@@ -1,9 +1,11 @@
 """Scratch chains with segments shorter than 32 updates (chains.py, make_plan's scratch length rule), end to end with
-the stand-in trainer and the bind mount simulated by a link: the scratch chain reaches the same after-states as the
-same chain without scratch, keeps exactly the states rolling retention keeps (every ladder state among them) while
-the plain chain also holds its last segment's other checkpoints, and a restart inside an unfinished segment reruns
-that segment from the last persisted end to the same states. Retention's strides are scaled down (full-state stride
-16, ladder 32) so a short run crosses both; a segment length of 4 or 8 relates to them as 4, 8 or 16 does to 64."""
+the stand-in trainer (each state a checkpoint and a wide learner's container) and the bind mount simulated by a link.
+For segment lengths 4, 8 and 16, against the same chain without scratch: every boundary's persisted records are the
+same, and at every segment start (after supervise's rolling prune) the scratch chain holds exactly the states rolling
+retention keeps, the plain chain those plus its last segment's other states, with the same hashes. Interruptions
+just before and after the promotion and just before and after the commit line, and a failure inside a segment, end
+in the same chain. The full-state stride is the real 64; the ladder stride is scaled to 128 (production 4,096), so
+256 updates cross a 64-multiple leaving the recent window and two ladder states."""
 import json
 import os
 import sys
@@ -20,7 +22,11 @@ import chains  # noqa: E402
 import retention  # noqa: E402
 from test_w5_chains import Node, STEP_C, STEP_X, jwrite  # noqa: E402
 
-FULL, LONG = 16, 32  # scaled retention strides (production: 64 and 4,096)
+LONG = 128  # scaled ladder and recent window (production 4,096); retention.FULL_STRIDE stays 64
+
+
+class Crash(Exception):
+    pass
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'scratch segments are Linux only (rename onto an empty directory)')
@@ -31,8 +37,7 @@ class ShortScratchSegments(unittest.TestCase):
         self.mounts = set()
         real_ismount = os.path.ismount
         patches = [mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_CPU_STEP_X': str(STEP_X),
-                                                'FAKE_SLEEP': '0.0'}),
-                   mock.patch.object(retention, 'FULL_STRIDE', FULL),
+                                                'FAKE_SLEEP': '0.0', 'FAKE_LEARNER_STATE': '1'}),
                    mock.patch.object(retention, 'C_LONG_STRIDE', LONG),
                    mock.patch.object(retention, 'C_RECENT', LONG),
                    # The simulated bind mount: the segment path is a link to its scratch directory while "mounted".
@@ -78,14 +83,33 @@ class ShortScratchSegments(unittest.TestCase):
         node.guard(ceilings={'c1': 10**6})
         return node, plan, [time.time()]
 
-    def drive(self, node, plan, wall):
-        """Drives c1 with `chains.time` advanced one second per segment only (one clock across restarts), and the
-        rolling retention supervise applies run before each segment, so prunes happen as the chain grows."""
-        manifest = plan['chains']['c1']['manifest']
+    def held(self, plan):
+        """(latest, boundary -> (checkpoint hash, container hash) for every state on disk). A state is its checkpoint
+        and its container together: both present with their pinned hashes, or neither."""
+        _, records = retention.index(plan['chains']['c1']['manifest'])
+        out = {}
+        for r in records:
+            ck, st = Path(r['checkpoint']['path']), Path(r['state']['path'])
+            self.assertEqual(ck.exists(), st.exists(), r['boundary'])
+            if ck.exists():
+                self.assertEqual((retention.sha(ck), retention.sha(st)), (r['checkpoint']['sha256'],
+                                                                           r['state']['sha256']), r['boundary'])
+                out[r['boundary']] = (r['checkpoint']['sha256'], r['state']['sha256'])
+        return (records[-1]['boundary'] if records else 0), out
+
+    def prune(self, node, plan):
+        retention.apply(retention.plan(plan['chains']['c1']['manifest']), node.root / 'retention.jsonl')
+
+    def drive(self, node, plan, wall, held=None):
+        """Drives c1 with `chains.time` advanced one second per segment only (one clock across restarts). Before each
+        segment, supervise's rolling prune; with `held`, what the chain then holds is recorded by its latest."""
         run_trainer = chains.run_trainer
 
         def run_segment(*args, **kwargs):
-            retention.apply(retention.plan(manifest), node.root / 'retention.jsonl')
+            self.prune(node, plan)
+            if held is not None:
+                latest, states = self.held(plan)
+                held[latest] = states
             result = run_trainer(*args, **kwargs)
             wall[0] += 1.0
             return result
@@ -95,67 +119,161 @@ class ShortScratchSegments(unittest.TestCase):
             clock.time.side_effect = lambda: wall[0]
             return node.drive(plan, 'c1')
 
-    def finish(self, plan, root):
-        """A last rolling prune (as supervise's next cycle), then (after-states, boundaries with a full state on
-        disk and their checkpoint hashes, latest)."""
-        manifest = plan['chains']['c1']['manifest']
-        retention.apply(retention.plan(manifest), Path(root) / 'retention.jsonl')
-        _, records = retention.index(manifest)
-        present = {r['boundary']: retention.sha(r['checkpoint']['path']) for r in records
-                   if Path(r['checkpoint']['path']).exists()}
-        return [r['after_state_sha256'] for r in records], present, records[-1]['boundary']
+    def finish(self, node, plan, held):
+        """A last rolling prune (as supervise's next cycle), recorded like the others; returns the final latest."""
+        self.prune(node, plan)
+        latest, states = self.held(plan)
+        held[latest] = states
+        return latest
+
+    def records(self, node, plan, ledger=True):
+        """Every boundary's persisted receipts (complete.json, update.json, collection.json), with the node's own
+        directory replaced by a placeholder and the ledger's wall-clock time dropped."""
+        _, records = retention.index(plan['chains']['c1']['manifest'])
+        man = json.loads(Path(plan['chains']['c1']['manifest']).read_text())
+        out = []
+        for r in records:
+            it = Path(man['segments'][r['segment']]['root']) / 'iterations' / f'{r["iteration"]:06d}'
+            complete = json.loads((it / 'complete.json').read_text())
+            att = chains.attempt_dir(it, complete)
+            # update.json names its node's paths, so its pin differs between roots: checked here, then compared as
+            # the document it pins.
+            self.assertEqual(complete['update'].pop('sha256'), retention.sha(att / 'update' / 'update.json'))
+            docs = [complete, json.loads((att / 'update' / 'update.json').read_text()),
+                    json.loads((att / 'collect' / 'collection.json').read_text())]
+            doc = json.loads(json.dumps(docs, sort_keys=True).replace(node.t.as_posix(), '<node>'))
+            doc[0].get('chain_ledger', {}).pop('unix_seconds', None)
+            if not ledger:
+                doc[0].pop('chain_ledger', None)
+            out.append((r['boundary'], doc))
+        return out
 
     def kept(self, latest):
         return {b for b in range(1, latest + 1) if retention.keeps_full_state('C', b, latest)} | {latest}
 
-    def test_short_scratch_keeps_what_the_plain_chain_keeps(self):
-        for length in (4, 8):
+    def check_held(self, length, s_held, p_held):
+        """At every segment start and at the end: the scratch chain holds exactly the retention-kept states; the
+        plain chain holds them and its last segment's other states (not yet prunable); the hashes agree."""
+        self.assertEqual(sorted(s_held), sorted(p_held))
+        for latest in sorted(s_held):
+            if not latest:
+                continue
+            kept = self.kept(latest)
+            self.assertEqual(set(s_held[latest]), kept, latest)
+            self.assertEqual(set(p_held[latest]), kept | set(range(latest - length + 1, latest + 1)), latest)
+            self.assertEqual({b: s_held[latest][b] for b in kept}, {b: p_held[latest][b] for b in kept}, latest)
+
+    def plain(self, length, segments):
+        node, plan, wall = self.chain(f'plain{length}', length, False, segments)
+        held = {}
+        self.assertEqual(self.drive(node, plan, wall, held), 0)
+        self.finish(node, plan, held)
+        return node, plan, held
+
+    def test_every_boundary_and_retention_decision_matches_the_plain_chain(self):
+        updates = 2 * LONG
+        for length in (4, 8, 16):
             with self.subTest(length=length):
-                segments = 104 // length  # 104 updates: three ladder states (32, 64, 96), a recent window, a tail
-                plain, pplan, pwall = self.chain(f'plain{length}', length, False, segments)
-                scratch, splan, swall = self.chain(f'scratch{length}', length, True, segments)
-                self.assertEqual(self.drive(plain, pplan, pwall), 0)
-                self.assertEqual(self.drive(scratch, splan, swall), 0)
-                p_states, p_present, p_latest = self.finish(pplan, plain.root)
-                s_states, s_present, s_latest = self.finish(splan, scratch.root)
-                self.assertEqual((p_latest, s_latest), (104, 104))
-                self.assertEqual(s_states, p_states)  # every after-state
-                kept = self.kept(104)
-                self.assertTrue({32, 64, 96} <= kept)
-                self.assertEqual(set(s_present), kept)  # exactly the retention-kept states
-                self.assertEqual(set(p_present), kept | set(range(104 - length + 1, 105)))  # plus its last segment
-                self.assertEqual({b: s_present[b] for b in kept}, {b: p_present[b] for b in kept})
-                # Persisted ends only: no trajectory and no mid-segment checkpoint survived the scratch run.
-                tree = scratch.root / 'chains' / 'c1'
-                self.assertFalse(list(tree.rglob('episode-*')))
+                segments = updates // length
+                p_node, p_plan, p_held = self.plain(length, segments)
+                s_node, s_plan, s_wall = self.chain(f'scratch{length}', length, True, segments)
+                s_held = {}
+                self.assertEqual(self.drive(s_node, s_plan, s_wall, s_held), 0)
+                self.assertEqual(self.finish(s_node, s_plan, s_held), updates)
+                self.assertEqual(self.records(s_node, s_plan), self.records(p_node, p_plan))  # every boundary
+                self.check_held(length, s_held, p_held)
+                # The decisions crossed what they must: a 64-multiple kept in the recent window and later pruned
+                # (64 leaves at latest 192), and both ladder states (128, 256) kept to the end.
+                self.assertIn(64, s_held[LONG])
+                self.assertNotIn(64, s_held[updates])
+                self.assertTrue({LONG, 2 * LONG} <= set(s_held[updates]))
+                tree = s_node.root / 'chains' / 'c1'
+                self.assertFalse(list(tree.rglob('episode-*')))  # no trajectory persisted
                 self.assertFalse(any(p.is_symlink() for p in tree.iterdir()))
                 self.assertEqual(len(list(tree.glob('seg-*'))), segments)
 
+    def test_interruptions_around_promotion_and_the_commit_line(self):
+        """Segment 15 of a 4-update chain ends at 64, a kept state. The driver is interrupted while persisting it:
+        with the staging copy marked but the segment still mounted, after the unmount just before the promotion
+        (rename), after the promotion just before the commit line, and just after the commit line. A new driver
+        finishes the chain; every boundary, retention decision and commit matches the uninterrupted plain chain, and
+        segment 15 holds its checkpoint and container under its marker's pins."""
+        length, segments, k = 4, 20, 15
+        seg = f'seg-{k:05d}'
+        p_node, p_plan, p_held = self.plain(length, segments)
+        real_rename, real_commit, real_compress = os.rename, chains.record_commit, chains.compress_config
+        armed = []
+
+        def unmount(native, tries=20):
+            if armed and Path(native).name == seg and armed[0] == 'before-unmount':
+                raise Crash(armed.pop())
+            return self.unlink(native, tries)
+
+        def rename(src, dst, *args, **kwargs):
+            if armed and Path(src).name == f'.{seg}.persist' and armed[0] == 'before-promotion':
+                raise Crash(armed.pop())
+            return real_rename(src, dst, *args, **kwargs)
+
+        def record_commit(cdir, man, s, how, *args, **kwargs):
+            if armed and s == k and armed[0] == 'after-promotion':
+                raise Crash(armed.pop())
+            return real_commit(cdir, man, s, how, *args, **kwargs)
+
+        def compress_config(path):
+            if armed and Path(path).name == f'{seg}.json' and armed[0] == 'after-commit':
+                raise Crash(armed.pop())
+            return real_compress(path)
+
+        expected = {'before-unmount': 'scratch-late', 'before-promotion': 'scratch-swap',
+                    'after-promotion': 'recovered', 'after-commit': 'scratch'}
+        for point, how in expected.items():
+            with self.subTest(point), mock.patch.object(chains, 'unmount', side_effect=unmount), \
+                    mock.patch('os.rename', side_effect=rename), \
+                    mock.patch.object(chains, 'record_commit', side_effect=record_commit), \
+                    mock.patch.object(chains, 'compress_config', side_effect=compress_config):
+                node, plan, wall = self.chain(f'crash-{point}', length, True, segments)
+                held = {}
+                armed[:] = [point]
+                with self.assertRaises(Crash):
+                    self.drive(node, plan, wall, held)
+                self.assertEqual(armed, [])  # the interruption happened, at segment 15's persist
+                self.assertEqual(self.drive(node, plan, wall, held), 0)
+                self.assertEqual(self.finish(node, plan, held), segments * length)
+                self.assertEqual(self.records(node, plan), self.records(p_node, p_plan))
+                self.check_held(length, held, p_held)
+                cdir = node.root / 'chains' / 'c1'
+                commits = [json.loads(line) for line in (cdir / chains.COMMIT_LOG).read_text().splitlines()]
+                commits = [c for c in commits if c.get('event') == 'commit']
+                self.assertEqual([c['segment'] for c in commits], list(range(segments)))  # once each, in order
+                self.assertEqual(commits[k]['how'], how)
+                self.assertEqual(commits[k]['boundary'], (k + 1) * length)
+                chains.validate_scratch_stage(cdir / seg)  # checkpoint and container under the marker's pins
+                self.assertIn((k + 1) * length, held[segments * length])  # 64 is still kept at the end
+                self.assertFalse((cdir / f'.{seg}.persist').exists())
+
     def test_restart_inside_an_unfinished_short_segment(self):
         length, segments = 4, 26
-        plain, pplan, pwall = self.chain('plain', length, False, segments)
-        self.assertEqual(self.drive(plain, pplan, pwall), 0)
-        p_states, p_present, _ = self.finish(pplan, plain.root)
+        p_node, p_plan, p_held = self.plain(length, segments)
         # The scratch chain fails after two of segment 10's four updates; its second driver resets the segment and
         # reruns it from segment 9's persisted end. The failed segment used one clock second, so the wall has one more.
-        scratch, splan, swall = self.chain('scratch', length, True, segments + 1)
+        node, plan, wall = self.chain('scratch', length, True, segments + 1)
+        held = {}
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': str(10 * length + 2)}):
-            self.assertEqual(self.drive(scratch, splan, swall), chains.EXIT_FAILED)
-        seg = scratch.root / 'chains' / 'c1' / 'seg-00010'
+            self.assertEqual(self.drive(node, plan, wall, held), chains.EXIT_FAILED)
+        seg = node.root / 'chains' / 'c1' / 'seg-00010'
         self.assertIn(seg, self.mounts)
         self.assertEqual(chains.completed(seg), 2)
-        self.assertEqual(self.drive(scratch, splan, swall), 0)
-        s_states, s_present, s_latest = self.finish(splan, scratch.root)
-        self.assertEqual(s_latest, segments * length)
-        self.assertEqual(s_states, p_states)
-        self.assertEqual(set(s_present), self.kept(s_latest))
-        self.assertEqual(s_present, {b: p_present[b] for b in self.kept(s_latest)})
-        rows = [json.loads(line) for line in (scratch.root / 'LOG.jsonl').read_text().splitlines()]
+        self.assertEqual(self.drive(node, plan, wall, held), 0)
+        self.assertEqual(self.finish(node, plan, held), segments * length)
+        # The two discarded updates count in the CPU ledger, so the ledger is left out of this comparison.
+        self.assertEqual(self.records(node, plan, ledger=False), self.records(p_node, p_plan, ledger=False))
+        self.check_held(length, held, p_held)
+        rows = [json.loads(line) for line in (node.root / 'LOG.jsonl').read_text().splitlines()]
         resets = [r for r in rows if r['event'] == 'scratch-reset']
         self.assertEqual([(r['segment'], r['discarded_iterations']) for r in resets], [('seg-00010', 2)])
-        commits = [json.loads(line) for line in (scratch.root / 'chains' / 'c1' / chains.COMMIT_LOG).read_text()
+        commits = [json.loads(line) for line in (node.root / 'chains' / 'c1' / chains.COMMIT_LOG).read_text()
                    .splitlines()]
-        self.assertEqual(sorted(c['segment'] for c in commits if c.get('event') == 'commit'), list(range(segments)))
+        self.assertEqual([c['segment'] for c in commits if c.get('event') == 'commit'], list(range(segments)))
 
 
 if __name__ == '__main__':

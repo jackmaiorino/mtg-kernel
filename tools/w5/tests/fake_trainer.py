@@ -10,7 +10,8 @@ Knobs (the config's `fake` block, which the test base carries, then FAKE_<NAME> 
 burn_x (CPU seconds per update), sleep and sleep_x (seconds per update), cpu_step and cpu_step_x (usec added to
 the ledger source's cpu.stat file per update, for hosts without cgroups), fail_at (exit 1 before that global
 update), publish_delay and publish_delay_x (seconds between a run's last receipt and its completion.json: a slow
-final publication).
+final publication). FAKE_LEARNER_STATE (environment only): each update also publishes a wide learner's container
+(`w_learner.state` in update.json), so a full state is a checkpoint and its container.
 """
 import hashlib
 import json
@@ -116,8 +117,12 @@ def main():
             collection['ex1'] = {'options': {}, 'episodes': [{'path': side.as_posix(), 'sha256': h(side)}]}
         c.write_text(json.dumps(collection))
         u = a / 'update' / 'update.json'
-        u.write_text(json.dumps({'after_state_sha256': h(ck), 'checkpoint': {'path': ck.as_posix(),
-                                                                             'sha256': h(ck)}}))
+        update_doc = {'after_state_sha256': h(ck), 'checkpoint': {'path': ck.as_posix(), 'sha256': h(ck)}}
+        if os.environ.get('FAKE_LEARNER_STATE'):  # a wide learner's container beside the checkpoint (one state)
+            st = a / 'update' / 'w-train-state.bin'
+            st.write_bytes(b'container of ' + h(ck).encode())
+            update_doc['w_learner'] = {'state': {'path': st.as_posix(), 'sha256': h(st)}}
+        u.write_text(json.dumps(update_doc))
         record, stop = ledger(cfg, knob(cfg, 'cpu_step', x))
         receipt = {'iteration': i, 'collection': {'path': c.as_posix()},
                    'update': {'path': u.as_posix(), 'sha256': h(u)},
