@@ -1393,7 +1393,15 @@ def make_plan(inputs_path):
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding='utf-8', newline='\n')
+            if repin_bytes:  # a re-pin: complete and durable before any plan or manifest names it
+                tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+                tmp.write_text(text, encoding='utf-8', newline='\n')
+                if os.name != 'nt':
+                    fsync_path(tmp)
+                os.replace(tmp, path)
+                durable_entry(path)
+            else:
+                path.write_text(text, encoding='utf-8', newline='\n')
         require(sha(path) == digest, f'{path} exists with other content')
         arms[a], arm_paths[a] = doc, path
     if 'C' in arms:
