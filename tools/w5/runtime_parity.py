@@ -24,7 +24,13 @@ outcome. Every check must hold for the receipt to pass:
   (singleton choices) and parity needs both off.
 - **Ordinary starts:** no training episode starts from a recorded history (`reset`); every episode is game 1
   (`postboard` false) with two registrations of 60-card mainboards (sideboards at most 15) and `selected` equal to
-  `registered`.
+  `registered`. A training set with post-board games (the chain tools' declared `postboard_exposure`: `postboard`
+  true and a `selected` 60 and 15 that differs from `registered`) fails `ordinary_starts_game_one`, exactly as
+  before, unless the caller passes `--allow-postboard-training REASON` (non-empty). The flag covers only a set with
+  no reset start and no malformed registration, in which every post-board game's `selected` lists hold exactly its
+  registered 75 on each seat and every other game has `selected` equal to `registered`. The receipt then records
+  the exception, the reason and the counts, and says that parity holds only with a recorded exception. The board
+  plays game one only, so the check itself stays false. Board decks are compared with the registered mainboards.
 - **Starting player:** the board assigns it (`host_assigned`) and swaps seats within each pair; training uses both
   starting seats and the learner both plays first and second.
 - **Limits:** training `max_physical_decisions` and `max_policy_steps` equal the board's `max_decisions` and
@@ -35,7 +41,8 @@ outcome. Every check must hold for the receipt to pass:
   (W5: Terror).
 
   runtime_parity.py --training-config CFG.json [...] --board-run RUN_DIR --repo MTG_KERNEL_REPO
-                    [--training-revision REV] [--allow-london-training REASON] [--out RECEIPT.json]
+                    [--training-revision REV] [--allow-london-training REASON]
+                    [--allow-postboard-training REASON] [--out RECEIPT.json]
 
 `--board-run` is a Spellbench run directory on the board (manifest.json and config.json; for v2, Phase A's run).
 `--repo` is an mtg-kernel checkout holding both revisions; the board revision is the manifest's
@@ -58,6 +65,7 @@ RULES_CALL = re.compile(r"\bset_runtime_rules_v1\s*\(")
 RAW_STRING = re.compile(r'[bc]?r(#*)"')
 OPENING_RULES = {"london-v1": "london"}  # a training `opening` protocol -> the board mulligan rule it plays
 MULLIGAN_CHECKS = ("mulligans_off_on_board", "mulligans_off_in_training")
+POSTBOARD_CHECK = "ordinary_starts_game_one"
 
 
 class ParityError(Exception):
@@ -95,6 +103,7 @@ def training_side(configs: list[dict], card_names: list[str]) -> dict:
     profiles, rules, starts, limits, learner_starts = Counter(), Counter(), Counter(), Counter(), Counter()
     mode_mix = Counter()
     resets = postboard = registered_differs = malformed = 0
+    postboard_conserving = postboard_seats = stray = 0
     decks: dict[str, Counter] = {}
     for config in configs:
         for ep in episodes(config):
@@ -119,10 +128,23 @@ def training_side(configs: list[dict], card_names: list[str]) -> dict:
             malformed += not (len(ep["registered"]) == len(ep["selected"]) == 2 and all(
                 len(d["mainboard"]) == 60 and len(d.get("sideboard", [])) <= 15
                 for d in ep["registered"] + ep["selected"]))
-            for registered, selected in zip(ep["registered"], ep["selected"]):
-                registered_differs += (registered["label"], registered["mainboard"]) != (
-                    selected["label"], selected["mainboard"])
-            for deck in ep["selected"]:
+            differs = [(registered["label"], registered["mainboard"]) != (selected["label"], selected["mainboard"])
+                       for registered, selected in zip(ep["registered"], ep["selected"])]
+            registered_differs += sum(differs)
+            if ep.get("postboard"):
+                # A post-board game: each seat's selected 60 and 15 must hold exactly its registered 75.
+                postboard_seats += sum(differs)
+                postboard_conserving += all(
+                    registered["label"] == selected["label"]
+                    and len(selected["mainboard"]) == 60 and len(selected.get("sideboard", [])) == 15
+                    and Counter(registered["mainboard"]) + Counter(registered.get("sideboard", []))
+                    == Counter(selected["mainboard"]) + Counter(selected.get("sideboard", []))
+                    for registered, selected in zip(ep["registered"], ep["selected"]))
+            else:
+                stray += any(differs)  # a game one whose selected lists are not its registration
+            # Board decks are compared with the registered 60 of a post-board game (its selected 60 is not a deck
+            # the board plays); a game one is read as before.
+            for deck in (ep["registered"] if ep.get("postboard") else ep["selected"]):
                 named = deck_key(deck["mainboard"], card_names)
                 if deck["label"] in decks and decks[deck["label"]] != named:
                     raise ParityError(f"training deck {deck['label']} has two different mainboards")
@@ -136,6 +158,9 @@ def training_side(configs: list[dict], card_names: list[str]) -> dict:
             "selected_differs_from_registered": registered_differs, "decks": decks}
     if mode_mix:  # only a set with an opening or modes adds this key, so a keep-seven receipt is unchanged
         side["mulligan_modes"] = dict(sorted(mode_mix.items()))
+    if postboard:  # only a set with post-board games adds this key, so every other receipt is unchanged
+        side["postboard"] = {"episodes": postboard, "conserving_episodes": postboard_conserving,
+                             "seats_changed": postboard_seats, "game_one_episodes_with_changed_decks": stray}
     return side
 
 
@@ -262,15 +287,42 @@ def mulligan_parity(training: dict, board_rule, supported: dict, reason: str | N
                     "training_rule": training_rule, "rules_equal": equal, "exception": exception}
 
 
+def check_postboard_reason(reason) -> str | None:
+    """The stripped `--allow-postboard-training` reason; None when the flag is absent; refuses an empty one."""
+    if reason is None:
+        return None
+    if not isinstance(reason, str) or not reason.strip():
+        raise ParityError("--allow-postboard-training needs a non-empty reason")
+    return reason.strip()
+
+
+def postboard_parity(training: dict, reason: str | None) -> dict | None:
+    """The receipt block of a training set with post-board games (None otherwise, so every other receipt is
+    unchanged). The exception is recorded only when the flag is given and the post-board games are the set's only
+    departure from ordinary starts: no reset, no malformed registration, every post-board game conserving its
+    registered 75 and no game one with changed decks."""
+    block = training.get("postboard")
+    if block is None:
+        return None
+    covered = training["reset_episodes"] == 0 and training["malformed_registrations"] == 0 \
+        and block["conserving_episodes"] == block["episodes"] and block["game_one_episodes_with_changed_decks"] == 0
+    exception = None
+    if reason is not None and covered:
+        exception = {"flag": "--allow-postboard-training", "reason": reason, "excepted_checks": [POSTBOARD_CHECK]}
+    return {**block, "covered_by_the_flag": covered, "exception": exception}
+
+
 def passes(result: dict) -> bool:
     """Every check holds, except those a recorded exception covers."""
-    excepted = ((result.get("mulligan") or {}).get("exception") or {}).get("excepted_checks", [])
+    excepted = list(((result.get("mulligan") or {}).get("exception") or {}).get("excepted_checks", []))
+    excepted += ((result.get("postboard") or {}).get("exception") or {}).get("excepted_checks", [])
     return all(v for k, v in result["checks"].items() if k not in excepted)
 
 
 def compare(training: dict, board_manifest: dict, board_config: dict, board_pool_decks: dict, bridge: dict,
-            allow_london_training: str | None = None) -> dict:
+            allow_london_training: str | None = None, allow_postboard_training: str | None = None) -> dict:
     reason = check_reason(allow_london_training)
+    postboard_block = postboard_parity(training, check_postboard_reason(allow_postboard_training))
     rules = board_manifest["information_rules"]["rules"]
     supported = board_manifest["engine_profile"]["rules_supported"]
     mulligan_checks, mulligan_block = mulligan_parity(training, rules["mulligan"], supported, reason)
@@ -308,10 +360,14 @@ def compare(training: dict, board_manifest: dict, board_config: dict, board_pool
                            "board_engine_defaults": board_manifest["information_rules"].get("engine_defaults")}}
     if mulligan_block is not None:  # only a training set with an opening adds these keys
         result["mulligan"] = mulligan_block
-        exception = mulligan_block["exception"]
-        if exception is not None and passes(result):
-            result["parity"] = ("holds only with a recorded exception: " + ", ".join(exception["excepted_checks"])
-                                + f" (--allow-london-training: {exception['reason']})")
+    if postboard_block is not None:  # only a training set with post-board games adds this key
+        result["postboard"] = postboard_block
+    exceptions = [block["exception"] for block in (mulligan_block, postboard_block)
+                  if block is not None and block["exception"] is not None]
+    if exceptions and passes(result):
+        result["parity"] = "holds only with a recorded exception: " + "; ".join(
+            ", ".join(exception["excepted_checks"]) + f" ({exception['flag']}: {exception['reason']})"
+            for exception in exceptions)
     return result
 
 
@@ -328,10 +384,14 @@ def main(argv=None) -> int:
     parser.add_argument("--allow-london-training", metavar="REASON", default=None,
                         help="record a London-opening training set as an exception to the board's mulligan rule "
                              "(non-empty reason, kept in the receipt)")
+    parser.add_argument("--allow-postboard-training", metavar="REASON", default=None,
+                        help="record a training set with post-board games (the declared postboard_exposure) as an "
+                             "exception to ordinary starts (non-empty reason, kept in the receipt)")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     try:
         reason = check_reason(args.allow_london_training)
+        postboard_reason = check_postboard_reason(args.allow_postboard_training)
         raw_configs = [p.read_bytes() for p in args.training_config]
         configs = [json.loads(raw) for raw in raw_configs]
         manifest_raw = (args.board_run / "manifest.json").read_bytes()
@@ -356,7 +416,8 @@ def main(argv=None) -> int:
         training = training_side(configs, card_names)
         result = compare(training, manifest, board_config,
                          board_decks(json.loads(decks_raw), pool, board_card_names),
-                         bridge_rules([raw.decode("utf-8") for raw in bridge_raw.values()]), reason)
+                         bridge_rules([raw.decode("utf-8") for raw in bridge_raw.values()]), reason,
+                         postboard_reason)
     except (ParityError, KeyError, IndexError) as exc:
         print(f"error: {exc!r}", file=sys.stderr)
         return 1
