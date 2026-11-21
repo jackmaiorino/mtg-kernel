@@ -128,7 +128,9 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
 - Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
   and two F segments per box (fillers do not wait on the guard; their hot set is bounded). A verdict issued early
   reserves the same: its census reads every chain's count before the bytes are counted, so what it covers does not
-  depend on the time since the last verdict.
+  depend on the time since the last verdict. On Windows a read refused while another process replaces the file is
+  a driver refusal (30 s poll) or, for a census count still unreadable after about a second, a deferred verdict
+  (the last one stays in force); a count is never assumed.
 - `supervise --loop` also keeps finished segments' byte totals (`retention.ByteCounter`): the guard walks only the
   rest of the root each cycle; every deletion or PRUNE move from a finished segment (any W5 tool's) moves the
   segment directory's modification time forward and the segment is counted again; every 6 hours it recounts them
@@ -201,8 +203,9 @@ fails the record (`<out>.failed.json`).
 one workload. The records must agree on the recorded host and kernel, run parameters, layout bindings, phase plans' inputs (except
 their label, chains, trainer and throughput records), the content pins of the files those name, and the arm files
 (except their trainer and tool pins); only the code (the trainer and the W5 tools) may differ, and the records of
-one side ran the same code. Each retained phase plan may occur in only one record, so copied records cannot supply
-extra independent samples. Otherwise it stops. Every chain's identity rows must equal the first baseline's at the
+one side ran the same code. A W5 tools difference counts in the rates too (e.g. a driver that resumes sooner after
+a guard wait), so a faster candidate is an end-to-end result, not by itself evidence of a faster trainer. Each
+retained phase plan may occur in only one record, so copied records cannot supply extra independent samples. Otherwise it stops. Every chain's identity rows must equal the first baseline's at the
 same phase and slot; a candidate that differs fails the report and is not compared for speed. A passing report
 gives, for the full-layout phase, each record's total and per-arm durable updates/hour and CPU-seconds per update,
 the medians, the ranges and the candidate/baseline median ratio. It calls a metric higher or lower only when the
@@ -279,6 +282,10 @@ SUPERVISE_EVERY = 60.0
 SUPERVISE_FLOOR = 2.0  # least sleep between two `supervise --loop` cycles (an early wake never spins)
 SUPERVISE_WAKE_POLL = 1.0  # how often a `supervise --loop` sleep reads the chains' admission counts
 REPLACE_TRIES = 100  # Windows: os.replace fails while another process reads the target; retried every 10 ms
+# Windows: a reader can be refused (sharing violation, or access denied while a rename completes) when another process
+# replaces the file. Nothing is caught elsewhere, where the error cannot be transient.
+TRANSIENT_READ_ERRORS = (PermissionError,) if os.name == 'nt' else ()
+CENSUS_TRIES, CENSUS_RETRY = 50, 0.02  # a census count read retried for about a second, then the verdict waits
 REPLAY_START_GRACE = 120.0
 EXIT_STOP, EXIT_ROOM, EXIT_FAILED = 5, 7, 8
 FAILED_ENDS = ('chain-failure', 'operator')  # END reasons whose recorded last valid boundary is the endpoint
@@ -1063,6 +1070,22 @@ def admitted(cdir):
     return read(path)['count'] if path.exists() else 0
 
 
+class CensusUnreadable(Exception):
+    """A chain's admission count stayed unreadable (Windows: its driver kept replacing it): no verdict this cycle."""
+
+
+def census_admitted(cdir):
+    """`admitted` for supervise's census: a read refused while the driver replaces the file (TRANSIENT_READ_ERRORS)
+    is retried for about a second, then CensusUnreadable; a count is never assumed (a zero would lower a ceiling)."""
+    for attempt in range(CENSUS_TRIES):
+        try:
+            return admitted(cdir)
+        except TRANSIENT_READ_ERRORS as exc:
+            if attempt == CENSUS_TRIES - 1:
+                raise CensusUnreadable(f'{Path(cdir).name}: the admission count could not be read ({exc})') from exc
+            time.sleep(CENSUS_RETRY)
+
+
 def guard_admit(root, cdir, chain):
     """Admission for one segment run (a new segment or a rerun of an unfinished one): a fresh `ok` verdict from
     supervise whose ceiling for this chain is above the chain's admissions so far (ADMITTED.json, counted here).
@@ -1070,17 +1093,21 @@ def guard_admit(root, cdir, chain):
     whatever any verdict admits after a census (one run in flight and GUARD_SEGMENTS more, retries and their moved
     aside attempts included) is inside that verdict's reservation, and a stopped supervise admits nothing more.
     Returns (admitted, why, seconds before the next look): GUARD_CEILING_POLL when the only refusal is the ceiling of
-    a fresh ok verdict (supervise's next verdict raises it, early once the chain nears it), else GUARD_POLL."""
+    a fresh ok verdict (supervise's next verdict raises it, early once the chain nears it), else GUARD_POLL. A read
+    refused while another process replaces the file (Windows, TRANSIENT_READ_ERRORS) is a refusal with GUARD_POLL."""
     path = Path(root) / 'GUARD.json'
     if not path.exists():
         return False, 'no guard verdict', GUARD_POLL
-    g = read(path)
+    try:
+        g = read(path)
+        count = admitted(cdir)  # written only by this driver: reading it before the checks changes nothing
+    except TRANSIENT_READ_ERRORS as exc:
+        return False, f'the guard verdict or admission count could not be read ({exc})', GUARD_POLL
     if time.time() - g.get('unix', 0) > GUARD_MAX_AGE:
         return False, 'the guard verdict is stale (is supervise running?)', GUARD_POLL
     if not g.get('ok'):
         return False, f'the byte guard refuses ({g.get("used_bytes")} used)', GUARD_POLL
-    count = admitted(cdir)
-    if count >= g.get('ceilings', {}).get(chain, 0):
+    if count >=g.get('ceilings', {}).get(chain, 0):
         return False, f'admission {count} is past this verdict\'s ceiling (is supervise running?)', GUARD_CEILING_POLL
     write(Path(cdir) / 'ADMITTED.json', {'count': count + 1})
     return True, 'ok', None
@@ -2361,7 +2388,8 @@ def guard_reservation(plan, root):
     for n, c in plan['chains'].items():  # what this verdict may admit, or an ended chain's last update
         if replay_sample.sampled(plan['stage'], c['arm']):
             if writing(root, n):
-                last = (admitted(chain_dir(root, n)) + GUARD_SEGMENTS) * plan['arms'][c['arm']]['segment_updates'] - 1
+                last = (census_admitted(chain_dir(root, n)) + GUARD_SEGMENTS) * \
+                    plan['arms'][c['arm']]['segment_updates'] - 1
             else:
                 last = latest(read(c['manifest']))[0] - 1
             staging += replay_sample.reservation(root, c['arm'], n, c['seed_root'], last,
@@ -2683,9 +2711,14 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
         if (pdir / 'PAIR.json').exists():
             pair_state[pair['X']] = read(pdir / 'PAIR.json')
     # The admission census is read before the prune: whatever any verdict admits after it (one run in flight and
-    # GUARD_SEGMENTS more) is inside the next verdict's reservation and the per-chain hot cap.
-    ceilings = {n: admitted(chain_dir(root, n)) + GUARD_SEGMENTS for n, c in plan['chains'].items()
-                if c['arm'] in MEASURED and writing(root, n)}
+    # GUARD_SEGMENTS more) is inside the next verdict's reservation and the per-chain hot cap. A count that stays
+    # unreadable (census_admitted) defers this cycle's verdict: the last one stays in force, as if supervise were slow.
+    deferred = None
+    try:
+        ceilings = {n: census_admitted(chain_dir(root, n)) + GUARD_SEGMENTS for n, c in plan['chains'].items()
+                    if c['arm'] in MEASURED and writing(root, n)}
+    except CensusUnreadable as exc:
+        ceilings, deferred = None, str(exc)
     report['replay_sample'] = sample_cycle(plan, root, infos)
     for n in sorted(n for n in names if n in plan['chains']):
         info = infos[n]
@@ -2718,7 +2751,16 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
     else:
         report['fills'] = occupancy(plan, root) if fills else None
     report['purged'] = purge_hold(root, plan['hold_days'], now)
-    next_bytes = guard_reservation(plan, root)
+    if deferred is None:
+        try:
+            next_bytes = guard_reservation(plan, root)
+        except CensusUnreadable as exc:
+            deferred = str(exc)
+    if deferred is not None:
+        log(root, event='guard-deferred', reason=deferred)
+        report['guard'] = {'deferred': deferred}
+        write(root / 'plan' / plan['label'] / 'SUPERVISE.json', report)
+        return report
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     safe = counter is not None and counter_safe(plan, root)
     g = retention.guard([root], plan['byte_cap'], next_bytes, manifests,

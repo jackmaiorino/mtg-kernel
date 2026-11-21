@@ -109,6 +109,92 @@ class GuardWaitTests(unittest.TestCase):
         self.assertIn('ceiling', reasons[0])
         self.assertIn('stale', reasons[1])
 
+    # ------------------------------------------------------------ reads refused during a replace (Windows)
+
+    def refused(self, name, times=None):
+        """chains.read raising a sharing violation for files called `name`, `times` times (None: always)."""
+        real, left = chains.read, [times]
+
+        def read(path):
+            if Path(path).name == name and (left[0] is None or left[0] > 0):
+                if left[0] is not None:
+                    left[0] -= 1
+                raise PermissionError(13, 'sharing violation (injected)', str(path))
+            return real(path)
+        return mock.patch.object(chains, 'read', side_effect=read)
+
+    def windows(self):
+        return mock.patch.object(chains, 'TRANSIENT_READ_ERRORS', (PermissionError,))
+
+    def test_a_refused_driver_read_waits_at_guard_poll(self):
+        for name in ('GUARD.json', 'ADMITTED.json'):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                _, plan = self.node.stage0(c_wall=600.0)
+                self.node.guard(ceilings={'c1': 1, 'x1': 0})
+                chains.write(chains.chain_dir(self.node.root, 'c1') / 'ADMITTED.json', {'count': 0})
+                sleeps = []
+
+                def sleep(seconds):
+                    sleeps.append(seconds)
+                    if len(sleeps) > 1:
+                        raise Halt
+
+                with self.windows(), self.refused(name, 1), mock.patch.object(chains, 'time', wraps=time) as clock, \
+                        self.assertRaises(Halt):
+                    clock.sleep.side_effect = sleep
+                    self.node.drive(plan, 'c1')
+                self.assertEqual(sleeps, [chains.GUARD_POLL, chains.GUARD_CEILING_POLL])  # not a ceiling wait
+                self.assertEqual(self.segments(plan, 'c1'), 1)
+                self.assertIn('could not be read', events(self.node.root, 'guard-wait')[0]['reason'])
+
+    def test_a_driver_read_refused_for_good_exits_after_guard_wait(self):
+        _, plan = self.node.stage0(c_wall=10**6)
+        self.node.guard()
+        wall, sleeps = [time.time()], []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            wall[0] += seconds
+
+        with self.windows(), self.refused('GUARD.json'), mock.patch.object(chains, 'time', wraps=time) as clock:
+            clock.time.side_effect = lambda: wall[0]
+            clock.sleep.side_effect = sleep
+            self.assertEqual(self.node.drive(plan, 'c1'), chains.EXIT_ROOM)
+        self.assertEqual(sleeps, [chains.GUARD_POLL] * int(chains.GUARD_WAIT / chains.GUARD_POLL))
+
+    def test_where_reads_cannot_be_refused_a_driver_error_still_raises(self):
+        _, plan = self.node.stage0(c_wall=600.0)
+        self.node.guard()
+        with mock.patch.object(chains, 'TRANSIENT_READ_ERRORS', ()), self.refused('GUARD.json', 1), \
+                self.assertRaises(PermissionError):
+            self.node.drive(plan, 'c1')
+
+    def test_where_reads_cannot_be_refused_a_census_error_still_raises(self):
+        path, plan = self.indep()
+        chains.write(chains.chain_dir(plan['root'], 'c1') / 'ADMITTED.json', {'count': 3})
+        with mock.patch.object(chains, 'TRANSIENT_READ_ERRORS', ()), self.refused('ADMITTED.json', 1), \
+                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(PermissionError):
+            chains.cycle(plan, path)
+
+    def test_census_retries_a_refused_count_then_defers_the_verdict(self):
+        path, plan = self.indep()
+        chains.write(chains.chain_dir(plan['root'], 'c1') / 'ADMITTED.json', {'count': 3})
+        guard = Path(plan['root']) / 'GUARD.json'
+        with self.windows(), mock.patch.object(chains, 'CENSUS_RETRY', 0.0), self.refused('ADMITTED.json', 2), \
+                contextlib.redirect_stdout(io.StringIO()):
+            report = chains.cycle(plan, path)
+        verdict = json.loads(guard.read_text())
+        self.assertEqual(verdict['ceilings'], {'c1': 3 + chains.GUARD_SEGMENTS})  # the count read, never a zero
+        self.assertIn('ok', report['guard'])
+        with self.windows(), mock.patch.object(chains, 'CENSUS_RETRY', 0.0), self.refused('ADMITTED.json'), \
+                contextlib.redirect_stdout(io.StringIO()):
+            report = chains.cycle(plan, path)
+        self.assertIn('could not be read', report['guard']['deferred'])
+        self.assertEqual(json.loads(guard.read_text()), verdict)  # the last verdict stays in force
+        self.assertEqual(len(events(plan['root'], 'guard-deferred')), 1)
+
     # ------------------------------------------------------------ supervise
 
     def supervise(self, path, plan, script=(), after_cycle=None, cycles=3, loop='60', guard_ok=True):
