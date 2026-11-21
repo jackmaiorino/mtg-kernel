@@ -1060,6 +1060,39 @@ fn hallow_follows_a_permanent_spell_onto_the_battlefield() {
     assert_eq!(life(&state, P0), 20);
 }
 
+#[test]
+fn hallow_does_not_follow_the_permanent_through_a_later_zone_change() {
+    let mut state = plains();
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    cast(&mut state, fanatic, &[]);
+    pass_priority(&mut state, P1);
+    cast(&mut state, hallow, &[Target::Object(fanatic)]);
+    settled(&mut state);
+    let first_incarnation = state.objects.get(fanatic).zone_change_count;
+
+    // Blinking the permanent creates a later incarnation. Only the
+    // original resolving spell-to-permanent transition carries Hallow.
+    let ephemerate = put(&mut state, P1, "Ephemerate", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    cast(&mut state, ephemerate, &[Target::Object(fanatic)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, fanatic), Zone::Battlefield);
+    assert!(state.objects.get(fanatic).zone_change_count > first_incarnation);
+    activate(&mut state, fanatic, 0, &[Target::Player(P0)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, fanatic), Zone::Graveyard);
+    assert_eq!(
+        life(&state, P0),
+        19,
+        "the later incarnation is not shielded"
+    );
+}
+
 // ---- Granted flashback and a mandatory additional cost (W1 review) ----------------------
 
 /// Deprive (wave Pf1b) given flashback by Snapcaster Mage still pays its
