@@ -39,7 +39,7 @@ fn run() -> Result<(), String> {
     let usage = concat!(
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
         "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
-        "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block]"
+        "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block] [--collect-external PROGRAM]"
     );
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
@@ -49,6 +49,7 @@ fn run() -> Result<(), String> {
     let mut gpu_learner: Option<usize> = None;
     let mut gpu_kernels: Option<String> = None;
     let mut gpu_wait: Option<String> = None;
+    let mut collect_external: Option<PathBuf> = None;
     let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
         value
             .ok_or(format!("missing {what}"))?
@@ -82,6 +83,9 @@ fn run() -> Result<(), String> {
             }
             Some("--gpu-exact-wait") if gpu_wait.is_none() => {
                 gpu_wait = Some(text(args.next(), "wait mode")?);
+            }
+            Some("--collect-external") if collect_external.is_none() => {
+                collect_external = Some(PathBuf::from(text(args.next(), "collector program")?));
             }
             _ => return Err(format!("unknown option; {usage}")),
         }
@@ -140,6 +144,12 @@ fn run() -> Result<(), String> {
         return Err(format!(
             "--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"
         ));
+    }
+    // Pooled collection changes where games are played, never their bytes:
+    // an execution option outside the run identity, checked by the run like
+    // a local collection.
+    if let Some(program) = collect_external {
+        mtg_kernel::native_expanded_training_run_v1::install_external_collector_v1(program)?;
     }
     let result = run_native_expanded_training_v1(&config, limit);
     #[cfg(feature = "gpu-exact-v1")]

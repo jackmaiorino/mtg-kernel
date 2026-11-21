@@ -168,11 +168,18 @@ pub(super) fn collect_parallel_v1(
     training_math: TrainingMathV1,
     ex1: Option<super::ex1_collect_v1::Ex1CollectOptionsV1>,
     record_envelope: RecordEnvelopeV1,
+    shard: Option<super::pooled_collection_v1::CollectionShardV1>,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = Instant::now();
     validate_collection_workers_v1(workers)?;
     ensure(workers >= 2, "use collect for a single collection worker")?;
+    // A shard publishes under schedule indices (`pooled_collection_v1`).
+    if let Some(shard) = &shard {
+        shard.validate_v1(episodes.len())?;
+        ensure(ex1.is_none(), "EX1 collection is not available pooled")?;
+    }
+    let first_slot = shard.map_or(0, |shard| shard.first_slot);
     // EX1's readers take plain trajectory JSON; the envelope is not offered there.
     ensure(
         record_envelope.is_none() || ex1.is_none(),
@@ -274,12 +281,14 @@ pub(super) fn collect_parallel_v1(
                 .as_ref()
                 .map(|opponent| collector.opponent_cache.load(opponent))
                 .transpose()?;
+            // The schedule index: equal to `index` unless this is a shard.
+            let slot = first_slot + index;
             let (trajectory, entries, ex1_record) = collect_episode_tolerant_v1(
                 &mut collector.policy,
                 &learner,
                 opponent,
                 episode,
-                index,
+                slot,
                 max_non_natural_episode_fraction,
                 ex1.as_ref(),
             )
@@ -300,7 +309,7 @@ pub(super) fn collect_parallel_v1(
             // (`trajectory_parse_ahead_v1`). A record envelope seals exactly
             // the serialized bytes (`record_envelope_v1`), and the sealed
             // bytes are the published and offered ones.
-            let name = format!("episode-{index:04}.json");
+            let name = format!("episode-{slot:04}.json");
             let bytes = std::sync::Arc::new(
                 record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?,
             );
@@ -337,7 +346,9 @@ pub(super) fn collect_parallel_v1(
     let (outputs, worker_timings) = collection_result?;
     let (outputs, ex1_outputs): (Vec<PinnedFileV1>, Vec<Option<PinnedFileV1>>) =
         outputs.into_iter().unzip();
-    if max_non_natural_episode_fraction > 0.0 {
+    // The cap is a property of the whole schedule: a shard leaves it to the
+    // merge, which sees every slot (`pooled_collection_v1::merge_shards_v1`).
+    if max_non_natural_episode_fraction > 0.0 && shard.is_none() {
         ensure(
             failed_fraction <= max_non_natural_episode_fraction,
             &format!(
@@ -366,6 +377,9 @@ pub(super) fn collect_parallel_v1(
     }
     if let Some(pin) = non_natural_ledger_pin {
         result["non_natural_ledger"] = json!(pin);
+    }
+    if let Some(shard) = &shard {
+        result["shard"] = json!(shard);
     }
     if let Some(options) = &ex1 {
         let episodes: Vec<PinnedFileV1> = ex1_outputs.into_iter().flatten().collect();
@@ -568,6 +582,7 @@ mod tests {
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: Default::default(),
+            shard: None,
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -729,6 +744,7 @@ mod tests {
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: Default::default(),
+            shard: None,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -760,6 +776,7 @@ mod tests {
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: Default::default(),
+            shard: None,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -1074,6 +1091,7 @@ mod tests {
                     training_math: TrainingMathV1::PlatformLibm,
                     ex1: None,
                     record_envelope: Default::default(),
+                    shard: None,
                     output_directory,
                 }
             };
@@ -1199,6 +1217,7 @@ mod tests {
                     training_math: TrainingMathV1::PlatformLibm,
                     ex1: None,
                     record_envelope: Default::default(),
+                    shard: None,
                     output_directory,
                 }
             };
