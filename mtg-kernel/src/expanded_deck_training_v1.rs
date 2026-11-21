@@ -6436,7 +6436,7 @@ fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
 /// the whole file). Invocation-local, never persisted.
 mod checkpoint_metadata_memo_v1 {
     use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex, PoisonError};
+    use std::sync::Arc;
 
     /// The newest checkpoints a run probes: its current one and the one before.
     const ENTRIES_V1: usize = 4;
@@ -6447,6 +6447,7 @@ mod checkpoint_metadata_memo_v1 {
 
     #[cfg(not(test))]
     fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        use std::sync::{Mutex, PoisonError};
         static ENTRIES: Mutex<EntriesV1> = Mutex::new(VecDeque::new());
         f(&mut ENTRIES.lock().unwrap_or_else(PoisonError::into_inner))
     }
