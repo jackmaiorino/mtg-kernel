@@ -221,7 +221,23 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     job_count: usize,
     work: F,
 ) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
-    ordered_jobs_with_state_v1(workers, job_count, || (), |_, ordinal| work(ordinal))
+    ordered_jobs_bounded_v1(workers, job_count, MAX_GROUPS, work)
+}
+
+/// [`ordered_jobs_v1`] admitting up to `max_jobs` jobs.
+fn ordered_jobs_bounded_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
+    workers: usize,
+    job_count: usize,
+    max_jobs: usize,
+    work: F,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
+    ordered_jobs_with_state_bounded_v1(
+        workers,
+        job_count,
+        max_jobs,
+        || (),
+        |_, ordinal| work(ordinal),
+    )
 }
 
 /// [`ordered_jobs_v1`] whose jobs also get their worker's own state: made by
@@ -231,6 +247,7 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
 /// caches. A worker takes no job after one of its own fails or panics (every
 /// later ordinal is past the first error), so no job sees state such a job
 /// left behind.
+#[cfg(test)]
 fn ordered_jobs_with_state_v1<S, T, M, F>(
     workers: usize,
     job_count: usize,
@@ -678,6 +695,10 @@ where
 
 /// [`prepare_with_loader_v1`] with the update's physical-group bound
 /// ([`preparation_groups_bound_v1`]).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_with_loader_v1's inputs, the group bound and the row cache choice"
+)]
 fn prepare_with_loader_bounded_v1<'a, F>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
