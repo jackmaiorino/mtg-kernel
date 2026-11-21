@@ -472,11 +472,12 @@ def make_carry(manifest_path, boundary, objects, out):
     man = read(manifest_path)
     require(man.get('schema') == 'w5-chain/v1' and man.get('arm') == 'C', 'not a C chain manifest')
     require(man.get('carry') is None, 'the chain is itself carried; carry from the chain it continues')
-    old_root = manifest_path.parent.parent.parent  # <root>/chains/<name>/chain.json
+    old_root, old_scratch = old_trees(manifest_path)  # <root>/chains/<name>/chain.json, and its scratch root
     copy_dir, out_path = Path(objects).resolve(), Path(out).resolve()
-    for dest in (copy_dir, out_path):
-        require(dest != old_root and old_root not in dest.parents,
-                f'{dest} is inside the root of the carried chain, {old_root}: carry writes only outside it')
+    for tree in [old_root.resolve()] + ([old_scratch.resolve()] if old_scratch else []):
+        for dest in (copy_dir, out_path):
+            require(dest != tree and tree not in dest.parents,
+                    f'{dest} is inside {tree}, a tree of the carried chain: carry writes only outside it')
     require(out_path.parent != copy_dir or not out_path.name.endswith('.json') or len(out_path.stem) != 64,
             'the record would share the name space of the checkpoint copies')
     require(man['launched_unix'] is not None, 'the chain has not started')
@@ -554,20 +555,28 @@ def disjoint(a, b):
     return a != b and a not in b.parents and b not in a.parents
 
 
+def old_trees(manifest_path):
+    """The carried chain's W5 root and its scratch root (None without one), read from its manifest and its pinned
+    arm file (the pin is checked): the trees no carry write and no continuation tree may touch. Refuses when they
+    cannot be established."""
+    man_path = Path(manifest_path)
+    man = read(man_path)  # an unreadable manifest refuses (raises) rather than dropping the protection
+    require(isinstance(man.get('arm_file'), dict), f'{man_path}: no pinned arm file, so its scratch root is unknown')
+    check_pin(man['arm_file'], f'the arm file of {man_path}')
+    old_scratch = read(man['arm_file']['path']).get('scratch_root')
+    return man_path.parent.parent.parent, (Path(old_scratch) if old_scratch else None)
+
+
 def check_carry_roots(doc, name, root, scratch_root=None):
     """The new root and its scratch root are disjoint from the carried chain's root and from its scratch root:
     neither is the other or inside it, so no write, scratch reset or persist of the continuation can reach a file
     of the old chain."""
-    man_path = Path(doc['from']['manifest']['path'])
-    old_root = man_path.parent.parent.parent
-    old_scratch = None
     try:
-        old_arm = read(read(man_path)['arm_file']['path'])
-        old_scratch = old_arm.get('scratch_root')
-    except (OSError, KeyError, ValueError):
-        pass
+        old_root, old_scratch = old_trees(doc['from']['manifest']['path'])
+    except (OSError, ValueError, KeyError) as exc:
+        raise Stop(f'{name}: the carried chain\'s trees cannot be established ({exc})') from exc
     mine = [Path(root)] + ([Path(scratch_root)] if scratch_root else [])
-    theirs = [old_root] + ([Path(old_scratch)] if old_scratch else [])
+    theirs = [old_root] + ([old_scratch] if old_scratch else [])
     for m in mine:
         for t in theirs:
             require(disjoint(m, t), f'{name}: {m} is not apart from the carried chain\'s {t} (a new root and scratch '
@@ -595,11 +604,13 @@ def check_carry(doc, name, seed_root, arm, new=True):
     require(name != doc['from']['chain'], f'{name}: a carried chain takes a new name')
     check_carry_roots(doc, name, Path(arm['root']), arm.get('scratch_root'))
     ck = Path(doc['source']['checkpoint']['path'])
+    _, old_scratch = old_trees(doc['from']['manifest']['path'])
     keep_out = [old_root.resolve(), Path(arm['root']).resolve()] + \
-        ([Path(arm['scratch_root']).resolve()] if arm.get('scratch_root') else [])
+        ([Path(arm['scratch_root']).resolve()] if arm.get('scratch_root') else []) + \
+        ([old_scratch.resolve()] if old_scratch else [])
     require(ck.is_absolute() and not any(k == ck.resolve() or k in ck.resolve().parents for k in keep_out),
             f'{name}: the carried checkpoint must be an absolute path outside the old root, the new root and the '
-            'scratch root (their cleanup moves or deletes files)')
+            'scratch roots (their cleanup moves or deletes files)')
     require(doc['source'].get('s_learner') is None and doc['source'].get('w_learner') is None,
             f'{name}: only single-file (net-8) sources are carried')
     check_pin(doc['source']['checkpoint'], f'{name} carried checkpoint')

@@ -474,5 +474,42 @@ class CarryTests(unittest.TestCase):
         self.assertIn('before the carried boundary', err.getvalue())
 
 
+    def test_the_old_scratch_root_is_protected_and_must_be_known(self):
+        _, old_man = self.old(3)
+        carry_path = self.carry(old_man, 8)
+        # give the old chain a scratch root, as the main chains have (its arm file re-pinned in its manifest)
+        man = json.loads(old_man.read_text())
+        arm = json.loads(Path(man['arm_file']['path']).read_text())
+        arm['scratch_root'] = (self.t / 'oldshm').as_posix()
+        new_arm = jwrite(self.t / 'old-arm-scratch.json', arm)
+        man['arm_file'] = chains.pin(new_arm)
+        old_man.write_text(json.dumps(man))
+        (self.t / 'oldshm').mkdir()
+        keep = self.t / 'oldshm' / 'keep.json'
+        keep.write_text('old scratch bytes')
+        for objects, out in ((self.t / 'oldshm' / 'objects', self.t / 'c.json'), (self.t / 'o', keep)):
+            with self.subTest(objects=objects, out=out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(chains.main(['carry', '--manifest', str(old_man), '--boundary', '8',
+                                              '--objects', str(objects), '--out', str(out)]), w5box.EXIT_REFUSED)
+        self.assertEqual(keep.read_text(), 'old scratch bytes')
+        self.assertFalse((self.t / 'oldshm' / 'objects').exists())
+        # a carried checkpoint under the old scratch root is refused at plan time
+        rec = json.loads(carry_path.read_text())
+        target = self.t / 'oldshm' / Path(rec['source']['checkpoint']['path']).name
+        target.write_bytes(Path(rec['source']['checkpoint']['path']).read_bytes())
+        rec['source']['checkpoint']['path'] = target.as_posix()
+        with self.assertRaisesRegex(chains.Stop, 'scratch roots'):
+            chains.make_plan(self.cont_inputs(jwrite(self.t / 'carry-oldshm.json', rec), label='os', root='os'))
+        # a new scratch root inside the old scratch root is refused
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='ns', root='ns')).read_text())
+        doc['scratch_root'] = (self.t / 'oldshm' / 'new').as_posix()
+        with self.assertRaisesRegex(chains.Stop, 'not apart'):
+            chains.make_plan(jwrite(self.t / 'ns.json', doc))
+        # an old arm file that no longer matches its pin: the old trees cannot be established, so planning refuses
+        new_arm.write_text(new_arm.read_text() + ' ')
+        with self.assertRaisesRegex(chains.Stop, 'cannot be established|differs|pin'):
+            chains.make_plan(self.cont_inputs(carry_path, label='pn', root='pn'))
+
+
 if __name__ == '__main__':
     unittest.main()
