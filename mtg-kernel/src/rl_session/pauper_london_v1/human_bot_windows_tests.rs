@@ -16,6 +16,13 @@
 //!    constructor the bridge reset calls after its own deal. The person
 //!    passes at every engine window the trainer's other seat does not have,
 //!    and answers everything else as the training game is answered.
+//!    Neutral choices (on in every human-play game) are run both ways: on
+//!    the trainer's session too (then everything is equal), and off it, the
+//!    production trainer exactly; then the bridge poses some choices training
+//!    resolves itself, each must have exactly one answer, and at every other
+//!    bot decision the menu, the model input and the new-window marker are
+//!    equal (the game states are not: neutral choices keep a pending
+//!    activation in their own fields and number stack items differently).
 //! 2. Both rules `harness-v2` is the engine-windows reset exactly.
 //! 3. The bridge takes the rules on its reset request, marks the bot's new
 //!    windows in the private support block, and refuses the field anywhere
@@ -64,15 +71,17 @@ struct Sessions {
 }
 
 /// The trainer's London session and the bridge's two sessions on one deal.
-/// `runtime_rule` asks for the training runtime rule (refused alike by all
-/// three for a game with a Delve card); neutral choices are the bridge's
-/// (every human-play game has them), set on all three.
+/// The training runtime rule is set on all three (refused alike for a game
+/// with a Delve card). Neutral choices are the bridge's (every human-play
+/// game has them): set on the trainer's session too with
+/// `neutral_training`, else the trainer's session is production's.
 fn sessions(
     decks: [&str; 2],
     seed: u64,
     episode: u64,
     bot: usize,
     person_windows: bool,
+    neutral_training: bool,
 ) -> Sessions {
     let deck_ids: SessionDeckIdsV1 = [decks[0].to_string(), decks[1].to_string()];
     let boards = mainboards(&deck_ids);
@@ -112,7 +121,9 @@ fn sessions(
     let fast =
         FastActorSessionV1::london_human_from_state_v1(start, deck_ids, hashes, state).unwrap();
     let mut copy = FlatV4LockstepV1::from_fast_session_for_test(episode, fast);
-    training.enable_spellbench_neutral_choices();
+    if neutral_training {
+        training.enable_spellbench_neutral_choices();
+    }
     raw.enable_spellbench_neutral_choices();
     copy.enable_spellbench_neutral_choices();
     let rule = crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1;
@@ -134,31 +145,76 @@ struct Played {
     bot_decisions: u64,
     bot_new_windows: u64,
     person_engine_windows: u64,
+    /// Decisions only the bridge poses (neutral choices), each with one
+    /// answer: all of them, and the bot's.
+    neutral_only: u64,
+    bot_neutral_only: u64,
     shared: u64,
     finished: bool,
 }
 
+/// The first paths at which the two game states differ (diagnostics).
+fn state_diff(training: &FastActorSessionV1, raw: &RlEpisodeSessionV1) -> Vec<String> {
+    fn walk(a: &Value, b: &Value, path: String, out: &mut Vec<String>) {
+        if out.len() >= 12 || a == b {
+            return;
+        }
+        match (a, b) {
+            (Value::Object(x), Value::Object(y)) => {
+                for key in x.keys().chain(y.keys().filter(|k| !x.contains_key(*k))) {
+                    walk(
+                        x.get(key).unwrap_or(&Value::Null),
+                        y.get(key).unwrap_or(&Value::Null),
+                        format!("{path}.{key}"),
+                        out,
+                    );
+                }
+            }
+            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+                for (i, (p, q)) in x.iter().zip(y).enumerate() {
+                    walk(p, q, format!("{path}[{i}]"), out);
+                }
+            }
+            _ => out.push(format!(
+                "{path}: {} vs {}",
+                a.to_string().chars().take(200).collect::<String>(),
+                b.to_string().chars().take(200).collect::<String>()
+            )),
+        }
+    }
+    let mut out = Vec::new();
+    walk(
+        &serde_json::to_value(training.game_state()).unwrap(),
+        &serde_json::to_value(raw.game_state()).unwrap(),
+        String::new(),
+        &mut out,
+    );
+    out
+}
+
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
-/// passed in the bridge sessions alone.
+/// passed in the bridge sessions alone; so are the decisions only neutral
+/// choices pose (production trainer only), which must have one answer.
 fn play(
     decks: [&str; 2],
     seed: u64,
     episode: u64,
     bot: usize,
     person_windows: bool,
+    neutral_training: bool,
     max_shared: u64,
 ) -> Played {
     let Sessions {
         mut training,
         mut raw,
         mut copy,
-    } = sessions(decks, seed, episode, bot, person_windows);
+    } = sessions(decks, seed, episode, bot, person_windows, neutral_training);
     let mut rng = SplitMix64::seed(seed ^ 0xB07);
     let mut scratch = FlatV4EncodeScratchV1::default();
     let mut out = Played::default();
     let context = |what: &str, at: u64| {
-        format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows}: {what} at shared decision {at}")
+        format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows} neutral training {neutral_training}: {what} at shared decision {at}")
     };
     loop {
         let response = raw.current_response();
@@ -189,12 +245,60 @@ fn play(
                 continue;
             }
         }
-        assert_eq!(
-            training.game_state(),
-            raw.game_state(),
-            "{}",
-            context("game state", out.shared)
-        );
+        if let RlSessionResponseV1::Decision(decision) = &response {
+            // Against the production trainer the states are not compared
+            // (neutral choices hold a pending activation in their own
+            // fields and number stack items differently); what the seat is
+            // asked is: the acting seat, the substep and the menu.
+            let shared = match training.current_response() {
+                FastActorResponseV1::Decision(theirs) => {
+                    theirs.acting_player == decision.acting_player
+                        && (theirs.substep_index, theirs.substep_count)
+                            == (decision.substep_index, decision.substep_count)
+                        && training.diagnostic_current_action_semantics()
+                            == copy.fast_session().diagnostic_current_action_semantics()
+                }
+                FastActorResponseV1::Terminal(_) => false,
+            };
+            if !shared && !neutral_training {
+                // A choice training resolves itself (a forced discard, a
+                // forced number), posed by neutral choices: one answer.
+                let rows = copy.row_candidate_ids(decision).unwrap();
+                assert_eq!(
+                    rows.len(),
+                    1,
+                    "{} bridge {:?} training {:?} state differences {:?}",
+                    context(
+                        "a bridge-only decision with more than one answer",
+                        out.shared
+                    ),
+                    copy.fast_session().diagnostic_current_action_semantics(),
+                    training.diagnostic_current_action_semantics(),
+                    state_diff(&training, &raw)
+                );
+                let chosen = &decision.legal_actions[rows[0] as usize];
+                raw.step(
+                    decision.episode_id,
+                    decision.step,
+                    rows[0],
+                    &chosen.stable_id,
+                )
+                .unwrap();
+                copy.mirror_step(&rows, decision.step, rows[0]).unwrap();
+                out.neutral_only += 1;
+                out.bot_neutral_only += u64::from(seat_index(decision.acting_player) == bot);
+                continue;
+            }
+        }
+        if neutral_training {
+            assert_eq!(
+                training.game_state(),
+                raw.game_state(),
+                "{}",
+                context("game state", out.shared)
+            );
+        }
+        let ahead = out.person_engine_windows + out.neutral_only;
         let (theirs, ours) = match (training.current_response(), response) {
             (FastActorResponseV1::Decision(theirs), RlSessionResponseV1::Decision(ours)) => {
                 (theirs, ours)
@@ -239,12 +343,9 @@ fn play(
             "{}",
             context("menu", out.shared)
         );
-        // The session counters differ by exactly the person's engine windows.
+        // The session counters differ by exactly the bridge-only decisions.
         assert_eq!(
-            (
-                training.policy_step_count() + out.person_engine_windows,
-                theirs.step + out.person_engine_windows
-            ),
+            (training.policy_step_count() + ahead, theirs.step + ahead),
             (raw.policy_step_count(), ours.step),
             "{}",
             context("counters", out.shared)
@@ -296,13 +397,26 @@ fn the_bot_on_action_windows_plays_the_training_session() {
         for (pairing, decks) in [[*deck, *deck], [*deck, other]].into_iter().enumerate() {
             for seed in [7_u64, 31] {
                 for bot in [0, 1] {
-                    for person_windows in [true, false] {
+                    for (person_windows, neutral_training) in
+                        [(true, true), (false, true), (true, false), (false, false)]
+                    {
                         let episode = 0xB0_0000
                             + index as u64 * 1_000
                             + pairing as u64 * 100
                             + seed * 2
                             + bot as u64;
-                        let played = play(decks, seed, episode, bot, person_windows, 8_000);
+                        let played = play(
+                            decks,
+                            seed,
+                            episode,
+                            bot,
+                            person_windows,
+                            neutral_training,
+                            8_000,
+                        );
+                        if neutral_training {
+                            assert_eq!(played.neutral_only, 0);
+                        }
                         assert!(
                             played.finished,
                             "{decks:?} seed {seed} bot p{bot}: not finished ({played:?})"
@@ -317,6 +431,8 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         total.bot_decisions += played.bot_decisions;
                         total.bot_new_windows += played.bot_new_windows;
                         total.person_engine_windows += played.person_engine_windows;
+                        total.neutral_only += played.neutral_only;
+                        total.bot_neutral_only += played.bot_neutral_only;
                         total.shared += played.shared;
                         games += 1;
                     }
