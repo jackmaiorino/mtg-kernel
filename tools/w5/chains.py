@@ -249,7 +249,7 @@ PAIR_SCHEMA = 'w5-pair/v1'
 SEGCHECK_SCHEMA = 'w5-segcheck/v1'
 COMMIT_SCHEMA = 'w5-segment-commit/v1'
 CARRY_SCHEMA = 'w5-chain-carry/v1'
-COMMIT_LOG ='durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
+COMMIT_LOG = 'durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
 ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
         'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C'), 'CH': ('C', 'C'),
         'FBA': ('C', 'C'), 'FBB': ('C', 'C')}  # recipe, retention arm
@@ -487,6 +487,12 @@ def make_carry(manifest_path, boundary, objects, out):
     seg = next((s for s in man['segments'] if s['offset'] + s['updates'] == boundary), None)
     require(seg is not None, f'no segment of the manifest ends at {boundary}')
     root = Path(seg['root'])
+    require(root.resolve().parent == manifest_path.parent,
+            f'{root} is not in the chain directory {manifest_path.parent} (a copied manifest is not carried)')
+    for key in ('ladder', 'keep_offset', 'initial_opponent'):
+        require(man['recipe'].get(key) is None, f'a recipe with {key} counts from its own start; it is not carried')
+    require(not man['seed_root'].startswith(('w5/chain', 'w5/filler')) and man['seed_root'] != 'w5/0b',
+            'a Stage 1 or 0b chain is not carried')
     require(not mounted(root) and (root / 'completion.json').exists() and completed(root) == seg['updates'],
             f'{root} is not a complete persisted segment')
     last = root / 'iterations' / f'{seg["updates"] - 1:06d}'
@@ -560,11 +566,19 @@ def old_trees(manifest_path):
     arm file (the pin is checked): the trees no carry write and no continuation tree may touch. Refuses when they
     cannot be established."""
     man_path = Path(manifest_path)
+    require(man_path.is_absolute() and man_path == man_path.resolve() and man_path.name == 'chain.json'
+            and man_path.parent.parent.name == 'chains',
+            f'{man_path}: not a canonical <root>/chains/<chain>/chain.json path')
     man = read(man_path)  # an unreadable manifest refuses (raises) rather than dropping the protection
+    require(man_path.parent.name == man.get('chain'), f'{man_path}: the manifest names chain {man.get("chain")}')
     require(isinstance(man.get('arm_file'), dict), f'{man_path}: no pinned arm file, so its scratch root is unknown')
     check_pin(man['arm_file'], f'the arm file of {man_path}')
-    old_scratch = read(man['arm_file']['path']).get('scratch_root')
-    return man_path.parent.parent.parent, (Path(old_scratch) if old_scratch else None)
+    old_arm = read(man['arm_file']['path'])
+    old_root = man_path.parent.parent.parent
+    require(Path(old_arm['root']).resolve() == old_root,
+            f'{man_path}: its arm names root {old_arm["root"]}, not {old_root} (a copied or linked manifest)')
+    old_scratch = old_arm.get('scratch_root')
+    return old_root, (Path(old_scratch) if old_scratch else None)
 
 
 def check_carry_roots(doc, name, root, scratch_root=None):

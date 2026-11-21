@@ -425,12 +425,15 @@ class CarryTests(unittest.TestCase):
         digest = json.loads(next(seg1.glob('iterations/000003/complete.json')).read_text())['output_identity'][
             'checkpoint_sha256']
         trap = objects / f'{digest}.json.tmp'
+        final = objects / f'{digest}.json'
         try:
             trap.symlink_to(old_ck)
+            final.symlink_to(old_ck)  # even the copy's own name, pointing at an old file, is not reused or written
         except OSError:
             self.skipTest('no symlink permission on this host')
         self.carry(old_man, 8)
         self.assertEqual(old_ck.read_bytes(), before)
+        self.assertFalse(final.is_symlink())
 
 
     def test_cleanup_trees_and_scratch_roots_stay_apart(self):
@@ -509,6 +512,37 @@ class CarryTests(unittest.TestCase):
         new_arm.write_text(new_arm.read_text() + ' ')
         with self.assertRaisesRegex(chains.Stop, 'cannot be established|differs|pin'):
             chains.make_plan(self.cont_inputs(carry_path, label='pn', root='pn'))
+
+
+    def test_carry_reads_the_chain_in_place_only(self):
+        _, old_man = self.old(3)
+        # a copied manifest (its segments still in the live tree) is refused
+        copy = self.t / 'backup' / 'chains' / 'c1' / 'chain.json'
+        copy.parent.mkdir(parents=True)
+        copy.write_bytes(old_man.read_bytes())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(chains.main(['carry', '--manifest', str(copy), '--boundary', '8', '--objects',
+                                          str(self.t / 'o'), '--out', str(self.t / 'c.json')]), w5box.EXIT_REFUSED)
+        # a carried chain is not carried again
+        carry_path = self.carry(old_man, 8)
+        path, plan = chains.make_plan(self.cont_inputs(carry_path))
+        self.assertEqual(self.drive(plan, 'c1c', self.t / 'cont', 2), chains.EXIT_ROOM)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(chains.main(['carry', '--manifest', plan['chains']['c1c']['manifest'], '--boundary',
+                                          '16', '--objects', str(self.t / 'o2'), '--out', str(self.t / 'c2.json')]),
+                             w5box.EXIT_REFUSED)
+        # an old root inside the new root is refused before any write
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='up', root='up')).read_text())
+        doc['root'] = self.node.root.parent.as_posix()
+        before = sorted(p.as_posix() for p in self.node.root.parent.glob('plan/**/*'))
+        with self.assertRaisesRegex(chains.Stop, 'not apart'):
+            chains.make_plan(jwrite(self.t / 'up.json', doc))
+        self.assertEqual(sorted(p.as_posix() for p in self.node.root.parent.glob('plan/**/*')), before)
+        # a record whose manifest path is not canonical is refused
+        rec = json.loads(carry_path.read_text())
+        rec['from']['manifest']['path'] = (old_man.parent / 'sub' / '..' / 'chain.json').as_posix()
+        with self.assertRaises(chains.Stop):
+            chains.make_plan(self.cont_inputs(jwrite(self.t / 'carry-dots.json', rec), label='dt', root='dt'))
 
 
 if __name__ == '__main__':
