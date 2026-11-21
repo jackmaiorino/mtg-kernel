@@ -3020,6 +3020,24 @@ fn refuse_unowned_donated_damage(state: &mut GameState, event: &ProposedEvent) -
     true
 }
 
+/// Hallow's simultaneous cohort previews the same effective replacement path
+/// on a disposable state; it does not duplicate modifiers or shield matching.
+pub(crate) fn preview_hallow_damage_batch(
+    state: &mut GameState,
+    events: &[ProposedEvent],
+) -> Result<(), String> {
+    for event in events
+        .iter()
+        .filter(|event| matches!(event, ProposedEvent::Damage(_)))
+    {
+        let _ = apply_replacements_inner(state, event.clone());
+        if state.engine.halted.is_some() {
+            return Err("Hallow damage preview rejected the original replacement path".into());
+        }
+    }
+    Ok(())
+}
+
 fn apply_replacements_inner(
     state: &mut GameState,
     mut proposed: ProposedEvent,
@@ -7062,6 +7080,18 @@ fn batch_with_aura_token_hosts_v1(
             source,
         ));
         return;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &events) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
     }
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
     if needs_final_zone_pt_plan_v1(state, &events) {
