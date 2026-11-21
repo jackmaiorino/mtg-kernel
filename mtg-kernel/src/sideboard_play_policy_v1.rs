@@ -2056,19 +2056,22 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         session: &FastActorSessionV1,
     ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
-        self.select_with_training_tensor_offset_v4(session, None)
+        self.select_with_training_tensor_offset_v4(session, None, None)
     }
 
     /// [`Self::select_with_training_tensor_v4`] with an optional London keep
-    /// offset (`london_keep_offset_v1`): the draw uses the offset logits, the
-    /// returned scores stay the raw scorer output. `None` is exactly the
-    /// plain selection.
+    /// offset (`london_keep_offset_v1`) and an optional priority pass offset
+    /// (`priority_pass_offset_v1`: the Pass row of this decision and the
+    /// constant added to it, present only at a new priority window): the
+    /// draw uses the offset logits, the returned scores stay the raw scorer
+    /// output. `None` for both is exactly the plain selection.
     pub(crate) fn select_with_training_tensor_offset_v4(
         &mut self,
         session: &FastActorSessionV1,
         london_keep_offset: Option<
             crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1,
         >,
+        priority_pass_offset: Option<(u32, f32)>,
     ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
         require(
             self.fresh_successor.is_some(),
@@ -2094,6 +2097,16 @@ impl FrozenPlayPolicyV1 {
                 )?
             }
             None => None,
+        };
+        let adjusted = match priority_pass_offset {
+            Some((pass_row, offset)) => Some(
+                crate::expanded_deck_training_v1::priority_pass_offset_v1::pass_offset_logits_v1(
+                    adjusted.as_deref().unwrap_or(&scores.logits),
+                    pass_row,
+                    offset,
+                )?,
+            ),
+            None => adjusted,
         };
         // An adjusted row is drawn from the unclamped sampler so the draw is
         // the softmax of exactly the logits the update trains on.

@@ -2764,3 +2764,183 @@ fn pregame_announcement_step_is_refused_with_an_exact_gpu_learner() {
     assert_eq!(state.pregame_announcement_step_scale_v1(), None);
     assert_eq!(state_bits(&state), state_bits(&base));
 }
+
+// Priority pass offset (`expanded_deck_training_v1::priority_pass_offset_v1`).
+
+use crate::expanded_deck_training_v1::priority_pass_offset_v1::{
+    pass_offset_logits_v1, PassOffsetMarksV1,
+};
+
+fn pass_marks(offset: f32, rows: [Option<u32>; 3]) -> Option<PassOffsetMarksV1> {
+    Some(PassOffsetMarksV1 {
+        offset,
+        rows: rows.to_vec(),
+    })
+}
+
+fn output_at(
+    result: &NativePolicyTrainStepResultV1,
+    group: usize,
+    substep: usize,
+) -> NativeSelectedOutputV1 {
+    result
+        .selected_outputs
+        .iter()
+        .find(|o| o.group_index == group && o.substep_index == substep)
+        .unwrap()
+        .clone()
+}
+
+/// The marked rows train on the log-softmax of exactly the logits the
+/// collector sampled from (`pass_offset_logits_v1`, the same helper);
+/// unmarked rows and every raw output stay as they were.
+#[test]
+fn priority_pass_offset_trains_on_the_sampled_distribution() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let offset = 3.25f32;
+    let last = (fixture.logits[1].len() - 1) as u32;
+    let mut plain = base.clone();
+    let mut shifted = base.clone();
+    // Group 0 substep 0 (selected row 0) has its Pass row at 1, so the
+    // offset lowers the selected row's probability; group 1's only substep
+    // selected its marked row, which the offset raises.
+    shifted.set_priority_pass_offset_v1(pass_marks(offset, [Some(1), None, Some(last)]));
+    let a = plain
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    let b = shifted
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(shifted.priority_pass_offset_v1(), None);
+    for (group, tensor, pass_row, selected) in
+        [(0usize, 0usize, 1u32, 0usize), (1, 1, last, last as usize)]
+    {
+        let raw: Vec<f32> = fixture.logits[tensor]
+            .iter()
+            .map(|b| f32::from_bits(*b))
+            .collect();
+        let sampled = pass_offset_logits_v1(&raw, pass_row, offset).unwrap();
+        let (expected, _) =
+            selected_log_softmax_math_v1(&sampled, selected, TrainingMathV1::PlatformLibm).unwrap();
+        let (with, without) = (output_at(&b, group, 0), output_at(&a, group, 0));
+        assert_eq!(
+            with.selected_log_probability.to_bits(),
+            expected.to_bits(),
+            "group {group}"
+        );
+        assert_ne!(
+            with.selected_log_probability.to_bits(),
+            without.selected_log_probability.to_bits()
+        );
+        // Raw outputs stay raw.
+        assert_eq!(
+            with.selected_logit.to_bits(),
+            without.selected_logit.to_bits()
+        );
+        assert_eq!(with.value.to_bits(), without.value.to_bits());
+    }
+    let marked_up = output_at(&b, 1, 0).selected_log_probability;
+    assert!(marked_up > output_at(&a, 1, 0).selected_log_probability);
+    // The unmarked substep trains exactly as without the offset.
+    assert_eq!(output_at(&a, 0, 1), output_at(&b, 0, 1));
+    assert_ne!(a.gradients, b.gradients);
+}
+
+#[test]
+fn priority_pass_offset_without_marks_or_at_zero_changes_no_bit() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut plain = base.clone();
+    let reference = plain
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    for marks in [
+        pass_marks(5.0, [None, None, None]),
+        pass_marks(0.0, [Some(1), Some(0), Some(0)]),
+    ] {
+        let mut offset = base.clone();
+        offset.set_priority_pass_offset_v1(marks);
+        let result = offset
+            .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+            .unwrap();
+        assert_eq!(result.selected_outputs, reference.selected_outputs);
+        assert_eq!(result.gradients, reference.gradients);
+        assert_eq!(result.loss.to_bits(), reference.loss.to_bits());
+        assert_eq!(state_bits(&offset), state_bits(&plain));
+    }
+}
+
+#[test]
+fn priority_pass_offset_is_refused_off_the_plain_gae_loss_and_with_bad_marks() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let refused = |code| NativePolicyTrainErrorV1::PriorityPassOffset { code };
+    // Another loss, through the shared refusal helper.
+    let mut legacy = base.clone();
+    legacy.set_priority_pass_offset_v1(pass_marks(1.0, [Some(0), None, None]));
+    assert_eq!(
+        legacy
+            .train_step_feature_transfer_v3(&groups, VC, LR)
+            .unwrap_err(),
+        refused("priority-pass-offset-requires-plain-gae")
+    );
+    assert_eq!(legacy.priority_pass_offset_v1(), None);
+    assert_eq!(state_bits(&legacy), state_bits(&base));
+    let mut weighted = base.clone();
+    weighted.set_priority_pass_offset_v1(pass_marks(1.0, [Some(0), None, None]));
+    let weights = vec![0.5f32; groups.len()];
+    assert_eq!(
+        weighted
+            .train_step_weighted_feature_transfer_v3(&groups, &weights, VC, LR)
+            .unwrap_err(),
+        refused("priority-pass-offset-requires-plain-gae")
+    );
+    assert_eq!(weighted.priority_pass_offset_v1(), None);
+    let mut helper = base.clone();
+    assert_eq!(helper.require_no_london_keep_offset_v1(), Ok(()));
+    helper.set_priority_pass_offset_v1(pass_marks(1.0, [None, None, None]));
+    assert_eq!(
+        helper.require_no_london_keep_offset_v1(),
+        Err(refused("priority-pass-offset-requires-plain-gae"))
+    );
+    assert_eq!(helper.priority_pass_offset_v1(), None);
+    // Marks that do not fit the batch, an invalid offset and a row outside
+    // the decision are refused before any state change, and cleared.
+    for (marks, code) in [
+        (
+            Some(PassOffsetMarksV1 {
+                offset: 1.0,
+                rows: vec![None, None],
+            }),
+            "priority-pass-offset-marks-differ-from-the-batch",
+        ),
+        (
+            pass_marks(-1.0, [None, None, None]),
+            "priority-pass-offset-marks-differ-from-the-batch",
+        ),
+        (
+            pass_marks(1.0, [Some(fixture.logits[0].len() as u32), None, None]),
+            "priority-pass-offset-malformed-decision",
+        ),
+    ] {
+        let mut bad = base.clone();
+        bad.set_priority_pass_offset_v1(marks);
+        assert_eq!(
+            bad.train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+                .unwrap_err(),
+            refused(code)
+        );
+        assert_eq!(bad.priority_pass_offset_v1(), None);
+        assert_eq!(state_bits(&bad), state_bits(&base));
+    }
+}

@@ -129,6 +129,7 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 pub(crate) mod london_keep_offset_v1;
+pub(crate) mod priority_pass_offset_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
@@ -1176,6 +1177,16 @@ pub struct ExpandedEpisodeV1 {
     /// keeps every prior serialized byte and today's surface.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority_windows: Option<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2]>,
+    /// Some adds a logit offset (finite, at least 0, at most 1e6 and an f64
+    /// holding exactly an f32 value) to the Pass row of every new priority
+    /// window, the windows an action-window seat is handed where HarnessV2
+    /// would have passed, in collection, record validation and the update
+    /// (`priority_pass_offset_v1`). Those rows are drawn from the unclamped
+    /// softmax sampler and marked in their records. Only with
+    /// `priority_windows` naming an action-window seat. None keeps every
+    /// prior serialized byte and every behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_pass_offset: Option<f64>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1260,6 +1271,27 @@ impl ExpandedEpisodeV1 {
         Ok(windows)
     }
 
+    /// The episode's priority pass offset as the f32 the trainer applies, or
+    /// None. Refused without `priority_windows`, and when no seat is on an
+    /// action-window rule (no window would ever be adjusted); the windows'
+    /// own refusals (reset start, search opponent) apply too.
+    pub(crate) fn priority_pass_offset_v1(&self) -> Result<Option<f32>, String> {
+        let Some(offset) = self.priority_pass_offset else {
+            return Ok(None);
+        };
+        ensure(
+            self.priority_windows.is_some(),
+            "priority_pass_offset requires priority_windows",
+        )?;
+        ensure(
+            self.priority_windows_v1()?
+                .iter()
+                .any(|rule| !rule.is_harness_v2()),
+            "priority_pass_offset requires a seat on an action-window rule",
+        )?;
+        priority_pass_offset_v1::pass_offset_f32_v1(offset).map(Some)
+    }
+
     pub(crate) fn validate_opening_v1(&self) -> Result<(), String> {
         ensure(
             self.opening.is_some() == self.mulligan_modes.is_some(),
@@ -1329,11 +1361,16 @@ impl ExpandedEpisodeV1 {
             self.opening.is_none(),
             "an opening is admitted only by the expanded collector",
         )?;
+        ensure(
+            self.priority_pass_offset.is_none(),
+            "priority_pass_offset is admitted only by the expanded collector",
+        )?;
         self.configurations_checked_v1()
     }
 
     fn configurations_checked_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         self.validate_opening_v1()?;
+        self.priority_pass_offset_v1()?;
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
@@ -1514,6 +1551,11 @@ struct DecisionRecordV1 {
     /// Wide menus require an explicit runtime receipt, not an ancestry edit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sampler_identity: Option<String>,
+    /// The Pass row index of a new priority window adjusted by the episode's
+    /// `priority_pass_offset` (`priority_pass_offset_v1`); absent on every
+    /// other decision, preserving every prior byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pass_offset_action: Option<u32>,
 }
 
 fn decision_sampler_identity_v1(width: usize) -> Option<&'static str> {
@@ -2618,6 +2660,20 @@ fn collect_episode_hooked_v1(
         })
     });
     let config_hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
+    // The priority pass offset (`priority_pass_offset_v1`): V4-generation
+    // policies only (the V3 path has no offset sampler), and never under the
+    // EX1 hook, whose W5 mode can replace a draw.
+    let priority_pass_offset = episode.priority_pass_offset_v1()?;
+    if priority_pass_offset.is_some() {
+        ensure(
+            hook.is_none(),
+            "priority_pass_offset is refused with the EX1 collection hook",
+        )?;
+        ensure(
+            policy.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
+            "priority_pass_offset requires a V4-generation policy",
+        )?;
+    }
     let mut session = episode_session_v1(episode, &configs)?;
     restore_reset_cut_v1(&mut session, episode)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
@@ -2687,6 +2743,11 @@ fn collect_episode_hooked_v1(
                     Some(hook) if hook.hooks_v1(&d) => Some(hook.before_select_v1(&session, d)?),
                     _ => None,
                 };
+                // A new priority window's Pass row, marked in the record.
+                let pass_offset_action = match priority_pass_offset {
+                    Some(_) => session.priority_pass_window_v1()?,
+                    None => None,
+                };
                 let (selected, scores, tensor_bits) = if acting.feature_identity_v1().generation
                     == FreshLineageGenerationV1::V4
                 {
@@ -2696,6 +2757,7 @@ fn collect_episode_hooked_v1(
                             .london_keep_offset
                             .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
                             .transpose()?,
+                        pass_offset_action.zip(priority_pass_offset),
                     )?;
                     // FlatV8 rows also record their pairing relation.
                     let bits = if acting.feature_identity_v1().feature_contract_digest
@@ -2741,6 +2803,7 @@ fn collect_episode_hooked_v1(
                     sampler_identity: acting_sampler
                         .or_else(|| decision_sampler_identity_v1(scores.logits.len()))
                         .map(str::to_owned),
+                    pass_offset_action,
                 };
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
                 decisions.push(record);
@@ -2766,6 +2829,28 @@ fn batch_london_keep_offset_v1(
         ensure(
             value?.map(|offset| offset.bits()) == first.map(|offset| offset.bits()),
             "an update batch mixes London keep offsets",
+        )?;
+    }
+    Ok(first)
+}
+
+/// The priority pass offset shared by every trajectory of an update batch
+/// (`priority_pass_offset_v1`), compared as f32 bits; a batch mixing values
+/// (or offset and no offset) is refused.
+fn batch_priority_pass_offset_v1<'a>(
+    episodes: impl IntoIterator<Item = &'a ExpandedEpisodeV1>,
+) -> Result<Option<f32>, String> {
+    let mut values = episodes
+        .into_iter()
+        .map(ExpandedEpisodeV1::priority_pass_offset_v1);
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    let first = first?;
+    for value in values {
+        ensure(
+            value?.map(f32::to_bits) == first.map(f32::to_bits),
+            "an update batch mixes priority pass offsets",
         )?;
     }
     Ok(first)
@@ -3213,6 +3298,50 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         decisions,
         &t.terminal,
         t.learner_sampler.as_deref(),
+    )?;
+    if t.episode.priority_pass_offset.is_some() {
+        validate_pass_offset_marks_v1(&t.episode, &t.decisions)?;
+    }
+    Ok(())
+}
+
+/// The priority pass offset's row marks (`priority_pass_offset_v1`): replays
+/// the episode through a fresh session with its recorded actions and requires
+/// every decision's `pass_offset_action` to be exactly the Pass row the
+/// session reports for a new priority window, and absent everywhere else, so
+/// a record can neither claim a row that was not a new window nor omit one
+/// that was. The replay must end at a terminal after the last row. Only for an
+/// episode carrying the field (an episode without it has no marks, which
+/// record validation checks row by row).
+fn validate_pass_offset_marks_v1(
+    episode: &ExpandedEpisodeV1,
+    decisions: &[DecisionRecordV1],
+) -> Result<(), String> {
+    ensure(
+        episode.priority_pass_offset_v1()?.is_some(),
+        "pass offset marks need priority_pass_offset",
+    )?;
+    let mut session = episode_session_v1(episode, &episode.configurations()?)?;
+    restore_reset_cut_v1(&mut session, episode)?;
+    for row in decisions {
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            return Err("pass offset replay reaches a terminal before the last decision".into());
+        };
+        ensure(
+            d.step == row.step && seat(d.acting_player) == row.actor,
+            "pass offset replay decision differs from the record",
+        )?;
+        ensure(
+            session.priority_pass_window_v1()? == row.pass_offset_action,
+            "pass offset mark differs from the replayed new priority window",
+        )?;
+        session
+            .step(d.episode_id, d.step, row.selected)
+            .map_err(err)?;
+    }
+    ensure(
+        matches!(session.current_response(), FastActorResponseV1::Terminal(_)),
+        "pass offset replay continues past the last decision",
     )
 }
 
@@ -3362,6 +3491,10 @@ fn validate_episode_records_with_search_v1(
         terminal.terminal_reward == expected_rewards,
         "terminal rewards contradict winner",
     )?;
+    // The priority pass offset (`priority_pass_offset_v1`): a marked row was
+    // drawn from its offset logits with the unclamped sampler. Whether each
+    // mark names a new window is checked by `validate_pass_offset_marks_v1`.
+    let pass_offset = episode.priority_pass_offset_v1()?;
     let mut physical = physical_offset;
     let mut index = 0usize;
     let mut rng = paired_policy_seeds_v1(episode.seed).map(SplitMix64::seed);
@@ -3388,6 +3521,10 @@ fn validate_episode_records_with_search_v1(
                     && row.substep_index == substep as u32
                     && row.actor == first.actor,
                 "physical decision grouping or step sequence differs",
+            )?;
+            ensure(
+                pass_offset.is_some() || row.pass_offset_action.is_none(),
+                "a decision marks a pass offset row without priority_pass_offset",
             )?;
             let captured = |row: &DecisionRecordV1| {
                 ensure(
@@ -3431,7 +3568,7 @@ fn validate_episode_records_with_search_v1(
                     // draw was made from the offset logits; the stored
                     // logits stay raw.
                     // An adjusted row was drawn from the unclamped sampler.
-                    match episode
+                    let kept = match episode
                         .london_keep_offset
                         .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
                         .transpose()?
@@ -3452,9 +3589,24 @@ fn validate_episode_records_with_search_v1(
                             }
                         }
                         None => raw,
+                    };
+                    // Then the priority pass offset, as collection applies
+                    // them (`priority_pass_offset_v1`).
+                    match (row.pass_offset_action, pass_offset) {
+                        (Some(pass_row), Some(offset)) => {
+                            use_unclamped = true;
+                            priority_pass_offset_v1::pass_offset_logits_v1(&kept, pass_row, offset)?
+                        }
+                        _ => kept,
                     }
                 }
-                SeatRowDrawV1::Singleton => vec![0.0],
+                SeatRowDrawV1::Singleton => {
+                    ensure(
+                        row.pass_offset_action.is_none(),
+                        "an unscored singleton row marks a pass offset row",
+                    )?;
+                    vec![0.0]
+                }
             };
             let bits = rng[row.actor as usize].next_u64();
             let selected = if use_unclamped {
@@ -4176,6 +4328,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                         .iter()
                         .all(|episode| episode.london_keep_offset.is_none()),
                     "an S learner collection refuses the London keep offset",
+                )?;
+                ensure(
+                    episodes
+                        .iter()
+                        .all(|episode| episode.priority_pass_offset.is_none()),
+                    "an S learner collection refuses the priority pass offset",
                 )?;
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
@@ -5012,6 +5170,26 @@ fn execute_update_inner_v1(
         )?;
     }
     state.set_london_keep_offset_v1(london_keep_offset);
+    // The priority pass offset (`priority_pass_offset_v1`): one value per
+    // update, on the plain CPU GAE update only. Its per-substep marks are
+    // installed once the learner groups exist, below.
+    let priority_pass_offset =
+        batch_priority_pass_offset_v1(episodes.iter().map(|trajectory| &trajectory.episode))?;
+    if priority_pass_offset.is_some() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "priority_pass_offset trains only on the plain CPU GAE update",
+        )?;
+    }
     // The terminal pregame advantage (`PregameAdvantageV1`): the plain CPU GAE
     // update only, on London episodes only.
     if !loss_selection.pregame_advantage_v1().is_gae() {
@@ -5191,6 +5369,18 @@ fn execute_update_inner_v1(
             },
         )
         .collect();
+    // The priority pass offset's marks, one per learner substep in the
+    // groups' order (`priority_pass_offset_v1`); validated against a replay
+    // of each trajectory by `validate_trajectory` above.
+    state.set_priority_pass_offset_v1(priority_pass_offset.map(|offset| {
+        priority_pass_offset_v1::PassOffsetMarksV1 {
+            offset,
+            rows: tensor_groups
+                .iter()
+                .flat_map(|(_, _, group)| group.iter().map(|(row, _)| row.pass_offset_action))
+                .collect(),
+        }
+    }));
     // Episode-boundary marker for the new GAE loss path only (section 2):
     // one entry per group, in the same order as `groups`, never read by the
     // unmodified v3 dispatch below. See `LearnerTensorGroupV1`'s doc comment
@@ -5851,6 +6041,7 @@ fn execute_update_inner_v1(
     };
     // The offset lived for this update's step only.
     state.set_london_keep_offset_v1(None);
+    state.set_priority_pass_offset_v1(None);
     // So did the pregame announcement step scale; its step left a record.
     state.set_pregame_announcement_step_scale_v1(None);
     let pregame_announcement_step = state.take_pregame_announcement_step_record_v1();
@@ -7094,6 +7285,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         }
     }
 
@@ -7141,6 +7333,7 @@ pub(crate) mod tests {
                 tensor: TensorBitsV1::from_tensor(&tensor.common),
                 sampler_identity: decision_sampler_identity_v1(scores.logits.len())
                     .map(str::to_owned),
+                pass_offset_action: None,
             });
         }
         let configs = episode.configurations().unwrap();
@@ -7630,6 +7823,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -7742,6 +7936,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -7882,6 +8077,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8024,6 +8220,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8163,6 +8360,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8285,6 +8483,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8421,6 +8620,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8568,6 +8768,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8705,6 +8906,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8859,6 +9061,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -9015,6 +9218,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -9059,6 +9263,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         }
     }
 
@@ -10015,6 +10220,7 @@ pub(crate) mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -10077,6 +10283,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -10122,6 +10329,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -10248,6 +10456,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -10308,6 +10517,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -10354,6 +10564,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -10415,6 +10626,7 @@ pub(crate) mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -10491,6 +10703,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -10529,6 +10742,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -10585,6 +10799,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -10624,6 +10839,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -10773,6 +10989,7 @@ pub(crate) mod tests {
                     .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -11156,6 +11373,7 @@ pub(crate) mod tests {
                     mulligan_modes: None,
                     london_keep_offset: None,
                     priority_windows: None,
+                    priority_pass_offset: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -11587,6 +11805,7 @@ pub(crate) mod tests {
                     mulligan_modes: None,
                     london_keep_offset: None,
                     priority_windows: None,
+                    priority_pass_offset: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -11737,6 +11956,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -11863,6 +12083,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -12333,6 +12554,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12810,6 +13032,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12961,6 +13184,7 @@ pub(crate) mod tests {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -13087,6 +13311,7 @@ pub(crate) mod tests {
     mod pauper_opening_tests;
     mod pregame_advantage_tests;
     mod pregame_announcement_step_tests;
+    mod priority_pass_offset_tests;
     mod reset_start_tests;
     mod v8_inclusion_tests;
     mod widening_b512_tests;

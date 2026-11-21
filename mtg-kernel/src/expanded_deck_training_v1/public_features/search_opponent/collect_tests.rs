@@ -81,6 +81,7 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
         mulligan_modes: None,
         london_keep_offset: None,
         priority_windows: None,
+        priority_pass_offset: None,
     }
 }
 

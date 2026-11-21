@@ -260,3 +260,66 @@ fn both_seats_harness_v2_is_the_plain_reset() {
         }
     }
 }
+
+/// The priority pass offset's rows (`priority_pass_window_v1`): exactly the
+/// windows the surface hands a seat on an action-window rule where HarnessV2
+/// would have passed, each named by its one Pass row. Never a HarnessV2
+/// seat's decision, never a window HarnessV2 itself offers, and for the
+/// end-step rule only in the end step. Both resets, every deck, both rules.
+#[test]
+fn the_pass_offset_window_is_exactly_an_added_window_of_an_action_seat() {
+    use crate::state::Step;
+    let mut marked = [0u64; 2];
+    let mut harness_offered = 0u64;
+    for (i, deck) in DECKS.iter().enumerate() {
+        for (j, london) in [false, true].into_iter().enumerate() {
+            let other = DECKS[(i + 3 + j) % DECKS.len()];
+            for (k, rule) in [
+                SeatPriorityWindowsV1::ActionWindowsV1,
+                SeatPriorityWindowsV1::ActionWindowsEndStepV1,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let seat = (i + j + k) % 2;
+                let mut windows = [SeatPriorityWindowsV1::HarnessV2; 2];
+                windows[seat] = rule;
+                let seed = 0x5eed_0c00 + (i * 4 + j * 2 + k) as u64;
+                let starting = PlayerId(((i + k) % 2) as u8);
+                let mut s = session(london, [deck, other], seed, starting, windows);
+                let mut rng = SplitMix64::seed(seed ^ 0x9a55);
+                for _ in 0..2 * MAX_SHARED {
+                    let FastActorResponseV1::Decision(d) = s.current_response() else {
+                        break;
+                    };
+                    let mark = s.priority_pass_window_v1().unwrap();
+                    let added = s.surface.engine_window_v1().is_some();
+                    let actor = s.current.as_ref().unwrap().actor.index();
+                    let context =
+                        format!("{deck} {other} london {london} rule {rule:?} seed {seed}");
+                    // Only the action seat is ever handed an added window.
+                    assert!(!added || actor == seat, "{context}");
+                    let expected =
+                        added.then(|| pass_index(&s).expect("an added window offers Pass"));
+                    assert_eq!(mark, expected, "{context}");
+                    if mark.is_some() {
+                        marked[k] += 1;
+                        if rule == SeatPriorityWindowsV1::ActionWindowsEndStepV1 {
+                            assert_eq!(s.game_state().step, Step::End, "{context}");
+                        }
+                    } else if pass_index(&s).is_some() {
+                        harness_offered += 1;
+                    }
+                    let n = candidates(&s).len() as u64;
+                    let pick = match mark {
+                        Some(pass) if rng.next_u64() % 2 == 0 => pass,
+                        _ => (rng.next_u64() % n) as u32,
+                    };
+                    s.step(d.episode_id, d.step, pick).unwrap();
+                }
+            }
+        }
+    }
+    assert!(marked.iter().all(|count| *count > 0), "{marked:?}");
+    assert!(harness_offered > 0);
+}

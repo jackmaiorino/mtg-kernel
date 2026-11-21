@@ -502,6 +502,10 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             episode.episode.london_keep_offset.is_none(),
             "an S learner update refuses the London keep offset",
         )?;
+        ensure(
+            episode.episode.priority_pass_offset.is_none(),
+            "an S learner update refuses the priority pass offset",
+        )?;
         // Rows the search played are authenticated and masked only by a
         // W5 update.
         ensure(

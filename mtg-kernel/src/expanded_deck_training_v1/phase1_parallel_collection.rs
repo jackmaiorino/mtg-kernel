@@ -557,6 +557,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
@@ -714,6 +715,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
 
@@ -834,6 +836,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let context = || {
@@ -925,6 +928,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         // The separate opponent seat gets its own parameters, so the service
@@ -1050,6 +1054,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let run = |label: &str, workers: usize| {
@@ -1175,6 +1180,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {
