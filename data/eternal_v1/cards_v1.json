@@ -36462,6 +36462,673 @@
    "complexity": "simple",
    "mechanics": ["trample"],
    "is_token": true
+  },
+  {
+   "name": "Wooded Ridgeline",
+   "engine_capability": "no_effect",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Mountain",
+    "Forest"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-dredge",
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/w/WoodedRidgeline.java"
+  },
+  {
+   "name": "Kabira Crossroads",
+   "engine_capability": "no_effect",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "W"
+   ],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/k/KabiraCrossroads.java"
+  },
+  {
+   "name": "Jaspera Sentinel",
+   "engine_capability": "no_effect",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/j/JasperaSentinel.java"
+  },
+  {
+   "name": "Kor Sanctifiers",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Kor",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/k/KorSanctifiers.java"
+  },
+  {
+   "name": "Vulshok Sorcerer",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Shaman",
+    "Sorcerer"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/v/VulshokSorcerer.java"
+  },
+  {
+   "name": "Primordial Pachyderm",
+   "engine_capability": "no_effect",
+   "mana_cost": "{3}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elephant",
+    "Avatar"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Lifelink",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/l/Lifelink.java"
+  },
+  {
+   "name": "Mask of Law and Grace",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "mono-white-heroic",
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/m/MaskOfLawAndGrace.java"
+  },
+  {
+   "name": "Mycosynth Wellspring",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/m/MycosynthWellspring.java"
+  },
+  {
+   "name": "K'un-Lun Warrior",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Warrior",
+    "Hero"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Bitter Reunion",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-inside-out-combo",
+    "legacy-the-epic-gamble",
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/b/BitterReunion.java"
+  },
+  {
+   "name": "Kruphix's Insight",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/k/KruphixsInsight.java"
+  },
+  {
+   "name": "Scattershot",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/s/Scattershot.java"
+  },
+  {
+   "name": "Deprive",
+   "engine_capability": "no_effect",
+   "mana_cost": "{U}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/d/Deprive.java"
+  },
+  {
+   "name": "Exclude",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-ephemerate-tron",
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/e/Exclude.java"
+  },
+  {
+   "name": "Fiery Cannonade",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/f/FieryCannonade.java"
+  },
+  {
+   "name": "Militia Bugler",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/m/MilitiaBugler.java"
+  },
+  {
+   "name": "Mob Lookout",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{U/B}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Rogue",
+    "Villain"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/m/MobLookout.java"
+  },
+  {
+   "name": "Elite Interceptor",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": []
+  },
+  {
+   "name": "Rejoinder",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Boarding Action",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": []
+  },
+  {
+   "name": "Kaervek's Torch",
+   "engine_capability": "no_effect",
+   "mana_cost": "{X}{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/k/KaerveksTorch.java"
+  },
+  {
+   "name": "Hallow",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/h/Hallow.java"
+  },
+  {
+   "name": "Fling",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-inside-out-combo",
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/f/Fling.java"
+  },
+  {
+   "name": "Klingon Warrior Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Warrior"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "haste"
+   ],
+   "is_token": true
   }
  ]
 }
