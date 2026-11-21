@@ -950,7 +950,7 @@ def plan(chain_path, snapshot_from=None, cache=None):
     def verified(b):
         snap = have.get(b)
         return bool(snap) and snap['cut_from_state_sha256'] == after.get(b) and sha(snap['path']) == snap['sha256']
-    latest = records[-1]['boundary'] if records else 0
+    latest = records[-1]['boundary'] if records else chain_start(chain)
     segs = chain['segments']
     if cache is None:
         complete = [segment_complete(s) for s in segs]
@@ -1126,10 +1126,10 @@ def select(chain, records, r_usec, weights=None):
     if snap and sha(snap['path']) == snap['sha256'] and snap['cut_from_state_sha256'] == hit['after_state_sha256']:
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'],
                 'weights_snapshot': {k: snap[k] for k in ('path', 'sha256', 'parameters_sha256')}, 'replay': None}
-    start = None
-    for b in range(endpoint - 1, -1, -1):
-        if b == 0:
-            start = {'boundary': 0, 'checkpoint': None}
+    start, first = None, chain_start(chain)  # the chain's start: 0 (its parent) or a carried chain's B (its record)
+    for b in range(endpoint - 1, first - 1, -1):
+        if b == first:
+            start = {'boundary': first, 'checkpoint': None}
             break
         rec = by_boundary.get(b)
         if rec and state_present(rec['checkpoint'], rec.get('state')):
@@ -1174,7 +1174,8 @@ def replay_config(chain, spec, out_dir):
     if replay['from']['checkpoint'] is not None:
         source['checkpoint'] = replay['from']['checkpoint']
     elif first != chain_start(chain):
-        raise SystemExit('stop: a replay from a boundary after the chain start needs its kept checkpoint')
+        raise SystemExit('stop: a replay from a nonzero boundary needs its kept checkpoint' if not chain_start(chain)
+                         else 'stop: a replay from a boundary after the carried start needs its kept checkpoint')
     else:  # the chain's start: its parent, or a carried chain's recorded source (segment 0's initial source)
         source = dict(read_config(chain['segments'][0]['config'])['initial_source'])
     cfg['initial_source'] = source
@@ -1266,7 +1267,7 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
             keep.append(item)
         else:
             prune.append(item)
-    if not keep and selected_boundary != 0:
+    if not keep and selected_boundary != chain_start(chain):
         raise SystemExit('stop: the selected endpoint is not on disk (replay it first)')
     by_kind = {k: sum(p['bytes'] for p in prune if p['kind'] == k) for k in ('full', 'weights')}
     return {'schema': 'artifact-prune-manifest/v1', 'lane': 'w5', 'chain': chain['chain'], 'arm': chain['arm'],
@@ -1478,8 +1479,8 @@ def main(argv=None):
     p.add_argument('--chain', dest='chains', action='append', default=[])
     a = ap.parse_args(argv)
     if a.cmd == 'index':
-        _, records = index(a.chain)
-        out = {'updates': len(records), 'latest_boundary': records[-1]['boundary'] if records else 0}
+        chain, records = index(a.chain)
+        out = {'updates': len(records), 'latest_boundary': records[-1]['boundary'] if records else chain_start(chain)}
     elif a.cmd == 'snapshot':
         made = snapshot(a.chain, a.binary, a.snapshot_from)
         out = {'snapshots': len(made), 'bytes': sum(m['bytes'] for m in made)}

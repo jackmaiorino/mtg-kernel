@@ -226,6 +226,7 @@ import signal
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from hashlib import sha256
 from pathlib import Path
@@ -467,9 +468,17 @@ def wall_origin(man):
 def make_carry(manifest_path, boundary, objects, out):
     """The carry record of the C chain at `manifest_path` at its persisted boundary `boundary` (a segment end).
     Reads that chain only; writes the record and the boundary's checkpoint copy (`objects/<sha256>.json`)."""
+    manifest_path = Path(manifest_path).resolve()  # canonical: restarts read it from any working directory
     man = read(manifest_path)
     require(man.get('schema') == 'w5-chain/v1' and man.get('arm') == 'C', 'not a C chain manifest')
     require(man.get('carry') is None, 'the chain is itself carried; carry from the chain it continues')
+    old_root = manifest_path.parent.parent.parent  # <root>/chains/<name>/chain.json
+    copy_dir, out_path = Path(objects).resolve(), Path(out).resolve()
+    for dest in (copy_dir, out_path):
+        require(dest != old_root and old_root not in dest.parents,
+                f'{dest} is inside the root of the carried chain, {old_root}: carry writes only outside it')
+    require(out_path.parent != copy_dir or not out_path.name.endswith('.json') or len(out_path.stem) != 64,
+            'the record would share the name space of the checkpoint copies')
     require(man['launched_unix'] is not None, 'the chain has not started')
     length = man['recipe']['segment_updates']
     require(type(boundary) is int and boundary > 0 and boundary % length == 0,
@@ -481,31 +490,74 @@ def make_carry(manifest_path, boundary, objects, out):
             f'{root} is not a complete persisted segment')
     last = root / 'iterations' / f'{seg["updates"] - 1:06d}'
     complete = read(last / 'complete.json')
-    update = read(attempt_dir(last, complete) / 'update' / 'update.json')
+    update_path = attempt_dir(last, complete) / 'update' / 'update.json'
+    require(sha(update_path) == complete['update']['sha256'], f'{update_path} differs from its receipt pin')
+    update = read(update_path)
+    require(retention.state_pin(update) is None,
+            'only single-file (net-8) states are carried: this state has a container the carry does not copy')
+    end_path = Path(manifest_path).parent / 'END.json'
+    if end_path.exists():
+        last_valid = read(end_path).get('last_valid_boundary')
+        require(last_valid is not None and last_valid >= boundary,
+                f'the chain ended at {last_valid}, before {boundary}: that boundary is not valid')
     source = next_source(root)
     digest = source['checkpoint']['sha256']
     require(update['checkpoint']['sha256'] == digest, 'the update receipt names another checkpoint')
-    copy_path = Path(objects) / f'{digest}.json'
-    if not (copy_path.exists() and sha(copy_path) == digest):
-        copy_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = copy_path.with_name(copy_path.name + '.tmp')
-        shutil.copyfile(source['checkpoint']['path'], tmp)
-        os.replace(tmp, copy_path)
+    copy_path = copy_dir / f'{digest}.json'  # absolute: a relative path would break after a restart elsewhere
+    if not (copy_path.exists() and not copy_path.is_symlink() and sha(copy_path) == digest):
+        durable_dirs(copy_dir)
+        fd, tmp = tempfile.mkstemp(prefix=f'.{digest}.', suffix='.tmp', dir=copy_dir)  # O_EXCL: never an old name
+        try:
+            with os.fdopen(fd, 'wb') as f, open(source['checkpoint']['path'], 'rb') as src:
+                shutil.copyfileobj(src, f, 1 << 22)
+                f.flush()
+                os.fsync(f.fileno())
+            require(sha(tmp) == digest, f'{tmp} differs from the checkpoint it copies')
+            os.replace(tmp, copy_path)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+    if os.name != 'nt':  # directory fsync is a POSIX operation
+        fsync_path(copy_path.parent)  # the copy's name is durable before any record names it
     require(sha(copy_path) == digest, f'{copy_path} differs from the checkpoint it copies')
     origin = source['checkpoint']['path']
     source['checkpoint'] = {'path': copy_path.as_posix(), 'sha256': digest}
-    end_path = Path(manifest_path).parent / 'END.json'
     doc = {'schema': CARRY_SCHEMA, 'boundary': boundary, 'seed_root': man['seed_root'],
            'launched_unix': man['launched_unix'], 'recipe': man['recipe'], 'source': source,
            'after_state_sha256': update['after_state_sha256'],
            'ledger_usec': (complete.get('chain_ledger') or {}).get('usec'),
-           'from': {'chain': man['chain'], 'manifest': pin(manifest_path), 'segment_root': root.as_posix(),
+           'from': {'chain': man['chain'], 'manifest': pin(manifest_path), 'segment_root': root.resolve().as_posix(),
                     'checkpoint': origin, 'end': pin(end_path) if end_path.exists() else None}}
-    write(out, doc)
+    durable_dirs(out_path.parent)
+    write(out_path, doc)
+    if os.name != 'nt':
+        fsync_path(out_path.parent)
     return doc
 
 
-def check_carry(doc, name, seed_root, arm):
+def durable_dirs(path):
+    """Creates `path` and any missing ancestors, each new directory entry made durable in its parent (POSIX)."""
+    path, made = Path(path), []
+    for d in [path] + list(path.parents):
+        if d.exists():
+            break
+        made.append(d)
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != 'nt':
+        for d in made:
+            fsync_path(d)
+            fsync_path(d.parent)
+
+
+def check_carry_roots(doc, name, root):
+    """The new root and the carried chain's root are disjoint: neither is the other or inside it."""
+    old_root = Path(doc['from']['manifest']['path']).parent.parent.parent.resolve()
+    new_root = Path(root).resolve()
+    require(new_root != old_root and old_root not in new_root.parents and new_root not in old_root.parents,
+            f'{name}: a carried chain runs in a new root, apart from {old_root}')
+
+
+def check_carry(doc, name, seed_root, arm, new=True):
     """A plan's carried chain: the record is well formed, its seed root is the chain's, its recipe is the arm's except
     the trainer build, its checkpoint copy is intact, and the wall it continues has not passed."""
     require(doc.get('schema') == CARRY_SCHEMA, f'{name}: not a {CARRY_SCHEMA} record')
@@ -520,8 +572,47 @@ def check_carry(doc, name, seed_root, arm):
     diff = sorted(k for k in set(mine) | set(doc['recipe'])
                   if k != 'trainer_sha256' and mine.get(k) != doc['recipe'].get(k))
     require(not diff, f'{name}: the arm changes the carried recipe in {diff}')
+    old_cdir = Path(doc['from']['manifest']['path']).parent
+    old_root = old_cdir.parent.parent
+    require(Path(doc['from']['manifest']['path']).is_absolute(), f'{name}: the carried manifest path is not absolute')
+    require(name != doc['from']['chain'], f'{name}: a carried chain takes a new name')
+    check_carry_roots(doc, name, Path(arm['root']))
+    ck = Path(doc['source']['checkpoint']['path'])
+    keep_out = [old_root.resolve(), Path(arm['root']).resolve()] + \
+        ([Path(arm['scratch_root']).resolve()] if arm.get('scratch_root') else [])
+    require(ck.is_absolute() and not any(k == ck.resolve() or k in ck.resolve().parents for k in keep_out),
+            f'{name}: the carried checkpoint must be an absolute path outside the old root, the new root and the '
+            'scratch root (their cleanup moves or deletes files)')
+    require(doc['source'].get('s_learner') is None and doc['source'].get('w_learner') is None,
+            f'{name}: only single-file (net-8) sources are carried')
     check_pin(doc['source']['checkpoint'], f'{name} carried checkpoint')
-    require(doc['launched_unix'] + arm['c_wall_seconds'] > time.time(), f'{name}: the carried wall has passed')
+    end = Path(doc['from']['manifest']['path']).parent / 'END.json'
+    if end.exists():
+        last_valid = read(end).get('last_valid_boundary')
+        require(last_valid is not None and last_valid >= doc['boundary'],
+                f'{name}: the carried chain ended at {last_valid}, before the carried boundary {doc["boundary"]}')
+    if new:  # a first plan; a re-plan of an existing manifest (for example after a tools fix) is not refused here
+        require(doc['launched_unix'] + arm['c_wall_seconds'] > time.time(), f'{name}: the carried wall has passed')
+
+
+def carried_from_stopped(man):
+    """A carried chain may run only while the chain it continues is held: that chain has END or STOP (its own, or
+    its root's), and no open w5box instance (its trainer has exited). Reads the old chain only. None if the chain is
+    not carried or the old chain is held, else the reason it is not."""
+    carry = man.get('carry')
+    if not carry:
+        return None
+    old_cdir = Path(carry['from']['manifest']['path']).parent
+    old_root, old_name = old_cdir.parent.parent, old_cdir.name
+    if not ((old_cdir / 'END.json').exists() or stopped(old_root, old_cdir)):
+        return f'the carried chain {old_name} has neither END nor STOP: it may still run'
+    if (old_cdir / 'END.json').exists():
+        last_valid = read(old_cdir / 'END.json').get('last_valid_boundary')
+        if last_valid is None or last_valid < carry['boundary']:
+            return f'the carried chain {old_name} ended at {last_valid}, before the carried boundary {carry["boundary"]}'
+    if live(old_root, old_name):
+        return f'the carried chain {old_name} still has an open instance (its trainer has not exited)'
+    return None
 
 
 def carry_cmd(a):
@@ -775,6 +866,9 @@ def make_plan(inputs_path):
     tools = tools_shas()
     common = {k: pin(inputs[k]) for k in ('python', 'trainer', 'container_tool', 'base', 'layout')}
     frozen_pin = pin(frozen) if frozen else None
+    for name, c in sorted(chains_in.items()):  # before any write: a carried plan never writes in the old root
+        if c.get('carry') is not None:
+            check_carry_roots(json.loads(Path(c['carry']).read_bytes()), name, root)
     arms, arm_paths = {}, {}
     for a in sorted(used):
         spec = arms_in[a]
@@ -929,7 +1023,7 @@ def make_plan(inputs_path):
         require(arms_in['X8'].get('budget') == arms_in['XS'].get('budget') and
                 arms_in['X8'].get('dose') == arms_in['XS'].get('dose'), 'X8 and XS share B and the dose')
     # chains, slots, seed roots and pairs
-    chains, slots, pairs, partners = {}, set(), {}, {}
+    chains, slots, pairs, partners, carry_docs = {}, set(), {}, {}, {}
     for name, c in sorted(chains_in.items()):
         require(NAME.fullmatch(name) is not None, f'chain name {name!r}: lowercase letters, digits and dashes')
         a, slot, seed_root = c['arm'], c['slot'], c['seed_root']
@@ -963,8 +1057,12 @@ def make_plan(inputs_path):
         if c.get('carry') is not None:  # absent otherwise: existing plans and manifests keep their bytes
             require(stage == '0' and independent and c.get('pair') is None,
                     f'{name}: a carried chain runs in an independent Stage 0 plan, without a pair')
-            check_carry(read(c['carry']), name, seed_root, arms[a])
-            chains[name]['carry'] = pin(c['carry'])
+            data = Path(c['carry']).read_bytes()  # one read: the pin, the checks and the manifest use these bytes
+            carry_docs[name] = json.loads(data)
+            require(r_nom is None, f'{name}: a carried chain keeps no look state (no r_nom_usec)')
+            check_carry(carry_docs[name], name, seed_root, arms[a],
+                        new=not Path(chains[name]['manifest']).exists())
+            chains[name]['carry'] = {'path': Path(c['carry']).as_posix(), 'sha256': w5box.sha256_bytes(data)}
     seeds = {}
     for name, c in chains.items():
         if c['pair'] is not None:
@@ -1017,7 +1115,7 @@ def make_plan(inputs_path):
                   'c_wall_seconds': c_wall, 'r_nom_usec': r_nom,
                   'snapshot_dir': (root / 'chains' / name / 'snapshots').as_posix()}
         if c.get('carry'):
-            header['carry'] = read(c['carry']['path'])
+            header['carry'] = carry_docs[name]
         path = Path(c['manifest'])
         if path.exists():
             have = read(path)
@@ -1722,6 +1820,8 @@ def drive(a):
     require(man['chain'] == a.chain and man['arm_name'] == arm['arm'] and man['seed_root'] == a.seed_root,
             'the chain manifest names another chain, arm or seed root')
     require(man['recipe'] == recipe_identity(arm), 'the arm file changes the recipe of this chain')
+    why = carried_from_stopped(man)
+    require(why is None, f'{a.chain}: {why}')
     held = lock(cdir / 'DRIVE.lock')
     require(held is not None, f'{a.chain} already has a driver')
     try:
@@ -1757,6 +1857,10 @@ def drive_locked(a, arm, root, cdir, man_path):
             recovered = True
         if stopped(root, cdir):
             log(root, chain=a.chain, event='stop')
+            return EXIT_STOP
+        hold = carried_from_stopped(man)  # None unless carried: before every segment, the old chain must stay held
+        if hold is not None:
+            log(root, chain=a.chain, event='stop', reason=hold)
             return EXIT_STOP
         if deadline is not None and time.time() >= deadline:
             boundary, receipt = latest(man)
@@ -1872,6 +1976,8 @@ def run(a):
     require(read_end(root, a.chain) is None, f'{a.chain} has ended')
     require(not oom_closed(root, a.chain), f'{a.chain} was OOM-killed: a chain failure (section 2.1)')
     require(not stopped(root, chain_dir(root, a.chain)), 'a STOP file is present')
+    why = carried_from_stopped(read(chain_dir(root, a.chain) / 'chain.json'))
+    require(why is None, f'{a.chain}: {why}')
     for p in plan['pairs'].values():
         if p['X'] == a.chain and p['c_external']:
             require(read_end(root, p['C']) is not None, f'the partner {p["C"]} has not ended')

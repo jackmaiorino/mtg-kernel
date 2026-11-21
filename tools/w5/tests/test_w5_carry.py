@@ -49,12 +49,17 @@ class CarryTests(unittest.TestCase):
 
     # ------------------------------------------------------------ helpers
 
-    def old(self, segments, c_wall=600.0):
-        """The old chain c1 (4-update segments) run for `segments` segments; returns (plan, manifest path)."""
-        _, plan = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': SEED}}, c_wall_seconds=c_wall,
-                                 independent=True, label='old')
+    def old(self, segments, c_wall=600.0, length=4, stop=True):
+        """The old chain c1 (`length`-update segments) run for `segments` segments, then held by its STOP file (as
+        the operator's stop step leaves it); returns (plan, manifest path)."""
+        doc = json.loads(Path(self.node.inputs('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': SEED}},
+                                               label='old', c_wall_seconds=c_wall, independent=True)).read_text())
+        doc['arms']['C']['segment_updates'] = length
+        _, plan = chains.make_plan(jwrite(self.t / 'inputs-old.json', doc))
         self.node.guard(ceilings={'c1': segments})
         self.assertEqual(self.node.drive(plan, 'c1'), chains.EXIT_ROOM)
+        if stop:
+            (self.node.root / 'chains' / 'c1' / 'STOP').write_text('carry stop\n')
         return plan, Path(plan['chains']['c1']['manifest'])
 
     def trainer_copy(self):
@@ -232,6 +237,215 @@ class CarryTests(unittest.TestCase):
         self.assertIsNone(chains.carry_source(man))
         self.assertEqual(chains.wall_origin(man), man['launched_unix'])
         self.assertEqual(chains.committed_through(old_man.parent), 4)  # its durable commits from 0
+        # The legacy replay diagnostic of an ordinary chain is unchanged.
+        chain = retention.load_chain(old_man)
+        spec = {'endpoint_boundary': 4, 'replay': {'from': {'boundary': 2, 'checkpoint': None}}}
+        with self.assertRaisesRegex(SystemExit, 'a replay from a nonzero boundary needs its kept checkpoint'):
+            retention.replay_config(chain, spec, self.t / 'r')
+
+
+    def test_a_carried_chain_runs_only_while_its_old_chain_is_held(self):
+        _, old_man = self.old(2, stop=False)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', self.t / 'cont', 1), w5box.EXIT_REFUSED)
+        self.assertEqual(json.loads(Path(plan['chains']['c1c']['manifest']).read_text())['segments'], [])
+        (self.node.root / 'chains' / 'c1' / 'STOP').write_text('carry stop\n')
+        self.assertEqual(self.drive(plan, 'c1c', self.t / 'cont', 1), chains.EXIT_ROOM)
+        # An open w5box instance of the old chain (its trainer still running) also holds the continuation back.
+        self.node.ledger('c1', 'open')
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', self.t / 'cont', 2), w5box.EXIT_REFUSED)
+        self.node.ledger('c1', 'close')
+        # The old chain's STOP removed while the continuation runs: it stops at its next segment boundary.
+        run_trainer = chains.run_trainer
+
+        def run_then_unstop(*args, **kwargs):
+            out = run_trainer(*args, **kwargs)
+            (self.node.root / 'chains' / 'c1' / 'STOP').unlink(missing_ok=True)
+            return out
+        with mock.patch.object(chains, 'run_trainer', side_effect=run_then_unstop):
+            self.assertEqual(self.drive(plan, 'c1c', self.t / 'cont', 4), chains.EXIT_STOP)
+        self.assertEqual(len(json.loads(Path(plan['chains']['c1c']['manifest']).read_text())['segments']), 2)
+
+    def test_carry_writes_nothing_inside_the_old_root(self):
+        _, old_man = self.old(2)
+        seg = Path(json.loads(old_man.read_text())['segments'][1]['root'])
+        before = {p: p.read_bytes() for p in self.node.root.rglob('*') if p.is_file()}
+        for objects, out in ((self.t / 'o', old_man), (self.node.root / 'chains' / 'c1', self.t / 'c.json'),
+                             (self.t / 'o', seg / 'carry.json'), (self.node.root, self.t / 'c.json')):
+            with self.subTest(objects=objects, out=out), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(chains.main(['carry', '--manifest', str(old_man), '--boundary', '8',
+                                              '--objects', str(objects), '--out', str(out)]), w5box.EXIT_REFUSED)
+        after = {p: p.read_bytes() for p in self.node.root.rglob('*') if p.is_file()}
+        self.assertEqual(before, after)  # names and contents
+
+    def test_long_carried_chain_keeps_every_state_the_old_rule_keeps(self):
+        """Realistic shape: 64-update segments, carry at S = 4,096 after the old chain stopped at E = 4,160; the
+        continuation is interrupted in its first segment, restarted, runs past 8,192 with supervise cycles. The
+        old tree is unchanged, the copy of S intact, every multiple of 4,096 and the recent window kept, unkept
+        states pruned as for any chain, the states equal one uninterrupted run, the incremental index a whole read,
+        and a replay inside the first carried segment starts at S from the carried source."""
+        old_plan, old_man = self.old(66, length=64, c_wall=86400.0)  # E = 4,224 (a long wall: a slow host)
+        start = 4160  # not a multiple of 4,096: a stride counted from the start would keep 8,256, not 8,192
+        total = start + 64 * 66
+        ref = self.whole(old_plan, total)
+        carry_path = self.carry(old_man, start)
+        old_plan_path = self.node.root / 'plan' / 'old' / 'CHAINS-PLAN.json'
+        path, plan = chains.make_plan(self.cont_inputs(carry_path, segment_updates=64, c_wall=86400.0))
+        cont_root, man_path = self.t / 'cont', Path(plan['chains']['c1c']['manifest'])
+        cache = retention.IndexCache(man_path)
+        with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '4190'}):  # a crash inside the first carried segment
+            self.assertEqual(self.drive(plan, 'c1c', cont_root, 1), chains.EXIT_FAILED)
+        self.assertEqual(self.drive(plan, 'c1c', cont_root, 3), chains.EXIT_ROOM)  # reruns it, then one more
+        _, rows = cache.refresh()  # the failed run used one admission: two segments now
+        self.assertEqual([r['after_state_sha256'] for r in rows], ref[start:start + 128])
+        _, old_rows = retention.index(old_man)
+        self.assertEqual([r['after_state_sha256'] for r in rows[:64]],
+                         [r['after_state_sha256'] for r in old_rows[start:start + 64]])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.main(['end', '--plan', str(old_plan_path), '--chain', 'c1', '--boundary',
+                                          '4224', '--reason', 'continued']), 0)
+        old_chain = self.node.root / 'chains' / 'c1'
+        old_files = {p: chains.sha(p) for p in old_chain.rglob('*') if p.is_file()}
+        copy_path = Path(json.loads(carry_path.read_text())['source']['checkpoint']['path'])
+        copy_sha = chains.sha(copy_path)
+        admitted = 3
+        # Strides scaled down (4,096 to 256, so the run leaves the recent window many times): every rule boundary
+        # is a global multiple of 256, while a stride counted from S = 4,160 would keep 4,416, 4,672, ...
+        with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')), \
+                mock.patch.object(retention, 'C_LONG_STRIDE', 256), mock.patch.object(retention, 'C_RECENT', 256):
+            for chunk in range(4):  # 64 more segments in 4 chunks, supervise cycles of both plans after each
+                admitted += 16
+                self.assertEqual(self.drive(plan, 'c1c', cont_root, admitted), chains.EXIT_ROOM)
+                _, rows = cache.refresh()
+                chains.cycle(plan, path, caches={man_path.as_posix(): cache})
+                chains.cycle(old_plan, old_plan_path)  # the old plan's supervisor, its chain ended
+        _, whole = retention.index(man_path)
+        self.assertEqual([r['boundary'] for r in rows], [r['boundary'] for r in whole])
+        self.assertEqual([r['after_state_sha256'] for r in whole], ref[start:total])
+        latest = whole[-1]['boundary']
+        self.assertEqual(latest, total)
+        kept = {r['boundary'] for r in whole if Path(r['checkpoint']['path']).exists()}
+        with mock.patch.object(retention, 'C_LONG_STRIDE', 256), mock.patch.object(retention, 'C_RECENT', 256):
+            rule = {r['boundary'] for r in whole if retention.keeps_full_state('C', r['boundary'], latest)}
+        self.assertTrue(rule <= kept, sorted(rule - kept)[:5])   # nothing the rule keeps is missing
+        self.assertTrue({4352, 4608, 6144, 8192} <= kept)        # global multiples of 256, far from the latest
+        self.assertFalse(kept & {4416, 4672, 6208})              # not a stride counted from S
+        self.assertFalse(kept & {4200, 4288, 5000})              # unkept states pruned as for any chain
+        self.assertEqual(kept - rule, {latest} - rule)           # nothing else survives
+        self.assertEqual({p: chains.sha(p) for p in old_chain.rglob('*') if p.is_file()}, old_files)
+        self.assertEqual(chains.sha(copy_path), copy_sha)
+        # replay selection inside the first carried segment starts at S with the carried source
+        b = start + 2
+        for r in whole:
+            if start < r['boundary'] <= b:
+                Path(r['checkpoint']['path']).unlink(missing_ok=True)
+        spec = retention.select(retention.load_chain(man_path), whole,
+                                next(r['ledger_usec'] for r in whole if r['boundary'] == b))
+        self.assertEqual(spec['replay']['from'], {'boundary': start, 'checkpoint': None})
+        cfg = retention.replay_config(retention.load_chain(man_path), spec, self.t / 'replay')
+        self.assertEqual(cfg['initial_source']['checkpoint']['sha256'], copy_sha)
+        arm = chains.load_arm(plan['arms']['C']['file']['path'])
+        self.assertEqual(chains.run_trainer(arm, jwrite(self.t / 'replay.json', cfg))[0], 0)
+        self.assertTrue(retention.verify_replay(spec, self.t / 'replay')['equal'])
+
+
+    def test_more_plan_and_carry_refusals(self):
+        _, old_man = self.old(3)
+        carry_path = self.carry(old_man, 8)
+        path, plan = chains.make_plan(self.cont_inputs(carry_path))
+        # a re-plan of the started manifest after the wall (for example after a tools fix) is not refused
+        with mock.patch.object(chains, 'time', wraps=time) as clock:
+            clock.time.return_value = json.loads(old_man.read_text())['launched_unix'] + 601.0
+            chains.make_plan(self.cont_inputs(carry_path))
+        # the old name or the old root, and look state, are refused
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='nm', root='nm')).read_text())
+        doc['chains'] = {'c1': dict(doc['chains']['c1c'])}
+        with self.assertRaisesRegex(chains.Stop, 'new name'):
+            chains.make_plan(jwrite(self.t / 'nm.json', doc))
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='rt', root='rt')).read_text())
+        doc['root'] = self.node.root.as_posix()
+        with self.assertRaisesRegex(chains.Stop, 'new root'):
+            chains.make_plan(jwrite(self.t / 'rt.json', doc))
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='rn', root='rn')).read_text())
+        doc['r_nom_usec'] = 10**9
+        with self.assertRaisesRegex(chains.Stop, 'look state'):
+            chains.make_plan(jwrite(self.t / 'rn.json', doc))
+        # a relative --objects becomes an absolute path in the record
+        cwd = os.getcwd()
+        try:
+            os.chdir(self.t)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(chains.main(['carry', '--manifest', os.path.relpath(old_man, self.t), '--boundary',
+                                              '4', '--objects', 'relobj', '--out', 'carry-rel.json']), 0)
+        finally:
+            os.chdir(cwd)
+        rel = json.loads((self.t / 'carry-rel.json').read_text())
+        self.assertTrue(Path(rel['source']['checkpoint']['path']).is_absolute())
+        self.assertTrue(Path(rel['from']['manifest']['path']).is_absolute())
+        # a new root inside the old root is refused before the plan writes anything there
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='in', root='in')).read_text())
+        doc['root'] = (self.node.root / 'sub').as_posix()
+        before = sorted(p.as_posix() for p in self.node.root.rglob('*'))
+        with self.assertRaisesRegex(chains.Stop, 'new root'):
+            chains.make_plan(jwrite(self.t / 'in.json', doc))
+        self.assertEqual(sorted(p.as_posix() for p in self.node.root.rglob('*')), before)
+        # a carried checkpoint inside the new root or the scratch root is refused
+        rec = json.loads(carry_path.read_text())
+        for where in (self.t / 'cont2' / 'chains' / 'c1c' / 'seg-00000', self.t / 'shm'):
+            moved = dict(rec, source=dict(rec['source'], checkpoint=dict(rec['source']['checkpoint'])))
+            target = where / Path(rec['source']['checkpoint']['path']).name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(Path(rec['source']['checkpoint']['path']).read_bytes())
+            moved['source']['checkpoint']['path'] = target.as_posix()
+            bad = jwrite(self.t / f'carry-{where.name}.json', moved)
+            doc = json.loads(Path(self.cont_inputs(bad, label='w' + where.name[:3], root='cont2')).read_text())
+            doc['scratch_root'] = (self.t / 'shm').as_posix()
+            doc['arms']['C']['scratch'] = True
+            doc['arms']['C']['segment_updates'] = 32
+            with self.subTest(where=where.name), self.assertRaises(chains.Stop):
+                chains.make_plan(jwrite(self.t / f'w{where.name}.json', doc))
+        # a boundary past the old chain's END is refused
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.main(['end', '--plan', str(self.node.root / 'plan' / 'old' / 'CHAINS-PLAN.json'),
+                                          '--chain', 'c1', '--boundary', '8', '--reason', 'x']), 0)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(chains.main(['carry', '--manifest', str(old_man), '--boundary', '12', '--objects',
+                                          str(self.t / 'o'), '--out', str(self.t / 'c12.json')]), w5box.EXIT_REFUSED)
+        # an unstarted carried chain reports its start as its latest boundary
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            retention.main(['index', str(Path(plan['chains']['c1c']['manifest']))])
+        self.assertIn('"latest_boundary": 8', out.getvalue())
+
+
+    def test_an_end_below_the_carried_boundary_holds_the_continuation(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.main(['end', '--plan', str(self.node.root / 'plan' / 'old' / 'CHAINS-PLAN.json'),
+                                          '--chain', 'c1', '--boundary', '4', '--reason', 'x']), 0)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', self.t / 'cont', 1), w5box.EXIT_REFUSED)
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1c']), w5box.EXIT_REFUSED)
+
+    def test_the_copy_never_writes_through_an_old_name(self):
+        _, old_man = self.old(2)
+        seg1 = Path(json.loads(old_man.read_text())['segments'][1]['root'])
+        old_ck = next(seg1.glob('iterations/*/attempt-*/update/checkpoint.json'))
+        before = old_ck.read_bytes()
+        objects = self.t / 'cont-in' / 'objects'
+        objects.mkdir(parents=True, exist_ok=True)
+        digest = json.loads(next(seg1.glob('iterations/000003/complete.json')).read_text())['output_identity'][
+            'checkpoint_sha256']
+        trap = objects / f'{digest}.json.tmp'
+        try:
+            trap.symlink_to(old_ck)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        self.carry(old_man, 8)
+        self.assertEqual(old_ck.read_bytes(), before)
 
 
 if __name__ == '__main__':
