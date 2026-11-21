@@ -52,9 +52,15 @@ def failed_jobs(get: Get, repo: str, run_id) -> list[str]:
 def ran(get: Get, repo: str, run: dict, before: str = "") -> bool:
     """Whether a run actually ran its checks (a run replaced while waiting started no job), judged only by jobs
     of any attempt that started before `before` (an ISO time), so a later rerun never changes an old report."""
-    jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100&filter=all")["jobs"]
-    return any(job.get("conclusion") in ("success", "failure", "timed_out")
-               and (not before or (job.get("started_at") or "9") < before) for job in jobs)
+    page = 1
+    while True:
+        jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100&filter=all&page={page}")["jobs"]
+        if any(job.get("conclusion") in ("success", "failure", "timed_out")
+               and (not before or (job.get("started_at") or "9") < before) for job in jobs):
+            return True
+        if len(jobs) < 100:
+            return False
+        page += 1
 
 
 def first_attempt_start(get: Get, repo: str, run: dict) -> str:
