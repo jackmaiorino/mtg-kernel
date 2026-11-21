@@ -366,6 +366,35 @@ fn the_spool_reads_stop_first_then_one_whole_next_config() {
     fs::remove_dir_all(&chain).unwrap();
 }
 
+#[test]
+fn a_managed_spool_observes_driver_exit_before_open_and_while_waiting() {
+    let (_, chain) = chain_base_v1("follow-driver-lock");
+    let spool_dir = chain.join("managed-spool");
+    fs::create_dir_all(&spool_dir).unwrap();
+    assert!(SpoolV1::open_managed_v1(&spool_dir).is_err());
+    let driver_path = spool_dir.join("driver.lock");
+    let driver = fs::File::create(&driver_path).unwrap();
+    driver.lock().unwrap();
+    assert!(SpoolV1::open_v1(&spool_dir).is_err());
+    let waiting = SpoolV1::open_managed_v1(&spool_dir).unwrap();
+    assert!(!waiting.driver_lost_v1().unwrap());
+    drop(driver);
+
+    let late = SpoolV1::open_managed_v1(&spool_dir).unwrap();
+    assert!(late.driver_lost_v1().unwrap());
+    drop(late);
+    let next = spool_dir.join(NEXT_NAME);
+    fs::write(&next, b"unread config").unwrap();
+    assert!(waiting.driver_lost_v1().unwrap());
+    assert!(matches!(waiting.wait_v1().unwrap(), FollowNextV1::Orphaned));
+    assert!(next.exists());
+    fs::write(spool_dir.join(STOP_NAME), b"").unwrap();
+    assert!(matches!(waiting.wait_v1().unwrap(), FollowNextV1::Stop));
+    assert!(next.exists());
+    drop(waiting);
+    fs::remove_dir_all(chain).unwrap();
+}
+
 /// A followed process over two segments publishes the files, bytes and states
 /// that two fresh processes publish (timed documents compared by their
 /// states), records each done, and STOP ends it; a refused continuation ends

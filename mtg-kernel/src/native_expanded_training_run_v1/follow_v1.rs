@@ -20,15 +20,20 @@
 //! run is never continued. The mode is a command-line flag only: no config
 //! key, plan or receipt names it.
 //!
-//! The spool protocol (a directory the driver creates empty for each
-//! process):
+//! The driver creates a new spool for each process. With
+//! `--follow-driver-lock`, it first opens and exclusively locks `driver.lock`
+//! in the spool and keeps its non-inherited handle open. A managed child sees
+//! a driver that exited before startup or while waiting on Unix and Windows.
+//! Standalone `--follow` uses an empty spool and retains the Unix parent
+//! check sampled during spool open. It has no Windows parent check.
+//!
+//! The spool protocol:
 //! - after each successful run the process writes its result line to stdout,
 //!   as a fresh process does; after a complete run it then publishes
 //!   `done-NNNNNN.json` (NNNNNN: the run's index in this process, from 0),
 //!   once the run has returned and released its lock;
-//! - it then waits for `STOP` (ends the process with exit 0), its parent's
-//!   end (Unix: ends the process with exit 0, before any queued config is
-//!   admitted) or `next.json` (the next config, published whole by a rename);
+//! - it then waits for `STOP`, loss of the driver (both exit 0), or
+//!   `next.json` (the next config, published whole by a rename);
 //!   `STOP` wins when both files are present; while a run is in flight
 //!   neither is looked at, as a fresh process does not look either;
 //! - `next.json` is read, parsed and removed, then admitted only if it
@@ -49,6 +54,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+mod driver_lock;
+use driver_lock::DriverLock;
 
 /// The driver's request to end the process between runs.
 pub const STOP_NAME: &str = "STOP";
@@ -187,24 +195,52 @@ pub fn follow_v1(
 /// directory (the driver creates one per process).
 pub struct SpoolV1 {
     directory: PathBuf,
+    driver: Option<DriverLock>,
     #[cfg(unix)]
     parent: u32,
 }
 
 impl SpoolV1 {
     pub fn open_v1(directory: &Path) -> Result<Self, String> {
+        Self::open(directory, false)
+    }
+
+    pub fn open_managed_v1(directory: &Path) -> Result<Self, String> {
+        Self::open(directory, true)
+    }
+
+    fn open(directory: &Path, managed: bool) -> Result<Self, String> {
         check(directory.is_absolute(), "absolute spool path required")?;
         let meta = fs::symlink_metadata(directory).map_err(err)?;
         check(meta.is_dir(), "the spool is not a plain directory")?;
-        check(
-            fs::read_dir(directory).map_err(err)?.next().is_none(),
-            "the spool is not empty (each process needs a new one)",
-        )?;
+        for entry in fs::read_dir(directory).map_err(err)? {
+            check(
+                managed && entry.map_err(err)?.file_name() == driver_lock::NAME,
+                "the spool is not empty (each process needs a new one)",
+            )?;
+        }
+        let driver = if managed {
+            Some(DriverLock::open(directory).map_err(err)?)
+        } else {
+            None
+        };
         Ok(Self {
             directory: directory.to_path_buf(),
+            driver,
             #[cfg(unix)]
             parent: std::os::unix::process::parent_id(),
         })
+    }
+
+    /// A managed launch can verify its driver before starting the first run.
+    pub fn driver_lost_v1(&self) -> Result<bool, String> {
+        if let Some(driver) = &self.driver {
+            return driver.held().map(|held| !held).map_err(err);
+        }
+        #[cfg(unix)]
+        return Ok(std::os::unix::process::parent_id() != self.parent);
+        #[cfg(not(unix))]
+        Ok(false)
     }
 
     /// Publishes the done record of the `index`-th run (durable publication,
@@ -231,7 +267,7 @@ impl SpoolV1 {
         }
     }
 
-    /// One look at the spool: `STOP` first, then the parent (Unix), then
+    /// One look at the spool: `STOP` first, then the driver, then
     /// `next.json` (read in full and removed, then parsed as a fresh process
     /// parses its config).
     fn look_v1(&self) -> Result<Option<FollowNextV1>, String> {
@@ -240,8 +276,7 @@ impl SpoolV1 {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(err(error)),
         }
-        #[cfg(unix)]
-        if std::os::unix::process::parent_id() != self.parent {
+        if self.driver_lost_v1()? {
             return Ok(Some(FollowNextV1::Orphaned));
         }
         let path = self.directory.join(NEXT_NAME);
@@ -270,6 +305,9 @@ impl SpoolV1 {
             Ok(config) => config,
             Err(error) => return refuse(format!("next config does not parse: {error}")),
         };
+        if self.driver.is_some() && self.driver_lost_v1()? {
+            return Ok(Some(FollowNextV1::Orphaned));
+        }
         // Taken: removed, so that it is never read again.
         if let Err(error) = fs::remove_file(&path) {
             return refuse(format!("next config cannot be removed: {error}"));
