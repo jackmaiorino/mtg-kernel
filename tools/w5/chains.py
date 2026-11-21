@@ -572,6 +572,28 @@ def old_trees(manifest_path):
         raise Stop(f'the carried chain\'s trees cannot be established from {manifest_path} ({exc})') from exc
 
 
+def no_links_in(*dirs):
+    """No entry directly in these directories is a link (a log, receipt, lock or record opened for writing there
+    cannot lead into another tree). Missing directories are skipped."""
+    for d in dirs:
+        d = Path(d)
+        if not d.is_dir():
+            continue
+        with os.scandir(d) as entries:
+            for e in entries:
+                require(not e.is_symlink(), f'{e.path} is a link in a carried chain\'s tree')
+
+
+def carried_trees_unlinked(root, name):
+    """A carried chain's chain directory, its W5 root, its retention folder and its state folder: no link among
+    their entries, and none in the chain directory's own path."""
+    cdir = chain_dir(root, name)
+    absolute = os.path.abspath(cdir)
+    require(not cdir.is_symlink() and os.path.realpath(absolute) == absolute,
+            f'{name}: {cdir} is a link or lies under one')
+    no_links_in(cdir, root, Path(root) / 'retention', Path(root) / 'state', Path(root) / 'state' / name)
+
+
 def carried_chain_dir_ok(plan, root, name):
     """A carried chain of a plan (its plan entry names `carry`): its chain directory is a real directory with no link
     in its path, and its manifest is that chain's carried manifest, before anything reads, indexes, ends or cleans
@@ -579,9 +601,7 @@ def carried_chain_dir_ok(plan, root, name):
     if not (plan['chains'].get(name) or {}).get('carry'):
         return
     cdir = chain_dir(root, name)
-    absolute = os.path.abspath(cdir)
-    require(not cdir.is_symlink() and os.path.realpath(absolute) == absolute,
-            f'{name}: {cdir} is a link or lies under one')
+    carried_trees_unlinked(root, name)
     man = read(cdir / 'chain.json')
     require(man.get('chain') == name and isinstance(man.get('carry'), dict),
             f'{name}: {cdir / "chain.json"} is not this carried chain\'s manifest')
@@ -1940,6 +1960,7 @@ def drive(a):
     require(why is None, f'{a.chain}: {why}')
     if man.get('carry'):
         carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
+        carried_trees_unlinked(root, a.chain)
     held = lock(cdir / 'DRIVE.lock')
     require(held is not None, f'{a.chain} already has a driver')
     try:
@@ -1986,6 +2007,7 @@ def drive_locked(a, arm, root, cdir, man_path):
         if hold is None and man.get('carry'):
             try:
                 carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
+                carried_trees_unlinked(root, a.chain)
             except Stop as exc:
                 hold = str(exc)
         if hold is not None:
@@ -2099,6 +2121,7 @@ def run(a):
     require(a.chain in plan['chains'], f'the plan has no chain {a.chain}')
     root = Path(plan['root'])
     c = plan['chains'][a.chain]
+    carried_chain_dir_ok(plan, root, a.chain)  # a carried chain: its directory and manifest before anything else
     require(c['arm'] in MEASURED, f'{a.chain} is a filler box: supervise runs it through `w5box.py fill`')
     require((root / 'plan' / plan['label'] / 'LAUNCHED.json').exists(),
             'launch the stage first (`chains.py launch`): its chains then start held until every box is occupied')
@@ -2126,6 +2149,7 @@ def run(a):
         release_scratch(plan, a.chain, read(chain_dir(root, a.chain) / 'chain.json'))  # the box's driver is gone
         return 0
     if code == w5box.EXIT_OOM and c['arm'] in MEASURED:
+        carried_chain_dir_ok(plan, root, a.chain)  # again, before the END write
         cdir = chain_dir(root, a.chain)
         man = read(cdir / 'chain.json')
         boundary, receipt = latest(man, persisted=True)

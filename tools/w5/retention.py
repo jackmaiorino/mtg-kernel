@@ -1045,6 +1045,9 @@ def apply(plan_doc, log_path, hold=None):
                  if not unlinked_inside(i['path'], plan_doc['own_dir'])]
         if stray:
             raise SystemExit(f'stop: the plan would delete through a link or outside {plan_doc["own_dir"]}: {stray[:3]}')
+        log_abs = os.path.abspath(log_path)
+        if os.path.realpath(log_abs) != log_abs:
+            raise SystemExit(f'stop: the retention log {log_path} is a link or lies under one')
     try:
         with open(log_path, 'a', encoding='utf-8') as log:
             for kind in ('checkpoints', 'trajectories'):

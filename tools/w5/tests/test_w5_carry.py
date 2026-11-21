@@ -757,5 +757,50 @@ class CarryTests(unittest.TestCase):
         old_man.write_text(good)
 
 
+    def test_log_links_and_ordinary_manifests_are_refused(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        old_chain = self.node.root / 'chains' / 'c1'
+        old_ck = next((old_chain / 'seg-00001' / 'iterations' / '000003').glob('attempt-*/update/checkpoint.json'))
+        before = {p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}
+        log = cont / 'chains' / 'c1c' / 'trainer.out'
+        log.unlink(missing_ok=True)
+        try:
+            log.symlink_to(old_ck)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        with mock.patch.object(chains, 'run_trainer', side_effect=AssertionError('no run')), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', cont, 2), w5box.EXIT_REFUSED)
+        log.unlink()
+        rlog = cont / 'retention' / 'c1c.jsonl'
+        rlog.parent.mkdir(exist_ok=True)
+        rlog.unlink(missing_ok=True)
+        rlog.symlink_to(old_ck)
+        with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')):
+            with self.assertRaises(chains.Stop):
+                chains.cycle(plan, path)
+        with self.assertRaises(SystemExit):
+            retention.apply({'own_dir': (cont / 'chains' / 'c1c').resolve().as_posix(), 'checkpoints': [],
+                             'trajectories': []}, rlog)
+        rlog.unlink()
+        self.assertEqual({p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}, before)
+        # an ordinary manifest under a carried plan entry: run refuses before reading on or dispatching
+        man_path = Path(plan['chains']['c1c']['manifest'])
+        man = json.loads(man_path.read_text())
+        man.pop('carry')
+        man_path.write_text(json.dumps(man))
+        (old_chain / 'STOP').unlink()
+        (self.node.root / 'STOP').write_text('root stop only\n')
+        jwrite(cont / 'plan' / 'cont' / 'LAUNCHED.json', {'opened': [0]})
+        err = io.StringIO()
+        with mock.patch.object(chains.subprocess, 'call', side_effect=AssertionError('no w5box')), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1c']), w5box.EXIT_REFUSED)
+        self.assertIn('carried manifest', err.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main()
