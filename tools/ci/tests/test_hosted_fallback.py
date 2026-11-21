@@ -74,6 +74,25 @@ class FallbackTests(unittest.TestCase):
         assert req.unredirected_hdrs == {"Authorization": "Bearer t"}
         assert not any(k.lower() == "authorization" for k in req.headers)
 
+    def test_a_scoped_run_reruns_only_its_checks(self):
+        posts = []
+
+        def request(method, path, body=None):
+            if path.endswith("/jobs?per_page=100&page=1"):
+                return json.dumps({"jobs": [job(1, "failure", ["self-hosted"])]}).encode()
+            if path.endswith("/logs"):
+                return fb.ADMISSION_MARKER.encode()
+            if method == "POST":
+                posts.append(body)
+            return b""
+        for checks, expected in (("python", {"scope": "python"}), ("all", {}), ("", {})):
+            posts.clear()
+            env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "FALLBACK_REF": "f", "GH_TOKEN": "t",
+                   "SCOPE": "pr", "CHECKS": checks}
+            with patch.dict(os.environ, env), patch.object(fb, "_request", side_effect=request), patch("sys.stdout"):
+                assert fb.main() == 0
+            assert posts[0]["inputs"] == {"windows_runner": '"windows-2025"', "fallback_scope": "windows-pr", **expected}
+
     def test_a_rerun_covers_only_the_windows_part_of_the_group_set(self):
         assert fb.fallback_scope("pr") == "windows-pr"
         assert fb.fallback_scope("windows-complement") == "windows-complement"
@@ -82,7 +101,7 @@ class FallbackTests(unittest.TestCase):
         assert fb.fallback_scope("something-new") == "windows-full"
         text = WORKFLOW.read_text(encoding="utf-8")
         # the workflow accepts every value the script sends, and the fallback job hands it the set
-        step = text[text.index("      - name: Choose the group set"):text.index("      - name: Check out merge ref")]
+        step = text[text.index("      - name: Choose the group set"):text.index("      - name: Classify changed paths")]
         for value in set(fb.FALLBACK_SCOPES.values()):
             assert value in step
         block = text[text.index("  hosted-fallback:"):]

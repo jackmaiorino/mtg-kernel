@@ -174,12 +174,23 @@ class RoutingTests(unittest.TestCase):
 
     def test_the_budget_step_reads_the_routing_variables_for_trusted_pull_requests_only(self):
         block = job_block("detect-changes", "rust-quality")
-        step = block[block.index("      - name: Choose the self-hosted pull request groups"):]
-        step = step[:step.index("\n      - name: ", 1)]
+        budget = block.index("      - name: Choose the self-hosted pull request groups")
+        self.assertLess(block.index("      - name: Choose the checks"), budget)
+        step = block[budget:].split("\n      - name: ", 1)[0]
         condition, = re.findall(r"^        if: (.+)$", step, re.MULTILINE)
-        self.assertTrue(evaluate(condition, **event(), **{"steps.scope.outputs.scope": "pr"}))
-        self.assertFalse(evaluate(condition, **event(), **{"steps.scope.outputs.scope": "draft"}))
-        self.assertFalse(evaluate(condition, **event(actor="other"), **{"steps.scope.outputs.scope": "pr"}))
+        context = event(**{"steps.scope.outputs.scope": "pr",
+                           "steps.classify.outputs.rust_relevant": "true",
+                           "steps.checks.outputs.checks": "all"})
+        self.assertTrue(evaluate(condition, **context))
+        for override in ({"steps.scope.outputs.scope": "draft"},
+                         {"steps.classify.outputs.rust_relevant": "false"},
+                         {"steps.checks.outputs.checks": "trainer"},
+                         {"steps.checks.outputs.checks": "workflow"},
+                         {"github.event_name": "workflow_dispatch"},
+                         {"github.actor": "contributor"},
+                         {"github.event.pull_request.head.repo.full_name": "someone/fork"}):
+            with self.subTest(override=override):
+                self.assertFalse(evaluate(condition, **{**context, **override}))
         for line in ("PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}", "PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}",
                      "PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}", "run: python3 tools/ci/self_hosted_budget.py"):
             self.assertIn(line, step)
