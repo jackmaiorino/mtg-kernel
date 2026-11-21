@@ -120,6 +120,8 @@ pub struct HallowShieldV1 {
 
 /// Private exact effective damage packet. Choosing a beneficiary applies one
 /// of the equivalent full-prevention shields, without targeting that player.
+/// General complete-prevention ordering reuses the same private binding with
+/// no beneficiaries; that choice can never award Hallow life.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HallowChoiceV1 {
     /// Original batch, event and replacement-step ordinals. Private
@@ -467,7 +469,7 @@ fn hallow_shield(ctx: &ExecCtx, state: &mut GameState) {
 /// The incarnation that deals `damage` and the zone it was in: its
 /// historical source, else the source of the resolving ability that deals
 /// it as that source last existed (113.7a), else the live object.
-fn damage_source_incarnation(
+pub(crate) fn damage_source_incarnation(
     state: &GameState,
     damage: &DamageProposed,
 ) -> Option<(ObjectLinkV4, Zone)> {

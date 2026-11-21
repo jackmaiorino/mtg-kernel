@@ -1133,6 +1133,9 @@ pub(crate) fn prepare_hallow_batch(
 }
 
 fn potential_operation(state: &GameState) -> bool {
+    if crate::eternal_prevention_order_v1::may_need_choice(state) {
+        return true;
+    }
     if crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state) {
         return true;
     }

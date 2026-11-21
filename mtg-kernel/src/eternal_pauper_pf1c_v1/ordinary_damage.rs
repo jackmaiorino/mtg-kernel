@@ -1,5 +1,6 @@
 //! Ordinary replacement effects competing for a Hallow-covered damage packet.
 use crate::eternal_legacy_e9a_v1::{self as e9a, RedirectV1};
+use crate::eternal_sideboard_s1d_v1::{statics as circles, CopShieldV1};
 use crate::event::{self, ActiveReplacement, DamageProposed, ProposedEvent};
 use crate::ids::ObjectId;
 use crate::state::{GameState, Target};
@@ -8,12 +9,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OrdinaryV1 {
     Sphere(ObjectId),
-    Ojer { object: ObjectId, power: i32 },
-    Redirect { position: usize, record: RedirectV1 },
+    Ojer {
+        object: ObjectId,
+        power: i32,
+    },
+    Redirect {
+        position: usize,
+        record: RedirectV1,
+    },
     // Fog and protection are equivalent for this packet and neither is consumed.
     PreventAll,
     Nishoba(ObjectId),
     Registered(ActiveReplacement),
+    Circle {
+        position: usize,
+        shield: CopShieldV1,
+    },
 }
 
 fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
@@ -100,6 +111,15 @@ impl Packet {
     pub fn apply(mut self, state: &mut GameState, effect: OrdinaryV1, work: &mut Vec<Self>) {
         use OrdinaryV1::*;
         match effect {
+            Circle { position, shield } => {
+                if !circles::consume_selected_circle_shield(state, &self.damage, position, shield) {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        self.damage.source,
+                    ));
+                }
+                return;
+            }
             Sphere(_) => {
                 self.used.push(effect);
                 self.damage.amount = self.damage.amount.saturating_sub(2);
