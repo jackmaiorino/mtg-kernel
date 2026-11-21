@@ -187,6 +187,15 @@ class GuardsTests(unittest.TestCase):
             self.skipTest('no hard links on this host')
         self.assertEqual(self.drive(plan, 3), w5box.EXIT_REFUSED)
         self.assertEqual(other.read_text(), 'keep\n')
+        # a write_once publication a crash left (its temporary still linked beside the destination) is not refused
+        log.unlink()
+        dest = self.cdir() / 'ONCE.json'
+        dest.write_text('{}')
+        os.link(dest, self.cdir() / 'ONCE.json.123.456.tmp')
+        chains.carried_trees_unlinked(self.node.root, 'c1')
+        os.link(dest, self.cdir() / 'ONCE-copy.json')
+        with self.assertRaisesRegex(chains.Stop, 'hard link'):
+            chains.carried_trees_unlinked(self.node.root, 'c1')
 
     def test_a_first_guarded_plan_refuses_a_linked_root(self):
         real = self.t / 'real-root'

@@ -594,13 +594,29 @@ def old_trees(manifest_path):
         raise Stop(f'the carried chain\'s trees cannot be established from {manifest_path} ({exc})') from exc
 
 
-def linked_file(path):
-    """A regular file with more than one hard link (False when absent)."""
+def linked_file(path, siblings=()):
+    """A regular file with more than one hard link (False when absent), unless every extra link is a `write_once`
+    temporary beside it (`<name>.<pid>.<ns>.tmp`, the same inode: a publication in progress, or one a crash left)."""
     try:
         st = os.lstat(path)
     except FileNotFoundError:
         return False
-    return stat.S_ISREG(st.st_mode) and st.st_nlink > 1
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink == 1:
+        return False
+    name = os.path.basename(path)
+    temps = 0
+    for s in siblings:
+        if s.startswith(name + '.') and s.endswith('.tmp'):
+            try:
+                t = os.lstat(os.path.join(os.path.dirname(path), s))
+            except FileNotFoundError:
+                continue
+            temps += (t.st_dev, t.st_ino) == (st.st_dev, st.st_ino)
+    try:
+        now = os.lstat(path).st_nlink  # after the temporaries: one removed meanwhile lowers the count too
+    except FileNotFoundError:
+        return False
+    return now > 1 + temps
 
 
 def carried_trees_unlinked(root, name):
@@ -619,12 +635,11 @@ def carried_trees_unlinked(root, name):
                     f'{name}: {os.path.join(dirpath, entry)} is a link in a carried chain\'s tree')
         for entry in filenames:  # no hard link either: an append (LOG.jsonl, an index) would modify the other file
             if entry.endswith('.tmp'):
-                continue  # write_once's temporary, linked to its destination for an instant
+                continue  # write_once's temporary: accounted for beside its destination
             path = os.path.join(dirpath, entry)
-            if not linked_file(path):
-                continue
-            time.sleep(0.05)  # write_once publishes by a hard link and removes its temporary at once: look again
-            require(not linked_file(path), f'{name}: {path} has more than one hard link in a carried chain\'s tree')
+            require(not (linked_file(path, filenames) and linked_file(path, os.listdir(dirpath))),  # fresh look: a
+                    # temporary removed between the listing and the check
+                    f'{name}: {path} has more than one hard link in a carried chain\'s tree')
         if os.path.dirname(os.path.abspath(dirpath)) == chains_abs:
             dirnames[:] = [d for d in dirnames if not retention.SEGMENT_DIR.fullmatch(d)]
 
