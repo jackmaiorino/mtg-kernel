@@ -196,6 +196,19 @@ class GuardsTests(unittest.TestCase):
         os.link(dest, self.cdir() / 'ONCE-copy.json')
         with self.assertRaisesRegex(chains.Stop, 'hard link'):
             chains.carried_trees_unlinked(self.node.root, 'c1')
+        # an outside link stays visible when the temporary goes away during the check
+        temp = self.cdir() / 'ONCE.json.123.456.tmp'
+        real_lstat = os.lstat
+
+        def lstat_removing(p, *a, **k):
+            st = real_lstat(p, *a, **k)
+            if os.fspath(p) == os.fspath(temp) and temp.exists():
+                temp.unlink()
+            return st
+        (self.cdir() / 'ONCE-copy.json').unlink()
+        os.link(dest, self.t / 'outside.json')
+        with mock.patch.object(chains.os, 'lstat', side_effect=lstat_removing):
+            self.assertTrue(chains.linked_file(str(dest), ['ONCE.json', 'ONCE.json.123.456.tmp']))
 
     def test_a_first_guarded_plan_refuses_a_linked_root(self):
         real = self.t / 'real-root'
