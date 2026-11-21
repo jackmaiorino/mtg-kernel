@@ -361,6 +361,19 @@ pub(crate) use search_state::V4SearchStateErrorV1;
 /// object alone (`pending_trigger_hidden_source_v1` reads only
 /// `state.objects`/`state.library_knowledge`, never `position`), so this
 /// split is unambiguous.
+///
+/// Defect 3 (`InvalidActionReference`, #454): a bounce land's "return a land
+/// you control" choice names the land as the pending effect's `Source` and
+/// as a legal target with the identical `reference`. The `Source` role
+/// resolves to the `HistoricalPublicSource` row and the target role to the
+/// live battlefield row, so one key held two different objects. Fix: the
+/// "already resolved" match also requires the same object group, keeping the
+/// historical source apart from the live target as two rows (the scorer
+/// maps both onto the one live model row, as `register_extensions_v3` does
+/// for a validated historical source). Every match that succeeded before
+/// had an equal object and so an equal group, so a menu that encoded before
+/// keeps the identical entries, order and indices; only this refusal
+/// changes. `flat_action_v5.rs` applies the same key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FlatResolvedActionObjectV4 {
     arena_id: u32,
@@ -1105,6 +1118,7 @@ impl FastActorSessionV1 {
                             && candidate.reference == *reference
                             && candidate.position_sensitive == position_sensitive
                             && (!position_sensitive || candidate.position == position)
+                            && candidate.object.group == object.group
                     }) {
                         if previous.object != object {
                             return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);
@@ -2504,5 +2518,218 @@ mod tests {
         assert_eq!(source.arena_id, hidden_extra.0);
         assert_eq!(source.card_db_id, contract.card_def);
         assert_eq!(source.zone_change_count, contract.zone_change_count);
+    }
+
+    /// #454 defect 3: a bounce land's "return a land you control" choice
+    /// names the land as the pending effect's source and as a target.
+    #[cfg(feature = "eternal-fixtures")]
+    mod bounce_land_choice {
+        use super::*;
+        use crate::engine::{advance_until_decision, step, Action};
+        use crate::flat_policy_v2::{
+            flat_action_ref_projection_role_id_v2, FlatCompletedDungeonV2,
+            FlatContextPathElementV2, FlatEffectSubtypeChangeV2, FlatObjectAbilityUseV2,
+            FlatObjectCoreV2, FlatObjectGoadV2, FlatObjectSubtypeV2, FlatRelationV2,
+            FlatScorerActionCoreV2, FlatScorerActionRefV2, FlatScoringOwnedBuffersV2,
+        };
+        use crate::flat_policy_v4::FlatDecisionEncoderV4;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::rl::TargetRefV1;
+        use crate::state::GameState;
+        use std::collections::BTreeSet;
+
+        /// Every registered land whose entry trigger is the shared
+        /// `return_controlled_land` operation.
+        const BOUNCE_LANDS: [&str; 8] = [
+            "Azorius Chancery",
+            "Boros Garrison",
+            "Dimir Aqueduct",
+            "Golgari Rot Farm",
+            "Gruul Turf",
+            "Orzhov Basilica",
+            "Rakdos Carnarium",
+            "Simic Growth Chamber",
+        ];
+
+        #[derive(Default)]
+        struct ScorerRows {
+            objects: Vec<FlatObjectCoreV2>,
+            relations: Vec<FlatRelationV2>,
+            object_subtypes: Vec<FlatObjectSubtypeV2>,
+            ability_uses: Vec<FlatObjectAbilityUseV2>,
+            goads: Vec<FlatObjectGoadV2>,
+            completed_dungeons: Vec<FlatCompletedDungeonV2>,
+            effect_subtype_changes: Vec<FlatEffectSubtypeChangeV2>,
+            context_path_elements: Vec<FlatContextPathElementV2>,
+            actions: Vec<FlatScorerActionCoreV2>,
+            action_refs: Vec<FlatScorerActionRefV2>,
+        }
+
+        impl ScorerRows {
+            fn buffers(&mut self) -> FlatScoringOwnedBuffersV2<'_> {
+                FlatScoringOwnedBuffersV2 {
+                    objects: &mut self.objects,
+                    relations: &mut self.relations,
+                    object_subtypes: &mut self.object_subtypes,
+                    ability_uses: &mut self.ability_uses,
+                    goads: &mut self.goads,
+                    completed_dungeons: &mut self.completed_dungeons,
+                    effect_subtype_changes: &mut self.effect_subtype_changes,
+                    context_path_elements: &mut self.context_path_elements,
+                    actions: &mut self.actions,
+                    action_refs: &mut self.action_refs,
+                }
+            }
+        }
+
+        /// The land played beside one Island, stopped at its entry choice.
+        fn bounce_choice_state(name: &str) -> (GameState, ObjectId, ObjectId) {
+            let mut state = ready_state();
+            let island = put(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
+            let land = put(&mut state, PlayerId::P0, name, Zone::Hand);
+            let _ = advance_until_decision(&mut state);
+            step(&mut state, Action::PlayLand(land)).unwrap();
+            for _ in 0..16 {
+                match advance_until_decision(&mut state) {
+                    Decision::ChooseEffectTargets { legal_targets, .. } => {
+                        assert_eq!(legal_targets.len(), 2, "{name}: the Island and itself");
+                        return (state, island, land);
+                    }
+                    Decision::CastSpellOrPass { .. } => step(&mut state, Action::Pass).unwrap(),
+                    other => panic!("{name}: expected the land choice, got {other:?}"),
+                }
+            }
+            panic!("{name}: the land choice never arrived");
+        }
+
+        fn candidate_targeting(session: &FastActorSessionV1, object: ObjectId) -> u32 {
+            let current = session.current.as_ref().unwrap();
+            let index = current
+                .candidates
+                .iter()
+                .position(|candidate| {
+                    matches!(
+                        &candidate.semantic,
+                        ActionSemanticV1::ChooseEffectTarget {
+                            target: TargetRefV1::Object { object: target },
+                            ..
+                        } if target.arena_id == object.0
+                    )
+                })
+                .expect("a candidate targets the object");
+            u32::try_from(index).unwrap()
+        }
+
+        #[test]
+        fn eternal_actor_bounce_land_self_return_choice_encodes_and_applies() {
+            let source_role = flat_action_ref_projection_role_id_v2(FlatActionRefRoleV1::Source);
+            let target_role =
+                flat_action_ref_projection_role_id_v2(FlatActionRefRoleV1::TargetObject);
+            for name in BOUNCE_LANDS {
+                let (state, island, land) = bounce_choice_state(name);
+
+                // V4 slice: one historical source row and two live target rows.
+                let mut session = FastActorSessionV1::from_v3_fixture_state(state.clone());
+                let mut actions = vec![FlatActionCoreV1::default(); 16];
+                let mut refs = vec![FlatActionRefV2::default(); 256];
+                let mut objects = vec![FlatActionObjectV2::default(); 256];
+                let slice = session
+                    .encode_current_flat_action_slice_v4(
+                        expected(&session),
+                        &mut FlatActionDecisionSliceBuffersV2 {
+                            actions: &mut actions,
+                            refs: &mut refs,
+                            objects: &mut objects,
+                        },
+                    )
+                    .unwrap_or_else(|error| panic!("{name}: V4 slice: {error:?}"));
+                assert_eq!(slice.active_action_count, 2, "{name}");
+                refs.truncate(usize::try_from(slice.active_ref_count).unwrap());
+                objects.truncate(usize::from(slice.active_object_count));
+                let group_of = |reference: &FlatActionRefV2| {
+                    objects[usize::from(reference.object_index)].group
+                };
+                assert!(refs
+                    .iter()
+                    .filter(|reference| reference.role == FlatActionRefRoleV1::Source)
+                    .all(|reference| group_of(reference)
+                        == FlatActionObjectGroupV1::HistoricalPublicSource));
+                let live_targets: BTreeSet<u16> = refs
+                    .iter()
+                    .filter(|reference| reference.role == FlatActionRefRoleV1::TargetObject)
+                    .inspect(|reference| {
+                        assert_eq!(
+                            group_of(reference),
+                            FlatActionObjectGroupV1::SelfBattlefield
+                        )
+                    })
+                    .map(|reference| reference.object_index)
+                    .collect();
+                assert_eq!(live_targets.len(), 2, "{name}: the Island and the land");
+                assert_eq!(objects.len(), 3, "{name}");
+
+                // Original scorer: the historical source maps onto the land's
+                // live model row, which the land target also names.
+                let mut rows = ScorerRows::default();
+                session
+                    .encode_current_flat_scoring_decision_owned_v4(
+                        expected(&session),
+                        &mut FlatDecisionEncoderV4::default(),
+                        &mut rows.buffers(),
+                    )
+                    .unwrap_or_else(|error| panic!("{name}: scorer: {error:?}"));
+                let model_rows = |role: u8| -> BTreeSet<u32> {
+                    rows.action_refs
+                        .iter()
+                        .filter(|reference| reference.projection_role_id == role)
+                        .map(|reference| reference.model_object_index)
+                        .collect()
+                };
+                let (sources, targets) = (model_rows(source_role), model_rows(target_role));
+                assert_eq!(sources.len(), 1, "{name}");
+                assert_eq!(targets.len(), 2, "{name}");
+                assert!(sources.is_subset(&targets), "{name}");
+
+                // V4 gameplay applies the self-return.
+                let decision = expected(&session);
+                let index = candidate_targeting(&session, land);
+                session
+                    .step(decision.episode_id, decision.step, index)
+                    .unwrap();
+                assert_eq!(session.state.objects.get(land).zone, Zone::Hand, "{name}");
+                assert_eq!(
+                    session.state.objects.get(island).zone,
+                    Zone::Battlefield,
+                    "{name}"
+                );
+
+                // V5 applies it through its rederived binding.
+                let mut session = FastActorSessionV1::from_v5_fixture_state(state);
+                let decision = expected(&session);
+                let mut actions = vec![FlatActionCoreV1::default(); 16];
+                let mut refs = vec![FlatActionRefV2::default(); 256];
+                let mut objects = vec![FlatActionObjectV2::default(); 256];
+                let slice = session
+                    .encode_current_flat_action_slice_v5(
+                        decision,
+                        &mut FlatActionDecisionSliceBuffersV2 {
+                            actions: &mut actions,
+                            refs: &mut refs,
+                            objects: &mut objects,
+                        },
+                    )
+                    .unwrap_or_else(|error| panic!("{name}: V5 slice: {error:?}"));
+                let index = candidate_targeting(&session, land);
+                session
+                    .step_flat_action_v5(decision, slice.binding, index)
+                    .unwrap_or_else(|error| panic!("{name}: V5 step: {error:?}"));
+                assert_eq!(session.state.objects.get(land).zone, Zone::Hand, "{name}");
+                assert_eq!(
+                    session.state.objects.get(island).zone,
+                    Zone::Battlefield,
+                    "{name}"
+                );
+            }
+        }
     }
 }
