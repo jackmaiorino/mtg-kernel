@@ -201,6 +201,10 @@ struct MagePlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RunnerV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    hallow_batch: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hallow_packet: Option<(u32, u32, u32)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     hallow_capture: Option<Vec<HallowChoiceV1>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     hallow_prepared: Vec<(HallowChoiceV1, HallowPreventionV1)>,
@@ -636,6 +640,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     // The installer is limited to this disposable atomic replay. It never
     // returns a Runner or installs one in an actual/restored game.
     replay.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
+        hallow_batch: None,
+        hallow_packet: None,
         hallow_capture: None,
         hallow_prepared: Vec::new(),
         kinship_start: None,
@@ -1018,7 +1024,7 @@ fn hallow_decision(choice: &HallowChoiceV1) -> Decision {
 /// checkpoint. Completed answers are replayed, never inferred from a slot.
 pub(crate) fn choose_hallow(
     state: &mut GameState,
-    choice: HallowChoiceV1,
+    mut choice: HallowChoiceV1,
 ) -> Result<Option<HallowPreventionV1>, String> {
     let runner = state
         .engine
@@ -1027,14 +1033,18 @@ pub(crate) fn choose_hallow(
         .as_mut()
         .ok_or("overlapping Hallow damage lacks its enclosing operation")?;
     if let Some(captured) = runner.hallow_capture.as_mut() {
-        // Preview follows physical packet order. Previously confirmed answers
-        // are in APNAP order, which preserves the order within each chooser.
-        // Apply known effects to the disposable state: spending a protected
-        // player's Circle can remove that option from their later packets.
-        let earlier_for_player = captured
-            .iter()
-            .filter(|earlier| earlier.chooser == choice.chooser)
-            .count();
+        let position = runner
+            .hallow_packet
+            .as_mut()
+            .ok_or("Hallow cohort capture lost its original packet ordinal")?;
+        choice.cohort = Some(*position);
+        position.2 = position
+            .2
+            .checked_add(1)
+            .ok_or("Hallow packet step ordinal overflow")?;
+        // A redirect can reveal an active-player choice after a confirmed
+        // nonactive-player choice. Match the original packet/step, never a
+        // freshly sorted seat offset, while applying confirmed mutations.
         let confirmed = runner.answers[runner.cursor..]
             .iter()
             .map_while(|answer| match answer {
@@ -1043,21 +1053,47 @@ pub(crate) fn choose_hallow(
                 }
                 _ => None,
             })
-            .filter(|(expected, _)| expected.chooser == choice.chooser)
-            .nth(earlier_for_player)
-            .filter(|(expected, prevention)| *expected == &choice && choice.allows(*prevention))
-            .map(|(_, prevention)| prevention);
+            .find(|(expected, _)| expected.cohort == choice.cohort);
+        let confirmed = if let Some((expected, prevention)) = confirmed {
+            if expected != &choice || !choice.allows(prevention) {
+                return Err("Hallow cohort changed a confirmed packet or replacement step".into());
+            }
+            Some(prevention)
+        } else {
+            None
+        };
         captured.push(choice);
         return Ok(confirmed);
     }
     if !runner.hallow_prepared.is_empty() {
         let (expected, prevention) = runner.hallow_prepared.remove(0);
+        choice.cohort = expected.cohort;
         if expected != choice {
             return Err("Hallow batch changed its effective damage packet".into());
         }
         return Ok(Some(prevention));
     }
     request_hallow(state, choice)
+}
+
+pub(crate) fn begin_hallow_preview_packet(
+    state: &mut GameState,
+    ordinal: usize,
+) -> Result<(), String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Hallow packet preview lacks its original operation")?;
+    runner.hallow_packet = Some((
+        runner
+            .hallow_batch
+            .ok_or("Hallow preview lost its batch ordinal")?,
+        u32::try_from(ordinal).map_err(|_| "Hallow packet ordinal overflow")?,
+        0,
+    ));
+    Ok(())
 }
 
 fn request_hallow(
@@ -1165,6 +1201,19 @@ pub(crate) fn prepare_hallow_batch(
     if runner.hallow_capture.is_some() || !runner.hallow_prepared.is_empty() {
         return Err("Hallow damage batch nested inside an unfinished packet cohort".into());
     }
+    let batch = match runner.hallow_batch {
+        None => 0,
+        Some(batch) => batch
+            .checked_add(1)
+            .ok_or("Hallow batch ordinal overflow")?,
+    };
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .hallow_batch = Some(batch);
     let mut projected = state.clone();
     projected
         .engine
@@ -1183,9 +1232,41 @@ pub(crate) fn prepare_hallow_batch(
         .hallow_capture
         .take()
         .ok_or("Hallow preview lost its capture")?;
-    let mut order: Vec<usize> = (0..choices.len()).collect();
-    order.sort_by_key(|at| usize::from(choices[*at].chooser != state.active_player));
     let mut answers = vec![None; choices.len()];
+    // Revalidate the existing chronological prefix before considering any
+    // newly exposed menu. Sorting that prefix again can move a dependent
+    // choice ahead of the answer which made it exist.
+    loop {
+        let runner = state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .unwrap();
+        let Some(GeneralAnswerV36::HallowV1 {
+            choice: expected, ..
+        }) = runner.answers.get(runner.cursor)
+        else {
+            break;
+        };
+        // A single operation can own several batches or a later singleton.
+        // Their confirmed answers remain for their own invocation.
+        if expected.cohort.is_none_or(|position| position.0 != batch) {
+            break;
+        }
+        let at = choices
+            .iter()
+            .position(|choice| choice.cohort == expected.cohort)
+            .ok_or("Hallow cohort lost a confirmed replacement step")?;
+        if answers[at].is_some() {
+            return Err("Hallow cohort repeated a confirmed replacement step".into());
+        }
+        answers[at] = request_hallow(state, choices[at].clone())?;
+    }
+    let mut order: Vec<usize> = (0..choices.len())
+        .filter(|at| answers[*at].is_none())
+        .collect();
+    order.sort_by_key(|at| usize::from(choices[*at].chooser != state.active_player));
     for at in order {
         let Some(answer) = request_hallow(state, choices[at].clone())? else {
             return Ok(true);
@@ -1457,6 +1538,8 @@ fn replay_general_input_v1(
     let origin = original_sha256(original);
     let returns_aura = potentially_returns_aura(original);
     let runner = RunnerV1 {
+        hallow_batch: None,
+        hallow_packet: None,
         hallow_capture: None,
         hallow_prepared: Vec::new(),
         kinship_start: None,
@@ -4324,6 +4407,8 @@ pub(crate) fn replay_drake_enclosing_owned_v1(
 pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) {
     assert!(!locally_owned(state));
     let runner = RunnerV1 {
+        hallow_batch: None,
+        hallow_packet: None,
         hallow_capture: None,
         hallow_prepared: Vec::new(),
         kinship_start: None,
@@ -4362,6 +4447,8 @@ mod runner_serde_tests {
 
     fn runner(mage_names_v2: bool) -> RunnerV1 {
         RunnerV1 {
+            hallow_batch: None,
+            hallow_packet: None,
             hallow_capture: None,
             hallow_prepared: Vec::new(),
             kinship_start: None,
