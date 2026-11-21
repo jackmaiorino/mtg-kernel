@@ -187,10 +187,24 @@ def chain_start(chain):
     return (chain.get('carry') or {}).get('boundary', 0)
 
 
+def own_files(seg_root, *paths):
+    """A carried chain's segment and the files it indexes resolve inside the segment's own chain directory (no link
+    out of it), so an index never labels another chain's files with the continuation's boundaries."""
+    seg_root = Path(seg_root)
+    chain_dir_real = seg_root.parent.resolve()
+    real_seg = seg_root.resolve()
+    if seg_root.is_symlink() or real_seg.parent != chain_dir_real:
+        raise SystemExit(f'stop: {seg_root} is a link or resolves outside its chain directory')
+    for p in paths:
+        if real_seg not in Path(p).resolve().parents:
+            raise SystemExit(f'stop: {p} resolves outside its segment {seg_root}')
+
+
 def scan(chain, known):
     """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
     stopping at the first update without its receipt (a segment's iterations complete in order)."""
     known += chain_start(chain)  # a boundary from here on: a carried chain's records start at update B
+    carried = bool(chain.get('carry'))
     new = []
     for s, seg in enumerate(chain['segments']):
         if seg['offset'] + seg['updates'] <= known:
@@ -202,7 +216,11 @@ def scan(chain, known):
             if not complete.exists():
                 return new
             receipt = read(complete)
+            if carried:  # a carried chain indexes only its own files (a link to another tree is refused)
+                own_files(seg['root'], complete, receipt['update']['path'])
             doc = read(receipt['update']['path'])
+            if carried:
+                own_files(seg['root'], doc['checkpoint']['path'])
             ledger = receipt.get('chain_ledger') or {}
             new.append({'update': seg['offset'] + i, 'boundary': seg['offset'] + i + 1, 'segment': s, 'iteration': i,
                         'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],

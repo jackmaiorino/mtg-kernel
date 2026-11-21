@@ -636,5 +636,42 @@ class CarryTests(unittest.TestCase):
                          before)
 
 
+    def test_links_into_the_old_chain_are_refused_by_index_retention_and_persist(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        man_path = Path(plan['chains']['c1c']['manifest'])
+        self.assertEqual(self.drive(plan, 'c1c', cont, 3), chains.EXIT_ROOM)
+        cache = retention.IndexCache(man_path)
+        cache.refresh()
+        old_chain = self.node.root / 'chains' / 'c1'
+        before = {p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}
+        seg0 = man_path.parent / 'seg-00000'
+        moved = seg0.with_name('seg-00000.real')
+        seg0.rename(moved)
+        try:
+            seg0.symlink_to(old_chain / 'seg-00001', target_is_directory=True)
+        except OSError:
+            moved.rename(seg0)
+            self.skipTest('no symlink permission on this host')
+        # a fresh index refuses the linked segment
+        retention.index_path(man_path).rename(retention.index_path(man_path).with_suffix('.bak'))
+        with self.assertRaises(SystemExit):
+            retention.index(man_path)
+        retention.index_path(man_path).with_suffix('.bak').rename(retention.index_path(man_path))
+        # a supervise cycle with the existing cache refuses to delete through the link
+        with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')):
+            with self.assertRaises((chains.Stop, SystemExit)):
+                chains.cycle(plan, path, caches={man_path.as_posix(): cache})
+        self.assertEqual({p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}, before)
+        seg0.unlink()
+        moved.rename(seg0)
+        # a persist staging link refuses the driver before any copy
+        (man_path.parent / '.seg-00003.persist').symlink_to(old_chain / 'seg-00001', target_is_directory=True)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', cont, 4), w5box.EXIT_REFUSED)
+        self.assertEqual({p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}, before)
+
+
 if __name__ == '__main__':
     unittest.main()

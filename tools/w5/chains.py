@@ -625,7 +625,7 @@ def carried_segment_ok(man, arm, cdir, native):
     cdir, native = Path(cdir), Path(native)
     carried_dirs_apart(carry, cdir.name, cdir.parent.parent, arm.get('scratch_root'))
     old_root, old_scratch = old_trees(carry['from']['manifest']['path'])
-    targets = [(native, cdir)]
+    targets = [(native, cdir), (cdir / f'.{native.name}.persist', cdir)]
     if arm.get('scratch_root'):
         targets.append((scratch_dir(arm, cdir, native), Path(arm['scratch_root']) / cdir.name))
     for d, parent in targets:
@@ -3037,6 +3037,11 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
             sample = replay_sample.protected(root, c['arm'], n, c['seed_root'], info['chain'], fresh)
             doc['trajectories'] = [i for i in doc['trajectories'] if i['path'] not in sample]
         (root / 'retention').mkdir(parents=True, exist_ok=True)
+        if (info.get('chain') or {}).get('carry'):  # a carried chain deletes only its own files
+            own = Path(info['path']).parent.resolve()
+            stray = [i['path'] for i in doc['checkpoints'] + doc['trajectories']
+                     if own not in Path(i['path']).resolve().parents]
+            require(not stray, f'{n}: retention would delete files outside its chain directory: {stray[:3]}')
         removed = retention.apply(doc, root / 'retention' / f'{n}.jsonl')
         if counter is not None:
             counter.invalidate([i['path'] for i in doc['checkpoints'] + doc['trajectories']])
