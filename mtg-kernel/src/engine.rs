@@ -16257,6 +16257,8 @@ pub(crate) fn validate_pending_cast(
                         })
                 })
     };
+    let graveyard_choice =
+        crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, pending.origin_zone, method);
     match method {
         CastMethodV4::Normal => {
             // `move_to_stack` clears `ObjectStateV4::on_adventure`;
@@ -16363,12 +16365,7 @@ pub(crate) fn validate_pending_cast(
                 || (!has_flashback_v1(state, pending.spell, origin_generation, def)
                     && !sphinx_lore_cast_v1::granted(pending))
                 || (def.escape.is_some() && !sphinx_lore_cast_v1::granted(pending))
-                || (pending.cast_mode != Some(CastMode::Normal)
-                    && !crate::eternal_legacy_e8a_v1::graveyard_life_choice(
-                        def,
-                        pending.origin_zone,
-                        method,
-                    ))
+                || (pending.cast_mode != Some(CastMode::Normal) && !graveyard_choice)
             {
                 return Err("flashback cast has a noncanonical origin or definition".to_string());
             }
@@ -16385,12 +16382,7 @@ pub(crate) fn validate_pending_cast(
                 || (def.additional_cost.is_some() && !compound_cast_cost_v1::supports_escape(def))
                 || def.kicker_cost.is_some()
                 || def.generic_cost_reduction.is_some()
-                || (pending.cast_mode != Some(CastMode::Normal)
-                    && !crate::eternal_legacy_e8a_v1::graveyard_life_choice(
-                        def,
-                        pending.origin_zone,
-                        method,
-                    ))
+                || (pending.cast_mode != Some(CastMode::Normal) && !graveyard_choice)
             {
                 return Err("escape cast has a noncanonical origin or definition".to_string());
             }
@@ -16795,8 +16787,6 @@ pub(crate) fn validate_pending_cast(
         && (!resolution_cast_v1::free_cast(state, pending.spell)
             || crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative)
                 .is_some());
-    let graveyard_choice =
-        crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, pending.origin_zone, method);
     let seeded_cast_mode =
         if (method == CastMethodV4::Normal && has_cast_mode_choice) || graveyard_choice {
             None
@@ -16814,10 +16804,12 @@ pub(crate) fn validate_pending_cast(
         pending.optional_additional_cost_paid.is_none()
     } && pending.optional_additional_cost_chosen.is_empty()
         && !pending.optional_additional_cost_selection_finished;
+    // Earlier snapshots preselected discard for a flashback or escape.
+    let old_discard_seed = graveyard_choice
+        && method != CastMethodV4::Normal
+        && pending.cast_mode == Some(CastMode::Normal);
     let later_fields_are_seeded = |require_seeded_cast_mode: bool| {
-        (!require_seeded_cast_mode || pending.cast_mode == seeded_cast_mode
-            // Earlier snapshots preselected discard for a flashback or escape.
-            || (graveyard_choice && method != CastMethodV4::Normal && pending.cast_mode == Some(CastMode::Normal)))
+        (!require_seeded_cast_mode || pending.cast_mode == seeded_cast_mode || old_discard_seed)
             && pending.sacrifice_chosen.is_empty()
             && pending.optional_additional_cost_chosen.is_empty()
             && !pending.optional_additional_cost_selection_finished

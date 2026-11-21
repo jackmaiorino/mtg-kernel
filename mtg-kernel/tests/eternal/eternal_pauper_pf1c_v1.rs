@@ -703,7 +703,8 @@ fn bitter_triumph_escape_can_pay_life_without_a_discard_and_checks_available_lif
     );
     state.players[0].life = 4;
     cast(&mut state, source, &[Target::Object(target)]);
-    for id in cards {
+    // With one candidate left the ordinary escape cost pays it automatically.
+    for id in cards.into_iter().take(2) {
         payment_pick(&mut state, CostKind::ExileFromGraveyard, id);
     }
     assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
@@ -794,7 +795,8 @@ fn bitter_triumph_escape_or_snapcaster_can_choose_the_life_payment_while_discard
         );
         act(&mut state, Action::ChooseCastMode(CastMode::Alternative));
         if !flashback {
-            for id in cards {
+            // With one candidate left the ordinary escape cost pays it automatically.
+            for id in cards.into_iter().take(2) {
                 payment_pick(&mut state, CostKind::ExileFromGraveyard, id);
             }
         }
@@ -852,8 +854,8 @@ fn bitter_triumph_retrace_keeps_its_land_cost_with_either_additional_payment() {
             ));
             act(&mut state, Action::ChooseEffectOption(0));
             payment_pick(&mut state, CostKind::DiscardCards, spare);
+            payment_pick(&mut state, CostKind::DiscardCards, land);
         }
-        payment_pick(&mut state, CostKind::DiscardCards, land);
         assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
         let item = state.stack.last().unwrap();
         assert_eq!(
