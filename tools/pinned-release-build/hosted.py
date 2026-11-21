@@ -55,7 +55,19 @@ SOURCES = (
     BATCHBOUND_SOURCE_MERGED,
     BATCHBOUND_GROUPS_SOURCE_MERGED,
 )
-IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
+# The image follows the host (this guard branch only): the amd64 image for the portable x86-64 build (unchanged),
+# and on an arm64 hosted runner the linux/arm64 member of the python:3.12-slim-bookworm index 935c3c5b... that the
+# Mac's native trainer 7cff4ff3 was built in, for a native aarch64 build of the same source. No variant on aarch64.
+IMAGES = {
+    "x86_64": ("linux/amd64",
+               "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"),
+    "aarch64": ("linux/arm64",
+                "mirror.gcr.io/library/python@sha256:df540bfd30bd380e89a349611ce42aa67bcb542d58c047706616eb6ba2f86a1b"),
+}
+ARCH = platform.machine() if platform.machine() in IMAGES else "x86_64"
+if ARCH == "aarch64" and TARGET_CPU != "default":
+    raise SystemExit("an aarch64 build takes no PINNED_TARGET_CPU variant")
+PLATFORM, IMAGE = IMAGES[ARCH]
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2
 GROWTH = 5 * GIB
@@ -298,7 +310,7 @@ def run(root, source, wall):
             require(daemon.poll() is None, f"private Docker daemon exited {daemon.returncode}")
             resources.pause()
         resources.check()
-        builder = start([*docker, "run", "--name", CONTAINER, "--network=host", "--platform=linux/amd64",
+        builder = start([*docker, "run", "--name", CONTAINER, "--network=host", "--platform=" + PLATFORM,
                          "--cpus=4", "--memory=12g", "--memory-swap=28g", "--sig-proxy=false",
                          "--env", "PINNED_TARGET_CPU=" + TARGET_CPU,
                          "--mount", f"type=bind,src={work},dst=/work",
@@ -353,7 +365,7 @@ def run(root, source, wall):
                 cleanup_errors.append(f"owned swap verification: {exc}")
         receipt = {"schema": "pinned-release-hosted-build/v1", "pass": error is None and not cleanup_errors,
                    "source_commit": source, "image": IMAGE, "work_root": str(root), "output": str(root / "work/out"),
-                   "target_cpu": TARGET_CPU,
+                   "target_cpu": TARGET_CPU, "arch": ARCH, "platform": PLATFORM,
                    "guard_sha256": guard_sha, "build_helper_sha256": helper_sha,
                    "limits": {"minimum_start_free_bytes": FREE_FLOOR + TOTAL_GROWTH, "free_floor_bytes": FREE_FLOOR,
                               "growth_bytes": TOTAL_GROWTH, "build_growth_bytes": GROWTH, "owned_swap_bytes": SWAP,
@@ -384,8 +396,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         require(0 < args.wall_seconds <= MAX_WALL, f"wall limit must be 1 to {MAX_WALL} seconds")
-        require(sys.platform.startswith("linux") and platform.machine() == "x86_64" and os.geteuid() == 0,
-                "run the hosted guard as root on Linux x86-64")
+        require(sys.platform.startswith("linux") and platform.machine() in IMAGES and os.geteuid() == 0,
+                "run the hosted guard as root on Linux x86-64 or aarch64")
         os.umask(0o022)
         create_root(args.work_root)
     except (OSError, ValueError) as exc:

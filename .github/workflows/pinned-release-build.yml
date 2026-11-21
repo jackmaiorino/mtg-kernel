@@ -23,6 +23,14 @@ on:
           - x86-64-v3
           - znver5
           - znver3
+      runner:
+        description: Hosted runner (ubuntu-24.04-arm builds natively for aarch64 Linux; default only)
+        required: false
+        default: ubuntu-24.04
+        type: choice
+        options:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
 
 permissions:
   contents: read
@@ -37,7 +45,7 @@ jobs:
     if: >-
       github.repository == 'jackmaiorino/mtg-kernel' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
     timeout-minutes: 120
     env:
       BUILD_SOURCE: ${{ inputs.source_commit || 'a30c3769f1ef3a7b569ab52814688141969d877f' }}
@@ -107,7 +115,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           # A target-flag variant's bundle says so in its name; the portable build's name is unchanged.
-          name: pinned-release-${{ github.run_id }}${{ (inputs.target_cpu && inputs.target_cpu != 'default') && format('-{0}', inputs.target_cpu) || '' }}
+          name: pinned-release-${{ github.run_id }}${{ (inputs.target_cpu && inputs.target_cpu != 'default') && format('-{0}', inputs.target_cpu) || '' }}${{ inputs.runner == 'ubuntu-24.04-arm' && '-aarch64' || '' }}
           path: |
             ${{ steps.capacity.outputs.root }}/*.json
             ${{ steps.capacity.outputs.root }}/*.log

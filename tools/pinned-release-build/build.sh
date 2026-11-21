@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Usage: build.sh SOURCE_COMMIT /work/out
-# Use the amd64 image mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93.
+# Use the amd64 image mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93,
+# or on an arm64 host (this guard branch only) the arm64 image mirror.gcr.io/library/python@sha256:df540bfd30bd380e89a349611ce42aa67bcb542d58c047706616eb6ba2f86a1b
+# (the linux/arm64 member of python:3.12-slim-bookworm index 935c3c5b...): a native aarch64-unknown-linux-gnu build
+# of the same source with the same Rust release, profile and Cargo settings, and no target-flag variant.
 # The launcher owns the image pin, target-volume admission, disk and memory monitoring, and wall limit.
 set -euo pipefail
 umask 022
@@ -34,7 +37,14 @@ fi
 export PINNED_RUSTFLAGS="$rustflags" PINNED_VARIANT="$variant" PINNED_MANIFEST_SCHEMA="$manifest_schema"
 printf 'Build variant: %s; manifest schema: %s; target flags: %s
 ' "$variant" "$manifest_schema" "${rustflags:-none}" >&2
-[[ $EUID == 0 && $(uname -m) == x86_64 ]]
+arch=$(uname -m)
+if [[ $arch == aarch64 && $variant != default ]]; then
+    printf 'An aarch64 build takes no target-flag variant
+' >&2
+    exit 2
+fi
+[[ $EUID == 0 && ( $arch == x86_64 || $arch == aarch64 ) ]]
+export PINNED_ARCH="$arch"
 grep -qx 'VERSION_CODENAME=bookworm' /etc/os-release
 [[ $(realpath -e -- /work) == /work && -d /work && -w /work ]]
 readonly work=/work/build
@@ -73,7 +83,7 @@ ld_version=$(ld --version)
 dpkg-query -W -f='${binary:Package}\t${Version}\n' >"$out/debian-packages.tsv"
 
 check_stop
-"$python" -B - "$work" "$rust" "$out" "/work/STOP" <<'PY'
+"$python" -B - "$work" "$rust" "$out" "/work/STOP" "$arch" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -82,17 +92,26 @@ import sys
 import tempfile
 from urllib.request import urlopen
 
-work, prefix, out, stop = map(Path, sys.argv[1:])
-components = (
-    ("rustc", 78645148, "0a6b16ca476461c6238f48efcb74a7aa08a3983e61adf587f208ba48504d87e1"),
-    ("cargo", 10972128, "03595624775204f80ff3a67986f69c8918e4cd311877ced635108888013a1e39"),
-    ("rust-std", 29846424, "74109ee2c19098f1d7122087dd338a8f643203b3ce678c9d58169db733e17a03"),
-)
+work, prefix, out, stop = map(Path, sys.argv[1:5])
+arch = sys.argv[5]
+components = {
+    "x86_64": (
+        ("rustc", 78645148, "0a6b16ca476461c6238f48efcb74a7aa08a3983e61adf587f208ba48504d87e1"),
+        ("cargo", 10972128, "03595624775204f80ff3a67986f69c8918e4cd311877ced635108888013a1e39"),
+        ("rust-std", 29846424, "74109ee2c19098f1d7122087dd338a8f643203b3ce678c9d58169db733e17a03"),
+    ),
+    # The same 1.94.1 dist of 2026-03-26 for aarch64 (sizes and SHA-256 as published beside each archive).
+    "aarch64": (
+        ("rustc", 61172248, "fb4ff31b71d7a2b6a793fb88fac18429befe807ddab3472bf87cbf92b6e5fbf6"),
+        ("cargo", 10396596, "69a99d7f0af6d9a86c89c1f991953e924d9910eb06847524e3833063338e3923"),
+        ("rust-std", 28467936, "2be613d5525a4ce8b7e2a1a55beeb64198314507be0d2da5aea4fd166cdde21f"),
+    ),
+}[arch]
 verified = []
 for name, size, digest in components:
     if stop.exists() or stop.is_symlink():
         sys.exit(75)
-    stem = f"{name}-1.94.1-x86_64-unknown-linux-gnu"
+    stem = f"{name}-1.94.1-{arch}-unknown-linux-gnu"
     url = f"https://static.rust-lang.org/dist/2026-03-26/{stem}.tar.xz"
     # Install each verified package before downloading the next one.
     with tempfile.TemporaryDirectory(prefix=f"rust-{name}-", dir=work) as temporary:
@@ -160,7 +179,7 @@ for bin in "${bins[@]}"; do
         env -i PATH="$PATH" HOME="$work/home" TMPDIR="$work/tmp" LC_ALL="$LC_ALL" TZ="$TZ" \
             GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
             SOURCE_DATE_EPOCH="$source_epoch" CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
-            CARGO_INCREMENTAL=0 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc \
+            CARGO_INCREMENTAL=0 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc             CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc \
             "${variant_env[@]}" \
             cargo build --release --locked --jobs 2 -p mtg-kernel --bin "$bin" "${variant_args[@]}"
     )
@@ -199,9 +218,10 @@ def executable(name):
     path = out / name
     headers = cmd("readelf", "-h", "-l", path)
     libraries = cmd("ldd", path)
-    if ("Advanced Micro Devices X86-64" not in headers
-            or "/lib64/ld-linux-x86-64.so.2" not in headers or "not found" in libraries):
-        raise ValueError(f"{name} must be a loadable Linux x86-64 ELF")
+    machine, loader = {"x86_64": ("Advanced Micro Devices X86-64", "/lib64/ld-linux-x86-64.so.2"),
+                       "aarch64": ("AArch64", "/lib/ld-linux-aarch64.so.1")}[os.environ["PINNED_ARCH"]]
+    if machine not in headers or loader not in headers or "not found" in libraries:
+        raise ValueError(f"{name} must be a loadable Linux {os.environ['PINNED_ARCH']} ELF")
     mapped = [re.sub(r" \(0x[0-9a-f]+\)$", "", line.strip()) for line in libraries.splitlines()]
     return dict(pin(path), runtime_libraries=mapped)
 
