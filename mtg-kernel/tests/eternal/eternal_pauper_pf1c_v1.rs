@@ -1980,7 +1980,7 @@ fn monstrous_emergence_escape_pays_three_exiles_and_uses_its_chosen_creature() {
         put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
         let grave =
             ["Forest", "Swamp", "Island"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
-        let target = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let target = put(&mut state, P1, "Mulldrifter", Zone::Battlefield);
         let spell = put(&mut state, P0, "Monstrous Emergence", Zone::Graveyard);
         pool(&mut state, P0, &[ManaColor::G], 1);
         assert!(
@@ -1992,7 +1992,7 @@ fn monstrous_emergence_escape_pays_three_exiles_and_uses_its_chosen_creature() {
         } else {
             Zone::Battlefield
         };
-        let creature = put(&mut state, P0, "Grizzly Bears", origin);
+        let creature = put(&mut state, P0, "Kor Skyfisher", origin);
         cast(&mut state, spell, &[Target::Object(target)]);
         for object in grave {
             payment_pick(&mut state, CostKind::ExileFromGraveyard, object);
@@ -2030,7 +2030,7 @@ fn monstrous_emergence_retrace_reveals_the_creature_land_it_discards() {
     let mut state = plains();
     retrace_emblem(&mut state);
     let spell = put(&mut state, P0, "Monstrous Emergence", Zone::Graveyard);
-    let target = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let target = put(&mut state, P1, "Mulldrifter", Zone::Battlefield);
     let land = put(&mut state, P0, "Dryad Arbor", Zone::Hand);
     let generation = state.objects.get(land).zone_change_count;
     pool(&mut state, P0, &[ManaColor::G], 1);
