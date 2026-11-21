@@ -153,7 +153,7 @@ fn validate(
         .map(|c| hex(&c.mainboard_sha256_v1()));
     validate_episode_records_with_learner_sampler_v1(episode, &hashes, decisions, terminal, None)?;
     if episode.priority_pass_offset.is_some() {
-        validate_pass_offset_marks_v1(episode, decisions)?;
+        validate_pass_offset_marks_v1(episode, decisions, terminal)?;
     }
     Ok(())
 }
@@ -341,7 +341,7 @@ fn validation_rejects_a_tampered_mark() {
     );
     let (decisions, terminal) = play(&e);
     validate(&e, &decisions, &terminal).unwrap();
-    validate_pass_offset_marks_v1(&e, &decisions).unwrap();
+    validate_pass_offset_marks_v1(&e, &decisions, &terminal).unwrap();
     let marked = decisions
         .iter()
         .position(|row| row.pass_offset_action.is_some())
@@ -366,7 +366,7 @@ fn validation_rejects_a_tampered_mark() {
     }
     for (label, copy) in &cases {
         assert!(
-            validate_pass_offset_marks_v1(&e, copy).is_err(),
+            validate_pass_offset_marks_v1(&e, copy, &terminal).is_err(),
             "{label} mark accepted by the replay"
         );
         assert!(validate(&e, copy, &terminal).is_err(), "{label}");
@@ -438,4 +438,36 @@ fn paths_that_would_ignore_the_field_refuse_it() {
     let error =
         refuse_priority_pass_offset_v1([&plain(), &windows_episode(0.0)], "a path").unwrap_err();
     assert_eq!(error, "a path refuses the priority pass offset");
+}
+
+/// The replay must end at exactly the recorded terminal: a game cut short by
+/// the policy-step cap cannot pass for the natural ending of the full game.
+#[test]
+fn the_replay_must_end_at_the_recorded_terminal() {
+    let full = episode(
+        ["Burn", "Spy"],
+        0x9a55_3000,
+        1,
+        false,
+        Some([ActionWindowsV1, HarnessV2]),
+        Some(1.0e6),
+    );
+    let (rows, natural) = play(&full);
+    assert_eq!(
+        natural.terminal_classification,
+        TerminalClassificationV1::Natural
+    );
+    validate_pass_offset_marks_v1(&full, &rows, &natural).unwrap();
+    let mut capped = full.clone();
+    capped.max_policy_steps = (rows.len() / 2) as u64;
+    let (prefix, truncated) = play(&capped);
+    assert!(prefix.len() <= rows.len() / 2);
+    assert_ne!(
+        truncated.terminal_classification,
+        TerminalClassificationV1::Natural
+    );
+    validate_pass_offset_marks_v1(&capped, &prefix, &truncated).unwrap();
+    let error = validate_pass_offset_marks_v1(&capped, &prefix, &natural).unwrap_err();
+    assert!(error.contains("another terminal"), "{error}");
+    assert!(validate(&capped, &prefix, &natural).is_err());
 }

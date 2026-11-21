@@ -3315,7 +3315,7 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         t.learner_sampler.as_deref(),
     )?;
     if t.episode.priority_pass_offset.is_some() {
-        validate_pass_offset_marks_v1(&t.episode, &t.decisions)?;
+        validate_pass_offset_marks_v1(&t.episode, &t.decisions, &t.terminal)?;
     }
     Ok(())
 }
@@ -3325,12 +3325,15 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
 /// every decision's `pass_offset_action` to be exactly the Pass row the
 /// session reports for a new priority window, and absent everywhere else, so
 /// a record can neither claim a row that was not a new window nor omit one
-/// that was. The replay must end at a terminal after the last row. Only for an
+/// that was. The replay must end, after the last row, at exactly the recorded
+/// terminal (so a replay that stops at a cap or a halt cannot stand for a
+/// recorded natural ending). Only for an
 /// episode carrying the field (an episode without it has no marks, which
 /// record validation checks row by row).
 fn validate_pass_offset_marks_v1(
     episode: &ExpandedEpisodeV1,
     decisions: &[DecisionRecordV1],
+    terminal: &RlSessionTerminalV1,
 ) -> Result<(), String> {
     ensure(
         episode.priority_pass_offset_v1()?.is_some(),
@@ -3354,10 +3357,15 @@ fn validate_pass_offset_marks_v1(
             .step(d.episode_id, d.step, row.selected)
             .map_err(err)?;
     }
-    ensure(
-        matches!(session.current_response(), FastActorResponseV1::Terminal(_)),
-        "pass offset replay continues past the last decision",
-    )
+    match session.current_response() {
+        FastActorResponseV1::Terminal(replayed) => ensure(
+            replayed == *terminal,
+            "pass offset replay ends at another terminal than the recorded one",
+        ),
+        FastActorResponseV1::Decision(_) => {
+            Err("pass offset replay continues past the last decision".into())
+        }
+    }
 }
 
 /// An episode with `opening` records its opening exactly once, with the
