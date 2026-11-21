@@ -582,11 +582,21 @@ class Dispatcher:
         with state_lock(state_path):
             self._prune_locked(state_path, current)
 
+    @staticmethod
+    def storage_key(host: Host) -> str:
+        """Retention records belong to a remote storage, not to a host name: the name plus a hash of
+        how it is reached (ssh target, container or VM wrap, transport and scratch). A name reused for
+        another machine starts with no ownership there."""
+        reach = json.dumps([host.kind, host.ssh, host.remote_wrap, getattr(host, "transport", "shell"),
+                            getattr(host, "agent_wrap", ""), host.scratch])
+        return f"{host.name}#{hashlib.sha256(reach.encode()).hexdigest()[:16]}"
+
     def _prune_locked(self, state_path: Path, current: set) -> None:
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
         keep_paths = {p for p, _ in current}
         for host in self.hosts:
-            previous = state.get(host.name, {})
+            key = self.storage_key(host)
+            previous = state.get(key, {})
             if not isinstance(previous, dict):
                 previous = {}  # an older state format holds no hashes: forget, never delete
             now = self.pushed.get(host.name, {})
@@ -599,7 +609,7 @@ class Dispatcher:
                         self.transports[host.name].remove_file(path)
                         self.note(event="pruned", host=host.name, path=path)
                     del merged[path]
-            state[host.name] = dict(sorted(merged.items()))
+            state[key] = dict(sorted(merged.items()))
         stage = state_path.with_name(f"{state_path.name}.{uuid.uuid4().hex}.stage")
         stage.write_text(json.dumps(state, indent=1))
         os.replace(stage, state_path)

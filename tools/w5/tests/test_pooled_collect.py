@@ -191,6 +191,25 @@ class PooledCollectTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
 
+    def test_a_host_name_reused_for_another_machine_inherits_no_ownership(self):
+        config = self.config([("a", 1.0, "x86")])
+        host = config["hosts"][0]
+        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
+        config["state_path"] = str(self.root / "pushed.json")
+        pc.Dispatcher(config, self.transports(config)).collect(self.command_path, fake_merge)
+        # The same name now reaches another machine that happens to hold the old checkpoint.
+        host.ssh = ["ssh", "machine-y"]
+        other = self.transports(config)
+        other["a"].files[str(self.checkpoint)] = pc.sha256_file(self.checkpoint)
+        new = self.root / "learner" / "checkpoint-2.json"
+        new.write_bytes(b"next checkpoint")
+        self.command["source"]["checkpoint"] = {"path": str(new), "sha256": pc.sha256_file(new)}
+        nxt = self.root / "run" / "iterations" / "000017" / "attempt-000000"
+        nxt.mkdir(parents=True)
+        (nxt / "collect-command.json").write_text(json.dumps(self.command))
+        pc.Dispatcher(config, other).collect(nxt / "collect-command.json", fake_merge)
+        self.assertIn(str(self.checkpoint), other["a"].files, "never installed there, never pruned there")
+
     def test_a_pin_installed_by_another_process_first_is_never_pruned(self):
         config = self.config([("a", 1.0, "x86")])
         host = config["hosts"][0]
@@ -210,7 +229,8 @@ class PooledCollectTests(unittest.TestCase):
         racing.pin_status = status_then_race
         pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
         state = json.loads((self.root / "pushed.json").read_text())
-        self.assertNotIn(str(self.checkpoint), state["a"], "not ours: never recorded, never pruned")
+        self.assertNotIn(str(self.checkpoint), state[pc.Dispatcher.storage_key(host)],
+                         "not ours: never recorded, never pruned")
 
     def test_concurrent_dispatchers_sharing_retention_state_keep_every_record(self):
         state_path = self.root / "shared-pushed.json"
@@ -234,7 +254,7 @@ class PooledCollectTests(unittest.TestCase):
             thread.join()
         self.assertEqual(errors, [])
         state = json.loads(state_path.read_text())
-        self.assertEqual(sorted(state), ["h0", "h1", "h2", "h3"])
+        self.assertEqual(sorted(k.split("#")[0] for k in state), ["h0", "h1", "h2", "h3"])
         self.assertTrue(all(len(state[h]) == 3 for h in state))
         self.assertEqual([p.name for p in self.root.glob("shared-pushed.json*.stage")], [])
 
@@ -336,7 +356,8 @@ class PooledCollectTests(unittest.TestCase):
             self.assertEqual(inputs, [old])
             self.assertIn(str(new), transport.files)
         state = json.loads((self.root / "pushed.json").read_text())
-        self.assertEqual(sorted(state["a"]), sorted([str(new), str(imp), str(leaf)]))
+        key = pc.Dispatcher.storage_key(config["hosts"][0])
+        self.assertEqual(sorted(state[key]), sorted([str(new), str(imp), str(leaf)]))
         for transport in transports.values():
             self.assertIn(str(leaf), transport.files)
 

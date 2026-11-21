@@ -42,7 +42,22 @@ def write_run(root: Path, recorded_root: str, states, trajectories, backend="poo
             "update": recorded(update_dir / "update.json"), "collection": recorded(collect / "collection.json")}))
 
 
+LOCAL = "native-cpu-parallel-episodes-v1"
+
+
+def write_ref(*args, **kwargs):
+    """A single-process reference run (the control)."""
+    kwargs.setdefault("backend", LOCAL)
+    write_run(*args, **kwargs)
+
+
 class PooledProofTests(unittest.TestCase):
+    def test_a_pooled_reference_is_refused(self):
+        write_run(self.root / "ref", "/srv/run", ["s0"], [["a"]])
+        write_run(self.root / "pool", "/srv/run", ["s0"], [["a"]])
+        self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
+
+
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="pooled-proof-test-"))
 
@@ -50,7 +65,7 @@ class PooledProofTests(unittest.TestCase):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def test_same_root_requires_equal_states_and_trajectories(self):
-        write_run(self.root / "ref", "/srv/run", ["s0", "s1"], [["a", "b"], ["c", "d"]])
+        write_ref(self.root / "ref", "/srv/run", ["s0", "s1"], [["a", "b"], ["c", "d"]])
         write_run(self.root / "pool", "/srv/run", ["s0", "s1"], [["a", "b"], ["c", "d"]], "pooled-collection-shards-v1")
         report = pp.compare(self.root / "ref", self.root / "pool", same_root=True)
         self.assertTrue(report["pass"])
@@ -63,7 +78,7 @@ class PooledProofTests(unittest.TestCase):
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool4", same_root=True)["pass"])
 
     def test_different_roots_require_equal_states_only(self):
-        write_run(self.root / "ref", "/srv/runA", ["s0", "s1"], [["a"], ["c"]])
+        write_ref(self.root / "ref", "/srv/runA", ["s0", "s1"], [["a"], ["c"]])
         write_run(self.root / "pool", "/srv/runB", ["s0", "s1"], [["a"], ["other"]])
         report = pp.compare(self.root / "ref", self.root / "pool")
         self.assertTrue(report["pass"])
@@ -72,29 +87,29 @@ class PooledProofTests(unittest.TestCase):
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool3")["pass"])
 
     def test_a_missing_iteration_fails(self):
-        write_run(self.root / "ref", "/r", ["s0", "s1"], [["a"], ["b"]])
+        write_ref(self.root / "ref", "/r", ["s0", "s1"], [["a"], ["b"]])
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], planned=2)
         report = pp.compare(self.root / "ref", self.root / "pool")
         self.assertFalse(report["pass"])
         self.assertEqual(report["rows"][1]["missing_in"], "pooled")
 
     def test_the_same_iteration_missing_from_both_runs_fails(self):
-        write_run(self.root / "ref", "/r", ["s0"], [["a"]], planned=2)
+        write_ref(self.root / "ref", "/r", ["s0"], [["a"]], planned=2)
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], planned=2)
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
 
     def test_an_unfinished_run_fails(self):
-        write_run(self.root / "ref", "/r", ["s0"], [["a"]])
+        write_ref(self.root / "ref", "/r", ["s0"], [["a"]])
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], complete=False)
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool")["pass"])
 
     def test_a_crash_resumed_iteration_is_read_through_its_completion_receipt(self):
-        write_run(self.root / "ref", "/srv/run", ["s0", "s1"], [["a"], ["b"]])
+        write_ref(self.root / "ref", "/srv/run", ["s0", "s1"], [["a"], ["b"]])
         write_run(self.root / "pool", "/srv/run", ["s0", "s1"], [["a"], ["b"]], resumed=(1,))
         self.assertTrue(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
 
     def test_a_receipt_whose_pinned_file_changed_is_refused(self):
-        write_run(self.root / "ref", "/srv/run", ["s0"], [["a"]])
+        write_ref(self.root / "ref", "/srv/run", ["s0"], [["a"]])
         write_run(self.root / "pool", "/srv/run", ["s0"], [["a"]])
         update = self.root / "pool" / "iterations" / "000000" / "attempt-000000" / "update" / "update.json"
         update.write_text(update.read_text().replace("s0", "s9"))
@@ -102,7 +117,7 @@ class PooledProofTests(unittest.TestCase):
             pp.compare(self.root / "ref", self.root / "pool")
 
     def test_a_pooled_tree_collected_locally_fails(self):
-        write_run(self.root / "ref", "/r", ["s0"], [["a"]])
+        write_ref(self.root / "ref", "/r", ["s0"], [["a"]])
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], backend="native-cpu-parallel-episodes-v1")
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
 

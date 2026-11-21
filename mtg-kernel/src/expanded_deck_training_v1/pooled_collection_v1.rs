@@ -122,6 +122,14 @@ fn whole_command_v1(command: &ExpandedTrainingCommandV1) -> Result<WholeCommandV
                 "invalid collection size",
             )?;
             validate_max_non_natural_episode_fraction_v1(*max_non_natural_episode_fraction)?;
+            // The ordinary collector's preflight for the whole command, before any
+            // split: shards would each pass it alone.
+            super::phase1_parallel_collection::validate_collection_workers_v1(*workers)?;
+            ensure(*workers >= 2, "use collect for a single collection worker")?;
+            let mut ids = BTreeSet::new();
+            for episode in episodes.iter() {
+                ensure(ids.insert(&episode.id), "duplicate episode id")?;
+            }
             Ok(WholeCommandV1 {
                 source,
                 episodes,
@@ -872,6 +880,56 @@ mod tests {
         }];
         assert!(shard_commands_v1(&whole, &bad).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The whole command passes the ordinary collector's preflight before any
+    /// split: an episode id repeated across a shard boundary, or a worker count
+    /// one process would refuse, is refused when sharding and when merging.
+    #[test]
+    fn a_whole_command_the_ordinary_collector_refuses_is_refused_pooled() {
+        let (root, source, mut episodes) = fixture_v1("preflight", 4);
+        episodes[3].id = episodes[0].id.clone();
+        let whole = whole_command_for_test_v1(
+            &source,
+            &episodes,
+            0.0,
+            RecordEnvelopeV1::default(),
+            root.join("merged"),
+        );
+        let specs = vec![
+            ShardSpecV1 {
+                episodes: 2,
+                workers: 2,
+                output_directory: root.join("a"),
+            },
+            ShardSpecV1 {
+                episodes: 2,
+                workers: 2,
+                output_directory: root.join("b"),
+            },
+        ];
+        let error = shard_commands_v1(&whole, &specs).unwrap_err();
+        assert!(error.contains("duplicate episode id"), "got: {error}");
+        let error = merge_shards_v1(&whole, &[root.join("a"), root.join("b")]).unwrap_err();
+        assert!(error.contains("duplicate episode id"), "got: {error}");
+        let (_, _, episodes) = fixture_v1("preflight-workers", 2);
+        for workers in [0usize, 1, 1025] {
+            let mut command = whole_command_for_test_v1(
+                &source,
+                &episodes,
+                0.0,
+                RecordEnvelopeV1::default(),
+                root.join("merged"),
+            );
+            if let ExpandedTrainingCommandV1::CollectParallel { workers: w, .. } = &mut command {
+                *w = workers;
+            }
+            assert!(
+                shard_commands_v1(&command, &specs[..1]).is_err(),
+                "workers {workers} must be refused"
+            );
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     /// A shard command round-trips through its wire form, and a whole

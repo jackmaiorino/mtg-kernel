@@ -12,7 +12,8 @@ Procedure (same root, one host):
     pooled_proof.py compare --same-root ROOT.reference ROOT
 or run the two at the same ROOT on two hosts and compare copies of their receipts.
 
-`compare` passes when both runs completed every planned iteration (each run's `completion.json`
+`compare` passes when the reference collected in one process (never the pooled backend), both runs
+completed every planned iteration (each run's `completion.json`
 says complete, with the same planned count), every iteration of the pooled run was collected by
 the pooled backend, and every iteration's after-state is equal. With `--same-root` (the operator
 states that both runs used the same root) every trajectory hash must be equal too; otherwise they
@@ -100,10 +101,12 @@ def compare(reference: Path, pooled: Path, same_root: bool = False) -> dict:
         states = a["after_state_sha256"] == b["after_state_sha256"]
         trajectories = a["trajectories"] == b["trajectories"]
         pooled_backend = b["collection_backend"] == POOLED_BACKEND
-        ok = states and pooled_backend and (trajectories or not same_root)
+        local_reference = a["collection_backend"] != POOLED_BACKEND  # the control collects in one process
+        ok = states and pooled_backend and local_reference and (trajectories or not same_root)
         failures += not ok
         rows.append({"iteration": name, "after_state_equal": states, "trajectories_equal": trajectories,
-                     "pooled_backend": b["collection_backend"], "pass": ok})
+                     "reference_backend": a["collection_backend"], "pooled_backend": b["collection_backend"],
+                     "pass": ok})
     return {"schema": "mtg-kernel-pooled-proof/v1", "same_root": same_root, "runs_complete": runs_ok,
             "planned_iterations": planned, "iterations": len(rows),
             "passed": len(rows) - failures, "pass": failures == 0 and bool(rows), "rows": rows}
