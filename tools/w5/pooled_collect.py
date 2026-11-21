@@ -186,6 +186,45 @@ def input_closure(command: dict) -> set[tuple[str, str]]:
     return found
 
 
+# The ownership witness: run by the push script right after it created the destination.
+WITNESS_LINK = ("    w=Path(scratch)/'.pooled-owned'/hashlib.sha256(sys.argv[1].encode()).hexdigest()\n"
+                "    w.parent.mkdir(parents=True,exist_ok=True)\n"
+                "    w.unlink(missing_ok=True)  # a stale witness: its file was removed by someone else\n"
+                "    try:\n"
+                "      os.link(dest,w); print('created')\n"
+                "    except OSError:\n"
+                "      print('created-unowned')\n")
+
+REMOVE_OWNED = """import hashlib,os,stat,sys,uuid
+dest,scratch,expected=sys.argv[1:4]
+own=os.path.join(scratch,'.pooled-owned')
+w=os.path.join(own,hashlib.sha256(dest.encode()).hexdigest())
+def ident(p):
+  try: s=os.lstat(p)
+  except FileNotFoundError: return None
+  return (s.st_dev,s.st_ino) if stat.S_ISREG(s.st_mode) else 'other'
+def digest(p):
+  h=hashlib.sha256()
+  with open(p,'rb') as f:
+    for b in iter(lambda: f.read(1<<20),b''): h.update(b)
+  return h.hexdigest()
+mine=ident(w)
+if mine is None or mine=='other':
+  print('not-owned'); sys.exit(0)
+if ident(dest)!=mine:
+  os.unlink(w); print('not-owned'); sys.exit(0)
+aside=os.path.join(own,'aside-'+uuid.uuid4().hex)
+os.rename(dest,aside)
+if ident(aside)==mine and digest(aside)==expected:
+  os.unlink(aside); os.unlink(w); print('removed'); sys.exit(0)
+try:
+  os.link(aside,dest); os.unlink(aside)
+except FileExistsError:
+  os.rename(aside,os.path.join(own,'kept-'+uuid.uuid4().hex))
+print('not-owned')
+"""
+
+
 class state_lock:
     """An exclusive lock beside the retention state file, held across its whole
     read, prune and publish, so concurrent dispatchers sharing it never lose records."""
@@ -317,8 +356,10 @@ class Transport:
     def push(self, local: Path, remote: str, digest: str) -> bool:
         """Installs an immutable pin: a private staged copy, verified, then hard-linked into place.
         An established file is never replaced; a racing copy is accepted only with the same digest.
-        Returns True only when this call created the destination (only then does the dispatcher
-        own it). The collector's filesystem needs hard links."""
+        Returns True only when this call created the destination and linked its ownership witness
+        (`<scratch>/.pooled-owned/<sha256 of the path>`, a second hard link to the same file); only
+        then does the dispatcher own it. The collector's filesystem needs hard links; a pin on another
+        filesystem than the scratch root is installed but never owned, so never pruned."""
         stage_name = f"{remote}.{uuid.uuid4().hex}.stage"
         if self.host.kind == "local":
             destination, stage = Path(remote), Path(stage_name)
@@ -342,7 +383,7 @@ class Transport:
                 stage.unlink(missing_ok=True)
         script = ("import hashlib,os,shutil,sys\n"
                   "from pathlib import Path\n"
-                  "dest,stage,expected=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]\n"
+                  "dest,stage,expected,scratch=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3],sys.argv[4]\n"
                   "def digest(path):\n"
                   "  h=hashlib.sha256()\n"
                   "  with path.open('rb') as f:\n"
@@ -354,13 +395,16 @@ class Transport:
                   "  with f: shutil.copyfileobj(sys.stdin.buffer,f)\n"
                   "  if digest(stage)!=expected: sys.exit('staged pin differs: '+str(dest))\n"
                   "  try:\n"
-                  "    os.link(stage,dest); print('created')\n"
+                  "    os.link(stage,dest)\n"
                   "  except FileExistsError:\n"
                   "    if not dest.is_file() or digest(dest)!=expected:\n"
                   "      sys.exit('existing pin differs: '+str(dest))\n"
                   "    print('existing')\n"
+                  "  else:\n"
+                  + WITNESS_LINK +
                   "finally: stage.unlink(missing_ok=True)\n")
-        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, remote, stage_name, digest))
+        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, remote, stage_name, digest,
+                                                        self.host.scratch))
         with open(local, "rb") as handle:
             result = subprocess.run(self._ssh([command]), stdin=handle, capture_output=True, timeout=600)
         if result.returncode != 0:
@@ -411,6 +455,24 @@ class Transport:
             Path(remote).unlink(missing_ok=True)
         else:
             subprocess.run(self._ssh([f"rm -f -- {shlex.quote(remote)}"]), capture_output=True, timeout=120)
+
+    def remove_owned(self, remote: str, digest: str) -> str:
+        """Deletes `remote` only if it is still the file this dispatcher installed: the same file
+        (device and inode) as its ownership witness, with the expected bytes. The file is first moved
+        aside atomically into the witness directory, checked there and only then deleted; anything else
+        is put back. A restored or replaced copy with the same bytes is another file and is kept; a
+        witness whose file is gone is dropped. Returns "removed" or "not-owned"."""
+        if self.host.kind == "local":
+            result = subprocess.run([sys.executable, "-c", REMOVE_OWNED, remote, self.host.scratch, digest],
+                                    capture_output=True, text=True, timeout=300)
+        else:
+            command = " ".join(shlex.quote(a) for a in ("python3", "-c", REMOVE_OWNED, remote, self.host.scratch, digest))
+            result = subprocess.run(self._ssh([command]), capture_output=True, text=True, timeout=300,
+                                    stdin=subprocess.DEVNULL)
+        outcome = result.stdout.strip().splitlines()[-1:] or [""]
+        if result.returncode != 0 or outcome[0] not in ("removed", "not-owned"):
+            raise RuntimeError(f"{self.host.name}: owned removal of {remote} failed: {result.stderr.strip()[-200:]}")
+        return outcome[0]
 
     def storage_id(self) -> str:
         """The collector storage's generation marker, `<scratch>/.pooled-storage-id`, created once
@@ -656,11 +718,13 @@ class Dispatcher:
             merged = dict(previous) | now
             if host.prune_pushed and host.kind == "ssh":
                 for path in sorted(set(merged) - set(now) - keep_paths):
-                    pin = (path, merged[path])
-                    # Delete only the bytes this dispatcher put there.
-                    if self.transports[host.name].pin_status({pin})[pin] == "ok":
-                        self.transports[host.name].remove_file(path)
-                        self.note(event="pruned", host=host.name, path=path)
+                    # Delete only the very file this dispatcher installed (its ownership witness).
+                    try:
+                        outcome = self.transports[host.name].remove_owned(path, merged[path])
+                    except Exception as error:  # noqa: BLE001  kept for the next collection
+                        self.note(event="prune-failed", host=host.name, path=path, error=str(error)[-200:])
+                        continue
+                    self.note(event="pruned" if outcome == "removed" else "not-owned", host=host.name, path=path)
                     del merged[path]
             state[key] = dict(sorted(merged.items()))
         stage = state_path.with_name(f"{state_path.name}.{uuid.uuid4().hex}.stage")
