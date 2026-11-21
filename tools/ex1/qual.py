@@ -452,10 +452,13 @@ def validate_postboard_exposure(spec, base=None):
     1 <= n <= d <= 2^20 (a bool is not an int), max_swaps not an int in [1, 15], an unknown rule or seat rule, or
     keep_ids that is not a strictly increasing list of card ids (each an int in [0, 65535]; it may be empty).
 
-    The meaning (`postboard_exposure_episode`): an episode is a post-board game with probability n / d; in such a game
-    each exposed seat plays its registered 75 with k' cards exchanged between mainboard and sideboard, k' uniform in
+    The meaning (`postboard_exposure_episode`): a share n / d of the episodes are drawn for exposure; in such a game
+    each exposed seat exchanges k' mainboard positions for k' sideboard positions of its registered 75, k' uniform in
     [1, max_swaps]. `keep_ids` are the card ids that are never taken out of a mainboard (the declared protected set:
-    the lands, so a random exchange cannot remove a deck's mana).
+    the lands, so a random exchange cannot remove a deck's mana). The exchange counts positions, not card names: a
+    position exchanged for a copy of the same card changes nothing, so where a card id is in both lists the number of
+    cards that change can be below k', and a drawn game whose exchanges all cancel stays a game one. The share of
+    post-board games is therefore at most n / d, and equal to it when no deck has a card id in both lists.
 
     With `base` (an OH1/OH2 base), also raises unless every episode can be a post-board game (`check_postboard_base`)."""
     if not isinstance(spec, dict):
@@ -480,16 +483,20 @@ def validate_postboard_exposure(spec, base=None):
     if not (isinstance(keep, list) and all(_is_index(i, 0, POSTBOARD_MAX_CARD_ID) for i in keep)
             and all(a < b for a, b in zip(keep, keep[1:]))):
         raise ValueError("postboard_exposure keep_ids must be a strictly increasing list of card ids in [0, 65535]")
+    normalized = {"share": list(share), "max_swaps": swaps, "rule": rule, "seats": seats, "keep_ids": list(keep)}
     if base is not None:
-        check_postboard_base(base)
-    return {"share": list(share), "max_swaps": swaps, "rule": rule, "seats": seats, "keep_ids": list(keep)}
+        check_postboard_base(base, normalized)
+    return normalized
 
 
-def check_postboard_base(base):
+def check_postboard_base(base, spec=None):
     """Raises ValueError unless every episode of `base` can be turned into a post-board game: it is a game one today
     (`postboard` false, `selected` equal to `registered`), both seats register exactly 60 and 15 card ids (the
     trainer's own registration), it has no reset start and no search opponent (a recorded prefix or a search
-    descriptor belongs to the registered 60), and its entry names an opponent kind the seat rule knows."""
+    descriptor belongs to the registered 60), and its entry names an opponent kind the seat rule knows. With
+    `spec` (a normalized exposure), also raises unless every registration has at least max_swaps mainboard positions
+    outside keep_ids, so the number of positions exchanged is never cut short and stays uniform."""
+    keep = set(spec["keep_ids"]) if spec is not None else None
     for i, item in enumerate(base["iterations"]):
         for j, entry in enumerate(item["episodes"]):
             episode = entry["episode"]
@@ -508,6 +515,10 @@ def check_postboard_base(base):
                         and all(_is_index(c, 0, POSTBOARD_MAX_CARD_ID) for c in main + side)):
                     raise ValueError(f"{where}: postboard_exposure needs registrations of exactly {POSTBOARD_MAIN} "
                                      f"mainboard and {POSTBOARD_SIDE} sideboard card ids")
+                if keep is not None and sum(card not in keep for card in main) < spec["max_swaps"]:
+                    raise ValueError(f"{where}: postboard_exposure needs at least max_swaps ({spec['max_swaps']}) "
+                                     f"mainboard cards outside keep_ids in every registration "
+                                     f"({deck.get('label')!r} has fewer)")
             if not _is_index(episode.get("learner_seat"), 0, 1):
                 raise ValueError(f"{where}: postboard_exposure needs a learner seat of 0 or 1")
             for key in ("reset", "opponent_search"):
@@ -535,11 +546,13 @@ def postboard_exposure_seats(entry):
 
 
 def postboard_exposure_swap(deck, spec, key):
-    """`deck` (a registration `{label, mainboard, sideboard}`) with k' cards exchanged, as a new dict with both lists
-    sorted, or None when the exchange leaves the mainboard as it was. k' = 1 + draw mod max_swaps, lowered to the
-    number of mainboard cards that may leave. The cards out are the k' mainboard positions (of those whose card id is
-    not in keep_ids) with the smallest keys; the cards in are the k' sideboard positions with the smallest keys.
-    `key` is the list that names this seat's draws."""
+    """`deck` (a registration `{label, mainboard, sideboard}`) with k' positions exchanged, as a new dict with both
+    lists sorted, or None when the exchange leaves the mainboard as it was (every position was exchanged for a copy
+    of the same card). k' = 1 + draw mod max_swaps; a base admitted by `check_postboard_base` always has that many
+    movable positions (a direct caller with fewer gets as many as there are). The positions out are the k' mainboard
+    positions (of those whose card id is not in keep_ids) with the smallest keys; the positions in are the k'
+    sideboard positions with the smallest keys. `key` is the list that names this seat's draws. `deck` is not
+    modified."""
     main, side = list(deck["mainboard"]), list(deck["sideboard"])
     keep = set(spec["keep_ids"])
     movable = [i for i, card in enumerate(main) if card not in keep]
@@ -555,11 +568,12 @@ def postboard_exposure_swap(deck, spec, key):
 
 def postboard_exposure_episode(entry, spec, namespace, run, update, slot):
     """Applies the exposure to one config entry in place and returns whether it became a post-board game. The game is
-    post-board when sha256([tag, namespace, run, update, slot, "gate"]) mod d < n; then each exposed seat
-    (`postboard_exposure_seats`) gets its own exchange (`postboard_exposure_swap`), `selected` holds the result and
-    `postboard` is true. `registered` never changes, so every selected 60 and 15 conserves its registered 75. A game
-    whose exchanges all leave the mainboards unchanged stays a game one (possible only when a card id is in both
-    lists)."""
+    drawn when sha256([tag, namespace, run, update, slot, "gate"]) mod d < n; then each exposed seat
+    (`postboard_exposure_seats`) gets its own exchange (`postboard_exposure_swap`). When at least one mainboard
+    changed, `selected` holds the result (new lists; a seat that did not change keeps its registration's values) and
+    `postboard` is true. `registered` never changes, so every selected 60 and 15 conserves its registered 75. A
+    drawn game whose exchanges all cancel stays a game one, byte for byte (possible only when a card id is in both
+    lists of a deck)."""
     episode = entry["episode"]
     key = [POSTBOARD_TAG, namespace, run, update, slot]
     numerator, denominator = spec["share"]

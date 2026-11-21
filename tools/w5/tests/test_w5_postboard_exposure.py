@@ -132,6 +132,16 @@ class ValidationTests(unittest.TestCase):
         bad(lambda e: e.update(opponent={'kind': 'recent'}), 'opponent kind')
         bad(lambda e: e.pop('opponent'), 'opponent kind')
 
+    def test_every_registration_needs_max_swaps_movable_cards(self):
+        spells = sorted(set(deck('A/aaaa')['mainboard']) - set(LANDS))
+        base = deck_base()
+        for keep in (LANDS + spells, LANDS + spells[:9]):  # none movable, then four movable with six asked
+            with self.assertRaisesRegex(ValueError, 'at least max_swaps'):
+                qual.validate_postboard_exposure(dict(EXPOSURE, keep_ids=keep), base)
+        with self.assertRaisesRegex(ValueError, 'at least max_swaps'):
+            qual.validate_postboard_exposure(dict(EXPOSURE, keep_ids=LANDS + spells[:9], max_swaps=5), base)
+        qual.validate_postboard_exposure(dict(EXPOSURE, keep_ids=LANDS + spells[:9], max_swaps=4), base)
+
 
 class ExchangeTests(unittest.TestCase):
     def test_an_exchange_conserves_the_75_keeps_the_lands_and_sorts(self):
@@ -174,6 +184,24 @@ class ExchangeTests(unittest.TestCase):
         registered = deck('A/aaaa')
         spec = dict(EXPOSURE, keep_ids=sorted(set(registered['mainboard'])))
         self.assertIsNone(qual.postboard_exposure_swap(registered, spec, ['t', 0]))
+
+    def test_positions_exchanged_are_uniform_and_unsorted_lists_give_sorted_results(self):
+        # no card id in both lists: the cards that change are exactly the positions exchanged
+        registered = deck('A/aaaa', overlap=False)
+        sizes = Counter()
+        for n in range(1200):
+            swapped = qual.postboard_exposure_swap(registered, EXPOSURE, ['u', n])
+            sizes[sum((Counter(swapped['mainboard']) - Counter(registered['mainboard'])).values())] += 1
+        self.assertEqual(sorted(sizes), [1, 2, 3, 4, 5, 6])
+        self.assertTrue(all(150 < sizes[k] < 250 for k in sizes), sizes)  # 200 each expected
+        shuffled = dict(registered, mainboard=registered['mainboard'][::-1], sideboard=registered['sideboard'][::-1])
+        before = copy.deepcopy(shuffled)
+        for n in range(50):
+            swapped = qual.postboard_exposure_swap(shuffled, EXPOSURE, ['u', n])
+            self.assertEqual(swapped['mainboard'], sorted(swapped['mainboard']))
+            self.assertEqual(swapped['sideboard'], sorted(swapped['sideboard']))
+            self.assertEqual(multiset(swapped), multiset(registered))
+        self.assertEqual(shuffled, before)
 
 
 class BuildConfigTests(unittest.TestCase):
@@ -232,6 +260,25 @@ class BuildConfigTests(unittest.TestCase):
             self.assertTrue(ep['postboard'])
             if entry['opponent']['kind'] == 'initial':
                 self.assertEqual(ep['selected'][1 - ep['learner_seat']], ep['registered'][1 - ep['learner_seat']])
+
+    def test_shared_deck_objects_in_the_base_are_never_modified(self):
+        base = deck_base(overlap=False)
+        for item in base['iterations']:
+            for entry in item['episodes']:
+                one = deck('A/aaaa', overlap=False)
+                entry['episode']['registered'] = [one, one]       # both seats share one object
+                entry['episode']['selected'] = entry['episode']['registered']  # and selected is registered itself
+        original = copy.deepcopy(base)
+        cfg = self.build(base, 0, 30, ALWAYS)
+        self.assertEqual(base, original)
+        for entry in entries(cfg):
+            ep = entry['episode']
+            self.assertEqual(ep['registered'], [deck('A/aaaa', overlap=False)] * 2)
+            self.assertTrue(ep['postboard'])
+            self.assertNotEqual(ep['selected'][ep['learner_seat']], ep['registered'][ep['learner_seat']])
+            if entry['opponent']['kind'] == 'current':  # the two seats draw their own exchanges
+                self.assertNotEqual(ep['selected'][0], ep['registered'][0])
+                self.assertNotEqual(ep['selected'][1], ep['registered'][1])
 
     def test_a_game_does_not_depend_on_where_its_segment_starts(self):
         base = deck_base(iterations=3)
@@ -301,7 +348,10 @@ class ChainTests(unittest.TestCase):
     def arm(plan, name='C'):
         return json.loads(Path(plan['arms'][name]['file']['path']).read_text())
 
-    def test_without_an_exposure_the_recipe_identity_and_files_are_unchanged(self):
+    def test_without_an_exposure_the_recipe_identity_and_configs_are_unchanged(self):
+        # An arm file also pins the tools' own hashes, so its bytes change with every tools change; what must not
+        # change without the key is the recipe identity, the manifest's recipe and every config (the config proof
+        # against a real older tools tree is collab LANES/lead/bo3-stage1-20261121/proof_configs.py).
         _, plan = self.plan(self.inputs(None, label='plain'))
         arm = self.arm(plan)
         self.assertNotIn('postboard_exposure', arm)
@@ -384,13 +434,14 @@ class ParityTests(unittest.TestCase):
             entry['episode']['starting_player'] = (n // 2) % 2
         return cfg
 
-    def compare(self, cfg, reason=None):
+    def compare(self, cfg, reason=None, london=None):
         names = [f'card{i}' for i in range(80)]
-        training = rp.training_side([cfg], names)
+        training = rp.training_side([cfg], names, postboard_flag=reason is not None)
         pool = {label: rp.deck_key(d['mainboard'], names)
                 for label, d in (('A', deck('A/aaaa', overlap=False)), ('B', deck('B/bbbb', shift=20, overlap=False)))}
         result = rp.compare(training, self.MANIFEST, {'limits': self.LIMITS}, pool,
-                            {'calls_set_runtime_rules': False}, allow_postboard_training=reason)
+                            {'calls_set_runtime_rules': False}, allow_london_training=london,
+                            allow_postboard_training=reason)
         return training, result
 
     def test_a_game_one_set_has_no_post_board_block(self):
@@ -404,16 +455,16 @@ class ParityTests(unittest.TestCase):
 
     def test_post_board_games_fail_ordinary_starts_unless_the_flag_records_them(self):
         cfg = self.config(ALWAYS)
-        training, result = self.compare(cfg)
+        # without the flag the set is read exactly as before: one label with several mainboards is refused
+        with self.assertRaisesRegex(rp.ParityError, 'two different mainboards'):
+            self.compare(cfg)
+        self.assertNotIn('postboard', rp.training_side([self.config()], [f'card{i}' for i in range(80)]))
+        training, flagged = self.compare(cfg, ' stage 1 exposure ')
         self.assertEqual(training['postboard']['episodes'], 80)
         self.assertEqual(training['postboard']['conserving_episodes'], 80)
-        self.assertFalse(result['checks']['ordinary_starts_game_one'])
-        self.assertTrue(result['checks']['every_board_deck_equals_a_training_deck'])  # by the registered 60
-        self.assertEqual(result['deck_matches'], {'A': ['A/aaaa'], 'B': ['B/bbbb']})
-        self.assertIsNone(result['postboard']['exception'])
-        self.assertTrue(result['postboard']['covered_by_the_flag'])
-        self.assertFalse(rp.passes(result))
-        _, flagged = self.compare(cfg, ' stage 1 exposure ')
+        self.assertTrue(flagged['checks']['every_board_deck_equals_a_training_deck'])  # by the registered 60
+        self.assertEqual(flagged['deck_matches'], {'A': ['A/aaaa'], 'B': ['B/bbbb']})
+        self.assertTrue(flagged['postboard']['covered_by_the_flag'])
         self.assertFalse(flagged['checks']['ordinary_starts_game_one'])  # the check itself stays honest
         self.assertEqual(flagged['postboard']['exception'],
                          {'flag': '--allow-postboard-training', 'reason': 'stage 1 exposure',
@@ -448,6 +499,39 @@ class ParityTests(unittest.TestCase):
         entries(cfg)[0]['episode']['postboard'] = False
         with self.assertRaisesRegex(rp.ParityError, 'two different mainboards'):
             self.compare(cfg, 'reason')
+
+    def test_a_game_one_with_only_its_sideboard_changed_is_not_covered(self):
+        cfg = self.config(dict(EXPOSURE, share=[1, 4]))  # a mixed set: game ones beside post-board games
+        game_one = next(e['episode'] for e in entries(cfg) if not e['episode']['postboard'])
+        side = game_one['selected'][0]['sideboard']
+        side[0] = side[-1]  # same length, same mainboard and label: only the sideboard differs from the registration
+        training, result = self.compare(cfg, 'reason')
+        self.assertEqual(training['postboard']['game_one_episodes_with_changed_decks'], 1)
+        self.assertFalse(result['postboard']['covered_by_the_flag'])
+        self.assertIsNone(result['postboard']['exception'])
+        self.assertFalse(rp.passes(result))
+
+    def test_both_exceptions_are_recorded_together(self):
+        base = deck_base(opening=True, overlap=False)
+        cfg = qual.build_config(base, self.dose, Path(self.tmp.name) / 'o', 'r1', 'ns', 0, 40, 2,
+                                postboard_exposure=ALWAYS)
+        for n, entry in enumerate(entries(cfg)):
+            entry['episode']['starting_player'] = (n // 2) % 2
+        _, result = self.compare(cfg, 'stage 1', london='arm Q')
+        self.assertEqual(result['mulligan']['exception']['excepted_checks'], ['mulligans_off_in_training'])
+        self.assertEqual(result['postboard']['exception']['excepted_checks'], ['ordinary_starts_game_one'])
+        self.assertTrue(rp.passes(result))
+        self.assertEqual(result['parity'], 'holds only with a recorded exception: mulligans_off_in_training '
+                                           '(--allow-london-training: arm Q); ordinary_starts_game_one '
+                                           '(--allow-postboard-training: stage 1)')
+        # a London set alone keeps its text
+        plain = qual.build_config(base, self.dose, Path(self.tmp.name) / 'o', 'r1', 'ns', 0, 40, 2)
+        for n, entry in enumerate(entries(plain)):
+            entry['episode']['starting_player'] = (n // 2) % 2
+        _, london = self.compare(plain, None, london='arm Q')
+        self.assertEqual(london['parity'], 'holds only with a recorded exception: mulligans_off_in_training '
+                                           '(--allow-london-training: arm Q)')
+        self.assertNotIn('postboard', london)
 
 
 if __name__ == '__main__':

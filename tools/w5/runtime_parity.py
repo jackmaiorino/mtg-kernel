@@ -26,11 +26,12 @@ outcome. Every check must hold for the receipt to pass:
   (`postboard` false) with two registrations of 60-card mainboards (sideboards at most 15) and `selected` equal to
   `registered`. A training set with post-board games (the chain tools' declared `postboard_exposure`: `postboard`
   true and a `selected` 60 and 15 that differs from `registered`) fails `ordinary_starts_game_one`, exactly as
-  before, unless the caller passes `--allow-postboard-training REASON` (non-empty). The flag covers only a set with
-  no reset start and no malformed registration, in which every post-board game's `selected` lists hold exactly its
-  registered 75 on each seat and every other game has `selected` equal to `registered`. The receipt then records
-  the exception, the reason and the counts, and says that parity holds only with a recorded exception. The board
-  plays game one only, so the check itself stays false. Board decks are compared with the registered mainboards.
+  before, unless the caller passes `--allow-postboard-training REASON` (non-empty). Without the flag nothing here
+  reads a set differently than before. With it, a post-board game's decks are read from `registered` (its selected
+  60 is not a deck the board plays) and the receipt gains a `postboard` block; the exception is recorded only for a
+  set with no reset start and no malformed registration, in which every post-board game's `selected` lists hold
+  exactly its registered 75 under the registered label on each seat and every other game has `selected` equal to
+  `registered` (label, mainboard and sideboard). The board plays game one only, so the check itself stays false.
 - **Starting player:** the board assigns it (`host_assigned`) and swaps seats within each pair; training uses both
   starting seats and the learner both plays first and second.
 - **Limits:** training `max_physical_decisions` and `max_policy_steps` equal the board's `max_decisions` and
@@ -98,8 +99,10 @@ def deck_key(ids, card_names: list[str]) -> Counter:
     return Counter((i, card_names[i]) for i in ids)
 
 
-def training_side(configs: list[dict], card_names: list[str]) -> dict:
-    """Mulligan profile, rules, starts, limits and decks of every training episode."""
+def training_side(configs: list[dict], card_names: list[str], postboard_flag: bool = False) -> dict:
+    """Mulligan profile, rules, starts, limits and decks of every training episode. With `postboard_flag` (the
+    caller passed `--allow-postboard-training`) a post-board game's decks are its registered ones and the side gains
+    a `postboard` block; without it every set is read exactly as before."""
     profiles, rules, starts, limits, learner_starts = Counter(), Counter(), Counter(), Counter(), Counter()
     mode_mix = Counter()
     resets = postboard = registered_differs = malformed = 0
@@ -128,23 +131,26 @@ def training_side(configs: list[dict], card_names: list[str]) -> dict:
             malformed += not (len(ep["registered"]) == len(ep["selected"]) == 2 and all(
                 len(d["mainboard"]) == 60 and len(d.get("sideboard", [])) <= 15
                 for d in ep["registered"] + ep["selected"]))
-            differs = [(registered["label"], registered["mainboard"]) != (selected["label"], selected["mainboard"])
-                       for registered, selected in zip(ep["registered"], ep["selected"])]
-            registered_differs += sum(differs)
-            if ep.get("postboard"):
+            for registered, selected in zip(ep["registered"], ep["selected"]):
+                registered_differs += (registered["label"], registered["mainboard"]) != (
+                    selected["label"], selected["mainboard"])
+            exposed = postboard_flag and bool(ep.get("postboard"))
+            if exposed:
                 # A post-board game: each seat's selected 60 and 15 must hold exactly its registered 75.
-                postboard_seats += sum(differs)
+                postboard_seats += sum(registered != selected
+                                       for registered, selected in zip(ep["registered"], ep["selected"]))
                 postboard_conserving += all(
                     registered["label"] == selected["label"]
                     and len(selected["mainboard"]) == 60 and len(selected.get("sideboard", [])) == 15
                     and Counter(registered["mainboard"]) + Counter(registered.get("sideboard", []))
                     == Counter(selected["mainboard"]) + Counter(selected.get("sideboard", []))
                     for registered, selected in zip(ep["registered"], ep["selected"]))
-            else:
-                stray += any(differs)  # a game one whose selected lists are not its registration
-            # Board decks are compared with the registered 60 of a post-board game (its selected 60 is not a deck
-            # the board plays); a game one is read as before.
-            for deck in (ep["registered"] if ep.get("postboard") else ep["selected"]):
+            elif postboard_flag:
+                # A game one whose selected decks are not its registration, in any field (a changed sideboard alone
+                # is invisible to the counter above).
+                stray += ep["registered"] != ep["selected"]
+            # Under the flag, board decks are compared with the registered 60 of a post-board game.
+            for deck in (ep["registered"] if exposed else ep["selected"]):
                 named = deck_key(deck["mainboard"], card_names)
                 if deck["label"] in decks and decks[deck["label"]] != named:
                     raise ParityError(f"training deck {deck['label']} has two different mainboards")
@@ -158,7 +164,7 @@ def training_side(configs: list[dict], card_names: list[str]) -> dict:
             "selected_differs_from_registered": registered_differs, "decks": decks}
     if mode_mix:  # only a set with an opening or modes adds this key, so a keep-seven receipt is unchanged
         side["mulligan_modes"] = dict(sorted(mode_mix.items()))
-    if postboard:  # only a set with post-board games adds this key, so every other receipt is unchanged
+    if postboard_flag and postboard:  # only under the flag, and only a set with post-board games, adds this key
         side["postboard"] = {"episodes": postboard, "conserving_episodes": postboard_conserving,
                              "seats_changed": postboard_seats, "game_one_episodes_with_changed_decks": stray}
     return side
@@ -297,17 +303,17 @@ def check_postboard_reason(reason) -> str | None:
 
 
 def postboard_parity(training: dict, reason: str | None) -> dict | None:
-    """The receipt block of a training set with post-board games (None otherwise, so every other receipt is
-    unchanged). The exception is recorded only when the flag is given and the post-board games are the set's only
+    """The receipt block of a training set with post-board games read under the flag (None otherwise, so every
+    other receipt is unchanged). The exception is recorded only when the post-board games are the set's only
     departure from ordinary starts: no reset, no malformed registration, every post-board game conserving its
     registered 75 and no game one with changed decks."""
     block = training.get("postboard")
-    if block is None:
+    if block is None or reason is None:
         return None
     covered = training["reset_episodes"] == 0 and training["malformed_registrations"] == 0 \
         and block["conserving_episodes"] == block["episodes"] and block["game_one_episodes_with_changed_decks"] == 0
     exception = None
-    if reason is not None and covered:
+    if covered:
         exception = {"flag": "--allow-postboard-training", "reason": reason, "excepted_checks": [POSTBOARD_CHECK]}
     return {**block, "covered_by_the_flag": covered, "exception": exception}
 
@@ -413,7 +419,7 @@ def main(argv=None) -> int:
         if BRIDGE_FILES[0] not in bridge_raw:
             raise ParityError(f"{BRIDGE_FILES[0]} is missing at the board revision")
         pool = [d["catalog_id"] for d in board_config["deck_pool"]]
-        training = training_side(configs, card_names)
+        training = training_side(configs, card_names, postboard_flag=postboard_reason is not None)
         result = compare(training, manifest, board_config,
                          board_decks(json.loads(decks_raw), pool, board_card_names),
                          bridge_rules([raw.decode("utf-8") for raw in bridge_raw.values()]), reason,

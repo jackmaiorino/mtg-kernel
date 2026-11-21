@@ -256,10 +256,12 @@ def main(argv=None) -> int:
                                                                    for s in snapshot.get("sources", [])},
         "census_hash_is_a1s": census_sha == CENSUS_SHA256,
     }
-    # The pool is the registered mainboards: a post-board game's selected 60 is not a pool deck.
+    # Under a recorded post-board exception of the parity receipt the pool is the registered mainboards (a
+    # post-board game's selected 60 is not a pool deck); every other receipt hashes the selected lists as before.
+    postboard_excepted = ((raw.get("postboard") or {}).get("exception")) is not None
     pool_hash = sha256_bytes(json.dumps(sorted({d["label"]: d["mainboard"] for c in configs for ep in rp.episodes(c)
-                                                for d in (ep["registered"] if ep.get("postboard")
-                                                          else ep["selected"])}.items()),
+                                                for d in (ep["registered"] if postboard_excepted
+                                                          and ep.get("postboard") else ep["selected"])}.items()),
                                         separators=(",", ":")).encode())
     search = [{"config": str(p), "ex1": c.get("ex1")} for p, c in zip(args.training_config, configs)]
     receipt = {
