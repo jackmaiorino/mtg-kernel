@@ -78,8 +78,6 @@ mod eternal_pauper_pf1a_v1;
 mod eternal_pauper_pf1b_v1;
 #[path = "eternal/eternal_pauper_pf1c_v1.rs"]
 mod eternal_pauper_pf1c_v1;
-#[path = "eternal/hallow_overlap_v1.rs"]
-mod hallow_overlap_v1;
 #[path = "eternal/eternal_premodern_p1a_v1.rs"]
 mod eternal_premodern_p1a_v1;
 #[path = "eternal/eternal_premodern_p1b_v1.rs"]
@@ -146,6 +144,8 @@ mod eternal_vintage_e4b_v1;
 mod eternal_vintage_e5a_v1;
 #[path = "eternal/eternal_vintage_e7b_v1.rs"]
 mod eternal_vintage_e7b_v1;
+#[path = "eternal/hallow_overlap_v1.rs"]
+mod hallow_overlap_v1;
 #[path = "eternal/premodern_feb_jsonl_v1.rs"]
 mod premodern_feb_jsonl_v1;
 
