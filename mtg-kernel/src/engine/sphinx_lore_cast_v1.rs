@@ -129,8 +129,11 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                     .any(|r| matches!(r, RouteV1::Granted { .. } | RouteV1::Snapcaster))
                     || cfg!(feature = "eternal-fixtures")
                         && (crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some()
-                            || d.flashback.is_some()
-                            || d.escape.is_some()))
+                            || crate::eternal_lurrus_v1::flashback_granted(
+                                state,
+                                options.spell,
+                                options.graveyard_generation,
+                            )))
             {
                 return Err("Sphinx original cast-choice roster changed".into());
             }
@@ -219,8 +222,42 @@ pub(super) fn granted(p: &PendingCast) -> bool {
     )
 }
 fn route_quote(state: &GameState, id: ObjectId, player: PlayerId, route: RouteV1) -> bool {
+    // The original Sphinx route can have mode- and kicker-dependent targets.
+    if let RouteV1::Granted { installation } = route {
+        let d = &card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)];
+        let m = method(route);
+        if !d.is_castable()
+            || !d.is_executable()
+            || !cast_form_timing_ok(d.types, d.keywords, player, state)
+        {
+            return false;
+        }
+        let modes = viable_printed_spell_modes(d, id, player, state);
+        return modes.into_iter().any(|mode| {
+            [false, true]
+                .into_iter()
+                .filter(|k| !*k || d.kicker_cost.is_some())
+                .any(|kicked| {
+                    spell_costs_v1::selected_spell_quote_with_grant_v1(
+                        d,
+                        id,
+                        Zone::Graveyard,
+                        m,
+                        kicked,
+                        mode,
+                        0,
+                        &[],
+                        &[],
+                        player,
+                        state,
+                        &[],
+                        Some(CostGrant::Sphinx(installation)),
+                    )
+                    .is_some()
+                })
+        });
+    }
     let grant = match route {
-        RouteV1::Granted { installation } => Some(CostGrant::Sphinx(installation)),
         RouteV1::Snapcaster => Some(CostGrant::Snapcaster),
         RouteV1::Retrace => Some(CostGrant::Retrace),
         _ => None,
@@ -284,7 +321,7 @@ pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<R
     routes.retain(|r| route_quote(state, id, player, *r));
     // An unaffordable new alternative must not replace an independently legal
     // printed/granted predecessor route or manufacture an empty choice stage.
-    if !cfg!(feature = "eternal-fixtures") && grants_are_absent(&routes) {
+    if !snapcaster && !beam && grants_are_absent(&routes) {
         return vec![];
     }
     if routes.len() > usize::from(u16::MAX) {

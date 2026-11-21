@@ -223,7 +223,14 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                 return Err("Sphinx duplicate route".into());
             }
             let (expected_cost, expected_method) = match option.route {
-                public::RouteV1::Normal | public::RouteV1::Retrace => (
+                public::RouteV1::Retrace => (
+                    vec![
+                        public::CostV1::Mana(def.cost.into()),
+                        public::CostV1::DiscardLand(1),
+                    ],
+                    crate::state::CastMethodV4::Normal,
+                ),
+                public::RouteV1::Normal => (
                     vec![public::CostV1::Mana(def.cost.into())],
                     crate::state::CastMethodV4::Normal,
                 ),

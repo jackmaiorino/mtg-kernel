@@ -158,6 +158,7 @@ pub enum RouteV1 {
 pub enum CostV1 {
     Mana(ManaCostV1),
     DiscardCards(u8),
+    DiscardLand(u8),
     SacrificeLands(u8),
     PayLife(u8),
     ExileOtherOwnGraveyardCards(u8),
@@ -368,7 +369,10 @@ pub(crate) fn options(
                             .ok_or("Breach cost absent")?,
                     )?,
                 ),
-                casting::RouteV1::Retrace => (RouteV1::Retrace, vec![CostV1::Mana(d.cost.into())]),
+                casting::RouteV1::Retrace => (
+                    RouteV1::Retrace,
+                    vec![CostV1::Mana(d.cost.into()), CostV1::DiscardLand(1)],
+                ),
                 casting::RouteV1::Granted { installation } => (
                     RouteV1::Granted {
                         grant: *grants

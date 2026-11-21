@@ -2623,6 +2623,8 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == caster
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
+                && (cast_method != CastMethodV4::Alternative
+                    || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none())
                 && (matches!(
                     cast_method,
                     CastMethodV4::Normal | CastMethodV4::Alternative
@@ -11828,7 +11830,14 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         if castable
             || muldrotha_v1::allowed(state, id, player)
                 && is_castable_now(player, id, CastMethodV4::Normal, state)
-            || (has_sphinx_lore_grant || cfg!(feature = "eternal-fixtures"))
+            || (has_sphinx_lore_grant
+                || cfg!(feature = "eternal-fixtures")
+                    && (crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
+                        || crate::eternal_lurrus_v1::flashback_granted(
+                            state,
+                            id,
+                            state.objects.get(id).zone_change_count,
+                        )))
                 && !sphinx_lore_cast_v1::routes(state, id, player).is_empty()
         {
             out.push(id);
@@ -16209,7 +16218,9 @@ pub(crate) fn validate_pending_cast(
                     "a normal hand cast must be controlled by its physical owner".to_string(),
                 );
             }
-            if def.alt_cost.is_none() {
+            if def.alt_cost.is_none()
+                || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
+            {
                 if pending.cast_mode != Some(CastMode::Normal) {
                     return Err("fixed normal cast has a noncanonical cast mode".to_string());
                 }

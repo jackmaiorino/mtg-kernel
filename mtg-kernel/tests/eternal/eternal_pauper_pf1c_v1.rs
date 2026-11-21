@@ -879,6 +879,29 @@ fn snapcaster_and_printed_flashback_charge_the_selected_cost() {
 }
 
 #[test]
+fn snapcaster_cost_ignores_lava_darts_printed_sacrifice_and_expires_on_zone_change() {
+    use mtg_kernel::event::{self, ProposedEvent};
+    let mut state = plains();
+    let card = put(&mut state, P0, "Lava Dart", Zone::Graveyard);
+    install_snapcaster(&mut state, card);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    let mut moved = state.clone();
+    event::propose_and_commit(&mut moved, ProposedEvent::zone_change(card, Zone::Hand));
+    event::propose_and_commit(
+        &mut moved,
+        ProposedEvent::zone_change(card, Zone::Graveyard),
+    );
+    assert!(
+        !castable(&mut moved, card),
+        "the new incarnation has only its printed Mountain cost"
+    );
+    cast(&mut state, card, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, card), Zone::Exile);
+    assert_eq!(life(&state, P1), 19);
+}
+
+#[test]
 fn boarding_action_beam_and_snapcaster_distinguish_bounce_payment_and_flashback() {
     use engine::sphinx_lore_cast_v1::RouteV1;
     use mtg_kernel::state::CastMethodV4;
