@@ -49,12 +49,20 @@ def failed_jobs(get: Get, repo: str, run_id) -> list[str]:
         page += 1
 
 
-def ran(get: Get, repo: str, run: dict) -> bool:
-    """Whether a completed run actually ran its checks (a run replaced while waiting started no job)."""
-    if run.get("conclusion") in ("success", "failure"):
-        return True
-    jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
-    return any(job.get("conclusion") in ("success", "failure", "timed_out") for job in jobs)
+def ran(get: Get, repo: str, run: dict, before: str = "") -> bool:
+    """Whether a run actually ran its checks (a run replaced while waiting started no job), judged only by jobs
+    of any attempt that started before `before` (an ISO time), so a later rerun never changes an old report."""
+    jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100&filter=all")["jobs"]
+    return any(job.get("conclusion") in ("success", "failure", "timed_out")
+               and (not before or (job.get("started_at") or "9") < before) for job in jobs)
+
+
+def first_attempt_start(get: Get, repo: str, run: dict) -> str:
+    """When the run's first attempt started (its own reruns do not move it)."""
+    if (run.get("run_attempt") or 1) == 1 and run.get("run_started_at"):
+        return run["run_started_at"]
+    first = get(f"/repos/{repo}/actions/runs/{run['id']}/attempts/1")
+    return first.get("run_started_at") or first.get("created_at") or run.get("created_at", "")
 
 
 # Earlier push runs a report examines for the last monitored commit before calling the range incomplete.
@@ -66,13 +74,14 @@ def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> tuple[str
     (None, False) whenever there is no such run in the examined history (none at all, history deleted, only runs
     replaced while waiting, or the pages ran out): the range cannot be bounded, so it is reported incomplete."""
     this = get(f"/repos/{repo}/actions/runs/{run_id}")
+    before = first_attempt_start(get, repo, this)
     for page in range(1, MAX_HISTORY_PAGES + 1):
         # Run ids increase with creation, so an earlier run created in the same second still counts.
         runs = get(f"/repos/{repo}/actions/workflows/ci.yml/runs?event=push&branch={branch}&status=completed"
                    f"&created=%3C%3D{this['created_at']}&per_page=50&page={page}")["workflow_runs"]
         earlier = [run for run in runs if run["id"] < int(run_id) and run["head_sha"] != this["head_sha"]]
         for run in earlier:
-            if ran(get, repo, run):
+            if ran(get, repo, run, before):
                 return run["head_sha"], True
         if len(runs) < 50:
             return None, False

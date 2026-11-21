@@ -107,19 +107,90 @@ TRAINING_REFERENCE_ROOTS = ["mtg-kernel/src/native_policy_train_step_v1.rs", "mt
                             "mtg-kernel/src/training_math_v1.rs"]
 
 
+def filtered(module: str) -> bool:
+    """Whether the trainer filters select a crate module's tests: a `name::` filter selects exactly that module,
+    a prefix filter (no trailing ::) every module starting with it."""
+    return any(module == f[:-2] if f.endswith("::") else module.startswith(f) for f in TRAINER_FILTERS)
+
+
+def crate_references(file, depth: int) -> set[str]:
+    """Crate-root modules a Rust file names: `crate::x`, grouped `crate::{x, y::z}`, and `super::` chains that
+    climb to the crate root from the file's module depth plus any enclosing inline modules."""
+    import rust_test_cfg  # the tokenizer (strings, comments and raw strings handled)
+    toks = rust_test_cfg.tokens(file.read_text(encoding="utf-8", errors="replace"))
+    out, stack, i = set(), [], 0
+
+    def group(j: int) -> int:
+        """toks[j] == '{': add the first name of each top-level item; return the index after the group."""
+        level, first = 0, True
+        while True:
+            t = toks[j]
+            if t == "{":
+                level += 1
+                first = first or level == 1
+            elif t == "}":
+                level -= 1
+                if level == 0:
+                    return j + 1
+            elif t == "," and level == 1:
+                first = True
+            elif level == 1 and first and re.fullmatch(r"[a-z_][a-z_0-9]*", t):
+                if t not in ("self", "super", "crate"):
+                    out.add(t)
+                first = False
+            elif level == 1 and first and t == "*":
+                out.add("*")
+                first = False
+            j += 1
+
+    import re
+    while i < len(toks):
+        t = toks[i]
+        if t == "mod" and i + 2 < len(toks) and toks[i + 2] == "{":
+            stack.append("mod")
+            i += 3
+            continue
+        if t == "{":
+            stack.append("{")
+        elif t == "}":
+            if stack:
+                stack.pop()
+        elif t in ("crate", "super") and toks[i + 1:i + 3] == [":", ":"]:
+            j, climbs = i, 0
+            if t == "super":
+                while toks[j] == "super" and toks[j + 1:j + 3] == [":", ":"]:
+                    climbs += 1
+                    j += 3
+                if climbs < depth + stack.count("mod"):
+                    i = j
+                    continue
+            else:
+                j += 3
+            if toks[j] == "{":
+                i = group(j)
+                continue
+            if re.fullmatch(r"[a-z_][a-z_0-9]*", toks[j]) or toks[j] == "*":
+                out.add(toks[j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
 def training_reference_gaps(root=None) -> tuple[list[str], list[str]]:
     """(referenced modules neither filtered nor excluded, exclusions no longer referenced) for the files in
     TRAINING_REFERENCE_ROOTS. The trainer scope runs this, so a qualifying change cannot add an unexamined backend."""
-    import re
     from pathlib import Path
     base = Path(root) if root else Path(__file__).resolve().parents[2]
+    src = base / "mtg-kernel" / "src"
     referenced = set()
     for name in TRAINING_REFERENCE_ROOTS:
         path = base / name
         for file in ([path] if path.is_file() else sorted(path.rglob("*.rs"))):
-            referenced |= set(re.findall(r"crate::([a-z_0-9]+)", file.read_text(encoding="utf-8", errors="replace")))
-    gaps = sorted(m for m in referenced if m not in TRAINING_REFERENCE_EXCLUSIONS
-                  and not any(m.startswith(f.rstrip(":")) for f in TRAINER_FILTERS))
+            parts = file.relative_to(src).with_suffix("").parts
+            depth = len(parts) - (1 if parts[-1] == "mod" else 0)
+            referenced |= crate_references(file, depth)
+    gaps = sorted(m for m in referenced if m not in TRAINING_REFERENCE_EXCLUSIONS and not filtered(m))
     return gaps, sorted(set(TRAINING_REFERENCE_EXCLUSIONS) - referenced)
 
 

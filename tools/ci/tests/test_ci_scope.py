@@ -111,10 +111,18 @@ class TableTests(unittest.TestCase):
                     out = Path(tmp) / file.relative_to(ROOT)
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_text(file.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
-            extra = Path(tmp) / "mtg-kernel/src/training_math_v1.rs"
-            extra.write_text(extra.read_text(encoding="utf-8") + "\nuse crate::unexamined_backend_v9::X;\n",
-                             encoding="utf-8")
-            self.assertEqual(ci_scope.training_reference_gaps(tmp)[0], ["unexamined_backend_v9"])
+            math = Path(tmp) / "mtg-kernel/src/training_math_v1.rs"
+            original = math.read_text(encoding="utf-8")
+            for added, expected in [("use crate::unexamined_backend_v9::X;", ["unexamined_backend_v9"]),
+                                    ("use crate::{fast_sampler, unexamined_v8::{A, B}};", ["unexamined_v8"]),
+                                    ("use super::unexamined_v7::X;", ["unexamined_v7"]),
+                                    ("mod t { use super::super::unexamined_v6::X; use super::local::Y; }",
+                                     ["unexamined_v6"]),
+                                    ("use crate::training_math_v1_extra::X;", ["training_math_v1_extra"]),
+                                    ("// use crate::only_in_a_comment::X;", [])]:
+                with self.subTest(reference=added):
+                    math.write_text(original + "\n" + added + "\n", encoding="utf-8")
+                    self.assertEqual(ci_scope.training_reference_gaps(tmp)[0], expected)
         self.assertIn('"tools/ci/ci_scope.py", "check-references"',
                       (ROOT / "tools/ci/run_trainer_row.py").read_text(encoding="utf-8"))
 
@@ -261,15 +269,20 @@ class MonitorTests(unittest.TestCase):
 
         def get(path):
             if path == f"/repos/o/r/actions/runs/{run_id}":
-                return {"id": run_id, "head_sha": head, "created_at": "2026-11-21T12:00:00Z"}
+                return {"id": run_id, "head_sha": head, "created_at": "2026-11-21T12:00:00Z",
+                        "run_started_at": "2026-11-21T12:30:00Z", "run_attempt": 1}
             if path.startswith("/repos/o/r/actions/workflows/ci.yml/runs"):
                 return {"workflow_runs": [{"id": i, "head_sha": h, "conclusion": c, "created_at": t}
                                           for i, h, c, t in runs]}
             if "/jobs" in path:
                 rid = int(path.split("/runs/")[1].split("/")[0])
                 ran = {i: c for i, h, c, t in runs}.get(rid) == "ran-cancelled"
-                return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "conclusion":
-                                  "failure" if rid == run_id else ("success" if ran else None)}]}
+                rerun = {i: c for i, h, c, t in runs}.get(rid) == "rerun-later"
+                return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "started_at":
+                                  "2026-11-21T13:00:00Z" if rerun else "2026-11-21T11:05:00Z", "conclusion":
+                                  "failure" if rid == run_id else ("success" if ran or rerun or
+                                                                   {i: c for i, h, c, t in runs}.get(rid) == "success"
+                                                                   else None)}]}
             if "/pulls?" in path:
                 sha = path.split("/commits/")[1].split("/")[0]
                 number, login = pulls[sha]
@@ -382,7 +395,7 @@ class MonitorTests(unittest.TestCase):
         import post_merge_report as report
         get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")], {"c3": (837, "x")})
         run = {"id": 9, "head_sha": "c3", "head_branch": "main", "event": "push", "html_url": "u",
-               "created_at": "2026-11-21T12:00:00Z"}
+               "created_at": "2026-11-21T12:00:00Z", "run_started_at": "2026-11-21T12:30:00Z", "run_attempt": 1}
 
         def request(method, path, body=None):
             if method == "POST":
@@ -419,6 +432,16 @@ class MonitorTests(unittest.TestCase):
         body, line, merges = self.run_report(get)
         self.assertIn("(incomplete, newest only)", line)
         self.assertNotIn("first responder the author of #837", line)
+
+    def test_a_later_rerun_of_an_earlier_push_never_changes_the_report(self):
+        # Push run 8 (c2) was replaced while waiting; it was rerun successfully after the red run started.
+        get = self.fake_api(["c0", "c1", "c2", "c3"],
+                            [(8, "c2", "rerun-later", "2026-11-21T11:30:00Z"),
+                             (6, "c1", "success", "2026-11-21T11:00:00Z")],
+                            {"c2": (836, "a"), "c3": (837, "b")})
+        body, line, merges = self.run_report(get)
+        self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c2", 836), ("c3", 837)])
+        self.assertIn("first responder the author of #836", line)
 
     def test_no_earlier_monitored_run_is_an_unbounded_range(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
