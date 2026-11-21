@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one narrow reading column, the chart is the hero, a small "per doubling" strip under it. */
+/* Article and interactive chart share one reading column. */
 :root {
   --bg: #f6f7f9;
   --card: #ffffff;
@@ -17,7 +17,6 @@
   --rule: #dde1e8;
   --grid: #e9ecf1;
   --accent: #2a78d6;
-  --band: rgba(42,120,214,.16);
   --pending: #eb6834;
   --proj: #8a909b;
   --f-display: "Sora", "Segoe UI", system-ui, sans-serif;
@@ -26,11 +25,11 @@
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #111318; --card: #181b21; --ink: #eef0f4; --ink-2: #b9bfca; --ink-3: #8a919d;
-  --rule: #2b3039; --grid: #232830; --accent: #4b93ea; --band: rgba(75,147,234,.20);
+  --rule: #2b3039; --grid: #232830; --accent: #4b93ea;
   --pending: #f07a4a; --proj: #8d94a0; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #111318; --card: #181b21; --ink: #eef0f4; --ink-2: #b9bfca; --ink-3: #8a919d;
-  --rule: #2b3039; --grid: #232830; --accent: #4b93ea; --band: rgba(75,147,234,.20);
+  --rule: #2b3039; --grid: #232830; --accent: #4b93ea;
   --pending: #f07a4a; --proj: #8d94a0; color-scheme: dark }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -58,10 +57,9 @@ svg .lab { fill: var(--ink-2); font-size: 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); margin-top: 10px; }
 .legend span { display: inline-flex; align-items: center; gap: 7px; }
 .sw { width: 18px; height: 0; border-top: 2px solid var(--accent); }
-.sw.band { height: 10px; border: 0; background: var(--band); }
 .sw.proj { border-top: 2px dashed var(--proj); }
 .sw.pend { width: 10px; height: 10px; border: 2px solid var(--pending); border-radius: 50%; }
-.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-family: var(--f-mono); font-size: 12px; line-height: 1.45; padding: 8px 10px; border-radius: 6px; white-space: nowrap; transform: translate(-50%, calc(-100% - 12px)); }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-family: var(--f-mono); font-size: 12px; line-height: 1.45; padding: 8px 10px; border-radius: 6px; width: max-content; max-width: 100%; transform: translateY(calc(-100% - 12px)); }
 .controls { display: flex; justify-content: flex-end; margin-top: 8px; }
 button { font: 500 13px var(--f-body); color: var(--accent); background: transparent; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
@@ -75,6 +73,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .foot { font-size: 13px; color: var(--ink-3); border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 8px; }
 .foot p { margin: 0; }
 details summary { cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.foot, .foot details { min-width: 0; }
 .tbl { overflow-x: auto; margin-top: 10px; }
 table { border-collapse: collapse; font-family: var(--f-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; width: 100%; }
 th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--rule); }
@@ -83,13 +82,13 @@ th { color: var(--ink-3); font-weight: 500; }
 @media (max-width: 560px) { svg text, svg .lab { font-size: 15px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
-<meta name="description" content="A computer program is teaching itself Magic: The Gathering by playing against itself. Doubling its practice still wins it more games, just fewer than before.">
+<meta name="description" content="A Magic: The Gathering bot won about 71 in 100 games against its starting version after 1.59 million training steps.">
 <link rel="canonical" href="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
 <link rel="alternate" type="application/atom+xml" title="MTG Kernel Weekly" href="../feed.xml">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="MTG Kernel">
 <meta property="og:title" content="A bot that taught itself Magic is still getting better">
-<meta property="og:description" content="A computer program is teaching itself Magic: The Gathering by playing against itself. Doubling its practice still wins it more games, just fewer than before.">
+<meta property="og:description" content="A Magic: The Gathering bot won about 71 in 100 games against its starting version after 1.59 million training steps.">
 <meta property="og:url" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
 <meta property="og:image" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/og.png">
 <meta property="og:image:width" content="1200">
@@ -103,28 +102,27 @@ th { color: var(--ink-3); font-weight: 500; }
   <header>
     <div class="eyebrow"><span>MTG Kernel weekly</span><span>#1</span><span>Nov 20, 2026</span></div>
     <h1>A bot that taught itself Magic is <em>still getting better</em></h1>
-    <p class="dek">Every time we double its practice, it wins more games. Just not as many more as it used to.</p>
+    <p class="dek">After 1.59 million training steps, the bot won about 71 in every 100 games against its starting version. How much did the latest practice help?</p>
   </header>
 
-  <aside class="intro"><p><b>New here?</b> MTG Kernel is an open-source project teaching a computer to play Magic: The Gathering from scratch. It has never seen a human play. It learns only by playing games against itself, and the only feedback it ever gets is whether it won. Each week we share one chart about what it learned.</p></aside>
+  <aside class="intro"><p><b>New here?</b> MTG Kernel is an open-source project teaching a computer to play Magic: The Gathering from scratch. It has never watched a human play. The bot learns by playing itself and earlier bots. Its only reward comes from winning. Each week we share one chart about what it learned.</p></aside>
 
   <section class="card" aria-labelledby="c1t">
     <div class="chart-head">
       <div>
         <p class="chart-title" id="c1t">How often today's bot beats the version it started from</p>
-        <p class="chart-sub">3,888 test games at each point. The shaded band is the range we are 95% sure of.</p>
+        <p class="chart-sub">Each dot combines 11,664 test games across three training runs, with 3,888 games per run.</p>
       </div>
-      <div class="big"><div class="n" id="bigN">71.0%</div><div class="l" id="bigL">of games won, at 1.59M training steps</div></div>
+      <div class="big"><div class="n" id="bigN">70.8%</div><div class="l" id="bigL">of games won, at 1.59M training steps</div></div>
     </div>
     <div class="svgbox" id="box1">
-      <svg id="c1" viewBox="0 0 720 360" role="img" aria-label="Line chart: the bot wins 55.5 percent of games against its starting version after 65 thousand training steps, rising to 71.0 percent after 1.59 million, and rising more slowly after 1 million."></svg>
+      <svg id="c1" viewBox="0 0 720 360" role="img" aria-label="The bot won 55.3 percent of its games against its starting version after 65,536 training steps and 70.8 percent after 1,589,248. Open circles show projections at 2.1 million steps."></svg>
       <div class="tip" id="tip" hidden></div>
     </div>
     <div class="legend">
       <span><i class="sw"></i>Measured</span>
-      <span><i class="sw band"></i>95% range</span>
-      <span><i class="sw proj"></i>If it had kept its earlier pace</span>
-      <span><i class="sw pend"></i>Next week: games already played, results not opened yet</span>
+      <span><i class="sw proj"></i>Projection at the earlier pace</span>
+      <span><i class="sw pend"></i>Two possible results at 2.1M steps</span>
     </div>
     <div class="controls"><button id="replay" type="button">Replay the climb</button></div>
   </section>
@@ -132,33 +130,47 @@ th { color: var(--ink-3); font-weight: 500; }
 
   <article class="prose">
     <h2>What we learned</h2>
-    <p>The bot plays Pauper, a style of Magic where only the most common cards are allowed. To measure progress, we pit each new version against the one it started from (Basilisk 1, which is public). A 71% win rate means today's bot beats its old self in 71 of every 100 games.</p>
-    <p>Early on, each doubling of practice added 3 to 4.5 points of win rate. Past a million training steps, it looks closer to 2.5 points. It is definitely still improving. Whether it is really slowing down is not certain yet: the data cannot rule out the old pace.</p>
+    <p>The bot plays Pauper, a version of Magic that allows only cards printed at its most common rarity. We test it against Basilisk 1, the public bot it started from. Basilisk 1 won 1,936 of 3,888 games against a copy of itself (49.79%). On the same deals, the three trained versions won 8,253 of 11,664 games (70.76%). Training gained about 21 wins per 100 games.</p>
+    <p>Through the first million training steps, doubling practice added about 2.6 to 4.5 wins per 100 games. Across the later tests, another doubling of practice was worth an estimated 2.4 extra wins per 100 games. The latest pace looks slower, though the earlier pace still fits the data.</p>
     <p>So besides training longer, we are handing it decisions it used to skip: whether to throw back a bad opening hand (a mulligan), and when to respond during the opponent's turn. It will have to work out both on its own.</p>
     <h2>Next week</h2>
-    <p>The games at twice the practice are already played, and we open the results next week. If it is still climbing at the same rate, expect about 72%. If it has stalled, about 70%.</p>
+    <p>At the time of this analysis, two of the three training runs had played their 2.1-million-step test games. We hadn't opened their results yet. Starting from the million-step score, the later pace would put the bot near 72% at 2.1 million steps. A flat result would put it near 70%.</p>
     <p>Follow along with the <a href="../feed.xml">RSS feed</a>, read the <a href="https://github.com/jackmaiorino/mtg-kernel">code on GitHub</a>, or <a href="../../">watch the bot's choices in the replay viewer</a>.</p>
   </article>
 
   <footer class="foot">
     <details>
       <summary>Show the numbers</summary>
-      <div class="tbl"><table id="tbl"><thead><tr><th>Training steps</th><th>Win rate</th><th>95% range</th></tr></thead><tbody></tbody></table></div>
+      <p>Each row includes 11,664 games against Basilisk 1. The gain compares the newer bots with Basilisk 1 on the same deals. The 95% range shows our uncertainty about that gain. It accounts for differences across training runs and deals.</p>
+      <div class="tbl"><table id="tbl"><thead><tr><th scope="col">Training steps</th><th scope="col">Wins</th><th scope="col">Win rate</th><th scope="col">Gain (points)</th><th scope="col">95% range for gain (points)</th></tr></thead><tbody></tbody></table></div>
+      <p>The four early doublings gained 2.58, 4.51, 3.95 and 3.34 percentage points. Across nine later tests per run, the estimate was 2.44 points per doubling (95% range 1.41 to 3.46). Comparing just the 1.05M and 1.59M endpoints gives a gain of 1.08 points (95% range −0.13 to 2.21).</p>
     </details>
-    <p>Each point is the average of three separate training runs. A draw counts as half a win. Beating its own starting point measures progress, not how strong it is against people or other bots, which we track separately.</p>
+    <p>All of these test games ended in a win or loss. We track performance against other opponents separately.</p>
   </footer>
 </div>
 
 <script>
 (function () {
+  var gamesPerCheckpoint = 11664;
   var pts = [
-    [65536, 55.5, 54.4, 56.6], [131072, 58.1, 56.65, 59.55], [262144, 62.6, 61.2, 64.05],
-    [524288, 66.55, 64.35, 68.55], [1048576, 69.9, 68.65, 71.1], [1122304, 69.1, 67.5, 70.65],
-    [1196032, 69.9, 68.6, 71.2], [1318912, 69.75, 68.4, 71.05], [1589248, 70.95, 69.55, 72.35]
+    { steps: 65536, wins: 6450, gain: 5.5041, low: 4.4067, high: 6.5844 },
+    { steps: 131072, wins: 6751, gain: 8.0847, low: 6.6529, high: 9.5336 },
+    { steps: 262144, wins: 7277, gain: 12.5943, low: 11.1968, high: 14.0432 },
+    { steps: 524288, wins: 7738, gain: 16.5466, low: 14.3261, high: 18.5271 },
+    { steps: 1048576, wins: 8127, gain: 19.8817, low: 18.6385, high: 21.1163 },
+    { steps: 1122304, wins: 8038, gain: 19.1187, low: 17.4897, high: 20.6619 },
+    { steps: 1196032, wins: 8129, gain: 19.8988, low: 18.6128, high: 21.2191 },
+    { steps: 1318912, wins: 8110, gain: 19.7359, low: 18.4156, high: 21.0648 },
+    { steps: 1589248, wins: 8253, gain: 20.9619, low: 19.5645, high: 22.3508 }
   ];
+  function winRate(point) { return 100 * point.wins / gamesPerCheckpoint; }
+  var first = pts[0], last = pts[pts.length - 1];
   var NS = "http://www.w3.org/2000/svg";
   function el(tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
-  function fmtU(u) { return u >= 1e6 ? (u / 1048576).toFixed(2).replace(/0$/, "") + "M" : Math.round(u / 1024) + "k"; }
+  function fmtU(u) {
+    if (u >= 1000000) return parseFloat((u / 1000000).toFixed(2)) + "M";
+    return parseFloat((u / 1000).toFixed(1)) + "k";
+  }
   function fmtLong(u) { return u.toLocaleString("en-US"); }
 
   // Chart 1
@@ -172,43 +184,41 @@ th { color: var(--ink-3); font-weight: 500; }
     el("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
     el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end" }, svg).textContent = v + "%";
   });
-  [[65536, "65k"], [131072, "131k"], [262144, "262k"], [524288, "524k"], [1048576, "1.05M"], [2097152, "2.1M"]].forEach(function (t) {
+  [[65536, "65.5k"], [131072, "131k"], [262144, "262k"], [524288, "524k"], [1048576, "1.05M"], [2097152, "2.1M"]].forEach(function (t) {
     el("text", { x: X(t[0]), y: H - B + 20, "text-anchor": "middle" }, svg).textContent = t[1];
   });
   el("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", class: "lab" }, svg).textContent = narrow ? "training steps (each tick doubles)" : "practice so far, in training steps (each tick is double the last)";
 
-  var band = "M" + pts.map(function (p) { return X(p[0]) + "," + Y(p[3]); }).join("L") + "L" + pts.slice().reverse().map(function (p) { return X(p[0]) + "," + Y(p[2]); }).join("L") + "Z";
-  el("path", { d: band, fill: "var(--band)", stroke: "none" }, svg);
+  // Project from the measured score at the last complete doubling.
+  var anchor = pts[4], nextSteps = 2097152, px = X(nextSteps);
+  var flat = winRate(anchor), earlierPace = flat + 3.3350, laterPace = flat + 2.4359;
+  el("path", { d: "M" + X(anchor.steps) + "," + Y(flat) + "L" + px + "," + Y(earlierPace), fill: "none", stroke: "var(--proj)", "stroke-width": 2, "stroke-dasharray": "5 5" }, svg);
+  el("text", { x: px + 5, y: Y(earlierPace) + 4, class: "lab" }, svg).textContent = "73%";
+  [flat, laterPace].forEach(function (scenario) {
+    el("circle", { cx: px, cy: Y(scenario), r: 5, fill: "var(--card)", stroke: "var(--pending)", "stroke-width": 2 }, svg);
+  });
 
-  // projection: +3.35 points per doubling from the 1.05M point
-  el("path", { d: "M" + X(1048576) + "," + Y(69.9) + "L" + X(2097152) + "," + Y(69.9 + 3.35), fill: "none", stroke: "var(--proj)", "stroke-width": 2, "stroke-dasharray": "5 5" }, svg);
-  el("text", { x: X(2097152) + 8, y: Y(73.25) + 4, class: "lab" }, svg).textContent = "73";
-
-  // pending 2.1M: trend range 71.3 to 73.4, flat 69.9
-  var px = X(2097152);
-  el("line", { x1: px, x2: px, y1: Y(73.4), y2: Y(69.9), stroke: "var(--pending)", "stroke-width": 2, "stroke-dasharray": "2 4", "stroke-linecap": "round" }, svg);
-  el("circle", { cx: px, cy: Y(72.35), r: 6, fill: "var(--card)", stroke: "var(--pending)", "stroke-width": 2 }, svg);
-
-  var line = el("path", { d: "M" + pts.map(function (p) { return X(p[0]) + "," + Y(p[1]); }).join("L"), fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
-  var dots = pts.map(function (p) { return el("circle", { cx: X(p[0]), cy: Y(p[1]), r: 4.5, fill: "var(--accent)", stroke: "var(--card)", "stroke-width": 2 }, svg); });
-  el("text", { x: X(65536) + 10, y: Y(55.5) + 18, class: "lab" }, svg).textContent = "55.5%";
-  el("text", { x: X(1589248) + (narrow ? 8 : -4), y: Y(70.95) + (narrow ? 44 : 26), "text-anchor": "end", class: "lab" }, svg).textContent = "71.0%";
+  var line = el("path", { d: "M" + pts.map(function (p) { return X(p.steps) + "," + Y(winRate(p)); }).join("L"), fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  var dots = pts.map(function (p) { return el("circle", { cx: X(p.steps), cy: Y(winRate(p)), r: 4.5, fill: "var(--accent)", stroke: "var(--card)", "stroke-width": 2 }, svg); });
+  el("text", { x: X(first.steps) + 10, y: Y(winRate(first)) + 18, class: "lab" }, svg).textContent = winRate(first).toFixed(1) + "%";
+  el("text", { x: X(last.steps) + (narrow ? 8 : -4), y: Y(winRate(last)) + (narrow ? 44 : 26), "text-anchor": "end", class: "lab" }, svg).textContent = winRate(last).toFixed(1) + "%";
 
   // hover
   var tip = document.getElementById("tip"), box = document.getElementById("box1");
-  var hits = pts.map(function (p) { return { p: p, x: X(p[0]), y: Y(p[1]) }; });
-  hits.push({ pend: true, x: px, y: Y(72.35) });
+  var hits = pts.map(function (p) { return { p: p, x: X(p.steps), y: Y(winRate(p)) }; });
+  hits.push({ pend: true, x: px, y: Y(laterPace) });
   function show(evt) {
     var r = svg.getBoundingClientRect(), sx = (evt.clientX - r.left) * W / r.width;
     var best = null, bd = 1e9;
     hits.forEach(function (h) { var d = Math.abs(h.x - sx); if (d < bd) { bd = d; best = h; } });
     if (!best || bd > 40) { tip.hidden = true; return; }
     tip.innerHTML = best.pend
-      ? "2,097,152 training steps<br>games played, results opened next week<br>still climbing: about 72%. stalled: about 70%"
-      : fmtLong(best.p[0]) + " training steps<br><b>" + best.p[1].toFixed(1) + "%</b> of games won<br>95% range: " + best.p[2].toFixed(1) + " to " + best.p[3].toFixed(1);
-    tip.style.left = (best.x * r.width / W) + "px";
-    tip.style.top = (best.y * r.height / H) + "px";
+      ? "2,097,152 steps (projections)<br>Later pace: " + laterPace.toFixed(1) + "%<br>Flat: " + flat.toFixed(1) + "%"
+      : fmtLong(best.p.steps) + " training steps<br><b>" + winRate(best.p).toFixed(1) + "%</b> of games won<br>" + fmtLong(best.p.wins) + " of " + fmtLong(gamesPerCheckpoint);
     tip.hidden = false;
+    var centered = best.x * r.width / W - tip.offsetWidth / 2;
+    tip.style.left = Math.max(0, Math.min(centered, box.clientWidth - tip.offsetWidth)) + "px";
+    tip.style.top = (best.y * r.height / H) + "px";
   }
   svg.addEventListener("pointermove", show);
   svg.addEventListener("pointerleave", function () { tip.hidden = true; });
@@ -225,9 +235,9 @@ th { color: var(--ink-3); font-weight: 500; }
       var k = Math.min(1, (ts - t0) / dur), e = 1 - Math.pow(1 - k, 3);
       line.style.strokeDashoffset = len * (1 - e);
       var drawnX = L + e * (X(1589248) - L), cur = pts[0];
-      pts.forEach(function (p, i) { if (X(p[0]) <= drawnX + 0.5) { dots[i].style.opacity = 1; cur = p; } });
-      bigN.textContent = cur[1].toFixed(1) + "%"; bigL.textContent = "of games won, at " + fmtU(cur[0]) + " training steps";
-      if (k < 1) requestAnimationFrame(frame); else { line.style.strokeDasharray = ""; line.style.strokeDashoffset = ""; bigN.textContent = "71.0%"; bigL.textContent = "of games won, at 1.59M training steps"; }
+      pts.forEach(function (p, i) { if (X(p.steps) <= drawnX + 0.5) { dots[i].style.opacity = 1; cur = p; } });
+      bigN.textContent = winRate(cur).toFixed(1) + "%"; bigL.textContent = "of games won, at " + fmtU(cur.steps) + " training steps";
+      if (k < 1) requestAnimationFrame(frame); else { line.style.strokeDasharray = ""; line.style.strokeDashoffset = ""; bigN.textContent = winRate(last).toFixed(1) + "%"; bigL.textContent = "of games won, at 1.59M training steps"; }
     }
     requestAnimationFrame(frame);
   });
@@ -235,7 +245,13 @@ th { color: var(--ink-3); font-weight: 500; }
 
   // table
   var tb = document.querySelector("#tbl tbody");
-  pts.forEach(function (p) { var tr = document.createElement("tr"); tr.innerHTML = "<td>" + fmtLong(p[0]) + "</td><td>" + p[1].toFixed(1) + "%</td><td>" + p[2].toFixed(1) + " to " + p[3].toFixed(1) + "</td>"; tb.appendChild(tr); });
+  pts.forEach(function (p) {
+    var tr = tb.insertRow();
+    [fmtLong(p.steps), fmtLong(p.wins), winRate(p).toFixed(2) + "%",
+     p.gain.toFixed(2), p.low.toFixed(2) + " to " + p.high.toFixed(2)].forEach(function (value) {
+      tr.insertCell().textContent = value;
+    });
+  });
 })();
 </script>
 </body>

@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MTG Kernel Weekly</title>
-<meta name="description" content="A computer program teaching itself Magic: The Gathering, one chart a week. It has never seen a human play; it learns only by playing itself.">
+<meta name="description" content="A computer program learning Magic: The Gathering by playing games against itself and earlier bots. Follow its progress one chart a week.">
 <link rel="canonical" href="https://jackmaiorino.github.io/mtg-kernel/blog/">
 <link rel="alternate" type="application/atom+xml" title="MTG Kernel Weekly" href="feed.xml">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="MTG Kernel">
 <meta property="og:title" content="MTG Kernel Weekly">
-<meta property="og:description" content="A computer program teaching itself Magic: The Gathering, one chart a week. It has never seen a human play; it learns only by playing itself.">
+<meta property="og:description" content="A computer program learning Magic: The Gathering by playing games against itself and earlier bots. Follow its progress one chart a week.">
 <meta property="og:url" content="https://jackmaiorino.github.io/mtg-kernel/blog/">
 <meta property="og:image" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -48,7 +48,7 @@ h1 { font-family: var(--f-display); font-size: clamp(30px, 6vw, 44px); line-heig
   <nav class="nav" aria-label="Site"><a href="../">Watch the bot play (replay viewer)</a><a href="feed.xml">RSS feed</a><a href="https://github.com/jackmaiorino/mtg-kernel">Code on GitHub</a></nav>
   <header>
     <h1>MTG Kernel Weekly</h1>
-    <p class="dek">We are teaching a computer to play Magic: The Gathering from scratch. It has never seen a human play. It learns only by playing games against itself, and the only feedback it gets is whether it won. Each week we share one chart about what it learned. No Magic or AI background needed.</p>
+    <p class="dek">We are teaching a computer to play Magic: The Gathering from scratch. It has never watched a human play. It learns by playing games against itself and earlier bots, and its only reward comes from winning. Each week we share one chart about what it learned.</p>
   </header>
   <ul class="posts">
     <!-- Newest first. The weekly task adds one <li> here per post. -->
@@ -56,12 +56,12 @@ h1 { font-family: var(--f-display); font-size: clamp(30px, 6vw, 44px); line-heig
       <div>
         <div class="meta">#1 · Nov 20, 2026</div>
         <h2>A bot that taught itself Magic is still getting better</h2>
-        <p>Every time we double its practice, it wins more games. Just not as many more as it used to.</p>
+        <p>After 1.59 million training steps, the bot won about 71 in every 100 games against its starting version. How much did the latest practice help?</p>
       </div>
-      <img src="2026-11-20-still-climbing/og.png" alt="Line chart: the bot beats its starting version 55.5% of the time after 65 thousand training steps and 71.0% after 1.59 million." width="1200" height="630" loading="lazy">
+      <img src="2026-11-20-still-climbing/og.png" alt="The bot's win rate against its starting version rose from 55.3% at 65,536 steps to 70.8% at 1,589,248 steps." width="1200" height="630" loading="lazy">
     </a></li>
   </ul>
-  <p class="foot">Numbers come from the project's own test games, with 95% ranges. The code is open source and older versions of the bot are public on Hugging Face.</p>
+  <p class="foot">The numbers come from the project's test games. The code is open source and older versions of the bot are public on Hugging Face.</p>
 </div>
 </body>
 </html>
