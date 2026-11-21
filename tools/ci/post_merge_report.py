@@ -34,7 +34,10 @@ def failed_jobs(repo: str, run_id: str) -> list[str]:
     names, page = [], 1
     while True:
         rows = request("GET", f"/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100&page={page}")["jobs"]
-        names += [job["name"] for job in rows if job.get("conclusion") == "failure" and job["name"] not in AGGREGATES]
+        # A shard stopped at its job timeout concludes cancelled (or timed_out); a push run is never cancelled
+        # by a newer one, so both count as failed here.
+        names += [job["name"] for job in rows if job.get("conclusion") in ("failure", "cancelled", "timed_out")
+                  and job["name"] not in AGGREGATES]
         if len(rows) < 100:
             return sorted(set(names))
         page += 1
@@ -65,7 +68,7 @@ def main() -> int:
     repo, run_id, sha = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_SHA"]
     ref, event = os.environ.get("GITHUB_REF_NAME", ""), os.environ.get("GITHUB_EVENT_NAME", "push")
     run_url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo}/actions/runs/{run_id}"
-    failed = failed_jobs(repo, run_id)
+    failed = failed_jobs(repo, run_id) or ["(no failed job identified; see the run)"]
     pull = merged_pull_request(repo, sha)
     body, line = compose(repo, run_url, sha, ref, event, failed, pull)
     if pull and failed:

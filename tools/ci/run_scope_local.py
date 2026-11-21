@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
               "finished": datetime.now(timezone.utc).isoformat(timespec="seconds"),
               "minutes": round((time.monotonic() - started) / 60, 1),
               "result": "pass" if all(r["exit"] == 0 for r in rows) else "fail", "commands": rows}
-    if args.scope == "trainer":
+    if "trainer" in args.scope:
         sys.path.insert(0, str(repo / "tools" / "ci"))
         import ci_scope  # noqa: PLC0415 - from the checked-out head
         record["note"] = ci_scope.trainer_record()
