@@ -1116,69 +1116,6 @@ pub fn publish_new_bytes_bracketed_v1(
     )
 }
 
-/// [`publish_new_bytes_v1`] without the directory sync after the staging name
-/// is removed (F3). Every readback, the staged file's data sync, the no-replace
-/// link, the directory sync before the receipt (F2) and the receipt are
-/// unchanged, so the final name is durable and verified before the receipt as
-/// in every other publication. F3 only made the removal of the staging name
-/// durable (and reported a failure of that flush): after a power loss without
-/// it, a staging name can reappear as a second link to the complete, synced
-/// final file, possibly beside records published after it. A staging name is
-/// never a record: every reader of these trees ignores or deletes it, and a
-/// process crash between linking and unlinking already leaves one. The next
-/// publication's directory sync in the same directory also persists the
-/// removal on journaling filesystems. For the native trainer's records
-/// (`expanded_deck_training_v1` and `native_expanded_training_run_v1`).
-pub fn publish_new_bytes_deferred_cleanup_v1(
-    parent: &ValidatedPublicationParentV1,
-    stage_name: impl AsRef<OsStr>,
-    final_name: impl AsRef<OsStr>,
-    bytes: &[u8],
-) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
-    let expectation = DurableFileExpectationV1::from_bytes(bytes)?;
-    publish_verified_bytes_mode_with_hook_v1(
-        parent,
-        stage_name.as_ref(),
-        final_name.as_ref(),
-        bytes,
-        expectation,
-        RecaptureV1::EveryBoundary,
-        CleanupSyncV1::Deferred,
-        crash_point_hook_v1,
-    )
-}
-
-/// [`publish_new_bytes_bracketed_v1`] (resident reads) without F3, as
-/// [`publish_new_bytes_deferred_cleanup_v1`].
-pub fn publish_new_bytes_bracketed_deferred_cleanup_v1(
-    parent: &ValidatedPublicationParentV1,
-    stage_name: impl AsRef<OsStr>,
-    final_name: impl AsRef<OsStr>,
-    bytes: &[u8],
-) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
-    let expectation = DurableFileExpectationV1::from_bytes(bytes)?;
-    publish_verified_bytes_mode_with_hook_v1(
-        parent,
-        stage_name.as_ref(),
-        final_name.as_ref(),
-        bytes,
-        expectation,
-        RecaptureV1::Bracketing,
-        CleanupSyncV1::Deferred,
-        crash_point_hook_v1,
-    )
-}
-
-/// Whether a publication syncs its directory after removing the staging name.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CleanupSyncV1 {
-    /// Sync the directory after the removal.
-    Synced,
-    /// Leave the removal to the next directory sync
-    /// (`publish_new_bytes_deferred_cleanup_v1`).
-    Deferred,
-}
-
 /// Which content readbacks a publication makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecaptureV1 {
@@ -1327,7 +1264,7 @@ fn publish_new_file_with_hook_v1(
 }
 
 /// The publication itself, for caller bytes already proven to match
-/// `expectation`, with the directory synced after the staging name's removal.
+/// `expectation`. Each readback compares the file with those bytes.
 fn publish_verified_bytes_with_hook_v1(
     parent: &ValidatedPublicationParentV1,
     stage_name: &OsStr,
@@ -1335,35 +1272,6 @@ fn publish_verified_bytes_with_hook_v1(
     verified_bytes: &[u8],
     expectation: DurableFileExpectationV1,
     recapture: RecaptureV1,
-    boundary_hook: impl FnMut(
-        PublicationBoundaryV1,
-        &Path,
-        &Path,
-    ) -> Result<(), DurablePublicationErrorV1>,
-) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
-    publish_verified_bytes_mode_with_hook_v1(
-        parent,
-        stage_name,
-        final_name,
-        verified_bytes,
-        expectation,
-        recapture,
-        CleanupSyncV1::Synced,
-        boundary_hook,
-    )
-}
-
-/// The publication itself, for caller bytes already proven to match
-/// `expectation`. Each readback compares the file with those bytes.
-#[allow(clippy::too_many_arguments)]
-fn publish_verified_bytes_mode_with_hook_v1(
-    parent: &ValidatedPublicationParentV1,
-    stage_name: &OsStr,
-    final_name: &OsStr,
-    verified_bytes: &[u8],
-    expectation: DurableFileExpectationV1,
-    recapture: RecaptureV1,
-    cleanup_sync: CleanupSyncV1,
     mut boundary_hook: impl FnMut(
         PublicationBoundaryV1,
         &Path,
@@ -1546,11 +1454,7 @@ fn publish_verified_bytes_mode_with_hook_v1(
         &stage_path,
         &final_path,
     )?;
-    match cleanup_sync {
-        CleanupSyncV1::Synced => sync_parent_namespace_v1(parent)?,
-        // The parent's identity is still revalidated at this boundary.
-        CleanupSyncV1::Deferred => revalidate_parent_v1(parent)?,
-    }
+    sync_parent_namespace_v1(parent)?;
     boundary_hook(
         PublicationBoundaryV1::CleanupNamespaceSynced,
         &stage_path,
@@ -1880,123 +1784,6 @@ mod tests {
                         .is_err(),
                         "changed final was accepted at {target:?}"
                     );
-                }
-            }
-        }
-    }
-
-    /// Every readback and directory-sync choice.
-    const MODES_V1: [(RecaptureV1, CleanupSyncV1); 4] = [
-        (RecaptureV1::EveryBoundary, CleanupSyncV1::Synced),
-        (RecaptureV1::Bracketing, CleanupSyncV1::Synced),
-        (RecaptureV1::EveryBoundary, CleanupSyncV1::Deferred),
-        (RecaptureV1::Bracketing, CleanupSyncV1::Deferred),
-    ];
-
-    #[test]
-    fn deferred_cleanup_publication_writes_the_same_final_and_receipt_and_removes_its_stage() {
-        let bytes = (0..2 * RECAPTURE_BUFFER_BYTES_V1 + 3)
-            .map(|index| (index * 7 % 253) as u8)
-            .collect::<Vec<_>>();
-        let directory = TestDirectoryV1::new("lean-success");
-        let parent = capture_existing_publication_parent_v1(directory.path()).unwrap();
-        let full = publish_new_bytes_v1(
-            &parent,
-            OsStr::new(".full.stage"),
-            OsStr::new("full.bin"),
-            &bytes,
-        )
-        .unwrap();
-        let lean = publish_new_bytes_deferred_cleanup_v1(
-            &parent,
-            OsStr::new(".lean.stage"),
-            OsStr::new("lean.bin"),
-            &bytes,
-        )
-        .unwrap();
-        assert!(!directory.path().join(".lean.stage").exists());
-        assert_eq!(fs::read(lean.final_path()).unwrap(), bytes);
-        assert_eq!(
-            (lean.exact_length(), lean.sha256()),
-            (full.exact_length(), full.sha256())
-        );
-        let expectation = DurableFileExpectationV1::from_bytes(&bytes).unwrap();
-        assert_eq!(
-            verify_existing_publication_v1(&parent, OsStr::new("lean.bin"), expectation).unwrap(),
-            lean
-        );
-        // The final name is still no-replace.
-        let again = publish_new_bytes_deferred_cleanup_v1(
-            &parent,
-            OsStr::new(".lean2.stage"),
-            OsStr::new("lean.bin"),
-            b"other",
-        );
-        assert_eq!(
-            again.unwrap_err().kind(),
-            DurablePublicationErrorKindV1::FinalCollision
-        );
-        assert_eq!(fs::read(lean.final_path()).unwrap(), bytes);
-    }
-
-    #[test]
-    fn every_mode_refuses_a_fault_or_a_change_at_every_boundary() {
-        let bytes = b"same-length-content-for-every-mode";
-        let expectation = DurableFileExpectationV1::from_bytes(bytes).unwrap();
-        for (recapture, cleanup) in MODES_V1 {
-            for target in ALL_BOUNDARIES_V1 {
-                for corrupt in [false, true] {
-                    let case = format!("{recapture:?} {cleanup:?} {target:?} corrupt={corrupt}");
-                    let directory = TestDirectoryV1::new("mode-boundary");
-                    let parent = capture_existing_publication_parent_v1(directory.path()).unwrap();
-                    let result = publish_verified_bytes_mode_with_hook_v1(
-                        &parent,
-                        OsStr::new("candidate.stage"),
-                        OsStr::new("authoritative.bin"),
-                        bytes,
-                        expectation,
-                        recapture,
-                        cleanup,
-                        |boundary, stage_path, final_path| {
-                            if boundary != target {
-                                return Ok(());
-                            }
-                            if !corrupt {
-                                return Err(injected_fault_v1(boundary));
-                            }
-                            let linked = matches!(
-                                boundary,
-                                PublicationBoundaryV1::FinalPublished
-                                    | PublicationBoundaryV1::FinalNamespaceSynced
-                                    | PublicationBoundaryV1::FinalVerified
-                                    | PublicationBoundaryV1::StageRemoved
-                                    | PublicationBoundaryV1::CleanupNamespaceSynced
-                            );
-                            if boundary == PublicationBoundaryV1::ParentValidated
-                                || boundary == PublicationBoundaryV1::StageCreated
-                            {
-                                // Nothing written yet: fail as a fault instead.
-                                return Err(injected_fault_v1(boundary));
-                            }
-                            overwrite_same_length_v1(
-                                if linked { final_path } else { stage_path },
-                                bytes.len(),
-                            );
-                            Ok(())
-                        },
-                    );
-                    assert!(result.is_err(), "{case}: accepted");
-                    let final_path = directory.path().join("authoritative.bin");
-                    if final_path.exists() {
-                        let verified = verify_existing_publication_v1(
-                            &parent,
-                            OsStr::new("authoritative.bin"),
-                            expectation,
-                        );
-                        // A fault leaves a valid final or none; a change never
-                        // leaves a final that verifies.
-                        assert_eq!(verified.is_ok(), !corrupt, "{case}");
-                    }
                 }
             }
         }

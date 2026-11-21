@@ -6761,18 +6761,13 @@ fn publish_json_unrecorded_v1(
         "output exceeds file size limit",
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    // No directory sync after the staging name's removal
-    // (`publish_new_bytes_deferred_cleanup_v1`); resident reads also skip the
-    // two non-bracketing readbacks (`publish_new_bytes_bracketed_v1`).
+    // Resident reads also skip the two non-bracketing readbacks
+    // (`publish_new_bytes_bracketed_v1`).
     let stage = format!(".{name}.stage");
     let receipt = if cache.resident_v1() {
-        crate::durable_publication_v1::publish_new_bytes_bracketed_deferred_cleanup_v1(
-            &parent, stage, name, bytes,
-        )
+        crate::durable_publication_v1::publish_new_bytes_bracketed_v1(&parent, stage, name, bytes)
     } else {
-        crate::durable_publication_v1::publish_new_bytes_deferred_cleanup_v1(
-            &parent, stage, name, bytes,
-        )
+        publish_new_bytes_v1(&parent, stage, name, bytes)
     }
     .map_err(err)?;
     Ok(PinnedFileV1 {

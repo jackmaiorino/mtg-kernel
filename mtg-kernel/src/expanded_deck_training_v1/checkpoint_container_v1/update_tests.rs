@@ -188,6 +188,18 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
     );
     let probe: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&pin_v2).unwrap();
     assert!(probe.e_supported.is_none() && probe.ex1.is_none());
+    // What the update remembers (the record's document, taken before
+    // sealing) is the view a fresh probe takes from a sealed file too.
+    let sealed = record_envelope_v1::RecordEnvelopeV1::Zstd1
+        .seal_v1(&bytes_v2)
+        .unwrap();
+    assert!(record_envelope_v1::is_sealed_v1(&sealed));
+    assert_eq!(
+        checkpoint_container_v1::metadata_view_v1(&sealed)
+            .unwrap()
+            .as_ref(),
+        checkpoint_container_v1::document_v1(&bytes_v2).unwrap()
+    );
     // The remembered view is exactly the view a fresh probe takes from the
     // file.
     let view = checkpoint_container_v1::metadata_view_v1(&bytes_v2).unwrap();
