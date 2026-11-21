@@ -1,0 +1,7464 @@
+{
+ "schema": "pauper_legality/v1",
+ "source": "api.scryfall.com card legalities",
+ "captured": "2026-11-21",
+ "note": "Names are the registries' ASCII spelling. A row is a registry card whose is_token flag is not true (token rows, such as 'Treasure Token', are excluded). A card the source could not match, after exact, fuzzy and front-face lookups, is listed under unresolved with no guess.",
+ "cards": [
+  {
+   "name": "Aang's Iceberg",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Abandon Attachments",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Abandoned Air Temple",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Abeyance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Abhorrent Oculus",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Abjure",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Abrade",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Abrupt Decay",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Absolute Law",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Abundant Countryside",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Abundant Growth",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Academy Rector",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Accumulated Knowledge",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Accursed Marauder",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Acererak the Archlich",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Acorn Harvest",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ad Nauseam",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Adarkar Wastes",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Adeline, Resplendent Cathar",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Aether Spellbomb",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Aether Vial",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Agatha's Soul Cauldron",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Agony Warp",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ajani, Nacatl Pariah",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Akroma's Vengeance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Akroma, Angel of Wrath",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Alms of the Vein",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Aloe Alchemist",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Alpha Deathclaw",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Alpine Moon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Aluren",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Amped Raptor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Anarchy",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ancestral Mask",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ancestral Recall",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ancient Den",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ancient Grudge",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ancient Tomb",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Angelic Gift",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Anger",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Animate Dead",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Annoyed Altisaur",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Annul",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Anoint with Affliction",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Anointed Peacekeeper",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Anurid Brushhopper",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Apostle's Blessing",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Arashin Cleric",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Arbor Elf",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Arcane Denial",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Arcane Laboratory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Archaeomancer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Archon of Absolution",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Archon of Cruelty",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Archon of Emeria",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Arena of Glory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Argentum Masticore",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Argothian Enchantress",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Arid Mesa",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Armadillo Cloak",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Armageddon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Arms of Hadar",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Arrogant Wurm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Artful Dodge",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ascendant Packleader",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Asgardian Citadel",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ash Barrens",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ashen Rider",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Assassin's Trophy",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Assimilation Aegis",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Astrologian's Planisphere",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Atraxa, Grand Unifier",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Attunement",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Augur of Bolas",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Aura of Silence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Auramancer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Auriok Salvagers",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Avalanche Riders",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Avatar of Burgeoning Echoes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Avatar of Woe",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Avenging Hunter",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Axebane Ferox",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Azorius Chancery",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Azorius Guildgate",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Azure Beastbinder",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Azure Fleet Admiral",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Back to Basics",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Badlands",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Balance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Baleful Strix",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ball Lightning",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Baloth Prime",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Balustrade Spy",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bane of the Living",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bannerhide Krushok",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Barbarian Ring",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Barrels of Blasting Jelly",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Barrowgoyf",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Basalt Monolith",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Basilisk Collar",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Basilisk Gate",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Basking Rootwalla",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Battle Screech",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Battlefield Forge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Battlefield Scrounger",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bayou",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bazaar of Baghdad",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Behold the Multiverse",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Beloved Chaplain",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bender's Waterskin",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Benevolent Blessing",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Beseech the Mirror",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Big Score",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bilbo, Thief in the Night",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bind the Monster",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Birchlore Rangers",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Birds of Paradise",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bitter Triumph",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Black Dragon Gate",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Black Lotus",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Black Mage's Rod",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Black Vise",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blackcleave Cliffs",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blast Zone",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blastoderm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Blazemire Verge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blazing Rootwalla",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bleachbone Verge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blood Crypt",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blood Fountain",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Blood Moon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bloodbraid Challenger",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bloodchief's Thirst",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bloodletter of Aclazotz",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bloodstained Mire",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bloodtithe Harvester",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blooming Marsh",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Blue Elemental Blast",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Blue Sun's Twilight",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Boarding Party",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Boggart Trawler",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bojuka Bog",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bolas's Citadel",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Boltwave",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bonder's Ornament",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bone Shards",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Boomerang Basics",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Boros Garrison",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Boseiju, Who Endures",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Botanical Sanctum",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Braided Net",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Brain Freeze",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Brainstorm",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bramble Wurm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Brazen Borrower",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Breach the Multiverse",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Breakthrough",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Breath Weapon",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Breeding Pool",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bridge from Below",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Bridgeworks Battle",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Brightglass Gearhulk",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Brinebarrow Intruder",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bristly Bill, Spine Sower",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Broadside Bombardiers",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Brotherhood's End",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Brushland",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Brutal Cathar",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Burning Wish",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Burning-Tree Emissary",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Burnout Bashtronaut",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Burst Lightning",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Bushwhack",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cabal Ritual",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cabal Therapy",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Call Damage Control",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Call of the Herd",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Caller of the Claw",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Campfire",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Candelabra of Tawnos",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Candy Trail",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Canoptek Scarab Swarm",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Careful Study",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Carnage Interpreter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Carnivorous Cultivator",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Carpet of Flowers",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cartouche of Solidarity",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Case of the Gateway Express",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Case of the Uneaten Feast",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cast Down",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cast into the Fire",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Castigate",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cathar Commando",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cauldron Familiar",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Caustic Bronco",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cavern of Souls",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Caves of Chaos Adventurer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Caves of Koilos",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cecil, Dark Knight",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Celestial Colonnade",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Celestial Purge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cenote Scout",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cephalid Coliseum",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cephalid Illusionist",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chain Lightning",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Chain of Smog",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chain of Vapor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chalice of the Void",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chancellor of the Annex",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chandra, Chill of Compliance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chandra, Hope's Beacon",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chaos Defiler",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chatter of the Squirrel",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Chill",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Choke",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chromatic Star",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Chrome Host Seedshark",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Chrome Mox",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Circle of Protection: Blue",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Circle of Protection: Red",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Citadel Gate",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "City of Brass",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "City of Traitors",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cityscape Leveler",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Clarion Conqueror",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Clay-Fired Bricks",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cleansing Wildfire",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cliffgate",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cloak and Dagger, Entwined",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Clockwork Percussionist",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Coalition Honor Guard",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Coalition Relic",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Coastal Tower",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Collective Brutality",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Collector Ouphe",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Collector's Cage",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Commandeer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Commercial District",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Concealed Courtyard",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Conduit Pylons",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Consider",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Consign to Memory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Contagion",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Containment Priest",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Contaminated Aquifer",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Contaminated Landscape",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Contamination",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Coppercoat Vanguard",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Copperline Gorge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cori-Steel Cutter",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Corpse Dance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Council of Reeds",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Council's Judgment",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Counterspell",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Coveted Jewel",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Creeping Chill",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Creeping Tar Pit",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Crimson Acolyte",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Crimson Fleet Commodore",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Crop Rotation",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Crossover Collaboration",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Crucible of Worlds",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Crumble",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cryogen Relic",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cryoshatter",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Crypt Incursion",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Crypt Rats",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Cryptic Serpent",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Curie, Emergent Intelligence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Currency Converter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cursed Scroll",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cursed Totem",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Cut Down",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Dack Fayden",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Damn",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Damnation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Damping Sphere",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dark Confidant",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dark Depths",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dark Matter Manipulator",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dark Petition",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dark Ritual",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Darkslick Shores",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Darkstar Augur",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Darksteel Angel",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dauthi Voidwalker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dawnbringer Cleric",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Daze",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Dead // Gone",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Deafening Clarion",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Deafening Silence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Death-Greeter's Champion",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Deathrite Shaman",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Debt to the Deathless",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Decree of Justice",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Decree of Pain",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Decree of Silence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Deem Inferior",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Deep Analysis",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Deep-Cavern Bat",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Defense Grid",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Defile",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Deglamer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Delayed Blast Fireball",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Delighted Halfling",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Delver of Secrets",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Demand Answers",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Demonic Consultation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Demonic Tutor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Deranged Hermit",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Desert",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Deserted Beach",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Desperate Ritual",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Destroy Evil",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Devoted Caretaker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Devoted Druid",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Diabolic Edict",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Diabolic Tutor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dig Through Time",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dimir Aqueduct",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Disenchant",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Dismember",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dispatch",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Dispel",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Displacer Kitten",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Disruptor Flute",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dissipate",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Djeru and Hazoret",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dominate",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Doomsday",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Doorkeeper Thrull",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dragon's Rage Channeler",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dread Return",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Dread of Night",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dreamroot Cascade",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dress Down",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dromar's Charm",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Drop of Honey",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Drossforge Bridge",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Drown in Sorrow",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Druid Lyrist",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Dryad Arbor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Duress",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Dusk Rose Reliquary",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dust Bowl",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Dust to Dust",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Dystopia",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Eagles of the North",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Earthquake",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Echo of Eons",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Echoing Deeps",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Echoing Truth",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Edge of Autumn",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Eiganjo, Seat of the Empire",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Eldrazi Confluence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Eldrazi Linebreaker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Eldrazi Repurposer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Eldrazi Temple",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Electrickery",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Elegant Parlor",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Elves of Deep Shadow",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Elvish Mystic",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Elvish Reclaimer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Elvish Spirit Guide",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Embereth Shieldbreaker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Emberheart Challenger",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Emperor of Bones",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Empty the Warrens",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Emrakul, the Aeons Torn",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Emry, Lurker of the Loch",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Enchantress's Presence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "End the Festivities",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Endurance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Enduring Curiosity",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Enduring Innocence",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Energy Refractor",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Engineered Explosives",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Engineered Plague",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Enlightened Tutor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Enroot",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ensnaring Bridge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Entomb",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Envelop",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Eowyn, Fearless Knight",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ephemerate",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Erode",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ertai Resurrected",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Escape to the Wilds",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Esika's Chariot",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Essence Channeler",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Essence Flare",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Essence Scatter",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Etali, Primal Conqueror",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Eternal Dragon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ethereal Armor",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ethereal Haze",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Eumidian Hatchery",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Everflowing Chalice",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Eviscerator's Insight",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Evolving Adaptive",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Exalted Angel",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Exhume",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Expedition Map",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Experimental Synthesizer",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Exploration",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Expressive Iteration",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Extinguisher Battleship",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Extirpate",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Extract a Confession",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Extraction Specialist",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Extrapolate the Impossible",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Eye of Ugin",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fable of the Mirror-Breaker",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fabled Passage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fact or Fiction",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fading Hope",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Faerie Dreamthief",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Faerie Macabre",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Faerie Mastermind",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Faerie Miscreant",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Faerie Seer",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Faerie Trickery",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Faithless Looting",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fallen Shinobi",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fanatic of Rhonas",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fanatical Offering",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fang Dragon",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fastbond",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fatal Push",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Feed the Swarm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fiery Confluence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fiery Temper",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fire // Ice",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fire Covenant",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Firebending Lesson",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fireblast",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Firebolt",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "First Day of Class",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Flagstones of Trokair",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flame Slash",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Flame of Anor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flaring Pain",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Flash",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flash of Insight",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flashback",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flickerwisp",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flooded Strand",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Floodfarm Verge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Floodpits Drowner",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flourishing Bloom-Kin",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flow State",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flow of Knowledge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Flusterstorm",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fog",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Foil",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fomori Vault",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Foot Ninjas",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Forbidden Orchard",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Force Spike",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Force of Negation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Force of Vigor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Force of Will",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Forensic Gadgeteer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Forest",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Formidable Speaker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Forsaken City",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Forsaken Miner",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Forth Eorlingas!",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fortress Kin-Guard",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fountainport",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fractured Identity",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Frantic Search",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "From the Ashes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Full Bore",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fume Spitter",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Funeral Charm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Fury",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Future Sight",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Fyndhorn Elves",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gaddock Teeg",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gaea's Blessing",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gaea's Cradle",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gaea's Will",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Galvanic Blast",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Galvanic Discharge",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Galvanic Relay",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Gamble",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gandalf, Goblins' Bane",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Garruk, Curse Breaker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gatecreeper Vine",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gatekeeper of Malakir",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gau, Feral Youth",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gearseeker Serpent",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gempalm Incinerator",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gemstone Mine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Generous Ent",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Generous Plunderer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Genesis",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Geothermal Crevice",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gerrard's Verdict",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Get Lost",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ghitu Encampment",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ghitu Slinger",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ghost Quarter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ghost Vacuum",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ghostly Flicker",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Giant's Boulder",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ginger, Queen of Sweets",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gingerbread Cabin",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gingerbrute",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gitaxian Probe",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Giver of Runes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gix's Command",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gixian Infiltrator",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Glacial Floodplain",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gladecover Scout",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Glaring Fleshraker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gleeful Demolition",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Glimmer Lens",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Glimpse the Impossible",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Glint Hawk",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Glissa Sunslayer",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gloom",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gloomlake Verge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Glorious Gale",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Glory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Glowrider",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Go for the Throat",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Goblin Anarchomancer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Goblin Bombardment",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Bushwhacker",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Goblin Engineer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Goon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Lackey",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Matron",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Goblin Piledriver",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Rabblemaster",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Ringleader",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Sharpshooter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Tinkerer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Goblin Tomb Raider",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Goblin Vandal",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Goblin Warchief",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goblin Welder",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "God-Pharaoh's Faithful",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Godless Shrine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goldmire Bridge",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Golgari Grave-Troll",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Golgari Rot Farm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Golgari Thug",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Goliath Paladin",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Golos, Tireless Pilgrim",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gorilla Shaman",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Grab the Prize",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Grafdigger's Cage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Grapeshot",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Grapple with Death",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Graveborn Muse",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Graveyard Trespasser",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Great Furnace",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Greatsword of Tyr",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Green Sun's Zenith",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Grief",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Grim Bauble",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Grim Lavamancer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Grim Monolith",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Grindstone",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Griselbrand",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Growth Spiral",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gruul Turf",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Guardian of the Guildpact",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Guardians' Pledge",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Guide of Souls",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Gurmag Angler",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gush",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Gut Shot",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gut, True Soul Zealot",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Guttersnipe",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Gwenna, Eyes of Gaea",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hajar, Loyal Bodyguard",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Halana and Alena, Partners",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hallowed Fountain",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Harbinger of the Seas",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hard Evidence",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Hard-Hitting Question",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hardlight Containment",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Harrier Strix",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Harvester of Misery",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Haughty Djinn",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Haunted Mire",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Haunted Ridge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Haunting Echoes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Haywire Mite",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Headliner Scarlett",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Healer of the Glade",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Heap Gate",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Heaped Harvest",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Heartfire Hero",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hedge Maze",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Heliod's Pilgrim",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Heritage Reclamation",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Hermit Druid",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hexing Squelcher",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hickory Woodlot",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "High Market",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Highland Forest",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Highway Robbery",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Hired Claw",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hogaak, Arisen Necropolis",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hollow One",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Holy Light",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Hopeful Initiate",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Horizon Canopy",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hullbreacher",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hullbreaker Horror",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Humbling Elder",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Hunter's Blowgun",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Hurkyl's Recall",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hushwood Verge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Hydroblast",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Hymn to Tourach",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Hypnotic Specter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ice Tunnel",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Icetill Explorer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ichor Wellspring",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ichorid",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Idyllic Beachfront",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Idyllic Grange",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ignoble Hierarch",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ihsan's Shade",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Imodane's Recruiter",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Imperial Seal",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Impractical Joke",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Improvised Act",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Impulse",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Incinerate",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Indatha Triome",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Infernal Grasp",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Infernal Tutor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Infest",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Innkeeper's Talent",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Innocent Blood",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Inquisition of Kozilek",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Inspiring Vantage",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Intuition",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Invasion Submersible",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Inventor's Axe",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Inventors' Fair",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Invoke Despair",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Iridescent Angel",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Iridescent Vinelasher",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Iron Man Armor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Iron-Shield Elf",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Island",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "It That Heralds the End",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "It'll Quench Ya!",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ivora, Insatiable Heir",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Jace, Wielder of Mysteries",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Jace, the Mind Sculptor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Jackal Pup",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Jacked Rabbit",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Jagged Barrens",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Jetmir's Garden",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Jewel Thief",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Jodah, the Unifier",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Journey to Nowhere",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Kaito, Bane of Nightmares",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kaldra Compleat",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kappa Cannoneer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Karakas",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Karmic Guide",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Karmic Justice",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Karn, Argent Defender",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Karn, Scion of Urza",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Karn, the Great Creator",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Karplusan Forest",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Katilda, Dawnhart Prime",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kayla's Reconstruction",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Keen-Eyed Curator",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kellan, Planar Trailblazer",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kessig Flamebreather",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ketria Triome",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Khalni Garden",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Kiora's Dismissal",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kishla Skimmer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kitchen Imp",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Knight of Stromgald",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Knight of the Reliquary",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Knight-Errant of Eos",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kolaghan's Command",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kor Haven",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Kor Skyfisher",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Kozilek's Command",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Krark-Clan Shaman",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Krosan Reclamation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Krosan Tusker",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Laelia, the Blade Reforged",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lagrella, the Magpie",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Land Grant",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Last Breath",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Lava Dart",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Lavinia, Azorius Renegade",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lazotep Quarry",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lead the Stampede",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ledger Shredder",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Legacy's Allure",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Legion Extruder",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Legolas's Quick Reflexes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lembas",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Leonardo, Big Brother",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Leyline Binding",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Leyline of Sanctity",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Leyline of the Void",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Library of Alexandria",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lich's Relic",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Life // Death",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Life from the Loam",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Light of Day",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lightning Bolt",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Lightning Greaves",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lightning Strike",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Liliana of the Veil",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lingering Souls",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lion Sash",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lion's Eye Diamond",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Liquimetal Coating",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lithomantic Barrage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Llanowar Elves",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Llanowar Wastes",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lodestone Golem",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Loki, God of Mischief",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lonely Arroyo",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Long Goodbye",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Loran of the Third Path",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lorien Revealed",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Lose Focus",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Lotleth Giant",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Lotus Petal",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Luminarch Aspirant",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lunar Convocation",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lunarch Veteran",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Lupinflower Village",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lurking Skirge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lurrus of the Dream-Den",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lush Portico",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Lutri, the Spellchaser",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Maelstrom Pulse",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Magus of the Moon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mai, Scornful Striker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Make Disappear",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Makeshift Munitions",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Malevolent Rumble",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mana Confluence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mana Crypt",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mana Drain",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mana Leak",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mana Short",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mana Tithe",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mana Vault",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Manamorphose",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Manifold Key",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Manifold Mouse",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Manor Gate",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Marsh Flats",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Martyr of Sands",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Martyr's Soul",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Marwyn, the Preserver",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Masked Meower",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Masked Vandal",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Massacre",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Master of Death",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Masticore",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Maze of Ith",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Meddling Mage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Meeting of Minds",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Melded Moxite",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Melira, the Living Cure",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Meltdown",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Memory Deluge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Memory Guardian",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Memory Jar",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Memory Lapse",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mental Misstep",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mental Note",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Merchant Scroll",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mesmeric Fiend",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Metallic Rebuke",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Metamorphosis Fanatic",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Meteor Sword",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Meticulous Archive",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mind Stone",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mind Twist",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mindbreak Trap",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mine Collapse",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Minsc & Boo, Timeless Heroes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mirran Banesplitter",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mirrex",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mirri's Guile",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Miscalculation",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Misdirection",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mishra's Bauble",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mishra's Factory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mishra's Foundry",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mishra's Research Desk",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mishra's Workshop",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mistvault Bridge",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Misty Rainforest",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mogg Fanatic",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mogg Salvage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mole Man, Moloid Master",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Molten Tributary",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Moment's Peace",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Momentum Breaker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Monastery Swiftspear",
+   "registry": "standard",
+   "pauper": "banned"
+  },
+  {
+   "name": "Monk Realist",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Monstrous Emergence",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Monstrous Rage",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Moon-Circuit Hacker",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Moonshadow",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mortuary Mire",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mosswood Dreadknight",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mother of Runes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mountain",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mox Diamond",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mox Emerald",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mox Jet",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mox Opal",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mox Pearl",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mox Ruby",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mox Sapphire",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mudflat Village",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mukotai Ambusher",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mulldrifter",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Multani's Acolyte",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Multani, Maro-Sorcerer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Multiversal Passage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Murktide Regent",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Murmuring Mystic",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mutagenic Growth",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mwonvuli Acid-Moss",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mycosynth Lattice",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Myr Battlesphere",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Myr Enforcer",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mystic Confluence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mystic Enforcer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mystic Forge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mystic Sanctuary",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Mystical Dispute",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Mystical Teachings",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Mystical Tutor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nantuko Shade",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nantuko Vigilante",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Narcomoeba",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Narset, Parter of Veils",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Natural Order",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Naturalize",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Navigator's Compass",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Necromancy",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Negate",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Nether Spirit",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nethergoyf",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nettlecyst",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nevinyrral's Disk",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Night Nurse, Healer of Heroes",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Night's Whisper",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Nihil Spellbomb",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ninja of the Deep Hours",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "No More Lies",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Noble Hierarch",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nomads en-Kor",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Nova Cleric",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nova Hellkite",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Novice Inspector",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Noxious Revival",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Null Rod",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Nutrient Block",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Nylea's Disciple",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Nyxborn Hydra",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Oath of Druids",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Occult Epiphany",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ocelot Pride",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Of One Mind",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ojer Axonil, Deepest Might",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Oko, Thief of Crowns",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Okoye, Mighty and Adored",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Oliphaunt",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Omen of the Dead",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Omnath, Locus of Creation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Omniscience",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Once Upon a Time",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Opalescence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Opt",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Orcish Bowmasters",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Origin of Metalbending",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Orim's Chant",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Oroku Saki, Shredder Rising",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Orzhov Basilica",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Oswald Fiddlebender",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Otawara, Soaring City",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Otharri, Suns' Glory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Otherworldly Gaze",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ouroboroid",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Oust",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Outland Liberator",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Outlaw Medic",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Overencumbered",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Overgrown Battlement",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Overgrown Estate",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Overgrown Farmland",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Overgrown Tomb",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Overload",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Overlord of the Balemurk",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Overlord of the Mistmoors",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ox of Agonas",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Painter's Servant",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Palace Sentinels",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Palantir of Orthanc",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Palinchron",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Paradox Engine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Paradoxical Outcome",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Parallax Wave",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Patchwork Automaton",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Path to Exile",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pawpatch Recruit",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Peer into the Abyss",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pentad Prism",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Perilous Landscape",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Perilous Snare",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pernicious Deed",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Personal Tutor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pest Infestation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pestilence",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Petradon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Petrified Hamlet",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phantom Interference",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Phantom Nishoba",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phelia, Exuberant Shepherd",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phlage, Titan of Fire's Fury",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Devourer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Dragon Engine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Dreadnought",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Furnace",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Metamorph",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Processor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Revoker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Phyrexian Tower",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pieces of the Puzzle",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Pillage",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Pillage the Bog",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pinnacle Emissary",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Piracy Charm",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Pithing Needle",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Plaguebearer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Plains",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Planar Nexus",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Plateau",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Plaza of Heroes",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Plunder the Trollshaws",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Polluted Delta",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Polukranos Reborn",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pompous Battlemage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ponder",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Portable Hole",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Portal to Phyrexia",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Portent",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Powder Keg",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Poxwalkers",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pre-War Formalwear",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Preacher of the Schism",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Preordain",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Price of Progress",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Priest of Titania",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Prismari Charm",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Prismatic Ending",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Prismatic Strands",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Prismatic Vista",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Prized Amalgam",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Proft's Eidetic Memory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Prohibit",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Prophetic Prism",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Psychatog",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Psychic Frog",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pulse of Murasa",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Pursue the Past",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Putrid Imp",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Pyrite Spellbomb",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Pyroblast",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Pyroclasm",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pyrokinesis",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Pyrostatic Pillar",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Quantum Riddler",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Questing Druid",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Quirion Beastcaller",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Quirion Dryad",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Quirion Ranger",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Radiant Fountain",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Raffine's Informant",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Raffine's Tower",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ragavan, Nimble Pilferer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ragged Short Spear",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rain of Filth",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rakdos Carnarium",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rally at the Hornburg",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rally the Peasants",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ram Through",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ramosian Rally",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rancid Earth",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rancor",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Raph & Mikey, Troublemakers",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Raucous Theater",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Raugrin Triome",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ravenous Baloth",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ravenous Rats",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ravenous Trap",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ray of Revelation",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Raze",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Razorkin Needlehead",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Razortide Bridge",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Razorverge Thicket",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Reality Smasher",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Reanimate",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rebuild",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Reckless Impulse",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Reckless Lackey",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Reckoner Bankbuster",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Reckoner's Bargain",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Recruiter of the Guard",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Recruitment Officer",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Recurring Nightmare",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Red Elemental Blast",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Reflecting Pool",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Refurbished Familiar",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Regal Bunnicorn",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Relic of Progenitus",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Relic of Sauron",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Remand",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Remote Isle",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Replenish",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Reprieve",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Repurposing Bay",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Resolute Reinforcements",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Respite",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rest in Peace",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Restless Bivouac",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Restless Cottage",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Restless Fortress",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Restless Prairie",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Restless Reef",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Restless Ridgeline",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Restless Vinestalk",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Retrofitter Foundry",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Return to Dust",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rewind",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ride's End",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Rip Apart",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rishadan Port",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rith's Grove",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Riverpyre Verge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rockface Village",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rockfall Vale",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Root Maze",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rough // Tumble",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ruin-Lurker Bat",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Rustvale Bridge",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sacred Cat",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sacred Foundry",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sacred Ground",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sage of the Skies",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sagittars' Volley",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sagu Wildling",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Saiba Cryptomancer",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sailors' Bane",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Salt Road Packbeast",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Samut, Hazoret's Champion",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Samwise the Stouthearted",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sand Scout",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sandstone Needle",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sandstorm Salvager",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sanguine Evangelist",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Saruli Caretaker",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Savai Triome",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Savannah",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Scalding Tarn",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Scattershot Archer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Scrawling Crawler",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Screaming Nemesis",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Scrubland",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Scythecat Cub",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sea Gate",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sea Gate Oracle",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Seachrome Coast",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Seal of Cleansing",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Seal of Fire",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Seam Rip",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sear",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Search Party Captain",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Searing Blaze",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Seasoned Cryomancer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Seasoned Dungeoneer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Seasoned Pyromancer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Seat of the Synod",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Secluded Courtyard",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Secluded Steppe",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sedgemoor Witch",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Seething Landscape",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Seething Song",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Seize the Storm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sejiri Steppe",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sensei's Divining Top",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sentinel of the Nameless City",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sentinel's Eyes",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Serenity",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Serra's Emissary",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Serra's Sanctum",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Serum Powder",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sewer-veillance Cam",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Shadowspear",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shadowy Backstreet",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shallow Grave",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shambling Shell",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Shanna, Purifying Blade",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shared Triumph",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sharp-Eyed Rookie",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shattered Landscape",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Shatterskull Smashing",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shelldock Isle",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sheltered by Ghosts",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sheltering Landscape",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Shenanigans",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sheoldred's Edict",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sheoldred, the Apocalypse",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shifting Woodland",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shivan Reef",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shock",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Shoot the Sheriff",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shore Up",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Shorikai, Genesis Engine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Show and Tell",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Shuko",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sickening Dreams",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sickening Shoal",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Siege-Gang Commander",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Silent Clearing",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Silhana Ledgewalker",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Silverbluff Bridge",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Silversmote Ghoul",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Simian Spirit Guide",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Simic Growth Chamber",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Simulacrum Synthesizer",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sink into Stupor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Six",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Skateboard",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Skeletal Scrying",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Skirk Prospector",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Skred",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Skrelv, Defector Mite",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Skullclamp",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Skyclave Apparition",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Skycloud Expanse",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Slagwoods Bridge",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sleep of the Dead",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sleight of Hand",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Slickshot Show-Off",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Slippery Bogle",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Smash to Smithereens",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Smother",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Smuggler's Copter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Snakeskin Veil",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snap",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snapback",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snapcaster Mage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sneak Attack",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sneaky Snacker",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snow-Covered Forest",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snow-Covered Island",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snow-Covered Mountain",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snow-Covered Plains",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snow-Covered Swamp",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Snuff Out",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sokenzan, Crucible of Defiance",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sol Ring",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Solitary Confinement",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Solitude",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Soltari Monk",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Soltari Priest",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Song of Creation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Soul-Guide Lantern",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Soulstone Sanctuary",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sowing Mycospawn",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spara's Headquarters",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spell Pierce",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Spell Snare",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spellseeker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spellstutter Sprite",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sphere of Law",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sphere of Resistance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sphinx of False Conclusions",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sphinx of the Steel Wind",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spider-Man, Web-Slinger",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Spider-Woman, Stunning Savior",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spike Feeder",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spinewoods Paladin",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Spirebluff Canal",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spirit Link",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Spreading Seas",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Spring-Loaded Sawblades",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Spyglass Siren",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Squadron Hawk",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Squee, Goblin Nabob",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Staff of the Storyteller",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Standard Bearer",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Standstill",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Starting Town",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stasis",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Static Prison",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Steam Vents",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Steel Sabotage",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Steel Wrecking Ball",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Step Through",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sterling Grove",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stern Dismissal",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Stern Scolding",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stifle",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stingcaster Mage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stinkweed Imp",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Stitcher's Supplier",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stock Up",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stomping Ground",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stone Rain",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Stonecoil Serpent",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stoneforge Mystic",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stonehorn Dignitary",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Stony Silence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stormchaser's Talent",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stream of Thought",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Street Wraith",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Strip Mine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Stronghold Gambit",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Subterranean Schooner",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Subtlety",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sudden Demise",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Suffocating Fumes",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Sulfuric Vortex",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sulfurous Springs",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Summon: Bahamut",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sunbaked Canyon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sundering Eruption",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sunfall",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sunscape Familiar",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Super Shredder",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Suplex",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Supreme Verdict",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Surge Engine",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Surgical Extraction",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Surrak, Elusive Hunter",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Survival of the Fittest",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Suspend",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Swamp",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Swan Song",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sword of the Meek",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Swords to Plowshares",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sylvan Library",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Sylvan Safekeeper",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Taiga",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tainted Field",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tainted Wood",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Takenuma, Abandoned Mire",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Talisman of Creativity",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Talisman of Curiosity",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Talisman of Dominance",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Talisman of Progress",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Talon Gates of Madara",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tamiyo's Safekeeping",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tamiyo, Inquisitive Student",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tangle",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tangled Islet",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tarfire",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tear Asunder",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Teething Wurmlet",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Teferi, Hero of Dominaria",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Teferi, Temporal Pilgrim",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Teferi, Time Raveler",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Temple Garden",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Temporary Lockdown",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tendrils of Agony",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Terminate",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Terminus",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Terravore",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tersa Lightshatter",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tezzeret, Cruel Captain",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thalia, Guardian of Thraben",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thassa's Oracle",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Echoverse Fulcrum",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Endstone",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Fantasticar",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Irencrag",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Mightstone and Weakstone",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Modern Age",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "The One Ring",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Tabernacle at Pendrell Vale",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "The Wandering Emperor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thermokarst",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thespian's Stage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thief of Existence",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Third Path Iconoclast",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thirst for Discovery",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thopter Foundry",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thorn of Amethyst",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thorn of the Black Rose",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thornscape Battlemage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thornscape Familiar",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thornspire Verge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thornwood Falls",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thought Monitor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thought Scour",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thought-Knot Seer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thoughtcast",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thoughtseize",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thousand Moons Smithy",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thraben Charm",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thraben Inspector",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Thundering Falls",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thundertrap Trainer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Thwart",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Timberwatch Elf",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Time Spiral",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Time Vault",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Time Walk",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Timetwister",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tinder Wall",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tinker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tireless Tracker",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tireless Tribe",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tishana's Tidebinder",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Titania, Protector of Argoth",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tithing Blade",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tolaria",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tolarian Academy",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tolarian Terror",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tormod's Crypt",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Torpor Orb",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Torsten, Founder of Benalia",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tough Cookie",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tourach, Dread Cantor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Toxic Deluge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Toxin Analysis",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tranquil Domain",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tranquil Frillback",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tranquil Thicket",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Traumatic Critique",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Treasure Cruise",
+   "registry": "eternal_v1",
+   "pauper": "banned"
+  },
+  {
+   "name": "Treetop Village",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Treva's Ruins",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Trinisphere",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Triskelion",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Triumph of Saint Katherine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Troll of Khazad-dum",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Tropical Island",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Troublemaker Ouphe",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "True Believer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tsabo's Web",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Tundra",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Twinned Vision",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Twinshot Sniper",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Twisted Landscape",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Ugin, Eye of the Storms",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Uktabi Orangutan",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ultimate Alliance",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Umezawa's Jitte",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Unable to Scream",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Undercity Sewers",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Underground Mortuary",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Underground River",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Underground Sea",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Undermountain Adventurer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Underworld Breach",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Undiscovered Paradise",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Unearth",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Unexpected Fangs",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Unexpectedly Absent",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Unholy Annex // Ritual Chamber",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Unholy Heat",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Union of the Third Path",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "United Battlefront",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Unlicensed Hearse",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Unmask",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Unstoppable Slasher",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Up the Beanstalk",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Upheaval",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Urborg, Tomb of Yawgmoth",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Uro, Titan of Nature's Wrath",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ursine Monstrosity",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Urza's Bauble",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Urza's Mine",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Urza's Power Plant",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Urza's Saga",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Urza's Tower",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Urza's Workshop",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Utopia Sprawl",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Utrom Monitor",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Valgavoth's Lair",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vampire Sovereign",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Vampire's Kiss",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Vampiric Tutor",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vandalblast",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Vault of Whispers",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Veil of Summer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vengevine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Verdant Catacombs",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Verdant Force",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Veteran Brawlers",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Veteran Explorer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vexing Bauble",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vicious Rivalry",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vindicate",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vintara Snapper",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Viridian Longbow",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Virtue of Loyalty",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Virtue's Ruin",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vision Charm",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Vitu-Ghazi Inspector",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Voice of Victory",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Void Mirror",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Volatile Fjord",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Volcanic Island",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Voldaren Epicure",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Volrath's Shapeshifter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Voltaic Key",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Vraska's Final Mercy",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Walking Ballista",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wall of Blossoms",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wall of Roots",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Warden of the Inner Sky",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Warleader's Call",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Warmth",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Warping Wail",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wasteland",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wastescape Battlemage",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wastewood Verge",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Waterbending Lesson",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Waterlogged Grove",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Watery Grave",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Weather the Storm",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Weathered Wayfarer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Webweaver Changeling",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Wellwisher",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Wheel of Fortune",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Whipflare",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "White Orchid Phantom",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "White Plume Adventurer",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wight of the Reliquary",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wild Growth",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Wild Mongrel",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Wind-Scarred Crag",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Winding Way",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Winds of Abandon",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Windswept Heath",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Winter Orb",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Winter's Grasp",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wirewood Symbiote",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wishclaw Talisman",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Witch Enchanter",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Witch's Cottage",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Witchstalker Frenzy",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Witherbloom Apprentice",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Withered Wretch",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Witness Protection",
+   "registry": "standard",
+   "pauper": "legal"
+  },
+  {
+   "name": "Wooded Foothills",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Worldspine Wurm",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wrath of God",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wrath of the Skies",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wrenn and Six",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Wrenn's Resolve",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Writhing Chrysalis",
+   "registry": "pauper_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Wurmcoil Engine",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Xander's Lounge",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Xantid Swarm",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Yavimaya Coast",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Yavimaya Granger",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Yavimaya Hollow",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Yavimaya, Cradle of Growth",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Yawgmoth's Will",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Yorion, Sky Nomad",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Yotian Frontliner",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "You Meet in a Tavern",
+   "registry": "eternal_v1",
+   "pauper": "legal"
+  },
+  {
+   "name": "Zagoth Triome",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Ziatora's Proving Ground",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Zoetic Glyph",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Zombie Infestation",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Zoraline, Cosmos Caller",
+   "registry": "standard",
+   "pauper": "not_legal"
+  },
+  {
+   "name": "Zuran Orb",
+   "registry": "eternal_v1",
+   "pauper": "not_legal"
+  }
+ ],
+ "unresolved": []
+}
