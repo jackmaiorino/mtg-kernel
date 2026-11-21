@@ -1,4 +1,4 @@
-//! Ordered object costs for a graveyard cast with a mandatory permanent payment.
+//! Ordered object costs for a graveyard cast with a second mandatory object payment.
 //! ObjectIds may recur across groups: returning a land or sacrificing a creature
 //! creates a new incarnation which can pay the following cost.
 
@@ -7,21 +7,22 @@ use spell_costs_v1::{SelectedSpellManaCostsV1, SpellManaPaymentV1};
 
 #[derive(Clone, Copy)]
 pub(super) struct Costs {
-    permanent: CostComponent,
+    additional: CostComponent,
     route: CostComponent,
 }
 
-fn permanent_cost(def: &card_def::CardDef) -> Option<CostComponent> {
+fn additional_object_cost(def: &card_def::CardDef) -> Option<CostComponent> {
     match def.additional_cost? {
         [cost @ (CostComponent::SacrificeControlled { .. }
         | CostComponent::SacrificeOtherControlledCreatures(_)
-        | CostComponent::ReturnControlledPermanentToOwnersHand(_))] => Some(*cost),
+        | CostComponent::ReturnControlledPermanentToOwnersHand(_)
+        | CostComponent::ExileOtherCardsFromOwnGraveyard(_))] => Some(*cost),
         _ => None,
     }
 }
 
 pub(super) fn supports_escape(def: &card_def::CardDef) -> bool {
-    permanent_cost(def).is_some()
+    additional_object_cost(def).is_some()
 }
 
 impl Costs {
@@ -30,7 +31,7 @@ impl Costs {
         method: CastMethodV4,
         retrace: bool,
     ) -> Option<Self> {
-        let permanent = permanent_cost(def)?;
+        let additional = additional_object_cost(def)?;
         let route = match method {
             CastMethodV4::Escape => spell_costs_v1::escape_cost_v1(def)?
                 .iter()
@@ -39,7 +40,7 @@ impl Costs {
             CastMethodV4::Normal if retrace => CostComponent::DiscardLandCardsV1(1),
             _ => return None,
         };
-        Some(Self { permanent, route })
+        Some(Self { additional, route })
     }
 
     pub(super) fn pending(
@@ -47,7 +48,7 @@ impl Costs {
         pending: &PendingCast,
         def: &card_def::CardDef,
     ) -> Option<Self> {
-        permanent_cost(def)?;
+        additional_object_cost(def)?;
         let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
         Self::new(
             def,
@@ -58,14 +59,14 @@ impl Costs {
 
     fn groups(self, route_first: bool) -> [CostComponent; 2] {
         if route_first {
-            [self.route, self.permanent]
+            [self.route, self.additional]
         } else {
-            [self.permanent, self.route]
+            [self.additional, self.route]
         }
     }
 
     pub(super) fn count(self) -> usize {
-        usize::from(count(self.route)) + usize::from(count(self.permanent))
+        usize::from(count(self.route)) + usize::from(count(self.additional))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -81,15 +82,22 @@ impl Costs {
         order: Option<bool>,
         reserved: &[ObjectId],
     ) -> Option<(SpellManaPaymentV1, Payment)> {
+        let additional_exiles = matches!(
+            self.additional,
+            CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+        );
+        let route_exiles = matches!(
+            self.route,
+            CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+        );
         if prefix.len() > self.count()
-            || state.players[player.index()].battlefield.len() < usize::from(count(self.permanent))
+            || (!additional_exiles
+                && state.players[player.index()].battlefield.len()
+                    < usize::from(count(self.additional)))
         {
             return None;
         }
-        if matches!(
-            self.route,
-            CostComponent::ExileOtherCardsFromOwnGraveyard(_)
-        ) {
+        if additional_exiles || route_exiles {
             checked_graveyard_exile_candidates(player, source, state, &[])?;
         }
         let ctx = Context {
@@ -114,9 +122,9 @@ impl Costs {
                 .then_some((mana, projected))
         };
         let (mana, projected) = project_mana(&[])?;
-        let survivors = ctx.candidates(&projected, self.permanent)?;
+        let survivors = ctx.candidates(&projected, self.additional)?;
         let lost: Vec<_> = ctx
-            .candidates(state, self.permanent)?
+            .candidates(state, self.additional)?
             .into_iter()
             .filter(|id| {
                 !survivors.contains(id)
@@ -131,15 +139,24 @@ impl Costs {
             let groups = self.groups(route_first);
             let split = prefix.len().min(usize::from(count(groups[0])));
             let (first, second) = prefix.split_at(split);
-            let permanent_picks = if route_first { second } else { first };
+            let additional_picks = if route_first { second } else { first };
             let complete = |projected: &GameState| {
-                // Neither exiling other cards nor discarding a land supplies a
-                // permanent for these costs. Check the permanent family before
-                // trying graveyard subsets. The inverse remains possible: a
-                // returned or sacrificed permanent can supply the route cost.
-                let candidates = ctx.candidates(projected, self.permanent)?;
-                if candidates.len() < usize::from(count(self.permanent))
-                    || permanent_picks.iter().any(|id| !candidates.contains(id))
+                let candidates = ctx.candidates(projected, self.additional)?;
+                if additional_exiles && route_exiles && candidates.len() < self.count() {
+                    // Both groups draw from the same graveyard and must be disjoint.
+                    return None;
+                }
+                if additional_exiles
+                    && !route_exiles
+                    && ctx.candidates(projected, self.route)?.is_empty()
+                {
+                    // Exiling cards cannot put a land in hand to pay for retrace.
+                    return None;
+                }
+                let discard_can_supply_exile = additional_exiles && !route_exiles && route_first;
+                if !discard_can_supply_exile
+                    && (candidates.len() < usize::from(count(self.additional))
+                        || additional_picks.iter().any(|id| !candidates.contains(id)))
                 {
                     return None;
                 }
@@ -160,15 +177,17 @@ impl Costs {
             if !lost.is_empty() {
                 // Only protect permanents actually lost to the first mana
                 // plan. Other selected lands may still tap before returning.
-                if let Some(plan) = ctx.complete(state, self.permanent, permanent_picks, |picks| {
-                    let protect: Vec<_> =
-                        picks.into_iter().filter(|id| lost.contains(id)).collect();
-                    if protect.is_empty() {
-                        return None;
-                    }
-                    let (mana, projected) = project_mana(&protect)?;
-                    Some((mana, complete(&projected)?))
-                }) {
+                if let Some(plan) =
+                    ctx.complete(state, self.additional, additional_picks, |picks| {
+                        let protect: Vec<_> =
+                            picks.into_iter().filter(|id| lost.contains(id)).collect();
+                        if protect.is_empty() {
+                            return None;
+                        }
+                        let (mana, projected) = project_mana(&protect)?;
+                        Some((mana, complete(&projected)?))
+                    })
+                {
                     return Some(plan);
                 }
             }
@@ -231,6 +250,13 @@ impl Costs {
             CostComponent::DiscardLandCardsV1(_) => seat.hand.clone(),
             _ => Vec::new(),
         };
+        if len >= first_count
+            && matches!(groups[0], CostComponent::DiscardLandCardsV1(_))
+            && matches!(group, CostComponent::ExileOtherCardsFromOwnGraveyard(_))
+        {
+            // The first payment can move a land from hand into the graveyard.
+            candidates.extend_from_slice(&seat.hand);
+        }
         candidates.extend_from_slice(&seat.battlefield);
         let mut picks = pending.sacrifice_chosen.clone();
         candidates.retain(|&id| {
