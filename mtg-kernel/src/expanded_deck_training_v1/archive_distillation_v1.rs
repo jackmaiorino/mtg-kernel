@@ -1066,6 +1066,9 @@ fn load_inputs_v1(
         let game: ArchiveGameV1 = serde_json::from_str(line).map_err(err)?;
         ensure(game.lineage == lineage, "archive game from another lineage")?;
         ensure(ids.insert(game.id.clone()), "duplicate archive game id")?;
+        // Extraction captures raw parent logits and distillation never
+        // applies the offset: refused before any extraction or cache lookup.
+        refuse_priority_pass_offset_v1([&game.episode], "archive distillation")?;
         parsed.push(game);
     }
     ensure(!parsed.is_empty(), "no archive games")?;
@@ -1271,7 +1274,8 @@ fn read_parent_trajectory_v1(
             && trajectory.behavior_state_sha256 == parent_state_sha256
             && trajectory.learner_sampler.is_none()
             && trajectory.episode.reset.is_none()
-            && trajectory.episode.london_keep_offset.is_none(),
+            && trajectory.episode.london_keep_offset.is_none()
+            && trajectory.episode.priority_pass_offset.is_none(),
         "trajectory is not the parent's own ordinary play",
     )?;
     ensure(

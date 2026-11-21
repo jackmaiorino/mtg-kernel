@@ -719,6 +719,9 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // ends in an error leaves no offset behind. Only the plain GAE
         // objective takes it.
         let london_keep_offset = self.london_keep_offset_mut_dims_v1().take();
+        // The priority pass offset of this step's batch and its per-substep
+        // Pass rows, or None (every existing step), taken the same way.
+        let priority_pass_offset = self.priority_pass_offset_mut_dims_v1().take();
         // The pregame announcement step scale of this step, or None (every
         // existing step), taken the same way; the last step's record never
         // outlives the next step (`pregame_announcement_step_v1`).
@@ -856,6 +859,29 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 code: "london-keep-offset-requires-plain-gae",
             });
         }
+        if let Some(marks) = &priority_pass_offset {
+            if line_b.is_some() || exploration.is_some() || imitation {
+                return Err(NativePolicyTrainErrorV1::PriorityPassOffset {
+                    code: "priority-pass-offset-requires-plain-gae",
+                });
+            }
+            let substeps: usize = groups.iter().map(|group| group.substeps.len()).sum();
+            if marks.rows.len() != substeps
+                || crate::expanded_deck_training_v1::priority_pass_offset_v1::validate_pass_offset_v1(
+                    marks.offset,
+                )
+                .is_err()
+            {
+                return Err(NativePolicyTrainErrorV1::PriorityPassOffset {
+                    code: "priority-pass-offset-marks-differ-from-the-batch",
+                });
+            }
+        }
+        // Each substep's Pass row under the priority pass offset, in batch
+        // order (`priority_pass_offset_v1`).
+        let mut pass_rows = priority_pass_offset
+            .as_ref()
+            .map(|marks| marks.rows.iter().copied());
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
@@ -941,6 +967,26 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         })?
                     }
                     None => None,
+                };
+                // The priority pass offset (`priority_pass_offset_v1`): the
+                // marked Pass row's logit plus the offset, after the keep
+                // offset, exactly as collection sampled it. Unmarked rows read
+                // the logits above, as before.
+                let offset_logits = match (
+                    pass_rows.as_mut().and_then(|rows| rows.next()).flatten(),
+                    &priority_pass_offset,
+                ) {
+                    (Some(pass_row), Some(marks)) => Some(
+                        crate::expanded_deck_training_v1::priority_pass_offset_v1::pass_offset_logits_v1(
+                            offset_logits.as_deref().unwrap_or(tape.logits_v1()),
+                            pass_row,
+                            marks.offset,
+                        )
+                        .map_err(|_| NativePolicyTrainErrorV1::PriorityPassOffset {
+                            code: "priority-pass-offset-malformed-decision",
+                        })?,
+                    ),
+                    _ => offset_logits,
                 };
                 let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
                     offset_logits.as_deref().unwrap_or(tape.logits_v1()),

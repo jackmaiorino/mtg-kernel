@@ -188,6 +188,10 @@ fn collect(
     mode: StackInputModeV1,
 ) -> Result<Trajectory, String> {
     let configs = episode.configurations()?;
+    ensure(
+        episode.priority_pass_offset.is_none(),
+        "priority_pass_offset is admitted only by the expanded collector",
+    )?;
     let (mut opponent, identity) = load_expanded_inference_v1(
         episode
             .opponent
@@ -257,6 +261,7 @@ fn collect(
                     tensor,
                     sampler_identity: decision_sampler_identity_v1(scores.logits.len())
                         .map(str::to_owned),
+                    pass_offset_action: None,
                 });
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
             }

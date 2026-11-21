@@ -131,6 +131,7 @@ fn widened_b512_reproduces_b512_on_its_collected_decisions() {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         for row in &trajectory.decisions {

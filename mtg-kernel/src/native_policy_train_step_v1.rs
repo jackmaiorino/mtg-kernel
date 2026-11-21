@@ -1300,6 +1300,12 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     LondonKeepOffset {
         code: &'static str,
     },
+    /// Priority pass offset (`priority_pass_offset_v1`) refusal: a set offset
+    /// on a loss other than the plain CPU GAE loss, or marks that do not fit
+    /// the step's substeps.
+    PriorityPassOffset {
+        code: &'static str,
+    },
     /// Pregame announcement step scale (`pregame_announcement_step_v1`)
     /// refusal: a set scale on anything but the plain CPU GAE step with a
     /// backward that routes the second gradient buffer, or a malformed
@@ -1645,6 +1651,14 @@ mod live_train_state_v1 {
         /// is every existing step, bit for bit.
         pub(super) london_keep_offset:
             Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>,
+        /// The priority pass offset of the next GAE step's batch
+        /// (`expanded_deck_training_v1::priority_pass_offset_v1`): the constant
+        /// and, per substep in batch order, the Pass row it is added to inside
+        /// the log-softmax, never to a parameter. Set by the update for one step
+        /// and cleared after it; not part of the state digest, snapshot or
+        /// checkpoint. None (the default) is every existing step, bit for bit.
+        pub(super) priority_pass_offset:
+            Option<crate::expanded_deck_training_v1::priority_pass_offset_v1::PassOffsetMarksV1>,
         /// The pregame announcement step scale of the next GAE step
         /// (`pregame_announcement_step_v1`). Set by the update for one step and
         /// cleared by it; not part of the state digest, snapshot or checkpoint.
@@ -1708,6 +1722,15 @@ mod live_train_state_v1 {
         ) -> &mut Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>
         {
             &mut self.fields.london_keep_offset
+        }
+
+        /// The next step's priority pass offset, outside the state digest and
+        /// snapshot (set for one step and cleared by it).
+        pub(super) fn priority_pass_offset_mut_dims_v1(
+            &mut self,
+        ) -> &mut Option<crate::expanded_deck_training_v1::priority_pass_offset_v1::PassOffsetMarksV1>
+        {
+            &mut self.fields.priority_pass_offset
         }
 
         /// The next step's pregame announcement step scale, outside the state
@@ -1926,6 +1949,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
             london_keep_offset: None,
+            priority_pass_offset: None,
             pregame_announcement_step_scale: None,
             pregame_announcement_step_record: None,
             #[cfg(test)]
@@ -1963,6 +1987,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
             london_keep_offset: None,
+            priority_pass_offset: None,
             pregame_announcement_step_scale: None,
             pregame_announcement_step_record: None,
             #[cfg(test)]
@@ -1991,6 +2016,23 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         self.london_keep_offset
     }
 
+    /// Sets (or clears) the priority pass offset of the next GAE step. Only
+    /// the plain CPU GAE loss reads it; every other loss refuses a set offset.
+    pub(crate) fn set_priority_pass_offset_v1(
+        &mut self,
+        offset: Option<
+            crate::expanded_deck_training_v1::priority_pass_offset_v1::PassOffsetMarksV1,
+        >,
+    ) {
+        *self.priority_pass_offset_mut_dims_v1() = offset;
+    }
+
+    pub(crate) fn priority_pass_offset_v1(
+        &self,
+    ) -> Option<&crate::expanded_deck_training_v1::priority_pass_offset_v1::PassOffsetMarksV1> {
+        self.priority_pass_offset.as_ref()
+    }
+
     /// Sets (or clears) the pregame announcement step scale of the next GAE
     /// step (`pregame_announcement_step_v1`). Only the plain CPU GAE step
     /// reads it; every other learner path refuses a set scale.
@@ -2013,11 +2055,13 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
     /// keep offset is set, and clears the setting either way: the offset lives
     /// for one plain GAE step only (`london_keep_offset_v1`). The pregame
     /// announcement step scale lives the same way and is refused and cleared
-    /// here too (`pregame_announcement_step_v1`).
+    /// here too (`pregame_announcement_step_v1`), and so is the priority pass
+    /// offset (`priority_pass_offset_v1`).
     pub(crate) fn require_no_london_keep_offset_v1(
         &mut self,
     ) -> Result<(), NativePolicyTrainErrorV1> {
         let scale = self.pregame_announcement_step_scale_mut_dims_v1().take();
+        let pass_offset = self.priority_pass_offset_mut_dims_v1().take();
         if self.london_keep_offset_mut_dims_v1().take().is_some() {
             Err(NativePolicyTrainErrorV1::LondonKeepOffset {
                 code: "london-keep-offset-requires-plain-gae",
@@ -2025,6 +2069,10 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         } else if scale.is_some() {
             Err(NativePolicyTrainErrorV1::PregameAnnouncementStep {
                 code: "pregame-announcement-step-requires-plain-gae",
+            })
+        } else if pass_offset.is_some() {
+            Err(NativePolicyTrainErrorV1::PriorityPassOffset {
+                code: "priority-pass-offset-requires-plain-gae",
             })
         } else {
             Ok(())
@@ -2355,6 +2403,7 @@ impl NativePolicyValueTrainStateV1 {
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
             london_keep_offset: None,
+            priority_pass_offset: None,
             pregame_announcement_step_scale: None,
             pregame_announcement_step_record: None,
             #[cfg(test)]
