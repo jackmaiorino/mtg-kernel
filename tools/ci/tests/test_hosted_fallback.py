@@ -96,9 +96,10 @@ class FallbackTests(unittest.TestCase):
         choice = "vars.MTG_CI_WINDOWS_RUNNER || '\"windows-2025\"'"
         assert text.count(choice) == 3
         assert text.count("inputs.windows_runner || " + choice) == 2
-        # the Rust groups first take the pull request slice's runner
+        # the Rust groups first take the pull request slice's runner (groups chosen within its budget)
         pr_slice = ("inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON("
-                    "vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || " + choice)
+                    "needs.detect-changes.outputs.pr_windows_groups || '[]'), matrix.group) && "
+                    "vars.MTG_CI_PR_WINDOWS_RUNNER) || " + choice)
         assert text.count(pr_slice) == 1
         block = text[text.index("  hosted-fallback:"):]
         assert "inputs.windows_runner == ''" in block.split("steps:")[0]

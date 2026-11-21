@@ -10,7 +10,7 @@ from pathlib import Path
 
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "ci.yml"
 TOKEN = re.compile(r"\s*(&&|\|\||==|!=|[(),]|'(?:[^']|'')*'|[A-Za-z_][\w.\-]*)")
-REPOSITORY = "owner/project"
+REPOSITORY, OWNER = "owner/project", "owner"
 WINDOWS_POOL, PR_POOL, LINUX_POOL = ["self-hosted", "windows-pool"], ["self-hosted", "pr-pool"], ["self-hosted", "linux-pool"]
 
 
@@ -106,8 +106,9 @@ def runs_on_expressions():
     return found
 
 
-def event(name="pull_request", head=REPOSITORY, **more):
-    context = {"github.event_name": name, "github.repository": REPOSITORY}
+def event(name="pull_request", head=REPOSITORY, actor=OWNER, **more):
+    context = {"github.event_name": name, "github.repository": REPOSITORY, "github.repository_owner": OWNER,
+               "github.actor": actor}
     if name == "pull_request":
         context["github.event.pull_request.head.repo.full_name"] = head
     return {**context, **more}
@@ -115,6 +116,7 @@ def event(name="pull_request", head=REPOSITORY, **more):
 
 EVERY_POOL = {"vars.MTG_CI_WINDOWS_RUNNER": json.dumps(WINDOWS_POOL), "vars.MTG_CI_PR_WINDOWS_RUNNER": json.dumps(PR_POOL),
               "vars.MTG_CI_PR_WINDOWS_GROUPS": '["workspace-targets", "eternal"]',
+              "needs.detect-changes.outputs.pr_windows_groups": '["workspace-targets", "eternal"]',
               "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL), "vars.MTG_CI_LINUX_GROUPS": '["eternal", "workspace-targets"]'}
 
 
@@ -151,6 +153,38 @@ class RoutingTests(unittest.TestCase):
                         self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": group, **fork}),
                                          system)
 
+    def test_only_the_repository_owner_runs_on_self_hosted_runners(self):
+        # A same-repository branch pushed by any other account (a collaborator, a bot) stays hosted too.
+        for untrusted in (event(actor="someone"), event("push", actor="someone"),
+                          event("workflow_dispatch", actor="github-actions[bot]")):
+            for name, expression in self.expressions.items():
+                for system in ("ubuntu-24.04", "windows-2025"):
+                    with self.subTest(job=name, system=system, event=untrusted["github.event_name"]):
+                        self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": "eternal",
+                                                                 **untrusted, **EVERY_POOL}), system)
+
+    def test_pull_request_windows_groups_follow_the_budget_output(self):
+        # The variable names the candidates; only the groups detect-changes chose within the budget route.
+        settings = {**EVERY_POOL, "vars.MTG_CI_PR_WINDOWS_GROUPS": '["workspace-lib", "workspace-targets"]',
+                    "needs.detect-changes.outputs.pr_windows_groups": '["workspace-targets"]'}
+        self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **settings), PR_POOL)
+        self.assertEqual(self.route("windows-2025", "workspace-lib", **event(), **settings), WINDOWS_POOL)
+        none = {**settings, "needs.detect-changes.outputs.pr_windows_groups": ""}
+        self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **none), WINDOWS_POOL)
+
+    def test_the_budget_step_reads_the_routing_variables_for_trusted_pull_requests_only(self):
+        block = job_block("detect-changes", "rust-quality")
+        step = block[block.index("      - name: Choose the self-hosted pull request groups"):]
+        step = step[:step.index("\n      - name: ", 1)]
+        self.assertIn("if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == "
+                      "github.repository && github.actor == github.repository_owner\n", step)
+        for line in ("PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}", "PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}",
+                     "PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}", "run: python3 tools/ci/self_hosted_budget.py"):
+            self.assertIn(line, step)
+        self.assertIn("pr_windows_groups: ${{ steps.budget.outputs.groups }}", block)
+        self.assertIn("      actions: read\n", block)
+        self.assertIn("timeout-minutes: 2\n        continue-on-error: true\n", step)
+
     def test_named_linux_groups_go_to_the_linux_runner_for_trusted_events(self):
         for trusted in (event(), event("push"), event("workflow_dispatch")):
             with self.subTest(event=trusted["github.event_name"]):
@@ -161,7 +195,8 @@ class RoutingTests(unittest.TestCase):
         cases = [{}, {"vars.MTG_CI_LINUX_GROUPS": '["eternal"]'}, {"vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)},
                  {"vars.MTG_CI_LINUX_GROUPS": "[]", "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)},
                  {"vars.MTG_CI_WINDOWS_RUNNER": json.dumps(WINDOWS_POOL), "vars.MTG_CI_PR_WINDOWS_RUNNER": json.dumps(PR_POOL),
-                  "vars.MTG_CI_PR_WINDOWS_GROUPS": '["eternal"]', "inputs.windows_runner": json.dumps(WINDOWS_POOL)}]
+                  "vars.MTG_CI_PR_WINDOWS_GROUPS": '["eternal"]', "needs.detect-changes.outputs.pr_windows_groups": '["eternal"]',
+                  "inputs.windows_runner": json.dumps(WINDOWS_POOL)}]
         for settings in cases:
             with self.subTest(settings=settings):
                 self.assertEqual(self.route("ubuntu-24.04", "eternal", **event(), **settings), "ubuntu-24.04")
@@ -175,7 +210,8 @@ class RoutingTests(unittest.TestCase):
         # Since 2026-11-18 08:45 ET: the whole Eternal integration suite (one job again) to the Linux pool,
         # workspace-lib of a pull request to the pull request Windows pool.
         today = {"vars.MTG_CI_LINUX_GROUPS": '["eternal-integration"]', "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL),
-                 "vars.MTG_CI_PR_WINDOWS_GROUPS": '["workspace-lib"]', "vars.MTG_CI_PR_WINDOWS_RUNNER": json.dumps(PR_POOL)}
+                 "needs.detect-changes.outputs.pr_windows_groups": '["workspace-lib"]',
+                 "vars.MTG_CI_PR_WINDOWS_RUNNER": json.dumps(PR_POOL)}
         self.assertEqual(self.route("ubuntu-24.04", "eternal-integration", **event(), **today), LINUX_POOL)
         self.assertEqual(self.route("ubuntu-24.04", "eternal", **event(), **today), "ubuntu-24.04")
         self.assertEqual(self.route("windows-2025", "workspace-lib", **event(), **today), PR_POOL)
@@ -184,10 +220,11 @@ class RoutingTests(unittest.TestCase):
                 self.assertEqual(self.route("windows-2025", part, **event(), **today), "windows-2025")
 
     def test_a_group_run_as_parts_routes_each_part_by_its_own_name(self):
-        first = {"vars.MTG_CI_PR_WINDOWS_GROUPS": '["native-store"]', "vars.MTG_CI_PR_WINDOWS_RUNNER": json.dumps(PR_POOL)}
+        first = {"needs.detect-changes.outputs.pr_windows_groups": '["native-store"]',
+                 "vars.MTG_CI_PR_WINDOWS_RUNNER": json.dumps(PR_POOL)}
         self.assertEqual(self.route("windows-2025", "native-store", **event(), **first), PR_POOL)
         self.assertEqual(self.route("windows-2025", "native-store-1", **event(), **first), "windows-2025")
-        both = {**first, "vars.MTG_CI_PR_WINDOWS_GROUPS": '["native-store", "native-store-1"]'}
+        both = {**first, "needs.detect-changes.outputs.pr_windows_groups": '["native-store", "native-store-1"]'}
         self.assertEqual(self.route("windows-2025", "native-store-1", **event(), **both), PR_POOL)
 
     def test_named_limited_groups_go_to_the_linux_runner_for_trusted_events(self):
@@ -307,6 +344,17 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('--default-library-list "$list"', line)
         # The shared Limited build's own download pattern does not pick up the list.
         self.assertIn("pattern: limited-build-${{ matrix.os }}-*", limited)
+
+    def test_the_budget_step_knows_exactly_the_pull_request_windows_groups(self):
+        block = job_block("rust-test-groups", "limited-build")
+        groups = matrix_groups(block)
+        exclude = block[block.index("        exclude:"):].splitlines()[0]
+        pull_request = set(re.findall(r'\{"os":"windows-2025","group":"([a-z0-9-]+)"\}',
+                                      exclude.split("'windows-complement'")[0]))
+        detect = job_block("detect-changes", "rust-quality")
+        (line,) = [line for line in detect.splitlines() if "PR_ELIGIBLE:" in line]
+        self.assertEqual(json.loads(line.split("PR_ELIGIBLE:", 1)[1].strip().strip("'")),
+                         [group for group in groups if group not in pull_request])
 
     def test_the_parts_of_a_group_share_one_build_cache(self):
         block = job_block("rust-test-groups", "limited-build")

@@ -60,9 +60,13 @@ jobs:
     # other work, and the Python shards wait on this job.
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       pull-requests: read
     outputs:
+      # The pull request Windows groups that run on MTG_CI_PR_WINDOWS_RUNNER
+      # (see rust-test-groups), as a JSON list.
+      pr_windows_groups: ${{ steps.budget.outputs.groups }}
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
       # full: every group on both systems. pr: the pull request set (Windows
@@ -114,6 +118,30 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 2
+
+      # MTG_CI_PR_WINDOWS_GROUPS names the groups to route, in order of
+      # preference; groups a pull request run does not have on Windows are
+      # skipped. With MTG_CI_PR_WINDOWS_SLOTS set, only as many route as the
+      # pool looks free: that many minus every unfinished job not on a
+      # GitHub-hosted image (Linux self-hosted jobs count too). Best effort, not a reservation: two runs that
+      # start together can both take the last free runner, and the later job
+      # then waits in GitHub's queue until that runner finishes a job (about
+      # an hour for a workspace group). Unset, every named group routes. An
+      # error or a slow lookup routes none. Rejected groups fall through to
+      # MTG_CI_WINDOWS_RUNNER, which stays hosted while the budget is used.
+      - name: Choose the self-hosted pull request groups
+        id: budget
+        timeout-minutes: 2
+        continue-on-error: true
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
+          PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}
+          PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}
+          # The Windows groups of the pr set (rust-test-groups matrix).
+          PR_ELIGIBLE: '["workspace-lib", "workspace-targets", "native-store", "native-store-1"]'
+        run: python3 tools/ci/self_hosted_budget.py
 
       - name: Classify changed paths
         id: classify
@@ -349,13 +377,16 @@ jobs:
     # pause for any host reservation. Windows groups default to GitHub's
     # hosted runners: on the local pool they queued for over an hour behind
     # research claims. The repository variable routes them elsewhere, for
-    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Pull
-    # requests from forks never run on the self-hosted runners.
+    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Only
+    # events from this repository by its owner run on self-hosted runners:
+    # never a pull request from a fork or another account's push.
     # On pull requests, the groups named in MTG_CI_PR_WINDOWS_GROUPS (a JSON
     # list, for example '["workspace-targets", "workspace-lib"]') run on
-    # MTG_CI_PR_WINDOWS_RUNNER instead: a few desktop runners can carry the
-    # slowest pull request groups, not every Windows job (2026-11-12: at 6
-    # CPUs and BelowNormal, workspace-targets took 54 min there, 113 hosted).
+    # MTG_CI_PR_WINDOWS_RUNNER instead, up to the free slots of
+    # MTG_CI_PR_WINDOWS_SLOTS (detect-changes chooses them): a few desktop
+    # runners can carry the slowest pull request groups, not every Windows
+    # job (2026-11-12: at 6 CPUs and BelowNormal, workspace-targets took 54
+    # min there, 113 hosted).
     # The Linux groups named in MTG_CI_LINUX_GROUPS (a JSON list, for example
     # '["eternal-integration"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on
     # labels, for example '["self-hosted", "mtg-ci-linux", "heavy"]') for
@@ -368,7 +399,7 @@ jobs:
     # each part by its own name: '["native-store"]' in
     # MTG_CI_PR_WINDOWS_GROUPS routes that group's first part and leaves
     # native-store-1 on MTG_CI_WINDOWS_RUNNER.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(needs.detect-changes.outputs.pr_windows_groups || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
@@ -935,7 +966,7 @@ jobs:
     # target directory instead of downloading the shared build; a routed
     # Limited-only shard still downloads the default library case list. Pull
     # requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # The Limited-only shards diff the default-feature library's case list
       # against the Limited build. The limited-build job now writes that list
@@ -1451,7 +1482,7 @@ jobs:
           - {os: ubuntu-24.04, shard: 2}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/target/release/kernel_rl_env${{ matrix.os == 'windows-2025' && '.exe' || '' }}
       MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/target/release/agent_bridge_v1${{ matrix.os == 'windows-2025' && '.exe' || '' }}
@@ -1600,9 +1631,12 @@ jobs:
   # step, logging MTG_CI_ADMISSION_TIMEOUT. A job cannot move to another runner
   # once one accepted it, so this hosted job dispatches the workflow again on
   # the same branch with Windows on hosted runners, limited to the Windows
-  # part of this run's group set. Real failures are not
-  # rerun, and a dispatched run never dispatches again. It runs only while a
-  # routing variable sends Windows jobs to the self-hosted pool.
+  # part of this run's group set. Real failures are not rerun, and a
+  # dispatched run never dispatches again. A self-hosted job stopped at its
+  # job timeout (for example while its CPU claim stayed suspended; GitHub
+  # then concludes it and the run cancelled) is not rerun: rerun it by hand.
+  # It runs only while a routing variable sends Windows jobs to the
+  # self-hosted pool.
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
