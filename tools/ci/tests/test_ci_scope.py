@@ -78,10 +78,13 @@ class ScopeTests(unittest.TestCase):
     def test_single_scope_changes(self):
         self.assertEqual(self.scope("tools/w5/chains.py", "tools/w5/tests/test_w5_chains.py", "docs/W5.md"), "w5-tools")
         self.assertEqual(self.scope("tools/stage4a/report.py"), "tools")
+        self.assertEqual(self.scope("tools/reach/plan.py"), "python")          # its tests are in python/tests
         self.assertEqual(self.scope("python/tests/test_x.py", "python/tools/foo.py"), "python")
-        self.assertEqual(self.scope("mtg-kernel/src/expanded_deck_training_v1.rs",
-                                    "mtg-kernel/src/native_policy_train_step_v1/weighted_v3.rs"), "trainer")
+        self.assertEqual(self.scope("mtg-kernel/src/expanded_deck_training_v1/ordered_update_preparation.rs",
+                                    "mtg-kernel/src/native_expanded_training_run_v1.rs",
+                                    "mtg-kernel/src/bin/native_expanded_training_run_v1.rs"), "trainer")
         self.assertEqual(self.scope("mtg-kernel/src/bin/kernel_limited_match_v1.rs"), "rules-limited")
+        self.assertEqual(self.scope("python/tools/check_limited_common_client_v1.py"), "python")
         self.assertEqual(self.scope(".github/workflows/viewer.yml"), "workflow")
         self.assertEqual(self.scope("docs/a.md", "README.md"), "docs")
 
@@ -91,10 +94,36 @@ class ScopeTests(unittest.TestCase):
                        "mtg-kernel/src/native_policy_value_net_v1.rs", "mtg-kernel/src/native_flat_tensorizer_v2.rs",
                        "mtg-kernel/src/fast_sampler.rs", "mtg-kernel/src/unclamped_softmax_sampler_v1.rs",
                        "mtg-kernel/src/expanded_deck_training_v1/public_features/opponent_kind/tests.rs",
-                       "mtg-kernel/src/priority_action_windows_v1.rs", "mtg-kernel/src/london_mulligan_v1.rs"):
+                       "mtg-kernel/src/priority_action_windows_v1.rs", "mtg-kernel/src/london_mulligan_v1.rs",
+                       "mtg-kernel/src/expanded_deck_training_v1.rs",
+                       "mtg-kernel/src/native_policy_train_step_v1/weighted_v3.rs",
+                       "mtg-kernel/src/expanded_deck_training_v1/checkpoint_container_v1/update_tests.rs",
+                       "mtg-kernel/src/expanded_deck_training_v1/stack_features.rs"):
             with self.subTest(file=shared):
                 self.assertEqual(ci_scope.scope_of(shared), "shared")
-                self.assertEqual(self.scope("mtg-kernel/src/expanded_deck_training_v1.rs", shared), "pr")
+                self.assertEqual(self.scope("mtg-kernel/src/native_expanded_training_run_v1.rs", shared), "pr")
+
+    def test_no_trainer_scoped_module_is_read_from_outside_the_trainer(self):
+        # A file maps to trainer only while code outside the trainer modules cannot reach it.
+        src = ROOT / "mtg-kernel" / "src"
+        roots = tuple(ci_scope.TRAINER_ROOTS)
+        refs = set()
+        for path in src.rglob("*.rs"):
+            rel = path.relative_to(src).as_posix()
+            if rel.split("/")[0].removesuffix(".rs") in roots or rel in ("bin/native_expanded_training_run_v1.rs",):
+                continue
+            for root, item in re.findall(r"(" + "|".join(roots) + r")(?:::([a-z_0-9]+))?", path.read_text(encoding="utf-8", errors="replace")):
+                refs.add((root, item))
+        for root, item in refs:
+            if root == "native_expanded_training_run_v1":
+                continue   # only lib.rs declares it
+            # An item of the module root (not a submodule file) is the root file itself.
+            sub = src / root / item
+            if item and not (sub.with_suffix(".rs").exists() or sub.is_dir()):
+                item = ""
+            target = f"mtg-kernel/src/{root}/{item}.rs" if item else f"mtg-kernel/src/{root}.rs"
+            with self.subTest(reference=f"{root}::{item}"):
+                self.assertNotEqual(ci_scope.scope_of(target), "trainer", target)
 
     def test_engine_card_and_unmapped_files_never_skip_the_rules_groups(self):
         for path in ("mtg-kernel/src/engine.rs", "mtg-kernel/src/eternal_cards_v1.rs", "mtg-kernel/src/card_def.rs",
@@ -107,10 +136,12 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(self.scope("tools/stage4a/a.py", "python/tests/test_a.py"), "pr")
 
     def test_choose(self):
-        trainer = ["mtg-kernel/src/expanded_deck_training_v1.rs"]
+        trainer = ["mtg-kernel/src/native_expanded_training_run_v1.rs"]
         self.assertEqual(ci_scope.choose("pull_request", "pr", "", [], trainer), "trainer")
         self.assertEqual(ci_scope.choose("pull_request", "pr", "", ["ci:full"], trainer), "all")
-        self.assertEqual(ci_scope.choose("pull_request", "pr", "", ["ci:tools"], trainer), "tools")
+        # Labels never narrow: an engine change labelled ci:docs or ci:trainer still runs everything.
+        self.assertEqual(ci_scope.choose("pull_request", "pr", "", ["ci:docs"], ["mtg-kernel/src/engine.rs"]), "all")
+        self.assertEqual(ci_scope.choose("pull_request", "pr", "", ["ci:trainer"], ["mtg-kernel/src/engine.rs"]), "all")
         self.assertEqual(ci_scope.choose("pull_request", "draft", "", [], trainer), "all")
         self.assertEqual(ci_scope.choose("pull_request", "pr", "", [], ["mtg-kernel/src/engine.rs"]), "all")
         self.assertEqual(ci_scope.choose("push", "full", "", [], trainer), "all")

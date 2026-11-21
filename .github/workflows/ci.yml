@@ -96,6 +96,12 @@ jobs:
       # pull request run's Linux and Windows work at the same commit (about a
       # third of all hosted runner time on 2026-11-11). Such a dispatch now
       # runs only the complement; together the two runs cover every group.
+      - name: Check out merge ref with parents
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 2
+
       - name: Choose the group set
         id: scope
         shell: bash
@@ -105,6 +111,7 @@ jobs:
           WINDOWS_RUNNER: ${{ inputs.windows_runner }}
           FULL_MATRIX: ${{ inputs.full_matrix }}
           FALLBACK_SCOPE: ${{ inputs.fallback_scope }}
+          INPUT_SCOPE: ${{ inputs.scope }}
           DRAFT: ${{ github.event.pull_request.draft }}
           FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
@@ -121,25 +128,27 @@ jobs:
               windows-pr|windows-complement|windows-full) scope=$FALLBACK_SCOPE ;;
               *) echo "::warning::unknown fallback_scope '$FALLBACK_SCOPE'; running every group" ;;
             esac
-          elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ]; then
+          elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ] && [ -z "$INPUT_SCOPE" ]; then
             # Only an open, ready (not draft) same-repository pull request
             # whose head is this exact commit has a pull request run covering
             # the rest. Any lookup failure keeps the full set.
-            pr_head=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0].head.sha // ""') || pr_head=
-            echo "open pull request head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
+              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0] | "\(.number // "") \(.head.sha // "")"') || pr=
+            read -r pr_number pr_head <<< "$pr"
+            echo "open pull request ${pr_number:-none} head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
             if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
-              scope=windows-complement
+              # Its run covered the whole pull request set only if its files
+              # did not narrow it to one scope (tools/ci/ci_scope.py).
+              pr_scope=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files" --jq '.[].filename' |
+                python3 tools/ci/ci_scope.py file-scope) || pr_scope=
+              echo "its files map to: ${pr_scope:-unknown}"
+              if [ "$pr_scope" = pr ]; then
+                scope=windows-complement
+              fi
             fi
           fi
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
           echo "group set: $scope" | tee -a "$GITHUB_STEP_SUMMARY"
-
-      - name: Check out merge ref with parents
-        if: github.event_name == 'pull_request' || inputs.scope != ''
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          fetch-depth: 2
 
       - name: Classify changed paths
         id: classify
@@ -1702,7 +1711,7 @@ jobs:
       - name: Run the trainer library tests
         run: |
           read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters)"
-          python python/tools/run_rust_lib_filters.py "${filters[@]}"
+          python python/tools/run_rust_lib_filters.py --features "" "${filters[@]}"
 
   # The tools scope: the top-level tools, G(i) and lease-guard unit suites
   # (the same commands as the python-tests job's tools steps, kept equal by
@@ -1766,12 +1775,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FALLBACK_REF: ${{ github.head_ref || github.ref_name }}
           SCOPE: ${{ needs.detect-changes.outputs.scope }}
+          CHECKS: ${{ needs.detect-changes.outputs.checks }}
         run: python3 tools/ci/hosted_fallback.py
 
-  # Post-merge monitor: a red push run on main or a release line, or a red
-  # full dispatch on either, comments the failed jobs on the pull request its
+  # Post-merge monitor: a red push run on main, or a red full dispatch on
+  # main or a release line, comments the failed jobs on the pull request its
   # merge commit belongs to (no mentions) and prints the handoff log line.
-  # Skipped on every other run, so it takes no runner.
+  # Skipped on every other run, so it takes no runner. Pushes to a release
+  # line run that branch's own ci.yml, which carries its own copy.
   post-merge-report:
     name: Report a red post-merge run
     needs: [detect-changes, rust-quality, rust-test-groups, limited-build, rust-limited-groups, rust-tests, python-env-build, python-tests]

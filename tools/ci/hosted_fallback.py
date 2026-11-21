@@ -110,8 +110,11 @@ def main() -> int:
     lines = []
     if timed_out:
         scope = fallback_scope(os.environ.get("SCOPE"))
-        _request("POST", f"/repos/{repo}/actions/workflows/{WORKFLOW}/dispatches",
-                 {"ref": ref, "inputs": {"windows_runner": HOSTED_WINDOWS, "fallback_scope": scope}})
+        inputs = {"windows_runner": HOSTED_WINDOWS, "fallback_scope": scope}
+        checks = os.environ.get("CHECKS", "all")
+        if checks and checks != "all":
+            inputs["scope"] = checks      # rerun only the checks the original run chose
+        _request("POST", f"/repos/{repo}/actions/workflows/{WORKFLOW}/dispatches", {"ref": ref, "inputs": inputs})
         lines.append(f"Self-hosted CPU admission timed out for {len(timed_out)} job(s); dispatched {WORKFLOW} on "
                      f"`{ref}` with windows_runner={HOSTED_WINDOWS} and fallback_scope={scope}. "
                      "Read that run's checks for these groups:")

@@ -23,6 +23,12 @@ import sys
 # Each rule: (patterns, scope). The first rule naming a file decides it. "shared" files are read by both the
 # engine (or agents, search, ladder) and the trainer: a change there is mixed and runs the whole pull request
 # set, never a trainer-only check.
+TOOLS_DIRS = ["checkpoint_codec_bench", "native_fixture_bench", "sd1", "search_experiment", "stage4a", "t1_diagnosis"]
+# Submodules of expanded_deck_training_v1 that code outside the trainer reads (2026-11-21 scan).
+TRAINER_SHARED_SUBMODULES = ["b_width_prescreen_v1", "checkpoint_container_v1", "no_state_digest_v1", "own_registration",
+                             "public_features", "registry_transfer_source", "s_update_fixture_v1", "stack_features",
+                             "tests", "w_learner_v1"]
+TRAINER_ROOTS = ["expanded_deck_training_v1", "native_expanded_training_run_v1", "native_policy_train_step_v1"]
 PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     (("data/*",), "pr"),
     (("docs/*", "*.md"), "docs"),
@@ -31,25 +37,26 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
       "python/tools/nine_deck_public_panel_v1.py", "python/tools/s_transformer_reference_v1.py",
       ".github/workflows/w5-tools.yml"), "w5-tools"),
     ((".github/workflows/*",), "workflow"),
-    (("tools/*",), "tools"),
-    # Observation encoding, action windows, mulligans, sampling and the shared policy network.
-    (("mtg-kernel/src/expanded_deck_training_v1/public_features.rs",
-      "mtg-kernel/src/expanded_deck_training_v1/public_features/*",
-      "mtg-kernel/src/expanded_deck_training_v1/stack_features.rs",
-      "mtg-kernel/src/expanded_deck_training_v1/stack_features/*",
-      "mtg-kernel/src/*mulligan*", "mtg-kernel/src/*/*mulligan*",
-      "mtg-kernel/src/*action_windows*", "mtg-kernel/src/*/*action_windows*",
-      "mtg-kernel/src/policy_observation_*", "mtg-kernel/src/native_flat_tensorizer_*",
-      "mtg-kernel/src/native_policy_value_net_v1*", "mtg-kernel/src/fast_sampler.rs",
-      "mtg-kernel/src/unclamped_softmax_sampler_v1.rs", "mtg-kernel/src/sideboard_play_policy_v1*",
-      "mtg-kernel/src/rl_session.rs", "mtg-kernel/src/rl_session/*"), "shared"),
-    (("mtg-kernel/src/expanded_deck_training_v1.rs", "mtg-kernel/src/expanded_deck_training_v1/*",
+    # Tool directories whose tests all live beside them (no python/tests or python/tools module reads them);
+    # every other tools/** directory has tests in python/tests and runs the Python set.
+    (tuple(f"tools/{name}/*" for name in TOOLS_DIRS), "tools"),
+    (("tools/*",), "python"),
+    # Shared: observation encoding, action windows, mulligans, sampling, the policy network, and every part
+    # of the trainer that code outside it reads (the module root's inference loaders, the train step's 41
+    # outside users, the submodules listed). tools/ci/tests/test_ci_scope.py fails if a trainer file below
+    # becomes readable from outside.
+    (("mtg-kernel/src/*mulligan*", "mtg-kernel/src/*action_windows*", "mtg-kernel/src/policy_observation_*",
+      "mtg-kernel/src/native_flat_tensorizer_*", "mtg-kernel/src/native_policy_value_net_v1*",
+      "mtg-kernel/src/fast_sampler.rs", "mtg-kernel/src/unclamped_softmax_sampler_v1.rs",
+      "mtg-kernel/src/sideboard_play_policy_v1*", "mtg-kernel/src/rl_session.rs", "mtg-kernel/src/rl_session/*",
+      "mtg-kernel/src/expanded_deck_training_v1.rs",
       "mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1/*",
+      *(f"mtg-kernel/src/expanded_deck_training_v1/{name}{tail}" for name in TRAINER_SHARED_SUBMODULES
+        for tail in (".rs", "/*"))), "shared"),
+    (("mtg-kernel/src/expanded_deck_training_v1/*",
       "mtg-kernel/src/native_expanded_training_run_v1.rs", "mtg-kernel/src/native_expanded_training_run_v1/*",
-      "mtg-kernel/src/bin/native_expanded_training_run_v1.rs", "mtg-kernel/src/bin/expanded_deck_training_v1.rs",
-      "mtg-kernel/src/bin/checkpoint_container_v1.rs"), "trainer"),
-    (("mtg-kernel/src/bin/kernel_limited_*", "python/tools/check_limited_*", "python/tools/limited_match_v1.py"),
-     "rules-limited"),
+      "mtg-kernel/src/bin/native_expanded_training_run_v1.rs"), "trainer"),
+    (("mtg-kernel/src/bin/kernel_limited_*",), "rules-limited"),
     # Python files that change which Rust tests run stay with the whole set.
     (("python/tools/run_rust_workspace_tests.py", "python/tools/run_rust_lib_filters.py",
       "python/tools/rust_case_seconds.json", "python/tools/rust_case_timeout_seconds.json",
@@ -67,14 +74,15 @@ SCOPES: dict[str, dict] = {
                 "summary": "formatting and Clippy, plus the library tests of the trainer and learner modules and "
                            "of what feeds a training update (TRAINER_FILTERS), Linux"},
     "tools": {"jobs": ["python-tools-tests"],
-              "summary": "the top-level tools, G(i) and lease-guard unit suites (no Rust binary), Linux"},
+              "summary": "the unit suites beside the tool directories in TOOLS_DIRS (no Rust binary), Linux"},
     "w5-tools": {"jobs": [],
                  "summary": "nothing in ci.yml: w5-tools.yml runs its Linux (Python 3.11) and Windows unit jobs and "
                             "the cgroup acceptance on these paths"},
     "python": {"jobs": ["python-env-build", "python-tests"],
                "summary": "the Python test binaries and shards, Linux and Windows"},
     "rules-limited": {"jobs": ["rust-quality", "limited-build", "rust-limited-groups"],
-                      "summary": "formatting and Clippy, the shared Limited build and every Limited group, Linux"},
+                      "summary": "formatting and Clippy, the shared Limited build and every Limited group, Linux "
+                                 "(only Limited process binaries map here; Limited library code is engine code)"},
     "workflow": {"jobs": [], "summary": "nothing in ci.yml: the changed workflow runs itself on its own paths"},
     "docs": {"jobs": [], "summary": "nothing"},
 }
@@ -103,20 +111,11 @@ RULES_NOTE = ("Engine rules and card changes that alter play are never bit-ident
               "need a declaration.")
 # Shell commands of each scope's local run (tools/ci/run_scope_local.py), from the repository root. The tools
 # commands are the same lines the python-tests job runs (a test keeps them equal).
-TOOLS_COMMANDS = [
-    "uv run --no-sync python -m unittest discover -v -s python/tools/phase1_cloud -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/search_sharing_allocation -p 'test_cloud_lease.py'",
-    "cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v test_nine_deck_cloud_v1.PackageTests.test_tooling_closure_is_complete_from_a_copy",
-    "cd python/tools/tests && PYTHONPATH=.. uv run --no-sync python -m unittest -v test_g_references_campaign_v1 test_g_references_qualify_v1 test_g_references_cloud_v1 test_g_references_archive_v1",
-    "uv run --no-sync python -m unittest discover -v -s tools/search_experiment/tests -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/stage4a/tests -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/t1_diagnosis -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/ci/tests -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/w5/tests -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/sd1/tests -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/native_fixture_bench/tests -p 'test_*.py'",
-    "uv run --no-sync python -m unittest discover -v -s tools/checkpoint_codec_bench/tests -p 'test_*.py'",
-]
+TOOLS_COMMANDS = [f"uv run --no-sync python -m unittest discover -v -s tools/{name}/{sub} -p 'test_*.py'"
+                  for name, sub in (("search_experiment", "tests"), ("stage4a", "tests"), ("t1_diagnosis", ""),
+                                    ("sd1", "tests"), ("native_fixture_bench", "tests"),
+                                    ("checkpoint_codec_bench", "tests"))]
+TOOLS_COMMANDS = [c.replace("/ -p", " -p") for c in TOOLS_COMMANDS]
 
 
 def scope_of(path: str) -> str | None:
@@ -152,9 +151,7 @@ def choose(event: str, group_set: str, input_scope: str, labels: list[str], file
         return "all"
     if "ci:full" in labels:
         return "all"
-    forced = [label[3:] for label in labels if label.startswith("ci:") and label[3:] in SCOPES]
-    if len(forced) == 1:
-        return "all" if forced[0] == "pr" else forced[0]
+    # Labels never narrow a run: paths decide, ci:full widens.
     scope = scope_of_files(files)
     return "all" if scope == "pr" else scope
 
@@ -199,11 +196,14 @@ def main(argv: list[str]) -> int:
     if command == "commands":
         scope = argv[2]
         lines = {"tools": TOOLS_COMMANDS,
-                 "trainer": ["python python/tools/run_rust_lib_filters.py " + " ".join(TRAINER_FILTERS)]}.get(scope)
+                 "trainer": ['python python/tools/run_rust_lib_filters.py --features "" ' + " ".join(TRAINER_FILTERS)]}.get(scope)
         if lines is None:
             print(f"no local command list for scope {scope}", file=sys.stderr)
             return 2
         print("\n".join(lines))
+        return 0
+    if command == "file-scope":
+        print(scope_of_files([line.strip() for line in sys.stdin if line.strip()]))
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")
