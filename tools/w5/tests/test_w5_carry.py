@@ -1037,7 +1037,7 @@ class CarryTests(unittest.TestCase):
         (self.t / 'hold-link').symlink_to(self.t / 'hold-real', target_is_directory=True)
         with self.assertRaisesRegex(SystemExit, 'hold folder'):
             retention.apply({'own_dir': (cont / 'chains' / 'c1c').resolve().as_posix(), 'checkpoints': [],
-                             'trajectories': []}, cont / 'retention-test.jsonl', hold=self.t / 'hold-link')
+                             'trajectories': []}, cont / 'retention' / 'c1c.jsonl', hold=self.t / 'hold-link')
         self.assertEqual(snap(), before)
 
 
@@ -1082,7 +1082,7 @@ class CarryTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, 'hold destination'):
             retention.apply({'own_dir': (cont / 'chains' / 'c1c').resolve().as_posix(),
                              'checkpoints': [{'path': victim.as_posix()}], 'trajectories': []},
-                            cont / 'retention-test.jsonl', hold=hold)
+                            cont / 'retention' / 'c1c.jsonl', hold=hold)
         self.assertTrue(victim.exists())
         # the replay worker with a planted trainer.out link in a replay folder of the carried plan
         rdir = cont / 'replay-test'
