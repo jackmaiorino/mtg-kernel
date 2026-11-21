@@ -2433,15 +2433,38 @@ fn validate_physical_spell_cast_origin(
                     .split_last()
                     .ok_or("chosen creature payment absent")?;
                 let legal_route = match (cast_method, origin.route) {
-                    (CastMethodV4::Escape, _) => spell_costs_v1::escape_cost_v1(def).is_some_and(|cost| {
-                        cost.iter().any(|part| matches!(part, CostComponent::ExileOtherCardsFromOwnGraveyard(n) if usize::from(*n) == route.len()))
-                            && route.iter().enumerate().all(|(idx, r)| r.owner == caster && r.zone == Zone::Exile && r.power_lki.is_none() && !route[..idx].iter().any(|prior| prior.object == r.object))
-                    }),
-                    (CastMethodV4::Normal, SpellCastRouteV4::GraveyardPermissionV1 { .. }) => match route {
-                        [] => true,
-                        [land] => land.owner == caster && land.power_lki.is_none() && card_def::CARD_DEFS.get(usize::from(land.card_def)).is_some_and(|d| d.has_type(CardType::Land)),
-                        _ => false,
-                    },
+                    (CastMethodV4::Escape, SpellCastRouteV4::GraveyardEscape) => {
+                        let count = spell_costs_v1::escape_cost_v1(def).and_then(|cost| {
+                            cost.iter().find_map(|part| match part {
+                                CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                                    Some(usize::from(*n))
+                                }
+                                _ => None,
+                            })
+                        });
+                        count == Some(route.len())
+                            && route.iter().enumerate().all(|(index, card)| {
+                                card.owner == caster
+                                    && card.zone == Zone::Exile
+                                    && card.power_lki.is_none()
+                                    && !route[..index]
+                                        .iter()
+                                        .any(|prior| prior.object == card.object)
+                            })
+                    }
+                    (CastMethodV4::Normal, SpellCastRouteV4::GraveyardPermissionV1 { .. }) => {
+                        match route {
+                            [] => true,
+                            [land] => {
+                                land.owner == caster
+                                    && land.power_lki.is_none()
+                                    && card_def::CARD_DEFS
+                                        .get(usize::from(land.card_def))
+                                        .is_some_and(|def| def.has_type(CardType::Land))
+                            }
+                            _ => false,
+                        }
+                    }
                     _ => route.is_empty(),
                 };
                 if *last != chosen || !legal_route {

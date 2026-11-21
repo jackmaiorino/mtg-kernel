@@ -2104,7 +2104,10 @@ pub(super) fn prepare_final_spell_payment_v1(
                 super::effective_power(&projected, binding.object)
             }
             super::ChosenCreatureCostZoneV1::Hand => {
-                chosen.visible_to_mask = 0b11;
+                // Known-by-name mode can already know a different copy of this card.
+                if projected.hand_knowledge_by_name_v2 {
+                    chosen.visible_to_mask = 0b11;
+                }
                 card_def::CARD_DEFS[usize::from(chosen.card_def)]
                     .power
                     .map(i32::from)
