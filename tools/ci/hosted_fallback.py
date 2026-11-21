@@ -20,6 +20,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ADMISSION_MARKER = "MTG_CI_ADMISSION_TIMEOUT"
@@ -40,8 +41,8 @@ def fallback_scope(scope: str | None) -> str:
 
 def admission_timeouts(jobs: list[dict], logs) -> list[dict]:
     """The self-hosted Windows jobs to rerun: failed ones whose log shows the admission timeout marker, and
-    ones concluded cancelled, which in a run that was not cancelled (the fallback job never runs for a
-    cancelled run) means the job timeout stopped them, for example while their CPU claim stayed suspended.
+    ones concluded cancelled (the job timeout stopped them, for example while their CPU claim stayed
+    suspended, or the run was superseded: main() drops those when the branch has moved on).
     `logs(job_id)` returns the job's log text (or None when it cannot be read: such a failed job is not rerun,
     since its cause is unknown)."""
     out = []
@@ -111,10 +112,20 @@ def job_log(repo: str, job_id: int, *, attempts: int = 4, delay: float = 2.0, sl
     return None
 
 
+def superseded(repo: str, run_id: str, ref: str) -> bool:
+    """True when the branch's head is no longer this run's head commit (a newer push replaced the run)."""
+    head = json.loads(_request("GET", f"/repos/{repo}/actions/runs/{run_id}"))["head_sha"]
+    branch = json.loads(_request("GET", f"/repos/{repo}/branches/{urllib.parse.quote(ref, safe='')}"))["commit"]["sha"]
+    return head != branch
+
+
 def main() -> int:
     repo, run_id, ref = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"], os.environ["FALLBACK_REF"]
     timed_out = admission_timeouts(run_jobs(repo, run_id), lambda job_id: job_log(repo, job_id))
     lines = []
+    if any(job.get("conclusion") == "cancelled" for job in timed_out) and superseded(repo, run_id, ref):
+        timed_out = [job for job in timed_out if job.get("conclusion") != "cancelled"]
+        lines.append(f"`{ref}` has moved past this run's commit: cancelled self-hosted jobs are not rerun.")
     if timed_out:
         scope = fallback_scope(os.environ.get("SCOPE"))
         _request("POST", f"/repos/{repo}/actions/workflows/{WORKFLOW}/dispatches",

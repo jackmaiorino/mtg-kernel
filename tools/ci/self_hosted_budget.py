@@ -70,10 +70,10 @@ def parse_slots(text: str | None) -> int | None:
 
 def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = None) -> int:
     """Jobs not yet completed that a pool runner could be holding or will take, counted generously (a
-    wrong count only sends a group to hosted runners): every job requesting all the pool labels, and every
-    self-hosted job that shares a custom pool label (any label but "self-hosted"), such as a broader
-    ["self-hosted", "Windows", "mtg-ci-windows"] request that a pool runner can also serve. The runner list
-    itself needs admin rights the job token lacks. Case-insensitive."""
+    wrong count only sends a group to hosted runners): every job that requests any custom pool label (any
+    label but "self-hosted"), such as ["bn6"] or a broader ["self-hosted", "Windows", "mtg-ci-windows"], and
+    every job that requests only "self-hosted". The runner list itself needs admin rights the job token
+    lacks. Case-insensitive."""
     want = {label.lower() for label in labels}
     custom = want - {"self-hosted"}
     count = 0
@@ -81,7 +81,7 @@ def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = Non
         if job.get("status") == "completed" or (skip_run is not None and job.get("run_id") == skip_run):
             continue
         have = {label.lower() for label in job.get("labels") or []}
-        if want and (want <= have or ("self-hosted" in have and have & custom)):
+        if want and (have & custom or (have and have <= {"self-hosted"}) or (not custom and "self-hosted" in have)):
             count += 1
     return count
 

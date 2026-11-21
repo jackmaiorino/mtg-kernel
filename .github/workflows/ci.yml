@@ -1632,15 +1632,16 @@ jobs:
   # once one accepted it, so this hosted job dispatches the workflow again on
   # the same branch with Windows on hosted runners, limited to the Windows
   # part of this run's group set. A self-hosted Windows job stopped at its
-  # job timeout (concluded cancelled in a run that was not cancelled, for
-  # example while its CPU claim stayed suspended) is rerun the same way.
-  # Real failures are not rerun, and a dispatched run never dispatches again.
-  # It runs only while a routing variable sends Windows jobs to the
-  # self-hosted pool, and never for a cancelled (superseded) run.
+  # job timeout (concluded cancelled, for example while its CPU claim stayed
+  # suspended; GitHub then concludes the whole run cancelled) is rerun the
+  # same way, unless the branch has moved past this run's commit (a
+  # superseded run). Real failures are not rerun, and a dispatched run never
+  # dispatches again. It runs only while a routing variable sends Windows
+  # jobs to the self-hosted pool.
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
-    if: ${{ !cancelled() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
