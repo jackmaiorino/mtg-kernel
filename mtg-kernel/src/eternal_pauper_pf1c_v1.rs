@@ -33,12 +33,14 @@ use crate::card_def::{CardDef, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectContinuation, EffectOp, ExecCtx, TargetRef};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_cube_c1c_v1::C1cOpV1;
+pub mod ordinary_damage;
 use crate::eternal_sideboard_s1d_v1::{statics as circles, CopShieldV1};
 use crate::event::{self, DamageProposed, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{GameState, ObjectLinkV4, StackItemKind, Target, Zone};
 use crate::trigger::TriggeredAbilityDef;
+use ordinary_damage::{OrdinaryV1, Packet};
 use serde::{Deserialize, Serialize};
 
 pub(crate) const FLING: &str = "Fling";
@@ -127,19 +129,46 @@ pub struct HallowChoiceV1 {
     pub beneficiaries: Vec<PlayerId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub circle: Option<CopShieldV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ordinary: Vec<OrdinaryV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HallowPreventionV1 {
     Hallow(PlayerId),
     Circle,
+    Ordinary(u16),
 }
 
 impl HallowChoiceV1 {
+    pub(crate) fn mixed(&self) -> bool {
+        self.circle.is_some() || !self.ordinary.is_empty()
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.beneficiaries.len() + usize::from(self.circle.is_some()) + self.ordinary.len()
+    }
+
+    pub(crate) fn option(&self, option: u16) -> Option<HallowPreventionV1> {
+        let index = usize::from(option);
+        if let Some(&player) = self.beneficiaries.get(index) {
+            return Some(HallowPreventionV1::Hallow(player));
+        }
+        let offset = index.checked_sub(self.beneficiaries.len())?;
+        if offset == 0 && self.circle.is_some() {
+            return Some(HallowPreventionV1::Circle);
+        }
+        let ordinary = offset.checked_sub(usize::from(self.circle.is_some()))?;
+        self.ordinary
+            .get(ordinary)
+            .map(|_| HallowPreventionV1::Ordinary(ordinary as u16))
+    }
+
     pub(crate) fn allows(&self, prevention: HallowPreventionV1) -> bool {
         match prevention {
             HallowPreventionV1::Hallow(player) => self.beneficiaries.contains(&player),
             HallowPreventionV1::Circle => self.circle.is_some(),
+            HallowPreventionV1::Ordinary(index) => usize::from(index) < self.ordinary.len(),
         }
     }
 }
@@ -154,18 +183,9 @@ pub(crate) fn may_need_hallow_choice(state: &GameState) -> bool {
         return false;
     };
     let turn = state.turn_key_v1();
-    let circle = circles::has_live_circle_shield(state);
-    pf1c.hallow_shields.iter().enumerate().any(|(at, first)| {
-        first.turn == turn
-            && first.active == state.active_player
-            && (circle
-                || pf1c.hallow_shields[at + 1..].iter().any(|second| {
-                    second.turn == first.turn
-                        && second.active == first.active
-                        && second.spell == first.spell
-                        && second.controller != first.controller
-                }))
-    })
+    pf1c.hallow_shields
+        .iter()
+        .any(|shield| shield.turn == turn && shield.active == state.active_player)
 }
 
 fn hallow_beneficiaries(state: &GameState, source: ObjectLinkV4, zone: Zone) -> Vec<PlayerId> {
@@ -488,76 +508,69 @@ fn shield_covers(shield: &HallowShieldV1, source: ObjectLinkV4, zone: Zone) -> b
 /// the replacement pass. The shield keeps preventing damage from that spell,
 /// and from the permanent it becomes, for the rest of the turn.
 pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) -> bool {
-    apply_hallow_prevention(state, damage, None)
-}
-
-/// Resolve genuinely competing Hallow and Circle shields before Circle spends
-/// a charge. A pure Circle packet keeps using the existing prevention path.
-pub(crate) fn hallow_prevents_with_circle(state: &mut GameState, damage: &DamageProposed) -> bool {
-    if read_state(state).is_none_or(|pf1c| pf1c.hallow_shields.is_empty()) {
-        return false;
-    }
-    let Some(position) = circles::circle_shield_position(state, damage) else {
-        return false;
-    };
-    let shield = state.eternal_v1.as_ref().unwrap().s1d.cop_shields[position];
-    apply_hallow_prevention(state, damage, Some(shield))
-}
-
-fn apply_hallow_prevention(
-    state: &mut GameState,
-    damage: &DamageProposed,
-    circle: Option<CopShieldV1>,
-) -> bool {
-    let Some(pf1c) = read_state(state) else {
-        return false;
-    };
-    if pf1c.hallow_shields.is_empty() || damage.amount <= 0 {
+    if damage.amount <= 0 || read_state(state).is_none_or(|pf| pf.hallow_shields.is_empty()) {
         return false;
     }
     let Some((source, zone)) = damage_source_incarnation(state, damage) else {
         return false;
     };
     let beneficiaries = hallow_beneficiaries(state, source, zone);
-    let controller = match (beneficiaries.as_slice(), circle) {
-        ([], _) => return false,
-        ([controller], None) => *controller,
-        _ => {
-            let chooser = match damage.target {
-                Target::Object(object) => state.objects.get(object).controller,
-                Target::Player(player) => player,
-                Target::StackItem(_) => return false,
+    if beneficiaries.is_empty() {
+        return false;
+    }
+    let mut work = vec![Packet::new(damage)];
+    'packets: while let Some(packet) = work.pop() {
+        let damage = &packet.damage;
+        let chooser = match damage.target {
+            Target::Object(object) => state.objects.get(object).controller,
+            Target::Player(player) => player,
+            Target::StackItem(_) => return false,
+        };
+        let circle = circles::circle_shield_position(state, damage)
+            .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
+        let choice = HallowChoiceV1 {
+            damage: damage.clone(),
+            source,
+            source_zone: zone,
+            chooser,
+            beneficiaries: beneficiaries.clone(),
+            circle,
+            ordinary: packet.options(state),
+        };
+        let selected = if choice.count() == 1 {
+            HallowPreventionV1::Hallow(beneficiaries[0])
+        } else {
+            let selection = if choice.count() <= usize::from(u16::MAX) {
+                crate::linked_aura_operation_v1::choose_hallow(state, choice.clone())
+            } else {
+                Err("Hallow replacement options exceed the native decision width".into())
             };
-            let choice = HallowChoiceV1 {
-                damage: damage.clone(),
-                source,
-                source_zone: zone,
-                chooser,
-                beneficiaries,
-                circle,
-            };
-            match crate::linked_aura_operation_v1::choose_hallow(state, choice) {
-                Ok(Some(HallowPreventionV1::Hallow(controller))) => controller,
-                Ok(Some(HallowPreventionV1::Circle)) => {
-                    return circles::consume_circle_shield(state, damage);
-                }
-                // Unanswered work runs only in the enclosing replay's disposable
-                // tail. Its earlier checkpoint contains neither this gain nor
-                // any later packet/operation effects.
-                Ok(None) => return true,
+            match selection {
+                Ok(Some(effect)) => effect,
+                Ok(None) => continue 'packets,
                 Err(_) => {
                     state.engine.halted = Some((
                         crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                         damage.source,
                     ));
-                    return true;
+                    break;
                 }
             }
+        };
+        match selected {
+            HallowPreventionV1::Hallow(controller) => pf1c_state(state)
+                .hallow_life_owed
+                .push((controller, damage.amount)),
+            HallowPreventionV1::Circle => {
+                circles::consume_circle_shield(state, damage);
+            }
+            HallowPreventionV1::Ordinary(index) => packet.apply(
+                state,
+                choice.ordinary[usize::from(index)].clone(),
+                &mut work,
+            ),
         }
-    };
-    pf1c_state(state)
-        .hallow_life_owed
-        .push((controller, damage.amount));
+    }
     true
 }
 

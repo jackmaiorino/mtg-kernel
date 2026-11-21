@@ -3085,6 +3085,13 @@ fn apply_replacements_inner(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        // Only a matching, preventable Hallow packet borrows replacement ordering.
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_pauper_pf1c_v1::hallow_prevents(state, damage)
+        {
+            return None;
+        }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before
         // the increases, the redirection and every shield.
         #[cfg(feature = "eternal-fixtures")]
@@ -3119,8 +3126,7 @@ fn apply_replacements_inner(
         // Circles of Protection (waves S1d and P3g).
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented
-            && (crate::eternal_pauper_pf1c_v1::hallow_prevents_with_circle(state, damage)
-                || crate::eternal_sideboard_s1d_v1::statics::consume_circle_shield(state, damage))
+            && crate::eternal_sideboard_s1d_v1::statics::consume_circle_shield(state, damage)
         {
             return None;
         }
@@ -3128,14 +3134,6 @@ fn apply_replacements_inner(
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented
             && crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
-        {
-            return None;
-        }
-        // Hallow's shield on a spell, which also gains its controller the
-        // life (Pauper field wave Pf1c).
-        #[cfg(feature = "eternal-fixtures")]
-        if !damage_cannot_be_prevented
-            && crate::eternal_pauper_pf1c_v1::hallow_prevents(state, damage)
         {
             return None;
         }

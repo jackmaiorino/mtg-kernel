@@ -991,11 +991,11 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn hallow_decision(choice: &HallowChoiceV1) -> Decision {
-    if choice.circle.is_some() {
+    if choice.mixed() {
         return Decision::ChooseEffectOption {
             player: choice.chooser,
             source: choice.damage.source,
-            option_count: (choice.beneficiaries.len() + 1) as u16,
+            option_count: choice.count() as u16,
         };
     }
     Decision::ChooseEffectTargets {
@@ -2297,21 +2297,13 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
         validate(state)?;
         let prevention = match action {
-            Action::ChooseEffectTarget(Target::Player(beneficiary))
-                if pending.choice.circle.is_none() =>
-            {
+            Action::ChooseEffectTarget(Target::Player(beneficiary)) if !pending.choice.mixed() => {
                 HallowPreventionV1::Hallow(beneficiary)
             }
-            Action::ChooseEffectOption(option) if pending.choice.circle.is_some() => {
-                let option = usize::from(option);
-                if option == pending.choice.beneficiaries.len() {
-                    HallowPreventionV1::Circle
-                } else if let Some(beneficiary) = pending.choice.beneficiaries.get(option) {
-                    HallowPreventionV1::Hallow(*beneficiary)
-                } else {
-                    return Err("Hallow prevention effect is outside its captured menu".into());
-                }
-            }
+            Action::ChooseEffectOption(option) if pending.choice.mixed() => pending
+                .choice
+                .option(option)
+                .ok_or("Hallow prevention effect is outside its captured menu")?,
             _ => return Err("Hallow requires one of its offered prevention effects".into()),
         };
         if !pending.choice.allows(prevention) {
