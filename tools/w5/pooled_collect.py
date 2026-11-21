@@ -63,8 +63,10 @@ class Host:
     arch: str  # architecture class, for audits: e.g. "x86-znver5", "x86-portable", "arm64"
     ssh: list = field(default_factory=list)  # e.g. ["ssh", "-o", "BatchMode=yes", "mtg@10.0.0.37"]
     prefix: list = field(default_factory=list)  # e.g. ["nice", "-n", "19", "taskset", "-c", "1,17"]
-    # Delete inputs this dispatcher pushed for an earlier iteration (old checkpoints) once a
-    # later collection succeeds. Only for ssh hosts that are not the learner's own machine.
+    # Opt-in remote retention: delete inputs this dispatcher pushed for an earlier iteration (old
+    # checkpoints) once a later collection merges, only while they still hold the bytes it pushed.
+    # Off by default: an absolute pin can still serve another run or fork on that host (a pruned
+    # pin is pushed again when next needed), so enable it only for hosts that serve one lineage.
     prune_pushed: bool = False
     # Format string around each remote shell command, e.g. "docker exec -i bladder-node sh -c {cmd}".
     remote_wrap: str = ""
@@ -201,13 +203,20 @@ class Transport:
     def pin_status(self, pins: set[tuple[str, str]]) -> dict:
         """Each pin's state on the host: "ok", "absent" or "differs" (a file with other bytes)."""
         if self.host.kind == "local":
-            return {p: ("absent" if not Path(p[0]).is_file() else
-                        "ok" if sha256_file(Path(p[0])) == p[1] else "differs") for p in pins}
+            return {p: ("absent" if not os.path.lexists(p[0]) else
+                        "ok" if Path(p[0]).is_file() and sha256_file(Path(p[0])) == p[1] else "differs")
+                    for p in pins}
         script = ("import hashlib,json,os,sys\n"
                   "out=[]\n"
                   "for p,s in json.load(sys.stdin):\n"
-                  "  out.append('absent' if not os.path.isfile(p) else\n"
-                  "             'ok' if hashlib.sha256(open(p,'rb').read()).hexdigest()==s else 'differs')\n"
+                  "  if not os.path.lexists(p):\n"
+                  "    out.append('absent'); continue\n"
+                  "  if not os.path.isfile(p):\n"
+                  "    out.append('differs'); continue\n"
+                  "  h=hashlib.sha256()\n"
+                  "  with open(p,'rb') as f:\n"
+                  "    for chunk in iter(lambda: f.read(1 << 20), b''): h.update(chunk)\n"
+                  "  out.append('ok' if h.hexdigest()==s else 'differs')\n"
                   "print(json.dumps(out))\n")
         ordered = sorted(pins)
         result = subprocess.run(self._ssh(["python3 -c " + shlex.quote(script)]),
@@ -216,23 +225,54 @@ class Transport:
             raise RuntimeError(f"{self.host.name}: pin check failed: {result.stderr.strip()}")
         return dict(zip(ordered, json.loads(result.stdout)))
 
-    def push(self, local: Path, remote: str) -> None:
-        """Copies one file to the same absolute path on the host (staged, then renamed)."""
+    def push(self, local: Path, remote: str, digest: str) -> None:
+        """Installs an immutable pin: a private staged copy, verified, then hard-linked into place.
+        An established file is never replaced; a racing copy is accepted only with the same digest.
+        The collector's filesystem needs hard links."""
+        stage_name = f"{remote}.{uuid.uuid4().hex}.stage"
         if self.host.kind == "local":
-            if str(Path(local)) != str(Path(remote)):
-                Path(remote).parent.mkdir(parents=True, exist_ok=True)
-                stage = f"{remote}.stage-{uuid.uuid4().hex}"
+            destination, stage = Path(remote), Path(stage_name)
+            if Path(local) == destination:
+                if sha256_file(destination) != digest:
+                    raise RuntimeError(f"{self.host.name}: existing pin differs: {remote}")
+                return
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            try:
                 shutil.copyfile(local, stage)
-                os.replace(stage, remote)
+                if sha256_file(stage) != digest:
+                    raise RuntimeError(f"{self.host.name}: staged pin differs: {remote}")
+                try:
+                    os.link(stage, destination)
+                except FileExistsError:
+                    if not destination.is_file() or sha256_file(destination) != digest:
+                        raise RuntimeError(f"{self.host.name}: existing pin differs: {remote}") from None
+            finally:
+                stage.unlink(missing_ok=True)
             return
-        parent = str(PurePosixPath(remote).parent)
-        stage = f"{remote}.stage-{uuid.uuid4().hex}"
+        script = ("import hashlib,os,shutil,sys\n"
+                  "from pathlib import Path\n"
+                  "dest,stage,expected=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]\n"
+                  "def digest(path):\n"
+                  "  h=hashlib.sha256()\n"
+                  "  with path.open('rb') as f:\n"
+                  "    for block in iter(lambda: f.read(1 << 20), b''): h.update(block)\n"
+                  "  return h.hexdigest()\n"
+                  "dest.parent.mkdir(parents=True,exist_ok=True)\n"
+                  "f=stage.open('xb')\n"
+                  "try:\n"
+                  "  with f: shutil.copyfileobj(sys.stdin.buffer,f)\n"
+                  "  if digest(stage)!=expected: sys.exit('staged pin differs: '+str(dest))\n"
+                  "  try: os.link(stage,dest)\n"
+                  "  except FileExistsError:\n"
+                  "    if not dest.is_file() or digest(dest)!=expected:\n"
+                  "      sys.exit('existing pin differs: '+str(dest))\n"
+                  "finally: stage.unlink(missing_ok=True)\n")
+        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, remote, stage_name, digest))
         with open(local, "rb") as handle:
-            result = subprocess.run(self._ssh([f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(stage)}"
-                                                     f" && mv {shlex.quote(stage)} {shlex.quote(remote)}"]),
-                                    stdin=handle, capture_output=True, timeout=600)
+            result = subprocess.run(self._ssh([command]), stdin=handle, capture_output=True, timeout=600)
         if result.returncode != 0:
-            raise RuntimeError(f"{self.host.name}: push of {remote} failed")
+            reason = result.stderr.decode(errors="replace").strip().splitlines()[-1:]
+            raise RuntimeError(f"{self.host.name}: push of {remote} failed: {' '.join(reason)}")
 
     def put_text(self, remote: str, text: str) -> None:
         if self.host.kind == "local":
@@ -273,7 +313,9 @@ class Transport:
             raise RuntimeError(f"{self.host.name}: fetch of {remote} failed")
 
     def remove_file(self, remote: str) -> None:
-        if self.host.kind == "ssh":
+        if self.host.kind == "local":
+            Path(remote).unlink(missing_ok=True)
+        else:
             subprocess.run(self._ssh([f"rm -f -- {shlex.quote(remote)}"]), capture_output=True, timeout=120)
 
     def remove_dir(self, remote: str) -> None:
@@ -333,7 +375,7 @@ class Dispatcher:
                 local = Path(pin[0])
                 if not local.is_file() or sha256_file(local) != pin[1]:
                     raise RuntimeError(f"learner lacks pinned input {pin[0]}")
-                transport.push(local, pin[0])
+                transport.push(local, pin[0], pin[1])
                 pushed += local.stat().st_size
                 if host.kind == "ssh":
                     with self._lock:
@@ -360,15 +402,22 @@ class Dispatcher:
         transport.remove_dir(out)
         pushed = self.distribute(host, command)
         command_path = str(PurePosixPath(host.scratch) / f"{tag}.json")
-        transport.put_text(command_path, json.dumps(command))
-        started = time.time()
-        result = transport.run(host.prefix + [host.collector, "--execute-collect-shard", command_path], self.timeout)
-        if result.returncode != 0:
-            raise RuntimeError(f"{host.name}: shard {tag} exit {result.returncode}: {result.stderr[-400:]}")
-        played = time.time() - started
-        local = staging / tag
-        transport.fetch_dir(out, local)
-        transport.remove_dir(out)
+        try:
+            transport.put_text(command_path, json.dumps(command))
+            started = time.time()
+            result = transport.run(host.prefix + [host.collector, "--execute-collect-shard", command_path],
+                                   self.timeout)
+            if result.returncode != 0:
+                raise RuntimeError(f"{host.name}: shard {tag} exit {result.returncode}: {result.stderr[-400:]}")
+            played = time.time() - started
+            local = staging / tag
+            transport.fetch_dir(out, local)
+            transport.remove_dir(out)
+        finally:
+            try:
+                transport.remove_file(command_path)
+            except (OSError, subprocess.SubprocessError) as error:
+                self.note(event="scratch-cleanup-failed", host=host.name, tag=tag, error=str(error)[-400:])
         self.note(event="shard", host=host.name, tag=tag, first=command["shard"]["first_slot"],
                   episodes=len(command["episodes"]), seconds=round(played, 3), pushed_bytes=pushed,
                   fetched_bytes=sum(p.stat().st_size for p in local.iterdir()))
@@ -402,15 +451,13 @@ class Dispatcher:
             raise ValueError("expected a whole collect_parallel command")
         attempt = command_path.parent
         iteration = iteration_of(command_path)
-        staging = attempt / "pooled-shards"
-        if staging.exists():
-            shutil.rmtree(staging)
-        staging.mkdir()
+        # Private to this invocation, so runs (or retries) sharing a scratch root never collide.
+        tag_root = f"pooled-{iteration:06d}-{uuid.uuid4().hex}"
+        staging_root = attempt / "pooled-shards"
+        staging = staging_root / tag_root
+        staging.mkdir(parents=True)
         total = len(whole["episodes"])
         sizes = plan_sizes(total, [h.weight for h in self.hosts])
-        # Unique per run, iteration and attempt, so runs sharing a scratch root never collide.
-        run_key = hashlib.sha256(str(attempt.resolve()).encode()).hexdigest()[:16]
-        tag_root = f"pooled-{run_key}-{attempt.parent.name}-{attempt.name}"
         jobs, first = [], 0
         for index, size in enumerate(sizes):
             if size:
@@ -442,11 +489,12 @@ class Dispatcher:
         merged = run_merge(command_path, directories)
         for directory in directories:  # the merge copied every trajectory into collect/
             shutil.rmtree(directory)
+        staging.rmdir()
         receipt = {"schema": "mtg-kernel-pooled-collect-dispatch/v1", "iteration": iteration,
                    "episodes": total, "shards": [[i, f, s, results[i][1].name] for i, f, s in jobs],
                    "collection_seconds": round(collected, 3), "failed_hosts": sorted(failed),
                    "events": self.log, "merged": merged}
-        (staging / "dispatch.json").write_text(json.dumps(receipt, indent=1))
+        (staging_root / "dispatch.json").write_text(json.dumps(receipt, indent=1))
         self.prune(input_closure(whole))
         return receipt
 

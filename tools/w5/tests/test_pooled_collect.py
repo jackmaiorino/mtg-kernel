@@ -3,12 +3,17 @@ fake collector writes each slot's bytes as a function of its episode alone (as t
 does), so any host split, failover or audit must merge to the same files."""
 import hashlib
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -31,8 +36,11 @@ class FakeTransport:
         return {p: ("absent" if p[0] not in self.files else "ok" if self.files[p[0]] == p[1] else "differs")
                 for p in pins}
 
-    def push(self, local, remote):
-        self.files[remote] = pc.sha256_file(Path(local))
+    def push(self, local, remote, digest):
+        if remote in self.files and self.files[remote] != digest:
+            raise RuntimeError(f"existing pin differs: {remote}")
+        assert pc.sha256_file(Path(local)) == digest
+        self.files[remote] = digest
         self.pushed.append(remote)
 
     def put_text(self, remote, text):
@@ -155,6 +163,8 @@ class PooledCollectTests(unittest.TestCase):
                 if transport.runs:
                     self.assertEqual(transport.pushed, [str(self.checkpoint)])
             self.assertTrue((self.command_path.parent / "pooled-shards" / "dispatch.json").exists())
+            self.assertEqual([p.name for p in (self.command_path.parent / "pooled-shards").iterdir()],
+                             ["dispatch.json"])
 
     def test_a_failed_host_moves_its_shard_and_changes_no_byte(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86"), ("c", 1.0, "arm64")])
@@ -245,7 +255,8 @@ class PooledCollectTests(unittest.TestCase):
         (nxt / "collect-command.json").write_text(json.dumps(self.command))
         pc.Dispatcher(config, transports).collect(nxt / "collect-command.json", fake_merge)
         for transport in transports.values():
-            self.assertEqual(transport.removed, [old])
+            inputs = [r for r in transport.removed if "pooled-" not in Path(r).name]  # not shard command files
+            self.assertEqual(inputs, [old])
             self.assertIn(str(new), transport.files)
         state = json.loads((self.root / "pushed.json").read_text())
         self.assertEqual(sorted(state["a"]), sorted([str(new), str(imp), str(leaf)]))
@@ -278,6 +289,116 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class PinPublicationTests(unittest.TestCase):
+    """Pins are published atomically and never replace an established file (ported from the
+    parallel dispatcher series on the same pull request, adapted to `pin_status`)."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="pooled-pin-test-"))
+        self.checkpoint = self.root / "learner" / "checkpoint.json"
+        self.checkpoint.parent.mkdir(parents=True)
+        self.checkpoint.write_bytes(b"checkpoint bytes")
+        self.host = pc.Host(name="a", kind="local", collector="/c", collector_sha256="c" * 64, workers=2,
+                            weight=1.0, scratch=str(self.root / "scratch"), arch="x86")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_concurrent_pin_uploads_have_separate_temporary_files(self):
+        transport = pc.Transport(self.host)
+        remote = self.root / "collector" / "pin.json"
+        copied = threading.Barrier(2, timeout=10)
+        real_copy = shutil.copyfile
+        stages = []
+
+        def copy_and_wait(src, dest):
+            stages.append(dest)
+            real_copy(src, dest)
+            copied.wait()
+
+        with mock.patch.object(pc.shutil, "copyfile", side_effect=copy_and_wait), \
+                ThreadPoolExecutor(max_workers=2) as pool:
+            digest = pc.sha256_file(self.checkpoint)
+            tasks = [pool.submit(transport.push, self.checkpoint, str(remote), digest) for _ in range(2)]
+            for task in tasks:
+                task.result(timeout=15)
+        self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
+        self.assertEqual(len(set(stages)), 2)
+
+    def test_failed_pin_upload_cleans_its_temporary_file_and_preserves_the_destination(self):
+        transport = pc.Transport(self.host)
+        remote = self.root / "collector" / "pin.json"
+        remote.parent.mkdir()
+        remote.write_bytes(b"existing pin")
+
+        def interrupted(src, dest):
+            Path(dest).write_bytes(b"partial upload")
+            raise OSError("copy interrupted")
+
+        with mock.patch.object(pc.shutil, "copyfile", side_effect=interrupted):
+            with self.assertRaisesRegex(OSError, "copy interrupted"):
+                transport.push(self.checkpoint, str(remote), pc.sha256_file(self.checkpoint))
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
+        self.assertEqual(remote.read_bytes(), b"existing pin")
+
+    def test_two_absent_observations_cannot_replace_a_conflicting_first_pin(self):
+        first, second = pc.Transport(self.host), pc.Transport(self.host)
+        remote = self.root / "collector" / "pin.json"
+        different = self.root / "different.json"
+        different.write_bytes(b"other learner's checkpoint")
+        first_pin = str(remote), pc.sha256_file(self.checkpoint)
+        second_pin = str(remote), pc.sha256_file(different)
+        self.assertEqual(first.pin_status({first_pin})[first_pin], "absent")
+        self.assertEqual(second.pin_status({second_pin})[second_pin], "absent")
+        first.push(self.checkpoint, *first_pin)
+        with self.assertRaisesRegex(RuntimeError, "existing pin differs"):
+            second.push(different, *second_pin)
+        self.assertEqual(second.pin_status({second_pin})[second_pin], "differs")
+        self.assertEqual(first.pin_status({first_pin})[first_pin], "ok")
+        self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
+
+    def test_fake_ssh_preserves_a_canonical_pin_installed_after_discovery(self):
+        self.host.kind, self.host.ssh = "ssh", ["fake-ssh", "collector"]
+        transport = pc.Transport(self.host)
+        remote = self.root / "collector's scratch" / "pin.json"
+        different = self.root / "different.json"
+        different.write_bytes(b"other learner's checkpoint")
+        good_pin = remote.as_posix(), pc.sha256_file(self.checkpoint)
+        conflicting_pin = remote.as_posix(), pc.sha256_file(different)
+        local_run = subprocess.run
+
+        def emulate_ssh(argv, **kwargs):
+            self.assertEqual(argv[:-1], self.host.ssh)
+            command = shlex.split(argv[-1])
+            self.assertEqual(command[:2], ["python3", "-c"])
+            return local_run([sys.executable, *command[1:]], **kwargs)
+
+        with mock.patch.object(pc.subprocess, "run", side_effect=emulate_ssh):
+            self.assertEqual(transport.pin_status({conflicting_pin})[conflicting_pin], "absent")
+            transport.push(self.checkpoint, *good_pin)
+            transport.push(self.checkpoint, *good_pin)
+            with self.assertRaisesRegex(RuntimeError, "existing pin differs"):
+                transport.push(different, *conflicting_pin)
+            self.assertEqual(transport.pin_status({good_pin})[good_pin], "ok")
+            self.assertEqual(transport.pin_status({conflicting_pin})[conflicting_pin], "differs")
+        self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
+
+    def test_merge_uses_the_native_trainer_mode_in_schedule_order(self):
+        command_path = self.root / "collect-command.json"
+        shards = [self.root / "first-shard", self.root / "second-shard"]
+        trainer = str(self.root / "native-trainer")
+        output = {"trajectories": ["first", "second"], "behavior_state_sha256": "state"}
+        result = subprocess.CompletedProcess([], 0, json.dumps(output), "")
+        with mock.patch.object(pc.subprocess, "run", return_value=result) as run:
+            report = pc.merge_with_binary(trainer)(command_path, shards)
+        run.assert_called_once_with([trainer, "--merge-collection-shards", str(command_path),
+                                     *map(str, shards)], capture_output=True, text=True)
+        self.assertEqual(report, {"trajectories": 2, "behavior_state_sha256": "state"})
+
+
 class ChainsPassThroughTests(unittest.TestCase):
     """The chain driver passes a pooled arm's pinned dispatcher and hosts file to the trainer, and the
     pooled-collection setting stays outside recipe_identity (execution only)."""
@@ -288,6 +409,7 @@ class ChainsPassThroughTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="pooled-chains-test-"))
         for name in ("trainer", "pooled_collect.py", "hosts.json"):
             (self.root / name).write_text(name)
+        (self.root / "pooled_collect.py").chmod(0o755)
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -309,6 +431,19 @@ class ChainsPassThroughTests(unittest.TestCase):
         argv, env = self.chains.trainer_command(self.arm(pooled=False), "/cfg.json")
         self.assertEqual(argv[-1], "/cfg.json")
         self.assertIsNone(env)
+
+    @unittest.skipUnless(os.name == "posix", "the native POSIX trainer executes a dispatcher directly")
+    def test_dispatcher_must_be_executable_when_the_segment_starts(self):
+        arm = self.arm()
+        (self.root / "pooled_collect.py").chmod(0o644)
+        with self.assertRaisesRegex(self.chains.Stop, "dispatcher must be executable"):
+            self.chains.trainer_command(arm, "/cfg.json")
+
+    @unittest.skipUnless(os.name == "posix", "the native POSIX trainer executes a dispatcher directly")
+    def test_shipped_dispatcher_reaches_its_usage_check(self):
+        result = subprocess.run([str(HERE / "pooled_collect.py")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage: pooled_collect.py", result.stderr)
 
     def test_a_changed_dispatcher_is_refused(self):
         arm = self.arm()
