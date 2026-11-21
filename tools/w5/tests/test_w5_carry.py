@@ -840,5 +840,43 @@ class CarryTests(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}, before)
 
 
+    def test_no_link_anywhere_in_a_carried_root(self):
+        _, old_man = self.old(3)
+        carry_path = self.carry(old_man, 8)
+        old_root = self.node.root
+        old_chain = old_root / 'chains' / 'c1'
+        old_ck = next((old_chain / 'seg-00001' / 'iterations' / '000003').glob('attempt-*/update/checkpoint.json'))
+        snap = lambda: {p: p.read_bytes() for p in old_root.rglob('*') if p.is_file() and not p.is_symlink()}
+        before = snap()
+        # a plan folder linked into the old root: refused before any plan write
+        (self.t / 'pl').mkdir()
+        try:
+            (self.t / 'pl' / 'plan').symlink_to(old_root / 'plan', target_is_directory=True)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        with self.assertRaisesRegex(chains.Stop, 'is a link'):
+            chains.make_plan(self.cont_inputs(carry_path, label='old', root='pl'))
+        self.assertEqual(snap(), before)
+        # links planted at a segment config temp, an instance log and the supervisor lock: driver, cycle and run refuse
+        path, plan = chains.make_plan(self.cont_inputs(carry_path))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        for planted in (cont / 'chains' / 'c1c' / 'segments' / 'seg-00001.json.gz.tmp',
+                        cont / 'state' / 'c1c' / 'instance-0000' / 'chain.log',
+                        cont / 'state' / 'c1c' / 'supervisor.lock'):
+            planted.parent.mkdir(parents=True, exist_ok=True)
+            planted.unlink(missing_ok=True)
+            planted.symlink_to(old_ck)
+            with self.subTest(planted=planted.name):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertIn(self.drive(plan, 'c1c', cont, 9), (w5box.EXIT_REFUSED, chains.EXIT_STOP))
+                with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')), \
+                        mock.patch.object(chains, 'recover_unsupervised', side_effect=AssertionError('no recovery')):
+                    with self.assertRaises(chains.Stop):
+                        chains.cycle(plan, path)
+            planted.unlink()
+            self.assertEqual(snap(), before)
+
+
 if __name__ == '__main__':
     unittest.main()

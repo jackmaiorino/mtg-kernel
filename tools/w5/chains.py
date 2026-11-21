@@ -584,14 +584,25 @@ def no_links_in(*dirs):
                 require(not e.is_symlink(), f'{e.path} is a link in a carried chain\'s tree')
 
 
+SEGMENT_DIR = re.compile(r'seg-\d+')
+
+
 def carried_trees_unlinked(root, name):
-    """A carried chain's chain directory, its W5 root, its retention folder and its state folder: no link among
-    their entries, and none in the chain directory's own path."""
+    """A carried chain's W5 root has a canonical path and no link anywhere in it: plan, state (instance logs and
+    locks), retention logs, segment configs, records and logs alike. Its segment directories (`chains/<name>/seg-*`)
+    are skipped here: the segment checks, the index and retention check them."""
     cdir = chain_dir(root, name)
-    absolute = os.path.abspath(cdir)
-    require(not cdir.is_symlink() and os.path.realpath(absolute) == absolute,
-            f'{name}: {cdir} is a link or lies under one')
-    no_links_in(cdir, root, Path(root) / 'retention', Path(root) / 'state', Path(root) / 'state' / name)
+    for d in (Path(root), cdir):
+        absolute = os.path.abspath(d)
+        require(not d.is_symlink() and os.path.realpath(absolute) == absolute,
+                f'{name}: {d} is a link or lies under one')
+    cdir_abs = os.path.abspath(cdir)
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for entry in dirnames + filenames:
+            require(not os.path.islink(os.path.join(dirpath, entry)),
+                    f'{name}: {os.path.join(dirpath, entry)} is a link in a carried chain\'s tree')
+        if os.path.abspath(dirpath) == cdir_abs:
+            dirnames[:] = [d for d in dirnames if not SEGMENT_DIR.fullmatch(d)]
 
 
 def carried_chain_dir_ok(plan, root, name):
@@ -1006,6 +1017,8 @@ def make_plan(inputs_path):
             carry_bytes[name] = Path(c['carry']).read_bytes()
             check_carry_roots(json.loads(carry_bytes[name]), name, root, inputs.get('scratch_root'))
             carried_dirs_apart(json.loads(carry_bytes[name]), name, root, inputs.get('scratch_root'))
+            if Path(root).exists():
+                carried_trees_unlinked(root, name)
     arms, arm_paths = {}, {}
     for a in sorted(used):
         spec = arms_in[a]
@@ -1991,11 +2004,13 @@ def drive_locked(a, arm, root, cdir, man_path):
     while True:
         if (cdir / 'END.json').exists():
             return 0
-        try:  # a carried chain: the segments settle may touch are real and its own
+        try:  # a carried chain: its tree and the segments settle may touch are real and its own
+            if man.get('carry'):
+                carried_trees_unlinked(root, a.chain)
             for seg in man['segments'][-2:]:
                 carried_segment_ok(man, arm, cdir, seg['root'])
-        except Stop as exc:
-            log(root, chain=a.chain, event='stop', reason=str(exc))
+        except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
+            print(f'stop: {exc}', file=sys.stderr, flush=True)
             return EXIT_STOP
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
             scratch_settle(arm, root, cdir, man, instance)
@@ -2012,8 +2027,9 @@ def drive_locked(a, arm, root, cdir, man_path):
             try:
                 carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
                 carried_trees_unlinked(root, a.chain)
-            except Stop as exc:
-                hold = str(exc)
+            except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
+                print(f'stop: {exc}', file=sys.stderr, flush=True)
+                return EXIT_STOP
         if hold is not None:
             log(root, chain=a.chain, event='stop', reason=hold)
             return EXIT_STOP
@@ -3035,9 +3051,9 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
     names |= {p['C'] for p in plan['pairs'].values()}
-    recovered = recover_unsupervised(plan, root)  # before anything reads the chains: dead supervisors' instances
-    for n in sorted(names):  # carried chains: their directories are real and theirs before any read or write
+    for n in sorted(names):  # carried chains: their trees are real and theirs before recovery, reads or writes
         carried_chain_dir_ok(plan, root, n)
+    recovered = recover_unsupervised(plan, root)  # before anything reads the chains: dead supervisors' instances
     oom_failures = end_oom_failures(plan, root)  # close, and OOM closes become chain failures, first
     infos = {n: chain_info(root, n, caches) for n in sorted(names)}
     looks = {n: look(i, plan['r_nom_usec']) for n, i in infos.items()}
