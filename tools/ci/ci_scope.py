@@ -99,6 +99,11 @@ TRAINER_FILTERS = [
     "ex1_v1::", "w5_xact_v1::", "line_b_teacher_target_v1::",
     # The scalar and vector activation math training_math_v1 calls.
     "deterministic_math_v1::", "vector_tanh_v1::",
+    # The rest of the update path the train step, training math and the trainer reference: the retention anchor
+    # (KL gradient), the training baseline, the CUDA training bridge, the exact GPU learner, the trajectory records
+    # the update consumes and the learner's model snapshot.
+    "native_policy_anchor_v1::", "native_policy_baseline_state_v4::", "experimental_burn_net8_packed_v1::",
+    "gpu_exact_v1::", "native_full_episode_trajectory_v", "private_physical_trajectory_", "common_model_snapshot_v1::",
 ]
 # The trainer tests run as two jobs, each building the library and running its filters. Balanced from the
 # filter times of hosted run 44906865422 (seconds): expanded_deck_training_v1 408, native_trainer_v1 306,
@@ -113,6 +118,126 @@ TRAINER_SHARDS = [
      "s_transformer_v1::", "ex1_v1::", "w5_xact_v1::", "line_b_teacher_target_v1::", "deterministic_math_v1::",
      "vector_tanh_v1::"],
 ]
+# Filters added after the timing run go to the first shard (its measured share was the larger only by 26 s).
+TRAINER_SHARDS[0] += ["native_policy_anchor_v1::", "native_policy_baseline_state_v4::",
+                      "experimental_burn_net8_packed_v1::", "gpu_exact_v1::", "native_full_episode_trajectory_v",
+                      "private_physical_trajectory_", "common_model_snapshot_v1::"]
+# Modules the train step, training math, the trainer and the trainer-scoped run module reference that the filters
+# leave out, each with its reason. The trainer-tests job fails on any referenced module that is neither filtered
+# nor listed here, so a new backend is examined before it can skip its tests.
+TRAINING_REFERENCE_EXCLUSIONS = {
+    "async_flat_scored_rollout_v1": "self-play rollout collection, not update arithmetic",
+    "async_flat_scored_rollout_v2": "self-play rollout collection, not update arithmetic",
+    "async_rollout": "self-play rollout collection, not update arithmetic",
+    "async_rollout_v2": "self-play rollout collection, not update arithmetic",
+    "durable_publication_v1": "file publication of artifacts",
+    "flat_policy_v2": "action-surface contract: decision views and buffers, not update arithmetic",
+    "flat_policy_v3": "action-surface contract: decision encoder and views, not update arithmetic",
+    "flat_policy_v4": "action-surface contract: decision encoder and views, not update arithmetic",
+    "kernel_native_search_opponent_v1": "opponent policy for collection",
+    "native_ladder_opponent_v1": "opponent policy for collection",
+    "native_population_opponent_v1": "opponent policy for collection",
+    "policy_observation_v6": "observation contract (shared: a change there runs the whole set)",
+    "regret_census_v1": "diagnostic census, not part of an update",
+    "rl": "engine types; engine changes run the whole set",
+    "rl_session": "game session (shared: a change there runs the whole set)",
+    "runtime_decks": "deck data for collection",
+    "sideboard": "engine sideboarding; engine changes run the whole set",
+    "sideboard_play_policy_v1": "sideboard policy (shared: a change there runs the whole set)",
+    "state": "engine state and its seed stream; engine changes run the whole set",
+    "test_temp_dir_v1": "test utility",
+}
+TRAINING_REFERENCE_ROOTS = ["mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1",
+                            "mtg-kernel/src/training_math_v1.rs", "mtg-kernel/src/native_trainer_v1.rs",
+                            "mtg-kernel/src/native_trainer_v1", "mtg-kernel/src/native_expanded_training_run_v1.rs",
+                            "mtg-kernel/src/native_expanded_training_run_v1"]
+def filtered(module: str) -> bool:
+    """Whether the trainer filters select a crate module's tests: a `name::` filter selects exactly that module,
+    a prefix filter (no trailing ::) every module starting with it."""
+    return any(module == f[:-2] if f.endswith("::") else module.startswith(f) for f in TRAINER_FILTERS)
+
+
+def crate_references(file, depth: int) -> set[str]:
+    """Crate-root modules a Rust file names: `crate::x`, grouped `crate::{x, y::z}`, and `super::` chains that
+    climb to the crate root from the file's module depth plus any enclosing inline modules."""
+    import rust_tokens  # the tokenizer (strings, comments and raw strings handled)
+    toks = rust_tokens.tokens(file.read_text(encoding="utf-8", errors="replace"))
+    out, stack, i = set(), [], 0
+
+    def group(j: int) -> int:
+        """toks[j] == '{': add the first name of each top-level item; return the index after the group."""
+        level, first = 0, True
+        while True:
+            t = toks[j]
+            if t == "{":
+                level += 1
+                first = first or level == 1
+            elif t == "}":
+                level -= 1
+                if level == 0:
+                    return j + 1
+            elif t == "," and level == 1:
+                first = True
+            elif level == 1 and first and re.fullmatch(r"[a-z_][a-z_0-9]*", t):
+                if t not in ("self", "super", "crate"):
+                    out.add(t)
+                first = False
+            elif level == 1 and first and t == "*":
+                out.add("*")
+                first = False
+            j += 1
+
+    import re
+    while i < len(toks):
+        t = toks[i]
+        if t == "mod" and i + 2 < len(toks) and toks[i + 2] == "{":
+            stack.append("mod")
+            i += 3
+            continue
+        if t == "{":
+            stack.append("{")
+        elif t == "}":
+            if stack:
+                stack.pop()
+        elif t in ("crate", "super") and toks[i + 1:i + 3] == [":", ":"]:
+            j, climbs = i, 0
+            if t == "super":
+                while toks[j] == "super" and toks[j + 1:j + 3] == [":", ":"]:
+                    climbs += 1
+                    j += 3
+                if climbs < depth + stack.count("mod"):
+                    i = j
+                    continue
+            else:
+                j += 3
+            if toks[j] == "{":
+                i = group(j)
+                continue
+            if re.fullmatch(r"[a-z_][a-z_0-9]*", toks[j]) or toks[j] == "*":
+                out.add(toks[j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
+def training_reference_gaps(root=None) -> tuple[list[str], list[str]]:
+    """(referenced modules neither filtered nor excluded, exclusions no longer referenced) for the files in
+    TRAINING_REFERENCE_ROOTS. The trainer scope runs this, so a qualifying change cannot add an unexamined backend."""
+    from pathlib import Path
+    base = Path(root) if root else Path(__file__).resolve().parents[2]
+    src = base / "mtg-kernel" / "src"
+    referenced = set()
+    for name in TRAINING_REFERENCE_ROOTS:
+        path = base / name
+        for file in ([path] if path.is_file() else sorted(path.rglob("*.rs"))):
+            parts = file.relative_to(src).with_suffix("").parts
+            depth = len(parts) - (1 if parts[-1] == "mod" else 0)
+            referenced |= crate_references(file, depth)
+    gaps = sorted(m for m in referenced if m not in TRAINING_REFERENCE_EXCLUSIONS and not filtered(m))
+    return gaps, sorted(set(TRAINING_REFERENCE_EXCLUSIONS) - referenced)
+
+
 # Trainer changes also need these rows, which run on a node, never in CI.
 BIT_IDENTITY_ROWS = [
     "the 10-game main-chain recipe", "the 60-game recipe", "the pilot recipe with mulligans",
@@ -212,6 +337,16 @@ def main(argv: list[str]) -> int:
     if command == "markdown":
         sys.stdout.write(markdown())
         return 0
+    if command == "check-references":
+        gaps, stale = training_reference_gaps()
+        for module in gaps:
+            print(f"{module}: referenced by the train step or training math; add it to TRAINER_FILTERS or to "
+                  "TRAINING_REFERENCE_EXCLUSIONS with a reason")
+        for module in stale:
+            print(f"{module}: listed in TRAINING_REFERENCE_EXCLUSIONS but no longer referenced; remove it")
+        if not gaps and not stale:
+            print("references: every module the train step and training math reference is filtered or excluded")
+        return 1 if gaps or stale else 0
     if command == "trainer-filters":
         # With --shard N, one shard's filters (the trainer-tests matrix); otherwise all of them.
         print(" ".join(TRAINER_SHARDS[int(argv[3])] if argv[2:3] == ["--shard"] else TRAINER_FILTERS))

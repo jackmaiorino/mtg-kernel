@@ -180,6 +180,33 @@ class ShardTests(unittest.TestCase):
         self.assertIn("trainer-filters --shard ${{ matrix.shard }}", text)
 
 
+class ReferenceGuardTests(unittest.TestCase):
+    def test_every_module_the_train_step_and_training_math_reference_is_filtered_or_excluded(self):
+        import tempfile
+        self.assertEqual(ci_scope.training_reference_gaps(), ([], []))
+        # A new reference from the train step to an unexamined module fails the guard the trainer scope runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ci_scope.TRAINING_REFERENCE_ROOTS:
+                src = ROOT / name
+                for file in ([src] if src.is_file() else sorted(src.rglob("*.rs"))):
+                    out = Path(tmp) / file.relative_to(ROOT)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text(file.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+            math = Path(tmp) / "mtg-kernel/src/training_math_v1.rs"
+            original = math.read_text(encoding="utf-8")
+            for added, expected in [("use crate::unexamined_backend_v9::X;", ["unexamined_backend_v9"]),
+                                    ("use crate::{fast_sampler, unexamined_v8::{A, B}};", ["unexamined_v8"]),
+                                    ("use super::unexamined_v7::X;", ["unexamined_v7"]),
+                                    ("mod t { use super::super::unexamined_v6::X; use super::local::Y; }",
+                                     ["unexamined_v6"]),
+                                    ("use crate::training_math_v1_extra::X;", ["training_math_v1_extra"]),
+                                    ("// use crate::only_in_a_comment::X;", [])]:
+                with self.subTest(reference=added):
+                    math.write_text(original + "\n" + added + "\n", encoding="utf-8")
+                    self.assertEqual(ci_scope.training_reference_gaps(tmp)[0], expected)
+        self.assertIn("run: python tools/ci/ci_scope.py check-references", WORKFLOW.read_text(encoding="utf-8"))
+
+
 class MonitorTests(unittest.TestCase):
     def test_the_monitor_runs_on_a_failed_or_timed_out_dependency(self):
         condition = workflow()["jobs"]["post-merge-report"]["if"]

@@ -1742,6 +1742,11 @@ jobs:
         with:
           python-version-file: .python-version
 
+      # A trainer-scoped change cannot add an unexamined backend: every module the train step, training math, the
+      # trainer and the run module reference is filtered or excluded with a reason (tools/ci/ci_scope.py).
+      - name: Check the trainer's references
+        run: python tools/ci/ci_scope.py check-references
+
       - name: Run the trainer library tests
         run: |
           read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters --shard ${{ matrix.shard }})"
