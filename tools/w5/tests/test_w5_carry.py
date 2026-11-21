@@ -861,7 +861,7 @@ class CarryTests(unittest.TestCase):
         path, plan = chains.make_plan(self.cont_inputs(carry_path))
         cont = self.t / 'cont'
         self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
-        for planted in (cont / 'chains' / 'c1c' / 'segments' / 'seg-00001.json.gz.tmp',
+        for planted in (cont / 'LOG.jsonl', cont / 'chains' / 'c1c' / 'segments' / 'seg-00001.json.gz.tmp',
                         cont / 'state' / 'c1c' / 'instance-0000' / 'chain.log',
                         cont / 'state' / 'c1c' / 'supervisor.lock'):
             planted.parent.mkdir(parents=True, exist_ok=True)
@@ -876,6 +876,16 @@ class CarryTests(unittest.TestCase):
                         chains.cycle(plan, path)
             planted.unlink()
             self.assertEqual(snap(), before)
+        log_path = cont / 'LOG.jsonl'
+
+        def plant_during_wait(_seconds):  # the link appears while the driver sleeps between guard polls
+            log_path.unlink(missing_ok=True)
+            log_path.symlink_to(old_ck)
+        with mock.patch.object(chains, 'guard_admit', return_value=(False, 'mocked guard wait')),                 mock.patch.object(chains.time, 'sleep', side_effect=plant_during_wait),                 mock.patch.object(chains, 'run_trainer', side_effect=AssertionError('no run'), create=True),                 contextlib.redirect_stderr(io.StringIO()):
+            code = self.drive(plan, 'c1c', cont, 9)
+        self.assertEqual(code, chains.EXIT_STOP)
+        log_path.unlink(missing_ok=True)
+        self.assertEqual(snap(), before)
 
 
 if __name__ == '__main__':

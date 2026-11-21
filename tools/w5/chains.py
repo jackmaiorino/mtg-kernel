@@ -584,25 +584,22 @@ def no_links_in(*dirs):
                 require(not e.is_symlink(), f'{e.path} is a link in a carried chain\'s tree')
 
 
-SEGMENT_DIR = re.compile(r'seg-\d+')
-
-
 def carried_trees_unlinked(root, name):
     """A carried chain's W5 root has a canonical path and no link anywhere in it: plan, state (instance logs and
-    locks), retention logs, segment configs, records and logs alike. Its segment directories (`chains/<name>/seg-*`)
+    locks), retention logs, segment configs, records and logs alike. Segment directories (`chains/<any>/seg-*`)
     are skipped here: the segment checks, the index and retention check them."""
     cdir = chain_dir(root, name)
     for d in (Path(root), cdir):
         absolute = os.path.abspath(d)
         require(not d.is_symlink() and os.path.realpath(absolute) == absolute,
                 f'{name}: {d} is a link or lies under one')
-    cdir_abs = os.path.abspath(cdir)
+    chains_abs = os.path.abspath(Path(root) / 'chains')
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         for entry in dirnames + filenames:
             require(not os.path.islink(os.path.join(dirpath, entry)),
                     f'{name}: {os.path.join(dirpath, entry)} is a link in a carried chain\'s tree')
-        if os.path.abspath(dirpath) == cdir_abs:
-            dirnames[:] = [d for d in dirnames if not SEGMENT_DIR.fullmatch(d)]
+        if os.path.dirname(os.path.abspath(dirpath)) == chains_abs:
+            dirnames[:] = [d for d in dirnames if not retention.SEGMENT_DIR.fullmatch(d)]
 
 
 def carried_chain_dir_ok(plan, root, name):
@@ -2164,8 +2161,8 @@ def run(a):
         cmd += ['--accept-lower-bound', a.accept_lower_bound]
     log(root, chain=a.chain, event='run', cmd=cmd)
     code = subprocess.call(cmd)
+    carried_chain_dir_ok(plan, root, a.chain)  # a carried chain: again, before its log, END read or END write
     log(root, chain=a.chain, event='run-exit', exit=code)
-    carried_chain_dir_ok(plan, root, a.chain)  # a carried chain: again, before reading or writing its END
     if read_end(root, a.chain) is not None:
         release_scratch(plan, a.chain, read(chain_dir(root, a.chain) / 'chain.json'))  # the box's driver is gone
         return 0
