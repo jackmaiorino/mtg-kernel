@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import inspect
 import io
 import json
 import os
@@ -76,6 +75,8 @@ class Host:
     # checkpoints) once a later collection merges, only while they still hold the bytes it pushed.
     # Off by default: an absolute pin can still serve another run or fork on that host (a pruned
     # pin is pushed again when next needed), so enable it only for hosts that serve one lineage.
+    # Agent transport only: the agent links the ownership witness and removes owned files under one
+    # per-path lock in one process; a shell-transport host asking for it is refused.
     prune_pushed: bool = False
     # Format string around each remote shell command, e.g. "docker exec -i bladder-node sh -c {cmd}".
     remote_wrap: str = ""
@@ -104,6 +105,8 @@ def load_hosts(path: Path) -> dict:
             raise ValueError(f"{host.name}: an ssh host needs its ssh command")
         if host.transport not in ("shell", "agent") or (host.transport == "agent" and host.kind != "ssh"):
             raise ValueError(f"{host.name}: transport is shell, or agent for an ssh host")
+        if host.prune_pushed and host.transport != "agent":
+            raise ValueError(f"{host.name}: remote retention (prune_pushed) needs the agent transport")
         if host.workers < 2 or host.weight <= 0:
             raise ValueError(f"{host.name}: workers >= 2 and weight > 0 required")
         if not (_absolute(host.collector) and _absolute(host.scratch)):
@@ -214,30 +217,15 @@ def input_closure(command: dict) -> set[tuple[str, str]]:
     return found
 
 
-# Ownership witness and storage marker. Each function below runs in two places: on the collector
-# as the source of the shell transport's remote scripts (inspect.getsource, so the remote python3 needs
-# only the standard library) and in-process in the collector agent. One definition, no copies.
+# Remote retention on agent hosts: the ownership witness and the storage generation marker, used
+# in-process by the collector agent (agent_serve). A pin an agent push creates gets a witness, a
+# second hard link to the very inode it installed, `<scratch>/.pooled-owned/<sha256 of the path>`,
+# linked from the verified stage before publication and renamed into place after it, under the
+# path's lock, so it can only ever name the installed inode. remove_pin takes the same lock.
 
 def owned_witness(dest, scratch):
-    """The ownership witness of the pin at `dest`: a second hard link to the very file a push
-    created, at `<scratch>/.pooled-owned/<sha256 of the path string>`."""
+    """The ownership witness of the pin at `dest`."""
     return os.path.join(scratch, ".pooled-owned", hashlib.sha256(dest.encode()).hexdigest())
-
-
-def link_witness(dest, scratch):
-    """Run right after a push created `dest`: "created" once the witness links to it, else
-    "created-unowned" (another filesystem than the scratch root, or links refused): never pruned."""
-    witness = owned_witness(dest, scratch)
-    os.makedirs(os.path.dirname(witness), exist_ok=True)
-    try:
-        os.unlink(witness)  # a stale witness: its file was removed by someone else
-    except FileNotFoundError:
-        pass
-    try:
-        os.link(dest, witness)
-    except OSError:
-        return "created-unowned"
-    return "created"
 
 
 def remove_owned_file(dest, scratch, expected):
@@ -307,12 +295,30 @@ def storage_marker(scratch):
         return handle.read(64).decode(errors="replace").strip()
 
 
-OWNERSHIP_SOURCE = "".join(inspect.getsource(f) for f in (owned_witness, link_witness, remove_owned_file,
-                                                           storage_marker))
-# The push script's step right after it created the destination.
-WITNESS_LINK = "    print(link_witness(sys.argv[1], str(scratch)))\n"
-REMOVE_OWNED = "import hashlib,os,stat,sys,uuid\n" + OWNERSHIP_SOURCE + "print(remove_owned_file(*sys.argv[1:4]))\n"
-STORAGE_MARKER = "import hashlib,os,stat,sys,uuid\n" + OWNERSHIP_SOURCE + "print(storage_marker(sys.argv[1]))\n"
+PUSH_PIN = """import hashlib,os,shutil,sys
+from pathlib import Path
+dest,stage,expected=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]
+def digest(path):
+  h=hashlib.sha256()
+  with path.open('rb') as f:
+    for block in iter(lambda: f.read(1 << 20), b''): h.update(block)
+  return h.hexdigest()
+dest.parent.mkdir(parents=True,exist_ok=True)
+f=stage.open('xb')
+try:
+  with f: shutil.copyfileobj(sys.stdin.buffer,f)
+  if digest(stage)!=expected: sys.exit('staged pin differs: '+str(dest))
+  try:
+    os.link(stage,dest)
+  except FileExistsError:
+    if not dest.is_file() or digest(dest)!=expected:
+      sys.exit('existing pin differs: '+str(dest))
+    print('existing')
+  else:
+    print('created')
+finally:
+  stage.unlink(missing_ok=True)
+"""
 
 
 class state_lock:
@@ -446,10 +452,8 @@ class Transport:
     def push(self, local: Path, remote: str, digest: str) -> bool:
         """Installs an immutable pin: a private staged copy, verified, then hard-linked into place.
         An established file is never replaced; a racing copy is accepted only with the same digest.
-        Returns True only when this call created the destination and linked its ownership witness
-        (`<scratch>/.pooled-owned/<sha256 of the path>`, a second hard link to the same file); only
-        then does the dispatcher own it. The collector's filesystem needs hard links; a pin on another
-        filesystem than the scratch root is installed but never owned, so never pruned."""
+        Returns True when this call created the destination. The collector's filesystem needs hard
+        links."""
         stage_name = f"{remote}.{uuid.uuid4().hex}.stage"
         if self.host.kind == "local":
             destination, stage = Path(remote), Path(stage_name)
@@ -471,31 +475,7 @@ class Transport:
                     return False
             finally:
                 stage.unlink(missing_ok=True)
-        script = ("import hashlib,os,shutil,stat,sys,uuid\n"
-                  "from pathlib import Path\n"
-                  + OWNERSHIP_SOURCE +
-                  "dest,stage,expected,scratch=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3],sys.argv[4]\n"
-                  "def digest(path):\n"
-                  "  h=hashlib.sha256()\n"
-                  "  with path.open('rb') as f:\n"
-                  "    for block in iter(lambda: f.read(1 << 20), b''): h.update(block)\n"
-                  "  return h.hexdigest()\n"
-                  "dest.parent.mkdir(parents=True,exist_ok=True)\n"
-                  "f=stage.open('xb')\n"
-                  "try:\n"
-                  "  with f: shutil.copyfileobj(sys.stdin.buffer,f)\n"
-                  "  if digest(stage)!=expected: sys.exit('staged pin differs: '+str(dest))\n"
-                  "  try:\n"
-                  "    os.link(stage,dest)\n"
-                  "  except FileExistsError:\n"
-                  "    if not dest.is_file() or digest(dest)!=expected:\n"
-                  "      sys.exit('existing pin differs: '+str(dest))\n"
-                  "    print('existing')\n"
-                  "  else:\n"
-                  + WITNESS_LINK +
-                  "finally: stage.unlink(missing_ok=True)\n")
-        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, remote, stage_name, digest,
-                                                        self.host.scratch))
+        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", PUSH_PIN, remote, stage_name, digest))
         with open(local, "rb") as handle:
             result = subprocess.run(self._ssh([command]), stdin=handle, capture_output=True, timeout=600)
         if result.returncode != 0:
@@ -546,41 +526,6 @@ class Transport:
             Path(remote).unlink(missing_ok=True)
         else:
             subprocess.run(self._ssh([f"rm -f -- {shlex.quote(remote)}"]), capture_output=True, timeout=120)
-
-    def remove_owned(self, remote: str, digest: str) -> str:
-        """Deletes `remote` only if it is still the file this dispatcher installed: the same file
-        (device and inode) as its ownership witness, with the expected bytes. The file is first moved
-        aside atomically into the witness directory, checked there and only then deleted; anything else
-        is put back. A restored or replaced copy with the same bytes is another file and is kept; a
-        witness whose file is gone is dropped. Returns "removed" or "not-owned"."""
-        if self.host.kind == "local":
-            result = subprocess.run([sys.executable, "-c", REMOVE_OWNED, remote, self.host.scratch, digest],
-                                    capture_output=True, text=True, timeout=300)
-        else:
-            command = " ".join(shlex.quote(a) for a in ("python3", "-c", REMOVE_OWNED, remote, self.host.scratch, digest))
-            result = subprocess.run(self._ssh([command]), capture_output=True, text=True, timeout=300,
-                                    stdin=subprocess.DEVNULL)
-        outcome = result.stdout.strip().splitlines()[-1:] or [""]
-        if result.returncode != 0 or outcome[0] not in ("removed", "not-owned"):
-            raise RuntimeError(f"{self.host.name}: owned removal of {remote} failed: {result.stderr.strip()[-200:]}")
-        return outcome[0]
-
-    def storage_id(self) -> str:
-        """The collector storage's generation marker, `<scratch>/.pooled-storage-id`, created once
-        with a random value. Replaced storage (a recreated container, a reimaged disk) gets a new one,
-        so it inherits no ownership records."""
-        script = STORAGE_MARKER  # published atomically: see storage_marker
-        if self.host.kind == "local":
-            result = subprocess.run([sys.executable, "-c", script, self.host.scratch], capture_output=True,
-                                    text=True, timeout=60)
-        else:
-            command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, self.host.scratch))
-            result = subprocess.run(self._ssh([command]), capture_output=True, text=True, timeout=120,
-                                    stdin=subprocess.DEVNULL)
-        marker = result.stdout.strip()
-        if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{32}", marker):
-            raise RuntimeError(f"{self.host.name}: storage marker unreadable")
-        return marker
 
     def remove_dir(self, remote: str) -> None:
         if self.host.kind == "local":
@@ -642,7 +587,7 @@ class Dispatcher:
                     raise RuntimeError(f"learner lacks pinned input {pin[0]}")
                 created = transport.push(local, pin[0], pin[1])
                 pushed += local.stat().st_size
-                if created and host.kind == "ssh":
+                if created and host.transport == "agent":  # ownership exists only on agent hosts
                     with self._lock:
                         self.pushed.setdefault(host.name, {})[pin[0]] = pin[1]
         return pushed
@@ -799,7 +744,7 @@ class Dispatcher:
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
         keep_paths = {p for p, _ in current}
         for host in self.hosts:
-            key = self.storage_key_now(host) if host.prune_pushed and host.kind == "ssh" else self.storage_key(host)
+            key = self.storage_key_now(host) if host.prune_pushed and host.transport == "agent" else self.storage_key(host)
             if key is None:
                 continue
             previous = state.get(key, {})
@@ -807,7 +752,7 @@ class Dispatcher:
                 previous = {}  # an older state format holds no hashes: forget, never delete
             now = self.pushed.get(host.name, {})
             merged = dict(previous) | now
-            if host.prune_pushed and host.kind == "ssh":
+            if host.prune_pushed and host.transport == "agent":
                 for path in sorted(set(merged) - set(now) - keep_paths):
                     # Delete only the very file this dispatcher installed (its ownership witness).
                     try:
@@ -860,7 +805,8 @@ class Dispatcher:
 # further, just before it executes:
 #   agent      reads beneath the pin roots, the scratch root and the system paths an interpreter and a
 #              dynamically linked program need (SYSTEM_DIRS, the interpreter's prefixes, SYSTEM_FILES);
-#              executes only beneath those system directories and the collector and prefix programs;
+#              executes only beneath those system directories, the collector, the absolute prefix
+#              programs and the config's run_paths (for example a binfmt interpreter such as Rosetta);
 #              writes, creates, removes, links and renames only beneath the pin roots and the scratch
 #              root (and writes /dev/null); never creates a symlink, device, fifo or socket node;
 #   collector  the same reads and programs, but the pin roots read-only and nothing else of the scratch
@@ -880,8 +826,14 @@ class Dispatcher:
 # configured and unavailable, every request is refused.
 #
 # The userspace checks stay because they refuse precisely and early: no-follow opens, singly linked
-# outputs, exact output and tag paths, inputs within the pin roots with their pinned bytes, and
-# revalidation of a stored command just before it runs.
+# outputs, exact output and tag paths, printable ASCII paths, inputs within the pin roots with their
+# pinned bytes, and revalidation of a stored command just before it runs.
+#
+# The config path comes only from the forced command's argv (the collector's own disk); the request
+# names no config, program or root. Programs are fixed by the config: the collector, run only when its
+# sha256 equals both the config's and the learner's expectation, and the prefix (absolute, no PATH
+# lookup, not hash pinned: the key holder cannot change it). Remote retention (remove_pin) deletes only
+# a file an agent push created and witnessed, under the per-path lock that push held.
 
 AGENT_SCHEMA = "mtg-kernel-pooled-collect-agent/v1"
 AGENT_REQUEST_SCHEMA = "pooled-collect-agent-request/v1"
@@ -1008,9 +960,8 @@ def _system_rules(config: dict) -> list:
     rules += [(f, LL_READ_FILE, False) for f in SYSTEM_FILES]
     rules.append(("/dev/null", LL_READ_FILE | LL_WRITE_FILE | LL_TRUNCATE, False))
     programs = [p for p in config["prefix"] if os.path.isabs(p) and os.path.isfile(p)]
-    if config["prefix"] and not os.path.isabs(config["prefix"][0]) and shutil.which(config["prefix"][0]):
-        programs.append(shutil.which(config["prefix"][0]))
     rules += [(p, LL_RUN, False) for p in programs] + [(config["collector"], LL_RUN, True)]
+    rules += [(p, LL_RUN, True) for p in config["run_paths"]]
     return rules
 
 
@@ -1072,8 +1023,10 @@ def decode_request(text) -> tuple[str, dict]:
 
 
 def _canonical(path) -> str | None:
-    """`path` if it is absolute and normalized and its existing part has no symlink; else None."""
-    if not isinstance(path, str) or not path or "\x00" in path:
+    """`path` if it is printable ASCII, absolute and normalized and its existing part has no
+    symlink; else None. ASCII only, so no locale (the key holder may send LANG or LC_* where sshd
+    accepts them) can encode a checked name into other bytes than the collector opens."""
+    if not isinstance(path, str) or not path or not all(" " <= c <= "~" for c in path):
         return None
     if not os.path.isabs(path) or os.path.normpath(path) != path:
         return None
@@ -1128,6 +1081,17 @@ def load_agent_config(path: Path) -> dict:
             info = os.stat(root)
             if info.st_uid != os.getuid() or info.st_mode & 0o022:
                 raise ValueError(f"{root} must be owned by this account and not group or world writable")
+    prefix = config["prefix"]
+    if not isinstance(prefix, list) or not all(isinstance(a, str) for a in prefix) \
+            or (prefix and not os.path.isabs(prefix[0])):
+        raise ValueError("agent prefix must be strings starting with an absolute program (no PATH lookup)")
+    if not (isinstance(config["collector"], str) and os.path.isabs(config["collector"])):
+        raise ValueError("agent collector must be an absolute path")
+    config["run_paths"] = config.get("run_paths", [])  # extra read and execute paths (a binfmt interpreter)
+    if not isinstance(config["run_paths"], list) or not all(
+            isinstance(p, str) and _canonical(p) == p and not any(_overlap(p, root) for root in roots)
+            for p in config["run_paths"]):
+        raise ValueError("agent run_paths must be canonical absolute paths outside every root")
     config["max_seconds"] = int(config.get("max_seconds", 3600))
     config["request_seconds"] = int(config.get("request_seconds", 900))
     return config
@@ -1443,16 +1407,32 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
             if _write_new(stage, stdin, AGENT_PIN_BYTES) != digest:
                 raise AgentRefusal("payload differs from its sha256")
             with _lock(config, path):
+                # Ownership follows the installed inode: the witness is linked from the verified
+                # stage before publication and renamed into place only after this call created the
+                # pin. Best effort: another filesystem than the scratch root, or Landlock ABI 1 (no
+                # cross-directory links), installs the pin unowned, so it is never pruned.
+                witness = owned_witness(path, scratch)
+                pending = f"{witness}.{uuid.uuid4().hex}.pending"
                 try:
-                    os.link(stage, path)
-                except FileExistsError:
-                    if _hash_nofollow(path) != digest:
-                        raise AgentRefusal("existing pin differs") from None
-                    outcome = "existing"
-                else:
-                    # Ownership follows the installed file, as the shell transport's push: a second
-                    # hard link beside the scratch root; "created" only once that witness is linked.
-                    outcome = link_witness(path, scratch)
+                    os.makedirs(os.path.dirname(witness), mode=0o700, exist_ok=True)
+                    os.link(stage, pending)
+                except OSError:
+                    pending = None
+                try:
+                    try:
+                        os.link(stage, path)
+                    except FileExistsError:
+                        if _hash_nofollow(path) != digest:
+                            raise AgentRefusal("existing pin differs") from None
+                        outcome = "existing"
+                    else:
+                        outcome = "created-unowned"
+                        if pending is not None:
+                            os.replace(pending, witness)  # replaces only a stale witness
+                            pending, outcome = None, "created"
+                finally:
+                    if pending is not None:
+                        os.unlink(pending)
                 if _canonical(path) is None or _hash_nofollow(path) != digest:
                     raise AgentRefusal("pin path changed while installing")
             reply(outcome)
@@ -1516,7 +1496,10 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                 member = os.path.join(directory, name)
                 if not _portable_name(name):
                     raise AgentRefusal(f"unexpected name in shard output: {name[:80]!r}")
-                fd = os.open(member, os.O_RDONLY | NOFOLLOW | BINARY)
+                try:
+                    fd = os.open(member, os.O_RDONLY | NOFOLLOW | BINARY)
+                except OSError:  # ELOOP: a symlink in the shard output
+                    raise AgentRefusal(f"shard output {name!r} is not a singly linked regular file") from None
                 with os.fdopen(fd, "rb") as handle:
                     info = os.fstat(handle.fileno())
                     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or os.path.islink(member):

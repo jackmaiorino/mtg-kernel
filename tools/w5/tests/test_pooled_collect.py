@@ -214,7 +214,7 @@ class PooledCollectTests(unittest.TestCase):
     def test_a_host_name_reused_for_another_machine_inherits_no_ownership(self):
         config = self.config([("a", 1.0, "x86")])
         host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
+        host.kind, host.ssh, host.prune_pushed, host.transport = "ssh", ["ssh", "machine-x"], True, "agent"
         config["state_path"] = str(self.root / "pushed.json")
         pc.Dispatcher(config, self.transports(config)).collect(self.command_path, fake_merge)
         # The same name now reaches another machine that happens to hold the old checkpoint.
@@ -233,7 +233,7 @@ class PooledCollectTests(unittest.TestCase):
     def test_replaced_storage_behind_the_same_connection_inherits_no_ownership(self):
         config = self.config([("a", 1.0, "x86")])
         host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
+        host.kind, host.ssh, host.prune_pushed, host.transport = "ssh", ["ssh", "machine-x"], True, "agent"
         config["state_path"] = str(self.root / "pushed.json")
         pc.Dispatcher(config, self.transports(config)).collect(self.command_path, fake_merge)
         # Same ssh target and wrap, but the container behind it was recreated (a new storage marker),
@@ -262,7 +262,7 @@ class PooledCollectTests(unittest.TestCase):
     def test_a_restored_copy_with_the_same_bytes_behind_a_kept_scratch_is_never_pruned(self):
         config = self.config([("a", 1.0, "x86")])
         host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
+        host.kind, host.ssh, host.prune_pushed, host.transport = "ssh", ["ssh", "machine-x"], True, "agent"
         config["state_path"] = str(self.root / "pushed.json")
         transports = self.transports(config)
         pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
@@ -276,7 +276,7 @@ class PooledCollectTests(unittest.TestCase):
     def test_storage_replaced_between_upload_and_prune_keeps_its_files(self):
         config = self.config([("a", 1.0, "x86")])
         host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
+        host.kind, host.ssh, host.prune_pushed, host.transport = "ssh", ["ssh", "machine-x"], True, "agent"
         config["state_path"] = str(self.root / "pushed.json")
         first = self.transports(config)
         pc.Dispatcher(config, first).collect(self.command_path, fake_merge)
@@ -310,13 +310,12 @@ class PooledCollectTests(unittest.TestCase):
         self.assertFalse((self.command_path.parent / "pooled-shards").exists())
 
     def test_the_storage_marker_is_created_once_and_then_read(self):
-        host = pc.Host(name="m", kind="local", collector="/c", collector_sha256="c" * 64, workers=2, weight=1.0,
-                       scratch=str(self.root / "scratch-marker"), arch="x86")
-        first = pc.Transport(host).storage_id()
+        scratch = str(self.root / "scratch-marker")
+        first = pc.storage_marker(scratch)
         self.assertRegex(first, r"^[0-9a-f]{32}$")
-        self.assertEqual(pc.Transport(host).storage_id(), first)
+        self.assertEqual(pc.storage_marker(scratch), first)
         (self.root / "scratch-marker" / ".pooled-storage-id").unlink()
-        self.assertNotEqual(pc.Transport(host).storage_id(), first, "new storage, new marker")
+        self.assertNotEqual(pc.storage_marker(scratch), first, "new storage, new marker")
 
     def test_concurrent_first_marker_initialization_agrees_on_one_complete_marker(self):
         scratch = self.root / "scratch-race"
@@ -388,7 +387,7 @@ class PooledCollectTests(unittest.TestCase):
     def test_a_pin_installed_by_another_process_first_is_never_pruned(self):
         config = self.config([("a", 1.0, "x86")])
         host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "a"], True
+        host.kind, host.ssh, host.prune_pushed, host.transport = "ssh", ["ssh", "a"], True, "agent"
         config["state_path"] = str(self.root / "pushed.json")
         transports = self.transports(config)
         racing = transports["a"]
@@ -512,7 +511,7 @@ class PooledCollectTests(unittest.TestCase):
         self.command_path.write_text(json.dumps(self.command))
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "arm64")])
         for host in config["hosts"]:
-            host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", host.name], True
+            host.kind, host.ssh, host.prune_pushed, host.transport = "ssh", ["ssh", host.name], True, "agent"
         config["state_path"] = str(self.root / "pushed.json")
         transports = self.transports(config)
         dispatcher = pc.Dispatcher(config, transports)
@@ -545,6 +544,30 @@ class PooledCollectTests(unittest.TestCase):
         self.assertEqual(argv[2], "docker exec -i node sh -c " + pc.shlex.quote("tar -C '/a b' -cf - ."))
         host.remote_wrap = ""
         self.assertEqual(pc.Transport(host)._ssh(["ls"]), ["ssh", "mac", "ls"])
+
+    def test_retention_is_refused_unless_the_host_uses_the_agent(self):
+        # Remote retention (pruning old pins on collectors) lives in the agent, where the ownership
+        # witness and the owned removal share one per-path lock in one process.
+        path = self.root / "hosts.json"
+        entry = {"name": "a", "kind": "ssh", "collector": "/bin/c", "collector_sha256": "c" * 64, "workers": 4,
+                 "weight": 1.0, "scratch": "/s", "arch": "x86", "ssh": ["ssh", "h"], "prune_pushed": True}
+        path.write_text(json.dumps({"schema": pc.SCHEMA, "hosts": [entry], "merge_binary": "/bin/m"}))
+        with self.assertRaisesRegex(ValueError, "needs the agent transport"):
+            pc.load_hosts(path)
+        path.write_text(json.dumps({"schema": pc.SCHEMA, "hosts": [dict(entry, transport="agent")],
+                                    "merge_binary": "/bin/m"}))
+        self.assertTrue(pc.load_hosts(path)["hosts"][0].prune_pushed)
+
+    def test_shell_hosts_record_and_prune_nothing(self):
+        config = self.config([("a", 1.0, "x86")])
+        host = config["hosts"][0]
+        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "a"], True  # built directly, not loaded
+        config["state_path"] = str(self.root / "pushed.json")
+        transports = self.transports(config)
+        pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        pc.Dispatcher(config, transports).collect(self.next_iteration(), fake_merge)
+        self.assertEqual(getattr(transports["a"], "removed", []), [])
+        self.assertEqual(json.loads((self.root / "pushed.json").read_text()), {pc.Dispatcher.storage_key(host): {}})
 
     def test_hosts_file_is_checked(self):
         path = self.root / "hosts.json"
@@ -658,34 +681,6 @@ class PinPublicationTests(unittest.TestCase):
             self.assertEqual(transport.pin_status({conflicting_pin})[conflicting_pin], "differs")
         self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
         self.assertEqual(list(remote.parent.iterdir()), [remote])
-
-    def test_owned_removal_deletes_only_the_installed_file(self):
-        self.host.kind, self.host.ssh = "ssh", ["fake-ssh", "collector"]
-        transport = pc.Transport(self.host)
-        remote = (self.root / "collector" / "pin.json").as_posix()
-        digest = pc.sha256_file(self.checkpoint)
-        local_run = subprocess.run
-
-        def emulate_ssh(argv, **kwargs):
-            command = shlex.split(argv[-1])
-            return local_run([sys.executable, *command[1:]], **kwargs)
-
-        with mock.patch.object(pc.subprocess, "run", side_effect=emulate_ssh):
-            self.assertTrue(transport.push(self.checkpoint, remote, digest), "created and owned")
-            self.assertFalse(transport.push(self.checkpoint, remote, digest), "existing: not owned twice")
-            self.assertEqual(transport.remove_owned(remote, "0" * 64), "not-owned", "other bytes expected")
-            self.assertTrue(Path(remote).exists(), "put back")
-            self.assertEqual(transport.remove_owned(remote, digest), "removed")
-            self.assertFalse(Path(remote).exists())
-            # A restored copy with the same bytes is another file: never removed.
-            self.assertTrue(transport.push(self.checkpoint, remote, digest))
-            Path(remote).unlink()
-            Path(remote).write_bytes(self.checkpoint.read_bytes())
-            self.assertEqual(transport.remove_owned(remote, digest), "not-owned")
-            self.assertEqual(Path(remote).read_bytes(), self.checkpoint.read_bytes())
-            self.assertEqual(transport.remove_owned(remote, digest), "not-owned", "the stale witness is gone")
-        owned = Path(self.host.scratch) / ".pooled-owned"
-        self.assertEqual(list(owned.iterdir()), [], "no witness or set-aside file left")
 
     def test_merge_uses_the_native_trainer_mode_in_schedule_order(self):
         command_path = self.root / "collect-command.json"

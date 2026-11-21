@@ -310,6 +310,78 @@ class AgentRefusalTests(AgentCase):
         (self.scratch / TAG).mkdir()
         self.assertRefused(self.run_shard(), "already exists")
 
+    def test_the_config_comes_only_from_the_forced_command(self):
+        evil_pins = self.root / "evil-pins"
+        evil_pins.mkdir()
+        evil = self.write_config(self.root / "evil.json", pin_roots=[str(evil_pins)])
+        data = b"bytes"
+        target = str(evil_pins / "x.bin")
+        self.assertRefused(self.serve("push", data, path=target, sha256=sha(data), config_path=str(evil)),
+                           "takes exactly")
+        with_config = json.dumps({"schema": pc.AGENT_REQUEST_SCHEMA, "op": "pin_status", "args": {"pins": []},
+                                  "config": str(evil)})
+        self.assertRefused(self.serve(raw=base64.urlsafe_b64encode(with_config.encode()).decode().rstrip("=")),
+                           "request/v1 object")
+        self.assertRefused(self.serve(raw=f"agent {evil}"), "base64url")
+        # The forced command's process: neither the request nor the environment selects another config.
+        env = dict(os.environ, SSH_ORIGINAL_COMMAND=pc.encode_request("push", path=target, sha256=sha(data)),
+                   MTG_POOLED_COLLECT_CONFIG=str(evil))
+        result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "agent",
+                                 str(self.config_path)], env=env, input=data, capture_output=True, timeout=120)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(b"outside the pin roots", result.stderr)
+        self.assertEqual(list(evil_pins.iterdir()), [])
+
+    def test_non_ascii_paths_are_refused(self):
+        data = b"bytes"
+        for name in ("café.bin", "tab\there.bin", "nul\x00.bin"):
+            self.assertRefused(self.serve("push", data, path=str(self.pins) + "/" + name, sha256=sha(data)),
+                               "outside the pin roots")
+        self.assertEqual(list(self.pins.iterdir()), [])
+
+    def test_programs_come_from_the_config_without_path_lookup(self):
+        relative = self.write_config(self.root / "relative.json", prefix=["python3"])
+        code, _, err = self.serve("pin_status", pins=[], config=relative)
+        self.assertEqual(code, 1)
+        self.assertIn("absolute program", err)
+        inside = self.write_config(self.root / "run-inside.json", run_paths=[str(self.pins)])
+        code, _, err = self.serve("pin_status", pins=[], config=inside)
+        self.assertEqual(code, 1)
+        self.assertIn("run_paths", err)
+
+    @unittest.skipUnless(os.name == "posix", "symlinks need privileges on Windows")
+    def test_symlinks_anywhere_in_a_declared_path_are_refused(self):
+        data = b"bytes"
+        secret = self.root / "secret.txt"
+        secret.write_bytes(data)
+        os.symlink(secret, self.pins / "final-link.bin")  # the final component is a symlink
+        self.assertRefused(self.serve("push", data, path=str(self.pins / "final-link.bin"), sha256=sha(data)),
+                           "outside the pin roots")
+        states = json.loads(self.serve("pin_status", pins=[[str(self.pins / "final-link.bin"), sha(data)]])[1])
+        self.assertEqual(states["states"], ["differs"], "a symlink is never hashed through")
+        self.assertRefused(self.serve("remove_pin", path=str(self.pins / "final-link.bin"), sha256=sha(data)),
+                           "outside the pin roots")
+        self.assertTrue(secret.exists())
+        # A symlinked root in the collector's own config is refused before any request is served.
+        os.symlink(self.pins, self.root / "pins-link")
+        linked_root = self.write_config(self.root / "linked.json", pin_roots=[str(self.root / "pins-link")])
+        code, _, err = self.serve("pin_status", pins=[], config=linked_root)
+        self.assertEqual(code, 1)
+        self.assertIn("canonical", err)
+        # Shard output: a symlink member, or a symlink in place of the run directory, is never fetched.
+        self.put_shard()
+        self.assertEqual(json.loads(self.run_shard()[1])["code"], 0)
+        os.symlink(secret, self.scratch / TAG / "out" / "leak.json")
+        self.assertRefused(self.serve("fetch_shard", tag=TAG), "singly linked")
+        shutil.rmtree(self.scratch / TAG)
+        (self.root / "planted" / "out").mkdir(parents=True)
+        (self.root / "planted" / "out" / "x.json").write_bytes(b"planted")
+        os.symlink(self.root / "planted", self.scratch / TAG)
+        self.assertRefused(self.serve("fetch_shard", tag=TAG), "not a directory")
+        self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG)[1]), "removed")
+        self.assertTrue((self.root / "planted" / "out" / "x.json").exists(), "removal never follows the link")
+        self.assertFalse(os.path.lexists(self.scratch / TAG))
+
     def test_overlapping_or_containing_roots_are_refused(self):
         overlapping = self.write_config(self.root / "overlap.json", pin_roots=[str(self.root)])
         self.assertEqual(self.serve("pin_status", pins=[], config=overlapping)[0], 1)
@@ -488,7 +560,8 @@ class AgentServiceTests(AgentCase):
         self.assertEqual(json.loads(self.serve("pin_status", pins=[[path, sha(data)]])[1])["states"], ["absent"])
         self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "created")
         witness = pc.owned_witness(path, str(self.scratch))
-        self.assertTrue(os.path.samefile(witness, path), "the same witness as the shell transport's push")
+        self.assertTrue(os.path.samefile(witness, path), "the witness is the installed inode")
+        self.assertEqual(os.listdir(os.path.dirname(witness)), [os.path.basename(witness)], "no pending link left")
         self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "existing")
         self.assertRefused(self.serve("push", other, path=path, sha256=sha(other)), "existing pin differs")
         self.assertRefused(self.serve("push", other, path=path, sha256=sha(data)), "payload differs")
@@ -595,6 +668,40 @@ class AgentServiceTests(AgentCase):
         self.assertLess(time.monotonic() - started, 5.4, "ended by the alarm, not the run deadline")
         leader, descendant = map(int, (self.scratch / TAG / "out" / "pids").read_text().split())
         self.assertTrue(gone(leader) and gone(descendant), "collector and its descendant killed")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "process-group termination checked through /proc")
+    def test_an_alarm_due_during_launch_still_ends_the_whole_process_group(self):
+        config = self.write_config(self.root / "launch.json", request_seconds=1, max_seconds=1)  # alarm at 2 s
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        real_popen = subprocess.Popen
+
+        def slow_launch(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            time.sleep(3)  # the request alarm comes due here, after the fork, before the guarded wait
+            return process
+
+        with mock.patch.object(pc.subprocess, "Popen", side_effect=slow_launch):
+            result = self.run_shard(seconds=60, config=config)
+        self.assertRefused(result, "request deadline")
+        leader, descendant = map(int, (self.scratch / TAG / "out" / "pids").read_text().split())
+        self.assertTrue(gone(leader) and gone(descendant), "collector and its descendant killed")
+
+    def test_a_pin_whose_witness_cannot_be_linked_is_installed_unowned(self):
+        data = b"checkpoint"
+        path = str(self.pins / "run" / "checkpoint.json")
+        real_link = os.link
+
+        def no_witness(source, destination, *args, **kwargs):
+            if str(destination).endswith(".pending"):
+                raise OSError(18, "Invalid cross-device link")  # another filesystem, or Landlock ABI 1
+            return real_link(source, destination, *args, **kwargs)
+
+        with mock.patch.object(pc.os, "link", side_effect=no_witness):
+            self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "created-unowned")
+        self.assertEqual(Path(path).read_bytes(), data)
+        self.assertEqual(json.loads(self.serve("remove_pin", path=path, sha256=sha(data))[1]), "not-owned")
+        self.assertEqual(Path(path).read_bytes(), data, "never pruned")
+        self.assertEqual(os.listdir(self.scratch / ".pooled-owned"), [], "no witness or pending link left")
 
     @unittest.skipUnless(os.name == "posix", "process-group termination is POSIX")
     def test_a_request_beyond_the_agent_cap_runs_to_the_cap(self):
