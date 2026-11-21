@@ -1995,8 +1995,18 @@ fn monstrous_emergence_escape_pays_three_exiles_and_uses_its_chosen_creature() {
         let creature = put(&mut state, P0, "Kor Skyfisher", origin);
         cast(&mut state, spell, &[Target::Object(target)]);
         for object in grave {
+            if !matches!(
+                next(&mut state),
+                Decision::ChooseCostTargets {
+                    cost_kind: CostKind::ExileFromGraveyard,
+                    ..
+                }
+            ) {
+                break; // The remaining exiles may already be forced.
+            }
             payment_pick(&mut state, CostKind::ExileFromGraveyard, object);
         }
+        assert!(grave.iter().all(|id| zone(&state, *id) == Zone::Exile));
         assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
         let refs = &state.stack.last().unwrap().v4.paid_cost_refs;
         assert_eq!(refs.len(), 4);
