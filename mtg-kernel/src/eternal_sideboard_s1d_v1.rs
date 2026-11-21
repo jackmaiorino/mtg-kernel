@@ -1735,6 +1735,11 @@ pub(crate) mod statics {
         })
     }
 
+    pub(crate) fn has_live_circle_shield(state: &GameState) -> bool {
+        let now = TurnV1::now(state);
+        read_state(state).is_some_and(|s1d| s1d.cop_shields.iter().any(|shield| shield.turn == now))
+    }
+
     /// Circles of Protection. Whether a shield prevents `damage`; the shield
     /// is used up.
     pub(crate) fn consume_circle_shield(state: &mut GameState, damage: &DamageProposed) -> bool {

@@ -4,6 +4,7 @@
 //! speculative tails are never installed in the game or its committed journal.
 use crate::effect::EffectObjectBinding;
 use crate::engine::{Action, Decision};
+use crate::eternal_pauper_pf1c_v1::{HallowChoiceV1, HallowPreventionV1};
 use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::{self as mage_entry, show_and_tell};
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::linked_aura_return_v1::HostChoiceV1;
@@ -100,8 +101,8 @@ pub enum GeneralAnswerV36 {
         selected: Option<crate::state::AbilitySourceContractV4>,
     },
     HallowV1 {
-        choice: Box<crate::eternal_pauper_pf1c_v1::HallowChoiceV1>,
-        beneficiary: crate::ids::PlayerId,
+        choice: Box<HallowChoiceV1>,
+        prevention: HallowPreventionV1,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,12 +201,9 @@ struct MagePlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RunnerV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    hallow_capture: Option<Vec<crate::eternal_pauper_pf1c_v1::HallowChoiceV1>>,
+    hallow_capture: Option<Vec<HallowChoiceV1>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    hallow_prepared: Vec<(
-        crate::eternal_pauper_pf1c_v1::HallowChoiceV1,
-        crate::ids::PlayerId,
-    )>,
+    hallow_prepared: Vec<(HallowChoiceV1, HallowPreventionV1)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kinship_start: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -992,7 +990,14 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
         }
     }
 }
-fn hallow_decision(choice: &crate::eternal_pauper_pf1c_v1::HallowChoiceV1) -> Decision {
+fn hallow_decision(choice: &HallowChoiceV1) -> Decision {
+    if choice.circle.is_some() {
+        return Decision::ChooseEffectOption {
+            player: choice.chooser,
+            source: choice.damage.source,
+            option_count: (choice.beneficiaries.len() + 1) as u16,
+        };
+    }
     Decision::ChooseEffectTargets {
         player: choice.chooser,
         source: choice.damage.source,
@@ -1013,8 +1018,8 @@ fn hallow_decision(choice: &crate::eternal_pauper_pf1c_v1::HallowChoiceV1) -> De
 /// checkpoint. Completed answers are replayed, never inferred from a slot.
 pub(crate) fn choose_hallow(
     state: &mut GameState,
-    choice: crate::eternal_pauper_pf1c_v1::HallowChoiceV1,
-) -> Result<Option<crate::ids::PlayerId>, String> {
+    choice: HallowChoiceV1,
+) -> Result<Option<HallowPreventionV1>, String> {
     let runner = state
         .engine
         .linked_aura_operation_v1
@@ -1022,23 +1027,43 @@ pub(crate) fn choose_hallow(
         .as_mut()
         .ok_or("overlapping Hallow damage lacks its enclosing operation")?;
     if let Some(captured) = runner.hallow_capture.as_mut() {
+        // Preview follows physical packet order. Previously confirmed answers
+        // are in APNAP order, which preserves the order within each chooser.
+        // Apply known effects to the disposable state: spending a protected
+        // player's Circle can remove that option from their later packets.
+        let earlier_for_player = captured
+            .iter()
+            .filter(|earlier| earlier.chooser == choice.chooser)
+            .count();
+        let confirmed = runner.answers[runner.cursor..]
+            .iter()
+            .map_while(|answer| match answer {
+                GeneralAnswerV36::HallowV1 { choice, prevention } => {
+                    Some((choice.as_ref(), *prevention))
+                }
+                _ => None,
+            })
+            .filter(|(expected, _)| expected.chooser == choice.chooser)
+            .nth(earlier_for_player)
+            .filter(|(expected, prevention)| *expected == &choice && choice.allows(*prevention))
+            .map(|(_, prevention)| prevention);
         captured.push(choice);
-        return Ok(None);
+        return Ok(confirmed);
     }
     if !runner.hallow_prepared.is_empty() {
-        let (expected, beneficiary) = runner.hallow_prepared.remove(0);
+        let (expected, prevention) = runner.hallow_prepared.remove(0);
         if expected != choice {
             return Err("Hallow batch changed its effective damage packet".into());
         }
-        return Ok(Some(beneficiary));
+        return Ok(Some(prevention));
     }
     request_hallow(state, choice)
 }
 
 fn request_hallow(
     state: &mut GameState,
-    choice: crate::eternal_pauper_pf1c_v1::HallowChoiceV1,
-) -> Result<Option<crate::ids::PlayerId>, String> {
+    choice: HallowChoiceV1,
+) -> Result<Option<HallowPreventionV1>, String> {
     let runner = state
         .engine
         .linked_aura_operation_v1
@@ -1051,13 +1076,13 @@ fn request_hallow(
     if let Some(answer) = runner.answers.get(runner.cursor).cloned() {
         let GeneralAnswerV36::HallowV1 {
             choice: expected,
-            beneficiary,
+            prevention,
         } = answer
         else {
             return Err("Hallow replay changed an already confirmed choice kind".into());
         };
-        if *expected != choice || !choice.beneficiaries.contains(&beneficiary) {
-            return Err("Hallow replay changed an already confirmed beneficiary".into());
+        if *expected != choice || !choice.allows(prevention) {
+            return Err("Hallow replay changed an already confirmed prevention effect".into());
         }
         state
             .engine
@@ -1066,7 +1091,7 @@ fn request_hallow(
             .as_mut()
             .unwrap()
             .cursor += 1;
-        return Ok(Some(beneficiary));
+        return Ok(Some(prevention));
     }
     let mut snapshot = state.clone();
     // Retain a real resolving row for public source/stack identity, using
@@ -1121,7 +1146,7 @@ pub(crate) fn prepare_hallow_batch(
     state: &mut GameState,
     events: &[ProposedEvent],
 ) -> Result<bool, String> {
-    if !crate::eternal_pauper_pf1c_v1::has_overlapping_hallows(state)
+    if !crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
         || !events
             .iter()
             .any(|event| matches!(event, ProposedEvent::Damage(_)))
@@ -1187,7 +1212,7 @@ pub(crate) fn prepare_hallow_batch(
 }
 
 fn potential_operation(state: &GameState) -> bool {
-    if crate::eternal_pauper_pf1c_v1::has_overlapping_hallows(state) {
+    if crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state) {
         return true;
     }
     if state
@@ -2271,16 +2296,31 @@ fn decision(state: &GameState) -> Result<Decision, String> {
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
         validate(state)?;
-        let Action::ChooseEffectTarget(Target::Player(beneficiary)) = action else {
-            return Err("Hallow requires one of its offered beneficiaries".into());
+        let prevention = match action {
+            Action::ChooseEffectTarget(Target::Player(beneficiary))
+                if pending.choice.circle.is_none() =>
+            {
+                HallowPreventionV1::Hallow(beneficiary)
+            }
+            Action::ChooseEffectOption(option) if pending.choice.circle.is_some() => {
+                let option = usize::from(option);
+                if option == pending.choice.beneficiaries.len() {
+                    HallowPreventionV1::Circle
+                } else if let Some(beneficiary) = pending.choice.beneficiaries.get(option) {
+                    HallowPreventionV1::Hallow(*beneficiary)
+                } else {
+                    return Err("Hallow prevention effect is outside its captured menu".into());
+                }
+            }
+            _ => return Err("Hallow requires one of its offered prevention effects".into()),
         };
-        if !pending.choice.beneficiaries.contains(&beneficiary) {
-            return Err("Hallow beneficiary is outside its captured menu".into());
+        if !pending.choice.allows(prevention) {
+            return Err("Hallow prevention effect is outside its captured menu".into());
         }
         let mut answers = pending.answers.clone();
         answers.push(GeneralAnswerV36::HallowV1 {
             choice: pending.choice.clone(),
-            beneficiary,
+            prevention,
         });
         let (next, _) = replay_general(
             &pending.original,
