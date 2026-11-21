@@ -41,6 +41,8 @@ PRIORITY_WINDOWS_SOURCE_MERGED = "fe06baa32227b9319a1f53d1d11f9d2abe916e27"
 RELEASE_PR811_SOURCE_MERGED = "572de58807a51254212e1cb2e4904f24a676e3d9"
 TRAINER_TAIL_SOURCE_V1 = "78415f8eb0a081d70f00ef970166fd457a08998b"
 TRAINER_TAIL_LEAN_SOURCE_V1 = "553018fe4cafd58d352b0121d5b1ad16da1cc8c5"
+# The followed-trainer branch on the release line (this guard branch only).
+FOLLOW_SOURCE_V1 = "df2ea7ab51f1a3996a637b645db86b84ca6e093b"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -64,6 +66,7 @@ SOURCES = (
     RELEASE_PR811_SOURCE_MERGED,
     TRAINER_TAIL_SOURCE_V1,
     TRAINER_TAIL_LEAN_SOURCE_V1,
+    FOLLOW_SOURCE_V1,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
