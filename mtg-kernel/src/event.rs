@@ -126,6 +126,11 @@ impl DamageProposed {
             _ => Err("damage proposal changed its native source loan".into()),
         }
     }
+
+    pub(crate) fn departed_types(&self) -> Option<crate::source_type_hexproof_v1::SourceTypesV1> {
+        self.eternal_damage_lki_v1
+            .and_then(|origin| origin.departed_types())
+    }
 }
 
 impl std::hash::Hash for DamageProposed {
@@ -3124,11 +3129,13 @@ fn apply_replacements_inner(
                             damage.target,
                         )
                     },
-                    |facts| match damage.target {
-                        Target::Object(target) => {
-                            crate::source_power_activation_v1::protected(state, facts, target)
-                        }
-                        _ => false,
+                    |facts| {
+                        historical_damage_prevented_by_protection(
+                            state,
+                            facts,
+                            damage.departed_types(),
+                            damage.target,
+                        )
                     },
                 )
         {
@@ -3658,6 +3665,70 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
             || crate::engine::object_color_mask(state, damage.source),
             |facts| facts.color_mask,
         )
+}
+
+pub(crate) fn historical_damage_prevented_by_protection(
+    state: &GameState,
+    facts: HistoricalDamageSourceV1,
+    departed_types: Option<crate::source_type_hexproof_v1::SourceTypesV1>,
+    target: Target,
+) -> bool {
+    let Some(types) = departed_types else {
+        return match target {
+            Target::Object(id) => crate::source_power_activation_v1::protected(state, facts, id),
+            Target::Player(_) | Target::StackItem(_) => false,
+        };
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let _ = types;
+    match target {
+        Target::Player(player) => {
+            #[cfg(feature = "eternal-fixtures")]
+            {
+                crate::eternal_cards_v1::e3::player_protected(state, player)
+                    || crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                        state,
+                        Target::Player(player),
+                        types,
+                    )
+            }
+            #[cfg(not(feature = "eternal-fixtures"))]
+            {
+                let _ = player;
+                false
+            }
+        }
+        Target::Object(id) => {
+            if crate::source_power_activation_v1::protected(state, facts, id) {
+                return true;
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if state
+                .objects
+                .try_get(id)
+                .is_some_and(|object| object.zone == Zone::Battlefield)
+            {
+                let multicolored = (facts.color_mask & 0x1f).count_ones() > 1;
+                return crate::eternal_pauper_e6b_v1::protected_from_colors(
+                    state,
+                    id,
+                    facts.color_mask,
+                ) || (multicolored
+                    && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(
+                        state, id,
+                    ))
+                    || (types.contains(crate::card_def::CardType::Creature)
+                        && crate::eternal_vintage_v1::protected_from_creatures(state, id))
+                    || crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                        state,
+                        Target::Object(id),
+                        types,
+                    );
+            }
+            false
+        }
+        Target::StackItem(_) => false,
+    }
 }
 
 /// Convenience: replace/prevent then commit if anything survived. Lifelink
@@ -4939,6 +5010,7 @@ fn commit_with_entry_batch_and_source_color(
         niv_source_departure,
         curie_departure,
         minsc_departure,
+        full_text_departure,
     }) = materialize_event_v1(
         state,
         event,
@@ -5075,6 +5147,9 @@ fn commit_with_entry_batch_and_source_color(
             entry_history_index,
             departure,
         );
+    }
+    if let Some(departure) = full_text_departure {
+        crate::full_text_v1::record_departure(state, entry_history_index, departure);
     }
     if let Some(copy) = metamorph_mage_copy {
         if matches!(state.engine.event_history.get(entry_history_index),
@@ -5528,6 +5603,7 @@ struct FinalZonePtPlanV1 {
     departures: Vec<(crate::state::ObjectLinkV4, (i32, i32))>,
     curie_departures: Vec<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
     minsc_departures: Vec<crate::eternal_vintage_e7b_v1::minsc::DepartureV1>,
+    full_text_departures: Vec<crate::full_text_v1::DepartureV1>,
 }
 #[derive(Clone, Copy)]
 enum NativeMaterializationV1<'a> {
@@ -5556,6 +5632,27 @@ impl NativeMaterializationV1<'_> {
                     .copied()
             }
             Self::Commit(None) => crate::eternal_vintage_e7b_v1::minsc::departure(state, id),
+        }
+    }
+
+    fn full_text_departure(
+        self,
+        state: &GameState,
+        id: ObjectId,
+    ) -> Option<crate::full_text_v1::DepartureV1> {
+        match self {
+            Self::FinalScene(_) => None,
+            Self::Commit(Some(plan)) => {
+                let generation = state.objects.get(id).zone_change_count;
+                plan.full_text_departures
+                    .iter()
+                    .find(|departure| {
+                        departure.facts.source.source == id
+                            && departure.facts.source.zone_change_count == generation
+                    })
+                    .copied()
+            }
+            Self::Commit(None) => crate::full_text_v1::departure(state, id),
         }
     }
 
@@ -5639,10 +5736,15 @@ impl FinalZonePtPlanV1 {
     fn eternal_departures_only(state: &GameState, events: &[ProposedEvent]) -> Option<Self> {
         let curie_departures = crate::eternal_legacy_e7a_v1::curie::capture_batch(state, events);
         let minsc_departures = crate::eternal_vintage_e7b_v1::minsc::capture_batch(state, events);
-        (!curie_departures.is_empty() || !minsc_departures.is_empty()).then_some(Self {
+        let full_text_departures = crate::full_text_v1::capture_batch(state, events);
+        (!curie_departures.is_empty()
+            || !minsc_departures.is_empty()
+            || !full_text_departures.is_empty())
+        .then_some(Self {
             departures: Vec::new(),
             curie_departures,
             minsc_departures,
+            full_text_departures,
         })
     }
 
@@ -5666,6 +5768,7 @@ impl FinalZonePtPlanV1 {
             departures: Vec::new(),
             curie_departures: crate::eternal_legacy_e7a_v1::curie::capture_batch(original, events),
             minsc_departures: crate::eternal_vintage_e7b_v1::minsc::capture_batch(original, events),
+            full_text_departures: crate::full_text_v1::capture_batch(original, events),
         };
         for event in events {
             if let ProposedEvent::ZoneChange(z) = event {
@@ -5929,6 +6032,7 @@ fn materialize_event_v1(
     let mut niv_source_departure = None;
     let mut curie_departure = None;
     let mut minsc_departure = None;
+    let mut full_text_departure = None;
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let historical = d
@@ -6025,6 +6129,7 @@ fn materialize_event_v1(
             if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                 curie_departure = mode.curie_departure(state, z.object);
                 minsc_departure = mode.minsc_departure(state, z.object);
+                full_text_departure = mode.full_text_departure(state, z.object);
             }
             let departure_pt = mode.departure_pt(state, z.object);
             let departure_power = departure_pt.map(|pt| pt.0);
@@ -6636,6 +6741,7 @@ fn materialize_event_v1(
         niv_source_departure,
         curie_departure,
         minsc_departure,
+        full_text_departure,
     })
 }
 struct MaterializedEventV1 {
@@ -6644,6 +6750,7 @@ struct MaterializedEventV1 {
     niv_source_departure: Option<crate::state::AbilitySourceContractV4>,
     curie_departure: Option<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
     minsc_departure: Option<crate::eternal_vintage_e7b_v1::minsc::DepartureV1>,
+    full_text_departure: Option<crate::full_text_v1::DepartureV1>,
 }
 
 /// Runs the replace/prevent pass independently on every event in `events`

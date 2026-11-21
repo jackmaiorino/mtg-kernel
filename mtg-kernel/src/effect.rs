@@ -21369,6 +21369,20 @@ fn execute_in_departure_scope_v1(
                             return;
                         }
                     }
+                } else if crate::full_text_v1::selected_donated_damage_trigger(
+                    state,
+                    &proof.owner.item,
+                ) {
+                    match crate::full_text_v1::departed_damage_loan(state, &proof.owner.item) {
+                        Ok(loan) => loan.map(EternalDamageLkiV1::for_full_text),
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
+                        }
+                    }
                 } else {
                     None
                 };
@@ -28582,6 +28596,10 @@ pub(crate) struct EternalDamageLkiV1(EternalDamageOriginV1);
 enum EternalDamageOriginV1 {
     Historical(crate::event::HistoricalDamageSourceV1),
     Live(ObjectId),
+    FullText {
+        facts: crate::event::HistoricalDamageSourceV1,
+        types: crate::source_type_hexproof_v1::SourceTypesV1,
+    },
 }
 
 impl std::hash::Hash for EternalDamageLkiV1 {
@@ -28592,6 +28610,11 @@ impl std::hash::Hash for EternalDamageLkiV1 {
                 std::hash::Hash::hash(b"native-live-damage/v1", state);
                 std::hash::Hash::hash(&source, state);
             }
+            EternalDamageOriginV1::FullText { facts, types } => {
+                std::hash::Hash::hash(b"full-text-damage/v1", state);
+                std::hash::Hash::hash(&facts, state);
+                std::hash::Hash::hash(&types, state);
+            }
         }
     }
 }
@@ -28601,17 +28624,33 @@ impl EternalDamageLkiV1 {
         Self(EternalDamageOriginV1::Historical(proof.facts()))
     }
 
+    pub(crate) fn for_full_text(loan: crate::full_text_v1::DamageLoanV1) -> Self {
+        Self(EternalDamageOriginV1::FullText {
+            facts: loan.facts(),
+            types: loan.types(),
+        })
+    }
+
     pub(crate) fn source(self) -> ObjectId {
         match self.0 {
-            EternalDamageOriginV1::Historical(facts) => facts.source.source,
+            EternalDamageOriginV1::Historical(facts)
+            | EternalDamageOriginV1::FullText { facts, .. } => facts.source.source,
             EternalDamageOriginV1::Live(source) => source,
         }
     }
 
     pub(crate) fn facts(self) -> Option<crate::event::HistoricalDamageSourceV1> {
         match self.0 {
-            EternalDamageOriginV1::Historical(facts) => Some(facts),
+            EternalDamageOriginV1::Historical(facts)
+            | EternalDamageOriginV1::FullText { facts, .. } => Some(facts),
             EternalDamageOriginV1::Live(_) => None,
+        }
+    }
+
+    pub(crate) fn departed_types(self) -> Option<crate::source_type_hexproof_v1::SourceTypesV1> {
+        match self.0 {
+            EternalDamageOriginV1::FullText { types, .. } => Some(types),
+            EternalDamageOriginV1::Historical(_) | EternalDamageOriginV1::Live(_) => None,
         }
     }
 }
