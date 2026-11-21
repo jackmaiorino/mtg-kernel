@@ -863,6 +863,8 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
     require(isinstance(req.get('id'), str) and req['id'], f'{name}: the re-pin request has no id')
     segs = man['segments']
     require(segs, f'{name}: a re-pin needs a started chain')
+    require(man.get('carry'), f'{name}: re-pin v1 is for carried chains (their segment and retention guards); '
+                              f'an ordinary chain needs those guards first')
     require(req.get('from_sha256') == man['recipe']['trainer_sha256'],
             f'{name}: the request re-pins from {req.get("from_sha256")}, the chain runs {man["recipe"]["trainer_sha256"]}')
     require(req.get('to_sha256') not in (None, req['from_sha256']), f'{name}: the request names no other trainer')
@@ -887,14 +889,13 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
         g = doc.get(gate) or {}
         require(g.get('updates') == length and g.get('equal') == length, f'{name}: proof {gate} is not {length} of {length}')
     require(not doc.get('rehearsal'), f'{name}: a rehearsal receipt authorises nothing')
-    require(man.get('carry'), f'{name}: re-pin v1 is for carried chains (their segment and retention guards); '
-                              f'an ordinary chain needs those guards first')
     if man_path is not None:  # bound to this chain's own manifest, as it stands held, and its next segment
         mp = Path(man_path).resolve()
         require(doc.get('manifest') == {'path': mp.as_posix(), 'sha256': sha(mp)},
                 f'{name}: the proof was made on another manifest, or the chain changed since')
         check_pin(doc['gate_a'].get('config'), 'the proof\'s gate (a) config')
-        require(Path(doc['gate_a']['config']['path']).resolve().parent == mp.parent / 'segments'
+        last_cfg = Path(segs[-1]['config']).resolve()
+        require(Path(doc['gate_a']['config']['path']).resolve() in (last_cfg, last_cfg.with_name(last_cfg.name + '.gz'))
                 and doc['gate_a'].get('segment') == len(segs) - 1, f'{name}: gate (a) replayed another segment')
     if arm is not None:
         config_sha, source = repin_next_config_sha256(arm, man)
@@ -943,7 +944,9 @@ def repin_cmd(a):
     if a.step == 'abort':
         hold = repin_held(root, a.chain)
         require(hold is None, hold)
-        if committed:  # committed but not run: revert while the chain still stands at the request's boundary
+        if committed and history[-1].get('reverts') == pending['id']:  # reverted already (a crash before removal)
+            pass
+        elif committed:  # committed but not run: revert while the chain still stands at the request's boundary
             entry = history[-1]
             require(entry['id'] == pending['id'] and len(man['segments']) == entry['segment'],
                     f'{a.chain}: the re-pin {pending["id"]} has run segments; the way back is a re-pin to the old '
@@ -1457,7 +1460,7 @@ def make_plan(inputs_path):
                         f'{name}: the committed re-pin and the plan trainer disagree')
             else:
                 check_repin_request(req, name, have, to_sha=common['trainer']['sha256'],
-                                    man_path=chains[name]['manifest'])
+                                    man_path=chains[name]['manifest'], arm=arms[a])
             repin_docs[name] = (req, {'path': Path(c['repin']).resolve().as_posix(),
                                       'sha256': w5box.sha256_bytes(data)}, committed)
             chains[name]['repin'] = repin_docs[name][1]
@@ -1521,6 +1524,18 @@ def make_plan(inputs_path):
             theirs = {k: v for k, v in read(old['arms'][a]['file']['path']).items() if k not in ('trainer', 'tools')}
             require(mine == theirs, f're-pin: arm {a} would change in '
                                     f'{sorted(k for k in set(mine) | set(theirs) if mine.get(k) != theirs.get(k))}')
+        for a, spec in old['arms'].items():  # the launch plans' execution settings
+            if not spec.get('w5box_plan'):
+                continue
+            box = read(spec['w5box_plan']['path'])
+            require(box.get('isolation') == inputs.get('isolation', 'partition-root') and
+                    box.get('cgroup_root') == inputs['cgroup_root'] and
+                    box.get('state_root') == (root / 'state').as_posix() and box.get('box_slots') == box_slots and
+                    box.get('env') == {'PYTHONDONTWRITEBYTECODE': '1'},
+                    f're-pin: the {a} launch plan\'s isolation, roots, slots or environment would change')
+            require(all(c['memory_max_bytes'] == int(arms_in[a]['memory_max_bytes']) for c in box['chains'].values())
+                    and box['filler']['memory_max_bytes'] == int(arms_in['F']['memory_max_bytes']),
+                    f're-pin: the {a} launch plan\'s memory limits would change')
         require(sorted(old['chains']) == sorted(chains), 're-pin: the plan\'s chains would change')
         for n in chains:
             require({k: v for k, v in old['chains'][n].items() if k != 'repin'} ==
@@ -1612,6 +1627,11 @@ def make_plan(inputs_path):
             'chains': chains, 'pairs': plan_pairs, 'xs_recipe_differences': xs_other}
     path = plan_dir / 'CHAINS-PLAN.json'
     write(path, plan)
+    if repin_docs:  # everything a re-pinned chain's next start reads: contents and directory entries durable
+        for p in [*arm_paths.values(), *(Path(w['path']) for w in w5plans.values()), path]:
+            if os.name != 'nt':
+                fsync_path(p)
+            durable_entry(p)
     return path, plan
 
 

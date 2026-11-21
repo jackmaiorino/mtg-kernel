@@ -72,7 +72,7 @@ class RepinTests(unittest.TestCase):
             path.write_text(FAKE.read_text() + f'\n# another build: {name}\n')
         return path
 
-    def inputs(self, trainer=None, throughput=False, repin=None, bytes_per_update=None):
+    def inputs(self, trainer=None, throughput=False, repin=None, bytes_per_update=None, memory=None):
         spec = {'arm': 'C', 'slot': 0, 'seed_root': SEED, 'carry': str(self.carry)}
         if repin:
             spec['repin'] = str(repin)
@@ -84,6 +84,8 @@ class RepinTests(unittest.TestCase):
             doc['arms']['C']['throughput'] = str(self.throughput)
         if bytes_per_update:
             doc['arms']['C']['bytes_per_update'] = bytes_per_update
+        if memory:
+            doc['arms']['C']['memory_max_bytes'] = memory
         return jwrite(self.t / 'inputs.json', doc)
 
     def drive(self, plan, segments):
@@ -219,6 +221,8 @@ class RepinTests(unittest.TestCase):
         # anything but the trainer changes: refused before the commit, nothing recorded
         with self.assertRaisesRegex(chains.Stop, 'would change'):
             chains.make_plan(self.inputs(trainer=new, repin=req, bytes_per_update=999))
+        with self.assertRaisesRegex(chains.Stop, 'memory limits would change'):
+            chains.make_plan(self.inputs(trainer=new, repin=req, memory=1 << 29))
         self.assertNotIn('trainer_history', self.man())
         with self.assertRaisesRegex(chains.Stop, "not the request's new trainer"):
             chains.make_plan(self.inputs(trainer=self.build('trainer-c.py'), repin=req))
@@ -255,7 +259,17 @@ class RepinTests(unittest.TestCase):
         self.assertEqual(len(self.man()['trainer_history']), 1)
         self.assertEqual(self.repin(path, 'begin', req)[0], 0)  # a rerun after the commit: recognised first
         self.assertIn('throughput record', self.repin(path, 'end')[1])
-        # the qualification failed: revert while the chain still stands at the boundary, then the launched pins
+        # the qualification failed: revert while the chain still stands at the boundary, then the launched pins;
+        # a crash between the revert entry and the pending record's removal is finished by a second abort
+        real_unlink = Path.unlink
+
+        def crash(p, *args, **kwargs):
+            if p.name == chains.REPIN_PENDING:
+                raise OSError('crash before removal')
+            return real_unlink(p, *args, **kwargs)
+        with mock.patch.object(Path, 'unlink', crash), self.assertRaises(OSError):
+            self.repin(path, 'abort')
+        self.assertTrue((self.cdir() / chains.REPIN_PENDING).exists())
         code, err = self.repin(path, 'abort')
         self.assertEqual(code, 0, err)
         man = self.man()
@@ -301,6 +315,7 @@ class RepinTests(unittest.TestCase):
             code = chains.main(['repin', 'begin', '--plan', str(old_path), '--chain', 'c1',
                                 '--request', str(jwrite(self.t / 'req-old.json', req_doc))])
         self.assertEqual(code, w5box.EXIT_REFUSED)
+        self.assertIn('carried chains', err.getvalue())
 
 
 if __name__ == '__main__':
