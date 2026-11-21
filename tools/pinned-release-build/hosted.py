@@ -43,6 +43,8 @@ PRIORITY_WINDOWS_811_SOURCE_MERGED = "572de58807a51254212e1cb2e4904f24a676e3d9"
 PASS_OFFSET_819_SOURCE_MERGED = "d66e9e8a1e9d08b36005d163f4b98e2b2d3f3cb0"
 # The merge commit of PR 814 (pack3, tail port, memo) after PR 819 on release/mull-c5719e1cf (this guard branch only).
 PACK3_814_SOURCE_MERGED = "82b9e1d5aa882ec62f9c16eb67be96e5e8ddd2bd"
+# main d2e30040a (PR 849 merge), the before build of the issue 454 encoder fix's identity proof (this guard branch only).
+MAIN_D2E30040A_SOURCE = "d2e30040a1ae4895e2b17c25b9c65ddada7b2136"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -66,6 +68,7 @@ SOURCES = (
     PRIORITY_WINDOWS_811_SOURCE_MERGED,
     PASS_OFFSET_819_SOURCE_MERGED,
     PACK3_814_SOURCE_MERGED,
+    MAIN_D2E30040A_SOURCE,
 )
 # The image follows the host (this guard branch only): the amd64 image for the portable x86-64 build (unchanged),
 # and on an arm64 hosted runner the linux/arm64 member of the python:3.12-slim-bookworm index 935c3c5b... that the
