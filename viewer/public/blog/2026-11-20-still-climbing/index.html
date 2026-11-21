@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mtg-kernel Weekly #1</title>
+<title>MTG Kernel Weekly #1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
@@ -66,6 +66,9 @@ svg .lab { fill: var(--ink-2); font-size: 12px; }
 button { font: 500 13px var(--f-body); color: var(--accent); background: transparent; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.intro { background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 18px; font-size: 15px; color: var(--ink-2); max-width: 64ch; }
+.intro p { margin: 0; }
+.intro b { color: var(--ink); }
 .prose { display: grid; gap: 14px; max-width: 64ch; }
 .prose p { margin: 0; }
 .prose h2 { font-family: var(--f-display); font-size: 20px; margin: 8px 0 0; }
@@ -77,15 +80,16 @@ table { border-collapse: collapse; font-family: var(--f-mono); font-size: 12.5px
 th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--rule); }
 th:first-child, td:first-child { text-align: left; }
 th { color: var(--ink-3); font-weight: 500; }
+@media (max-width: 560px) { svg text, svg .lab { font-size: 15px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
-<meta name="description" content="Each doubling of training still buys wins against the model the chains started from. It just buys fewer than it used to.">
+<meta name="description" content="A computer program is teaching itself Magic: The Gathering by playing against itself. Doubling its practice still wins it more games, just fewer than before.">
 <link rel="canonical" href="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
 <link rel="alternate" type="application/atom+xml" title="MTG Kernel Weekly" href="../feed.xml">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="MTG Kernel">
-<meta property="og:title" content="Past a million updates, the bot is still climbing">
-<meta property="og:description" content="Each doubling of training still buys wins against the model the chains started from. It just buys fewer than it used to.">
+<meta property="og:title" content="A bot that taught itself Magic is still getting better">
+<meta property="og:description" content="A computer program is teaching itself Magic: The Gathering by playing against itself. Doubling its practice still wins it more games, just fewer than before.">
 <meta property="og:url" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
 <meta property="og:image" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/og.png">
 <meta property="og:image:width" content="1200">
@@ -95,55 +99,53 @@ th { color: var(--ink-3); font-weight: 500; }
 <body>
 
 <div class="wrap">
-  <nav class="nav" aria-label="Site"><a href="../">All weekly posts</a><a href="../../">Decision Studio</a></nav>
+  <nav class="nav" aria-label="Site"><a href="../">All weekly posts</a><a href="../../">Watch the bot play (replay viewer)</a><a href="https://github.com/jackmaiorino/mtg-kernel">Code on GitHub</a></nav>
   <header>
-    <div class="eyebrow"><span>mtg-kernel weekly</span><span>#1</span><span>Week of Nov 14 to 20, 2026</span></div>
-    <h1>Past a million updates, the bot is <em>still climbing</em></h1>
-    <p class="dek">Each doubling of training still buys wins. It just buys fewer than it used to.</p>
+    <div class="eyebrow"><span>MTG Kernel weekly</span><span>#1</span><span>Nov 20, 2026</span></div>
+    <h1>A bot that taught itself Magic is <em>still getting better</em></h1>
+    <p class="dek">Every time we double its practice, it wins more games. Just not as many more as it used to.</p>
   </header>
+
+  <aside class="intro"><p><b>New here?</b> MTG Kernel is an open-source project teaching a computer to play Magic: The Gathering from scratch. It has never seen a human play. It learns only by playing games against itself, and the only feedback it ever gets is whether it won. Each week we share one chart about what it learned.</p></aside>
 
   <section class="card" aria-labelledby="c1t">
     <div class="chart-head">
       <div>
-        <p class="chart-title" id="c1t">Win rate against Basilisk 1, the model the chains started from</p>
-        <p class="chart-sub">Mean of three self-play chains, 3,888 games per checkpoint, 95% interval</p>
+        <p class="chart-title" id="c1t">How often today's bot beats the version it started from</p>
+        <p class="chart-sub">3,888 test games at each point. The shaded band is the range we are 95% sure of.</p>
       </div>
-      <div class="big"><div class="n" id="bigN">71.0%</div><div class="l" id="bigL">at 1.59M updates</div></div>
+      <div class="big"><div class="n" id="bigN">71.0%</div><div class="l" id="bigL">of games won, at 1.59M training steps</div></div>
     </div>
     <div class="svgbox" id="box1">
-      <svg id="c1" viewBox="0 0 720 360" role="img" aria-label="Line chart: win rate rises from 55.5 percent at 65 thousand updates to 71.0 percent at 1.59 million updates, flattening after 1 million."></svg>
+      <svg id="c1" viewBox="0 0 720 360" role="img" aria-label="Line chart: the bot wins 55.5 percent of games against its starting version after 65 thousand training steps, rising to 71.0 percent after 1.59 million, and rising more slowly after 1 million."></svg>
       <div class="tip" id="tip" hidden></div>
     </div>
     <div class="legend">
       <span><i class="sw"></i>Measured</span>
-      <span><i class="sw band"></i>95% interval</span>
-      <span><i class="sw proj"></i>If every doubling paid like 524k to 1.05M</span>
-      <span><i class="sw pend"></i>2.1M: games played, not read yet</span>
+      <span><i class="sw band"></i>95% range</span>
+      <span><i class="sw proj"></i>If it had kept its earlier pace</span>
+      <span><i class="sw pend"></i>Next week: games already played, results not opened yet</span>
     </div>
     <div class="controls"><button id="replay" type="button">Replay the climb</button></div>
   </section>
 
-  <section class="card" aria-labelledby="c2t">
-    <p class="chart-title" id="c2t">Win rate points gained per doubling of training</p>
-    <p class="chart-sub">Past 1.05M: regression slope over nine checkpoints per chain, with its 95% interval</p>
-    <div class="svgbox"><svg id="c2" viewBox="0 0 720 210" role="img" aria-label="Bar chart: points per doubling were 2.6, 4.5, 4.0 and 3.4 through 1.05 million updates, and about 2.5 after."></svg></div>
-  </section>
 
   <article class="prose">
     <h2>What we learned</h2>
-    <p>Our main training chains learn Pauper by playing against themselves and a few earlier models, and the only reward is winning. At each checkpoint we test them against Basilisk 1, the public model they started from, on a fixed panel of 3,888 games.</p>
-    <p>Through the middle of the curve, each doubling of training added 3.4 to 4.5 points of win rate. Past a million updates the best estimate is about 2.5 points per doubling. The interval rules out a flat line, so the chains are still improving. It does not yet rule out the old rate, so "slowing down" is our best guess, not a settled fact.</p>
-    <p>That shapes how we spend the fleet. More of the same training still pays, probably more slowly. So the next experiments add what the bot could not do before: mulligans and full priority windows are next to go into training, as their own forks.</p>
+    <p>The bot plays Pauper, a style of Magic where only the most common cards are allowed. To measure progress, we pit each new version against the one it started from (Basilisk 1, which is public). A 71% win rate means today's bot beats its old self in 71 of every 100 games.</p>
+    <p>Early on, each doubling of practice added 3 to 4.5 points of win rate. Past a million training steps, it looks closer to 2.5 points. It is definitely still improving. Whether it is really slowing down is not certain yet: the data cannot rule out the old pace.</p>
+    <p>So besides training longer, we are handing it decisions it used to skip: whether to throw back a bad opening hand (a mulligan), and when to respond during the opponent's turn. It will have to work out both on its own.</p>
     <h2>Next week</h2>
-    <p>The first games at 2.1M updates are already played and sealed until the read. If the trend holds, it lands near 72%. If the curve has gone flat, it lands near 70%.</p>
+    <p>The games at twice the practice are already played, and we open the results next week. If it is still climbing at the same rate, expect about 72%. If it has stalled, about 70%.</p>
+    <p>Follow along with the <a href="../feed.xml">RSS feed</a>, read the <a href="https://github.com/jackmaiorino/mtg-kernel">code on GitHub</a>, or <a href="../../">watch the bot's choices in the replay viewer</a>.</p>
   </article>
 
   <footer class="foot">
     <details>
       <summary>Show the numbers</summary>
-      <div class="tbl"><table id="tbl"><thead><tr><th>Updates</th><th>Win rate</th><th>95% interval</th></tr></thead><tbody></tbody></table></div>
+      <div class="tbl"><table id="tbl"><thead><tr><th>Training steps</th><th>Win rate</th><th>95% range</th></tr></thead><tbody></tbody></table></div>
     </details>
-    <p>Win rate counts a draw as half a win and is read from the signed score as 50% plus half the score. The yardstick is the chains' own starting point, so this measures progress, not strength against the wider field. Spellbench ratings are the outside view.</p>
+    <p>Each point is the average of three separate training runs. A draw counts as half a win. Beating its own starting point measures progress, not how strong it is against people or other bots, which we track separately.</p>
   </footer>
 </div>
 
@@ -160,7 +162,9 @@ th { color: var(--ink-3); font-weight: 500; }
   function fmtLong(u) { return u.toLocaleString("en-US"); }
 
   // Chart 1
-  var svg = document.getElementById("c1"), W = 720, H = 360, L = 48, R = 20, T = 14, B = 40;
+  var svg = document.getElementById("c1"), narrow = svg.parentNode.clientWidth < 520;
+  var W = narrow ? 420 : 720, H = 360, L = narrow ? 52 : 48, R = narrow ? 30 : 20, T = 14, B = narrow ? 50 : 40;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
   var xMin = -0.15, xMax = 5.25, yMin = 52, yMax = 75;
   function X(u) { return L + (Math.log2(u / 65536) - xMin) / (xMax - xMin) * (W - L - R); }
   function Y(v) { return T + (yMax - v) / (yMax - yMin) * (H - T - B); }
@@ -171,7 +175,7 @@ th { color: var(--ink-3); font-weight: 500; }
   [[65536, "65k"], [131072, "131k"], [262144, "262k"], [524288, "524k"], [1048576, "1.05M"], [2097152, "2.1M"]].forEach(function (t) {
     el("text", { x: X(t[0]), y: H - B + 20, "text-anchor": "middle" }, svg).textContent = t[1];
   });
-  el("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", class: "lab" }, svg).textContent = "training updates (log scale, each tick is a doubling)";
+  el("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", class: "lab" }, svg).textContent = narrow ? "training steps (each tick doubles)" : "practice so far, in training steps (each tick is double the last)";
 
   var band = "M" + pts.map(function (p) { return X(p[0]) + "," + Y(p[3]); }).join("L") + "L" + pts.slice().reverse().map(function (p) { return X(p[0]) + "," + Y(p[2]); }).join("L") + "Z";
   el("path", { d: band, fill: "var(--band)", stroke: "none" }, svg);
@@ -188,7 +192,7 @@ th { color: var(--ink-3); font-weight: 500; }
   var line = el("path", { d: "M" + pts.map(function (p) { return X(p[0]) + "," + Y(p[1]); }).join("L"), fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
   var dots = pts.map(function (p) { return el("circle", { cx: X(p[0]), cy: Y(p[1]), r: 4.5, fill: "var(--accent)", stroke: "var(--card)", "stroke-width": 2 }, svg); });
   el("text", { x: X(65536) + 10, y: Y(55.5) + 18, class: "lab" }, svg).textContent = "55.5%";
-  el("text", { x: X(1589248) - 4, y: Y(70.95) + 26, "text-anchor": "end", class: "lab" }, svg).textContent = "71.0%";
+  el("text", { x: X(1589248) + (narrow ? 8 : -4), y: Y(70.95) + (narrow ? 44 : 26), "text-anchor": "end", class: "lab" }, svg).textContent = "71.0%";
 
   // hover
   var tip = document.getElementById("tip"), box = document.getElementById("box1");
@@ -200,8 +204,8 @@ th { color: var(--ink-3); font-weight: 500; }
     hits.forEach(function (h) { var d = Math.abs(h.x - sx); if (d < bd) { bd = d; best = h; } });
     if (!best || bd > 40) { tip.hidden = true; return; }
     tip.innerHTML = best.pend
-      ? "2,097,152 updates<br>played and sealed, read next week<br>trend says about 72%, flat says 70%"
-      : fmtLong(best.p[0]) + " updates<br><b>" + best.p[1].toFixed(1) + "%</b> win rate<br>95%: " + best.p[2].toFixed(1) + " to " + best.p[3].toFixed(1);
+      ? "2,097,152 training steps<br>games played, results opened next week<br>still climbing: about 72%. stalled: about 70%"
+      : fmtLong(best.p[0]) + " training steps<br><b>" + best.p[1].toFixed(1) + "%</b> of games won<br>95% range: " + best.p[2].toFixed(1) + " to " + best.p[3].toFixed(1);
     tip.style.left = (best.x * r.width / W) + "px";
     tip.style.top = (best.y * r.height / H) + "px";
     tip.hidden = false;
@@ -222,33 +226,12 @@ th { color: var(--ink-3); font-weight: 500; }
       line.style.strokeDashoffset = len * (1 - e);
       var drawnX = L + e * (X(1589248) - L), cur = pts[0];
       pts.forEach(function (p, i) { if (X(p[0]) <= drawnX + 0.5) { dots[i].style.opacity = 1; cur = p; } });
-      bigN.textContent = cur[1].toFixed(1) + "%"; bigL.textContent = "at " + fmtU(cur[0]) + " updates";
-      if (k < 1) requestAnimationFrame(frame); else { line.style.strokeDasharray = ""; line.style.strokeDashoffset = ""; bigN.textContent = "71.0%"; bigL.textContent = "at 1.59M updates"; }
+      bigN.textContent = cur[1].toFixed(1) + "%"; bigL.textContent = "of games won, at " + fmtU(cur[0]) + " training steps";
+      if (k < 1) requestAnimationFrame(frame); else { line.style.strokeDasharray = ""; line.style.strokeDashoffset = ""; bigN.textContent = "71.0%"; bigL.textContent = "of games won, at 1.59M training steps"; }
     }
     requestAnimationFrame(frame);
   });
 
-  // Chart 2: points per doubling
-  var s2 = document.getElementById("c2"), W2 = 720, H2 = 210, L2 = 48, R2 = 20, T2 = 18, B2 = 38, yM = 5;
-  var bars = [["65k to 131k", 2.6], ["131k to 262k", 4.5], ["262k to 524k", 3.95], ["524k to 1.05M", 3.35], ["past 1.05M", 2.45, 1.4, 3.45]];
-  function Y2(v) { return T2 + (yM - v) / yM * (H2 - T2 - B2); }
-  [0, 1, 2, 3, 4, 5].forEach(function (v) {
-    el("line", { x1: L2, x2: W2 - R2, y1: Y2(v), y2: Y2(v), stroke: v ? "var(--grid)" : "var(--rule)", "stroke-width": 1 }, s2);
-    if (v % 1 === 0) el("text", { x: L2 - 8, y: Y2(v) + 4, "text-anchor": "end" }, s2).textContent = v;
-  });
-  var slot = (W2 - L2 - R2) / bars.length, bw = Math.min(56, slot * 0.42);
-  bars.forEach(function (b, i) {
-    var cx = L2 + slot * (i + 0.5), y = Y2(b[1]), h = Y2(0) - y, last = i === bars.length - 1;
-    var r = 4;
-    el("path", { d: "M" + (cx - bw / 2) + "," + Y2(0) + "V" + (y + r) + "Q" + (cx - bw / 2) + "," + y + " " + (cx - bw / 2 + r) + "," + y + "H" + (cx + bw / 2 - r) + "Q" + (cx + bw / 2) + "," + y + " " + (cx + bw / 2) + "," + (y + r) + "V" + Y2(0) + "Z",
-      fill: last ? "var(--pending)" : "var(--accent)", opacity: last ? 1 : 0.85 }, s2);
-    if (last) {
-      el("line", { x1: cx, x2: cx, y1: Y2(b[3]), y2: Y2(b[2]), stroke: "var(--ink-2)", "stroke-width": 1.5 }, s2);
-      [b[2], b[3]].forEach(function (v) { el("line", { x1: cx - 6, x2: cx + 6, y1: Y2(v), y2: Y2(v), stroke: "var(--ink-2)", "stroke-width": 1.5 }, s2); });
-    }
-    el("text", { x: last ? cx + bw / 2 + 6 : cx, y: last ? y + 4 : y - 6, "text-anchor": last ? "start" : "middle", class: "lab" }, s2).textContent = "+" + b[1].toFixed(1);
-    el("text", { x: cx, y: H2 - B2 + 18, "text-anchor": "middle" }, s2).textContent = b[0];
-  });
 
   // table
   var tb = document.querySelector("#tbl tbody");
