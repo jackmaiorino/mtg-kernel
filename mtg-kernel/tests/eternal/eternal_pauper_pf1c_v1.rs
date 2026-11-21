@@ -672,6 +672,308 @@ fn compound_escape_deprive_returns_a_land_and_exiles_graveyard_cards() {
 }
 
 #[test]
+fn graveyard_discard_escape_uses_the_discarded_card_and_records_both_incarnations() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let source = put(&mut state, P0, "Grab the Prize", Zone::Graveyard);
+    let grave = ["Swamp", "Island"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    put(&mut state, P0, "Fiery Temper", Zone::Hand);
+    assert!(
+        !castable(&mut state, source),
+        "Madness sends the discard to exile"
+    );
+    let discard = put(&mut state, P0, "Mountain", Zone::Hand);
+    cast(&mut state, source, &[]);
+    payment_pick(&mut state, CostKind::DiscardCards, discard);
+    for card in [grave[0], discard, grave[1]] {
+        payment_pick(&mut state, CostKind::ExileFromGraveyard, card);
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    let item = state.stack.last().unwrap();
+    assert_eq!(item.discarded, [discard]);
+    assert_eq!(
+        item.v4
+            .paid_cost_refs
+            .iter()
+            .map(|r| (r.object, r.zone, r.zone_change_count))
+            .collect::<Vec<_>>(),
+        [
+            (discard, Zone::Graveyard, 1),
+            (grave[0], Zone::Exile, 1),
+            (grave[1], Zone::Exile, 1),
+            (discard, Zone::Exile, 2)
+        ]
+    );
+    settled(&mut state);
+    assert_eq!(zone(&state, source), Zone::Graveyard);
+}
+
+#[test]
+fn graveyard_discard_retrace_requires_two_different_hand_cards_in_either_order() {
+    for route_first in [false, true] {
+        let mut state = plains();
+        retrace_emblem(&mut state);
+        let source = put(&mut state, P0, "Grab the Prize", Zone::Graveyard);
+        let land = put(&mut state, P0, "Forest", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::R], 1);
+        assert!(!castable(&mut state, source));
+        let other = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        cast(&mut state, source, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        act(
+            &mut state,
+            Action::ChooseEffectOption(u16::from(route_first)),
+        );
+        let [first, second] = if route_first {
+            [land, other]
+        } else {
+            [other, land]
+        };
+        payment_pick(&mut state, CostKind::DiscardCards, first);
+        let snapshot = state.clone();
+        assert!(engine::step(&mut state, Action::ChooseCostTarget(first)).is_err());
+        assert_eq!(state, snapshot);
+        payment_pick(&mut state, CostKind::DiscardCards, second);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let item = state.stack.last().unwrap();
+        assert_eq!(item.discarded, [other]);
+        assert_eq!(
+            item.v4
+                .paid_cost_refs
+                .iter()
+                .map(|r| (r.object, r.zone))
+                .collect::<Vec<_>>(),
+            [(first, Zone::Graveyard), (second, Zone::Graveyard)]
+        );
+        settled(&mut state);
+        assert_eq!(zone(&state, source), Zone::Graveyard);
+        assert_eq!(life(&state, P1), 18);
+    }
+}
+
+#[test]
+fn graveyard_discard_escape_offers_each_payable_demand_answers_and_bone_shards_mode() {
+    for (name, payment_name, color, target) in [
+        ("Demand Answers", "Ichor Wellspring", ManaColor::R, false),
+        ("Bone Shards", "Thraben Inspector", ManaColor::B, true),
+    ] {
+        for mode in [0, 1] {
+            let mut state = plains();
+            put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+            let source = put(&mut state, P0, name, Zone::Graveyard);
+            let victim = target.then(|| put(&mut state, P1, "Kor Skyfisher", Zone::Battlefield));
+            let payment = put(
+                &mut state,
+                P0,
+                payment_name,
+                if mode == 0 {
+                    Zone::Battlefield
+                } else {
+                    Zone::Hand
+                },
+            );
+            let grave = ["Swamp", "Island"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
+            pool(&mut state, P0, &[color], u8::from(!target));
+            cast_mode(
+                &mut state,
+                source,
+                mode,
+                &victim.into_iter().map(Target::Object).collect::<Vec<_>>(),
+            );
+            let kind = if mode == 1 {
+                CostKind::DiscardCards
+            } else if target {
+                CostKind::SacrificeCreatures
+            } else {
+                CostKind::SacrificeArtifacts
+            };
+            payment_pick(&mut state, kind, payment);
+            for id in [payment, grave[0], grave[1]] {
+                payment_pick(&mut state, CostKind::ExileFromGraveyard, id);
+            }
+            next(&mut state);
+            let item = state
+                .stack
+                .iter()
+                .find(|item| item.source == source)
+                .unwrap();
+            assert_eq!(item.mode_chosen, mode);
+            assert_eq!(
+                item.discarded,
+                if mode == 1 { vec![payment] } else { vec![] }
+            );
+            settled(&mut state);
+            if let Some(victim) = victim {
+                assert_eq!(zone(&state, victim), Zone::Graveyard);
+            }
+        }
+    }
+}
+
+#[test]
+fn graveyard_dynamic_escape_discard_x_can_supply_its_own_fuel() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Sickening Dreams", Zone::Graveyard);
+    let grave = put(&mut state, P0, "Swamp", Zone::Graveyard);
+    let first = put(&mut state, P0, "Forest", Zone::Hand);
+    let madness = put(&mut state, P0, "Fiery Temper", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    assert!(!castable(&mut state, spell));
+    let second = put(&mut state, P0, "Island", Zone::Hand);
+    cast(&mut state, spell, &[]);
+    // X = 2 or 3. Costs cannot exile the Madness card that is discarded to exile.
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            option_count: 2,
+            ..
+        }
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    payment_pick(&mut state, CostKind::DiscardCards, first);
+    assert!(
+        matches!(next(&mut state), Decision::ChooseCostTargets { candidates, .. } if !candidates.contains(&madness))
+    );
+    payment_pick(&mut state, CostKind::DiscardCards, second);
+    for id in [first, grave, second] {
+        payment_pick(&mut state, CostKind::ExileFromGraveyard, id);
+    }
+    next(&mut state);
+    let item = state.stack.last().unwrap();
+    assert_eq!(item.discarded, [first, second]);
+    assert_eq!(item.v4.x_value, 2);
+    settled(&mut state);
+    assert_eq!((life(&state, P0), life(&state, P1)), (18, 18));
+    assert_eq!(zone(&state, madness), Zone::Hand);
+}
+
+#[test]
+fn graveyard_dynamic_retrace_reserves_its_land_for_discard_x() {
+    for x in [0, 2] {
+        let mut state = plains();
+        retrace_emblem(&mut state);
+        let spell = put(&mut state, P0, "Sickening Dreams", Zone::Graveyard);
+        let land = put(&mut state, P0, "Swamp", Zone::Hand);
+        let spares = ["Lightning Bolt", "Dark Ritual"].map(|n| put(&mut state, P0, n, Zone::Hand));
+        pool(&mut state, P0, &[ManaColor::B], 1);
+        cast(&mut state, spell, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 3,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(x));
+        if x != 0 {
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption {
+                    option_count: 2,
+                    ..
+                }
+            ));
+            act(&mut state, Action::ChooseEffectOption(0));
+            for id in spares {
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseCostTargets { candidates, .. } if !candidates.contains(&land))
+                );
+                payment_pick(&mut state, CostKind::DiscardCards, id);
+            }
+        }
+        payment_pick(&mut state, CostKind::DiscardCards, land);
+        next(&mut state);
+        assert_eq!(
+            state.stack.last().unwrap().discarded,
+            spares[..usize::from(x)]
+        );
+        settled(&mut state);
+        assert_eq!(life(&state, P1), 20 - i32::from(x));
+    }
+}
+
+#[test]
+fn graveyard_dynamic_escape_escalate_sets_the_discard_count_from_the_modes() {
+    // Drain, reveal + drain, then all three. Each extra mode supplies one
+    // otherwise missing escape card. Mode 6 is the only payable mode in the last case.
+    for (mode, discards) in [(3, 0), (4, 1), (6, 2)] {
+        let mut state = plains();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Collective Brutality", Zone::Graveyard);
+        let creature = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+        let grave: Vec<_> = (discards..3)
+            .map(|_| put(&mut state, P0, "Swamp", Zone::Graveyard))
+            .collect();
+        let hand: Vec<_> = (0..discards)
+            .map(|_| put(&mut state, P0, "Forest", Zone::Hand))
+            .collect();
+        pool(&mut state, P0, &[ManaColor::B], 1);
+        let mut targets = vec![Target::Player(P1)];
+        if mode == 6 {
+            targets.push(Target::Object(creature));
+        }
+        if discards > 0 {
+            targets.push(Target::Player(P1));
+        }
+        cast_mode(&mut state, spell, mode, &targets);
+        for &id in &hand {
+            payment_pick(&mut state, CostKind::DiscardCards, id);
+        }
+        for &id in grave.iter().chain(&hand) {
+            payment_pick(&mut state, CostKind::ExileFromGraveyard, id);
+        }
+        next(&mut state);
+        assert_eq!(state.stack.last().unwrap().discarded, hand);
+        settled(&mut state);
+        assert_eq!((life(&state, P0), life(&state, P1)), (22, 18));
+        if mode == 6 {
+            assert_eq!(zone(&state, creature), Zone::Graveyard);
+        }
+    }
+}
+
+#[test]
+fn graveyard_dynamic_retrace_escalate_offers_only_modes_payable_after_the_land() {
+    let mut state = plains();
+    retrace_emblem(&mut state);
+    let spell = put(&mut state, P0, "Collective Brutality", Zone::Graveyard);
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let land = put(&mut state, P0, "Swamp", Zone::Hand);
+    let other = put(&mut state, P0, "Dark Ritual", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    cast(&mut state, spell, &[]);
+    assert!(
+        matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == [0,1,2,3,4,5])
+    );
+    act(&mut state, Action::ChooseSpellMode(4));
+    for _ in 0..2 {
+        choose_target(&mut state, Target::Player(P1));
+    }
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            option_count: 2,
+            ..
+        }
+    ));
+    act(&mut state, Action::ChooseEffectOption(1));
+    payment_pick(&mut state, CostKind::DiscardCards, land);
+    payment_pick(&mut state, CostKind::DiscardCards, other);
+    next(&mut state);
+    assert_eq!(state.stack.last().unwrap().discarded, [other]);
+    settled(&mut state);
+    assert_eq!((life(&state, P0), life(&state, P1)), (22, 18));
+}
+
+#[test]
 fn compound_retrace_fling_discards_before_sacrificing() {
     let mut state = plains();
     retrace_emblem(&mut state);

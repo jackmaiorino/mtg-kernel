@@ -1410,7 +1410,7 @@ fn selected_spell_quote_branch_grant_v1(
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     if let Some(costs) =
-        super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace)
+        super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace, mode, x)
     {
         let order = state
             .engine
@@ -1732,6 +1732,13 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    pub(super) fn compound_printed_discards(&self) -> &[ObjectId] {
+        self.compound
+            .as_ref()
+            .map(|p| p.printed_discards())
+            .unwrap_or_default()
+    }
+
     pub(super) fn planned_mana_count_v1(&self, state: &GameState, player: PlayerId) -> Option<u32> {
         super::checked_spell_mana_plan_v59(state, player, &self.mana.mana)
     }
@@ -1880,7 +1887,13 @@ pub(super) fn prepare_final_spell_payment_v1(
         state,
     )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
-    let compound = super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace);
+    let compound = super::compound_cast_cost_v1::Costs::new(
+        definition,
+        method,
+        selected.retrace,
+        pending.mode_chosen.unwrap_or(0),
+        pending.selected_x_v59().unwrap_or(0),
+    );
     let choices = if compound.is_some() {
         SpellComponentChoicesV1 {
             ordered_objects: Vec::new(),
@@ -1919,6 +1932,11 @@ pub(super) fn prepare_final_spell_payment_v1(
             Some(count) => usize::from(count.unwrap_or(0)),
             None => discard_count,
         };
+    let discard_count = if compound.is_some_and(|cost| cost.printed_discard()) {
+        0
+    } else {
+        discard_count
+    };
     if discarded.len() != discard_count
         || discarded.iter().enumerate().any(|(index, object)| {
             discarded[..index].contains(object)
@@ -1969,7 +1987,7 @@ pub(super) fn prepare_final_spell_payment_v1(
     };
     let resources = resource_projection.as_ref().unwrap_or(state);
     let (mana, compound) = if let Some(costs) = compound {
-        if pending.sacrifice_chosen.len() != costs.count(pending) {
+        if pending.sacrifice_chosen.len() != costs.count() {
             return None;
         }
         let (mana, payment) = costs.quote(

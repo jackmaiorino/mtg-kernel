@@ -9610,7 +9610,16 @@ fn controlled_permanent_sacrifice_needed(
 /// cast. Bitter Triumph's alternative cost replaces its discard. A card
 /// with a choice between two additional costs discards only in the mode
 /// whose cost is the discard (`eternal_cost_choice_v1`).
-fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> Option<u8> {
+fn additional_discard_count(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Option<u8> {
+    if compound_cast_cost_v1::Costs::pending(state, pending, def)
+        .is_some_and(|cost| cost.printed_discard())
+    {
+        return None;
+    }
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(
         def,
@@ -11206,6 +11215,25 @@ pub(crate) fn divine_pending_quote_v44(
     Ok(Some(payment.mana))
 }
 
+fn minimum_payable_cast_x(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Option<u16> {
+    let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    if let Some(limit) = compound_cast_cost_v1::Costs::escape_discard_x_limit(def, method) {
+        return (0..=u16::from(limit)).find(|&x| {
+            pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
+                .is_some()
+        });
+    }
+    Some(u16::from(crate::standard_cards_v1::minimum_x(
+        def,
+        &pending.targets_chosen,
+        state,
+    )))
+}
+
 fn maximum_payable_x(
     def: &card_def::CardDef,
     pending: &PendingCast,
@@ -11573,20 +11601,23 @@ fn is_castable_with_cost_grant(
         return false;
     }
 
-    match cast_method {
-        CastMethodV4::Flashback | CastMethodV4::Alternative
-            if cast_method == CastMethodV4::Flashback
-                || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() =>
+    let graveyard_payable = || {
+        // A card with a choice between two additional costs (#715) is
+        // castable while either cost is payable; every other card is
+        // quoted in its first mode, as before.
+        let modes = if cast_method == CastMethodV4::Escape
+            && crate::eternal_cube_c1b_v1::additional_discard_count(def, None).is_some()
         {
-            // A card with a choice between two additional costs (#715) is
-            // castable while either cost is payable; every other card is
-            // quoted in its first mode, as before.
-            let modes: &[u8] = if crate::eternal_cost_choice_v1::applies(def) {
-                &[0, 1]
-            } else {
-                &[0]
-            };
-            modes.iter().any(|&mode| {
+            viable_printed_spell_modes(def, id, player, state)
+        } else if crate::eternal_cost_choice_v1::applies(def) {
+            vec![0, 1]
+        } else {
+            vec![0]
+        };
+        let limit =
+            compound_cast_cost_v1::Costs::escape_discard_x_limit(def, cast_method).unwrap_or(0);
+        modes.into_iter().any(|mode| {
+            (0..=limit).any(|x| {
                 spell_costs_v1::selected_spell_quote_with_grant_v1(
                     def,
                     id,
@@ -11594,7 +11625,7 @@ fn is_castable_with_cost_grant(
                     cast_method,
                     false,
                     mode,
-                    0,
+                    x,
                     &[],
                     &[],
                     player,
@@ -11604,6 +11635,14 @@ fn is_castable_with_cost_grant(
                 )
                 .is_some()
             })
+        })
+    };
+    match cast_method {
+        CastMethodV4::Flashback => graveyard_payable(),
+        CastMethodV4::Alternative
+            if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() =>
+        {
+            graveyard_payable()
         }
         CastMethodV4::Escape => {
             (def.escape.is_some() || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
@@ -11611,22 +11650,7 @@ fn is_castable_with_cost_grant(
                     .is_none()
                     || compound_cast_cost_v1::supports_escape(def))
                 && def.generic_cost_reduction.is_none()
-                && spell_costs_v1::selected_spell_quote_with_grant_v1(
-                    def,
-                    id,
-                    state.objects.get(id).zone,
-                    cast_method,
-                    false,
-                    0,
-                    0,
-                    &[],
-                    &[],
-                    player,
-                    state,
-                    &[],
-                    grant,
-                )
-                .is_some()
+                && graveyard_payable()
         }
         CastMethodV4::Normal => {
             // Every check below is a pure read of `state`, so they are
@@ -14876,9 +14900,15 @@ fn remaining_cast_payment_is_payable(
     ) else {
         return false;
     };
-    if let Some(costs) = compound_cast_cost_v1::Costs::new(def, method, selected.retrace) {
+    if let Some(costs) = compound_cast_cost_v1::Costs::new(
+        def,
+        method,
+        selected.retrace,
+        pending.mode_chosen.unwrap_or(0),
+        pending.selected_x_v59().unwrap_or(0),
+    ) {
         return pending.graveyard_cost_first_v1.is_some_and(|first| {
-            pending.sacrifice_chosen.len() == costs.count(pending)
+            pending.sacrifice_chosen.len() == costs.count()
                 && costs.can_finish(state, pending, first, &pending.sacrifice_chosen)
         });
     }
@@ -16775,7 +16805,7 @@ pub(crate) fn validate_pending_cast(
     let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
     let interactive_object_cost_needed = if let Some(costs) = compound {
         if let Some(first) = pending.graveyard_cost_first_v1 {
-            if (costs.announces_x() && pending.selected_x_v59().is_none())
+            if compound_cast_cost_v1::Costs::waiting_for_x(pending, def)
                 || pending.cast_mode.is_none()
                 || pending.kicked.is_none()
                 || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
@@ -16786,7 +16816,7 @@ pub(crate) fn validate_pending_cast(
         } else if !pending.sacrifice_chosen.is_empty() {
             return Err("compound object choices require a payment order".into());
         }
-        costs.count(pending)
+        costs.count()
     } else {
         if pending.graveyard_cost_first_v1.is_some() {
             return Err("ordinary cast carries a compound payment order".into());
@@ -16842,7 +16872,7 @@ pub(crate) fn validate_pending_cast(
         }
     }
 
-    let interactive_discard = additional_discard_count(def, pending);
+    let interactive_discard = additional_discard_count(def, pending, state);
     let seeded_mode = if has_spell_form_choice(def) {
         None
     } else {
@@ -17034,14 +17064,12 @@ fn decide_cast_x(
         ));
         return None;
     };
-    let minimum = u16::from(crate::standard_cards_v1::minimum_x(
-        def,
-        &pending.targets_chosen,
-        state,
-    ));
-    let Some(maximum) =
-        maximum_payable_x(def, pending, state).filter(|&maximum| maximum >= minimum)
-    else {
+    let minimum = minimum_payable_cast_x(def, pending, state);
+    let Some((minimum, maximum)) = minimum.and_then(|minimum| {
+        maximum_payable_x(def, pending, state)
+            .filter(|&maximum| maximum >= minimum)
+            .map(|maximum| (minimum, maximum))
+    }) else {
         let cast_method = finalized_cast_method(pending, staged_method, def);
         let pending = state.engine.pending_cast.take().unwrap();
         abort_cast(state, pending, cast_method);
@@ -17406,11 +17434,11 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, &pending, def) {
-        if costs.announces_x() && pending.selected_x_v59().is_none() {
+        if compound_cast_cost_v1::Costs::waiting_for_x(&pending, def) {
             return decide_cast_x(state, &pending, def, staged_method);
         }
         if let Some(first) = pending.graveyard_cost_first_v1 {
-            if pending.sacrifice_chosen.len() < costs.count(&pending) {
+            if pending.sacrifice_chosen.len() < costs.count() {
                 return Some(costs.next(state, &pending, first));
             }
         } else {
@@ -17920,7 +17948,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             "additional_cost_discarded is None only when begin_cast saw an additional_cost",
         );
         let _ = add;
-        match additional_discard_count(def, &pending) {
+        match additional_discard_count(def, &pending, state) {
             Some(n) => {
                 state.engine.pending_discard = Some(PendingDiscard {
                     player: pending.controller,
@@ -26773,13 +26801,13 @@ fn pending_cast_action_stage(
         return Ok(PendingCastActionStage::ChooseMandatoryAdditionalCost);
     }
     if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, pending, def) {
-        if costs.announces_x() && pending.selected_x_v59().is_none() {
+        if compound_cast_cost_v1::Costs::waiting_for_x(pending, def) {
             return Ok(PendingCastActionStage::ChooseXValue);
         }
         if pending.graveyard_cost_first_v1.is_none() {
             return Ok(PendingCastActionStage::ChooseCompoundCostOrder);
         }
-        if pending.sacrifice_chosen.len() < costs.count(pending) {
+        if pending.sacrifice_chosen.len() < costs.count() {
             return Ok(PendingCastActionStage::ChooseCostTarget);
         }
     }
@@ -27975,7 +28003,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
         if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, &pending, def) {
             if let Some(first) = pending.graveyard_cost_first_v1 {
-                if pending.sacrifice_chosen.len() < costs.count(&pending) {
+                if pending.sacrifice_chosen.len() < costs.count() {
                     let mut picks = pending.sacrifice_chosen.clone();
                     picks.push(id);
                     if !costs.can_finish(state, &pending, first, &picks) {
@@ -30276,11 +30304,8 @@ fn apply_pending_cast_effect_option(
                 .ok_or("pending X choice lost its selected spell form")?;
             let maximum = maximum_payable_x(def, &pending, state)
                 .ok_or("pending X choice has no payable value")?;
-            let minimum = u16::from(crate::standard_cards_v1::minimum_x(
-                def,
-                &pending.targets_chosen,
-                state,
-            ));
+            let minimum = minimum_payable_cast_x(def, &pending, state)
+                .ok_or("pending X choice has no payable value")?;
             let x_value = option_index
                 .checked_add(minimum)
                 .ok_or_else(|| "chosen X exceeds the native u16 range".to_string())?;
@@ -31153,6 +31178,7 @@ fn finalize_owned_cast(
         payment.restricted_pool_used(),
         &mana_taps,
     );
+    let compound_printed_discards = payment.compound_printed_discards().to_vec();
     let storm_targets = payment.storm_targets.take();
     let (mana_spent, mut paid_cost_refs) = payment.commit(state, pending.controller, pending.spell);
     if let Some((creatures, quoted)) = edict_input {
@@ -31334,6 +31360,7 @@ fn finalize_owned_cast(
     item.v4.target_spec = Some(selected_target_spec);
     item.v4.target_contracts = pending.target_contracts;
     item.discarded = discarded;
+    item.discarded.extend(compound_printed_discards);
     // The Omen/Adventure selection is canonicalized into `cast_method`; the
     // spell's own modal index remains zero because the front-face mode2
     // program is unrelated to the alternative characteristics.
