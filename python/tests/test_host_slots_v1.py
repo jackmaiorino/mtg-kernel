@@ -805,7 +805,7 @@ class BackgroundProcessTests(unittest.TestCase):
             try:
                 affinity, system = slots.ctypes.c_size_t(0), slots.ctypes.c_size_t(0)
                 self.assertTrue(slots._GetProcessAffinityMask(handle, slots.ctypes.byref(affinity), slots.ctypes.byref(system)))
-                self.assertEqual(affinity.value, 1 << CPUS[-1])
+                self.assertEqual(affinity.value, 1 << CPUS[0])   # background work: the last core in the order
                 get_priority = slots._fn(slots._k32, "GetPriorityClass", wintypes.DWORD, wintypes.HANDLE)
                 self.assertEqual(get_priority(handle), slots.PRIORITY_CLASS["idle"])
             finally:
