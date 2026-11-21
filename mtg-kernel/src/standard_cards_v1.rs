@@ -3446,18 +3446,22 @@ pub(crate) fn has_active_ojer(state: &GameState, controller: PlayerId) -> bool {
     active_ojers(state, controller).next().is_some()
 }
 
+pub(crate) fn matching_ojers<'a>(
+    state: &'a GameState,
+    damage: &DamageProposed,
+) -> impl Iterator<Item = (ObjectId, i32)> + 'a {
+    ojer_source_controller(state, damage)
+        .into_iter()
+        .flat_map(move |controller| active_ojers(state, controller))
+        .map(move |id| (id, crate::engine::effective_power(state, id)))
+}
+
 pub(crate) fn applicable_ojers<'a>(
     state: &'a GameState,
     damage: &DamageProposed,
 ) -> impl Iterator<Item = (ObjectId, i32)> + 'a {
     let amount = damage.amount;
-    ojer_source_controller(state, damage)
-        .into_iter()
-        .flat_map(move |controller| active_ojers(state, controller))
-        .filter_map(move |id| {
-            let power = crate::engine::effective_power(state, id);
-            (amount < power).then_some((id, power))
-        })
+    matching_ojers(state, damage).filter(move |(_, power)| amount < *power)
 }
 
 /// Records noncombat damage dealt by red sources for Temple of Power.

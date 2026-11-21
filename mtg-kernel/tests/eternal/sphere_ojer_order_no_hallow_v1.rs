@@ -141,3 +141,52 @@ fn earthquake_residual_and_uncovered_damage_commit_once_in_the_same_batch() {
         }
     }
 }
+
+#[test]
+fn fireblast_exposes_competing_ojer_after_the_first_of_two_spheres_both_seats() {
+    for active in [P0, P1] {
+        let mut start = board(active, true, true);
+        put(
+            &mut start,
+            active.opponent(),
+            "Sphere of Law",
+            Zone::Battlefield,
+        );
+        let source = put(&mut start, active, "Fireblast", Zone::Hand);
+        // No Mountains are in play: cast for its printed mana cost, not its
+        // alternative cost. Four damage initially equals Ojer's power.
+        pool(&mut start, active, &[ManaColor::R, ManaColor::R], 4);
+        cast(&mut start, source, &[Target::Player(active.opponent())]);
+        assert!(
+            matches!(settle(&mut start), Some(Decision::ChooseEffectOption {
+            player, source: actual, option_count: 2,
+        }) if player == active.opponent() && actual == source)
+        );
+        no_shields(&start);
+        for (option, damage) in [(0, 0), (1, 2)] {
+            let mut state = restored(&start);
+            choose_public(&mut state, active.opponent(), source, option, 2);
+            settled(&mut state);
+            assert_eq!(life(&state, active.opponent()), 20 - damage);
+            assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        }
+    }
+}
+
+#[test]
+fn color_wide_prevention_without_a_finite_shield_does_not_offer_pointless_ordering() {
+    for active in [P0, P1] {
+        let mut state = board(active, true, true);
+        super::prevention_order_no_hallow_v1::global_prevention(
+            &mut state,
+            active.opponent(),
+            "Prismatic Strands",
+            ManaColor::R,
+        );
+        bolt(&mut state, active, "Lightning Bolt");
+        settled(&mut state);
+        assert_eq!(life(&state, active.opponent()), 20);
+        no_shields(&state);
+        assert!(state.engine.linked_aura_operation_v1.is_empty());
+    }
+}

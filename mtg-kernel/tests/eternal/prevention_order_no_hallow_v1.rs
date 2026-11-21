@@ -10,7 +10,12 @@ use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
 use mtg_kernel::rl::{observe_policy_v5, policy_legal_action_candidates_v5, ActionSemanticV1};
 use mtg_kernel::state::Step;
 
-fn global_prevention(state: &mut GameState, player: PlayerId, name: &str, color: ManaColor) {
+pub(super) fn global_prevention(
+    state: &mut GameState,
+    player: PlayerId,
+    name: &str,
+    color: ManaColor,
+) {
     give_priority(state, player);
     let spell = put(state, player, name, Zone::Hand);
     match name {

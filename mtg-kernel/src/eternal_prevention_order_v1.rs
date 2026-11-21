@@ -68,6 +68,10 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
 /// finite shields retain their distinct consumption choice.
 pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<OrdinaryV1> {
     let mut options = Vec::new();
+    // Preserve the already published Circle/global menu. On the new residual
+    // path, identical reductions are one initial choice; each real Sphere is
+    // still applied at most once and may surround an intervening increase.
+    let coalesce_spheres = !full_prevention(state, &packet.damage);
     for (position, shield) in circles::matching_circle_shields(state, &packet.damage) {
         if !options.iter().any(|effect| {
             matches!(effect,
@@ -88,6 +92,14 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
             }
             effect => effect,
         };
+        if coalesce_spheres
+            && matches!(effect, OrdinaryV1::Sphere(_))
+            && options
+                .iter()
+                .any(|option| matches!(option, OrdinaryV1::Sphere(_)))
+        {
+            continue;
+        }
         if !options.contains(&effect) {
             options.push(effect);
         }
@@ -99,15 +111,31 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
 /// active reduction and increase. Their authoritative matchers retain source
 /// color, controller, printed-ability, face and historical-source restrictions.
 pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed) -> bool {
-    !damage.is_combat
-        && damage.amount > 0
-        && !cannot_prevent(state)
-        && crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage)
-            .next()
-            .is_some()
-        && crate::standard_cards_v1::applicable_ojers(state, damage)
-            .next()
-            .is_some()
+    if damage.is_combat
+        || damage.amount <= 0
+        || cannot_prevent(state)
+        || full_prevention(state, damage)
+        || crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
+    {
+        return false;
+    }
+    let Some(power) = crate::standard_cards_v1::matching_ojers(state, damage)
+        .map(|(_, power)| power)
+        .max()
+    else {
+        return false;
+    };
+    let mut amount = damage.amount;
+    for _ in crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage) {
+        if amount <= 0 {
+            break;
+        }
+        if amount < power {
+            return true;
+        }
+        amount = amount.saturating_sub(2);
+    }
+    false
 }
 
 /// Local, nonserialized evidence that the frontier finished this exact damage
