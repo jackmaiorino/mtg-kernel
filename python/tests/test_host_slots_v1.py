@@ -653,8 +653,9 @@ class BackgroundPolicyTests(unittest.TestCase):
     def test_background_placement_changes_only_where_background_work_sits(self):
         """For a table of states: an admitted background request gets the same number of cores from the same room,
         the CI floor first, and the cores latest in the preference order when no reserve applies. In that case an
-        ordinary request that fits in the cores no claim holds never meets it. Ordinary choices, shared expansion and every
-        admit-or-wait outcome are computed by main's code (available(), _claim_record) on the same claims."""
+        ordinary request admitted next that fits in the cores no claim holds does not meet it at that admission
+        (later ones still can, once other claims end). Ordinary choices, shared expansion and every admit-or-wait
+        outcome are computed by main's code (available(), _claim_record) on the same claims."""
         bg = lambda *c: {"cores": list(c), "background": True}                   # noqa: E731
         no_play = {"cores": [7, 6, 5, 4, 1, 0], "keep_free": 0, "priority": "below_normal"}   # 2 and 3 reserved
         states = [(config8(), FREE, []), (config8(1), FREE, [{"cores": [7]}]), (FLOOR8, FREE, []),
@@ -831,6 +832,62 @@ class BackgroundProcessTests(unittest.TestCase):
             if controller and controller.poll() is None:
                 controller.terminate()
                 controller.wait(timeout=30)
+
+
+class OrdinaryAdmissionPathTests(unittest.TestCase):
+    """review round 2 (P3): the real ordinary admission in run(), beside background claims placed by both the old
+    rule (front of the order) and the new one (far end), publishes exactly the cores the backfill engine predicts
+    for that head (_head_start), and a shared request's guarantee and expansion follow main's code. A change to
+    run()'s ordinary core choice makes this fail."""
+    setUp = HostSlotsTests.setUp
+    tearDown = HostSlotsTests.tearDown
+
+    def write(self, cid, cores, background):
+        pid, creation = slots.self_identity()
+        slots.write_json(self.host / f"TESTHOST.slots/claim-{cid}.json", {
+            "schema": slots.SCHEMA, "id": cid, "pid": pid, "creation_time": creation, "lane": "l",
+            "work_id": f"w-{cid[:4]}", "cores": cores, "background": background, "priority": "below_normal",
+            "state": "running", "acquired_at": slots.now_utc()})
+
+    def admit(self, wanted, **kwargs):
+        seen = []
+        with patch.object(slots, "_run_claimed",
+                          side_effect=lambda claim, *a, **k: seen.append(slots.read_json(claim)) or 0):
+            slots.run("l", "probe", wanted, ["unused"], **kwargs)
+        self.assertEqual(len(seen), 1)
+        return seen[0]
+
+    def test_ordinary_admission_matches_the_prediction_beside_old_and_new_background_placements(self):
+        slots.write_json(self.host / "TESTHOST.slots/config.json", {"cores": "7-0", "lending": True})
+        with patch.object(slots, "cpu_total", return_value=8):
+            config = slots.load_config()
+            self.write("1" * 32, [7], False)                                   # an ordinary claim on the first core
+            room = slots.available(config, FREE, slots.live_claims())
+            old_placed = sorted(room[:1])                                        # main's background choice
+            new_placed = sorted(slots.background_order(config, room)[:1])        # this change's choice
+            self.assertEqual((old_placed, new_placed), ([6], [0]))
+            self.write("2" * 32, old_placed, True)
+            self.write("3" * 32, new_placed, True)
+            claims = slots.live_claims()
+            self.assertEqual(len(claims), 3)
+            for wanted in (1, 3, 5):
+                with self.subTest(wanted=wanted):
+                    predicted, handoffs = slots._head_start(config, FREE, claims, {"id": "h", "cores_wanted": wanted})
+                    record = self.admit(wanted)
+                    self.assertEqual(record["cores"], sorted(predicted))
+                    self.assertEqual(handoffs, set(record["cores"]) & {6, 0})
+                    self.assertEqual(len(slots.live_claims()), 3)                # the probe's claim was released
+            # main's order: the first free cores in preference order, the old-placed background core included
+            self.assertEqual(sorted(slots._head_start(config, FREE, claims, {"id": "h", "cores_wanted": 3})[0]),
+                             [4, 5, 6])
+            # a shared request (1 to 3): its guarantee is the predicted ordinary choice, its expansion main's
+            predicted, _ = slots._head_start(config, FREE, claims, {"id": "h", "cores_wanted": 1})
+            record = self.admit(3, shared=True, min_cores=1)
+            self.assertEqual(record["guaranteed"], sorted(predicted))
+            self.assertEqual(record["guaranteed"], [6])
+            extra = slots.unclaimed(config, FREE, claims + [{"id": "x", "cores": record["guaranteed"]}])[:2]
+            self.assertEqual(record["cores"], sorted(record["guaranteed"] + extra))
+            self.assertEqual(record["cores"], [4, 5, 6])
 
 
 def snapshot_of(tickets, claims=()):
