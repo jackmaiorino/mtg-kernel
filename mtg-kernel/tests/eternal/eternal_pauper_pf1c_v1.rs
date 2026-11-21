@@ -878,6 +878,45 @@ fn snapcaster_and_printed_flashback_charge_the_selected_cost() {
 }
 
 #[test]
+fn snapcaster_can_use_mana_cost_instead_of_printed_escape() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    let mut base = plains();
+    let card = put(&mut base, P0, "Sleep of the Dead", Zone::Graveyard);
+    let creature = install_snapcaster(&mut base, card);
+    put(&mut base, P1, "Thraben Inspector", Zone::Battlefield);
+    let fodder: Vec<_> = (0..3)
+        .map(|_| put(&mut base, P0, "Plains", Zone::Graveyard))
+        .collect();
+    for route in [RouteV1::Snapcaster, RouteV1::Escape] {
+        let mut state = base.clone();
+        pool(&mut state, P0, &[ManaColor::U], 2);
+        choose_graveyard_route(&mut state, card, route);
+        choose_target(&mut state, Target::Object(creature));
+        settle_first(&mut state);
+        let escaped = route == RouteV1::Escape;
+        assert_eq!(
+            zone(&state, card),
+            if escaped {
+                Zone::Graveyard
+            } else {
+                Zone::Exile
+            }
+        );
+        assert!(fodder.iter().all(|&f| zone(&state, f)
+            == if escaped {
+                Zone::Exile
+            } else {
+                Zone::Graveyard
+            }));
+        assert_eq!(
+            state.players[0].mana_pool[ManaColor::C.pool_index()],
+            if escaped { 0 } else { 2 }
+        );
+        assert!(state.objects.get(creature).tapped);
+    }
+}
+
+#[test]
 fn snapcaster_cost_ignores_lava_darts_printed_sacrifice_and_expires_on_zone_change() {
     use mtg_kernel::event::{self, ProposedEvent};
     let mut state = plains();

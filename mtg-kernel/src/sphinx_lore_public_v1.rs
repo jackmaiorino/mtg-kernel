@@ -158,10 +158,10 @@ pub enum RouteV1 {
 pub enum CostV1 {
     Mana(ManaCostV1),
     DiscardCards(u8),
-    DiscardLand(u8),
     SacrificeLands(u8),
     PayLife(u8),
     ExileOtherOwnGraveyardCards(u8),
+    DiscardLand(u8),
     SacrificeControlled(u8, card_def::PermanentFilter),
     TapControlled(u8, card_def::PermanentFilterDef),
     ReturnControlled(card_def::PermanentFilterDef),
