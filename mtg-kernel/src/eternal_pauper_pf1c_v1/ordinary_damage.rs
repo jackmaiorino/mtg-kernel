@@ -27,7 +27,7 @@ pub enum OrdinaryV1 {
     },
 }
 
-fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
+pub(crate) fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
     crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
         || damage
             .historical_facts(state)

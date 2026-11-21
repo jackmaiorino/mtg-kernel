@@ -115,7 +115,7 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
         || damage.amount <= 0
         || cannot_prevent(state)
         || full_prevention(state, damage)
-        || crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
+        || crate::eternal_pauper_pf1c_v1::ordinary_damage::prevention_without_cost(state, damage)
     {
         return false;
     }

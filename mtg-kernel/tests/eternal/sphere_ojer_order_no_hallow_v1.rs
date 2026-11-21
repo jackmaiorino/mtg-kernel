@@ -190,3 +190,38 @@ fn color_wide_prevention_without_a_finite_shield_does_not_offer_pointless_orderi
         assert!(state.engine.linked_aura_operation_v1.is_empty());
     }
 }
+
+#[test]
+fn one_ring_player_protection_keeps_untargeted_damage_order_unobservable() {
+    use mtg_kernel::state::Step;
+    for active in [P0, P1] {
+        let protected = active.opponent();
+        let mut state = turn_of(protected);
+        put(&mut state, protected, "Sphere of Law", Zone::Battlefield);
+        put(
+            &mut state,
+            active,
+            "Ojer Axonil, Deepest Might",
+            Zone::Battlefield,
+        );
+        let ring = put(&mut state, protected, "The One Ring", Zone::Hand);
+        pool(&mut state, protected, &[], 4);
+        cast(&mut state, ring, &[]);
+        settled(&mut state);
+        super::pass_until(&mut state, |state| {
+            state.active_player == active && state.step == Step::PrecombatMain
+        });
+        let source = put(&mut state, active, "Earthquake", Zone::Hand);
+        pool(&mut state, active, &[ManaColor::R], 3);
+        cast(&mut state, source, &[]);
+        assert!(
+            matches!(super::next(&mut state), Decision::ChooseEffectOption { option_count, .. } if option_count > 3)
+        );
+        act(&mut state, Action::ChooseEffectOption(3));
+        settled(&mut state);
+        assert_eq!(life(&state, protected), 20);
+        assert_eq!(life(&state, active), 17);
+        no_shields(&state);
+        assert!(state.engine.linked_aura_operation_v1.is_empty());
+    }
+}
