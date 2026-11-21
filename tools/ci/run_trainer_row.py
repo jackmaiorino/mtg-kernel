@@ -40,9 +40,10 @@ def build(features: str) -> str:
     return executables[0]
 
 
-def compiled(executable: str) -> set[str]:
-    listing = subprocess.run([executable, "--list", "--format", "terse"], cwd=ROOT, stdout=subprocess.PIPE,
-                             text=True, check=True).stdout
+def compiled(executable: str, ignored: bool = False) -> set[str]:
+    """Selected names in the compiled inventory (with ignored=True, only the #[ignore] ones)."""
+    listing = subprocess.run([executable, "--list", *(["--ignored"] if ignored else []), "--format", "terse"],
+                             cwd=ROOT, stdout=subprocess.PIPE, text=True, check=True).stdout
     names = {line.removesuffix(": test") for line in listing.splitlines() if line.endswith(": test")}
     return {name for name in names if rust_test_cfg.selected(name)}
 
@@ -78,12 +79,16 @@ def main() -> int:
     if not features:
         command = [sys.executable, "python/tools/run_rust_lib_filters.py", "--features", "", *ci_scope.TRAINER_FILTERS]
         return subprocess.run(command, cwd=ROOT, check=False).returncode
-    names = rust_test_cfg.feature_only(features, target)
-    print(json.dumps({"feature_only": names, "count": len(names)}), flush=True)
-    if not names:
+    added = rust_test_cfg.feature_only(features, target)
+    # #[ignore] cases keep their explicit-invocation rule: listed as ignored, never run or reported as passed.
+    ignored = sorted(compiled(executable, ignored=True) & set(added))
+    runnable = [name for name in added if name not in ignored]
+    print(json.dumps({"feature_only": added, "count": len(added), "ignored": ignored,
+                      "runnable_count": len(runnable)}), flush=True)
+    if not runnable:
         return 0
     # One process per case, a few at a time, each stopped and reported at the limit (no long command lines).
-    return filter_runner().run_isolated_cases(executable, names, CASE_TIMEOUT_SECONDS, [])
+    return filter_runner().run_isolated_cases(executable, runnable, CASE_TIMEOUT_SECONDS, ignored)
 
 
 if __name__ == "__main__":
