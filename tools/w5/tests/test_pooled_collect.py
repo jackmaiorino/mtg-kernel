@@ -3,6 +3,7 @@ fake collector writes each slot's bytes as a function of its episode alone (as t
 does), so any host split, failover or audit must merge to the same files."""
 import hashlib
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -386,6 +387,7 @@ class ChainsPassThroughTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="pooled-chains-test-"))
         for name in ("trainer", "pooled_collect.py", "hosts.json"):
             (self.root / name).write_text(name)
+        (self.root / "pooled_collect.py").chmod(0o755)
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -407,6 +409,19 @@ class ChainsPassThroughTests(unittest.TestCase):
         argv, env = self.chains.trainer_command(self.arm(pooled=False), "/cfg.json")
         self.assertEqual(argv[-1], "/cfg.json")
         self.assertIsNone(env)
+
+    @unittest.skipUnless(os.name == "posix", "the native POSIX trainer executes a dispatcher directly")
+    def test_dispatcher_must_be_executable_when_the_segment_starts(self):
+        arm = self.arm()
+        (self.root / "pooled_collect.py").chmod(0o644)
+        with self.assertRaisesRegex(self.chains.Stop, "dispatcher must be executable"):
+            self.chains.trainer_command(arm, "/cfg.json")
+
+    @unittest.skipUnless(os.name == "posix", "the native POSIX trainer executes a dispatcher directly")
+    def test_shipped_dispatcher_reaches_its_usage_check(self):
+        result = subprocess.run([str(HERE / "pooled_collect.py")], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage: pooled_collect.py", result.stderr)
 
     def test_a_changed_dispatcher_is_refused(self):
         arm = self.arm()

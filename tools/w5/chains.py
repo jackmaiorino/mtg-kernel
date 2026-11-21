@@ -398,6 +398,11 @@ def chain_ladder(arm, man, cdir, offset):
 POOLED_COLLECT_ENV = 'MTG_POOLED_COLLECT_CONFIG'
 
 
+def check_dispatcher_executable(path):
+    if os.name == 'posix':
+        require(os.access(path, os.X_OK), f'pooled collection dispatcher must be executable: {path}')
+
+
 def trainer_command(arm, config_path):
     """The trainer's argv and environment for one segment. A pooled arm (`pooled_collect`, execution only and
     outside `recipe_identity`) hands each iteration's collection to its pinned dispatcher, with its pinned
@@ -408,6 +413,7 @@ def trainer_command(arm, config_path):
     pooled = arm.get('pooled_collect')
     if pooled:
         check_pin(pooled['dispatcher'], 'the pooled-collection dispatcher')
+        check_dispatcher_executable(pooled['dispatcher']['path'])
         check_pin(pooled['hosts'], 'the pooled-collection hosts file')
         argv += ['--collect-external', pooled['dispatcher']['path']]
         env = dict(os.environ, **{POOLED_COLLECT_ENV: pooled['hosts']['path']})
@@ -582,6 +588,7 @@ def make_plan(inputs_path):
                     and all(Path(pooled[k]).is_absolute() and Path(pooled[k]).is_file() for k in pooled),
                     f'{a}: pooled_collect names an absolute dispatcher and hosts file, for C-recipe arms '
                     f'with at least two workers')
+            check_dispatcher_executable(pooled['dispatcher'])
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,

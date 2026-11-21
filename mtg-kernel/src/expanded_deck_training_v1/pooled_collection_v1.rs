@@ -688,7 +688,7 @@ mod tests {
         // Out of order, or a shard missing.
         let error = merge_shards_v1(&whole, &[second.clone(), first.clone()]).unwrap_err();
         assert!(error.contains("contiguous"), "got: {error}");
-        let error = merge_shards_v1(&whole, &[first.clone()]).unwrap_err();
+        let error = merge_shards_v1(&whole, std::slice::from_ref(&first)).unwrap_err();
         assert!(error.contains("cover every episode"), "got: {error}");
         // A changed trajectory byte.
         let path = second.join("episode-0002.json");
