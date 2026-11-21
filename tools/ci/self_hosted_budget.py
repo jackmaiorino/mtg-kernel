@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import time
 import urllib.request
@@ -69,13 +68,17 @@ def parse_slots(text: str | None) -> int | None:
     return slots
 
 
-HOSTED_IMAGE = re.compile(r"(ubuntu|windows|macos)-(latest|[0-9][0-9.]*)(-(arm|arm64|large|xlarge))?", re.IGNORECASE)
+# GitHub's standard hosted runner labels (an explicit list: any other name could be a self-hosted label).
+HOSTED_LABELS = frozenset({
+    "ubuntu-latest", "ubuntu-24.04", "ubuntu-22.04", "ubuntu-24.04-arm", "ubuntu-22.04-arm",
+    "windows-latest", "windows-2025", "windows-2022", "windows-11-arm",
+    "macos-latest", "macos-15", "macos-14", "macos-13", "macos-15-intel"})
 
 
 def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = None) -> int:
     """Jobs not yet completed that a pool runner could be holding or will take, counted conservatively (a
-    wrong count only sends a group to hosted runners): every job except those requesting only GitHub-hosted
-    images (ubuntu-24.04, windows-2025, ...). Runs-on labels are requirements, not a runner's full label set,
+    wrong count only sends a group to hosted runners): every job except those requesting only standard GitHub-hosted
+    labels (HOSTED_LABELS). Runs-on labels are requirements, not a runner's full label set,
     and the runner list needs admin rights the job token lacks, so no other job can be ruled out."""
     if not labels:
         return 0
@@ -84,7 +87,7 @@ def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = Non
         if job.get("status") == "completed" or (skip_run is not None and job.get("run_id") == skip_run):
             continue
         have = job.get("labels") or []
-        if have and all(HOSTED_IMAGE.fullmatch(label) for label in have):
+        if have and all(label.lower() in HOSTED_LABELS for label in have):
             continue
         count += 1
     return count

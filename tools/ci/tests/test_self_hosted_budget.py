@@ -26,10 +26,12 @@ class BudgetTests(unittest.TestCase):
                 job("queued", ["self-hosted", "mtg-ci-linux", "X64"]),                 # counted: cannot rule out
                 job("queued", ["self-hosted", "heavy"]),
                 job("queued", ["windows-2025"]), job("queued", ["ubuntu-24.04"]),      # hosted images
-                job("queued", ["ubuntu-latest"]), job("queued", ["macos-15-arm64"]),
+                job("queued", ["ubuntu-latest"]), job("queued", ["macos-15"]),
+                job("queued", ["windows-2025-large"]), job("queued", ["ubuntu-24.04-xlarge"]),  # custom names
+                job("queued", ["windows-2025.."]), job("queued", []),                           # counted
                 job("in_progress", POOL, run_id=7)]
-        self.assertEqual(budget.held_by_pool(jobs, POOL), 10)
-        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 9)
+        self.assertEqual(budget.held_by_pool(jobs, POOL), 14)
+        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 13)
         self.assertEqual(budget.held_by_pool(jobs, []), 0)
         self.assertEqual(budget.held_by_pool([job("in_progress", ["bn6"])], ["bn6"]), 1)
 
