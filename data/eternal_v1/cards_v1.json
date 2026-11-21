@@ -36465,7 +36465,7 @@
   },
   {
    "name": "Wooded Ridgeline",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -36490,12 +36490,16 @@
    ],
    "sideboard_only": false,
    "complexity": "simple",
-   "mechanics": [],
+   "mechanics": [
+    "dual_land",
+    "enters_tapped",
+    "mana_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WoodedRidgeline.java"
   },
   {
    "name": "Kabira Crossroads",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -36515,12 +36519,16 @@
    ],
    "sideboard_only": false,
    "complexity": "simple",
-   "mechanics": [],
+   "mechanics": [
+    "enters_tapped",
+    "etb_life_gain",
+    "mana_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KabiraCrossroads.java"
   },
   {
    "name": "Jaspera Sentinel",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}",
    "mana_value": 1,
    "colors": [
@@ -36549,12 +36557,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "reach",
+    "mana_ability",
+    "tap_ability",
+    "tap_other_creature_cost",
+    "any_color_mana"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/j/JasperaSentinel.java"
   },
   {
    "name": "Kor Sanctifiers",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}",
    "mana_value": 3,
    "colors": [
@@ -36577,12 +36591,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "kicker",
+    "etb_trigger",
+    "destroy_target"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KorSanctifiers.java"
   },
   {
    "name": "Vulshok Sorcerer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}{R}",
    "mana_value": 3,
    "colors": [
@@ -36606,12 +36624,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "haste",
+    "tap_ability",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/v/VulshokSorcerer.java"
   },
   {
    "name": "Primordial Pachyderm",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{G}",
    "mana_value": 4,
    "colors": [
@@ -36634,11 +36656,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "reach",
+    "trample",
+    "etb_trigger",
+    "life_gain"
+   ]
   },
   {
    "name": "Lifelink",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -36660,12 +36687,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "lifelink"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/l/Lifelink.java"
   },
   {
    "name": "Mask of Law and Grace",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -36688,12 +36719,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "aura",
+    "enchant_creature",
+    "protection_from_color"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MaskOfLawAndGrace.java"
   },
   {
    "name": "Mycosynth Wellspring",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -36711,12 +36746,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "dies_trigger",
+    "library_search"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MycosynthWellspring.java"
   },
   {
    "name": "K'un-Lun Warrior",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -36740,11 +36779,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "etb_trigger",
+    "sacrifice_cost",
+    "discard",
+    "draw_card"
+   ]
   },
   {
    "name": "Bitter Reunion",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -36766,12 +36810,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "discard",
+    "draw_card",
+    "activated_ability",
+    "sacrifice_cost",
+    "haste_grant"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BitterReunion.java"
   },
   {
    "name": "Kruphix's Insight",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -36791,12 +36842,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "reveal",
+    "card_selection",
+    "mill"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KruphixsInsight.java"
   },
   {
    "name": "Scattershot",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -36816,12 +36871,15 @@
    ],
    "sideboard_only": false,
    "complexity": "complex",
-   "mechanics": [],
+   "mechanics": [
+    "storm",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/Scattershot.java"
   },
   {
    "name": "Deprive",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{U}{U}",
    "mana_value": 2,
    "colors": [
@@ -36841,12 +36899,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "counterspell",
+    "additional_cost",
+    "return_land_cost"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/d/Deprive.java"
   },
   {
    "name": "Exclude",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}",
    "mana_value": 3,
    "colors": [
@@ -36867,12 +36929,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "counterspell",
+    "draw_card"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/e/Exclude.java"
   },
   {
    "name": "Fiery Cannonade",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -36892,12 +36957,14 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "damage_each_creature"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FieryCannonade.java"
   },
   {
    "name": "Militia Bugler",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}",
    "mana_value": 3,
    "colors": [
@@ -36920,12 +36987,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "vigilance",
+    "etb_trigger",
+    "library_look",
+    "card_selection",
+    "library_bottom_random"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MilitiaBugler.java"
   },
   {
    "name": "Mob Lookout",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U/B}",
    "mana_value": 2,
    "colors": [
@@ -36950,12 +37023,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "connive"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MobLookout.java"
   },
   {
    "name": "Elite Interceptor",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -36978,11 +37054,13 @@
    ],
    "sideboard_only": false,
    "complexity": "complex",
-   "mechanics": []
+   "mechanics": [
+    "prepared"
+   ]
   },
   {
    "name": "Rejoinder",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -37000,7 +37078,11 @@
    "decks": [],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "prepare_spell",
+    "tap_or_untap",
+    "draw_card"
+   ]
   },
   {
    "name": "Boarding Action",

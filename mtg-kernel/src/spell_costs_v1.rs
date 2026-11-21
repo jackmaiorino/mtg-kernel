@@ -262,6 +262,14 @@ impl SelectedSpellManaCostsV1 {
             && original_groups.last().is_some_and(|components| {
                 super::controlled_permanent_sacrifice_in(components).is_some()
                     || super::tap_permanent_filter_in(components).is_some()
+                    // Deprive: "return a land you control to its owner's
+                    // hand" as an additional cost of an ordinary cast.
+                    || components.iter().any(|component| {
+                        matches!(
+                            component,
+                            CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        )
+                    })
                     // Abhorrent Oculus: "exile six cards from your graveyard"
                     // as an additional cost of an ordinary cast.
                     || (cfg!(feature = "eternal-fixtures")

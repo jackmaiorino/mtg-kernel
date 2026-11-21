@@ -348,6 +348,11 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
         "Skeletal Scrying" => {
             "Some(&[CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only: false }])"
         }
+        // Deprive: "As an additional cost to cast this spell, return a land
+        // you control to its owner's hand." (Pauper field wave Pf1b.)
+        "Deprive" => {
+            "Some(&[CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandV1)])"
+        }
         _ => "None",
     }
 }

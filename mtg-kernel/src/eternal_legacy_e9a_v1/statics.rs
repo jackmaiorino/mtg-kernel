@@ -467,6 +467,7 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         | law
         | granted_protection_mask(state, host)
         | crate::eternal_sideboard_s1n_v1::protection_mask(state, host)
+        | crate::eternal_pauper_pf1a_v1::protection_mask(state, host)
 }
 
 /// Sejiri Steppe's protection until end of turn, as a mask.

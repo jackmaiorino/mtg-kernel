@@ -2150,6 +2150,9 @@ pub enum PermanentFilterDef {
     /// A permanent with this effective subtype (Wirewood Symbiote's "Return an
     /// Elf you control to its owner's hand"). Appended for Premodern wave P2b.
     WithSubtypeV1(Subtype),
+    /// A land (Deprive's "return a land you control to its owner's hand").
+    /// Appended for Pauper field wave Pf1b.
+    LandV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

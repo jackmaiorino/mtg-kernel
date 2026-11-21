@@ -7072,6 +7072,7 @@ fn permanent_matches_return_filter(
         }
         PermanentFilterDef::Artifact => object_has_type(state, object_id, CardType::Artifact),
         PermanentFilterDef::CreatureV1 => object_has_type(state, object_id, CardType::Creature),
+        PermanentFilterDef::LandV1 => object_has_type(state, object_id, CardType::Land),
         PermanentFilterDef::WithSubtypeV1(subtype) => {
             has_effective_subtype(state, object_id, subtype)
         }
@@ -9305,7 +9306,17 @@ fn cast_single_object_cost_needed(
             });
     }
     if pending.cast_mode != Some(CastMode::Alternative) {
-        return None;
+        // "As an additional cost to cast this spell, return a land you
+        // control to its owner's hand" (Deprive).
+        return def
+            .additional_cost?
+            .iter()
+            .find_map(|component| match component {
+                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                    Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
+                }
+                _ => None,
+            });
     }
     def.alt_cost?
         .components
