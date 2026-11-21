@@ -34,7 +34,9 @@ Linux host, WSL guest and the Mac's Linux VM).
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -42,6 +44,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import uuid
@@ -71,6 +74,11 @@ class Host:
     prune_pushed: bool = False
     # Format string around each remote shell command, e.g. "docker exec -i bladder-node sh -c {cmd}".
     remote_wrap: str = ""
+    # "shell" (proof tooling: ordinary logins) or "agent" (standing access: a forced command runs
+    # `pooled_collect.py agent`, which serves one confined request per connection).
+    transport: str = "shell"
+    # Agent mode over an ordinary login (proofs only): format string with {req}, see AgentTransport.
+    agent_wrap: str = ""
 
 
 def _absolute(path: str) -> bool:
@@ -89,6 +97,8 @@ def load_hosts(path: Path) -> dict:
             raise ValueError(f"{host.name}: kind must be local or ssh")
         if host.kind == "ssh" and not host.ssh:
             raise ValueError(f"{host.name}: an ssh host needs its ssh command")
+        if host.transport not in ("shell", "agent") or (host.transport == "agent" and host.kind != "ssh"):
+            raise ValueError(f"{host.name}: transport is shell, or agent for an ssh host")
         if host.workers < 2 or host.weight <= 0:
             raise ValueError(f"{host.name}: workers >= 2 and weight > 0 required")
         if not (_absolute(host.collector) and _absolute(host.scratch)):
@@ -497,6 +507,13 @@ class Transport:
             raise RuntimeError(f"{self.host.name}: storage marker unreadable")
         return marker
 
+    def remove_pin(self, path: str, digest: str) -> bool:
+        """Deletes the file only while it still holds `digest`'s bytes."""
+        if self.pin_status({(path, digest)})[(path, digest)] != "ok":
+            return False
+        self.remove_file(path)
+        return True
+
     def remove_dir(self, remote: str) -> None:
         if self.host.kind == "local":
             shutil.rmtree(remote, ignore_errors=True)
@@ -523,7 +540,8 @@ class Dispatcher:
     def __init__(self, config: dict, transports: dict | None = None, timeout: float = 3600.0):
         self.config = config
         self.hosts: list[Host] = config["hosts"]
-        self.transports = transports or {h.name: Transport(h) for h in self.hosts}
+        self.transports = transports or {h.name: AgentTransport(h) if h.transport == "agent" else Transport(h)
+                                          for h in self.hosts}
         self.timeout = timeout
         self.log: list[dict] = []
         self.pushed: dict[str, dict] = {}  # host -> {path: sha256} this process uploaded
@@ -575,7 +593,9 @@ class Dispatcher:
         # The collector is pinned per host and never pushed: a host without its
         # pinned binary fails, and its shard moves on.
         collector = (host.collector, host.collector_sha256)
-        if transport.pin_status({collector})[collector] != "ok":
+        # In agent mode the agent checks its own configured collector before every run, and its
+        # pin_status answers only for the lineage's pin roots.
+        if not isinstance(transport, AgentTransport) and transport.pin_status({collector})[collector] != "ok":
             raise RuntimeError(f"{host.name}: collector binary missing or not its pin")
         out = self.owned_dir(host, command["output_directory"])
         transport.remove_dir(out)
@@ -758,6 +778,290 @@ class Dispatcher:
             shutil.rmtree(replay)
 
 
+# ---------------------------------------------------------------- collector agent (forced command)
+
+AGENT_SCHEMA = "mtg-kernel-pooled-collect-agent/v1"
+AGENT_REQUEST_SCHEMA = "pooled-collect-agent-request/v1"
+AGENT_REQUEST_BYTES = 64 * 1024  # the encoded request in SSH_ORIGINAL_COMMAND
+AGENT_SHARD_BYTES = 16 * 1024 * 1024  # a shard command, as the trainer's config bound
+AGENT_PIN_BYTES = 4 * 1024 * 1024 * 1024  # one pushed input
+AGENT_TAG = re.compile(r"^pooled-[0-9]{6}-[0-9a-f]{32}(-s[0-9]{3}|-audit[0-9]{4})$")
+AGENT_OPS = ("pin_status", "push", "put_shard", "run_shard", "fetch_shard", "remove_shard", "remove_pin")
+
+
+class AgentRefusal(Exception):
+    """A request the agent does not serve. Exit 2, nothing done."""
+
+
+def encode_request(op: str, **args) -> str:
+    body = json.dumps({"schema": AGENT_REQUEST_SCHEMA, "op": op, "args": args}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(body.encode()).decode().rstrip("=")
+
+
+def decode_request(text) -> tuple[str, dict]:
+    if not isinstance(text, str) or not text or len(text) > AGENT_REQUEST_BYTES:
+        raise AgentRefusal("missing or oversized request")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", text):
+        raise AgentRefusal("request is not one base64url token")
+    try:
+        body = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        request = json.loads(body)  # one JSON value: trailing data is an error
+    except (ValueError, UnicodeDecodeError) as error:
+        raise AgentRefusal(f"malformed request: {error}") from None
+    if not isinstance(request, dict) or set(request) != {"schema", "op", "args"} \
+            or request["schema"] != AGENT_REQUEST_SCHEMA or not isinstance(request["args"], dict):
+        raise AgentRefusal("request is not a pooled-collect-agent-request/v1 object")
+    if request["op"] not in AGENT_OPS:
+        raise AgentRefusal(f"operation not served: {request['op']!r}")
+    return request["op"], request["args"]
+
+
+def load_agent_config(path: Path) -> dict:
+    config = json.loads(Path(path).read_text())
+    if config.get("schema") != AGENT_SCHEMA:
+        raise ValueError(f"agent config schema is not {AGENT_SCHEMA}")
+    for key in ("collector", "collector_sha256", "scratch", "pin_roots", "prefix"):
+        if key not in config:
+            raise ValueError(f"agent config lacks {key}")
+    if not config["pin_roots"] or not all(_canonical(root) == root for root in config["pin_roots"] + [config["scratch"]]):
+        raise ValueError("agent roots must be canonical absolute paths")
+    return config
+
+
+def _canonical(path) -> str | None:
+    """`path` when it is an absolute, normalized path whose existing part has no symlink; else None."""
+    if not isinstance(path, str) or not path or "\x00" in path:
+        return None
+    if not os.path.isabs(path) or os.path.normpath(path) != path.rstrip("/\\") or path != path.rstrip("/\\"):
+        return None
+    probe = path
+    while probe and not os.path.lexists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    if probe and os.path.realpath(probe) != probe:
+        return None
+    return path
+
+
+def _under(path: str, roots) -> bool:
+    return any(path == root or path.startswith(root.rstrip("/\\") + os.sep) for root in roots)
+
+
+def _pin_arg(args: dict, config: dict) -> tuple[str, str]:
+    path, digest = args.get("path"), args.get("sha256")
+    if _canonical(path) is None or not _under(path, config["pin_roots"]):
+        raise AgentRefusal(f"path outside the pin roots: {path!r}")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise AgentRefusal("sha256 must be 64 hex digits")
+    return path, digest
+
+
+def _tag_arg(args: dict) -> str:
+    tag = args.get("tag")
+    if not isinstance(tag, str) or not AGENT_TAG.fullmatch(tag):
+        raise AgentRefusal(f"bad tag: {tag!r}")
+    return tag
+
+
+def _no_more_input(stdin) -> None:
+    """One request per connection: an operation without a payload takes no input at all."""
+    if stdin.read(1):
+        raise AgentRefusal("one request per connection: unexpected input after the request")
+
+
+def _read_payload(stdin, cap: int) -> bytes:
+    data = stdin.read(cap + 1)
+    if len(data) > cap:
+        raise AgentRefusal("payload exceeds its bound")
+    return data
+
+
+def agent_serve(config: dict, encoded, stdin, stdout) -> None:
+    """Serves one request. Raises AgentRefusal for anything outside the seven operations and their
+    confinement; writes the result (JSON, or a tar for fetch_shard) to `stdout`."""
+    op, args = decode_request(encoded)
+    allowed = {"pin_status": {"pins"}, "push": {"path", "sha256"}, "put_shard": {"tag"}, "run_shard": {"tag"},
+               "fetch_shard": {"tag"}, "remove_shard": {"tag"}, "remove_pin": {"path", "sha256"}}[op]
+    if set(args) != allowed:
+        raise AgentRefusal(f"{op} takes exactly {sorted(allowed)}")
+    scratch = config["scratch"]
+
+    def reply(value) -> None:
+        stdout.write((json.dumps(value) + "\n").encode())
+
+    if op == "pin_status":
+        pins = args["pins"]
+        if not isinstance(pins, list) or len(pins) > 4096:
+            raise AgentRefusal("pins must be a list of at most 4096")
+        checked = [_pin_arg({"path": p[0], "sha256": p[1]}, config)
+                   if isinstance(p, list) and len(p) == 2 else None for p in pins]
+        if None in checked:
+            raise AgentRefusal("a pin is not [path, sha256]")
+        _no_more_input(stdin)
+        reply(["absent" if not os.path.lexists(p) else
+               "ok" if os.path.isfile(p) and sha256_file(Path(p)) == d else "differs" for p, d in checked])
+    elif op == "push":
+        path, digest = _pin_arg(args, config)
+        data = _read_payload(stdin, AGENT_PIN_BYTES)
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise AgentRefusal("payload differs from its sha256")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        stage = f"{path}.{uuid.uuid4().hex}.stage"
+        try:
+            with open(stage, "xb") as handle:
+                handle.write(data)
+            try:
+                os.link(stage, path)
+                reply("created")
+            except FileExistsError:
+                if not os.path.isfile(path) or sha256_file(Path(path)) != digest:
+                    raise AgentRefusal(f"existing pin differs: {path}") from None
+                reply("existing")
+        finally:
+            if os.path.lexists(stage):
+                os.unlink(stage)
+    elif op == "put_shard":
+        tag = _tag_arg(args)
+        data = _read_payload(stdin, AGENT_SHARD_BYTES)
+        try:
+            command = json.loads(data)
+        except (ValueError, UnicodeDecodeError):
+            raise AgentRefusal("shard command is not JSON") from None
+        if not isinstance(command, dict) or command.get("mode") != "collect_parallel" \
+                or not isinstance(command.get("shard"), dict) \
+                or not isinstance(command.get("output_directory"), str)                 or os.path.normpath(command["output_directory"]) != os.path.join(scratch, tag):
+            raise AgentRefusal("not a collect_parallel shard command writing to its own scratch directory")
+        os.makedirs(scratch, exist_ok=True)
+        with open(os.path.join(scratch, f"{tag}.json"), "xb") as handle:
+            handle.write(data)
+        reply("stored")
+    elif op == "run_shard":
+        tag = _tag_arg(args)
+        _no_more_input(stdin)
+        command_path = os.path.join(scratch, f"{tag}.json")
+        if not os.path.isfile(command_path):
+            raise AgentRefusal("no stored shard command for this tag")
+        if not os.path.isfile(config["collector"]) or sha256_file(Path(config["collector"])) != config["collector_sha256"]:
+            raise AgentRefusal("collector binary differs from its pin")
+        result = subprocess.run(list(config["prefix"]) + [config["collector"], "--execute-collect-shard", command_path],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                timeout=float(config.get("max_seconds", 3600)))
+        reply({"code": result.returncode, "stderr": result.stderr.decode(errors="replace")[-4096:]})
+    elif op == "fetch_shard":
+        tag = _tag_arg(args)
+        _no_more_input(stdin)
+        directory = os.path.join(scratch, tag)
+        if not os.path.isdir(directory) or os.path.islink(directory):
+            raise AgentRefusal("no shard output for this tag")
+        with tarfile.open(fileobj=stdout, mode="w|") as archive:
+            for name in sorted(os.listdir(directory)):
+                member = os.path.join(directory, name)
+                if os.path.isfile(member) and not os.path.islink(member):
+                    archive.add(member, arcname=name, recursive=False)
+    elif op == "remove_shard":
+        tag = _tag_arg(args)
+        _no_more_input(stdin)
+        shutil.rmtree(os.path.join(scratch, tag), ignore_errors=True)
+        command_path = os.path.join(scratch, f"{tag}.json")
+        if os.path.lexists(command_path):
+            os.unlink(command_path)
+        reply("removed")
+    elif op == "remove_pin":
+        path, digest = _pin_arg(args, config)
+        _no_more_input(stdin)
+        if os.path.isfile(path) and not os.path.islink(path) and sha256_file(Path(path)) == digest:
+            os.unlink(path)
+            reply("removed")
+        else:
+            reply("kept")
+
+
+def agent_main(config_path: str, environ, stdin, stdout, stderr) -> int:
+    """The forced command's entry point. Exit 0 served, 2 refused, 1 failed."""
+    try:
+        config = load_agent_config(Path(config_path))
+        agent_serve(config, environ.get("SSH_ORIGINAL_COMMAND"), stdin, stdout)
+        stdout.flush()
+        return 0
+    except AgentRefusal as error:
+        stderr.write(f"refused: {error}\n")
+        return 2
+    except Exception as error:  # noqa: BLE001  report, never a traceback with paths to the caller
+        stderr.write(f"failed: {type(error).__name__}: {error}\n")
+        return 1
+
+
+class AgentTransport:
+    """The dispatcher's side of agent mode: every call is one ssh connection whose only content is
+    an encoded request (plus payload on stdin). With the forced command the collector's sshd puts
+    the request in SSH_ORIGINAL_COMMAND and runs the agent. `agent_wrap` (proofs over an ordinary
+    login, no forced command) is a format string such as
+    "SSH_ORIGINAL_COMMAND={req} /usr/bin/python3 -I /srv/.../pooled_collect.py agent /srv/.../agent.json"."""
+
+    def __init__(self, host: Host):
+        self.host = host
+
+    def _call(self, op: str, payload: bytes | None = None, timeout: float = 600, **args):
+        request = encode_request(op, **args)
+        remote = self.host.agent_wrap.format(req=request) if self.host.agent_wrap else request
+        return subprocess.run(self.host.ssh + [remote], input=payload if payload is not None else b"",
+                              capture_output=True, timeout=timeout)
+
+    def _json(self, op: str, payload: bytes | None = None, timeout: float = 600, **args):
+        result = self._call(op, payload, timeout, **args)
+        if result.returncode != 0:
+            raise RuntimeError(f"{self.host.name}: agent {op}: {result.stderr.decode(errors='replace').strip()[-400:]}")
+        return json.loads(result.stdout.decode())
+
+    @staticmethod
+    def _tag(path: str) -> str:
+        name = PurePosixPath(path).name
+        return name[:-5] if name.endswith(".json") else name
+
+    def pin_status(self, pins: set[tuple[str, str]]) -> dict:
+        ordered = sorted(pins)
+        states = self._json("pin_status", pins=[list(p) for p in ordered])
+        return dict(zip(ordered, states))
+
+    def push(self, local: Path, remote: str, digest: str) -> bool:
+        return self._json("push", Path(local).read_bytes(), path=remote, sha256=digest) == "created"
+
+    def put_text(self, remote: str, text: str) -> None:
+        self._json("put_shard", text.encode(), tag=self._tag(remote))
+
+    def run(self, argv: list[str], timeout: float) -> subprocess.CompletedProcess:
+        outcome = self._json("run_shard", timeout=timeout + 60, tag=self._tag(argv[-1]))
+        return subprocess.CompletedProcess(argv, outcome["code"], "", outcome["stderr"])
+
+    def fetch_dir(self, remote: str, local: Path) -> None:
+        if local.exists():
+            shutil.rmtree(local)
+        local.mkdir(parents=True)
+        result = self._call("fetch_shard", timeout=FETCH_SECONDS, tag=self._tag(remote))
+        if result.returncode != 0:
+            shutil.rmtree(local, ignore_errors=True)
+            raise RuntimeError(f"{self.host.name}: agent fetch_shard: {result.stderr.decode(errors='replace')[-400:]}")
+        with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as archive:
+            for member in archive.getmembers():
+                if not member.isfile() or "/" in member.name or member.name in ("", ".", ".."):
+                    raise RuntimeError(f"{self.host.name}: unexpected entry in a shard archive: {member.name!r}")
+            archive.extractall(local, filter="data") if hasattr(tarfile, "data_filter") else archive.extractall(local)
+
+    def remove_dir(self, remote: str) -> None:
+        self._json("remove_shard", tag=self._tag(remote))
+
+    def remove_file(self, remote: str) -> None:
+        if AGENT_TAG.fullmatch(self._tag(remote)):
+            self._json("remove_shard", tag=self._tag(remote))
+        else:
+            raise RuntimeError(f"{self.host.name}: agent mode removes inputs only by pin")
+
+    def remove_pin(self, path: str, digest: str) -> bool:
+        return self._json("remove_pin", path=path, sha256=digest) == "removed"
+
+
 def merge_with_binary(binary: str):
     def run_merge(command_path: Path, directories: list[Path]) -> dict:
         result = subprocess.run([binary, "--merge-collection-shards", str(command_path)] + [str(d) for d in directories],
@@ -771,9 +1075,11 @@ def merge_with_binary(binary: str):
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "agent":
+        return agent_main(argv[2], os.environ, sys.stdin.buffer, sys.stdout.buffer, sys.stderr)
     if len(argv) != 2:
-        print("usage: pooled_collect.py ATTEMPT/collect-command.json (hosts file in MTG_POOLED_COLLECT_CONFIG)",
-              file=sys.stderr)
+        print("usage: pooled_collect.py ATTEMPT/collect-command.json (hosts file in MTG_POOLED_COLLECT_CONFIG)"
+              " | pooled_collect.py agent AGENT_CONFIG.json (request in SSH_ORIGINAL_COMMAND)", file=sys.stderr)
         return 2
     config_path = os.environ.get("MTG_POOLED_COLLECT_CONFIG")
     if not config_path:

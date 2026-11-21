@@ -85,6 +85,12 @@ class FakeTransport:
         (out / "collection.json").write_text(json.dumps({"trajectories": pins, "shard": command["shard"]}))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
+    def remove_pin(self, path, digest):
+        if self.files.get(path) != digest:
+            return False
+        self.remove_file(path)
+        return True
+
     def remove_file(self, remote):
         self.files.pop(remote, None)
         self.removed = getattr(self, "removed", []) + [remote]
