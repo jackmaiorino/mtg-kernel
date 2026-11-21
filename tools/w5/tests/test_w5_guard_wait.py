@@ -201,6 +201,84 @@ class GuardWaitTests(unittest.TestCase):
         _, out = self.supervise(path, plan, after_cycle=exhaust, cycles=3, loop='0.5')  # loop stays the bound
         self.assertEqual([t for t, *_ in out], [0.0, 0.5, 1.0])
 
+    def test_admissions_between_census_and_byte_count_stay_inside_the_reservation(self):
+        """A driver admits under the previous verdict while a cycle runs between its census and its byte count, then
+        under the new verdict: after the census at most GUARD_SEGMENTS more are admitted, so with the one in flight at
+        most GUARD_SEGMENTS + 1 segments are written past the counted bytes, which the reservation covers."""
+        path, plan = self.indep()
+        root, cdir = Path(plan['root']), chains.chain_dir(plan['root'], 'c1')
+        c, f = (plan['arms'][a]['segment_updates'] * plan['arms'][a]['bytes_per_update'] for a in ('C', 'F'))
+        real_sample = chains.sample_cycle
+
+        def admit_all():
+            n = 0
+            while chains.guard_admit(root, cdir, 'c1')[0]:
+                n += 1
+            return n
+
+        for start in (0, 2):
+            with self.subTest(start=start), contextlib.redirect_stdout(io.StringIO()), \
+                    mock.patch.object(chains.subprocess, 'Popen'):
+                chains.write(cdir / 'ADMITTED.json', {'count': 0})
+                chains.cycle(plan, path)  # the previous verdict: ceiling 4
+                chains.write(cdir / 'ADMITTED.json', {'count': start})  # admitted under it before the next census
+                gap = []
+
+                def sample(*args, **kwargs):  # runs after the census, before retention and the byte count
+                    gap.append(admit_all())  # GUARD.json on disk is still the previous verdict
+                    return real_sample(*args, **kwargs)
+
+                with mock.patch.object(chains, 'sample_cycle', side_effect=sample):
+                    chains.cycle(plan, path)
+                verdict = json.loads((root / 'GUARD.json').read_text())
+                self.assertEqual(verdict['ceilings'], {'c1': start + chains.GUARD_SEGMENTS})
+                self.assertEqual(gap, [chains.GUARD_SEGMENTS - start])
+                after = admit_all()  # under the new verdict
+                self.assertEqual(gap[0] + after, chains.GUARD_SEGMENTS)
+                self.assertLessEqual(1 + gap[0] + after, chains.GUARD_SEGMENTS + 1)
+                self.assertEqual(verdict['next_bytes'], (chains.GUARD_SEGMENTS + 1) * c + 2 * f)
+
+    def wait(self, plan, verdict=None, guard_text=None, admitted_text=None, loop=60.0):
+        """chains.supervise_wait on a fake clock (monotonic and wall advance with each sleep). `verdict` (its `unix`
+        relative to the start) or raw `guard_text` is GUARD.json; `admitted_text` is c1's ADMITTED.json. Returns
+        (the chain that woke it, seconds slept)."""
+        root, now, t0 = Path(plan['root']), [0.0], time.time()
+        (root / 'GUARD.json').unlink(missing_ok=True)
+        if verdict is not None:
+            jwrite(root / 'GUARD.json', dict(verdict, unix=t0 + verdict['unix']))
+        elif guard_text is not None:
+            (root / 'GUARD.json').write_text(guard_text)
+        adm = chains.chain_dir(root, 'c1') / 'ADMITTED.json'
+        adm.unlink(missing_ok=True)
+        if admitted_text is not None:
+            adm.parent.mkdir(parents=True, exist_ok=True)
+            adm.write_text(admitted_text)
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        with mock.patch.object(chains, 'time', wraps=time) as clock:
+            clock.monotonic.side_effect = lambda: now[0]
+            clock.time.side_effect = lambda: t0 + now[0]
+            clock.sleep.side_effect = sleep
+            woke = chains.supervise_wait(plan, root, loop)
+        return woke, now[0]
+
+    def test_supervise_wait_reads_only_a_fresh_ok_verdict_of_its_plan(self):
+        _, plan = self.indep()
+        ours = {'ok': True, 'plan': plan['label'], 'unix': 0.0, 'ceilings': {'c1': 4}}
+        three = '{"count": 3}'
+        self.assertEqual(self.wait(plan, ours, admitted_text=three), ('c1', 2.0))  # control: one from the ceiling
+        self.assertEqual(self.wait(plan, dict(ours, plan='another'), admitted_text=three), (None, 60.0))
+        self.assertEqual(self.wait(plan, None, admitted_text=three), (None, 60.0))  # no GUARD.json
+        self.assertEqual(self.wait(plan, guard_text='{"ok": true, "pl', admitted_text=three), (None, 60.0))
+        self.assertEqual(self.wait(plan, ours, admitted_text=None), (None, 60.0))  # no ADMITTED.json: count 0
+        self.assertEqual(self.wait(plan, ours, admitted_text='{"cou'), (None, 60.0))  # truncated: skipped
+        # Stale during the wait: fresh at entry (aged 899 s), stale by the first look at 2 s, so no early wake.
+        age = chains.GUARD_MAX_AGE
+        self.assertEqual(self.wait(plan, dict(ours, unix=-(age - 1)), admitted_text=three), (None, 60.0))
+        self.assertEqual(self.wait(plan, dict(ours, unix=-(age - 3)), admitted_text=three), ('c1', 2.0))
+
     def test_one_shot_supervise_is_unchanged(self):
         path, plan = self.indep()
         with mock.patch.object(chains, 'supervise_wait', side_effect=AssertionError('no wait')):

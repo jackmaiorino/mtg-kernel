@@ -2776,21 +2776,23 @@ def supervise_wait(plan, root, loop):
     """FAST_GUARD_WAITS: the sleep between two `supervise --loop` cycles, at most `loop` seconds and at least
     SUPERVISE_FLOOR (when `loop` allows), ended early once `ceiling_near` names a chain of the plan's fresh ok verdict
     just written. Every cycle sets each ceiling to the chain's count plus GUARD_SEGMENTS, so a wake needs
-    GUARD_SEGMENTS - 1 admissions since the census; a refused or stale verdict is slept out. Returns the chain that
-    woke it, or None."""
+    GUARD_SEGMENTS - 1 admissions since the census; a refused verdict, or one that is or becomes stale, is slept out.
+    Returns the chain that woke it, or None."""
     start = time.monotonic()
     try:
         verdict = read(Path(root) / 'GUARD.json')
     except (OSError, ValueError):
         verdict = {}
-    ours = verdict.get('ok') and verdict.get('plan') == plan['label'] and \
-        time.time() - verdict.get('unix', 0) <= GUARD_MAX_AGE
+    ours = verdict.get('ok') and verdict.get('plan') == plan['label']
     ceilings = (verdict.get('ceilings') or {}) if ours else {}
+    fresh_until = verdict.get('unix', 0) + GUARD_MAX_AGE
     time.sleep(min(loop, SUPERVISE_FLOOR))
     while True:
         left = loop - (time.monotonic() - start)
         if left <= 0:
             return None
+        if time.time() > fresh_until:  # stale from here on: no early wake
+            ceilings = {}
         near = ceiling_near(root, ceilings)
         if near is not None:
             return near
