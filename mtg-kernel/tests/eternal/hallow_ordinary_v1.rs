@@ -175,3 +175,80 @@ fn confirmed_packet_keeps_its_prevention_when_a_later_redirect_consumes_a_shared
         assert_eq!(state.objects.get(object).damage, 0);
     }
 }
+
+#[test]
+fn hallowed_and_uncovered_blockers_share_one_nishoba_counter_for_the_combat_batch() {
+    use mtg_kernel::state::Step;
+
+    for shield_sprite in [false, true] {
+        for sprite_first in [false, true] {
+            let mut state = turn_of(P0);
+            let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Battlefield);
+            state.objects.get_mut(nishoba).counters.plus1_plus1 = 7;
+            let bears = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+            give_priority(&mut state, P1);
+            let sprite = put(&mut state, P1, "Spellstutter Sprite", Zone::Hand);
+            pool(&mut state, P1, &[ManaColor::U], 1);
+            cast(&mut state, sprite, &[]);
+            if shield_sprite {
+                protect(&mut state, sprite);
+            }
+            settled(&mut state);
+            assert_eq!(state.objects.get(sprite).zone, Zone::Battlefield);
+
+            super::pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+            act(&mut state, Action::DeclareAttackers(vec![nishoba]));
+            super::pass_until(&mut state, |state| state.step == Step::DeclareBlockers);
+            let blockers = if sprite_first {
+                [sprite, bears]
+            } else {
+                [bears, sprite]
+            };
+            act(
+                &mut state,
+                Action::DeclareBlockers(
+                    blockers
+                        .into_iter()
+                        .map(|blocker| (blocker, nishoba))
+                        .collect(),
+                ),
+            );
+
+            let mut choices = 0;
+            for _ in 0..100 {
+                let decision = super::next(&mut state);
+                if state.step == Step::EndCombat {
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                    Decision::OrderTriggers { pending, .. } => act(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    ),
+                    Decision::ChooseEffectOption {
+                        player: P0,
+                        source,
+                        option_count: 2,
+                    } if shield_sprite && source == sprite => {
+                        // Nishoba prevents Sprite's covered damage; Bears'
+                        // ordinary damage is simultaneous with that point.
+                        state = restored(&state);
+                        act(&mut state, Action::ChooseEffectOption(1));
+                        choices += 1;
+                    }
+                    other => panic!("unexpected combat decision {other:?}"),
+                }
+            }
+            assert_eq!(state.step, Step::EndCombat);
+            assert_eq!(choices, usize::from(shield_sprite));
+            assert_eq!(state.objects.get(nishoba).zone, Zone::Battlefield);
+            assert_eq!(state.objects.get(nishoba).damage, 0);
+            assert_eq!(
+                state.objects.get(nishoba).counters.plus1_plus1,
+                6,
+                "Sprite and Bears deal one simultaneous combat batch"
+            );
+        }
+    }
+}

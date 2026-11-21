@@ -674,6 +674,22 @@ fn prevent_packets(
     Ok(true)
 }
 
+/// Whether this batch needs Hallow's scoped replacement phase. Its caller
+/// owns the Nishoba cohort across this phase and all remaining ordinary events.
+pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEvent]) -> bool {
+    may_need_hallow_choice(state)
+        && !state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+            )
+        })
+        && events.iter().any(|event| {
+            matches!(event,
+            ProposedEvent::Damage(damage) if covered_packet(state, damage, 0).is_some())
+        })
+}
+
 /// Process all covered portions of one simultaneous batch as a live frontier.
 /// Every such portion must ultimately be prevented because its Hallow remains
 /// applicable. Uncovered events retain the ordinary replacement/commit path.
@@ -706,10 +722,7 @@ pub(crate) fn prevent_hallow_batch(
     if work.is_empty() {
         return Ok(false);
     }
-    let nishoba = crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, events);
-    let result = prevent_packets(state, work, Some(batch));
-    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba);
-    if !result? {
+    if !prevent_packets(state, work, Some(batch))? {
         return Ok(true);
     }
     let mut at = 0;
