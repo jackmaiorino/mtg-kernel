@@ -2569,6 +2569,14 @@ def launch_replay(plan, plan_path, rdir, arm, budget):
 def replay_cmd(a):
     plan = load_plan(a.plan)
     rdir = Path(a.dir)
+    if any(c.get('carry') for c in plan['chains'].values()):  # a carried plan: its trees and the replay folder
+        carried_plan_ok(plan)
+        absolute = os.path.abspath(rdir)
+        require(os.path.realpath(absolute) == absolute, f'{rdir} is a link or lies under one')
+        for dirpath, dirnames, filenames in os.walk(rdir, followlinks=False):
+            for entry in dirnames + filenames:
+                require(not os.path.islink(os.path.join(dirpath, entry)),
+                        f'{os.path.join(dirpath, entry)} is a link in a carried plan\'s replay folder')
     held = lock(rdir / 'REPLAY.lock')
     require(held is not None, 'a replay is already running here')
     try:

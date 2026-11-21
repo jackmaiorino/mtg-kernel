@@ -297,6 +297,24 @@ def carried_files_unlinked(chain_path):
             raise SystemExit(f'stop: {p} is a link or lies under one (a carried chain)')
 
 
+def carried_index_head_ok(chain, chain_path, cache):
+    """A carried chain's index starts with its own first update: update B, local segment 0, a checkpoint with no
+    link in its path inside the manifest's directory (a copied predecessor's or another continuation's index is
+    refused before its rows are used or counted)."""
+    if not chain.get('carry') or not Path(cache).exists():
+        return
+    with open(cache, 'rb') as f:
+        line = f.readline()
+    if not line.strip():
+        return
+    rec = json.loads(line)
+    ck = (rec.get('checkpoint') or {}).get('path', '')
+    if rec.get('update') != chain_start(chain) or rec.get('segment') != 0 or \
+            not unlinked_inside(ck, Path(chain_path).parent):
+        raise SystemExit(f'stop: {cache} does not start at the carried boundary {chain_start(chain)} '
+                         f'with this chain\'s own checkpoint')
+
+
 def index(chain_path):
     """One record per completed update: update, boundary, segment, after-state hash, checkpoint pin, ledger."""
     if is_carried(chain_path):
@@ -311,8 +329,7 @@ def index_locked(chain_path):
     records = []
     if cache.exists():
         records = [json.loads(line) for line in cache.read_text(encoding='utf-8').splitlines() if line]
-    if chain.get('carry') and records and records[0].get('update') != chain_start(chain):
-        raise SystemExit(f'stop: {cache} does not start at the carried boundary {chain_start(chain)}')
+    carried_index_head_ok(chain, chain_path, cache)
     if any('state' not in r for r in records):
         # Caches written before S containers were tracked: read each record's container pin from its durable
         # update receipt once, then rewrite the cache.
@@ -772,6 +789,7 @@ class IndexCache:
         """Every record as `index` reads them (the lock is held), streamed; the cursor is then the file's end."""
         chain = load_chain(self.chain_path)
         cache = index_path(self.chain_path)
+        carried_index_head_ok(chain, self.chain_path, cache)
         store = IndexRecords(cache)
         self.consumed = (0, None)
         if cache.exists() and not self._stream(cache, store):
@@ -1092,6 +1110,10 @@ def apply(plan_doc, log_path, hold=None):
             hold_abs = os.path.abspath(hold)
             if os.path.realpath(hold_abs) != hold_abs:
                 raise SystemExit(f'stop: the hold folder {hold} is a link or lies under one')
+            bad = [i['path'] for kind in ('checkpoints', 'trajectories') for i in plan_doc[kind]
+                   if not unlinked_inside(Path(hold) / Path(i['path']).relative_to(Path(i['path']).anchor), hold)]
+            if bad:
+                raise SystemExit(f'stop: a hold destination has a link in its path: {bad[:3]}')
     try:
         with open(log_path, 'a', encoding='utf-8') as log:
             for kind in ('checkpoints', 'trajectories'):

@@ -1041,5 +1041,60 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(snap(), before)
 
 
+    def test_cache_copied_index_hold_destination_and_replay_links_are_refused(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        old_root = self.node.root
+        old_ck = next((old_root / 'chains' / 'c1' / 'seg-00001' / 'iterations' / '000003').glob(
+            'attempt-*/update/checkpoint.json'))
+        snap = lambda: {p: p.read_bytes() for p in old_root.rglob('*') if p.is_file() and not p.is_symlink()}
+        retention.index(old_root / 'chains' / 'c1' / 'chain.json')
+        before = snap()
+        cman = cont / 'chains' / 'c1c' / 'chain.json'
+        cindex = cont / 'chains' / 'c1c' / 'chain.index.jsonl'
+        cindex.unlink(missing_ok=True)
+        cindex.write_bytes((old_root / 'chains' / 'c1' / 'chain.index.jsonl').read_bytes())
+        for read_only in (False, True):
+            with self.subTest(read_only=read_only):
+                with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+                    retention.IndexCache(cman, read_only=read_only).refresh()
+        cindex.unlink()
+        # a good cache, then the file replaced by the copy: the rebuild refuses
+        cache = retention.IndexCache(cman)
+        cache.refresh()
+        cindex.unlink()
+        cindex.write_bytes((old_root / 'chains' / 'c1' / 'chain.index.jsonl').read_bytes())
+        with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+            cache.refresh()
+        cindex.unlink()
+        # a real hold folder with a link below it, at a destination's parent
+        hold = self.t / 'hold'
+        victim = cont / 'chains' / 'c1c' / 'victim.json'
+        victim.write_text('{}')
+        dst_parent = hold / Path(victim).parent.relative_to(Path(victim).anchor)
+        dst_parent.parent.mkdir(parents=True)
+        try:
+            dst_parent.symlink_to(old_ck.parent, target_is_directory=True)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        with self.assertRaisesRegex(SystemExit, 'hold destination'):
+            retention.apply({'own_dir': (cont / 'chains' / 'c1c').resolve().as_posix(),
+                             'checkpoints': [{'path': victim.as_posix()}], 'trajectories': []},
+                            cont / 'retention-test.jsonl', hold=hold)
+        self.assertTrue(victim.exists())
+        # the replay worker with a planted trainer.out link in a replay folder of the carried plan
+        rdir = cont / 'replay-test'
+        rdir.mkdir()
+        (rdir / 'trainer.out').symlink_to(old_ck)
+        err = io.StringIO()
+        with mock.patch.object(chains, 'run_trainer', side_effect=AssertionError('no trainer')), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(chains.main(['_replay', '--plan', str(path), '--dir', str(rdir)]), w5box.EXIT_REFUSED)
+        self.assertIn('is a link', err.getvalue())
+        self.assertEqual(snap(), before)
+
+
 if __name__ == '__main__':
     unittest.main()
