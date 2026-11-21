@@ -209,7 +209,7 @@ fn one_ring_player_protection_keeps_untargeted_damage_order_unobservable() {
         cast(&mut state, ring, &[]);
         settled(&mut state);
         super::pass_until(&mut state, |state| {
-            state.active_player == active && state.step == Step::PrecombatMain
+            state.active_player == active && state.step == Step::Main1
         });
         let source = put(&mut state, active, "Earthquake", Zone::Hand);
         pool(&mut state, active, &[ManaColor::R], 3);
