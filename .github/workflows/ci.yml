@@ -122,8 +122,8 @@ jobs:
       # MTG_CI_PR_WINDOWS_GROUPS names the groups to route, in order of
       # preference; groups a pull request run does not have on Windows are
       # skipped. With MTG_CI_PR_WINDOWS_SLOTS set, only as many route as the
-      # pool looks free: that many minus the unfinished self-hosted jobs that
-      # could be on its runners. Best effort, not a reservation: two runs that
+      # pool looks free: that many minus every unfinished job not on a
+      # GitHub-hosted image (Linux self-hosted jobs count too). Best effort, not a reservation: two runs that
       # start together can both take the last free runner, and the later job
       # then waits in GitHub's queue until that runner finishes a job (about
       # an hour for a workspace group). Unset, every named group routes. An
@@ -139,7 +139,6 @@ jobs:
           PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
           PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}
           PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}
-          PR_OTHER_RUNNER: ${{ vars.MTG_CI_LINUX_RUNNER }}
           # The Windows groups of the pr set (rust-test-groups matrix).
           PR_ELIGIBLE: '["workspace-lib", "workspace-targets", "native-store", "native-store-1"]'
         run: python3 tools/ci/self_hosted_budget.py

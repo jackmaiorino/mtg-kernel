@@ -18,28 +18,20 @@ def job(status, labels, run_id=1):
 
 
 class BudgetTests(unittest.TestCase):
-    def test_unfinished_self_hosted_jobs_a_pool_runner_could_take_count(self):
+    def test_every_unfinished_job_not_on_a_hosted_image_counts(self):
         jobs = [job("queued", POOL), job("in_progress", ["self-hosted", "MTG-CI-WINDOWS", "bn6"]),
                 job("completed", POOL),
-                job("queued", ["self-hosted", "mtg-ci-windows"]),                       # broader
-                job("queued", ["self-hosted", "Windows", "X64", "mtg-ci-windows"]),     # broader, other labels
-                job("queued", POOL + ["gpu"]),                                          # narrower
-                job("queued", ["self-hosted", "mtg-ci-linux"]),                         # the other pool
-                job("queued", ["windows-2025"]), job("queued", ["ubuntu-24.04"]),       # hosted
-                job("queued", ["bn6"]), job("queued", ["mtg-ci-windows"]),              # custom label alone
-                job("queued", ["self-hosted"]), job("queued", ["self-hosted", "Windows", "X64"]),  # generic
+                job("queued", ["self-hosted", "mtg-ci-windows"]), job("queued", ["self-hosted", "Windows", "X64"]),
+                job("queued", ["Windows", "X64"]), job("queued", ["bn6"]), job("queued", ["self-hosted"]),
+                job("queued", ["self-hosted", "mtg-ci-linux", "X64"]),                 # counted: cannot rule out
+                job("queued", ["self-hosted", "heavy"]),
+                job("queued", ["windows-2025"]), job("queued", ["ubuntu-24.04"]),      # hosted images
+                job("queued", ["ubuntu-latest"]), job("queued", ["macos-15-arm64"]),
                 job("in_progress", POOL, run_id=7)]
-        linux = ["self-hosted", "mtg-ci-linux"]
-        self.assertEqual(budget.held_by_pool(jobs, POOL, other=linux), 10)
-        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7, other=linux), 9)
-        # Without the other pool's labels, its jobs count too (conservative).
-        self.assertEqual(budget.held_by_pool(jobs, POOL), 11)
-        # A pool named only "self-hosted" counts every self-hosted job.
-        self.assertEqual(budget.held_by_pool([job("queued", ["self-hosted", "mtg-ci-linux"]), job("queued", ["x"])],
-                                             ["self-hosted"]), 1)
+        self.assertEqual(budget.held_by_pool(jobs, POOL), 10)
+        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 9)
         self.assertEqual(budget.held_by_pool(jobs, []), 0)
-        # A pool named by one custom label counts the jobs that request it.
-        self.assertEqual(budget.held_by_pool([job("in_progress", ["bn6"]), job("queued", ["other"])], ["bn6"]), 1)
+        self.assertEqual(budget.held_by_pool([job("in_progress", ["bn6"])], ["bn6"]), 1)
 
     def test_groups_this_run_lacks_do_not_take_a_slot(self):
         text, _ = self.run_main({"PR_GROUPS": '["eternal", "workspace-targets"]', "PR_RUNNER": '["bn6"]',
