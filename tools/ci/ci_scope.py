@@ -51,6 +51,8 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
       "mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1/*"), "shared"),
     (("mtg-kernel/src/native_expanded_training_run_v1.rs", "mtg-kernel/src/native_expanded_training_run_v1/*",
       "mtg-kernel/src/bin/native_expanded_training_run_v1.rs"), "trainer"),
+    # A Limited binary with its own tests runs the whole set: the rules-limited jobs only build the binaries.
+    (("mtg-kernel/src/bin/kernel_limited_training_v1.rs",), "pr"),
     (("mtg-kernel/src/bin/kernel_limited_*",), "rules-limited"),
     # Python files that change which Rust tests run stay with the whole set.
     (("python/tools/run_rust_workspace_tests.py", "python/tools/run_rust_lib_filters.py",
@@ -95,6 +97,8 @@ TRAINER_FILTERS = [
     "s_transformer_v1::",
     # Update targets and sampling the learners call: the EX1 target, the W5 exact target and the line-B teacher.
     "ex1_v1::", "w5_xact_v1::", "line_b_teacher_target_v1::",
+    # The scalar and vector activation math training_math_v1 calls.
+    "deterministic_math_v1::", "vector_tanh_v1::",
 ]
 # The trainer tests run as two jobs, each building the library and running its filters. Balanced from the
 # filter times of hosted run 44906865422 (seconds): expanded_deck_training_v1 408, native_trainer_v1 306,
@@ -106,7 +110,8 @@ TRAINER_SHARDS = [
     ["native_policy_value_net_v1::", "training_math_v1::", "native_flat_tensorizer_v", "inference_cache_v1::",
      "native_train_state_payload_v1::", "native_trainer_schedule_v", "native_trainer_v1::", "native_training_",
      "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
-     "s_transformer_v1::", "ex1_v1::", "w5_xact_v1::", "line_b_teacher_target_v1::"],
+     "s_transformer_v1::", "ex1_v1::", "w5_xact_v1::", "line_b_teacher_target_v1::", "deterministic_math_v1::",
+     "vector_tanh_v1::"],
 ]
 # Trainer changes also need these rows, which run on a node, never in CI.
 BIT_IDENTITY_ROWS = [

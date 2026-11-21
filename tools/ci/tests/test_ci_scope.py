@@ -132,6 +132,14 @@ class ScopeTests(unittest.TestCase):
             with self.subTest(reference=f"{root}::{item}"):
                 self.assertNotEqual(ci_scope.scope_of(target), "trainer", target)
 
+    def test_a_limited_binary_with_its_own_tests_runs_the_whole_set(self):
+        bins = ROOT / "mtg-kernel" / "src" / "bin"
+        for path in sorted(bins.glob("kernel_limited_*.rs")):
+            rel = path.relative_to(ROOT).as_posix()
+            has_tests = "#[test]" in path.read_text(encoding="utf-8", errors="replace")
+            with self.subTest(binary=rel):
+                self.assertEqual(ci_scope.scope_of(rel), "pr" if has_tests else "rules-limited")
+
     def test_engine_card_and_unmapped_files_never_skip_the_rules_groups(self):
         for path in ("mtg-kernel/src/engine.rs", "mtg-kernel/src/eternal_cards_v1.rs", "mtg-kernel/src/card_def.rs",
                      "data/eternal_v1/cards.json", "mtg-kernel/src/lib.rs", "Cargo.lock", "mtg-kernel/build.rs",
@@ -189,15 +197,20 @@ class MonitorTests(unittest.TestCase):
 
         def get(path):
             if path == f"/repos/o/r/actions/runs/{run_id}":
-                return {"id": run_id, "head_sha": head, "created_at": "2026-11-21T12:00:00Z"}
+                return {"id": run_id, "head_sha": head, "created_at": "2026-11-21T12:00:00Z",
+                        "run_started_at": "2026-11-21T12:30:00Z", "run_attempt": 1}
             if path.startswith("/repos/o/r/actions/workflows/ci.yml/runs"):
                 return {"workflow_runs": [{"id": i, "head_sha": h, "conclusion": c, "created_at": t}
                                           for i, h, c, t in runs]}
             if "/jobs" in path:
                 rid = int(path.split("/runs/")[1].split("/")[0])
                 ran = {i: c for i, h, c, t in runs}.get(rid) == "ran-cancelled"
-                return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "conclusion":
-                                  "failure" if rid == run_id else ("success" if ran else None)}]}
+                rerun = {i: c for i, h, c, t in runs}.get(rid) == "rerun-later"
+                return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "started_at":
+                                  "2026-11-21T13:00:00Z" if rerun else "2026-11-21T11:05:00Z", "conclusion":
+                                  "failure" if rid == run_id else ("success" if ran or rerun or
+                                                                   {i: c for i, h, c, t in runs}.get(rid) == "success"
+                                                                   else None)}]}
             if "/pulls?" in path:
                 sha = path.split("/commits/")[1].split("/")[0]
                 number, login = pulls[sha]
@@ -310,7 +323,7 @@ class MonitorTests(unittest.TestCase):
         import post_merge_report as report
         get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")], {"c3": (837, "x")})
         run = {"id": 9, "head_sha": "c3", "head_branch": "main", "event": "push", "html_url": "u",
-               "created_at": "2026-11-21T12:00:00Z"}
+               "created_at": "2026-11-21T12:00:00Z", "run_started_at": "2026-11-21T12:30:00Z", "run_attempt": 1}
 
         def request(method, path, body=None):
             if method == "POST":
@@ -347,6 +360,16 @@ class MonitorTests(unittest.TestCase):
         body, line, merges = self.run_report(get)
         self.assertIn("(incomplete, newest only)", line)
         self.assertNotIn("first responder the author of #837", line)
+
+    def test_a_later_rerun_of_an_earlier_push_never_changes_the_report(self):
+        # Push run 8 (c2) was replaced while waiting; it was rerun successfully after the red run started.
+        get = self.fake_api(["c0", "c1", "c2", "c3"],
+                            [(8, "c2", "rerun-later", "2026-11-21T11:30:00Z"),
+                             (6, "c1", "success", "2026-11-21T11:00:00Z")],
+                            {"c2": (836, "a"), "c3": (837, "b")})
+        body, line, merges = self.run_report(get)
+        self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c2", 836), ("c3", 837)])
+        self.assertIn("first responder the author of #836", line)
 
     def test_no_earlier_monitored_run_is_an_unbounded_range(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
