@@ -137,10 +137,19 @@ the [addendum](t5_m3_addendum_native_fixture_desktop_dj1c40r_20261116.md).
 
 ## Retained artifacts
 
-The bench outputs behind both receipts (`bench.json`, `samples.jsonl`, `comparison.json`
-and the reference run trees) and the `base` and `m3` binaries are not in the repo. They
-are kept under `D:/antigravity-20261112/bench-599` on the maintainer desktop; the receipts
-pin each by SHA-256.
+The sealed desktop artifact tree is `E:/artifacts/mtg-kernel-599-bench-20261120/`.
+The original `bench-599/` and `logs/jobs/` paths are relative to that root. The
+four cited executables also have individual SHA-256 directories in
+`E:/pinned-binaries/`.
+
+On November 20, archival verification matched 50 direct receipt hashes and all
+6,727 files (24,809,622,195 bytes) against the recovery archive and the cold
+tree. The file index is `files.sha256.json`, SHA-256
+`da159f3b28d7aeb613e966c26c1d915475b6cc543d5e8c4e2c9b070cbf5d9b1e`.
+The independently stored recovery copy is
+`N:/recovery/mtg-kernel-599-bench-20261120/bench-599.tar.zst`, SHA-256
+`c8f18bfeb379ba17f504fe2677a28b66bc88e590b0bd5503fca3c229fc03045f`. The original benchmark
+commands and measurement hashes are preserved in the JSON receipts.
 
 ## Checks and setup
 

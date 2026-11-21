@@ -2134,9 +2134,22 @@ fn label_common(
                     .ok_or(Error::UnsupportedPrompt)?;
                 return Ok(format!("For {}, {}", handles.name(source)?, option.label()));
             }
-            let EffectOp::Choice { options, .. } =
-                pending_program(source, structural_path, observation)?
-            else {
+            let program = pending_program(source, structural_path, observation)?;
+            if matches!(
+                program,
+                EffectOp::OfferAffectedPlayerSpellCopy {
+                    affected: TargetRef::Target(0)
+                }
+            ) && structural_path == crate::engine::SPELL_COPY_CHOICE_PATH
+                && *option_count == 2
+            {
+                return match *option_index {
+                    0 => Ok(format!("Decline to copy {}", handles.name(source)?)),
+                    1 => Ok(format!("Copy {}", handles.name(source)?)),
+                    _ => Err(Error::UnsupportedPrompt),
+                };
+            }
+            let EffectOp::Choice { options, .. } = program else {
                 return Err(Error::UnsupportedPrompt);
             };
             if options.len() != *option_count as usize {
@@ -2344,8 +2357,16 @@ fn label_common(
             ) {
                 return Err(Error::UnsupportedPrompt);
             }
-            format!("{} {{R}}{{R}} to copy {} (inherited target: {}; a new target may be chosen after payment)",
-                if *pay { "Attempt to pay" } else { "Decline to pay" }, handles.name(source)?, target(&pending.inherited_target, handles, human)?)
+            format!(
+                "{} {{R}}{{R}} for the option to copy {} (inherited target: {})",
+                if *pay {
+                    "Attempt to pay"
+                } else {
+                    "Decline to pay"
+                },
+                handles.name(source)?,
+                target(&pending.inherited_target, handles, human)?
+            )
         }
         A::ChooseMadnessCast { card, cast_it, .. } => {
             if *cast_it {

@@ -72,7 +72,7 @@ pub struct E5aStateV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exile_if_dies: Vec<(ObjectLinkV4, TurnEffectV1)>,
     /// Serra's Emissaries and the card type each chose, as an index into
-    /// `PROTECTION_TYPES`.
+    /// `PROTECTION_TYPES`, with Dungeon appended at index 7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emissary_types: Vec<(ObjectLinkV4, u8)>,
     /// Permanents Oko, Thief of Crowns's +1 made green 3/3 Elk creatures

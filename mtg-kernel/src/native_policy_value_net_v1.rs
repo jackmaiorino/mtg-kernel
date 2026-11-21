@@ -1926,13 +1926,19 @@ pub(crate) fn no_negative_zero_or_nan_v1(values: &[f32]) -> bool {
     })
 }
 
-/// Whether this thread's floating-point state is the pinned one: round to
-/// nearest, with denormals neither read nor flushed as zero.
+/// Whether this thread's floating-point state is the pinned one, in which
+/// the kernels may leave out zero terms and unread input-gradient columns:
+/// round to nearest, with denormals neither read nor flushed as zero, and
+/// every floating-point exception masked, so that an operation left out
+/// cannot change an error path (an unmasked exception could trap on the
+/// reference's operation). Sticky exception flags are not compared
+/// (`mxcsr_exceptions_masked_v1`). Other targets keep every operation.
 #[inline(always)]
 pub(crate) fn rounds_to_nearest_v1() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok()
+            && deterministic_math_v1::mxcsr_exceptions_masked_v1()
     }
     #[cfg(not(target_arch = "x86_64"))]
     {

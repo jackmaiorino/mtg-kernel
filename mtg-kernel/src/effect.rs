@@ -1598,9 +1598,9 @@ pub enum EffectOp {
     /// controller may pay {R}{R}" branch. XMage asks this choice before it
     /// attempts payment, even when payment will fail, so this always
     /// suspends the current resolution in the engine's dedicated spell-copy
-    /// state machine; no SBA, trigger placement, zone
-    /// move, or priority window can occur until payment and optional
-    /// retargeting finish. This leaf must remain last in Chain Lightning's
+    /// state machine; no SBA, trigger placement, zone move, or priority
+    /// window can occur while the affected player answers payment, copying,
+    /// or retargeting. This leaf must remain last in Chain Lightning's
     /// generated sequence for the same reason `DiscardCards` must remain
     /// last in its sequence.
     OfferAffectedPlayerSpellCopy {
@@ -15083,10 +15083,13 @@ fn drive_resumable_in_departure_scope_v1(
                         return Err("linked-exile answered frame/guard mismatch".to_string());
                     }
                     validate_linked_exile_chosen_hand_frame(state, &continuation, &answered_frame)?;
-                    if state.engine.linked_exile_records.iter().any(|record| {
-                        record.source.source == source.source
-                            && record.source.zone_change_count == source.zone_change_count
-                    }) {
+                    if linked_hand_exile_kind(source.card_def)
+                        != Some(LinkedHandExileKind::ReturnTrigger)
+                        && state.engine.linked_exile_records.iter().any(|record| {
+                            record.source.source == source.source
+                                && record.source.zone_change_count == source.zone_change_count
+                        })
+                    {
                         return Err(
                             "linked-exile source incarnation already owns a card".to_string()
                         );
@@ -15799,6 +15802,9 @@ fn drive_resumable_in_departure_scope_v1(
                 put_returning_aura_attached(state, aura, host)?;
             }
             EffectOp::Sequence(ops) => {
+                if execute_graveyard_return_tapped(&ops, &continuation.ctx, state, native_row) {
+                    continue;
+                }
                 for (index, inner) in ops.into_iter().enumerate().rev() {
                     let mut inner_path = path.clone();
                     inner_path.push(index as u16);
@@ -16940,50 +16946,7 @@ fn drive_resumable_in_departure_scope_v1(
                 {
                     return Err("linked-exile return has the wrong source contract".to_string());
                 }
-                let positions = state
-                    .engine
-                    .linked_exile_records
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, record)| (record.source == source).then_some(index))
-                    .collect::<Vec<_>>();
-                let Some(&position) = positions.first() else {
-                    continue;
-                };
-                if positions.len() != 1 {
-                    return Err("linked-exile source owns duplicate records".to_string());
-                }
-                let record = state.engine.linked_exile_records[position];
-                let live = state
-                    .objects
-                    .try_get(record.exiled)
-                    .ok_or("linked-exile record names a missing object")?;
-                if live.card_def != record.exiled_card_def
-                    || live.owner != record.exiled_owner
-                    || live.zone_change_count < record.exiled_zone_change_count
-                {
-                    return Err("linked-exile record is structurally inconsistent".to_string());
-                }
-                if live.zone_change_count == record.exiled_zone_change_count {
-                    let memberships = state
-                        .exile
-                        .iter()
-                        .filter(|&&candidate| candidate == record.exiled)
-                        .count();
-                    if live.zone != Zone::Exile || memberships != 1 {
-                        return Err(
-                            "linked-exile exact incarnation lost its exile membership".to_string()
-                        );
-                    }
-                    event::propose_and_commit(
-                        state,
-                        event::ProposedEvent::zone_change_preserving_known_identity(
-                            record.exiled,
-                            Zone::Hand,
-                        ),
-                    );
-                }
-                state.engine.linked_exile_records.remove(position);
+                return_linked_exiles(state, source, Zone::Hand)?;
             }
             EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { player } => {
                 let player = continuation.ctx.resolve_player(player, state);
@@ -19058,6 +19021,78 @@ fn stage_creature_sacrifice_choice(
     });
 }
 
+/// A linked leave ability returns all cards still exiled by its source incarnation (CR 607.3).
+fn return_linked_exiles(
+    state: &mut GameState,
+    source: AbilitySourceContractV4,
+    destination: Zone,
+) -> Result<(), String> {
+    if source.zone != Zone::Battlefield || source.attached_to.is_some() {
+        return Err("linked return has an invalid source".into());
+    }
+    let belongs = |record: &LinkedExileRecordV4| {
+        record.source.source == source.source
+            && record.source.zone_change_count == source.zone_change_count
+    };
+    let mut events = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for record in state
+        .engine
+        .linked_exile_records
+        .iter()
+        .filter(|record| belongs(record))
+    {
+        let live = state
+            .objects
+            .try_get(record.exiled)
+            .ok_or("linked-exile object is missing")?;
+        if record.source.card_def != source.card_def
+            || record.source.owner != source.owner
+            || record.source.zone != source.zone
+            || record.source.attached_to.is_some()
+            || !crate::linked_exile_v4::target_matches(state, record, live)
+            || !seen.insert((record.exiled, record.exiled_zone_change_count))
+        {
+            return Err("linked-exile record is structurally inconsistent".into());
+        }
+        if live.zone_change_count == record.exiled_zone_change_count {
+            if live.zone != Zone::Exile
+                || state
+                    .exile
+                    .iter()
+                    .filter(|&&id| id == record.exiled)
+                    .count()
+                    != 1
+            {
+                return Err("linked-exile exact incarnation lost its exile membership".into());
+            }
+            events.push(if destination == Zone::Hand {
+                event::ProposedEvent::zone_change_preserving_known_identity(
+                    record.exiled,
+                    destination,
+                )
+            } else {
+                event::ProposedEvent::zone_change(record.exiled, destination)
+            });
+        }
+    }
+    if state.engine.linked_exile_records.iter().any(|record| {
+        !belongs(record) && seen.contains(&(record.exiled, record.exiled_zone_change_count))
+    }) {
+        return Err("linked-exile incarnation is claimed by two sources".into());
+    }
+    state
+        .engine
+        .linked_exile_records
+        .retain(|record| !belongs(record));
+    match events.len() {
+        0 => {}
+        1 if destination == Zone::Hand => event::propose_and_commit(state, events.pop().unwrap()),
+        _ => event::propose_and_commit_batch(state, events),
+    }
+    Ok(())
+}
+
 /// How a linked hand-exile source gets its card back. Mesmeric Fiend's exile
 /// is mandatory and returns through its own leaves-the-battlefield trigger.
 /// Deep-Cavern Bat's "you may exile ... until this creature leaves the
@@ -20815,6 +20850,76 @@ fn execute_with_native_row_v1(
     crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
 }
 
+/// CR 400.7: a graveyard ability refers to its source's original incarnation.
+/// Sneaky Snacker has no targets and no intervening "if" clause. If another
+/// effect moved the card, the ability resolves and does nothing because the
+/// object it refers to is gone. CR 400.7j lets an effect find objects moved
+/// to a public zone by that effect or by the spell or ability's costs.
+/// The return-and-tap pair below handles this resolution's own move. This
+/// check uses the captured ability source, so abilities that triggered on
+/// the battlefield, spells, and effects that move a target are unaffected.
+fn graveyard_ability_source_left_graveyard(
+    object: ObjectRef,
+    ctx: &ExecCtx,
+    state: &GameState,
+) -> bool {
+    object == ObjectRef::ThisSource
+        && ctx.ability_source_contract.is_some_and(|contract| {
+            contract.zone == Zone::Graveyard
+                && contract.source == ctx.source
+                && state.objects.try_get(ctx.source).is_none_or(|source| {
+                    source.zone != Zone::Graveyard
+                        || source.zone_change_count != contract.zone_change_count
+                })
+        })
+}
+
+/// Handles the return-and-tap pair without storing new resolution state.
+/// The original incarnation must be present before this pair's move, and
+/// only the battlefield incarnation created by that move can be tapped.
+fn execute_graveyard_return_tapped(
+    ops: &[EffectOp],
+    ctx: &ExecCtx,
+    state: &mut GameState,
+    native_row: Option<&NativeExecutionOwnerV1>,
+) -> bool {
+    let Some(contract) = ctx.ability_source_contract else {
+        return false;
+    };
+    if contract.zone != Zone::Graveyard
+        || !matches!(
+            ops,
+            [
+                EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                },
+                EffectOp::TapObject {
+                    object: ObjectRef::ThisSource,
+                },
+            ]
+        )
+    {
+        return false;
+    }
+    if contract.source != ctx.source
+        || graveyard_ability_source_left_graveyard(ObjectRef::ThisSource, ctx, state)
+    {
+        return true;
+    }
+    execute_native_child_v1(&ops[0], ctx, state, native_row);
+    if state.engine.halted.is_none()
+        && !crate::eternal_cards_v1::owned_draws_v1::program_stops_after_win(state)
+        && state.objects.try_get(ctx.source).is_some_and(|source| {
+            source.zone == Zone::Battlefield
+                && contract.zone_change_count.checked_add(1) == Some(source.zone_change_count)
+        })
+    {
+        event::propose_and_commit(state, event::ProposedEvent::tap(ctx.source));
+    }
+    true
+}
+
 fn execute_in_departure_scope_v1(
     op: &EffectOp,
     ctx: &ExecCtx,
@@ -21197,6 +21302,9 @@ fn execute_in_departure_scope_v1(
             }
         }
         EffectOp::Sequence(ops) => {
+            if execute_graveyard_return_tapped(ops, ctx, state, native_row) {
+                return;
+            }
             for inner in ops {
                 execute_native_child_v1(inner, ctx, state, native_row);
                 // A player who won the game ends it at once (104.1): the
@@ -21763,8 +21871,14 @@ fn execute_in_departure_scope_v1(
                     .expect("freshly revealed batch bindings remain valid");
             }
         }
-        EffectOp::MoveObject { object, to_zone } => {
-            let object = ctx.resolve_object(*object);
+        EffectOp::MoveObject {
+            object: object_ref,
+            to_zone,
+        } => {
+            if graveyard_ability_source_left_graveyard(*object_ref, ctx, state) {
+                return;
+            }
+            let object = ctx.resolve_object(*object_ref);
             if *to_zone != Zone::Stack {
                 match crate::engine::apply_live_stack_spell_departure(state, object, *to_zone) {
                     Ok(true) => return,
@@ -23163,6 +23277,16 @@ fn execute_in_departure_scope_v1(
             event::propose_and_commit(state, proposed);
         }
         EffectOp::TapObject { object } => {
+            // The return-and-tap pair handles graveyard sources only after
+            // verifying that this resolution returned the original object.
+            // A standalone tap cannot follow a later incarnation.
+            if *object == ObjectRef::ThisSource
+                && ctx
+                    .ability_source_contract
+                    .is_some_and(|contract| contract.zone == Zone::Graveyard)
+            {
+                return;
+            }
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
         }
@@ -24697,33 +24821,63 @@ fn execute_in_departure_scope_v1(
                 return;
             };
             let Some(live) = state.objects.try_get(source.source) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
                 return;
             };
-            if live.card_def != source.card_def || live.owner != source.owner {
+            if source.source != ctx.source
+                || source.controller != ctx.controller
+                || source.zone != Zone::Battlefield
+                || crate::card_def::card_id_by_name("Lembas") != Some(source.card_def)
+                || !crate::engine::source_card_def_matches(state, source, live.card_def)
+                || live.owner != source.owner
+                || live.zone_change_count < expected_generation
+                || (live.zone_change_count == expected_generation && live.zone != Zone::Graveyard)
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
                 return;
             }
-            if live.zone != Zone::Graveyard || live.zone_change_count != expected_generation {
+            let graveyard_incarnation =
+                live.zone == Zone::Graveyard && live.zone_change_count == expected_generation;
+            // A ceased token keeps its arena record, but cannot move again (CR 111.8).
+            let same_incarnation = graveyard_incarnation && !live.v4.is_token;
+            let Ok(shuffle_token) = state.preflight_library_shuffle(source.owner) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if same_incarnation
+                && state.players[source.owner.index()]
+                    .graveyard
+                    .iter()
+                    .filter(|&&id| id == source.source)
+                    .count()
+                    != 1
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
                 return;
             }
             let mut staged = state.clone();
-            let Ok(shuffle_token) = staged.preflight_library_shuffle(source.owner) else {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-                return;
-            };
-            event::propose_and_commit(
-                &mut staged,
-                event::ProposedEvent::public_library_insert(
-                    source.source,
-                    event::LibraryPlacement::Top,
-                ),
-            );
+            // CR 701.24c still shuffles the library if the named object has left.
+            if same_incarnation {
+                event::propose_and_commit(
+                    &mut staged,
+                    event::ProposedEvent::public_library_insert(
+                        source.source,
+                        event::LibraryPlacement::Top,
+                    ),
+                );
+            }
             if staged
                 .commit_library_shuffle(source.owner, shuffle_token)
                 .is_err()
@@ -24808,7 +24962,10 @@ fn execute_in_departure_scope_v1(
                     zone_change_count: source_contract.zone_change_count,
                 };
                 if state.engine.linked_exile_records.iter().any(|record| {
-                    (!until_leaves && record.source == source_contract)
+                    (!until_leaves
+                        && crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                            != "Journey to Nowhere"
+                        && record.source == source_contract)
                         || (record.exiled == object
                             && record.exiled_zone_change_count == exiled_zone_change_count)
                 }) {
@@ -24857,51 +25014,14 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             };
-            let same_source_incarnation = |record: &LinkedExileRecordV4| {
-                record.source.source == ctx.source
-                    && record.source.card_def == source_contract.card_def
-                    && record.source.owner == source_contract.owner
-                    && record.source.zone == Zone::Battlefield
-                    && record.source.zone_change_count == source_contract.zone_change_count
-            };
-            let matching = state
-                .engine
-                .linked_exile_records
-                .iter()
-                .copied()
-                .filter(same_source_incarnation)
-                .collect::<Vec<_>>();
-            let structurally_valid = matching.iter().all(|record| {
-                record.source.zone == source_contract.zone
-                    && state.objects.try_get(record.exiled).is_some_and(|exiled| {
-                        exiled.card_def == record.exiled_card_def
-                            && exiled.owner == record.exiled_owner
-                            && exiled.zone_change_count >= record.exiled_zone_change_count
-                            && (exiled.zone_change_count != record.exiled_zone_change_count
-                                || exiled.zone == Zone::Exile)
-                    })
-            });
-            if !structurally_valid {
+            if source_contract.source != ctx.source
+                || return_linked_exiles(state, source_contract, Zone::Battlefield).is_err()
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
             }
-            state
-                .engine
-                .linked_exile_records
-                .retain(|record| !same_source_incarnation(record));
-            let events = matching
-                .iter()
-                .filter(|record| {
-                    let live = state.objects.get(record.exiled);
-                    live.zone == Zone::Exile
-                        && live.zone_change_count == record.exiled_zone_change_count
-                })
-                .map(|record| event::ProposedEvent::zone_change(record.exiled, Zone::Battlefield))
-                .collect::<Vec<_>>();
-            event::propose_and_commit_batch(state, events);
         }
         EffectOp::InstallDamagePreventionFromColor { player, color } => {
             if *player != ctx.controller

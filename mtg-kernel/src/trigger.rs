@@ -4699,7 +4699,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
         } else if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
-            TargetSpec::CreatureOtherThanSource
+            TargetSpec::Creature
         } else if cfg!(feature = "eternal-fixtures")
             && (crate::eternal_vintage_v1::initiative_granter(card.name)
                 || card.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)

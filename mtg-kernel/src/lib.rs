@@ -223,6 +223,7 @@ mod librarian_activation_v1;
 pub mod librarian_public_v1;
 pub mod linked_aura_operation_v1;
 pub mod linked_aura_return_v1;
+mod linked_exile_v4;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
@@ -529,6 +530,8 @@ pub mod unclamped_softmax_sampler_v1;
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub(crate) mod leyline_axe_v1;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub mod limited_campaign_v1;
 pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
 pub mod limited_common_session_v3;

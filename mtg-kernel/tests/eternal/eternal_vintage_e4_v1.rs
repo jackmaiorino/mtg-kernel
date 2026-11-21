@@ -3031,6 +3031,500 @@ fn phyrexian_metamorph_enters_as_an_artifact_copy_and_leaves_as_itself() {
     assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
 }
 
+#[test]
+fn metamorph_copying_lembas_shuffles_its_owners_library_after_the_copy_ends() {
+    let mut state = islands();
+    let lembas = put(&mut state, P1, "Lembas", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, metamorph, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
+        legal_targets, ..
+    }) if legal_targets.contains(&Target::Object(lembas)))
+    );
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(lembas)),
+    );
+    settle_declining_selections(&mut state);
+    assert_eq!(engine::effective_name(&state, metamorph), "Lembas");
+
+    pool(&mut state, P0, &[], 2);
+    act(&mut state, Action::ActivateAbility(metamorph, 0));
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
+    assert_eq!(
+        CARD_DEFS[state.objects.get(metamorph).card_def as usize].name,
+        "Phyrexian Metamorph"
+    );
+    let trigger = state.stack.last().unwrap();
+    assert_eq!(trigger.source, metamorph);
+    assert!(matches!(
+        trigger.inline_effect,
+        Some(mtg_kernel::effect::EffectOp::ShuffleTriggerSourceIntoOwnersLibrary)
+    ));
+    assert_eq!(
+        trigger.v4.ability_source_contract.unwrap().card_def,
+        state.objects.get(lembas).card_def
+    );
+
+    for exiled in [false, true] {
+        let mut branch = state.clone();
+        if exiled {
+            event_move(&mut branch, metamorph, Zone::Exile);
+        }
+        let initial_size = branch.players[P0.index()].library.len();
+        branch.reveal_library_top(P1, P0, 1);
+        assert_eq!(branch.known_library_cards(P1, P0).len(), 1);
+        settled(&mut branch);
+        assert!(branch.known_library_cards(P1, P0).is_empty());
+        let library = &branch.players[P0.index()].library;
+        assert_eq!(library.len(), initial_size + usize::from(!exiled));
+        assert_eq!(library.contains(&metamorph), !exiled);
+        assert_eq!(
+            branch.objects.get(metamorph).zone,
+            if exiled { Zone::Exile } else { Zone::Library }
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FiendCopy {
+    Metamorph,
+    Curie,
+    EquippedMyr,
+    MetamorphAsCurie,
+}
+
+fn exile_two_with_fiend(state: &mut GameState, fiend: ObjectId, cards: [ObjectId; 2]) {
+    event_move(state, fiend, Zone::Battlefield);
+    let triggers = mtg_kernel::trigger::collect_and_process(state);
+    assert_eq!(triggers.len(), 1);
+    // Resolve two instances of the same native enter trigger.
+    for card in cards {
+        state.engine.pending_triggers.extend(triggers.clone());
+        assert!(matches!(
+            settle(state),
+            Some(Decision::ChooseTargets { .. })
+        ));
+        choose_target(state, Target::Player(P0));
+        if let Some(Decision::ChooseEffectTargets { .. }) = settle(state) {
+            choose_target(state, Target::Object(card));
+            settled(state);
+        }
+        assert_eq!(state.objects.get(card).zone, Zone::Exile);
+    }
+}
+
+fn recast_fiend_card_as_copy(state: &mut GameState, host: ObjectId, case: FiendCopy) -> u16 {
+    let karn = put(state, P0, "Karn, the Great Creator", Zone::Hand);
+    pool(state, P0, &[], 4);
+    cast(state, karn, &[]);
+    settled(state);
+    activate(state, karn, 1, &[]);
+    assert!(matches!(
+        settle(state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    choose_target(state, Target::Object(host));
+    settled(state);
+    assert_eq!(state.objects.get(host).zone, Zone::Hand);
+
+    let intermediate = match case {
+        FiendCopy::Metamorph => Some(put(state, P1, "Fume Spitter", Zone::Battlefield)),
+        FiendCopy::MetamorphAsCurie => Some(put(
+            state,
+            P1,
+            "Curie, Emergent Intelligence",
+            Zone::Battlefield,
+        )),
+        _ => None,
+    };
+    let generic = match case {
+        FiendCopy::EquippedMyr => 7,
+        FiendCopy::Curie => 2,
+        _ => 3,
+    };
+    pool(state, P0, &[ManaColor::U], generic);
+    cast(state, host, &[]);
+    if let Some(target) = intermediate {
+        assert!(matches!(
+            settle(state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        choose_target(state, Target::Object(target));
+    }
+    settled(state);
+
+    let model = match case {
+        FiendCopy::Metamorph => intermediate.unwrap(),
+        FiendCopy::Curie | FiendCopy::MetamorphAsCurie => {
+            let donor = put(state, P0, "Phyrexian Dreadnought", Zone::Battlefield);
+            pool(state, P0, &[ManaColor::U], 1);
+            activate(state, host, 0, &[]);
+            settled(state);
+            assert_eq!(state.objects.get(donor).zone, Zone::Exile);
+            donor
+        }
+        FiendCopy::EquippedMyr => {
+            let model = put(state, P1, "Llanowar Elves", Zone::Battlefield);
+            let aegis = put(state, P0, "Assimilation Aegis", Zone::Hand);
+            pool(state, P0, &[ManaColor::U, ManaColor::W], 1);
+            cast(state, aegis, &[]);
+            assert!(matches!(
+                settle(state),
+                Some(Decision::ChooseTargets { .. })
+            ));
+            choose_target(state, Target::Object(model));
+            settled(state);
+            assert_eq!(state.objects.get(model).zone, Zone::Exile);
+            pool(state, P0, &[ManaColor::W; 2], 0);
+            activate(state, aegis, 0, &[Target::Object(host)]);
+            settled(state);
+            model
+        }
+    };
+    assert_eq!(state.objects.get(host).zone, Zone::Battlefield);
+    assert_eq!(
+        state.objects.get(host).card_def,
+        state.objects.get(model).card_def
+    );
+    state.objects.get(model).card_def
+}
+
+fn fiend_copy_return(case: FiendCopy) {
+    use mtg_kernel::{rl::observe_v2, surface_v2::HarnessSurfaceV2};
+    let mut state = islands();
+    let printed = match case {
+        FiendCopy::Metamorph | FiendCopy::MetamorphAsCurie => "Phyrexian Metamorph",
+        FiendCopy::Curie => "Curie, Emergent Intelligence",
+        FiendCopy::EquippedMyr => "Myr Enforcer",
+    };
+    let fiend = put(&mut state, P1, "Mesmeric Fiend", Zone::Hand);
+    let host = put(&mut state, P0, printed, Zone::Hand);
+    let other = put(&mut state, P0, "Counterspell", Zone::Hand);
+    exile_two_with_fiend(&mut state, fiend, [host, other]);
+    let copied = recast_fiend_card_as_copy(&mut state, host, case);
+    let bounce = put(&mut state, P0, "Echoing Truth", Zone::Hand);
+    let moves: Vec<_> = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match event {
+            event::CommittedEvent::LinkedExileDepartureV1 {
+                exiled,
+                owner,
+                card_def,
+                move_history_index,
+            } if exiled.object == host => {
+                assert_eq!((*owner, *card_def), (P0, card_id_by_name(printed).unwrap()));
+                assert_eq!(*move_history_index + 1, at as u64);
+                Some(at)
+            }
+            _ => None,
+        })
+        .collect();
+    let [departure] = moves.as_slice() else {
+        panic!("expected one independent exile departure")
+    };
+    let mut relinked = state.clone();
+    if let event::CommittedEvent::LinkedExileDepartureV1 {
+        move_history_index, ..
+    } = &mut relinked.engine.event_history[*departure]
+    {
+        *move_history_index += 1;
+    }
+    assert!(observe_v2(&relinked, &HarnessSurfaceV2::default(), P0, 17).is_err());
+    let saved = serde_json::to_vec(&state).unwrap();
+
+    let check_return = |forged| {
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        let record = restored
+            .engine
+            .linked_exile_records
+            .iter_mut()
+            .find(|r| r.exiled == host)
+            .unwrap();
+        assert_eq!(record.exiled_card_def, card_id_by_name(printed).unwrap());
+        assert_ne!(record.exiled_card_def, copied);
+        assert!(restored.objects.get(host).zone_change_count > record.exiled_zone_change_count);
+        if forged {
+            record.exiled_card_def = copied;
+        }
+        let observable = observe_v2(&restored, &HarnessSurfaceV2::default(), P0, 17).is_ok();
+        pool(&mut restored, P0, &[ManaColor::U], 1);
+        cast(&mut restored, bounce, &[Target::Object(fiend)]);
+        for _ in 0..32 {
+            match engine::advance_until_decision(&mut restored) {
+                Decision::Halted {
+                    mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source,
+                } if source == fiend => break,
+                Decision::CastSpellOrPass { .. }
+                    if restored.stack.is_empty() && restored.engine.pending_triggers.is_empty() =>
+                {
+                    break
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut restored, Action::Pass),
+                decision => panic!("unexpected Fiend leave decision: {decision:?}"),
+            }
+        }
+        assert_eq!(restored.objects.get(fiend).zone, Zone::Hand);
+        assert_eq!(restored.objects.get(host).zone, Zone::Battlefield);
+        assert_eq!(restored.objects.get(host).card_def, copied);
+        let links = restored
+            .engine
+            .linked_exile_records
+            .iter()
+            .filter(|r| r.source.source == fiend)
+            .count();
+        (
+            observable,
+            restored.engine.halted.is_some(),
+            restored.objects.get(other).zone,
+            links,
+        )
+    };
+    assert_eq!(
+        [check_return(false), check_return(true)],
+        [(true, false, Zone::Hand, 0), (false, true, Zone::Exile, 2)]
+    );
+}
+
+#[test]
+fn fiend_returns_other_card_after_metamorph_copies_a_creature() {
+    fiend_copy_return(FiendCopy::Metamorph);
+}
+
+#[test]
+fn fiend_returns_other_card_after_curie_copies_a_creature() {
+    fiend_copy_return(FiendCopy::Curie);
+}
+
+#[test]
+fn fiend_returns_other_card_after_aegis_copies_an_equipped_creature() {
+    fiend_copy_return(FiendCopy::EquippedMyr);
+}
+
+#[test]
+fn fiend_returns_other_card_after_metamorph_copies_curie_then_dreadnought() {
+    fiend_copy_return(FiendCopy::MetamorphAsCurie);
+}
+
+fn metamorph_exiles_opponents_card_as_fiend() -> (GameState, ObjectId, ObjectId) {
+    let mut state = islands();
+    let model = put(&mut state, P1, "Mesmeric Fiend", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    let victim = put(&mut state, P1, "Counterspell", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, metamorph, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    choose_target(&mut state, Target::Object(model));
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    choose_target(&mut state, Target::Player(P1));
+    settled(&mut state);
+    let [link] = state.engine.linked_exile_records.as_slice() else {
+        panic!("one native Fiend exile")
+    };
+    assert_eq!(link.source.source, metamorph);
+    assert_eq!(
+        link.source.card_def,
+        card_id_by_name("Mesmeric Fiend").unwrap()
+    );
+    assert_eq!(link.exiled, victim);
+    assert_eq!(state.objects.get(victim).zone, Zone::Exile);
+    (state, metamorph, victim)
+}
+
+fn fiend_relation_is_observable(state: &GameState, source: ObjectId, expected_name: &str) -> bool {
+    use mtg_kernel::rl::{observe_v2, CardStableRefV1, ObjectRelationPublicV4};
+    let record = state
+        .engine
+        .linked_exile_records
+        .iter()
+        .find(|r| r.source.source == source)
+        .unwrap();
+    let expected = CardStableRefV1 {
+        arena_id: source.0,
+        card_db_id: card_id_by_name(expected_name).unwrap(),
+        owner: P0.into(),
+        controller: P0.into(),
+        zone: Zone::Battlefield,
+        zone_change_count: record.source.zone_change_count,
+    };
+    let mut both = true;
+    for seat in [P0, P1] {
+        let Ok(view) = observe_v2(
+            state,
+            &mtg_kernel::surface_v2::HarnessSurfaceV2::default(),
+            seat,
+            17,
+        ) else {
+            both = false;
+            continue;
+        };
+        let mut refs =
+            view.projection
+                .object_relations
+                .iter()
+                .filter_map(|relation| match relation {
+                    ObjectRelationPublicV4::ExiledBy { object, exiled_by }
+                        if object.arena_id == record.exiled.0 =>
+                    {
+                        assert_eq!(object.zone, Zone::Exile);
+                        assert_eq!(object.card_db_id, record.exiled_card_def);
+                        assert_eq!(object.zone_change_count, record.exiled_zone_change_count);
+                        Some(exiled_by)
+                    }
+                    _ => None,
+                });
+        assert_eq!(
+            refs.next(),
+            Some(&expected),
+            "wrong source for observer {seat:?}"
+        );
+        assert!(
+            refs.next().is_none(),
+            "duplicate source for observer {seat:?}"
+        );
+    }
+    both
+}
+
+fn observe_fiend_copy_after_restore(
+    state: &GameState,
+    source: ObjectId,
+    expected: &str,
+) -> (GameState, bool) {
+    let restored: GameState = serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+    let mut forged = restored.clone();
+    let link = forged
+        .engine
+        .linked_exile_records
+        .iter_mut()
+        .find(|r| r.source.source == source)
+        .unwrap();
+    // This supported linked exile source never existed in this incarnation.
+    link.source.card_def = card_id_by_name("Journey to Nowhere").unwrap();
+    for seat in [P0, P1] {
+        assert!(mtg_kernel::rl::observe_v2(
+            &forged,
+            &mtg_kernel::surface_v2::HarnessSurfaceV2::default(),
+            seat,
+            17
+        )
+        .is_err());
+    }
+    let observable = fiend_relation_is_observable(&restored, source, expected);
+    (restored, observable)
+}
+fn exile_copied_fiend(state: &mut GameState, source: ObjectId) {
+    let swords = put(state, P0, "Swords to Plowshares", Zone::Hand);
+    pool(state, P0, &[ManaColor::W], 0);
+    cast(state, swords, &[Target::Object(source)]);
+    pass_until(state, |s| s.objects.get(source).zone == Zone::Exile);
+}
+
+#[test]
+fn metamorph_as_fiend_has_public_leave_trigger_after_its_printing_reverts() {
+    let (mut state, source, victim) = metamorph_exiles_opponents_card_as_fiend();
+    let link = state.engine.linked_exile_records[0].source;
+    exile_copied_fiend(&mut state, source);
+    assert_eq!(
+        state.objects.get(source).card_def,
+        card_id_by_name("Phyrexian Metamorph").unwrap()
+    );
+    assert_eq!(
+        state.objects.get(source).zone_change_count,
+        link.zone_change_count + 1
+    );
+    assert_eq!(state.objects.get(victim).zone, Zone::Exile);
+    let [leave] = state.stack.as_slice() else {
+        panic!("Fiend leave trigger must be on the stack")
+    };
+    assert_eq!(leave.source, source);
+    assert_eq!(
+        leave.kind,
+        mtg_kernel::state::StackItemKind::TriggeredAbility
+    );
+    assert_eq!(
+        leave.inline_effect,
+        Some(mtg_kernel::effect::EffectOp::ReturnLinkedExiledCardToOwnersHand)
+    );
+    assert_eq!(leave.v4.ability_source_contract, Some(link));
+    let (mut restored, observable) =
+        observe_fiend_copy_after_restore(&state, source, "Mesmeric Fiend");
+    settled(&mut restored);
+    assert_eq!(restored.objects.get(source).zone, Zone::Exile);
+    assert_eq!(restored.objects.get(victim).zone, Zone::Hand);
+    assert!(restored.engine.linked_exile_records.is_empty());
+    assert!(
+        observable,
+        "public observation refused the pending copied Fiend leave trigger"
+    );
+}
+
+#[test]
+fn copied_fiends_link_survives_an_aegis_layer_until_its_own_leave_trigger() {
+    let (mut state, source, victim) = metamorph_exiles_opponents_card_as_fiend();
+    let generation = state.objects.get(source).zone_change_count;
+    let donor = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let aegis = put(&mut state, P0, "Assimilation Aegis", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::W], 1);
+    cast(&mut state, aegis, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    choose_target(&mut state, Target::Object(donor));
+    settled(&mut state);
+    pool(&mut state, P0, &[ManaColor::W; 2], 0);
+    activate(&mut state, aegis, 0, &[Target::Object(source)]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(source).card_def,
+        state.objects.get(donor).card_def
+    );
+    assert_eq!(state.objects.get(source).zone_change_count, generation);
+    assert_eq!(state.objects.get(victim).zone, Zone::Exile);
+    let (mut restored, observable) =
+        observe_fiend_copy_after_restore(&state, source, "Llanowar Elves");
+    let disenchant = put(&mut restored, P0, "Disenchant", Zone::Hand);
+    pool(&mut restored, P0, &[ManaColor::W], 1);
+    cast(&mut restored, disenchant, &[Target::Object(aegis)]);
+    settled(&mut restored);
+    assert_eq!(restored.objects.get(donor).zone, Zone::Battlefield);
+    assert_eq!(
+        restored.objects.get(source).card_def,
+        card_id_by_name("Mesmeric Fiend").unwrap()
+    );
+    assert_eq!(restored.objects.get(source).zone_change_count, generation);
+    assert_eq!(restored.objects.get(victim).zone, Zone::Exile);
+    assert_eq!(restored.engine.linked_exile_records.len(), 1);
+    assert!(fiend_relation_is_observable(
+        &restored,
+        source,
+        "Mesmeric Fiend"
+    ));
+    exile_copied_fiend(&mut restored, source);
+    settled(&mut restored);
+    assert_eq!(restored.objects.get(source).zone, Zone::Exile);
+    assert_eq!(restored.objects.get(victim).zone, Zone::Hand);
+    assert!(restored.engine.linked_exile_records.is_empty());
+    assert!(
+        observable,
+        "public observation refused the copied Fiend under an Aegis layer"
+    );
+}
+
 fn event_move(state: &mut GameState, object: ObjectId, zone: Zone) {
     mtg_kernel::event::propose_and_commit(
         state,

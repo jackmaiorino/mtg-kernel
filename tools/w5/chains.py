@@ -37,7 +37,11 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   first segment, so from the fork point) is below `end_update`, and no such field from there on; C-recipe arms only,
   on a base whose every episode has the London opening and its modes and whose loss and backend are the plain CPU GAE
   update; part of the recipe identity only when present, so a started chain refuses a changed schedule; `b0` is a
-  number or a list of 7, one lean per number of mulligans the acting seat has already taken), optional
+  number or a list of 7, one lean per number of mulligans the acting seat has already taken), optional `pass_offset`
+  (`{b0, end_update, shape: "linear-v1"}`, qual.py: every episode with `priority_windows` carries the trainer's
+  `priority_pass_offset = b(u)` on the same terms; C-recipe arms only, on a base whose every episode has
+  `priority_windows` with an action-window seat and the plain CPU GAE update; recipe identity only when present),
+  optional
   `pregame_advantage` (`"terminal_v1"`, qual.py: the trainer's loss_selection key, the pregame decisions' advantage
   and value target from the terminal result; C-recipe arms on a London base with gamma 1.0; recipe identity only when
   present), optional `pregame_announcement_step_scale` (a number s, 0 < s < 1, only with `pregame_advantage`: the
@@ -116,13 +120,21 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
 - C's wall is calendar time from its first start; at the deadline the in-flight update is discarded (C updates
   are about half a second).
 - Cadences: driver trainer poll 1 s (C only), guard verdict valid 15 minutes, a driver waits up to 30 minutes for
-  one (then exits 7); supervise default 60 s. One running plan per node (the guard counts its chains).
+  one (then exits 7), looking again every 30 s; supervise default 60 s. Off Windows (FAST_GUARD_WAITS) a driver
+  refused only at its ceiling in a fresh `ok` verdict looks again every second, and `supervise --loop` starts its
+  next cycle early (at least 2 s after a cycle) once a chain of its fresh `ok` verdict without END or STOP is at most
+  one admission from its ceiling (counts read every second), so a chain whose GUARD_SEGMENTS segments are shorter
+  than a cycle waits about a cycle's own time, not the loop. On Windows, where a reader can be refused while another
+  process replaces a file and these tools run only in tests, the waits are 30 s and the full loop, so no file is read
+  more often there. One running plan per node (the guard counts its chains).
 - Fillers (`_filler` in a paused box, an ended box or a filler box) start fresh from the C parent at update 0 and
   delete each segment once the next one finishes; their trees go with `clean-fillers` at the stage's end. A box
   left by an ended chain becomes an outage when supervise's next cycle starts `w5box.py fill` (`--empty-since`
   records the chain's close, so the unfrozen gap of at most one cycle is on record).
 - Byte guard: each verdict reserves 5 segments per measured chain (one in flight, GUARD_SEGMENTS = 4 admitted)
-  and two F segments per box (fillers do not wait on the guard; their hot set is bounded).
+  and two F segments per box (fillers do not wait on the guard; their hot set is bounded). A verdict issued early
+  reserves the same: its census reads every chain's count before the bytes are counted, so what it covers does not
+  depend on the time since the last verdict.
 - `supervise --loop` also keeps finished segments' byte totals (`retention.ByteCounter`): the guard walks only the
   rest of the root each cycle; every deletion or PRUNE move from a finished segment (any W5 tool's) moves the
   segment directory's modification time forward and the segment is counted again; every 6 hours it recounts them
@@ -203,7 +215,9 @@ the medians, the ranges and the candidate/baseline median ratio. It calls a metr
 two sides' ranges separate, their medians differ by more than the larger range, and finite, nonoverlapping run
 intervals form complete ABBA or BAAB blocks in start-time order. It reports the chance that noise alone separates
 them that completely (2 / C(n_b + n_c, n_b): one ABBA leaves 1/3) only for those schedules. Other schedules keep
-the descriptive statistics, with an inconclusive verdict or too few samples.
+the descriptive statistics, with an inconclusive verdict or too few samples. A W5 tools difference counts in the
+rates too (e.g. a driver that resumes sooner after a guard wait), so a faster candidate is an end-to-end result,
+not by itself evidence of a faster trainer.
 """
 import argparse
 import copy
@@ -252,10 +266,11 @@ MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
 SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256, 'CH': 256, 'FBA': 256,
                    'FBB': 256}
-# A scratch segment ends on a multiple of 32 updates that divides the 4,096-update ladder stride. 32 (below retention's
-# 64-update full-state stride) lets a large-batch arm keep its segment config under the trainer's 16 MiB cap; an odd
-# 32-update end is pruned like any other non-full state, only once its segment and the next are complete.
-SCRATCH_MIN_UPDATES = 32
+# A scratch chain keeps full states at its segment ends only, so its segment length divides the 4,096-update ladder
+# stride and either divides retention's 64-update full-state stride or is a multiple of it. A length below 64 (32 for
+# a 60-game update; 16, 8 or 4 for 120, 240 or 480 games, which keep a segment config under the trainer's 16 MiB cap)
+# then has every state retention keeps at a segment end, as a plain chain of that length has; its other ends are
+# pruned like any other non-full state, only once their segment and the next are complete.
 HOT_CAP_BYTES = 60 * 10**9
 BYTE_CAP = 560 * 10**9
 HOLD_DAYS = 7
@@ -264,11 +279,16 @@ LOOK_FRACTION = 0.5
 GUARD_MAX_AGE = 900.0
 GUARD_WAIT = 1800.0
 GUARD_POLL = 30.0
+GUARD_CEILING_POLL = 1.0  # FAST_GUARD_WAITS: the driver's poll while a fresh ok verdict refuses it only at its ceiling
 GUARD_SEGMENTS = 4
 END_KILL_GRACE = 30.0
 FILL_START_GRACE = 60.0
 TRAINER_POLL = 1.0
 SUPERVISE_EVERY = 60.0
+SUPERVISE_FLOOR = 2.0  # FAST_GUARD_WAITS: least sleep between two `supervise --loop` cycles (an early wake never spins)
+SUPERVISE_WAKE_POLL = 1.0  # FAST_GUARD_WAITS: how often a `supervise --loop` sleep reads the admission counts
+# The faster guard waits (module docstring, "Cadences") only where no reader is refused while a file is replaced.
+FAST_GUARD_WAITS = os.name != 'nt'
 REPLAY_START_GRACE = 120.0
 EXIT_STOP, EXIT_ROOM, EXIT_FAILED = 5, 7, 8
 FAILED_ENDS = ('chain-failure', 'operator')  # END reasons whose recorded last valid boundary is the endpoint
@@ -458,6 +478,7 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     x = arm['x'] or {}
     parent = read(arm['parent']['path'])
     keep_offset = arm.get('keep_offset')  # absent otherwise: the config is exactly what it was
+    pass_offset = arm.get('pass_offset')  # absent otherwise, as keep_offset
     pregame_advantage = arm.get('pregame_advantage')  # absent otherwise, as keep_offset
     pregame_announcement_step_scale = arm.get('pregame_announcement_step_scale')  # absent otherwise, as keep_offset
     try:
@@ -466,9 +487,12 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
                                 x.get('dose', 'primary'), ledger_source,
                                 prep_workers=arm.get('preparation_workers'), keep_offset=keep_offset,
                                 pregame_advantage=pregame_advantage,
-                                pregame_announcement_step_scale=pregame_announcement_step_scale)
+                                pregame_announcement_step_scale=pregame_announcement_step_scale,
+                                pass_offset=pass_offset)
+        if source is not None:
+            qual.check_pass_offset_source(pass_offset, source, offset)
     except ValueError as exc:
-        if keep_offset is None and pregame_advantage is None:
+        if keep_offset is None and pregame_advantage is None and pass_offset is None:
             raise
         raise Stop(f'{arm["arm"]}: {exc}') from exc
     if source is not None:
@@ -588,6 +612,8 @@ def recipe_identity(arm):
         identity['initial_opponent'] = arm['initial_opponent']
     if arm.get('keep_offset') is not None:
         identity['keep_offset'] = arm['keep_offset']  # absent otherwise: existing manifests unchanged
+    if arm.get('pass_offset') is not None:
+        identity['pass_offset'] = arm['pass_offset']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_advantage') is not None:
         identity['pregame_advantage'] = arm['pregame_advantage']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_announcement_step_scale') is not None:
@@ -701,14 +727,15 @@ def make_plan(inputs_path):
         allowed = ['initial'] if initial_opponent else []
         require(not [k for k in history_relative(base_doc) if k not in allowed],
                 f'{a}: the base uses history-relative opponents, which segments would change')
-        fresh = read(spec['parent']).get('fresh') is True
+        parent = read(spec['parent'])
+        fresh = parent.get('fresh') is True
         require(not fresh or extra,
                 f'{a}: a fresh parent (no checkpoint) is for extra C-recipe arms of independent Stage 0 plans only')
         ladder = None
         if a in LADDER_ARMS:
             try:
                 ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE,
-                                          read(spec['parent'])['source'], pin)
+                                          parent['source'], pin)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
             require(ladder.get('start_member', True) or initial_opponent,
@@ -742,6 +769,18 @@ def make_plan(inputs_path):
             require(recipe == 'C', f'{a}: keep_offset trains only on the plain CPU update of a C-recipe arm')
             try:
                 keep_offset = qual.validate_keep_offset(keep_offset, base_doc)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
+        # pass_offset: the priority pass offset schedule {b0, end_update, shape} (qual.validate_pass_offset), stamped
+        # by update into each episode with priority_windows as the trainer's priority_pass_offset. It needs a base
+        # whose every episode has priority_windows with an action-window seat and is part of the arm's frozen recipe.
+        # Absent (or null): nothing changes.
+        pass_offset = spec.get('pass_offset')
+        if pass_offset is not None:
+            require(recipe == 'C', f'{a}: pass_offset trains only on the plain CPU update of a C-recipe arm')
+            try:
+                pass_offset = qual.validate_pass_offset(pass_offset, base_doc)
+                qual.check_pass_offset_source(pass_offset, parent['source'], 0)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
         # pregame_advantage: the trainer's loss_selection.pregame_advantage ("terminal_v1": the pregame decisions'
@@ -788,9 +827,10 @@ def make_plan(inputs_path):
             require(recipe == 'C' and a != 'F' and stage == '0',
                     f'{a}: scratch segments are for C-recipe chains (net-8 or S parent) in Stage 0 plans only')
             require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
-            require(length % SCRATCH_MIN_UPDATES == 0 and retention.C_LONG_STRIDE % length == 0,
-                    f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and is a multiple of '
-                    f'{SCRATCH_MIN_UPDATES}, so segment ends hold every ladder state')
+            full = retention.FULL_STRIDE
+            require(retention.C_LONG_STRIDE % length == 0 and (full % length == 0 or length % full == 0),
+                    f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and divides or is a multiple of '
+                    f'{full}, so segment ends hold every ladder state')
             require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
         if ladder is not None:
@@ -805,6 +845,8 @@ def make_plan(inputs_path):
             doc['verified_reads'] = verified_reads
         if keep_offset is not None:  # absent otherwise, as record_envelope
             doc['keep_offset'] = keep_offset
+        if pass_offset is not None:  # absent otherwise, as record_envelope
+            doc['pass_offset'] = pass_offset
         if pregame_advantage is not None:  # absent otherwise, as record_envelope
             doc['pregame_advantage'] = pregame_advantage
         if pregame_announcement_step_scale is not None:  # absent otherwise, as record_envelope
@@ -917,6 +959,8 @@ def make_plan(inputs_path):
                     f'{name}: the recipe changed after the chain started' +
                     (' (keep_offset differs)' if have['recipe'].get('keep_offset') != header['recipe'].get(
                         'keep_offset') else '') +
+                    (' (pass_offset differs)' if have['recipe'].get('pass_offset') != header['recipe'].get(
+                        'pass_offset') else '') +
                     (' (pregame_advantage differs)' if have['recipe'].get('pregame_advantage') != header[
                         'recipe'].get('pregame_advantage') else '') +
                     (' (pregame_announcement_step_scale differs)' if have['recipe'].get('pregame_announcement_step_scale') != header[
@@ -1051,20 +1095,24 @@ def guard_admit(root, cdir, chain):
     supervise whose ceiling for this chain is above the chain's admissions so far (ADMITTED.json, counted here).
     Supervise reads every chain's count before it counts bytes and sets the ceiling to it plus GUARD_SEGMENTS, so
     whatever any verdict admits after a census (one run in flight and GUARD_SEGMENTS more, retries and their moved
-    aside attempts included) is inside that verdict's reservation, and a stopped supervise admits nothing more."""
+    aside attempts included) is inside that verdict's reservation, and a stopped supervise admits nothing more.
+    Returns (admitted, why, seconds before the next look): GUARD_POLL, or GUARD_CEILING_POLL with FAST_GUARD_WAITS
+    when the only refusal is the ceiling of a fresh ok verdict (supervise's next verdict raises it)."""
     path = Path(root) / 'GUARD.json'
     if not path.exists():
-        return False, 'no guard verdict'
+        return False, 'no guard verdict', GUARD_POLL
     g = read(path)
     if time.time() - g.get('unix', 0) > GUARD_MAX_AGE:
-        return False, 'the guard verdict is stale (is supervise running?)'
+        return False, 'the guard verdict is stale (is supervise running?)', GUARD_POLL
     if not g.get('ok'):
-        return False, f'the byte guard refuses ({g.get("used_bytes")} used)'
+        return False, f'the byte guard refuses ({g.get("used_bytes")} used)', GUARD_POLL
     count = admitted(cdir)
-    if count >= g.get('ceilings', {}).get(chain, 0):
-        return False, f'admission {count} is past this verdict\'s ceiling (is supervise running?)'
+    ceilings = g.get('ceilings', {})
+    if count >= ceilings.get(chain, 0):
+        return False, f'admission {count} is past this verdict\'s ceiling (is supervise running?)', \
+            GUARD_CEILING_POLL if FAST_GUARD_WAITS and chain in ceilings else GUARD_POLL
     write(Path(cdir) / 'ADMITTED.json', {'count': count + 1})
-    return True, 'ok'
+    return True, 'ok', None
 
 
 def reached_stop(man, ledger_source):
@@ -1124,9 +1172,15 @@ def current_segment(arm, man, man_path, ledger_source):
 # on the root's volume, the mount is removed, and the copy replaces the (empty) segment directory by one rename.
 # An unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
 # persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively). Full states are kept
-# at segment ends only, so the recent-window stride of a scratch C chain is its segment length, or 64 for 32-update
-# segments (odd ends are pruned; at most 255 updates of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
-# and no look. An END (wall, operator, OOM) names a persisted boundary only.
+# at segment ends only. For a segment length L that divides 64, every state rolling retention keeps is a segment end,
+# so the chain keeps exactly what a plain chain of length L keeps, and its other ends are pruned by the same rule. For
+# a longer L (a multiple of 64) there is no such parity: the recent-window stride is L, and a 64-multiple a plain chain
+# keeps may be gone (at L = 128 and latest 128 a plain chain keeps state 64; the scratch chain reaped it). A boundary
+# in that window is rebuilt by a replay of at most L - 1 updates from the preceding segment end while that end is
+# still kept; once that end has left the window the replay starts from the last 4,096-ladder state (up to 4,095
+# updates; at L = 128 and latest 4,224, boundary 192 replays from 0). Either way the 4,096 ladder is exact, and a
+# restart reruns at most L updates; scratch chains take no pair (W5 selection) and no look. An END (wall, operator,
+# OOM) names a persisted boundary only.
 
 SCRATCH_BULK = ('episode-', 'ex1-')
 REAP_EVERY = 0.5
@@ -1648,7 +1702,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             return 0
         if reached_stop(man, a.ledger_source):  # a stop at a segment's last update, or a restart past it
             return end_at_stop(a, arm, root, cdir, man)
-        ok, why = guard_admit(root, cdir, a.chain)
+        ok, why, poll = guard_admit(root, cdir, a.chain)
         if not ok:
             if waiting is None:
                 waiting = time.time()
@@ -1656,7 +1710,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             if time.time() - waiting >= GUARD_WAIT:
                 log(root, chain=a.chain, event='no-room', reason=why)
                 return EXIT_ROOM
-            time.sleep(GUARD_POLL)
+            time.sleep(poll)
             continue
         waiting = None
         s, path, native = current_segment(arm, man, man_path, a.ledger_source)
@@ -2729,10 +2783,56 @@ def supervise(a):
             print(json.dumps(report, sort_keys=True), flush=True)
             if not a.loop:
                 return 0
-            time.sleep(a.loop)
+            if FAST_GUARD_WAITS:
+                supervise_wait(plan, root, a.loop)
+            else:
+                time.sleep(a.loop)
             plan = load_plan(a.plan)
     finally:
         unlock(held)
+
+
+def ceiling_near(root, ceilings):
+    """A chain of the verdict's ceilings that may still start segments (no END, no STOP) is at its ceiling or one
+    admission from it, so its driver soon waits for the next verdict; None if no chain is."""
+    for n, ceiling in sorted(ceilings.items()):
+        cdir = chain_dir(root, n)
+        if (cdir / 'END.json').exists() or stopped(root, cdir):
+            continue
+        try:
+            count = admitted(cdir)
+        except (OSError, ValueError):  # only decides an early wake: look again at the next poll
+            continue
+        if count >= ceiling - 1:
+            return n
+    return None
+
+
+def supervise_wait(plan, root, loop):
+    """FAST_GUARD_WAITS: the sleep between two `supervise --loop` cycles, at most `loop` seconds and at least
+    SUPERVISE_FLOOR (when `loop` allows), ended early once `ceiling_near` names a chain of the plan's fresh ok verdict
+    just written. Every cycle sets each ceiling to the chain's count plus GUARD_SEGMENTS, so a wake needs
+    GUARD_SEGMENTS - 1 admissions since the census; a refused verdict, or one that is or becomes stale, is slept out.
+    Returns the chain that woke it, or None."""
+    start = time.monotonic()
+    try:
+        verdict = read(Path(root) / 'GUARD.json')
+    except (OSError, ValueError):
+        verdict = {}
+    ours = verdict.get('ok') and verdict.get('plan') == plan['label']
+    ceilings = (verdict.get('ceilings') or {}) if ours else {}
+    fresh_until = verdict.get('unix', 0) + GUARD_MAX_AGE
+    time.sleep(min(loop, SUPERVISE_FLOOR))
+    while True:
+        left = loop - (time.monotonic() - start)
+        if left <= 0:
+            return None
+        if time.time() > fresh_until:  # stale from here on: no early wake
+            ceilings = {}
+        near = ceiling_near(root, ceilings)
+        if near is not None:
+            return near
+        time.sleep(min(SUPERVISE_WAKE_POLL, left))
 
 
 # ---------------------------------------------------------------- status, segcheck, fillers
@@ -3288,7 +3388,8 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     target = load_plan(plan_path)
     require(arm in target['arms'], f'the plan has no arm {arm}')
     slots = plan_slots(target)
-    counts = counts or [1, len(slots)]
+    if counts is None:
+        counts = [1, len(slots)] if len(slots) > 1 else [1]
     length = target['arms'][arm]['segment_updates']
     require(updates % length == 0 and updates >= 2 * length,
             f'N must be whole {arm} segments of {length} updates, at least two')
@@ -3340,7 +3441,10 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
 
 def throughput(a):
     require(sys.platform.startswith('linux'), 'the box throughput qualification runs the W5 launcher (Linux only)')
-    counts = [int(x) for x in a.counts.split(',')] if a.counts else None
+    try:
+        counts = [int(x) for x in a.counts.split(',')] if a.counts is not None else None
+    except ValueError:
+        raise Stop('phase box counts must be comma-separated integers') from None
     passed, record = throughput_run(a.plan, a.arm, a.label, a.updates, a.out, counts, a.max_wall_seconds,
                                     a.seed_root, keep_trees=a.keep_trees)
     print(json.dumps({'pass': passed, 'summary': record.get('summary'), 'why': record.get('why'),
@@ -3871,8 +3975,8 @@ def main(argv=None):
     p.add_argument('--seed-root', default=THROUGHPUT_SEED_ROOT)
     p.add_argument('--keep-trees', action='store_true')
     p = sub.add_parser('throughput-compare')
-    p.add_argument('--baseline', action='append', required=True)
-    p.add_argument('--candidate', action='append', required=True)
+    p.add_argument('--baseline', action='extend', nargs='+', required=True)
+    p.add_argument('--candidate', action='extend', nargs='+', required=True)
     p.add_argument('--out', required=True)
     p = sub.add_parser('stage0-exit')
     p.add_argument('--record', action='append', required=True)
