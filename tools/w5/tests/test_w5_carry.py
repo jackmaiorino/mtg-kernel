@@ -418,12 +418,13 @@ class CarryTests(unittest.TestCase):
     def test_the_copy_never_writes_through_an_old_name(self):
         _, old_man = self.old(2)
         seg1 = Path(json.loads(old_man.read_text())['segments'][1]['root'])
-        old_ck = next(seg1.glob('iterations/*/attempt-*/update/checkpoint.json'))
+        old_ck = next(seg1.glob('iterations/000003/attempt-*/update/checkpoint.json'))  # S itself: the matching hash
         before = old_ck.read_bytes()
         objects = self.t / 'cont-in' / 'objects'
         objects.mkdir(parents=True, exist_ok=True)
         digest = json.loads(next(seg1.glob('iterations/000003/complete.json')).read_text())['output_identity'][
             'checkpoint_sha256']
+        self.assertEqual(chains.sha(old_ck), digest)
         trap = objects / f'{digest}.json.tmp'
         final = objects / f'{digest}.json'
         try:
@@ -543,6 +544,19 @@ class CarryTests(unittest.TestCase):
         rec['from']['manifest']['path'] = (old_man.parent / 'sub' / '..' / 'chain.json').as_posix()
         with self.assertRaises(chains.Stop):
             chains.make_plan(self.cont_inputs(jwrite(self.t / 'carry-dots.json', rec), label='dt', root='dt'))
+
+
+    def test_a_paired_chain_is_not_carried(self):
+        _, old_man = self.old(2)
+        man = json.loads(old_man.read_text())
+        carry_path = self.carry(old_man, 8)  # the unpaired control carries
+        man['pair'] = 1
+        old_man.write_text(json.dumps(man))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(chains.main(['carry', '--manifest', str(old_man), '--boundary', '8', '--objects',
+                                          str(self.t / 'o'), '--out', str(self.t / 'cp.json')]), w5box.EXIT_REFUSED)
+        with self.assertRaises(chains.Stop):
+            chains.make_plan(self.cont_inputs(carry_path, label='pr', root='pr'))
 
 
 if __name__ == '__main__':

@@ -472,6 +472,7 @@ def make_carry(manifest_path, boundary, objects, out):
     man = read(manifest_path)
     require(man.get('schema') == 'w5-chain/v1' and man.get('arm') == 'C', 'not a C chain manifest')
     require(man.get('carry') is None, 'the chain is itself carried; carry from the chain it continues')
+    require(man.get('pair') is None, 'a paired chain is not carried (its pair finalization prunes its states)')
     old_root, old_scratch = old_trees(manifest_path)  # <root>/chains/<name>/chain.json, and its scratch root
     copy_dir, out_path = Path(objects).resolve(), Path(out).resolve()
     for tree in [old_root.resolve()] + ([old_scratch.resolve()] if old_scratch else []):
@@ -571,6 +572,7 @@ def old_trees(manifest_path):
             f'{man_path}: not a canonical <root>/chains/<chain>/chain.json path')
     man = read(man_path)  # an unreadable manifest refuses (raises) rather than dropping the protection
     require(man_path.parent.name == man.get('chain'), f'{man_path}: the manifest names chain {man.get("chain")}')
+    require(man.get('pair') is None, f'{man_path}: a paired chain is not carried (its pair finalization prunes its states)')
     require(isinstance(man.get('arm_file'), dict), f'{man_path}: no pinned arm file, so its scratch root is unknown')
     check_pin(man['arm_file'], f'the arm file of {man_path}')
     old_arm = read(man['arm_file']['path'])
@@ -2020,8 +2022,9 @@ def run(a):
     require(read_end(root, a.chain) is None, f'{a.chain} has ended')
     require(not oom_closed(root, a.chain), f'{a.chain} was OOM-killed: a chain failure (section 2.1)')
     require(not stopped(root, chain_dir(root, a.chain)), 'a STOP file is present')
-    why = carried_from_stopped(read(chain_dir(root, a.chain) / 'chain.json'))
-    require(why is None, f'{a.chain}: {why}')
+    if c.get('carry'):  # absent otherwise: an ordinary run reads nothing more than before
+        why = carried_from_stopped(read(chain_dir(root, a.chain) / 'chain.json'))
+        require(why is None, f'{a.chain}: {why}')
     for p in plan['pairs'].values():
         if p['X'] == a.chain and p['c_external']:
             require(read_end(root, p['C']) is not None, f'the partner {p["C"]} has not ended')
