@@ -1,0 +1,1906 @@
+{
+ "schema": "eternal_meta_snapshot/v1",
+ "source": "mtgtop8.com Pauper format page, Last 2 Weeks (865 decks), one representative list per archetype from its deck pages",
+ "captured": "2026-11-21",
+ "note": "Lists are kept exactly as captured: the Golgari / Jund Garden mainboard has 61 cards. Archetypes of tier top or second only; the share is the format page's percentage.",
+ "formats": {
+  "pauper": [
+   {
+    "archetype": "pauper-affinity",
+    "share": 11.0,
+    "mainboard": [
+     [
+      4,
+      "Drossforge Bridge"
+     ],
+     [
+      2,
+      "Great Furnace"
+     ],
+     [
+      4,
+      "Mistvault Bridge"
+     ],
+     [
+      1,
+      "Mountain"
+     ],
+     [
+      2,
+      "Seat of the Synod"
+     ],
+     [
+      2,
+      "Silverbluff Bridge"
+     ],
+     [
+      4,
+      "Vault of Whispers"
+     ],
+     [
+      3,
+      "Krark-Clan Shaman"
+     ],
+     [
+      4,
+      "Myr Enforcer"
+     ],
+     [
+      4,
+      "Refurbished Familiar"
+     ],
+     [
+      3,
+      "Utrom Monitor"
+     ],
+     [
+      4,
+      "Galvanic Blast"
+     ],
+     [
+      4,
+      "Reckoner's Bargain"
+     ],
+     [
+      4,
+      "Thoughtcast"
+     ],
+     [
+      2,
+      "Toxin Analysis"
+     ],
+     [
+      3,
+      "Black Mage's Rod"
+     ],
+     [
+      2,
+      "Blood Fountain"
+     ],
+     [
+      4,
+      "Ichor Wellspring"
+     ],
+     [
+      1,
+      "Makeshift Munitions"
+     ],
+     [
+      2,
+      "Nihil Spellbomb"
+     ],
+     [
+      1,
+      "Sewer-veillance Cam"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Blue Elemental Blast"
+     ],
+     [
+      2,
+      "Extract a Confession"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ],
+     [
+      1,
+      "Krark-Clan Shaman"
+     ],
+     [
+      4,
+      "Pyroblast"
+     ],
+     [
+      1,
+      "Red Elemental Blast"
+     ],
+     [
+      1,
+      "Unexpected Fangs"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914551&f=PAU"
+   },
+   {
+    "archetype": "pauper-burn",
+    "share": 10.0,
+    "mainboard": [
+     [
+      19,
+      "Mountain"
+     ],
+     [
+      4,
+      "Guttersnipe"
+     ],
+     [
+      2,
+      "Kessig Flamebreather"
+     ],
+     [
+      4,
+      "Sneaky Snacker"
+     ],
+     [
+      4,
+      "Voldaren Epicure"
+     ],
+     [
+      3,
+      "Faithless Looting"
+     ],
+     [
+      4,
+      "Fiery Temper"
+     ],
+     [
+      4,
+      "Fireblast"
+     ],
+     [
+      4,
+      "Grab the Prize"
+     ],
+     [
+      4,
+      "Highway Robbery"
+     ],
+     [
+      4,
+      "Lava Dart"
+     ],
+     [
+      4,
+      "Lightning Bolt"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Cast into the Fire"
+     ],
+     [
+      1,
+      "Gorilla Shaman"
+     ],
+     [
+      4,
+      "Pyroblast"
+     ],
+     [
+      1,
+      "Red Elemental Blast"
+     ],
+     [
+      3,
+      "Relic of Progenitus"
+     ],
+     [
+      3,
+      "Smash to Smithereens"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914561&f=PAU"
+   },
+   {
+    "archetype": "pauper-dimir-control",
+    "share": 10.0,
+    "mainboard": [
+     [
+      1,
+      "Bojuka Bog"
+     ],
+     [
+      4,
+      "Contaminated Aquifer"
+     ],
+     [
+      1,
+      "Dimir Aqueduct"
+     ],
+     [
+      10,
+      "Island"
+     ],
+     [
+      1,
+      "Seething Landscape"
+     ],
+     [
+      1,
+      "Swamp"
+     ],
+     [
+      2,
+      "Augur of Bolas"
+     ],
+     [
+      4,
+      "Baleful Strix"
+     ],
+     [
+      3,
+      "Faerie Seer"
+     ],
+     [
+      4,
+      "Ninja of the Deep Hours"
+     ],
+     [
+      4,
+      "Spellstutter Sprite"
+     ],
+     [
+      2,
+      "Thorn of the Black Rose"
+     ],
+     [
+      1,
+      "Arms of Hadar"
+     ],
+     [
+      3,
+      "Brainstorm"
+     ],
+     [
+      3,
+      "Cast Down"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      1,
+      "Dispel"
+     ],
+     [
+      1,
+      "Extract a Confession"
+     ],
+     [
+      4,
+      "Lorien Revealed"
+     ],
+     [
+      2,
+      "Plunder the Trollshaws"
+     ],
+     [
+      4,
+      "Snuff Out"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Annul"
+     ],
+     [
+      1,
+      "Arms of Hadar"
+     ],
+     [
+      2,
+      "Blue Elemental Blast"
+     ],
+     [
+      1,
+      "Campfire"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ],
+     [
+      1,
+      "Murmuring Mystic"
+     ],
+     [
+      2,
+      "Relic of Progenitus"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914555&f=PAU"
+   },
+   {
+    "archetype": "pauper-balustrade-spy",
+    "share": 8.0,
+    "mainboard": [
+     [
+      3,
+      "Forest"
+     ],
+     [
+      1,
+      "Swamp"
+     ],
+     [
+      4,
+      "Balustrade Spy"
+     ],
+     [
+      3,
+      "Gatecreeper Vine"
+     ],
+     [
+      4,
+      "Generous Ent"
+     ],
+     [
+      2,
+      "Jaspera Sentinel"
+     ],
+     [
+      2,
+      "Lotleth Giant"
+     ],
+     [
+      3,
+      "Masked Vandal"
+     ],
+     [
+      3,
+      "Mesmeric Fiend"
+     ],
+     [
+      2,
+      "Nyxborn Hydra"
+     ],
+     [
+      4,
+      "Overgrown Battlement"
+     ],
+     [
+      2,
+      "Quirion Ranger"
+     ],
+     [
+      4,
+      "Sagu Wildling"
+     ],
+     [
+      4,
+      "Saruli Caretaker"
+     ],
+     [
+      4,
+      "Wall of Roots"
+     ],
+     [
+      2,
+      "Dread Return"
+     ],
+     [
+      4,
+      "Land Grant"
+     ],
+     [
+      4,
+      "Lead the Stampede"
+     ],
+     [
+      4,
+      "Winding Way"
+     ],
+     [
+      1,
+      "Lotus Petal"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Avenging Hunter"
+     ],
+     [
+      1,
+      "Dread Return"
+     ],
+     [
+      2,
+      "Faerie Macabre"
+     ],
+     [
+      1,
+      "Flaring Pain"
+     ],
+     [
+      2,
+      "Healer of the Glade"
+     ],
+     [
+      1,
+      "Lotleth Giant"
+     ],
+     [
+      1,
+      "Masked Vandal"
+     ],
+     [
+      1,
+      "Mesmeric Fiend"
+     ],
+     [
+      2,
+      "Nylea's Disciple"
+     ],
+     [
+      2,
+      "Vandalblast"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94066&d=914195&f=PAU"
+   },
+   {
+    "archetype": "pauper-boros-aggro",
+    "share": 5.0,
+    "mainboard": [
+     [
+      2,
+      "Ancient Den"
+     ],
+     [
+      2,
+      "Boros Garrison"
+     ],
+     [
+      2,
+      "Great Furnace"
+     ],
+     [
+      2,
+      "Kabira Crossroads"
+     ],
+     [
+      1,
+      "Mortuary Mire"
+     ],
+     [
+      4,
+      "Mountain"
+     ],
+     [
+      3,
+      "Plains"
+     ],
+     [
+      1,
+      "Radiant Fountain"
+     ],
+     [
+      3,
+      "Wind-Scarred Crag"
+     ],
+     [
+      4,
+      "Glint Hawk"
+     ],
+     [
+      4,
+      "Kor Skyfisher"
+     ],
+     [
+      4,
+      "Sneaky Snacker"
+     ],
+     [
+      3,
+      "Thraben Inspector"
+     ],
+     [
+      2,
+      "Dispatch"
+     ],
+     [
+      4,
+      "Galvanic Blast"
+     ],
+     [
+      4,
+      "Lightning Bolt"
+     ],
+     [
+      4,
+      "Pursue the Past"
+     ],
+     [
+      1,
+      "Journey to Nowhere"
+     ],
+     [
+      4,
+      "Lembas"
+     ],
+     [
+      4,
+      "Melded Moxite"
+     ],
+     [
+      2,
+      "Relic of Progenitus"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Goliath Paladin"
+     ],
+     [
+      2,
+      "Kor Sanctifiers"
+     ],
+     [
+      1,
+      "Pyroblast"
+     ],
+     [
+      4,
+      "Red Elemental Blast"
+     ],
+     [
+      1,
+      "Relic of Progenitus"
+     ],
+     [
+      3,
+      "Return to Dust"
+     ],
+     [
+      2,
+      "Vulshok Sorcerer"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914554&f=PAU"
+   },
+   {
+    "archetype": "pauper-urzatron",
+    "share": 5.0,
+    "mainboard": [
+     [
+      1,
+      "Bojuka Bog"
+     ],
+     [
+      2,
+      "Conduit Pylons"
+     ],
+     [
+      2,
+      "Forest"
+     ],
+     [
+      4,
+      "Urza's Mine"
+     ],
+     [
+      4,
+      "Urza's Power Plant"
+     ],
+     [
+      4,
+      "Urza's Tower"
+     ],
+     [
+      1,
+      "Wooded Ridgeline"
+     ],
+     [
+      4,
+      "Bramble Wurm"
+     ],
+     [
+      2,
+      "Generous Ent"
+     ],
+     [
+      3,
+      "Nyxborn Hydra"
+     ],
+     [
+      4,
+      "Writhing Chrysalis"
+     ],
+     [
+      2,
+      "Crop Rotation"
+     ],
+     [
+      4,
+      "Malevolent Rumble"
+     ],
+     [
+      3,
+      "Plunder the Trollshaws"
+     ],
+     [
+      2,
+      "Pulse of Murasa"
+     ],
+     [
+      4,
+      "Barrels of Blasting Jelly"
+     ],
+     [
+      4,
+      "Bonder's Ornament"
+     ],
+     [
+      4,
+      "Expedition Map"
+     ],
+     [
+      4,
+      "Giant's Boulder"
+     ],
+     [
+      2,
+      "Soul-Guide Lantern"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Blue Elemental Blast"
+     ],
+     [
+      4,
+      "Breath Weapon"
+     ],
+     [
+      2,
+      "Coalition Honor Guard"
+     ],
+     [
+      2,
+      "Faerie Macabre"
+     ],
+     [
+      1,
+      "Kaervek's Torch"
+     ],
+     [
+      2,
+      "Vandalblast"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94125&d=914564&f=PAU"
+   },
+   {
+    "archetype": "pauper-aura-aggro",
+    "share": 4.0,
+    "mainboard": [
+     [
+      2,
+      "Ash Barrens"
+     ],
+     [
+      12,
+      "Forest"
+     ],
+     [
+      3,
+      "Plains"
+     ],
+     [
+      4,
+      "Gladecover Scout"
+     ],
+     [
+      3,
+      "Silhana Ledgewalker"
+     ],
+     [
+      4,
+      "Slippery Bogle"
+     ],
+     [
+      1,
+      "Kruphix's Insight"
+     ],
+     [
+      4,
+      "Malevolent Rumble"
+     ],
+     [
+      4,
+      "Abundant Growth"
+     ],
+     [
+      4,
+      "Ancestral Mask"
+     ],
+     [
+      4,
+      "Armadillo Cloak"
+     ],
+     [
+      1,
+      "Cartouche of Solidarity"
+     ],
+     [
+      4,
+      "Ethereal Armor"
+     ],
+     [
+      1,
+      "Lifelink"
+     ],
+     [
+      4,
+      "Rancor"
+     ],
+     [
+      1,
+      "Sentinel's Eyes"
+     ],
+     [
+      4,
+      "Utopia Sprawl"
+     ]
+    ],
+    "sideboard": [
+     [
+      2,
+      "Flaring Pain"
+     ],
+     [
+      3,
+      "Mask of Law and Grace"
+     ],
+     [
+      2,
+      "Ram Through"
+     ],
+     [
+      3,
+      "Scattershot Archer"
+     ],
+     [
+      3,
+      "Spirit Link"
+     ],
+     [
+      2,
+      "Standard Bearer"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914559&f=PAU"
+   },
+   {
+    "archetype": "pauper-red-deck-wins",
+    "share": 4.0,
+    "mainboard": [
+     [
+      4,
+      "Great Furnace"
+     ],
+     [
+      14,
+      "Mountain"
+     ],
+     [
+      4,
+      "Burning-Tree Emissary"
+     ],
+     [
+      4,
+      "Clockwork Percussionist"
+     ],
+     [
+      4,
+      "Goblin Bushwhacker"
+     ],
+     [
+      4,
+      "Goblin Tomb Raider"
+     ],
+     [
+      4,
+      "K'un-Lun Warrior"
+     ],
+     [
+      4,
+      "Voldaren Epicure"
+     ],
+     [
+      3,
+      "Boarding Action"
+     ],
+     [
+      4,
+      "Galvanic Blast"
+     ],
+     [
+      4,
+      "Lightning Bolt"
+     ],
+     [
+      4,
+      "Rally at the Hornburg"
+     ],
+     [
+      3,
+      "Experimental Synthesizer"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Cast into the Fire"
+     ],
+     [
+      3,
+      "End the Festivities"
+     ],
+     [
+      4,
+      "Pyroblast"
+     ],
+     [
+      4,
+      "Tormod's Crypt"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=93887&d=912962&f=PAU"
+   },
+   {
+    "archetype": "pauper-elves",
+    "share": 4.0,
+    "mainboard": [
+     [
+      12,
+      "Forest"
+     ],
+     [
+      1,
+      "Gingerbread Cabin"
+     ],
+     [
+      4,
+      "Avenging Hunter"
+     ],
+     [
+      4,
+      "Elvish Mystic"
+     ],
+     [
+      4,
+      "Fyndhorn Elves"
+     ],
+     [
+      4,
+      "Generous Ent"
+     ],
+     [
+      1,
+      "Llanowar Elves"
+     ],
+     [
+      4,
+      "Masked Vandal"
+     ],
+     [
+      4,
+      "Nyxborn Hydra"
+     ],
+     [
+      4,
+      "Priest of Titania"
+     ],
+     [
+      4,
+      "Quirion Ranger"
+     ],
+     [
+      2,
+      "Sagu Wildling"
+     ],
+     [
+      4,
+      "Timberwatch Elf"
+     ],
+     [
+      4,
+      "Lead the Stampede"
+     ],
+     [
+      4,
+      "Winding Way"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Faerie Macabre"
+     ],
+     [
+      4,
+      "Monstrous Emergence"
+     ],
+     [
+      2,
+      "Primordial Pachyderm"
+     ],
+     [
+      2,
+      "Ram Through"
+     ],
+     [
+      2,
+      "Scattershot Archer"
+     ],
+     [
+      2,
+      "Spinewoods Paladin"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914557&f=PAU"
+   },
+   {
+    "archetype": "pauper-golgari-jund-garden",
+    "share": 4.0,
+    "mainboard": [
+     [
+      3,
+      "Desert"
+     ],
+     [
+      4,
+      "Khalni Garden"
+     ],
+     [
+      1,
+      "Snow-Covered Forest"
+     ],
+     [
+      11,
+      "Swamp"
+     ],
+     [
+      4,
+      "Crypt Rats"
+     ],
+     [
+      4,
+      "Cast Down"
+     ],
+     [
+      4,
+      "Defile"
+     ],
+     [
+      4,
+      "Eviscerator's Insight"
+     ],
+     [
+      4,
+      "Fanatical Offering"
+     ],
+     [
+      2,
+      "Reckoner's Bargain"
+     ],
+     [
+      2,
+      "Toxin Analysis"
+     ],
+     [
+      3,
+      "Campfire"
+     ],
+     [
+      4,
+      "Ichor Wellspring"
+     ],
+     [
+      2,
+      "Lembas"
+     ],
+     [
+      2,
+      "Mycosynth Wellspring"
+     ],
+     [
+      4,
+      "Nihil Spellbomb"
+     ],
+     [
+      3,
+      "Tithing Blade"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Duress"
+     ],
+     [
+      2,
+      "Faerie Macabre"
+     ],
+     [
+      3,
+      "Rancid Earth"
+     ],
+     [
+      3,
+      "Troublemaker Ouphe"
+     ],
+     [
+      4,
+      "Weather the Storm"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94011&d=913871&f=PAU"
+   },
+   {
+    "archetype": "pauper-rg-ruby-storm",
+    "share": 4.0,
+    "mainboard": [
+     [
+      4,
+      "Geothermal Crevice"
+     ],
+     [
+      4,
+      "Hickory Woodlot"
+     ],
+     [
+      5,
+      "Mountain"
+     ],
+     [
+      4,
+      "Sandstone Needle"
+     ],
+     [
+      4,
+      "Goblin Anarchomancer"
+     ],
+     [
+      4,
+      "Thornscape Familiar"
+     ],
+     [
+      2,
+      "Big Score"
+     ],
+     [
+      3,
+      "Crossover Collaboration"
+     ],
+     [
+      4,
+      "Desperate Ritual"
+     ],
+     [
+      2,
+      "First Day of Class"
+     ],
+     [
+      4,
+      "Glimpse the Impossible"
+     ],
+     [
+      4,
+      "Manamorphose"
+     ],
+     [
+      2,
+      "Reckless Impulse"
+     ],
+     [
+      4,
+      "Seething Song"
+     ],
+     [
+      2,
+      "Seize the Storm"
+     ],
+     [
+      4,
+      "Twinned Vision"
+     ],
+     [
+      3,
+      "Wrenn's Resolve"
+     ],
+     [
+      1,
+      "Bitter Reunion"
+     ]
+    ],
+    "sideboard": [
+     [
+      1,
+      "Abandon Attachments"
+     ],
+     [
+      1,
+      "Flaring Pain"
+     ],
+     [
+      1,
+      "Fling"
+     ],
+     [
+      2,
+      "Gruul Turf"
+     ],
+     [
+      1,
+      "Origin of Metalbending"
+     ],
+     [
+      4,
+      "Pyroblast"
+     ],
+     [
+      2,
+      "Red Elemental Blast"
+     ],
+     [
+      1,
+      "Scattershot"
+     ],
+     [
+      2,
+      "Weather the Storm"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94125&d=914570&f=PAU"
+   },
+   {
+    "archetype": "pauper-gruul-aggro",
+    "share": 3.0,
+    "mainboard": [
+     [
+      13,
+      "Forest"
+     ],
+     [
+      2,
+      "Mountain"
+     ],
+     [
+      1,
+      "Wooded Ridgeline"
+     ],
+     [
+      4,
+      "Annoyed Altisaur"
+     ],
+     [
+      4,
+      "Arbor Elf"
+     ],
+     [
+      4,
+      "Avenging Hunter"
+     ],
+     [
+      4,
+      "Boarding Party"
+     ],
+     [
+      4,
+      "Eldrazi Repurposer"
+     ],
+     [
+      4,
+      "Jewel Thief"
+     ],
+     [
+      2,
+      "Nyxborn Hydra"
+     ],
+     [
+      4,
+      "Writhing Chrysalis"
+     ],
+     [
+      3,
+      "Malevolent Rumble"
+     ],
+     [
+      3,
+      "Ram Through"
+     ],
+     [
+      4,
+      "Utopia Sprawl"
+     ],
+     [
+      4,
+      "Wild Growth"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Deglamer"
+     ],
+     [
+      2,
+      "Fiery Cannonade"
+     ],
+     [
+      2,
+      "Red Elemental Blast"
+     ],
+     [
+      3,
+      "Relic of Progenitus"
+     ],
+     [
+      4,
+      "Weather the Storm"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94096&d=914398&f=PAU"
+   },
+   {
+    "archetype": "pauper-mono-blue-aggro",
+    "share": 3.0,
+    "mainboard": [
+     [
+      16,
+      "Island"
+     ],
+     [
+      4,
+      "Cryptic Serpent"
+     ],
+     [
+      4,
+      "Delver of Secrets"
+     ],
+     [
+      4,
+      "Tolarian Terror"
+     ],
+     [
+      4,
+      "Brainstorm"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      1,
+      "Deep Analysis"
+     ],
+     [
+      3,
+      "Dispel"
+     ],
+     [
+      4,
+      "Lorien Revealed"
+     ],
+     [
+      4,
+      "Mental Note"
+     ],
+     [
+      1,
+      "Plunder the Trollshaws"
+     ],
+     [
+      3,
+      "Ponder"
+     ],
+     [
+      2,
+      "Sleep of the Dead"
+     ],
+     [
+      2,
+      "Spell Pierce"
+     ],
+     [
+      4,
+      "Thought Scour"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Annul"
+     ],
+     [
+      4,
+      "Blue Elemental Blast"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ],
+     [
+      2,
+      "Murmuring Mystic"
+     ],
+     [
+      1,
+      "Steel Sabotage"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94000&d=913755&f=PAU"
+   },
+   {
+    "archetype": "pauper-weenie-white",
+    "share": 3.0,
+    "mainboard": [
+     [
+      2,
+      "Idyllic Grange"
+     ],
+     [
+      17,
+      "Plains"
+     ],
+     [
+      1,
+      "Elite Interceptor"
+     ],
+     [
+      4,
+      "Kor Skyfisher"
+     ],
+     [
+      3,
+      "Leonardo, Big Brother"
+     ],
+     [
+      4,
+      "Lunarch Veteran"
+     ],
+     [
+      3,
+      "Militia Bugler"
+     ],
+     [
+      4,
+      "Novice Inspector"
+     ],
+     [
+      4,
+      "Raffine's Informant"
+     ],
+     [
+      4,
+      "Thraben Inspector"
+     ],
+     [
+      4,
+      "Battle Screech"
+     ],
+     [
+      2,
+      "Guardians' Pledge"
+     ],
+     [
+      3,
+      "Prismatic Strands"
+     ],
+     [
+      4,
+      "Thraben Charm"
+     ],
+     [
+      1,
+      "Journey to Nowhere"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Dust to Dust"
+     ],
+     [
+      1,
+      "Hallow"
+     ],
+     [
+      2,
+      "Holy Light"
+     ],
+     [
+      3,
+      "Journey to Nowhere"
+     ],
+     [
+      4,
+      "Martyr of Sands"
+     ],
+     [
+      1,
+      "Palace Sentinels"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94011&d=913879&f=PAU"
+   },
+   {
+    "archetype": "pauper-ephemerate",
+    "share": 3.0,
+    "mainboard": [
+     [
+      2,
+      "Ash Barrens"
+     ],
+     [
+      4,
+      "Azorius Chancery"
+     ],
+     [
+      10,
+      "Island"
+     ],
+     [
+      1,
+      "Mortuary Mire"
+     ],
+     [
+      1,
+      "Perilous Landscape"
+     ],
+     [
+      2,
+      "Plains"
+     ],
+     [
+      3,
+      "Archaeomancer"
+     ],
+     [
+      4,
+      "God-Pharaoh's Faithful"
+     ],
+     [
+      2,
+      "Mob Lookout"
+     ],
+     [
+      4,
+      "Mulldrifter"
+     ],
+     [
+      1,
+      "Murmuring Mystic"
+     ],
+     [
+      4,
+      "Sunscape Familiar"
+     ],
+     [
+      3,
+      "Deep Analysis"
+     ],
+     [
+      2,
+      "Ephemerate"
+     ],
+     [
+      1,
+      "Ghostly Flicker"
+     ],
+     [
+      1,
+      "Plunder the Trollshaws"
+     ],
+     [
+      4,
+      "Preordain"
+     ],
+     [
+      2,
+      "Prismatic Strands"
+     ],
+     [
+      2,
+      "Prohibit"
+     ],
+     [
+      4,
+      "Snap"
+     ],
+     [
+      3,
+      "The Modern Age"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Dust to Dust"
+     ],
+     [
+      1,
+      "Exclude"
+     ],
+     [
+      1,
+      "Glorious Gale"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ],
+     [
+      1,
+      "Murmuring Mystic"
+     ],
+     [
+      2,
+      "Negate"
+     ],
+     [
+      1,
+      "Stonehorn Dignitary"
+     ],
+     [
+      1,
+      "Thraben Charm"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94000&d=913753&f=PAU"
+   },
+   {
+    "archetype": "pauper-mono-blue-terror",
+    "share": 3.0,
+    "mainboard": [
+     [
+      14,
+      "Island"
+     ],
+     [
+      4,
+      "Cryptic Serpent"
+     ],
+     [
+      4,
+      "Tolarian Terror"
+     ],
+     [
+      2,
+      "Artful Dodge"
+     ],
+     [
+      4,
+      "Brainstorm"
+     ],
+     [
+      4,
+      "Counterspell"
+     ],
+     [
+      2,
+      "Deem Inferior"
+     ],
+     [
+      1,
+      "Deprive"
+     ],
+     [
+      3,
+      "Dispel"
+     ],
+     [
+      4,
+      "Lorien Revealed"
+     ],
+     [
+      4,
+      "Mental Note"
+     ],
+     [
+      4,
+      "Ponder"
+     ],
+     [
+      4,
+      "Preordain"
+     ],
+     [
+      2,
+      "Sleep of the Dead"
+     ],
+     [
+      4,
+      "Thought Scour"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Annul"
+     ],
+     [
+      4,
+      "Blue Elemental Blast"
+     ],
+     [
+      3,
+      "Gut Shot"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914560&f=PAU"
+   },
+   {
+    "archetype": "pauper-turbo-fog",
+    "share": 2.0,
+    "mainboard": [
+     [
+      1,
+      "Bojuka Bog"
+     ],
+     [
+      2,
+      "Desert"
+     ],
+     [
+      2,
+      "Forest"
+     ],
+     [
+      1,
+      "Ice Tunnel"
+     ],
+     [
+      4,
+      "Island"
+     ],
+     [
+      4,
+      "Simic Growth Chamber"
+     ],
+     [
+      2,
+      "Tangled Islet"
+     ],
+     [
+      4,
+      "Thornwood Falls"
+     ],
+     [
+      4,
+      "Arcane Denial"
+     ],
+     [
+      4,
+      "Behold the Multiverse"
+     ],
+     [
+      2,
+      "Embrace the Paradox"
+     ],
+     [
+      3,
+      "Fog"
+     ],
+     [
+      4,
+      "Growth Spiral"
+     ],
+     [
+      1,
+      "Keep Watch"
+     ],
+     [
+      4,
+      "Lorien Revealed"
+     ],
+     [
+      2,
+      "Memory Leak"
+     ],
+     [
+      4,
+      "Moment's Peace"
+     ],
+     [
+      4,
+      "Plunder the Trollshaws"
+     ],
+     [
+      2,
+      "Stream of Thought"
+     ],
+     [
+      2,
+      "Tangle"
+     ],
+     [
+      4,
+      "Weather the Storm"
+     ]
+    ],
+    "sideboard": [
+     [
+      4,
+      "Blue Elemental Blast"
+     ],
+     [
+      1,
+      "Bojuka Bog"
+     ],
+     [
+      1,
+      "Desert"
+     ],
+     [
+      2,
+      "Faerie Macabre"
+     ],
+     [
+      1,
+      "Gigadrowse"
+     ],
+     [
+      4,
+      "Hydroblast"
+     ],
+     [
+      2,
+      "Murmuring Mystic"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914553&f=PAU"
+   },
+   {
+    "archetype": "pauper-tireless-tribe",
+    "share": 0.9,
+    "mainboard": [
+     [
+      2,
+      "Boros Garrison"
+     ],
+     [
+      4,
+      "Escape Tunnel"
+     ],
+     [
+      5,
+      "Mountain"
+     ],
+     [
+      5,
+      "Plains"
+     ],
+     [
+      4,
+      "Wind-Scarred Crag"
+     ],
+     [
+      4,
+      "Aurora Eidolon"
+     ],
+     [
+      1,
+      "Sandstorm Eidolon"
+     ],
+     [
+      4,
+      "Spirit Mascot"
+     ],
+     [
+      4,
+      "Squadron Hawk"
+     ],
+     [
+      4,
+      "Tireless Tribe"
+     ],
+     [
+      4,
+      "Battle Screech"
+     ],
+     [
+      1,
+      "Fling"
+     ],
+     [
+      4,
+      "Inside Out"
+     ],
+     [
+      2,
+      "Lightning Bolt"
+     ],
+     [
+      2,
+      "Prismatic Strands"
+     ],
+     [
+      4,
+      "Pursue the Past"
+     ],
+     [
+      2,
+      "Rites of Initiation"
+     ],
+     [
+      4,
+      "Thrilling Discovery"
+     ]
+    ],
+    "sideboard": [
+     [
+      3,
+      "Breath Weapon"
+     ],
+     [
+      2,
+      "Obsidian Acolyte"
+     ],
+     [
+      2,
+      "Prismatic Strands"
+     ],
+     [
+      3,
+      "Red Elemental Blast"
+     ],
+     [
+      2,
+      "Shenanigans"
+     ],
+     [
+      3,
+      "Thraben Charm"
+     ]
+    ],
+    "companion": null,
+    "source_deck": "https://www.mtgtop8.com/event?e=94124&d=914562&f=PAU"
+   }
+  ]
+ }
+}

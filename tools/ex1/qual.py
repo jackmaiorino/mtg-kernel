@@ -333,6 +333,11 @@ def keep_offset_value(keep_offset, u):
 
 
 PASS_OFFSET_MAX = 1.0e6  # the trainer's priority_pass_offset_v1::MAX_PASS_OFFSET_V1
+# The pinned destination pair in data/flat_policy_v3/feature_identity.rs, also used by the native loader.
+FLAT_V3_TRANSFER = {
+    "expected_feature_contract_digest": "9319fbd41e6b42ec90d565c13f3b4f75a3898dafe3816387453c08419ba9cc68",
+    "expected_feature_encoding_digest": "c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b",
+}
 ACTION_WINDOW_RULES = ("action-windows-v1", "action-windows-end-step-v1")  # the trainer's action-window seat rules
 WINDOW_RULES = ("harness-v2",) + ACTION_WINDOW_RULES
 
@@ -395,6 +400,19 @@ def check_windows_base(base):
             raise ValueError(f"pass_offset trains only on the plain CPU GAE update: the base's {key} is refused")
 
 
+def check_pass_offset_source(pass_offset, source, update):
+    """Reject active offsets when source metadata establishes an unsupported learner.
+
+    Generation preflight uses the declared transfer. The native collector checks the loaded policy.
+    """
+    if pass_offset is None or update >= pass_offset["end_update"]:
+        return
+    if source.get("s_learner") is not None:
+        raise ValueError("priority pass offset is unsupported by the S learner")
+    if source.get("feature_transfer") == FLAT_V3_TRANSFER:
+        raise ValueError("priority pass offset is unsupported by FlatV3: it requires a V4-generation policy")
+
+
 def pass_offset_value(pass_offset, u):
     """The `priority_pass_offset` an episode with `priority_windows` carries at fork update `u`, or None from
     `end_update` on (no field at all): float32(float64(b0) * (T - u) / T), computed as `keep_offset_value` computes a
@@ -450,6 +468,7 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
         if coefficient is not None:
             raise ValueError("pass_offset is refused with an EX1 coefficient (the trainer refuses the offset with ex1)")
     source = dose["source"]
+    check_pass_offset_source(pass_offset, source, offset)
     # An S source starting from its initial train state (W5's XS parent, S0) has no checkpoint; its pin is
     # `s_learner.initial` (s_learner_v1.rs). A fresh net-8 start (a dose record that says `"fresh": true`, e.g. a
     # G(i) fresh-init lineage) has no checkpoint either: the trainer builds the model from the play import's

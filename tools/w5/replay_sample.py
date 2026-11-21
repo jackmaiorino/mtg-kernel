@@ -244,11 +244,19 @@ def sync_entry(root, out):
         sync_ancestors(d, staging_dir(root).parent)
 
 
+def since(records, update):
+    """The records whose update is at or past `update`, in order. A view of a supervisor's index cache
+    (`retention.IndexView`) selects them from its compact fields without parsing the others."""
+    where = getattr(records, 'where', None)
+    todo = where('update', lambda u: u >= update) if where is not None else None
+    return todo if todo is not None else [r for r in records if r['update'] >= update]
+
+
 def stage(root, arm, chain, seed_root, chain_doc, records, api=None):
     """Stages every selected update past the chain's watermark (records are completed updates, in order). Returns
     the counts for the cycle report."""
     prog = progress(root, arm, chain)
-    todo = [r for r in records if r['update'] >= prog['next_update']]
+    todo = since(records, prog['next_update'])
     if not todo:
         return {'staged': 0, 'missing': 0, 'next_update': prog['next_update']}
     staged = missing = 0
@@ -276,8 +284,8 @@ def protected(root, arm, chain, seed_root, chain_doc, records):
     retention keeps them."""
     nxt = progress(root, arm, chain)['next_update']
     out = set()
-    for rec in records:
-        if rec['update'] >= nxt and selected(selection_hash(seed_root, rec['update'])):
+    for rec in since(records, nxt):
+        if selected(selection_hash(seed_root, rec['update'])):
             files = update_files(chain_doc['segments'][rec['segment']]['root'], rec['iteration']) or []
             out |= {Path(p).as_posix() for _, p in files}
     return out
