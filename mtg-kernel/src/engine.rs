@@ -16828,6 +16828,7 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast kicker stage is malformed".to_string());
     }
 
+    let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
     match (
         def.optional_additional_cost,
         pending.optional_additional_cost_paid,
@@ -16889,13 +16890,28 @@ pub(crate) fn validate_pending_cast(
             ),
             Some(true),
         ) => {
-            let candidates = bargain_candidates(kind, pending.controller, state)?;
-            if pending.optional_additional_cost_selection_finished
-                || pending.optional_additional_cost_chosen.len() > 1
-                || !selected_bindings_are_unique_subset(
-                    &pending.optional_additional_cost_chosen,
-                    &candidates,
+            let chosen = &pending.optional_additional_cost_chosen;
+            let eligible = if let Some(costs) = compound.filter(|costs| costs.pays_optional()) {
+                let pick = pending
+                    .graveyard_cost_first_v1
+                    .and_then(|first| costs.optional_pick_index(first))
+                    .and_then(|index| pending.sacrifice_chosen.get(index));
+                match (pick, chosen.as_slice()) {
+                    (None, []) => true,
+                    (Some(id), [binding]) => {
+                        binding.object == *id && binding.expected_zone == Zone::Battlefield
+                    }
+                    _ => false,
+                }
+            } else {
+                selected_bindings_are_unique_subset(
+                    chosen,
+                    &bargain_candidates(kind, pending.controller, state)?,
                 )
+            };
+            if pending.optional_additional_cost_selection_finished
+                || chosen.len() > 1
+                || !eligible
                 || pending
                     .optional_additional_cost_chosen
                     .iter()
@@ -16954,11 +16970,7 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast advanced X before choosing its spell form".to_string());
     }
 
-    let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
     let interactive_object_cost_needed = if let Some(costs) = compound {
-        if costs.pays_optional() && !pending.optional_additional_cost_chosen.is_empty() {
-            return Err("compound sacrifice carries a second optional binding".into());
-        }
         if let Some(first) = pending.graveyard_cost_first_v1 {
             if compound_cast_cost_v1::Costs::waiting_for_x(pending, def)
                 || pending.cast_mode.is_none()
@@ -16991,7 +17003,8 @@ pub(crate) fn validate_pending_cast(
             || pending.mode_chosen.is_none()
             || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
             || pending.cast_mode.is_none()
-            || pending.sacrifice_chosen.len() != interactive_object_cost_needed)
+            || (!compound.is_some_and(|costs| costs.pays_optional())
+                && pending.sacrifice_chosen.len() != interactive_object_cost_needed))
     {
         return Err(
             "optional additional-cost objects were chosen before prior cast stages completed"
@@ -28187,7 +28200,16 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                     if !costs.can_finish(state, &pending, first, &picks) {
                         return Err("invalid compound payment object".into());
                     }
-                    state.engine.pending_cast.as_mut().unwrap().sacrifice_chosen = picks;
+                    let binding = (costs.optional_pick_index(first)
+                        == Some(pending.sacrifice_chosen.len()))
+                    .then(|| EffectObjectBinding {
+                        object: id,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: state.objects.get(id).zone_change_count,
+                    });
+                    let cast = state.engine.pending_cast.as_mut().unwrap();
+                    cast.sacrifice_chosen = picks;
+                    cast.optional_additional_cost_chosen.extend(binding);
                     return Ok(());
                 }
             }
@@ -31319,6 +31341,7 @@ fn finalize_owned_cast(
     // The complete local plan was prepared before any real discard or mana
     // payment. Capture provenance inputs before consuming it exactly once.
     let object_cost_chosen = payment.ordered_objects.clone();
+    let optional_cost_objects = payment.optional_objects.clone();
     let chosen_creature_cost = payment.chosen_creature;
     let was_kicked = pending.kicked == Some(true);
     let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
@@ -31426,12 +31449,7 @@ fn finalize_owned_cast(
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
-    paid_cost_objects.extend(
-        pending
-            .optional_additional_cost_chosen
-            .iter()
-            .map(|binding| binding.object),
-    );
+    paid_cost_objects.extend(optional_cost_objects);
     // Capture after sacrifice/discard zone changes have committed. These refs
     // describe the payment-time incarnation and visibility forever; later
     // reanimation, bounce, shuffle, or exile cannot rewrite stack provenance.

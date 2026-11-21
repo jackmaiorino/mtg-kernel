@@ -1774,7 +1774,7 @@ pub(super) struct PreparedSpellPaymentV1 {
     additional: PreparedSpellNonmanaV1,
     chosen_reveal: Option<ObjectId>,
     optional_kind: Option<super::OptionalAdditionalCostDef>,
-    optional_objects: Vec<ObjectId>,
+    pub(super) optional_objects: Vec<ObjectId>,
     pub(super) ordered_objects: Vec<ObjectId>,
     pub(super) chosen_creature: Option<super::PaidCostRefV4>,
     pub(super) storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
@@ -2025,6 +2025,7 @@ pub(super) fn prepare_final_spell_payment_v1(
     let optional_objects = pending
         .optional_additional_cost_chosen
         .iter()
+        .filter(|_| optional_kind.is_some())
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
     let optional_graveyard = if matches!(

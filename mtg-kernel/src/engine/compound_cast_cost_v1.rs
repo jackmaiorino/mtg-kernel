@@ -119,6 +119,16 @@ impl Costs {
         matches!(self.printed, Group::OptionalSacrifice(_))
     }
 
+    pub(super) fn optional_pick_index(self, route_first: bool) -> Option<usize> {
+        self.pays_optional().then(|| {
+            if route_first {
+                usize::from(count(self.route))
+            } else {
+                0
+            }
+        })
+    }
+
     pub(super) fn pending(
         state: &GameState,
         pending: &PendingCast,
@@ -281,7 +291,21 @@ impl Costs {
                 // A land discarded to retrace can subsequently pay a printed exile.
                 // Other route payments cannot supply a printed discard or permanent.
                 let discard_can_supply_exile = printed_exiles && !route_exiles && route_first;
+                // Exiling cards can change a creature's effective power for casualty.
+                let eligibility_after_escape = route_first
+                    && matches!(
+                        self.printed,
+                        Group::OptionalSacrifice(OptionalAdditionalCostDef::Casualty(_))
+                    )
+                    && projected.players[player.index()]
+                        .battlefield
+                        .iter()
+                        .any(|id| {
+                            printed_picks.first().is_none_or(|selected| selected == id)
+                                && object_has_type(projected, *id, CardType::Creature)
+                        });
                 if !discard_can_supply_exile
+                    && !eligibility_after_escape
                     && (candidates.len() < usize::from(self.printed.count())
                         || printed_picks.iter().any(|id| !candidates.contains(id)))
                 {
