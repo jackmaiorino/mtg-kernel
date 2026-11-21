@@ -1128,11 +1128,13 @@ def current_segment(arm, man, man_path, ledger_source):
 # persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively). Full states are kept
 # at segment ends only. For a segment length L that divides 64, every state rolling retention keeps is a segment end,
 # so the chain keeps exactly what a plain chain of length L keeps, and its other ends are pruned by the same rule. For
-# a longer L (a multiple of 64) there is no such parity: the recent-window stride is L, so a replay of at most L - 1
-# updates rebuilds a boundary in that window, and a 64-multiple a plain chain keeps may be gone (at L = 128 and latest
-# 128 a plain chain keeps state 64; the scratch chain reaped it). Either way the 4,096 ladder is exact, and a restart
-# reruns at most L updates; scratch chains take no pair (W5 selection) and no look. An END (wall, operator, OOM) names
-# a persisted boundary only.
+# a longer L (a multiple of 64) there is no such parity: the recent-window stride is L, and a 64-multiple a plain chain
+# keeps may be gone (at L = 128 and latest 128 a plain chain keeps state 64; the scratch chain reaped it). A boundary
+# in that window is rebuilt by a replay of at most L - 1 updates from the preceding segment end while that end is
+# still kept; once that end has left the window the replay starts from the last 4,096-ladder state (up to 4,095
+# updates; at L = 128 and latest 4,224, boundary 192 replays from 0). Either way the 4,096 ladder is exact, and a
+# restart reruns at most L updates; scratch chains take no pair (W5 selection) and no look. An END (wall, operator,
+# OOM) names a persisted boundary only.
 
 SCRATCH_BULK = ('episode-', 'ex1-')
 REAP_EVERY = 0.5
