@@ -151,10 +151,10 @@ def load_chain(path):
     chain = read(path)
     if chain.get('schema') != 'w5-chain/v1' or chain.get('arm') not in ('X', 'C'):
         raise SystemExit('stop: not a w5-chain/v1 manifest with arm X or C')
-    offset = 0
+    offset = chain_start(chain)
     for seg in chain['segments']:
         if seg['offset'] != offset:
-            raise SystemExit('stop: segment offsets are not contiguous from 0')
+            raise SystemExit(f'stop: segment offsets are not contiguous from {chain_start(chain)}')
         if 'root' not in seg or 'updates' not in seg:
             cfg = read_config(seg['config'])
             seg['root'] = cfg['output_directory']
@@ -181,9 +181,16 @@ def index_path(chain_path):
     return Path(chain_path).with_suffix('.index.jsonl')
 
 
+def chain_start(chain):
+    """The boundary the manifest's first segment starts from: 0 (the parent), or a carried continuation's boundary B
+    (chains.py `carry`: the chain keeps the global update numbering of the chain it continues)."""
+    return (chain.get('carry') or {}).get('boundary', 0)
+
+
 def scan(chain, known):
-    """Index records of the completed updates from `known` on, in order, stopping at the first update without its
-    receipt (a segment's iterations complete in order)."""
+    """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
+    stopping at the first update without its receipt (a segment's iterations complete in order)."""
+    known += chain_start(chain)  # a boundary from here on: a carried chain's records start at update B
     new = []
     for s, seg in enumerate(chain['segments']):
         if seg['offset'] + seg['updates'] <= known:
@@ -1166,9 +1173,9 @@ def replay_config(chain, spec, out_dir):
     source = dict(cfg['initial_source'])
     if replay['from']['checkpoint'] is not None:
         source['checkpoint'] = replay['from']['checkpoint']
-    elif first != 0:
-        raise SystemExit('stop: a replay from a nonzero boundary needs its kept checkpoint')
-    else:
+    elif first != chain_start(chain):
+        raise SystemExit('stop: a replay from a boundary after the chain start needs its kept checkpoint')
+    else:  # the chain's start: its parent, or a carried chain's recorded source (segment 0's initial source)
         source = dict(read_config(chain['segments'][0]['config'])['initial_source'])
     cfg['initial_source'] = source
     cfg['iterations'] = iterations

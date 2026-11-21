@@ -57,7 +57,11 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
 - `chains`: name to `{arm, slot, seed_root, pair}` (F: a filler box, no pair, run by supervise through `w5box.py
   fill`, not by `run`; XS in Stage 1b: `partner`, the Stage 1a C
   chain in the same root; Stage 0 chains may omit the pair, e.g. a box throughput run with every box on one
-  seed root, since a `w5-box-throughput/v1` record binds the arm file and needs identical work per box).
+  seed root, since a `w5-box-throughput/v1` record binds the arm file and needs identical work per box). An
+  independent Stage 0 C-recipe chain may name `carry` (a `w5-chain-carry/v1` record from `chains.py carry`): it then
+  continues another chain from that chain's persisted boundary B with the same global update numbering, seed root
+  and wall ("carried continuations" below); the arm must equal the carried recipe except the trainer build.
+  chains.py carry --manifest OLD/chain.json --boundary B --objects DIR --out CARRY.json   (reads OLD only)
 Stage 1 rules checked: seed roots `w5/chain<i>` (pair i) and `w5/filler<slot>`; 1a pairs C with X8 and 1b XS with
 F, every box used, half per arm; F starts from C's parent; X chain i's configs share every iteration (episode ids,
 deal seeds, seats, opponents) with C chain i's and differ only in the search block and resource keys (XS: the same
@@ -243,7 +247,8 @@ END_SCHEMA = 'w5-chain-end/v1'
 PAIR_SCHEMA = 'w5-pair/v1'
 SEGCHECK_SCHEMA = 'w5-segcheck/v1'
 COMMIT_SCHEMA = 'w5-segment-commit/v1'
-COMMIT_LOG = 'durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
+CARRY_SCHEMA = 'w5-chain-carry/v1'
+COMMIT_LOG ='durable.jsonl'  # chains/<name>/durable.jsonl: the driver's committed boundaries (module docstring)
 ARMS = {'C': ('C', 'C'), 'X8': ('X', 'X'), 'XS': ('X', 'X'), 'F': ('C', None),
         'CS': ('C', 'C'), 'CP': ('C', 'C'), 'CG': ('C', 'C'), 'CH': ('C', 'C'),
         'FBA': ('C', 'C'), 'FBB': ('C', 'C')}  # recipe, retention arm
@@ -430,6 +435,100 @@ def next_source(native):
     source = copy.deepcopy(complete['source'])
     source['checkpoint'] = {'path': checkpoint.as_posix(), 'sha256': digest}
     return source
+
+
+# ---------------------------------------------------------------- carried continuations
+#
+# A carried chain continues another C chain of the same recipe (only the trainer build may differ) under a new name
+# and root, keeping its global update numbering, seed root and wall: its first segment is the segment the old chain
+# would have run next from a persisted boundary B (offset B; source the old chain's next source, its checkpoint
+# copied by content), so every episode id, deal seed, seat and opponent is the old chain's, and with a bit-identical
+# trainer every after-state is too. The record (`chains.py carry`, schema w5-chain-carry/v1) is named in the plan
+# inputs (`chains.<name>.carry`) and copied into the manifest (`carry`); segment s of a carried manifest covers
+# global updates [B + s L, B + (s + 1) L). A manifest without it starts at boundary 0 as before.
+
+def carry_start(man):
+    """The boundary a chain's first segment starts from: a carried chain's B, else 0 (its parent)."""
+    return (man.get('carry') or {}).get('boundary', 0)
+
+
+def carry_source(man):
+    """The first segment's source: a carried chain's recorded source, else None (the arm's parent)."""
+    carry = man.get('carry')
+    return copy.deepcopy(carry['source']) if carry else None
+
+
+def wall_origin(man):
+    """What the C wall counts from: the carried chain's first start (the wall it continues), else this one's."""
+    carry = man.get('carry')
+    return carry['launched_unix'] if carry else man['launched_unix']
+
+
+def make_carry(manifest_path, boundary, objects, out):
+    """The carry record of the C chain at `manifest_path` at its persisted boundary `boundary` (a segment end).
+    Reads that chain only; writes the record and the boundary's checkpoint copy (`objects/<sha256>.json`)."""
+    man = read(manifest_path)
+    require(man.get('schema') == 'w5-chain/v1' and man.get('arm') == 'C', 'not a C chain manifest')
+    require(man.get('carry') is None, 'the chain is itself carried; carry from the chain it continues')
+    require(man['launched_unix'] is not None, 'the chain has not started')
+    length = man['recipe']['segment_updates']
+    require(type(boundary) is int and boundary > 0 and boundary % length == 0,
+            f'boundary must be a positive multiple of the segment length {length}')
+    seg = next((s for s in man['segments'] if s['offset'] + s['updates'] == boundary), None)
+    require(seg is not None, f'no segment of the manifest ends at {boundary}')
+    root = Path(seg['root'])
+    require(not mounted(root) and (root / 'completion.json').exists() and completed(root) == seg['updates'],
+            f'{root} is not a complete persisted segment')
+    last = root / 'iterations' / f'{seg["updates"] - 1:06d}'
+    complete = read(last / 'complete.json')
+    update = read(attempt_dir(last, complete) / 'update' / 'update.json')
+    source = next_source(root)
+    digest = source['checkpoint']['sha256']
+    require(update['checkpoint']['sha256'] == digest, 'the update receipt names another checkpoint')
+    copy_path = Path(objects) / f'{digest}.json'
+    if not (copy_path.exists() and sha(copy_path) == digest):
+        copy_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = copy_path.with_name(copy_path.name + '.tmp')
+        shutil.copyfile(source['checkpoint']['path'], tmp)
+        os.replace(tmp, copy_path)
+    require(sha(copy_path) == digest, f'{copy_path} differs from the checkpoint it copies')
+    origin = source['checkpoint']['path']
+    source['checkpoint'] = {'path': copy_path.as_posix(), 'sha256': digest}
+    end_path = Path(manifest_path).parent / 'END.json'
+    doc = {'schema': CARRY_SCHEMA, 'boundary': boundary, 'seed_root': man['seed_root'],
+           'launched_unix': man['launched_unix'], 'recipe': man['recipe'], 'source': source,
+           'after_state_sha256': update['after_state_sha256'],
+           'ledger_usec': (complete.get('chain_ledger') or {}).get('usec'),
+           'from': {'chain': man['chain'], 'manifest': pin(manifest_path), 'segment_root': root.as_posix(),
+                    'checkpoint': origin, 'end': pin(end_path) if end_path.exists() else None}}
+    write(out, doc)
+    return doc
+
+
+def check_carry(doc, name, seed_root, arm):
+    """A plan's carried chain: the record is well formed, its seed root is the chain's, its recipe is the arm's except
+    the trainer build, its checkpoint copy is intact, and the wall it continues has not passed."""
+    require(doc.get('schema') == CARRY_SCHEMA, f'{name}: not a {CARRY_SCHEMA} record')
+    require(doc['seed_root'] == seed_root, f'{name}: the carried chain has seed root {doc["seed_root"]}')
+    require(arm['recipe'] == 'C' and arm['arm'] != 'F', f'{name}: only a C-recipe chain is carried')
+    for key in ('ladder', 'keep_offset', 'initial_opponent'):
+        require(arm.get(key) is None, f'{name}: an arm with {key} counts from its own start; it is not carried')
+    length = arm['segment_updates']
+    require(type(doc['boundary']) is int and doc['boundary'] > 0 and doc['boundary'] % length == 0,
+            f'{name}: the carried boundary is not a segment end of this arm')
+    mine = recipe_identity(arm)
+    diff = sorted(k for k in set(mine) | set(doc['recipe'])
+                  if k != 'trainer_sha256' and mine.get(k) != doc['recipe'].get(k))
+    require(not diff, f'{name}: the arm changes the carried recipe in {diff}')
+    check_pin(doc['source']['checkpoint'], f'{name} carried checkpoint')
+    require(doc['launched_unix'] + arm['c_wall_seconds'] > time.time(), f'{name}: the carried wall has passed')
+
+
+def carry_cmd(a):
+    doc = make_carry(a.manifest, a.boundary, a.objects, a.out)
+    print(json.dumps({k: doc[k] for k in ('boundary', 'seed_root', 'after_state_sha256', 'ledger_usec')} |
+                     {'checkpoint': doc['source']['checkpoint'], 'out': a.out}, indent=1))
+    return 0
 
 
 def quarantine(native, dest_root):
@@ -861,6 +960,11 @@ def make_plan(inputs_path):
                 f'{name}: a scratch chain has no pair (W5 selection replays need the every-64 states)')
         chains[name] = {'arm': a, 'slot': slot, 'seed_root': seed_root, 'pair': c.get('pair'),
                         'manifest': None if a == 'F' else (root / 'chains' / name / 'chain.json').as_posix()}
+        if c.get('carry') is not None:  # absent otherwise: existing plans and manifests keep their bytes
+            require(stage == '0' and independent and c.get('pair') is None,
+                    f'{name}: a carried chain runs in an independent Stage 0 plan, without a pair')
+            check_carry(read(c['carry']), name, seed_root, arms[a])
+            chains[name]['carry'] = pin(c['carry'])
     seeds = {}
     for name, c in chains.items():
         if c['pair'] is not None:
@@ -912,11 +1016,13 @@ def make_plan(inputs_path):
                   'recipe': recipe_identity(arm), 'frozen': frozen_pin, 'x_cap_seconds': x_cap,
                   'c_wall_seconds': c_wall, 'r_nom_usec': r_nom,
                   'snapshot_dir': (root / 'chains' / name / 'snapshots').as_posix()}
+        if c.get('carry'):
+            header['carry'] = read(c['carry']['path'])
         path = Path(c['manifest'])
         if path.exists():
             have = read(path)
             for k in ('chain', 'arm', 'arm_name', 'seed_root', 'pair', 'stage', 'frozen', 'x_cap_seconds',
-                      'c_wall_seconds', 'snapshot_dir'):
+                      'c_wall_seconds', 'snapshot_dir', 'carry'):
                 require(have.get(k) == header[k], f'{name}: the manifest has another {k}')
             require(not have['segments'] or have['recipe'] == header['recipe'],
                     f'{name}: the recipe changed after the chain started' +
@@ -1031,7 +1137,7 @@ def latest(man, persisted=False, *, read_receipt=True):
         if n:
             receipt = read(Path(seg['root']) / 'iterations' / f'{n - 1:06d}' / 'complete.json') if read_receipt else None
             return seg['offset'] + n, receipt
-    return 0, None
+    return carry_start(man), None  # nothing completed: the parent (0), or a carried chain's start B
 
 
 def receipt_at(man, boundary):
@@ -1102,18 +1208,21 @@ def current_segment(arm, man, man_path, ledger_source):
         s = len(segs) - 1
     else:
         s = len(segs)
+    start = carry_start(man)  # 0 unless the chain is carried (its segment s then starts at global update B + s L)
+    offset = start + s * length
     native = cdir / f'seg-{s:05d}'
-    source = next_source(segs[s - 1]['root']) if s > 0 else None
-    ladder = chain_ladder(arm, man, cdir, s * length) if arm.get('ladder') else None
-    cfg = arm_config(arm, man['seed_root'], s * length, length, native, source, ledger_source, ladder)
+    source = next_source(segs[s - 1]['root']) if s > 0 else carry_source(man)
+    ladder = chain_ladder(arm, man, cdir, offset) if arm.get('ladder') else None
+    cfg = arm_config(arm, man['seed_root'], offset, length, native, source, ledger_source, ladder)
     path = cdir / 'segments' / f'seg-{s:05d}.json'
     if path.exists():
         require(read(path) == cfg, f'{path} differs from the segment config derived from the pins')
     else:
         write(path, cfg)
     if s == len(segs):
-        require(all(seg['offset'] == i * length for i, seg in enumerate(segs)), 'manifest offsets are not contiguous')
-        segs.append({'config': path.as_posix(), 'offset': s * length, 'root': native.as_posix(), 'updates': length})
+        require(all(seg['offset'] == start + i * length for i, seg in enumerate(segs)),
+                'manifest offsets are not contiguous')
+        segs.append({'config': path.as_posix(), 'offset': offset, 'root': native.as_posix(), 'updates': length})
         write(man_path, man)
     return s, path, native
 
@@ -1544,10 +1653,11 @@ def commit_index(rows, chain='chain'):
     return out, repeats
 
 
-def committed_prefix(by_segment):
-    """The commits of segments 0, 1, ... while each starts at the previous one's boundary: the boundaries that are
-    durable with every boundary before them (a missing segment, or a cut one's short boundary, ends it)."""
-    prefix, boundary, s = [], 0, 0
+def committed_prefix(by_segment, start=0):
+    """The commits of segments 0, 1, ... while each starts at the previous one's boundary (segment 0 at `start`: 0,
+    or a carried chain's B): the boundaries that are durable with every boundary before them (a missing segment, or
+    a cut one's short boundary, ends it)."""
+    prefix, boundary, s = [], start, 0
     while s in by_segment and by_segment[s]['offset'] == boundary:
         prefix.append(by_segment[s])
         boundary = by_segment[s]['boundary']
@@ -1556,15 +1666,18 @@ def committed_prefix(by_segment):
 
 
 def committed_through(cdir):
-    """The chain's last boundary durable with all before it, by its commit log (0 without one)."""
+    """The chain's last boundary durable with all before it, by its commit log (its start, 0 or a carried chain's B,
+    without one)."""
+    path = Path(cdir) / 'chain.json'
+    start = carry_start(read(path)) if path.exists() else 0
     rows, _ = read_commits(cdir)
-    prefix = committed_prefix(commit_index(rows, Path(cdir).name)[0])
-    return prefix[-1]['boundary'] if prefix else 0
+    prefix = committed_prefix(commit_index(rows, Path(cdir).name)[0], start)
+    return prefix[-1]['boundary'] if prefix else start
 
 
 def verify_unlogged_scratch_boundary(cdir, man, boundary):
     """Check only the selected persisted scratch segment before an external END."""
-    if not boundary:
+    if boundary <= carry_start(man):
         return
     s, seg = next((s, seg) for s, seg in reversed(list(enumerate(man['segments']))) if seg['offset'] < boundary)
     root = Path(seg['root'])
@@ -1627,7 +1740,7 @@ def drive_locked(a, arm, root, cdir, man_path):
         man['launched_unix'] = time.time()
         write(man_path, man)
         log(root, chain=a.chain, event='launched')
-    deadline = man['launched_unix'] + arm['c_wall_seconds'] if arm['recipe'] == 'C' else None
+    deadline = wall_origin(man) + arm['c_wall_seconds'] if arm['recipe'] == 'C' else None
     waiting = None
     scratch = bool(arm.get('scratch_root'))
     if arm.get('mull_monitor'):
@@ -1821,9 +1934,9 @@ def end_cmd(a):
         boundary, receipt = latest(man, persisted=True)
     else:
         top, _ = latest(man, persisted=True, read_receipt=False)
-        boundary = a.boundary
-        require(0 <= boundary <= top, f'boundary must be 0 to {top}')
-        receipt = receipt_at(man, boundary) if boundary else None
+        boundary, start = a.boundary, carry_start(man)
+        require(start <= boundary <= top, f'boundary must be {start} to {top}')
+        receipt = receipt_at(man, boundary) if boundary > start else None
     verify_unlogged_scratch_boundary(cdir, man, boundary)
     doc = end_doc(a.chain, plan['chains'][a.chain]['arm'], 'operator', boundary, receipt, 'operator',
                   note=a.reason)
@@ -3894,6 +4007,11 @@ def main(argv=None):
     p.add_argument('--chain', required=True)
     p.add_argument('--reason', required=True)
     p.add_argument('--boundary', type=int)
+    p = sub.add_parser('carry')
+    p.add_argument('--manifest', required=True)
+    p.add_argument('--boundary', type=int, required=True)
+    p.add_argument('--objects', required=True)
+    p.add_argument('--out', required=True)
     p = sub.add_parser('segcheck')
     p.add_argument('--plan', required=True)
     p.add_argument('--arm', required=True, choices=sorted(ARMS))
@@ -3948,6 +4066,7 @@ def main(argv=None):
                               'xs_recipe_differences': plan['xs_recipe_differences']}, indent=1))
             return 0
         return {'run': run, 'launch': launch, 'supervise': supervise, 'status': status, 'end': end_cmd,
+                'carry': carry_cmd,
                 'segcheck': segcheck, 'clean-fillers': clean_fillers, 'throughput': throughput,
                 'throughput-mix': throughput_mix, 'throughput-compare': throughput_compare,
                 'stage0-exit': stage0_exit_cmd, '_drive': drive, '_filler': filler,
