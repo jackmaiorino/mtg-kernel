@@ -496,6 +496,9 @@ def check_postboard_base(base, spec=None):
     descriptor belongs to the registered 60), and its entry names an opponent kind the seat rule knows. With
     `spec` (a normalized exposure), also raises unless every registration has at least max_swaps mainboard positions
     outside keep_ids, so the number of positions exchanged is never cut short and stays uniform."""
+    if base.get("ex1") is not None:
+        raise ValueError("postboard_exposure is refused with an EX1 base configuration (search roots and placements "
+                         "belong to the registered 60)")
     keep = set(spec["keep_ids"]) if spec is not None else None
     for i, item in enumerate(base["iterations"]):
         for j, entry in enumerate(item["episodes"]):
@@ -505,16 +508,24 @@ def check_postboard_base(base, spec=None):
                 raise ValueError(f"{where}: postboard_exposure needs a game-one base (postboard false); the exposure "
                                  "is the only writer of a post-board game")
             registered, selected = episode.get("registered"), episode.get("selected")
-            if not (isinstance(registered, list) and len(registered) == 2 and registered == selected):
+            if not all(isinstance(decks, list) and len(decks) == 2 for decks in (registered, selected)):
                 raise ValueError(f"{where}: postboard_exposure needs two registrations with selected equal to "
                                  "registered")
-            for deck in registered:
-                main, side = (deck.get(k) if isinstance(deck, dict) else None for k in ("mainboard", "sideboard"))
+            for deck in registered + selected:
+                if not (isinstance(deck, dict) and deck.keys() == {"label", "mainboard", "sideboard"}
+                        and isinstance(deck["label"], str)):
+                    raise ValueError(f"{where}: postboard_exposure expects each deck to have exactly label, "
+                                     "mainboard and sideboard fields, with a string label")
+                main, side = deck["mainboard"], deck["sideboard"]
                 if not (isinstance(main, list) and len(main) == POSTBOARD_MAIN and isinstance(side, list)
                         and len(side) == POSTBOARD_SIDE
                         and all(_is_index(c, 0, POSTBOARD_MAX_CARD_ID) for c in main + side)):
                     raise ValueError(f"{where}: postboard_exposure needs registrations of exactly {POSTBOARD_MAIN} "
                                      f"mainboard and {POSTBOARD_SIDE} sideboard card ids")
+            if selected != registered:
+                raise ValueError(f"{where}: postboard_exposure needs selected equal to registered")
+            for deck in registered:
+                main = deck["mainboard"]
                 if keep is not None and sum(card not in keep for card in main) < spec["max_swaps"]:
                     raise ValueError(f"{where}: postboard_exposure needs at least max_swaps ({spec['max_swaps']}) "
                                      f"mainboard cards outside keep_ids in every registration "

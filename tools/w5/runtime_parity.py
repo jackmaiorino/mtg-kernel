@@ -108,7 +108,9 @@ def deck_key(ids, card_names: list[str]) -> Counter:
 def typed_deck(deck) -> bool:
     """A registration as the trainer reads one: a string label and two lists of card ids (ints in [0, 65535]; a
     bool is not a card id). Judged only under `--postboard-exception`, before any multiset is compared."""
-    return isinstance(deck, dict) and isinstance(deck.get("label"), str) and all(
+    if not isinstance(deck, dict) or deck.keys() != {"label", "mainboard", "sideboard"}:
+        return False
+    return isinstance(deck["label"], str) and all(
         isinstance(deck.get(zone), list) and all(type(card) is int and 0 <= card <= 65535 for card in deck[zone])
         for zone in ("mainboard", "sideboard"))
 

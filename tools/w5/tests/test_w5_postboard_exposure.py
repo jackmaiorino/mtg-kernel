@@ -126,6 +126,9 @@ class ValidationTests(unittest.TestCase):
             for key in ('registered', 'selected'):
                 e['episode'][key][0]['mainboard'][0] = 70000
         bad(odd_id, 'exactly 60 mainboard and 15 sideboard')
+        bad(lambda e: e['episode']['selected'][0]['mainboard'].__setitem__(0, False),
+            'exactly 60 mainboard and 15 sideboard')
+        bad(lambda e: e['episode']['selected'][0].update(note='unknown native field'), 'exactly label')
         bad(lambda e: e['episode'].update(learner_seat=2), 'learner seat')
         bad(lambda e: e['episode'].update(reset={'prefix': []}), 'refused with reset')
         bad(lambda e: e['episode'].update(opponent_search={'any': 1}), 'refused with opponent_search')
@@ -339,6 +342,18 @@ class BuildConfigTests(unittest.TestCase):
             self.build(base, -1, 2, EXPOSURE)
         with self.assertRaisesRegex(ValueError, 'game-one base'):
             self.build(strip_exposure(exposed) | {'iterations': exposed['iterations']}, 0, 2, EXPOSURE)
+
+    def test_a_native_ex1_base_refuses_exposure_without_a_coefficient_argument(self):
+        base = deck_base()
+        base['ex1'] = {'run': 'legacy', 'update_offset': 0, 'coefficient': 0.5, 'cap': {'mode': 'off'}}
+        plain = qual.build_config(base, self.dose, self.out, 'ch', 'w5', 0, 1, 2)
+        self.assertEqual(plain['ex1'], base['ex1'])
+        with self.assertRaisesRegex(ValueError, 'refused with an EX1 base configuration'):
+            qual.build_config(base, self.dose, self.out, 'ch', 'w5', 0, 1, 2, postboard_exposure=ALWAYS)
+        with self.assertRaisesRegex(ValueError, 'refused with an EX1 base configuration'):
+            qual.validate_postboard_exposure(ALWAYS, base)
+        base['ex1'] = None  # serde treats null and an absent optional EX1 as the same disabled mode
+        self.assertTrue(all(entry['episode']['postboard'] for entry in entries(self.build(base, 0, 1, ALWAYS))))
 
 
 class ChainTests(unittest.TestCase):
@@ -620,6 +635,7 @@ class ParityTests(unittest.TestCase):
             'a card id out of range': lambda deck: deck.update(sideboard=[70000] * 15),
             'a tuple': lambda deck: deck.update(sideboard=tuple(deck['sideboard'])),
             'a label that is not a string': lambda deck: deck.update(label=7),
+            'an unknown native deck field': lambda deck: deck.update(note='not in ExpandedDeckListV1'),
         }
         for name, change in cases.items():
             with self.subTest(name=name):
