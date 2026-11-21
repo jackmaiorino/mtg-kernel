@@ -2915,6 +2915,136 @@ fn priority_pass_offset_trains_on_the_sampled_distribution() {
     assert_ne!(a.gradients, b.gradients);
 }
 
+/// Under a nonzero priority pass offset (3.25, and 1e6 where the offset
+/// saturates the Pass row), the sequential backward's transposed kernels give
+/// the reference loops' gradients, telemetry and state bit for bit.
+#[test]
+fn priority_pass_offset_keeps_the_reference_bits_in_the_sequential_backward() {
+    use crate::native_policy_train_step_v1::accumulate_transposed_v1::{
+        transposed_layers_for_test_v1 as transposed_layers,
+        with_reference_sequential_backward_for_test_v1 as with_reference,
+    };
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let last = (fixture.logits[1].len() - 1) as u32;
+    let mut plain = base.clone();
+    let unshifted = plain
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    for offset in [3.25f32, 1.0e6] {
+        let marks = pass_marks(offset, [Some(1), None, Some(last)]);
+        let mut reference = base.clone();
+        reference.set_priority_pass_offset_v1(marks.clone());
+        let before = transposed_layers();
+        let expected = with_reference(|| {
+            reference
+                .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+                .unwrap()
+        });
+        assert_eq!(transposed_layers(), before, "offset {offset}");
+        let mut transposed = base.clone();
+        transposed.set_priority_pass_offset_v1(marks);
+        let actual = transposed
+            .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+            .unwrap();
+        assert!(transposed_layers().0 > before.0, "offset {offset}");
+        assert_eq!(
+            gradient_bits(&actual),
+            gradient_bits(&expected),
+            "offset {offset}"
+        );
+        // Debug prints every float in shortest round-trip form, so equal
+        // text is equal bits.
+        assert_eq!(
+            format!("{actual:?}"),
+            format!("{expected:?}"),
+            "offset {offset}"
+        );
+        assert_eq!(
+            state_bits(&transposed),
+            state_bits(&reference),
+            "offset {offset}"
+        );
+        // The offset really changes the step.
+        assert_ne!(
+            gradient_bits(&actual),
+            gradient_bits(&unshifted),
+            "offset {offset}"
+        );
+    }
+}
+
+/// The same with precomputed forward tapes and the exact parallel backward:
+/// 399 substeps with Pass rows marked on two of every three, sequential
+/// reference loops against forward and backward workers.
+#[test]
+fn priority_pass_offset_keeps_every_bit_across_forward_and_backward_workers() {
+    use crate::native_policy_train_step_v1::accumulate_transposed_v1::with_reference_sequential_backward_for_test_v1 as with_reference;
+    use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
+        with_exact_backward_hooks_for_test_v1 as with_hooks, ExactBackwardHooksForTestV1,
+    };
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = many_substeps(&fixture, 200);
+    let batch = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    // A Pass row inside each substep's decision on two of every three
+    // substeps, the selected row itself on some of them.
+    let rows: Vec<Option<u32>> = steps
+        .iter()
+        .enumerate()
+        .flat_map(|(group, substeps)| (0..substeps.len()).map(move |substep| (group, substep)))
+        .enumerate()
+        .map(|(index, (group, substep))| {
+            let tensor = (group + substep) % 2;
+            let width = fixture.logits[tensor].len();
+            (index % 3 != 2).then(|| ((group * 5 + substep) % width) as u32)
+        })
+        .collect();
+    for offset in [3.25f32, 1.0e6] {
+        let marks = Some(PassOffsetMarksV1 {
+            offset,
+            rows: rows.clone(),
+        });
+        let mut sequential = start.clone();
+        sequential.set_priority_pass_offset_v1(marks.clone());
+        let (expected, runs) = with_hooks(ExactBackwardHooksForTestV1::NONE, || {
+            with_reference(|| profiled_step(&mut sequential, &batch, 1).unwrap())
+        });
+        assert_eq!(runs, 0);
+        for (block_substeps, workers) in [(Some(37), 2), (None, 4), (Some(64), 8)] {
+            let hooks = ExactBackwardHooksForTestV1 {
+                block_substeps,
+                ..ExactBackwardHooksForTestV1::NONE
+            };
+            let mut parallel = start.clone();
+            parallel.set_priority_pass_offset_v1(marks.clone());
+            let (actual, runs) = with_hooks(hooks, || {
+                profiled_step(&mut parallel, &batch, workers).unwrap()
+            });
+            assert_eq!(runs, 1, "offset {offset} {block_substeps:?} {workers}");
+            assert_eq!(
+                gradient_bits(&actual),
+                gradient_bits(&expected),
+                "offset {offset} {workers}"
+            );
+            assert_eq!(
+                format!("{actual:?}"),
+                format!("{expected:?}"),
+                "offset {offset} {workers}"
+            );
+            assert_eq!(
+                state_bits(&parallel),
+                state_bits(&sequential),
+                "offset {offset} {workers}"
+            );
+        }
+    }
+}
+
 #[test]
 fn priority_pass_offset_without_marks_or_at_zero_changes_no_bit() {
     let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
