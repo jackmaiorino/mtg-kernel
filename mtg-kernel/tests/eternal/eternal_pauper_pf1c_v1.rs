@@ -1436,18 +1436,14 @@ fn deprive_with_a_second_land_returns_a_land_the_payment_leaves() {
     assert_eq!(life(&state, P0), 20);
 }
 
-fn depletion_land_with_last_counter(
-    state: &mut GameState,
-    name: &str,
-    color: ManaColor,
-) -> ObjectId {
+fn depletion_land_with_last_counter(state: &mut GameState, name: &str) -> ObjectId {
     let land = put(state, P0, name, Zone::Hand);
     play_land(state, land);
     // Fixture untaps and the pool reset stand for intervening turns. The
     // real mana ability removes the first of the two depletion counters.
     state.objects.get_mut(land).tapped = false;
     next(state);
-    act(state, Action::ActivateManaAbilityChoice(land, color));
+    act(state, Action::ActivateManaAbility(land));
     state.objects.get_mut(land).tapped = false;
     state.players[0].mana_pool = [0; 6];
     assert_eq!(
@@ -1458,13 +1454,13 @@ fn depletion_land_with_last_counter(
 }
 
 fn woodlot_with_last_counter(state: &mut GameState) -> ObjectId {
-    depletion_land_with_last_counter(state, "Hickory Woodlot", ManaColor::G)
+    depletion_land_with_last_counter(state, "Hickory Woodlot")
 }
 
 #[test]
 fn compound_escape_deprive_can_return_a_last_counter_needle_while_paying_torch_tax() {
     let mut state = plains();
-    let needle = depletion_land_with_last_counter(&mut state, "Sandstone Needle", ManaColor::R);
+    let needle = depletion_land_with_last_counter(&mut state, "Sandstone Needle");
     let lands = ["Island", "Island", "Mountain", "Mountain"]
         .map(|name| put(&mut state, P0, name, Zone::Battlefield));
     put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
