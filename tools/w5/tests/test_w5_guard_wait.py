@@ -1,8 +1,9 @@
-"""Waiting on the byte guard (tools/w5/chains.py): a driver refused only at its ceiling in a fresh ok verdict looks
-again every second, any other refusal every GUARD_POLL seconds up to GUARD_WAIT; `supervise --loop` starts its next
-cycle early (never sooner than SUPERVISE_FLOOR) once a chain that may still run nears the ceiling of the ok verdict
-it just wrote, and every verdict reserves and admits exactly what it did before. End to end, a chain whose segments
-are much shorter than the loop never waits out the loop."""
+"""Waiting on the byte guard (tools/w5/chains.py). With FAST_GUARD_WAITS (set here explicitly, so these run on every
+platform): a driver refused only at its ceiling in a fresh ok verdict looks again every second, any other refusal
+every GUARD_POLL seconds up to GUARD_WAIT; `supervise --loop` starts its next cycle early (never sooner than
+SUPERVISE_FLOOR) once a chain that may still run nears the ceiling of the fresh ok verdict it just wrote, and every
+verdict reserves and admits exactly what it did before. Without it (Windows) the waits are main's. End to end where
+it is on by default, a chain whose segments are much shorter than the loop never waits out the loop."""
 import contextlib
 import io
 import json
@@ -20,7 +21,9 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import chains  # noqa: E402
 import retention  # noqa: E402
-from test_w5_chains import Node, STEP_C, STEP_X  # noqa: E402
+from test_w5_chains import Node, STEP_C, STEP_X, jwrite  # noqa: E402
+
+FAST_BY_DEFAULT = chains.FAST_GUARD_WAITS  # this platform's value, before any test patches it
 
 
 class Halt(Exception):
@@ -41,6 +44,9 @@ class GuardWaitTests(unittest.TestCase):
                                            'FAKE_SLEEP': '0.01'})
         env.start()
         self.addCleanup(env.stop)
+        fast = mock.patch.object(chains, 'FAST_GUARD_WAITS', True)
+        fast.start()
+        self.addCleanup(fast.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -109,92 +115,6 @@ class GuardWaitTests(unittest.TestCase):
         self.assertIn('ceiling', reasons[0])
         self.assertIn('stale', reasons[1])
 
-    # ------------------------------------------------------------ reads refused during a replace (Windows)
-
-    def refused(self, name, times=None):
-        """chains.read raising a sharing violation for files called `name`, `times` times (None: always)."""
-        real, left = chains.read, [times]
-
-        def read(path):
-            if Path(path).name == name and (left[0] is None or left[0] > 0):
-                if left[0] is not None:
-                    left[0] -= 1
-                raise PermissionError(13, 'sharing violation (injected)', str(path))
-            return real(path)
-        return mock.patch.object(chains, 'read', side_effect=read)
-
-    def windows(self):
-        return mock.patch.object(chains, 'TRANSIENT_READ_ERRORS', (PermissionError,))
-
-    def test_a_refused_driver_read_waits_at_guard_poll(self):
-        for name in ('GUARD.json', 'ADMITTED.json'):
-            with self.subTest(name):
-                self.tearDown()
-                self.setUp()
-                _, plan = self.node.stage0(c_wall=600.0)
-                self.node.guard(ceilings={'c1': 1, 'x1': 0})
-                chains.write(chains.chain_dir(self.node.root, 'c1') / 'ADMITTED.json', {'count': 0})
-                sleeps = []
-
-                def sleep(seconds):
-                    sleeps.append(seconds)
-                    if len(sleeps) > 1:
-                        raise Halt
-
-                with self.windows(), self.refused(name, 1), mock.patch.object(chains, 'time', wraps=time) as clock, \
-                        self.assertRaises(Halt):
-                    clock.sleep.side_effect = sleep
-                    self.node.drive(plan, 'c1')
-                self.assertEqual(sleeps, [chains.GUARD_POLL, chains.GUARD_CEILING_POLL])  # not a ceiling wait
-                self.assertEqual(self.segments(plan, 'c1'), 1)
-                self.assertIn('could not be read', events(self.node.root, 'guard-wait')[0]['reason'])
-
-    def test_a_driver_read_refused_for_good_exits_after_guard_wait(self):
-        _, plan = self.node.stage0(c_wall=10**6)
-        self.node.guard()
-        wall, sleeps = [time.time()], []
-
-        def sleep(seconds):
-            sleeps.append(seconds)
-            wall[0] += seconds
-
-        with self.windows(), self.refused('GUARD.json'), mock.patch.object(chains, 'time', wraps=time) as clock:
-            clock.time.side_effect = lambda: wall[0]
-            clock.sleep.side_effect = sleep
-            self.assertEqual(self.node.drive(plan, 'c1'), chains.EXIT_ROOM)
-        self.assertEqual(sleeps, [chains.GUARD_POLL] * int(chains.GUARD_WAIT / chains.GUARD_POLL))
-
-    def test_where_reads_cannot_be_refused_a_driver_error_still_raises(self):
-        _, plan = self.node.stage0(c_wall=600.0)
-        self.node.guard()
-        with mock.patch.object(chains, 'TRANSIENT_READ_ERRORS', ()), self.refused('GUARD.json', 1), \
-                self.assertRaises(PermissionError):
-            self.node.drive(plan, 'c1')
-
-    def test_where_reads_cannot_be_refused_a_census_error_still_raises(self):
-        path, plan = self.indep()
-        chains.write(chains.chain_dir(plan['root'], 'c1') / 'ADMITTED.json', {'count': 3})
-        with mock.patch.object(chains, 'TRANSIENT_READ_ERRORS', ()), self.refused('ADMITTED.json', 1), \
-                contextlib.redirect_stdout(io.StringIO()), self.assertRaises(PermissionError):
-            chains.cycle(plan, path)
-
-    def test_census_retries_a_refused_count_then_defers_the_verdict(self):
-        path, plan = self.indep()
-        chains.write(chains.chain_dir(plan['root'], 'c1') / 'ADMITTED.json', {'count': 3})
-        guard = Path(plan['root']) / 'GUARD.json'
-        with self.windows(), mock.patch.object(chains, 'CENSUS_RETRY', 0.0), self.refused('ADMITTED.json', 2), \
-                contextlib.redirect_stdout(io.StringIO()):
-            report = chains.cycle(plan, path)
-        verdict = json.loads(guard.read_text())
-        self.assertEqual(verdict['ceilings'], {'c1': 3 + chains.GUARD_SEGMENTS})  # the count read, never a zero
-        self.assertIn('ok', report['guard'])
-        with self.windows(), mock.patch.object(chains, 'CENSUS_RETRY', 0.0), self.refused('ADMITTED.json'), \
-                contextlib.redirect_stdout(io.StringIO()):
-            report = chains.cycle(plan, path)
-        self.assertIn('could not be read', report['guard']['deferred'])
-        self.assertEqual(json.loads(guard.read_text()), verdict)  # the last verdict stays in force
-        self.assertEqual(len(events(plan['root'], 'guard-deferred')), 1)
-
     # ------------------------------------------------------------ supervise
 
     def supervise(self, path, plan, script=(), after_cycle=None, cycles=3, loop='60', guard_ok=True):
@@ -251,6 +171,13 @@ class GuardWaitTests(unittest.TestCase):
         _, out = self.supervise(path, plan, script=[(5.0, 'c1', 4)], guard_ok=False)
         self.assertEqual([t for t, *_ in out], [0.0, 60.0, 120.0])
         cdir = chains.chain_dir(plan['root'], 'c1')
+        (cdir / 'ADMITTED.json').unlink()
+
+        def age(g):  # a verdict older than GUARD_MAX_AGE (its supervise stalled): slept out, not woken on
+            jwrite(Path(plan['root']) / 'GUARD.json', dict(g, unix=time.time() - chains.GUARD_MAX_AGE - 1))
+
+        _, out = self.supervise(path, plan, script=[(5.0, 'c1', 4)], after_cycle=age, cycles=2)
+        self.assertEqual([t for t, *_ in out], [0.0, 60.0])
         for marker in ('STOP', 'END.json'):  # written after the verdict that still names the chain
             (cdir / 'ADMITTED.json').unlink()
 
@@ -280,8 +207,23 @@ class GuardWaitTests(unittest.TestCase):
             code, out = self.supervise(path, plan, cycles=2, loop=None)
         self.assertEqual((code, len(out)), (0, 1))
 
+    def test_without_fast_guard_waits_the_waits_are_mains(self):
+        with mock.patch.object(chains, 'FAST_GUARD_WAITS', False):
+            code, sleeps, reasons = self.run_out(True, {'c1': 0, 'x1': 0})
+            self.assertEqual(code, chains.EXIT_ROOM)
+            self.assertEqual(sleeps, [chains.GUARD_POLL] * int(chains.GUARD_WAIT / chains.GUARD_POLL))
+            self.assertIn('ceiling', reasons[0])
+
+    def test_without_fast_guard_waits_supervise_sleeps_the_loop(self):
+        path, plan = self.indep()
+        with mock.patch.object(chains, 'FAST_GUARD_WAITS', False), \
+                mock.patch.object(chains, 'supervise_wait', side_effect=AssertionError('no early wake')):
+            _, out = self.supervise(path, plan, script=[(5.0, 'c1', 3)])
+        self.assertEqual([t for t, *_ in out], [0.0, 60.0, 120.0])
+
     # ------------------------------------------------------------ end to end
 
+    @unittest.skipUnless(FAST_BY_DEFAULT, 'the faster guard waits are off on this platform (Windows)')
     def test_short_segments_never_wait_out_the_loop(self):
         """Real processes: `supervise --loop 60` and a driver whose segments take well under a second. Before this
         change the fourth segment waited for the next verdict, a loop later; now every wait is a few seconds."""
