@@ -351,6 +351,15 @@ fn the_spool_reads_stop_first_then_one_whole_next_config() {
         FollowNextV1::Unusable(_)
     ));
     fs::remove_file(spool_dir.join(NEXT_NAME)).unwrap();
+    let oversized = fs::File::create(spool_dir.join(NEXT_NAME)).unwrap();
+    oversized.set_len(SMALL_CAP + 1).unwrap();
+    drop(oversized);
+    assert!(matches!(
+        spool.wait_v1().unwrap(),
+        FollowNextV1::Unusable(_)
+    ));
+    assert!(spool_dir.join(NEXT_NAME).exists());
+    fs::remove_file(spool_dir.join(NEXT_NAME)).unwrap();
     // A spool that is not empty belongs to another process.
     fs::write(spool_dir.join("done-000000.json"), b"{}").unwrap();
     assert!(SpoolV1::open_v1(&spool_dir).is_err());
