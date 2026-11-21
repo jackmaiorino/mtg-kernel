@@ -613,12 +613,12 @@ fn prevent_packets(
         let chooser =
             packet_chooser(state, damage).ok_or("Hallow packet has no affected player")?;
         let beneficiaries = hallow_beneficiaries(state, item.source, item.source_zone);
-        let complete_prevention = beneficiaries.is_empty();
-        let circle = (!complete_prevention)
+        let ordinary_only = beneficiaries.is_empty();
+        let circle = (!ordinary_only)
             .then(|| circles::circle_shield_position(state, damage))
             .flatten()
             .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
-        let ordinary = if complete_prevention {
+        let ordinary = if ordinary_only {
             crate::eternal_prevention_order_v1::packet_options(state, &item.packet)
         } else {
             item.packet.options(state)
@@ -647,7 +647,7 @@ fn prevent_packets(
             residuals.push((item.event, damage.clone()));
             continue;
         } else if choice.count() == 1 {
-            if complete_prevention {
+            if ordinary_only {
                 HallowPreventionV1::Ordinary(0)
             } else {
                 HallowPreventionV1::Hallow(choice.beneficiaries[0])

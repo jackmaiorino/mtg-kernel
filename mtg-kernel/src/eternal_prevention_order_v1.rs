@@ -19,8 +19,8 @@ fn has_color_prevention(state: &GameState) -> bool {
     })
 }
 
-/// This rare state, not every ordinary spell or activation, borrows operation
-/// replay. No matching Circle/global prevention leaves the old path intact.
+/// Only states with an eligible pair borrow the enclosing operation replay:
+/// a Circle plus global prevention, or an active Sphere opposite an Ojer.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
         && !cannot_prevent(state)
