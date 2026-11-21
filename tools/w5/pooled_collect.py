@@ -43,10 +43,12 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 SCHEMA = "mtg-kernel-pooled-collect-hosts/v1"
+FETCH_SECONDS = 900.0
 
 
 @dataclass
@@ -196,33 +198,35 @@ class Transport:
         return subprocess.run(self._ssh([remote]), capture_output=True, text=True,
                               timeout=timeout, stdin=subprocess.DEVNULL)
 
-    def missing_pins(self, pins: set[tuple[str, str]]) -> list[tuple[str, str]]:
-        """Pins whose file is absent or differs on the host."""
+    def pin_status(self, pins: set[tuple[str, str]]) -> dict:
+        """Each pin's state on the host: "ok", "absent" or "differs" (a file with other bytes)."""
         if self.host.kind == "local":
-            return sorted(p for p in pins if not Path(p[0]).is_file() or sha256_file(Path(p[0])) != p[1])
+            return {p: ("absent" if not Path(p[0]).is_file() else
+                        "ok" if sha256_file(Path(p[0])) == p[1] else "differs") for p in pins}
         script = ("import hashlib,json,os,sys\n"
                   "out=[]\n"
                   "for p,s in json.load(sys.stdin):\n"
-                  "  ok=os.path.isfile(p) and hashlib.sha256(open(p,'rb').read()).hexdigest()==s\n"
-                  "  out.append(ok)\n"
+                  "  out.append('absent' if not os.path.isfile(p) else\n"
+                  "             'ok' if hashlib.sha256(open(p,'rb').read()).hexdigest()==s else 'differs')\n"
                   "print(json.dumps(out))\n")
         ordered = sorted(pins)
         result = subprocess.run(self._ssh(["python3 -c " + shlex.quote(script)]),
                                 input=json.dumps(ordered), capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             raise RuntimeError(f"{self.host.name}: pin check failed: {result.stderr.strip()}")
-        return [p for p, ok in zip(ordered, json.loads(result.stdout)) if not ok]
+        return dict(zip(ordered, json.loads(result.stdout)))
 
     def push(self, local: Path, remote: str) -> None:
         """Copies one file to the same absolute path on the host (staged, then renamed)."""
         if self.host.kind == "local":
             if str(Path(local)) != str(Path(remote)):
                 Path(remote).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(local, remote + ".stage")
-                os.replace(remote + ".stage", remote)
+                stage = f"{remote}.stage-{uuid.uuid4().hex}"
+                shutil.copyfile(local, stage)
+                os.replace(stage, remote)
             return
         parent = str(PurePosixPath(remote).parent)
-        stage = remote + ".stage"
+        stage = f"{remote}.stage-{uuid.uuid4().hex}"
         with open(local, "rb") as handle:
             result = subprocess.run(self._ssh([f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(stage)}"
                                                      f" && mv {shlex.quote(stage)} {shlex.quote(remote)}"]),
@@ -251,9 +255,21 @@ class Transport:
         local.mkdir(parents=True)
         tar = subprocess.Popen(self._ssh([f"tar -C {shlex.quote(remote)} -cf - ."]),
                                stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
-        unpack = subprocess.run(["tar", "-C", str(local), "-xf", "-"], stdin=tar.stdout, capture_output=True)
+        unpack = subprocess.Popen(["tar", "-C", str(local), "-xf", "-"], stdin=tar.stdout,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         tar.stdout.close()
-        if tar.wait(timeout=600) != 0 or unpack.returncode != 0:
+        deadline = time.time() + FETCH_SECONDS
+        try:
+            unpack_code = unpack.wait(timeout=max(1.0, deadline - time.time()))
+            tar_code = tar.wait(timeout=max(1.0, deadline - time.time()))
+        except subprocess.TimeoutExpired:
+            for process in (tar, unpack):
+                process.kill()
+                process.wait()
+            shutil.rmtree(local, ignore_errors=True)
+            raise RuntimeError(f"{self.host.name}: fetch of {remote} timed out")
+        if tar_code != 0 or unpack_code != 0:
+            shutil.rmtree(local, ignore_errors=True)
             raise RuntimeError(f"{self.host.name}: fetch of {remote} failed")
 
     def remove_file(self, remote: str) -> None:
@@ -289,8 +305,9 @@ class Dispatcher:
         self.transports = transports or {h.name: Transport(h) for h in self.hosts}
         self.timeout = timeout
         self.log: list[dict] = []
-        self.pushed: dict[str, set] = {}
+        self.pushed: dict[str, dict] = {}  # host -> {path: sha256} this process uploaded
         self._lock = threading.Lock()
+        self._input_locks: dict[tuple[str, str], threading.Lock] = {}
 
     def note(self, **event):
         event["t"] = round(time.time(), 3)
@@ -298,27 +315,48 @@ class Dispatcher:
             self.log.append(event)
 
     def distribute(self, host: Host, command: dict) -> int:
-        """Makes every pin of `command` present on `host`; returns bytes pushed."""
+        """Makes every pin of `command` (and the pins nested in its small JSON inputs) present on
+        `host`; returns bytes pushed. A file at a pinned path with other bytes is never replaced:
+        the host fails and its shard moves on. One upload per host and input at a time."""
         transport = self.transports[host.name]
         pushed = 0
-        for path, digest in transport.missing_pins(input_closure(command)):
-            local = Path(path)
-            if not local.is_file() or sha256_file(local) != digest:
-                raise RuntimeError(f"learner lacks pinned input {path}")
-            transport.push(local, path)
-            pushed += local.stat().st_size
-            if host.kind == "ssh":
-                with self._lock:
-                    self.pushed.setdefault(host.name, set()).add(path)
+        for pin, state in sorted(transport.pin_status(input_closure(command)).items()):
+            if state == "ok":
+                continue
+            if state == "differs":
+                raise RuntimeError(f"{host.name}: {pin[0]} exists with other bytes; not replaced")
+            with self._lock:
+                lock = self._input_locks.setdefault((host.name, pin[0]), threading.Lock())
+            with lock:
+                if transport.pin_status({pin})[pin] == "ok":  # another thread uploaded it
+                    continue
+                local = Path(pin[0])
+                if not local.is_file() or sha256_file(local) != pin[1]:
+                    raise RuntimeError(f"learner lacks pinned input {pin[0]}")
+                transport.push(local, pin[0])
+                pushed += local.stat().st_size
+                if host.kind == "ssh":
+                    with self._lock:
+                        self.pushed.setdefault(host.name, {})[pin[0]] = pin[1]
         return pushed
+
+    @staticmethod
+    def owned_dir(host: Host, path: str) -> str:
+        """Every remote directory this dispatcher deletes lies directly under the host's scratch
+        root and carries the `pooled-` tag."""
+        if PurePosixPath(path).parent != PurePosixPath(host.scratch) or \
+                not PurePosixPath(path).name.startswith("pooled-"):
+            raise RuntimeError(f"{host.name}: {path} is not a pooled scratch directory")
+        return path
 
     def run_shard(self, host: Host, command: dict, tag: str, staging: Path) -> Path:
         transport = self.transports[host.name]
         # The collector is pinned per host and never pushed: a host without its
         # pinned binary fails, and its shard moves on.
-        if transport.missing_pins({(host.collector, host.collector_sha256)}):
+        collector = (host.collector, host.collector_sha256)
+        if transport.pin_status({collector})[collector] != "ok":
             raise RuntimeError(f"{host.name}: collector binary missing or not its pin")
-        out = command["output_directory"]
+        out = self.owned_dir(host, command["output_directory"])
         transport.remove_dir(out)
         pushed = self.distribute(host, command)
         command_path = str(PurePosixPath(host.scratch) / f"{tag}.json")
@@ -370,7 +408,9 @@ class Dispatcher:
         staging.mkdir()
         total = len(whole["episodes"])
         sizes = plan_sizes(total, [h.weight for h in self.hosts])
-        tag_root = f"pooled-{attempt.parent.name}-{attempt.name}"
+        # Unique per run, iteration and attempt, so runs sharing a scratch root never collide.
+        run_key = hashlib.sha256(str(attempt.resolve()).encode()).hexdigest()[:16]
+        tag_root = f"pooled-{run_key}-{attempt.parent.name}-{attempt.name}"
         jobs, first = [], 0
         for index, size in enumerate(sizes):
             if size:
@@ -407,7 +447,7 @@ class Dispatcher:
                    "collection_seconds": round(collected, 3), "failed_hosts": sorted(failed),
                    "events": self.log, "merged": merged}
         (staging / "dispatch.json").write_text(json.dumps(receipt, indent=1))
-        self.prune(pins_of(whole))
+        self.prune(input_closure(whole))
         return receipt
 
     def prune(self, current: set) -> None:
@@ -420,15 +460,20 @@ class Dispatcher:
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
         keep_paths = {p for p, _ in current}
         for host in self.hosts:
-            previous = set(state.get(host.name, []))
-            now = self.pushed.get(host.name, set())
+            previous = state.get(host.name, {})
+            if not isinstance(previous, dict):
+                previous = {}  # an older state format holds no hashes: forget, never delete
+            now = self.pushed.get(host.name, {})
+            merged = dict(previous) | now
             if host.prune_pushed and host.kind == "ssh":
-                for path in sorted(previous - now - keep_paths):
-                    self.transports[host.name].remove_file(path)
-                    self.note(event="pruned", host=host.name, path=path)
-                state[host.name] = sorted(now | (previous & keep_paths))
-            else:
-                state[host.name] = sorted(previous | now)
+                for path in sorted(set(merged) - set(now) - keep_paths):
+                    pin = (path, merged[path])
+                    # Delete only the bytes this dispatcher put there.
+                    if self.transports[host.name].pin_status({pin})[pin] == "ok":
+                        self.transports[host.name].remove_file(path)
+                        self.note(event="pruned", host=host.name, path=path)
+                    del merged[path]
+            state[host.name] = dict(sorted(merged.items()))
         stage = state_path.with_suffix(".stage")
         stage.write_text(json.dumps(state, indent=1))
         os.replace(stage, state_path)

@@ -33,19 +33,22 @@ class PooledProofTests(unittest.TestCase):
     def test_same_root_requires_equal_states_and_trajectories(self):
         write_run(self.root / "ref", "/srv/run", ["s0", "s1"], [["a", "b"], ["c", "d"]])
         write_run(self.root / "pool", "/srv/run", ["s0", "s1"], [["a", "b"], ["c", "d"]], "pooled-collection-shards-v1")
-        report = pp.compare(self.root / "ref", self.root / "pool")
+        report = pp.compare(self.root / "ref", self.root / "pool", same_root=True)
         self.assertTrue(report["pass"])
-        self.assertTrue(all(r["same_root"] and r["trajectories_equal"] for r in report["rows"]))
+        self.assertTrue(all(r["trajectories_equal"] for r in report["rows"]))
         self.assertEqual(report["rows"][0]["pooled_backend"], "pooled-collection-shards-v1")
         write_run(self.root / "pool2", "/srv/run", ["s0", "s1"], [["a", "b"], ["c", "X"]])
-        self.assertFalse(pp.compare(self.root / "ref", self.root / "pool2")["pass"])
+        self.assertFalse(pp.compare(self.root / "ref", self.root / "pool2", same_root=True)["pass"])
+        # A retried attempt records other paths under the same root; the claim still binds.
+        write_run(self.root / "pool4", "/srv/run-attempt-1", ["s0", "s1"], [["a", "b"], ["c", "X"]])
+        self.assertFalse(pp.compare(self.root / "ref", self.root / "pool4", same_root=True)["pass"])
 
     def test_different_roots_require_equal_states_only(self):
         write_run(self.root / "ref", "/srv/runA", ["s0", "s1"], [["a"], ["c"]])
         write_run(self.root / "pool", "/srv/runB", ["s0", "s1"], [["a"], ["other"]])
         report = pp.compare(self.root / "ref", self.root / "pool")
         self.assertTrue(report["pass"])
-        self.assertFalse(report["rows"][1]["same_root"])
+        self.assertFalse(report["rows"][1]["trajectories_equal"])
         write_run(self.root / "pool3", "/srv/runB", ["s0", "sX"], [["a"], ["c"]])
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool3")["pass"])
 

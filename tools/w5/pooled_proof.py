@@ -9,12 +9,13 @@ Procedure (same root, one host):
     native_expanded_training_run_v1 CONFIG.json                  # reference, output ROOT
     mv ROOT ROOT.reference
     native_expanded_training_run_v1 CONFIG.json --collect-external DISPATCHER   # pooled, output ROOT
-    pooled_proof.py compare ROOT.reference ROOT
+    pooled_proof.py compare --same-root ROOT.reference ROOT
 or run the two at the same ROOT on two hosts and compare copies of their receipts.
 
-`compare` passes when every iteration's after-state is equal and, where both runs recorded the
-same checkpoint path (the same root), every trajectory hash is equal too; with different roots the
-trajectory hashes are reported, not required. Exit 0 on pass, 1 on a difference, 2 on bad input.
+`compare` passes when every iteration's after-state is equal. With `--same-root` (the operator
+states that both runs used the same root) every trajectory hash must be equal too; otherwise they
+are reported only. Whether the roots match is never inferred from the receipts: a retried attempt
+changes recorded paths without changing the root. Exit 0 on pass, 1 on a difference, 2 on bad input.
 """
 from __future__ import annotations
 
@@ -45,7 +46,7 @@ def iterations(root: Path) -> dict:
     return out
 
 
-def compare(reference: Path, pooled: Path) -> dict:
+def compare(reference: Path, pooled: Path, same_root: bool = False) -> dict:
     ref, pool = iterations(reference), iterations(pooled)
     rows, failures = [], 0
     for name in sorted(set(ref) | set(pool)):
@@ -54,24 +55,25 @@ def compare(reference: Path, pooled: Path) -> dict:
             rows.append({"iteration": name, "missing_in": "reference" if a is None else "pooled"})
             failures += 1
             continue
-        same_root = a["checkpoint_path"] == b["checkpoint_path"]
         states = a["after_state_sha256"] == b["after_state_sha256"]
         trajectories = a["trajectories"] == b["trajectories"]
         ok = states and (trajectories or not same_root)
         failures += not ok
-        rows.append({"iteration": name, "after_state_equal": states, "same_root": same_root,
-                     "trajectories_equal": trajectories, "pooled_backend": b["collection_backend"],
-                     "pass": ok})
-    return {"schema": "mtg-kernel-pooled-proof/v1", "iterations": len(rows),
+        rows.append({"iteration": name, "after_state_equal": states, "trajectories_equal": trajectories,
+                     "pooled_backend": b["collection_backend"], "pass": ok})
+    return {"schema": "mtg-kernel-pooled-proof/v1", "same_root": same_root, "iterations": len(rows),
             "passed": len(rows) - failures, "pass": failures == 0 and bool(rows), "rows": rows}
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 4 or argv[1] != "compare":
-        print("usage: pooled_proof.py compare REFERENCE_ROOT POOLED_ROOT", file=sys.stderr)
+    args = argv[2:]
+    same_root = "--same-root" in args
+    args = [a for a in args if a != "--same-root"]
+    if len(argv) < 2 or argv[1] != "compare" or len(args) != 2:
+        print("usage: pooled_proof.py compare [--same-root] REFERENCE_ROOT POOLED_ROOT", file=sys.stderr)
         return 2
     try:
-        report = compare(Path(argv[2]), Path(argv[3]))
+        report = compare(Path(args[0]), Path(args[1]), same_root)
     except (OSError, ValueError, KeyError) as error:
         print(f"pooled proof: {error}", file=sys.stderr)
         return 2

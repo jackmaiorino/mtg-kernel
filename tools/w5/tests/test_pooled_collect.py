@@ -27,8 +27,9 @@ class FakeTransport:
         self.host, self.files, self.fail, self.salt = host, files, fail, salt
         self.pushed, self.runs = [], []
 
-    def missing_pins(self, pins):
-        return sorted(p for p in pins if self.files.get(p[0]) != p[1])
+    def pin_status(self, pins):
+        return {p: ("absent" if p[0] not in self.files else "ok" if self.files[p[0]] == p[1] else "differs")
+                for p in pins}
 
     def push(self, local, remote):
         self.files[remote] = pc.sha256_file(Path(local))
@@ -170,6 +171,35 @@ class PooledCollectTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
 
+    def test_a_foreign_file_at_a_pinned_path_is_never_replaced(self):
+        config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
+        transports = self.transports(config)
+        transports["b"].files[str(self.checkpoint)] = "e" * 64
+        receipt = pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        self.assertEqual(receipt["merged"]["slots"], self.expected())
+        self.assertEqual(receipt["failed_hosts"], ["b"])
+        self.assertEqual(transports["b"].pushed, [])
+        self.assertEqual(transports["b"].files[str(self.checkpoint)], "e" * 64)
+
+    def test_remote_deletion_stays_inside_the_scratch_root(self):
+        host = pc.Host(name="m", kind="ssh", collector="/c", collector_sha256="c" * 64, workers=2, weight=1.0,
+                       scratch="/srv/scratch", arch="x86", ssh=["ssh", "m"])
+        self.assertEqual(pc.Dispatcher.owned_dir(host, "/srv/scratch/pooled-ab-s000"), "/srv/scratch/pooled-ab-s000")
+        for bad in ("/srv/scratch", "/srv/other/pooled-x", "/srv/scratch/run", "/srv/scratch/pooled-x/../.."):
+            with self.assertRaises(RuntimeError):
+                pc.Dispatcher.owned_dir(host, bad)
+
+    def test_tags_differ_between_runs_sharing_a_scratch_root(self):
+        config = self.config([("a", 1.0, "x86")])
+        transports = self.transports(config)
+        first = pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        other = self.root / "run2" / "iterations" / "000016" / "attempt-000000"
+        other.mkdir(parents=True)
+        (other / "collect-command.json").write_text(json.dumps(self.command))
+        second = pc.Dispatcher(config, transports).collect(other / "collect-command.json", fake_merge)
+        tags = lambda r: {e["tag"] for e in r["events"] if e["event"] == "shard"}  # noqa: E731
+        self.assertFalse(tags(first) & tags(second))
+
     def test_a_host_without_its_pinned_collector_is_not_used(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
         transports = self.transports(config)
@@ -191,6 +221,13 @@ class PooledCollectTests(unittest.TestCase):
             pc.Dispatcher(config, self.transports(config, salt={"m": "-arm"})).collect(self.command_path, fake_merge)
 
     def test_old_pushed_checkpoints_are_pruned_on_ssh_hosts_only(self):
+        # A nested input (a play import's parameters) stays across iterations.
+        leaf = self.root / "learner" / "parameters.f32le"
+        leaf.write_bytes(b"parameters")
+        imp = self.root / "learner" / "import.json"
+        imp.write_text(json.dumps({"parameters": {"path": str(leaf), "sha256": pc.sha256_file(leaf)}}))
+        self.command["source"]["play_import"] = {"path": str(imp), "sha256": pc.sha256_file(imp)}
+        self.command_path.write_text(json.dumps(self.command))
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "arm64")])
         for host in config["hosts"]:
             host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", host.name], True
@@ -211,7 +248,9 @@ class PooledCollectTests(unittest.TestCase):
             self.assertEqual(transport.removed, [old])
             self.assertIn(str(new), transport.files)
         state = json.loads((self.root / "pushed.json").read_text())
-        self.assertEqual(state["a"], [str(new)])
+        self.assertEqual(sorted(state["a"]), sorted([str(new), str(imp), str(leaf)]))
+        for transport in transports.values():
+            self.assertIn(str(leaf), transport.files)
 
     def test_remote_commands_can_run_inside_a_container(self):
         host = pc.Host(name="m", kind="ssh", collector="/c", collector_sha256="c" * 64, workers=2, weight=1.0,

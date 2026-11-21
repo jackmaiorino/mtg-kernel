@@ -212,6 +212,12 @@ pub(super) fn collect_parallel_v1(
         )?;
         collection_sampler.apply_to_learner_v1(&mut policy);
         if let Some(context) = &transfer {
+            // A registry-transfer continuation validates its whole pinned
+            // batch, which a shard does not hold.
+            ensure(
+                shard.is_none(),
+                "pooled collection does not take a registry-transfer source",
+            )?;
             context.validate_batch(&episodes)?;
         }
         let state_hash = hex(&state.state_sha256_v1().map_err(err)?);

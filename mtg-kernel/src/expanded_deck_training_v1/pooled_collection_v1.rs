@@ -91,6 +91,7 @@ struct WholeCommandV1<'a> {
     episodes: &'a [ExpandedEpisodeV1],
     workers: usize,
     max_non_natural_episode_fraction: f32,
+    record_envelope: RecordEnvelopeV1,
     output_directory: &'a Path,
 }
 
@@ -102,6 +103,7 @@ fn whole_command_v1(command: &ExpandedTrainingCommandV1) -> Result<WholeCommandV
             workers,
             max_non_natural_episode_fraction,
             ex1,
+            record_envelope,
             shard,
             output_directory,
             ..
@@ -121,6 +123,7 @@ fn whole_command_v1(command: &ExpandedTrainingCommandV1) -> Result<WholeCommandV
                 episodes,
                 workers: *workers,
                 max_non_natural_episode_fraction: *max_non_natural_episode_fraction,
+                record_envelope: *record_envelope,
                 output_directory,
             })
         }
@@ -334,15 +337,6 @@ pub fn merge_shards_v1(
         "shards do not cover every episode of the collection",
     )?;
     fs::create_dir(whole.output_directory).map_err(err)?;
-    let mut outputs = Vec::with_capacity(schedule);
-    for (slot, bytes) in trajectory_bytes.into_iter().enumerate() {
-        let name = format!("episode-{slot:04}.json");
-        outputs.push(publish_json_shared_v1(
-            whole.output_directory,
-            &name,
-            &Arc::new(bytes),
-        )?);
-    }
     // The same order and cap as one process: entries sorted by slot then
     // attempt, the ledger kept on disk even when the cap aborts.
     ledger_entries.sort_by_key(|entry| (entry.slot, entry.attempt));
@@ -360,6 +354,29 @@ pub fn merge_shards_v1(
     } else {
         None
     };
+    // Bind every trajectory to the whole command before anything else is
+    // published: the requested record envelope, and the scheduled episode
+    // (with the seed the ledger re-derives for a retried slot, after the
+    // ledger itself is checked against the schedule).
+    let seed_overrides = match &ledger_pin {
+        Some(pin) => ledgered_retry_seed_overrides_v1(pin, whole.episodes)?,
+        None => vec![None; schedule],
+    };
+    check_trajectories_against_schedule_v1(
+        &trajectory_bytes,
+        whole.episodes,
+        &seed_overrides,
+        whole.record_envelope,
+    )?;
+    let mut outputs = Vec::with_capacity(schedule);
+    for (slot, bytes) in trajectory_bytes.into_iter().enumerate() {
+        let name = format!("episode-{slot:04}.json");
+        outputs.push(publish_json_shared_v1(
+            whole.output_directory,
+            &name,
+            &Arc::new(bytes),
+        )?);
+    }
     if whole.max_non_natural_episode_fraction > 0.0 {
         ensure(
             failed_fraction <= whole.max_non_natural_episode_fraction,
@@ -394,6 +411,66 @@ pub fn merge_shards_v1(
     }
     publish_json(whole.output_directory, "collection.json", &result)?;
     Ok(result)
+}
+
+/// Every trajectory carries the requested envelope and exactly its scheduled
+/// episode. Opened and parsed on a few threads; the first failing slot in
+/// schedule order is reported.
+fn check_trajectories_against_schedule_v1(
+    trajectories: &[Vec<u8>],
+    episodes: &[ExpandedEpisodeV1],
+    seed_overrides: &[Option<u64>],
+    envelope: RecordEnvelopeV1,
+) -> Result<(), String> {
+    ensure(
+        trajectories.len() == episodes.len() && seed_overrides.len() == episodes.len(),
+        "collection episode count differs",
+    )?;
+    let check = |slot: usize| -> Result<(), String> {
+        let bytes = &trajectories[slot];
+        ensure(
+            record_envelope_v1::is_sealed_v1(bytes) == !envelope.is_none(),
+            &format!("shard trajectory {slot} is not in the requested record envelope"),
+        )?;
+        let record = record_envelope_v1::open_v1(bytes, MAX_FILE_BYTES)?;
+        let document: Value = serde_json::from_slice(&record).map_err(err)?;
+        let mut expected = episodes[slot].clone();
+        if let Some(seed) = seed_overrides[slot] {
+            expected.seed = seed;
+        }
+        ensure(
+            document["episode"] == serde_json::to_value(&expected).map_err(err)?,
+            &format!("shard trajectory {slot} does not carry its scheduled episode"),
+        )
+    };
+    let workers = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .clamp(1, 16)
+        .min(trajectories.len());
+    let results: Vec<Result<(), String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|worker| {
+                let check = &check;
+                scope.spawn(move || {
+                    (worker..trajectories.len())
+                        .step_by(workers)
+                        .map(|slot| (slot, check(slot)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let mut all: Vec<(usize, Result<(), String>)> = handles
+            .into_iter()
+            .flat_map(|handle| {
+                handle.join().unwrap_or_else(|_| {
+                    vec![(0, Err("trajectory check worker panicked".to_string()))]
+                })
+            })
+            .collect();
+        all.sort_by_key(|entry| entry.0);
+        all.into_iter().map(|entry| entry.1).collect()
+    });
+    results.into_iter().collect()
 }
 
 /// A command file of at most 16 MiB (the trainer's config bound).
@@ -704,7 +781,54 @@ mod tests {
             !root.join("merged").exists(),
             "a refused merge publishes nothing"
         );
-        merge_shards_v1(&whole, &[first, second]).unwrap();
+        merge_shards_v1(&whole, &[first.clone(), second.clone()]).unwrap();
+        // Coherent shards of another command (same source, other episodes)
+        // are refused: every trajectory is bound to its scheduled episode.
+        let mut foreign_episodes = episodes.clone();
+        for episode in &mut foreign_episodes {
+            episode.seed += 500;
+        }
+        let foreign = whole_command_for_test_v1(
+            &source,
+            &foreign_episodes,
+            0.0,
+            RecordEnvelopeV1::default(),
+            root.join("unused"),
+        );
+        let foreign_specs: Vec<_> = specs
+            .iter()
+            .enumerate()
+            .map(|(index, spec)| ShardSpecV1 {
+                output_directory: root.join(format!("foreign-{index}")),
+                ..spec.clone()
+            })
+            .collect();
+        for shard in shard_commands_v1(&foreign, &foreign_specs).unwrap() {
+            execute_v1(shard).unwrap();
+        }
+        let foreign_dirs: Vec<_> = foreign_specs
+            .iter()
+            .map(|s| s.output_directory.clone())
+            .collect();
+        let again = whole_command_for_test_v1(
+            &source,
+            &episodes,
+            0.0,
+            RecordEnvelopeV1::default(),
+            root.join("merged-2"),
+        );
+        let error = merge_shards_v1(&again, &foreign_dirs).unwrap_err();
+        assert!(error.contains("scheduled episode"), "got: {error}");
+        // Plain shards do not merge into a command that asks for zstd1.
+        let sealed = whole_command_for_test_v1(
+            &source,
+            &episodes,
+            0.0,
+            RecordEnvelopeV1::Zstd1,
+            root.join("merged-3"),
+        );
+        let error = merge_shards_v1(&sealed, &[first, second]).unwrap_err();
+        assert!(error.contains("record envelope"), "got: {error}");
         // Shard plans that do not cover the schedule are refused up front.
         let bad = vec![ShardSpecV1 {
             episodes: 2,
