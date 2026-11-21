@@ -176,6 +176,42 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
     );
     let probe: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&pin_v2).unwrap();
     assert!(probe.e_supported.is_none() && probe.ex1.is_none());
+    // The v2 update remembered its container's metadata view after its
+    // readback: exactly the view a fresh probe takes from the file.
+    let view = checkpoint_container_v1::metadata_view_v1(&bytes_v2).unwrap();
+    assert_eq!(
+        checkpoint_metadata_memo_v1::lookup_v1(&pin_v2.sha256).as_deref(),
+        Some(&view.to_vec())
+    );
+    // A probe parses the remembered view only after the file check: a copy
+    // with one byte changed under the same pin is refused, with or without
+    // the memo, and a probe without the memo gives the remembered answer.
+    let changed = root.join("changed.ckpt");
+    let mut altered = bytes_v2.clone();
+    let last = altered.len() - 1;
+    altered[last] ^= 1;
+    fs::write(&changed, &altered).unwrap();
+    let changed_pin = PinnedFileV1 {
+        path: changed.clone(),
+        sha256: pin_v2.sha256.clone(),
+    };
+    assert!(read_checkpoint_metadata_v1::<CheckpointESupportedProbeV1>(&changed_pin).is_err());
+    checkpoint_metadata_memo_v1::clear_for_test_v1();
+    assert!(read_checkpoint_metadata_v1::<CheckpointESupportedProbeV1>(&changed_pin).is_err());
+    let cold: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&pin_v2).unwrap();
+    assert_eq!(
+        (cold.e_supported, cold.soft_q, cold.search_targets, cold.ex1),
+        (
+            probe.e_supported,
+            probe.soft_q,
+            probe.search_targets,
+            probe.ex1
+        )
+    );
+    assert_eq!(
+        checkpoint_metadata_memo_v1::lookup_v1(&pin_v2.sha256).as_deref(),
+        Some(&view.to_vec())
+    );
     assert!(!no_state_digest_v1::names_another_file_v1(&bytes_v2).unwrap());
     // A truncated container is refused by the metadata view as by a load.
     let header_end = bytes_v2.len() - 4;
