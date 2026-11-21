@@ -930,10 +930,16 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
         OperationV1::Advance => Ok(Some(crate::engine::advance_without_linked_aura_v1(state))),
         OperationV1::Event(event) => {
             crate::event::propose_without_linked_aura_v1(state, event.clone());
+            // A direct public Event has no enclosing Advance/Effect tail to
+            // finish prevention after its last saved answer is resumed.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
             Ok(None)
         }
         OperationV1::Batch(events) => {
             crate::event::batch_without_linked_aura_v1(state, events.clone());
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
             Ok(None)
         }
         OperationV1::Effect { op, ctx } => {

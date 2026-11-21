@@ -345,3 +345,39 @@ fn mixed_source_batch_shares_apnap_frontier_with_hallow() {
         assert_eq!(shields(&state), 0);
     }
 }
+
+#[test]
+fn direct_event_finishes_hallow_gain_only_after_the_saved_choice() {
+    use mtg_kernel::event::{self, ProposedEvent};
+    for active in [P0, P1] {
+        let other = active.opponent();
+        let mut state = turn_of(active);
+        let protected = put(&mut state, active, "Jackal Pup", Zone::Hand);
+        pool(&mut state, active, &[ManaColor::R], 0);
+        cast(&mut state, protected, &[]);
+        give_priority(&mut state, other);
+        let hallow = put(&mut state, other, "Hallow", Zone::Hand);
+        pool(&mut state, other, &[ManaColor::W], 0);
+        cast(&mut state, hallow, &[Target::Object(protected)]);
+        settled(&mut state);
+        global_prevention(&mut state, other, "Ethereal Haze", ManaColor::W);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::damage(protected, Target::Player(other), 2),
+        );
+        assert_eq!(life(&state, other), 20);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 } if player == other && source == protected)
+        );
+        choose_public(&mut state, other, protected, 0, 2);
+        settled(&mut state);
+        assert_eq!(life(&state, other), 22);
+        assert!(state
+            .eternal_v1
+            .as_ref()
+            .unwrap()
+            .pf1c
+            .hallow_life_owed
+            .is_empty());
+    }
+}

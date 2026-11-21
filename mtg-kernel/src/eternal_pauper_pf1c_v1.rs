@@ -774,6 +774,11 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
 /// per controller (simultaneous damage prevented at once is one gain), in
 /// the order the damage was prevented. Free when nothing is owed.
 pub(crate) fn gain_hallow_life(state: &mut GameState) {
+    // Direct Event/Batch wrappers may return a public saved checkpoint. Its
+    // original operation, not this already-returned wrapper, owns the gain.
+    if crate::linked_aura_operation_v1::has_pending(state) {
+        return;
+    }
     let owed = match state.eternal_v1.as_mut() {
         Some(eternal) if !eternal.pf1c.hallow_life_owed.is_empty() => {
             std::mem::take(&mut eternal.pf1c.hallow_life_owed)
