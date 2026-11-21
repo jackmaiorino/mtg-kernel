@@ -13331,7 +13331,10 @@ mod tests {
         session
     }
 
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     mod limited_trigger_order_tests {
         use super::*;
         use crate::event::{propose_and_commit, ProposedEvent};
@@ -18333,7 +18336,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn flat_action_slice_refuses_loyalty_and_combat_prevention_before_publish() {
         let base = FastActorSessionV1::reset_with_limits(81_039, 139, 128, 16_384);
         for semantic in 0..5 {
