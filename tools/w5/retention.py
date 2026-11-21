@@ -851,7 +851,7 @@ class IndexCache:
 
     def file_rows(self):
         """How many held records come from the index file (not the unwritten rows a read-only cache keeps)."""
-        store = self.records.store
+        store = getattr(self.records, 'store', self.records)  # the cache's IndexRecords
         return len(store) - len(store.extra)
 
     def refresh(self):
