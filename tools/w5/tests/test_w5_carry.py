@@ -566,6 +566,13 @@ class CarryTests(unittest.TestCase):
         with self.assertRaisesRegex(chains.Stop, 'not a w5-chain-carry/v1 record'):
             chains.make_plan(self.cont_inputs(other, label='fr', root='fr'))
         self.assertFalse((self.t / 'fr').exists())  # refused before any plan write
+        broken = jwrite(self.t / 'broken-carry.json', {'schema': chains.CARRY_SCHEMA, 'from': None})
+        with self.assertRaises(chains.Stop):
+            chains.make_plan(self.cont_inputs(broken, label='br', root='br'))
+        rec = json.loads(self.carry(old_man, 8).read_text())
+        rec['from']['chain'] = 'other'
+        with self.assertRaisesRegex(chains.Stop, 'names chain other'):
+            chains.make_plan(self.cont_inputs(jwrite(self.t / 'carry-other.json', rec), label='ot', root='ot'))
         seg = Path(json.loads(old_man.read_text())['segments'][1]['root'])
         upd = next(seg.glob('iterations/000003/attempt-*/update/update.json'))
         upd.write_text(upd.read_text() + ' ')

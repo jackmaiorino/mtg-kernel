@@ -590,7 +590,7 @@ def check_carry_roots(doc, name, root, scratch_root=None):
     require(isinstance(doc, dict) and doc.get('schema') == CARRY_SCHEMA, f'{name}: not a {CARRY_SCHEMA} record')
     try:
         old_root, old_scratch = old_trees(doc['from']['manifest']['path'])
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         raise Stop(f'{name}: the carried chain\'s trees cannot be established ({exc})') from exc
     mine = [Path(root)] + ([Path(scratch_root)] if scratch_root else [])
     theirs = [old_root] + ([old_scratch] if old_scratch else [])
@@ -633,6 +633,8 @@ def check_carry(doc, name, seed_root, arm, new=True):
     old_cdir = Path(doc['from']['manifest']['path']).parent
     old_root = old_cdir.parent.parent
     require(Path(doc['from']['manifest']['path']).is_absolute(), f'{name}: the carried manifest path is not absolute')
+    require(doc['from']['chain'] == old_cdir.name, f'{name}: the record names chain {doc["from"]["chain"]}, '
+            f'its manifest is {old_cdir.name}\'s')
     require(name != doc['from']['chain'], f'{name}: a carried chain takes a new name')
     check_carry_roots(doc, name, Path(arm['root']), arm.get('scratch_root'))
     carried_dirs_apart(doc, name, Path(arm['root']), arm.get('scratch_root'))
