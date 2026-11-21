@@ -881,7 +881,11 @@ class CarryTests(unittest.TestCase):
         def plant_during_wait(_seconds):  # the link appears while the driver sleeps between guard polls
             log_path.unlink(missing_ok=True)
             log_path.symlink_to(old_ck)
-        with mock.patch.object(chains, 'guard_admit', return_value=(False, 'mocked guard wait')),                 mock.patch.object(chains.time, 'sleep', side_effect=plant_during_wait),                 mock.patch.object(chains, 'run_trainer', side_effect=AssertionError('no run'), create=True),                 contextlib.redirect_stderr(io.StringIO()):
+        with mock.patch.object(chains, 'guard_admit', return_value=(False, 'mocked guard wait')), \
+                mock.patch.object(chains.time, 'sleep', side_effect=plant_during_wait), \
+                mock.patch.object(chains, 'GUARD_WAIT', 3600.0), \
+                mock.patch.object(chains, 'run_reaped', side_effect=AssertionError('no run')), \
+                contextlib.redirect_stderr(io.StringIO()):
             code = self.drive(plan, 'c1c', cont, 9)
         self.assertEqual(code, chains.EXIT_STOP)
         log_path.unlink(missing_ok=True)
