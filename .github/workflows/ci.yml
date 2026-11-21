@@ -140,7 +140,7 @@ jobs:
             if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               # Its run covered the whole pull request set only if its files
               # did not narrow it to one scope (tools/ci/ci_scope.py).
-              pr_scope=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files" --jq '.[].filename' |
+              pr_scope=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files" --jq '.[] | .filename, (.previous_filename // empty)' |
                 python3 tools/ci/ci_scope.py file-scope) || pr_scope=
               echo "its files map to: ${pr_scope:-unknown}"
               if [ "$pr_scope" = pr ]; then
@@ -164,7 +164,7 @@ jobs:
           fi
           # The PR checkout is the synthetic merge commit; HEAD^1 is the
           # base branch tip, so this diff is exactly the PR's file set.
-          files=$(git diff --name-only HEAD^1 HEAD)
+          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
           echo "changed files:"; echo "$files"
           python_relevant=false
           rust_relevant=false
@@ -213,7 +213,7 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            CHANGED_FILES=$(git diff --name-only HEAD^1 HEAD)
+            CHANGED_FILES=$(git diff --no-renames --name-only HEAD^1 HEAD)
             export CHANGED_FILES
           fi
           python3 tools/ci/ci_scope.py choose
