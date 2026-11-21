@@ -188,9 +188,11 @@ def chain_start(chain):
 
 
 def unlinked_inside(path, top):
-    """`path` has no symlink in any component and lies inside `top` (both made absolute, `top` resolved)."""
+    """`path` has no symlink in any component, no `..` component, and lies inside `top` (both made absolute, `top`
+    resolved)."""
     absolute = os.path.abspath(path)
-    return os.path.realpath(absolute) == absolute and Path(top).resolve() in Path(absolute).parents
+    return '..' not in Path(path).parts and os.path.realpath(absolute) == absolute and \
+        Path(top).resolve() in Path(absolute).parents
 
 
 def own_files(seg_root, *paths, own_dir=None):
@@ -310,7 +312,7 @@ def carried_files_unlinked(chain_path):
     for p in (chain_path.parent, chain_path, cache, chain_path.with_suffix('.index.lock'),
               cache.with_suffix(cache.suffix + '.tmp')):
         absolute = os.path.abspath(p)
-        if os.path.islink(p) or os.path.realpath(absolute) != absolute:
+        if '..' in Path(p).parts or os.path.islink(p) or os.path.realpath(absolute) != absolute:
             raise SystemExit(f'stop: {p} is a link or lies under one (a carried chain)')
 
 
@@ -1121,6 +1123,8 @@ def apply(plan_doc, log_path, hold=None):
         if stray:
             raise SystemExit(f'stop: the plan would delete through a link or outside {plan_doc["own_dir"]}: {stray[:3]}')
         log_abs = os.path.abspath(log_path)
+        if '..' in Path(log_path).parts or (hold and '..' in Path(hold).parts):
+            raise SystemExit('stop: a carried plan\'s log and hold paths have no ".." component')
         if os.path.realpath(log_abs) != log_abs:
             raise SystemExit(f'stop: the retention log {log_path} is a link or lies under one')
         own_root = Path(os.path.abspath(plan_doc['own_dir'])).parent.parent  # <root>/chains/<name> -> <root>

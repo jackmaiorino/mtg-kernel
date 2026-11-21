@@ -620,6 +620,15 @@ def carried_chain_dir_ok(plan, root, name):
     man = read(cdir / 'chain.json')
     require(man.get('chain') == name and isinstance(man.get('carry'), dict),
             f'{name}: {cdir / "chain.json"} is not this carried chain\'s manifest')
+    arm_file = ((plan.get('arms') or {}).get(plan['chains'][name].get('arm')) or {}).get('file') or {}
+    if arm_file.get('path'):  # its scratch root and scratch directory: canonical, apart, and with no link inside
+        scratch_root = read(arm_file['path']).get('scratch_root')
+        carried_dirs_apart(man['carry'], name, root, scratch_root)
+        if scratch_root and Path(scratch_root).is_dir():
+            for dirpath, dirnames, filenames in os.walk(scratch_root, followlinks=False):
+                for entry in dirnames + filenames:
+                    require(not os.path.islink(os.path.join(dirpath, entry)),
+                            f'{name}: {os.path.join(dirpath, entry)} is a link in a carried plan\'s scratch root')
 
 
 def old_trees_read(manifest_path):
@@ -668,6 +677,8 @@ def carried_dirs_apart(doc, name, root, scratch_root=None):
     for top, d in pairs:
         real = d.resolve()
         absolute = os.path.abspath(d)
+        require('..' not in Path(top).parts and '..' not in d.parts,
+                f'{name}: {top} and {d} must have no ".." component')
         require(Path(top).is_absolute() and os.path.realpath(top) == os.path.abspath(top)
                 and not d.is_symlink() and os.path.realpath(absolute) == absolute,
                 f'{name}: {top} and {d} must be canonical paths with no link in them (resolves to {real})')
@@ -1016,6 +1027,9 @@ def make_plan(inputs_path):
     common = {k: pin(inputs[k]) for k in ('python', 'trainer', 'container_tool', 'base', 'layout')}
     frozen_pin = pin(frozen) if frozen else None
     carry_bytes = {}  # one read of each carry record: every check, the pin and the manifest use these bytes
+    carried_names = [n for n, c in chains_in.items() if c.get('carry') is not None]
+    require(not carried_names or len(carried_names) == len(chains_in),
+            'a plan with a carried chain carries every chain (no ordinary chain shares its roots)')
     for name, c in sorted(chains_in.items()):  # before any write: a carried plan never writes in the old root
         if c.get('carry') is not None:
             carry_bytes[name] = Path(c['carry']).read_bytes()
