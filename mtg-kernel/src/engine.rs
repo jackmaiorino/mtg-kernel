@@ -9362,18 +9362,19 @@ fn cast_single_object_cost_needed(
 }
 
 /// Whether returning `object` as part of `pending`'s cost keeps the cast
-/// payable. Only a permanent whose mana ability would sacrifice it (a
-/// Gemstone Mine's last counter) can make a difference: once chosen it is
-/// reserved from the mana payment, so it is offered only while the rest of
-/// the payment still covers the cast (Pauper field wave W1 review). Every
-/// other choice leaves the mana sources unchanged.
+/// payable. A LandV1 return uses the shared quote's exact post-mana survival
+/// check; other return filters retain the Gemstone Mine reservation check.
 fn return_choice_keeps_cast_payable(
     pending: &PendingCast,
     object: ObjectId,
+    filter: PermanentFilterDef,
     state: &GameState,
 ) -> bool {
     if !cfg!(feature = "eternal-fixtures")
-        || !crate::eternal_premodern_p1a_v1::statics::leaves_when_tapped_for_mana(state, object)
+        || (filter != PermanentFilterDef::LandV1
+            && !crate::eternal_premodern_p1a_v1::statics::leaves_when_tapped_for_mana(
+                state, object,
+            ))
     {
         return true;
     }
@@ -9402,7 +9403,7 @@ fn cast_single_object_cost_candidates(
             return_permanent_cost_candidates(pending.controller, state, filter, &[])
                 .into_iter()
                 .map(|binding| binding.object)
-                .filter(|&object| return_choice_keeps_cast_payable(pending, object, state))
+                .filter(|&object| return_choice_keeps_cast_payable(pending, object, filter, state))
                 .collect()
         }
         CastSingleObjectCostV1::ExileHandCard(color) => {
@@ -9425,7 +9426,7 @@ fn cast_single_object_cost_candidates(
                 .into_iter()
                 .map(|binding| binding.object)
                 .filter(|object| !pending.sacrifice_chosen.contains(object))
-                .filter(|&object| return_choice_keeps_cast_payable(pending, object, state))
+                .filter(|&object| return_choice_keeps_cast_payable(pending, object, filter, state))
                 .collect()
         }
         CastSingleObjectCostV1::TapPermanents(filter, _) => tap_permanent_cost_candidates(
