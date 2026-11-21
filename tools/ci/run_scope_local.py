@@ -60,9 +60,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     rows, started = [], time.monotonic()
     commands = [line for line in listed.stdout.splitlines() if line.strip()]
+    python = Path(sys.executable).as_posix()
     if args.no_uv:
-        python = Path(sys.executable).as_posix()
         commands = [c.replace("uv run --no-sync python", f'"{python}"') for c in commands]
+    # Plain `python` commands use this interpreter (CI's is the pinned setup-python one).
+    commands = [f'"{python}"' + c[len("python"):] if c.startswith("python ") else c for c in commands]
     for command in commands:
         t0 = time.monotonic()
         code = run(command, repo, shell=True).returncode

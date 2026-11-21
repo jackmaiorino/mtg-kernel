@@ -51,47 +51,31 @@ class TableTests(unittest.TestCase):
                 stem = prefix.rstrip(":")
                 self.assertTrue(any(n == stem or n.startswith(stem) for n in names), prefix)
 
-    def test_the_feature_matrix_is_the_table(self):
+    def test_the_job_rows_are_the_table(self):
         text = WORKFLOW.read_text(encoding="utf-8")
-        (line,) = [l for l in text.splitlines() if l.strip().startswith("features: [")]
-        self.assertEqual(re.findall(r"'([^']*)'", line), ci_scope.FEATURE_SETS)
+        job = text[text.index("  trainer-tests:\n"):]
+        job = job[:job.index("    runs-on:")]
+        (line,) = [l for l in job.splitlines() if l.strip().startswith("features: [")]
+        linux = re.findall(r"'([^']*)'", line)
+        windows = re.findall(r"- os: windows-2025\n\s+features: '([^']*)'", job)
+        self.assertIn("os: [ubuntu-24.04]", job)
+        self.assertEqual([("linux", f) for f in linux] + [("windows", f) for f in windows], ci_scope.TRAINER_ROWS)
         self.assertEqual(ci_scope.scope_of("docs/reports/x/pipeline.py"), None)
         self.assertEqual(ci_scope.scope_of_files(["docs/reports/x/pipeline.py", "mtg-kernel/src/rl_session.rs"]), "pr")
 
-    def test_every_feature_gate_in_a_module_the_filters_select_is_covered(self):
-        cargo = (ROOT / "mtg-kernel" / "Cargo.toml").read_text(encoding="utf-8")
-        implies = {name: re.findall(r'"([a-z0-9-]+)"', deps)
-                   for name, deps in re.findall(r'^([a-z0-9-]+) = \[([^\]]*)\]', cargo, re.MULTILINE)}
-
-        def closure(features):
-            out, todo = set(), [f for f in features.split(",") if f]
-            while todo:
-                f = todo.pop()
-                if f not in out:
-                    out.add(f)
-                    todo += implies.get(f, [])
-            return out
-
-        def owner(feature):
-            extra = ci_scope.FEATURE_SETS[1:]
-            return (next((fs for fs in extra if feature in fs.split(",")), None)
-                    or next((fs for fs in extra if feature in closure(fs)), None))
-        src = ROOT / "mtg-kernel" / "src"
-        scanned = 0
-        for prefix in ci_scope.TRAINER_FILTERS:
-            stem = prefix.rstrip(":")
-            for entry in src.iterdir():
-                if not (entry.stem if entry.is_file() else entry.name).startswith(stem):
-                    continue
-                for path in ([entry] if entry.suffix == ".rs" else sorted(entry.rglob("*.rs")) if entry.is_dir() else []):
-                    scanned += 1
-                    text = path.read_text(encoding="utf-8", errors="replace")
-                    for feature in sorted(set(re.findall(r'feature\s*=\s*"([a-z0-9-]+)"', text))):
-                        with self.subTest(file=path.relative_to(src).as_posix(), feature=feature):
-                            fs = owner(feature)
-                            self.assertIsNotNone(fs, feature)
-                            self.assertIn(prefix, ci_scope.filters_for(fs))
-        self.assertGreater(scanned, 100)
+    def test_every_selected_test_runs_in_some_row_or_is_windows_only_with_features(self):
+        import rust_test_cfg
+        names = [name for name, _, _ in rust_test_cfg.all_tests() if rust_test_cfg.selected(name)]
+        self.assertGreater(len(names), 1000)
+        for name, file, on_windows in rust_test_cfg.uncovered():
+            with self.subTest(test=name, file=file):
+                self.assertTrue(on_windows, "no release-trainer row compiles this test")
+        # The Standard row must not rerun default tests whose fixtures Standard rejects.
+        standard = rust_test_cfg.feature_only("standard-magezero-fixtures")
+        self.assertIn("native_training_store_run_v2::tests::standard_fixture_refuses_unadmitted_training_profile",
+                      standard)
+        self.assertNotIn("native_training_store_run_v2::tests::valid_fixture_roundtrips_and_exposes_authority",
+                         standard)
 
     def test_the_record_names_the_mandatory_rows(self):
         record = ci_scope.trainer_record()
@@ -99,6 +83,58 @@ class TableTests(unittest.TestCase):
             self.assertIn(row, record)
         self.assertIn("field absent", record)
         self.assertIn("not mergeable", record)
+
+
+class CfgPredictorTests(unittest.TestCase):
+    def predicted(self, files, features, target="linux"):
+        import tempfile
+        import rust_test_cfg
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel, text in files.items():
+                path = Path(tmp) / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            tests = []
+            rust_test_cfg.scan_file("m", Path(tmp) / "m.rs", [], tests)
+            enabled = frozenset(f for f in features.split(",") if f)
+            return sorted(name for name, cfgs, _ in tests
+                          if all(rust_test_cfg.evaluate(c, enabled, target) for c in cfgs))
+
+    def test_conjunctions_negations_and_enclosing_modules(self):
+        files = {
+            "m.rs": """
+                #[cfg(feature = "a")]
+                mod gated;
+                #[cfg(test)]
+                mod tests {
+                    const BRACES: &str = r#"{ } }"#;
+                    #[test]
+                    fn plain() { let c = '}'; }
+                    #[test]
+                    #[cfg(all(feature = "a", feature = "b"))]
+                    fn both() {}
+                    #[test]
+                    #[cfg(all(feature = "a", not(feature = "b")))]
+                    fn a_without_b() {}
+                    #[cfg(windows)]
+                    mod win {
+                        #[test]
+                        fn only_windows() {}
+                    }
+                    /* } */
+                    #[test]
+                    fn after() {}
+                }
+            """,
+            "m/gated.rs": '#[test]\nfn inside() {}\n#[path = "other.rs"]\nmod moved;\n',
+            "m/other.rs": "#[test]\nfn moved_test() {}\n",
+        }
+        self.assertEqual(self.predicted(files, ""), ["m::tests::after", "m::tests::plain"])
+        self.assertEqual(self.predicted(files, "a"), ["m::gated::inside", "m::gated::moved::moved_test",
+                                                       "m::tests::a_without_b", "m::tests::after", "m::tests::plain"])
+        self.assertEqual(self.predicted(files, "a,b"), ["m::gated::inside", "m::gated::moved::moved_test",
+                                                         "m::tests::after", "m::tests::both", "m::tests::plain"])
+        self.assertIn("m::tests::win::only_windows", self.predicted(files, "", "windows"))
 
 
 class ScopeTests(unittest.TestCase):

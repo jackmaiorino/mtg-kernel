@@ -64,29 +64,18 @@ TRAINER_FILTERS = [
     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
     "native_opponent_sampler_v1::", "sideboard_play_policy_v1::", "rl_session::",
 ]
-# Some tests in the modules the filters select compile only under other features. Each extra feature set runs the
-# filters whose modules have tests gated on a feature that set owns (FEATURE_FILTERS): the set naming the feature,
-# or else the first set that enables it through Cargo implications. The default set runs every filter.
-# tools/ci/tests/test_ci_scope.py scans every module the filters select and fails if a gate is not covered.
+# Rows of the trainer-tests job (tools/ci/run_trainer_row.py). The default row runs every selected library test;
+# each other row runs exactly the selected tests its build compiles and the default build does not, as predicted
+# from each test's cfg by tools/ci/rust_test_cfg.py and checked against the compiled inventory on every run. The
+# Windows default row runs the selected tests on Windows, as the pull request set's Windows workspace suite does.
+# Selected tests that compile only on Windows with other features are outside this scope, as they are outside the
+# pull request set; tools/ci/tests/test_ci_scope.py fails if any other selected test is compiled by no row.
 FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1", "limited-fdn-fixtures",
                 "standard-magezero-fixtures", "eternal-fixtures",
-                "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,native-training-store-v2-production"]
-FEATURE_FILTERS = {
-    "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1": [
-        "expanded_deck_training_v1::", "native_policy_train_step_v1::", "native_expanded_training_run_v1::",
-        "native_policy_value_net_v1::", "native_trainer_v1::", "native_training_", "native_checkpoint_",
-        "sideboard_play_policy_v1::", "rl_session::"],
-    "limited-fdn-fixtures": ["native_policy_value_net_v1::", "native_flat_tensorizer_v", "native_training_",
-                             "sideboard_play_policy_v1::", "rl_session::"],
-    "standard-magezero-fixtures": ["native_flat_tensorizer_v", "native_training_", "rl_session::"],
-    "eternal-fixtures": ["rl_session::"],
-    "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,native-training-store-v2-production": [
-        "expanded_deck_training_v1::", "native_flat_tensorizer_v", "inference_cache_v1::", "native_trainer_v1::",
-        "native_training_", "native_checkpoint_", "sideboard_play_policy_v1::", "rl_session::"],
-}
-
-def filters_for(features: str) -> list[str]:
-    return TRAINER_FILTERS if not features else FEATURE_FILTERS[features]
+                "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,"
+                "native-training-store-v2-production"]
+TRAINER_ROWS = [("linux", features) for features in FEATURE_SETS] + [("windows", "")]
+WINDOWS_STORE_FEATURES = "limited-fdn-fixtures,native-training-store-v2-production"
 
 
 BIT_IDENTITY_ROWS = [
@@ -157,10 +146,12 @@ def markdown() -> str:
            "## Scope to checks", "", "| scope | ci.yml jobs | what runs |", "|---|---|---|"]
     for name, spec in SCOPES.items():
         out.append(f"| {name} | {', '.join(spec['jobs']) or 'none'} | {spec['summary']} |")
-    out += ["", "Library test filters (default features): " + ", ".join(f"`{f}`" for f in TRAINER_FILTERS) + ".", ""]
-    out += [f"Under `{features}`: " + ", ".join(f"`{f}`" for f in filters_for(features)) + "."
-            for features in FEATURE_SETS if features]
-    out += ["",
+    out += ["", "Library test filters: " + ", ".join(f"`{f}`" for f in TRAINER_FILTERS) + ".", "",
+            "Rows: Linux with " + ", ".join(f"`{f or 'default features'}`" for f in FEATURE_SETS)
+            + ", and Windows with default features. A default row runs every library test the filters select; "
+            "another row runs exactly the selected tests its build compiles and the default build does not "
+            "(`tools/ci/rust_test_cfg.py`, checked against the compiled inventory on every run). Selected tests "
+            "that compile only on Windows with other features are not run here, as in the pull request set.", "",
             trainer_record(), "", BLIND_NOTE, "", RULES_NOTE, ""]
     return "\n".join(out)
 
@@ -171,8 +162,7 @@ def main(argv: list[str]) -> int:
         sys.stdout.write(markdown())
         return 0
     if command == "trainer-filters":
-        features = argv[3] if len(argv) > 3 and argv[2] == "--features" else ""
-        print(" ".join(filters_for(features)))
+        print(" ".join(TRAINER_FILTERS))
         return 0
     if command == "file-scope":
         print(scope_of_files([line.strip() for line in sys.stdin if line.strip()]))
@@ -182,7 +172,7 @@ def main(argv: list[str]) -> int:
             print(f"no local command list for scope {argv[2]}", file=sys.stderr)
             return 2
         for features in FEATURE_SETS:
-            print(f'python python/tools/run_rust_lib_filters.py --features "{features}" ' + " ".join(filters_for(features)))
+            print(f'python tools/ci/run_trainer_row.py --features "{features}"')
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")

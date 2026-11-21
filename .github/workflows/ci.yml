@@ -1170,38 +1170,49 @@ jobs:
   # workspace-lib also compiles (its cache is restored, never saved here).
   # The mandatory bit-identity rows run on a node.
   trainer-tests:
-    name: Trainer library tests (ubuntu-24.04, ${{ matrix.features || 'default' }})
+    name: Trainer library tests (${{ matrix.os }}, ${{ matrix.features || 'default' }})
     needs: detect-changes
     if: needs.detect-changes.outputs.checks == 'release-trainer'
     strategy:
       fail-fast: false
       matrix:
-        # tools/ci/ci_scope.py FEATURE_SETS (a test keeps them equal).
+        # tools/ci/ci_scope.py TRAINER_ROWS (a test keeps them equal).
+        os: [ubuntu-24.04]
         features: ['', 'experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1', 'limited-fdn-fixtures', 'standard-magezero-fixtures', 'eternal-fixtures', 'viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,native-training-store-v2-production']
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+        include:
+          - os: windows-2025
+            features: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
     defaults:
       run:
         shell: bash
     steps:
+      # As in rust-test-groups.
+      - name: Add swap space for the library test build
+        if: runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+
+      # Windows can resolve `bash` to the WSL launcher in System32 first.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-
-      # As in rust-test-groups (compressed swap, see job rust-quality).
-      - name: Add swap space for the library test build
-        run: |
-          sudo modprobe zram
-          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
-          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
-          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
-          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
-          sudo mkswap /dev/zram0
-          sudo swapon -p 100 /dev/zram0
 
       - name: Install pinned Rust in a fresh toolchain directory
         env:
           RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
           printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
           fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
           test -n "$fdn_rust_channel"
@@ -1214,11 +1225,12 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-registry-tests-ubuntu-24.04-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
-            cargo-registry-tests-ubuntu-24.04-
+            cargo-registry-tests-${{ matrix.os }}-
 
       - name: Restore the workspace library build
+        if: matrix.features == ''
         uses: ./.github/actions/cargo-build-cache
         with:
           scope: tests-workspace-lib
@@ -1230,10 +1242,9 @@ jobs:
 
       - name: Run the trainer library tests
         run: |
-          read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters --features "$TRAINER_FEATURES")"
           # The catalog feature builds need two Cargo jobs on a 16 GB runner (as in limited-build).
           case "$TRAINER_FEATURES" in *limited*|*standard*|*eternal*) export CARGO_BUILD_JOBS=2 ;; esac
-          python python/tools/run_rust_lib_filters.py --features "$TRAINER_FEATURES" "${filters[@]}"
+          python tools/ci/run_trainer_row.py --features "$TRAINER_FEATURES"
         env:
           TRAINER_FEATURES: ${{ matrix.features }}
 
