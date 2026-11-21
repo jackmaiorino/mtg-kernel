@@ -600,6 +600,21 @@ def check_carry_roots(doc, name, root, scratch_root=None):
                                     'root, neither inside the other)')
 
 
+def carried_dirs_apart(doc, name, root, scratch_root=None):
+    """The carried chain's own directory (<root>/chains/<name>) and scratch directory (<scratch_root>/<name>),
+    resolved through any symlink, stay inside their roots and apart from the old chain's trees: a link placed below
+    a new root cannot lead a scratch reset, persist or cleanup into the old chain."""
+    old_root, old_scratch = old_trees(doc['from']['manifest']['path'])
+    theirs = [old_root] + ([old_scratch] if old_scratch else [])
+    pairs = [(Path(root), Path(root) / 'chains' / name)] + \
+        ([(Path(scratch_root), Path(scratch_root) / name)] if scratch_root else [])
+    for top, d in pairs:
+        real = d.resolve()
+        require(Path(top).resolve() in real.parents, f'{name}: {d} resolves to {real}, outside {top}')
+        for t in theirs:
+            require(disjoint(real, t), f'{name}: {d} resolves to {real}, not apart from the carried chain\'s {t}')
+
+
 def check_carry(doc, name, seed_root, arm, new=True):
     """A plan's carried chain: the record is well formed, its seed root is the chain's, its recipe is the arm's except
     the trainer build, its checkpoint copy is intact, and the wall it continues has not passed."""
@@ -620,6 +635,7 @@ def check_carry(doc, name, seed_root, arm, new=True):
     require(Path(doc['from']['manifest']['path']).is_absolute(), f'{name}: the carried manifest path is not absolute')
     require(name != doc['from']['chain'], f'{name}: a carried chain takes a new name')
     check_carry_roots(doc, name, Path(arm['root']), arm.get('scratch_root'))
+    carried_dirs_apart(doc, name, Path(arm['root']), arm.get('scratch_root'))
     ck = Path(doc['source']['checkpoint']['path'])
     _, old_scratch = old_trees(doc['from']['manifest']['path'])
     keep_out = [old_root.resolve(), Path(arm['root']).resolve()] + \
@@ -916,6 +932,7 @@ def make_plan(inputs_path):
         if c.get('carry') is not None:
             carry_bytes[name] = Path(c['carry']).read_bytes()
             check_carry_roots(json.loads(carry_bytes[name]), name, root, inputs.get('scratch_root'))
+            carried_dirs_apart(json.loads(carry_bytes[name]), name, root, inputs.get('scratch_root'))
     arms, arm_paths = {}, {}
     for a in sorted(used):
         spec = arms_in[a]
@@ -1869,6 +1886,8 @@ def drive(a):
     require(man['recipe'] == recipe_identity(arm), 'the arm file changes the recipe of this chain')
     why = carried_from_stopped(man)
     require(why is None, f'{a.chain}: {why}')
+    if man.get('carry'):
+        carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
     held = lock(cdir / 'DRIVE.lock')
     require(held is not None, f'{a.chain} already has a driver')
     try:
@@ -1906,6 +1925,11 @@ def drive_locked(a, arm, root, cdir, man_path):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
         hold = carried_from_stopped(man)  # None unless carried: before every segment, the old chain must stay held
+        if hold is None and man.get('carry'):
+            try:
+                carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
+            except Stop as exc:
+                hold = str(exc)
         if hold is not None:
             log(root, chain=a.chain, event='stop', reason=hold)
             return EXIT_STOP

@@ -574,5 +574,31 @@ class CarryTests(unittest.TestCase):
                                           str(self.t / 'o'), '--out', str(self.t / 'cu.json')]), w5box.EXIT_REFUSED)
 
 
+    def test_a_link_below_the_new_roots_cannot_reach_the_old_chain(self):
+        _, old_man = self.old(2, length=32)
+        carry_path = self.carry(old_man, 32)
+        shm = self.t / 'shm'
+        shm.mkdir()
+        try:
+            (shm / 'c1c').symlink_to(self.node.root / 'chains' / 'c1', target_is_directory=True)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='lk', root='lk', segment_updates=32)).read_text())
+        doc['scratch_root'] = shm.as_posix()
+        doc['arms']['C']['scratch'] = True
+        with self.assertRaisesRegex(chains.Stop, 'resolves to'):
+            chains.make_plan(jwrite(self.t / 'lk.json', doc))
+        self.assertFalse((self.t / 'lk').exists())  # refused before any plan write
+        # the same link placed after planning: the driver refuses at start, before any scratch work
+        (shm / 'c1c').unlink()
+        path, plan = chains.make_plan(jwrite(self.t / 'lk.json', doc))
+        (shm / 'c1c').symlink_to(self.node.root / 'chains' / 'c1', target_is_directory=True)
+        before = {p: p.read_bytes() for p in (self.node.root / 'chains' / 'c1').rglob('*') if p.is_file()}
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', self.t / 'lk', 1), w5box.EXIT_REFUSED)
+        self.assertEqual({p: p.read_bytes() for p in (self.node.root / 'chains' / 'c1').rglob('*') if p.is_file()},
+                         before)
+
+
 if __name__ == '__main__':
     unittest.main()
