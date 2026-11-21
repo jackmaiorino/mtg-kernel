@@ -69,8 +69,13 @@ def main() -> int:
     if platform.machine().lower() not in ("x86_64", "amd64") or not sys.platform.startswith(("win32", "linux")):
         print(f"unsupported host {sys.platform}/{platform.machine()}: the predictor models x86-64 Linux and Windows")
         return 2
-    if not features and target == "linux" and rust_test_cfg.check_coverage():
-        return 1
+    if not features and target == "linux":
+        # The scope's own guards, before building: every selected test runs in a row, and every module the train
+        # step and training math reference is filtered or excluded with a reason.
+        if rust_test_cfg.check_coverage():
+            return 1
+        if subprocess.run([sys.executable, "tools/ci/ci_scope.py", "check-references"], cwd=ROOT).returncode:
+            return 1
     executable = build(features)
     actual, predicted = compiled(executable), set(rust_test_cfg.predict(features, target))
     if actual != predicted:

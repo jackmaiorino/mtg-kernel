@@ -62,18 +62,20 @@ MAX_HISTORY_PAGES = 5
 
 
 def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> tuple[str | None, bool]:
-    """(head of the newest push run on the branch created before this run that ran its checks, found): (None,
-    True) when the branch has no such run, (None, False) when the examined history ran out first."""
+    """(head of the newest push run on the branch created before this run that ran its checks, found).
+    (None, False) whenever there is no such run in the examined history (none at all, history deleted, only runs
+    replaced while waiting, or the pages ran out): the range cannot be bounded, so it is reported incomplete."""
     this = get(f"/repos/{repo}/actions/runs/{run_id}")
     for page in range(1, MAX_HISTORY_PAGES + 1):
         # Run ids increase with creation, so an earlier run created in the same second still counts.
         runs = get(f"/repos/{repo}/actions/workflows/ci.yml/runs?event=push&branch={branch}&status=completed"
                    f"&created=%3C%3D{this['created_at']}&per_page=50&page={page}")["workflow_runs"]
-        for run in runs:
-            if run["id"] < int(run_id) and run["head_sha"] != this["head_sha"] and ran(get, repo, run):
+        earlier = [run for run in runs if run["id"] < int(run_id) and run["head_sha"] != this["head_sha"]]
+        for run in earlier:
+            if ran(get, repo, run):
                 return run["head_sha"], True
         if len(runs) < 50:
-            return None, True
+            return None, False
     return None, False
 
 

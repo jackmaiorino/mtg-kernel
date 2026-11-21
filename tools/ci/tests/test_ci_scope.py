@@ -101,20 +101,22 @@ class TableTests(unittest.TestCase):
             self.assertIn("run: " + command, job)
 
     def test_every_module_the_train_step_and_training_math_reference_is_filtered_or_excluded(self):
-        referenced = set()
-        for root in ci_scope.TRAINING_REFERENCE_ROOTS:
-            path = ROOT / root
-            for file in ([path] if path.is_file() else sorted(path.rglob("*.rs"))):
-                referenced |= set(re.findall(r"crate::([a-z_0-9]+)", file.read_text(encoding="utf-8", errors="replace")))
-        self.assertGreater(len(referenced), 10)
-        for module in sorted(referenced):
-            filtered = any(module.startswith(f.rstrip(":")) for f in ci_scope.TRAINER_FILTERS)
-            with self.subTest(module=module):
-                self.assertTrue(filtered or module in ci_scope.TRAINING_REFERENCE_EXCLUSIONS,
-                                f"{module}: add it to TRAINER_FILTERS or to TRAINING_REFERENCE_EXCLUSIONS with a reason")
-        for module in ci_scope.TRAINING_REFERENCE_EXCLUSIONS:
-            with self.subTest(stale_exclusion=module):
-                self.assertIn(module, referenced)
+        import tempfile
+        self.assertEqual(ci_scope.training_reference_gaps(), ([], []))
+        # A new reference from the train step to an unexamined module fails the guard the trainer scope runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ci_scope.TRAINING_REFERENCE_ROOTS:
+                src = ROOT / name
+                for file in ([src] if src.is_file() else sorted(src.rglob("*.rs"))):
+                    out = Path(tmp) / file.relative_to(ROOT)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text(file.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+            extra = Path(tmp) / "mtg-kernel/src/training_math_v1.rs"
+            extra.write_text(extra.read_text(encoding="utf-8") + "\nuse crate::unexamined_backend_v9::X;\n",
+                             encoding="utf-8")
+            self.assertEqual(ci_scope.training_reference_gaps(tmp)[0], ["unexamined_backend_v9"])
+        self.assertIn('"tools/ci/ci_scope.py", "check-references"',
+                      (ROOT / "tools/ci/run_trainer_row.py").read_text(encoding="utf-8"))
 
     def test_a_sync_pull_request_runs_the_full_set(self):
         trainer = ["mtg-kernel/src/expanded_deck_training_v1.rs"]
@@ -411,9 +413,18 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch' && (inputs.scope != '' || inputs.windows_runner != '')"
                       " && format('-dispatch-{0}', github.run_id)", group)
 
-    def test_no_earlier_monitored_run_covers_the_head_only(self):
+    def test_only_replaced_earlier_runs_make_the_range_incomplete(self):
+        get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "cancelled", "2026-11-21T11:30:00Z"),
+                                                 (7, "c1", "cancelled", "2026-11-21T11:00:00Z")], {"c3": (837, "x")})
+        body, line, merges = self.run_report(get)
+        self.assertIn("(incomplete, newest only)", line)
+        self.assertNotIn("first responder the author of #837", line)
+
+    def test_no_earlier_monitored_run_is_an_unbounded_range(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
-        self.assertEqual([m["sha"] for m in self.run_report(get)[2]], ["c3"])
+        body, line, merges = self.run_report(get)
+        self.assertEqual([m["sha"] for m in merges], ["c3"])
+        self.assertIn("(incomplete, newest only)", line)
 
     def test_the_comment_mentions_no_one(self):
         import post_merge_report as report
@@ -421,6 +432,25 @@ class MonitorTests(unittest.TestCase):
                                     [{"sha": "abcdef1234", "pull": 7, "author": "x"}])
         self.assertNotIn("@s", body + line)
         self.assertIn("full dispatch run", body)
+
+    def test_the_collector_splits_listings_above_the_result_cap(self):
+        import red_push_runs as red
+        from datetime import datetime, timezone
+        calls = []
+
+        def listing(repo, start, end):
+            calls.append((start, end))
+            hours = (end - start).total_seconds() / 3600
+            return (1500 if hours > 24 else 10), [{"id": len(calls), "event": "push",
+                                                     "updated_at": "2026-11-21T12:00:00Z"}]
+        saved = red.listing
+        red.listing = listing
+        try:
+            runs = red.runs_in("o/r", datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 11, 3, tzinfo=timezone.utc))
+        finally:
+            red.listing = saved
+        self.assertGreater(len(calls), 1)
+        self.assertEqual(len(runs), len(calls) - sum(1 for s_, e_ in calls if (e_ - s_).total_seconds() > 86400))
 
     def test_the_append_command_and_append_are_exact(self):
         import post_merge_report as report

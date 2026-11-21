@@ -67,7 +67,7 @@ TRAINER_FILTERS = [
     # the CUDA training bridge, the exact GPU learner, the deterministic and vector math, the line-B teacher target,
     # the EX1 target and the policy anchor of the retention loss.
     "experimental_burn_net8_packed_v1::", "gpu_exact_v1::", "deterministic_math_v1::", "vector_tanh_v1::",
-    "line_b_teacher_target_v1::", "ex1_v1::", "native_policy_anchor_v1::",
+    "line_b_teacher_target_v1::", "ex1_v1::", "native_policy_anchor_v1::", "w5_xact_v1::",
     "native_opponent_sampler_v1::", "sideboard_play_policy_v1::", "rl_session::",
 ]
 # Rows of the trainer-tests job (tools/ci/run_trainer_row.py). The default row runs every selected library test;
@@ -105,6 +105,22 @@ TRAINING_REFERENCE_EXCLUSIONS = {
 # The files whose references TRAINING_REFERENCE_EXCLUSIONS is checked against.
 TRAINING_REFERENCE_ROOTS = ["mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1",
                             "mtg-kernel/src/training_math_v1.rs"]
+
+
+def training_reference_gaps(root=None) -> tuple[list[str], list[str]]:
+    """(referenced modules neither filtered nor excluded, exclusions no longer referenced) for the files in
+    TRAINING_REFERENCE_ROOTS. The trainer scope runs this, so a qualifying change cannot add an unexamined backend."""
+    import re
+    from pathlib import Path
+    base = Path(root) if root else Path(__file__).resolve().parents[2]
+    referenced = set()
+    for name in TRAINING_REFERENCE_ROOTS:
+        path = base / name
+        for file in ([path] if path.is_file() else sorted(path.rglob("*.rs"))):
+            referenced |= set(re.findall(r"crate::([a-z_0-9]+)", file.read_text(encoding="utf-8", errors="replace")))
+    gaps = sorted(m for m in referenced if m not in TRAINING_REFERENCE_EXCLUSIONS
+                  and not any(m.startswith(f.rstrip(":")) for f in TRAINER_FILTERS))
+    return gaps, sorted(set(TRAINING_REFERENCE_EXCLUSIONS) - referenced)
 
 
 BIT_IDENTITY_ROWS = [
@@ -198,6 +214,16 @@ def main(argv: list[str]) -> int:
     if command == "trainer-filters":
         print(" ".join(TRAINER_FILTERS))
         return 0
+    if command == "check-references":
+        gaps, stale = training_reference_gaps()
+        for module in gaps:
+            print(f"{module}: referenced by the train step or training math; add it to TRAINER_FILTERS or to "
+                  "TRAINING_REFERENCE_EXCLUSIONS with a reason")
+        for module in stale:
+            print(f"{module}: listed in TRAINING_REFERENCE_EXCLUSIONS but no longer referenced; remove it")
+        if not gaps and not stale:
+            print("references: every module the train step and training math reference is filtered or excluded")
+        return 1 if gaps or stale else 0
     if command == "file-scope":
         print(scope_of_files([line.strip() for line in sys.stdin if line.strip()]))
         return 0
