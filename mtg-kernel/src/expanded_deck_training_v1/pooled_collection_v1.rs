@@ -442,10 +442,13 @@ mod tests {
             s_learner: None,
         };
         let decks = [deck_v1("Affinity"), deck_v1("Terror")];
+        // Seeds unique to each test: the forced non-natural seed set is
+        // process-wide and tests run concurrently.
+        let base = 2_026_112_000 + 1_000 * u64::from(label.bytes().fold(0u8, u8::wrapping_add));
         let episodes = (0..count)
             .map(|index| ExpandedEpisodeV1 {
                 id: format!("{label}-{index}"),
-                seed: 2_026_112_000 + index,
+                seed: base + index,
                 starting_player: (index % 2) as u8,
                 learner_seat: 0,
                 opponent: None,
