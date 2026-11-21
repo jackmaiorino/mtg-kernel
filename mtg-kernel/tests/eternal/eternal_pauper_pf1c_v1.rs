@@ -592,6 +592,7 @@ fn finish_optional_escape(
     target: Option<ObjectId>,
     sacrifice: Option<ObjectId>,
     fuel: &[ObjectId],
+    route_first: bool,
 ) {
     assert!(castable(state, spell));
     act(state, Action::CastSpell(spell));
@@ -606,8 +607,9 @@ fn finish_optional_escape(
             {
                 Action::ChooseEffectOption(u16::from(sacrifice.is_some()))
             }
-            // If both payment orders are offered, pay the sacrifice first.
-            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+            Decision::ChooseEffectOption { .. } => {
+                Action::ChooseEffectOption(u16::from(route_first))
+            }
             Decision::ChooseTargets { legal_targets, .. } => {
                 let asked = Target::Object(target.expect("a spell to counter"));
                 assert!(legal_targets.contains(&asked));
@@ -654,7 +656,7 @@ fn optional_escape_can_exile_its_own_bargain_or_casualty_sacrifice() {
             (creature, Casualty(1), Some(target))
         };
         let fuel = [island, swamp, sacrifice];
-        finish_optional_escape(&mut state, spell, target, Some(sacrifice), &fuel);
+        finish_optional_escape(&mut state, spell, target, Some(sacrifice), &fuel, false);
         let item = state
             .stack
             .iter()
@@ -692,7 +694,14 @@ fn optional_escape_cannot_use_a_sacrifice_diverted_to_exile_and_can_decline() {
     pool(&mut state, P0, &[ManaColor::B; 3], 1);
     assert!(!castable(&mut state, spell));
     let forest = put(&mut state, P0, "Forest", Zone::Graveyard);
-    finish_optional_escape(&mut state, spell, None, None, &[island, swamp, forest]);
+    finish_optional_escape(
+        &mut state,
+        spell,
+        None,
+        None,
+        &[island, swamp, forest],
+        false,
+    );
     let item = state
         .stack
         .iter()
@@ -703,6 +712,65 @@ fn optional_escape_cannot_use_a_sacrifice_diverted_to_exile_and_can_decline() {
     for card in [island, swamp, forest] {
         assert_eq!(zone(&state, card), Zone::Exile);
     }
+}
+
+#[test]
+fn optional_escape_rejects_a_stale_restored_bargain_sacrifice() {
+    let mut state = plains();
+    let breach = put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    put(&mut state, P0, "Ichor Wellspring", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Beseech the Mirror", Zone::Graveyard);
+    let island = put(&mut state, P0, "Island", Zone::Graveyard);
+    put(&mut state, P0, "Swamp", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::B; 3], 1);
+    assert!(castable(&mut state, spell));
+    act(&mut state, Action::CastSpell(spell));
+    let Decision::ChooseCostTargets { candidates, .. } = next(&mut state) else {
+        panic!("expected the bargain sacrifice");
+    };
+    assert!(candidates.contains(&breach));
+    act(&mut state, Action::ChooseCostTarget(breach));
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseCostTargets {
+            cost_kind: CostKind::ExileFromGraveyard,
+            ..
+        }
+    ));
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    restored.objects.get_mut(breach).zone_change_count += 2;
+    let before = restored.clone();
+    assert!(engine::step(&mut restored, Action::ChooseCostTarget(island)).is_err());
+    assert_eq!(restored, before);
+}
+
+#[test]
+fn optional_escape_route_first_casualty_resolves_its_copy() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let creature = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Make Disappear", Zone::Graveyard);
+    let fuel = ["Island", "Swamp", "Forest"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    finish_optional_escape(&mut state, spell, Some(bolt), Some(creature), &fuel, true);
+    assert_eq!(zone(&state, creature), Zone::Graveyard);
+    for card in fuel {
+        assert_eq!(zone(&state, card), Zone::Exile);
+    }
+    let Some(Decision::ChooseEffectTargets { legal_targets, .. }) = settle(&mut state) else {
+        panic!("expected to choose a target for the casualty copy");
+    };
+    assert!(legal_targets.contains(&Target::Object(bolt)));
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(bolt)));
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    let copy = state.stack.last().expect("the new copy");
+    assert!(copy.is_copy);
+    assert_eq!(copy.targets, [Target::Object(bolt)]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(life(&state, P0), 20);
 }
 
 #[test]
