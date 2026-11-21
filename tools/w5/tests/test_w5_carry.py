@@ -943,5 +943,59 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(snap(), before)
 
 
+    def test_linked_index_and_late_scratch_links_are_refused(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        old_root = self.node.root
+        old_index = old_root / 'chains' / 'c1' / 'chain.index.jsonl'
+        retention.index(old_root / 'chains' / 'c1' / 'chain.json')
+        snap = lambda: {p: p.read_bytes() for p in old_root.rglob('*') if p.is_file() and not p.is_symlink()}
+        before = snap()
+        cman = cont / 'chains' / 'c1c' / 'chain.json'
+        cindex = cont / 'chains' / 'c1c' / 'chain.index.jsonl'
+        saved = cindex.read_bytes() if cindex.exists() else None
+        cindex.unlink(missing_ok=True)
+        try:
+            cindex.symlink_to(old_index)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        with self.assertRaises(SystemExit):
+            retention.index(cman)
+        with self.assertRaises(SystemExit):
+            retention.IndexCache(cman).refresh()
+        self.assertEqual(snap(), before)
+        cindex.unlink()
+        # a copied (not linked) predecessor index: its first row is not the carried boundary
+        cindex.write_bytes(old_index.read_bytes())
+        with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+            retention.index(cman)
+        cindex.unlink()
+        if saved is not None:
+            cindex.write_bytes(saved)
+        # scratch recovery: a link appearing during the late persist stops before the commit line
+        man = json.loads(cman.read_text())
+        old_ck = next((old_root / 'chains' / 'c1' / 'seg-00001' / 'iterations' / '000003').glob(
+            'attempt-*/update/checkpoint.json'))
+        durable = cont / 'chains' / 'c1c' / 'durable.jsonl'
+
+        def persist_and_plant(arm, native, cdir):
+            durable.unlink(missing_ok=True)
+            durable.symlink_to(old_ck)
+            return 0
+        seg = {'root': (cont / 'chains' / 'c1c' / 'seg-00009').as_posix()}
+        Path(seg['root']).mkdir()
+        (Path(seg['root']) / 'completion.json').write_text('{}')
+        man['segments'] = man['segments'] + [dict(man['segments'][-1], root=seg['root'])]
+        with mock.patch.object(chains, 'mounted', side_effect=lambda p: Path(p) == Path(seg['root'])), \
+                mock.patch.object(chains, 'persist', side_effect=persist_and_plant), \
+                mock.patch.object(chains, 'record_commit', side_effect=AssertionError('no commit')):
+            with self.assertRaises(chains.Stop):
+                chains.scratch_settle({'arm': 'C'}, cont, cont / 'chains' / 'c1c', man)
+        durable.unlink()
+        self.assertEqual(snap(), before)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -265,8 +265,30 @@ def index_lock(chain_path):
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+def is_carried(chain_path):
+    """True when `chain_path` is a readable carried manifest (one with `carry`)."""
+    try:
+        return Path(chain_path).is_file() and bool(read(chain_path).get('carry'))
+    except (OSError, ValueError):
+        return False
+
+
+def carried_files_unlinked(chain_path):
+    """A carried manifest's chain directory, manifest, index, index lock and index temp have no link in any
+    component (a link could hand the continuation another chain's index or lock, or append to it)."""
+    chain_path = Path(chain_path)
+    cache = index_path(chain_path)
+    for p in (chain_path.parent, chain_path, cache, chain_path.with_suffix('.index.lock'),
+              cache.with_suffix(cache.suffix + '.tmp')):
+        absolute = os.path.abspath(p)
+        if os.path.islink(p) or os.path.realpath(absolute) != absolute:
+            raise SystemExit(f'stop: {p} is a link or lies under one (a carried chain)')
+
+
 def index(chain_path):
     """One record per completed update: update, boundary, segment, after-state hash, checkpoint pin, ledger."""
+    if is_carried(chain_path):
+        carried_files_unlinked(chain_path)
     with index_lock(chain_path):
         return index_locked(chain_path)
 
@@ -277,6 +299,8 @@ def index_locked(chain_path):
     records = []
     if cache.exists():
         records = [json.loads(line) for line in cache.read_text(encoding='utf-8').splitlines() if line]
+    if chain.get('carry') and records and records[0].get('update') != chain_start(chain):
+        raise SystemExit(f'stop: {cache} does not start at the carried boundary {chain_start(chain)}')
     if any('state' not in r for r in records):
         # Caches written before S containers were tracked: read each record's container pin from its durable
         # update receipt once, then rewrite the cache.
@@ -776,6 +800,10 @@ class IndexCache:
 
     def refresh(self):
         """(chain, records), equal to `index(chain_path)` at the same moment (records: an `IndexView`)."""
+        if getattr(self, 'carried', None) is None:
+            self.carried = is_carried(self.chain_path)
+        if self.carried:
+            carried_files_unlinked(self.chain_path)
         if self.read_only:
             return self._refresh()
         with index_lock(self.chain_path):

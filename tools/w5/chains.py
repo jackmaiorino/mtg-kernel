@@ -1759,6 +1759,8 @@ def scratch_settle(arm, root, cdir, man, instance=None):
                 with retention.index_lock(cdir / 'chain.json'):
                     os.rename(tmp, native)  # the driver stopped between the unmount and the rename
                     fsync_path(native.parent)  # as persist: the rename is durable before the commit names it
+                if man.get('carry'):  # a carried chain: its tree again before the commit line and the log
+                    carried_trees_unlinked(root, cdir.name)
                 record_commit(cdir, man, s, 'scratch-swap', instance)
                 log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
             else:
@@ -1767,6 +1769,8 @@ def scratch_settle(arm, root, cdir, man, instance=None):
         if mounted(native) and (native / 'completion.json').exists():
             t = time.time()
             n = persist(arm, native, cdir)
+            if man.get('carry'):  # a carried chain: its tree again after the copy, before any further write
+                carried_trees_unlinked(root, cdir.name)
             record_commit(cdir, man, s, 'scratch-late', instance, persist_seconds=time.time() - t, persist_bytes=n)
             t = time.time()
             z = compress_config(seg['config']) if seg.get('config') else 0
@@ -2915,6 +2919,8 @@ def launch(a):
     for n in sorted(plan['chains']):  # carried chains: their trees before the witness, node lock or launch log
         carried_chain_dir_ok(plan, root, n)
     settle_vector_tanh(plan['trainer'], root)
+    for n in sorted(plan['chains']):  # and again after the witness, before the node lock
+        carried_chain_dir_ok(plan, root, n)
     node = w5box.NodeLog(root / 'state')
     opened = []
     with node.locked():
