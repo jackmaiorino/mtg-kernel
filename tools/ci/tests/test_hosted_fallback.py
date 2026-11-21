@@ -31,6 +31,21 @@ class FallbackTests(unittest.TestCase):
                 4: fb.ADMISSION_MARKER, 5: None}
         assert [j["id"] for j in fb.admission_timeouts(jobs, logs.get)] == [1]
 
+    def test_a_self_hosted_windows_job_stopped_at_its_timeout_is_rerun_without_reading_its_log(self):
+        jobs = [job(1, "cancelled", ["self-hosted", "mtg-ci-windows", "bn6"]),
+                job(2, "cancelled", ["windows-2025"]),
+                job(3, "cancelled", ["self-hosted", "mtg-ci-linux"], name="Rust tests (ubuntu-24.04, eternal-integration)")]
+
+        def no_logs(_job_id):
+            raise AssertionError("a timed-out job's log is not needed")
+        assert [j["id"] for j in fb.admission_timeouts(jobs, no_logs)] == [1]
+
+    def test_the_fallback_job_never_runs_for_a_cancelled_run(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        head = text[text.index("  hosted-fallback:"):].split("steps:")[0]
+        assert "if: ${{ !cancelled() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))" in head
+        assert "always()" not in head
+
     def test_a_self_hosted_linux_job_is_never_a_reason_for_the_windows_rerun(self):
         marker = "hook ... " + fb.ADMISSION_MARKER + ": no CPU slots"
         jobs = [job(1, "failure", ["self-hosted", "mtg-ci-linux"], name="Rust tests (ubuntu-24.04, eternal-integration)"),

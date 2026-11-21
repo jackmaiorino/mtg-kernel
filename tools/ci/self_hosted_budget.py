@@ -10,15 +10,18 @@ Environment:
   PR_RUNNER  JSON runs-on labels of the pool (vars.MTG_CI_PR_WINDOWS_RUNNER), a list or one string.
   PR_SLOTS   Most jobs the pool may hold at once, queued or running (vars.MTG_CI_PR_WINDOWS_SLOTS).
              Unset or empty: every named group routes, as before this budget existed.
+  PR_ELIGIBLE  JSON list of the groups this run has on Windows; other named groups are skipped before
+             the free slots are handed out (optional: unset, every named group is eligible).
   GH_TOKEN, GITHUB_REPOSITORY, GITHUB_RUN_ID, optional GITHUB_API_URL, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY.
 
 Writes `groups=<JSON list>` to GITHUB_OUTPUT. Any error, more than MAX_REQUESTS API calls or more than
 DEADLINE_SECONDS while counting the pool's jobs routes no group (every group stays on hosted runners).
 Exit 0 always.
 
-The budget is a snapshot, not a reservation: runs that start within the same few seconds can each take the
-same free slot, so the pool can briefly hold up to that many extra jobs. A rejected group falls through to
-MTG_CI_WINDOWS_RUNNER, which is meant to stay hosted while this budget is in use.
+The budget is best effort, not a reservation: runs that start within the same few seconds can each take
+the same free slot; the later job then waits in GitHub's queue until a pool runner finishes a job (a
+self-hosted queue has no timeout or fallback). A rejected group falls through to MTG_CI_WINDOWS_RUNNER,
+which is meant to stay hosted while this budget is in use.
 """
 from __future__ import annotations
 
@@ -66,16 +69,19 @@ def parse_slots(text: str | None) -> int | None:
 
 
 def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = None) -> int:
-    """Jobs not yet completed that a pool runner could be holding or will take: self-hosted jobs whose runs-on
-    labels include every pool label, or are all among them (a broader request such as ["self-hosted",
-    "mtg-ci-windows"] can also land on a pool runner). Case-insensitive; errs toward counting."""
+    """Jobs not yet completed that a pool runner could be holding or will take, counted generously (a
+    wrong count only sends a group to hosted runners): every job requesting all the pool labels, and every
+    self-hosted job that shares a custom pool label (any label but "self-hosted"), such as a broader
+    ["self-hosted", "Windows", "mtg-ci-windows"] request that a pool runner can also serve. The runner list
+    itself needs admin rights the job token lacks. Case-insensitive."""
     want = {label.lower() for label in labels}
+    custom = want - {"self-hosted"}
     count = 0
     for job in jobs:
         if job.get("status") == "completed" or (skip_run is not None and job.get("run_id") == skip_run):
             continue
         have = {label.lower() for label in job.get("labels") or []}
-        if want and "self-hosted" in have and (want <= have or have <= want):
+        if want and (want <= have or ("self-hosted" in have and have & custom)):
             count += 1
     return count
 
@@ -126,6 +132,10 @@ def main() -> int:
         groups = parse_list(os.environ.get("PR_GROUPS"))
         labels = parse_list(os.environ.get("PR_RUNNER"))
         slots = parse_slots(os.environ.get("PR_SLOTS"))
+        eligible = os.environ.get("PR_ELIGIBLE")
+        if eligible:
+            allowed = set(parse_list(eligible))
+            groups = [group for group in groups if group in allowed]
         if slots is None or not groups:
             chosen = choose(groups, slots, 0)
             lines.append(f"Self-hosted pull request groups: {json.dumps(chosen)} (no slot budget set)")

@@ -120,12 +120,14 @@ jobs:
           fetch-depth: 2
 
       # MTG_CI_PR_WINDOWS_GROUPS names the groups to route, in order of
-      # preference. With MTG_CI_PR_WINDOWS_SLOTS set, only as many route as the
-      # pool has free: that many minus the jobs already queued or running on
-      # MTG_CI_PR_WINDOWS_RUNNER, so routed groups never wait in GitHub's queue
-      # behind other runs. Unset, every named group routes. An error or a slow
-      # lookup routes none. The count is a snapshot: runs starting together
-      # can share a free slot. Rejected groups fall through to
+      # preference; groups a pull request run does not have on Windows are
+      # skipped. With MTG_CI_PR_WINDOWS_SLOTS set, only as many route as the
+      # pool looks free: that many minus the unfinished self-hosted jobs that
+      # could be on its runners. Best effort, not a reservation: two runs that
+      # start together can both take the last free runner, and the later job
+      # then waits in GitHub's queue until that runner finishes a job (about
+      # an hour for a workspace group). Unset, every named group routes. An
+      # error or a slow lookup routes none. Rejected groups fall through to
       # MTG_CI_WINDOWS_RUNNER, which stays hosted while the budget is used.
       - name: Choose the self-hosted pull request groups
         id: budget
@@ -137,6 +139,8 @@ jobs:
           PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
           PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}
           PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}
+          # The Windows groups of the pr set (rust-test-groups matrix).
+          PR_ELIGIBLE: '["workspace-lib", "workspace-targets", "native-store", "native-store-1"]'
         run: python3 tools/ci/self_hosted_budget.py
 
       - name: Classify changed paths
@@ -723,23 +727,6 @@ jobs:
             rl_session::flat_action_v4::search_state::library_tests:: \
             sideboard_play_policy_v1::search_leaf_v4:: \
             action_block_gradient_diagnostic_v1::
-
-      # A desktop runner's job-started hook ends a job whose background CPU
-      # claim stayed suspended past its limit (research claims took the
-      # CPUs) and leaves a marker beside its state. Printing it with the
-      # admission timeout marker lets hosted-fallback rerun the group.
-      - name: Report a self-hosted CPU preemption
-        if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
-        run: |
-          # The step's own text must not contain hosted-fallback's marker, and
-          # only a marker naming this run, attempt, job and runner counts.
-          marker_name=MTG_CI_ADMISSION
-          for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
-            [ -f "$marker" ] || continue
-            if python -c 'import json, os, sys; m = json.load(open(sys.argv[1])); sys.exit([m.get(k) for k in ("run_id", "run_attempt", "job", "runner")] != [os.environ.get(k) for k in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME")])' "$(cygpath -w "$marker")"; then
-              echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"
-            fi
-          done
 
       - name: Save compiled test output
         if: success() && runner.environment == 'github-hosted' && matrix.group == env.MTG_CI_BUILD_GROUP
@@ -1350,20 +1337,6 @@ jobs:
           test -n "$list" || { echo "Missing the default library case list" >&2; exit 1; }
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 3 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml --default-library-list "$list"
 
-      # As in rust-test-groups.
-      - name: Report a self-hosted CPU preemption
-        if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
-        run: |
-          # The step's own text must not contain hosted-fallback's marker, and
-          # only a marker naming this run, attempt, job and runner counts.
-          marker_name=MTG_CI_ADMISSION
-          for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
-            [ -f "$marker" ] || continue
-            if python -c 'import json, os, sys; m = json.load(open(sys.argv[1])); sys.exit([m.get(k) for k in ("run_id", "run_attempt", "job", "runner")] != [os.environ.get(k) for k in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME")])' "$(cygpath -w "$marker")"; then
-              echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"
-            fi
-          done
-
       - name: Report the hosted Linux runner's memory use
         if: always() && steps.memory_guard.outcome == 'success'
         uses: ./.github/actions/memory-guard
@@ -1653,32 +1626,21 @@ jobs:
       - name: Run Python test shard against the real Rust environment
         run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.os == 'windows-2025' && 3 || 2 }}
 
-      # As in rust-test-groups.
-      - name: Report a self-hosted CPU preemption
-        if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
-        run: |
-          # The step's own text must not contain hosted-fallback's marker, and
-          # only a marker naming this run, attempt, job and runner counts.
-          marker_name=MTG_CI_ADMISSION
-          for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
-            [ -f "$marker" ] || continue
-            if python -c 'import json, os, sys; m = json.load(open(sys.argv[1])); sys.exit([m.get(k) for k in ("run_id", "run_attempt", "job", "runner")] != [os.environ.get(k) for k in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME")])' "$(cygpath -w "$marker")"; then
-              echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"
-            fi
-          done
-
   # A self-hosted runner's job-started hook waits for host_slots CPU admission
   # at most MTG_CI_ADMISSION_TIMEOUT seconds and then fails the job before any
   # step, logging MTG_CI_ADMISSION_TIMEOUT. A job cannot move to another runner
   # once one accepted it, so this hosted job dispatches the workflow again on
   # the same branch with Windows on hosted runners, limited to the Windows
-  # part of this run's group set. Real failures are not
-  # rerun, and a dispatched run never dispatches again. It runs only while a
-  # routing variable sends Windows jobs to the self-hosted pool.
+  # part of this run's group set. A self-hosted Windows job stopped at its
+  # job timeout (concluded cancelled in a run that was not cancelled, for
+  # example while its CPU claim stayed suspended) is rerun the same way.
+  # Real failures are not rerun, and a dispatched run never dispatches again.
+  # It runs only while a routing variable sends Windows jobs to the
+  # self-hosted pool, and never for a cancelled (superseded) run.
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: ${{ !cancelled() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

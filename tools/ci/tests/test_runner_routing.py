@@ -345,23 +345,16 @@ class MatrixTests(unittest.TestCase):
         # The shared Limited build's own download pattern does not pick up the list.
         self.assertIn("pattern: limited-build-${{ matrix.os }}-*", limited)
 
-    def test_jobs_that_can_run_on_desktop_windows_report_a_preemption_without_the_marker_in_their_text(self):
-        text = WORKFLOW.read_text(encoding="utf-8")
-        for name, following in (("rust-test-groups", "limited-build"), ("rust-limited-groups", "rust-tests"),
-                                ("python-tests", "hosted-fallback")):
-            with self.subTest(job=name):
-                block = job_block(name, following)
-                step = block[block.index("      - name: Report a self-hosted CPU preemption"):]
-                step = step[:step.index("\n\n") if "\n\n" in step else len(step)]
-                self.assertIn("if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'", step)
-                self.assertIn("ci-job-slots/*.preempted.json", step)
-                # The step's own script is printed in every log that runs it; only its output may carry the
-                # marker, or every real failure would be rerun.
-                self.assertNotIn("MTG_CI_ADMISSION_TIMEOUT", step)
-                self.assertIn('marker_name=MTG_CI_ADMISSION', step)
-                self.assertIn('"${marker_name}_TIMEOUT: ', step)
-                for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME"):
-                    self.assertIn(key, step)
+    def test_the_budget_step_knows_exactly_the_pull_request_windows_groups(self):
+        block = job_block("rust-test-groups", "limited-build")
+        groups = matrix_groups(block)
+        exclude = block[block.index("        exclude:"):].splitlines()[0]
+        pull_request = set(re.findall(r'\{"os":"windows-2025","group":"([a-z0-9-]+)"\}',
+                                      exclude.split("'windows-complement'")[0]))
+        detect = job_block("detect-changes", "rust-quality")
+        (line,) = [line for line in detect.splitlines() if "PR_ELIGIBLE:" in line]
+        self.assertEqual(json.loads(line.split("PR_ELIGIBLE:", 1)[1].strip().strip("'")),
+                         [group for group in groups if group not in pull_request])
 
     def test_the_parts_of_a_group_share_one_build_cache(self):
         block = job_block("rust-test-groups", "limited-build")

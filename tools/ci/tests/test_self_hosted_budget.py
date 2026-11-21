@@ -21,14 +21,22 @@ class BudgetTests(unittest.TestCase):
     def test_unfinished_self_hosted_jobs_a_pool_runner_could_take_count(self):
         jobs = [job("queued", POOL), job("in_progress", ["self-hosted", "MTG-CI-WINDOWS", "bn6"]),
                 job("completed", POOL),
-                job("queued", ["self-hosted", "mtg-ci-windows"]),             # broader: may land on the pool
-                job("queued", POOL + ["gpu"]),                                # narrower: only the pool can take it
-                job("queued", ["self-hosted", "mtg-ci-linux"]),               # another pool
-                job("queued", ["windows-2025"]), job("queued", ["bn6"]),      # hosted, or not self-hosted
+                job("queued", ["self-hosted", "mtg-ci-windows"]),                       # broader
+                job("queued", ["self-hosted", "Windows", "X64", "mtg-ci-windows"]),     # broader, other labels
+                job("queued", POOL + ["gpu"]),                                          # narrower
+                job("queued", ["self-hosted", "mtg-ci-linux"]),                         # another pool
+                job("queued", ["windows-2025"]), job("queued", ["bn6"]),                # hosted or not self-hosted
                 job("in_progress", POOL, run_id=7)]
-        self.assertEqual(budget.held_by_pool(jobs, POOL), 5)
-        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 4)
+        self.assertEqual(budget.held_by_pool(jobs, POOL), 6)
+        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 5)
         self.assertEqual(budget.held_by_pool(jobs, []), 0)
+        # A pool named by one custom label counts the jobs that request it.
+        self.assertEqual(budget.held_by_pool([job("in_progress", ["bn6"]), job("queued", ["other"])], ["bn6"]), 1)
+
+    def test_groups_this_run_lacks_do_not_take_a_slot(self):
+        text, _ = self.run_main({"PR_GROUPS": '["eternal", "workspace-targets"]', "PR_RUNNER": '["bn6"]',
+                                 "PR_SLOTS": "1", "PR_ELIGIBLE": '["workspace-targets", "workspace-lib"]'})
+        self.assertEqual(text, 'groups=["workspace-targets"]\n')
 
     def test_the_lookup_has_a_time_and_request_limit(self):
         tight = budget.Budget(seconds=60, requests=2)

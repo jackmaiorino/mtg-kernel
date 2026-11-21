@@ -39,12 +39,19 @@ def fallback_scope(scope: str | None) -> str:
 
 
 def admission_timeouts(jobs: list[dict], logs) -> list[dict]:
-    """The failed self-hosted Windows jobs whose log shows the admission timeout marker. `logs(job_id)` returns
-    the job's log text (or None when it cannot be read: such a job is not rerun, since its cause is unknown)."""
+    """The self-hosted Windows jobs to rerun: failed ones whose log shows the admission timeout marker, and
+    ones concluded cancelled, which in a run that was not cancelled (the fallback job never runs for a
+    cancelled run) means the job timeout stopped them, for example while their CPU claim stayed suspended.
+    `logs(job_id)` returns the job's log text (or None when it cannot be read: such a failed job is not rerun,
+    since its cause is unknown)."""
     out = []
     for job in jobs:
-        if (job.get("conclusion") != "failure" or "self-hosted" not in (job.get("labels") or [])
-                or WINDOWS_JOB not in (job.get("name") or "")):
+        if "self-hosted" not in (job.get("labels") or []) or WINDOWS_JOB not in (job.get("name") or ""):
+            continue
+        if job.get("conclusion") == "cancelled":
+            out.append(job)
+            continue
+        if job.get("conclusion") != "failure":
             continue
         text = logs(job["id"])
         if text is not None and ADMISSION_MARKER in text:
