@@ -74,7 +74,7 @@ impl Packet {
             options.push(PreventAll);
         }
         if let Target::Object(object) = damage.target {
-            if crate::eternal_premodern_p2c_v1::statics::is_nishoba(state, object) {
+            if crate::eternal_premodern_p2c_v1::statics::nishoba_applies(state, damage) {
                 options.push(Nishoba(object));
             }
         }

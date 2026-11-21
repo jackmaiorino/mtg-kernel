@@ -501,6 +501,36 @@ fn shield_covers(shield: &HallowShieldV1, source: ObjectLinkV4, zone: Zone) -> b
             && shield.spell.zone_change_count.checked_add(1) == Some(source.zone_change_count))
 }
 
+/// A split may reach Nishoba without the original packet naming it. Reserve its
+/// existing once-per-simultaneous-event counter bookkeeping for both portions.
+fn redirect_may_hit_nishoba(state: &GameState, damage: &DamageProposed) -> bool {
+    use crate::eternal_legacy_e9a_v1 as e9a;
+    let Some(records) = e9a::read_state(state) else {
+        return false;
+    };
+    !records.redirects.is_empty()
+        && e9a::statics::applicable_redirects(state, damage)
+            .next()
+            .is_some()
+        && records.redirects.iter().any(|record| {
+            e9a::link_live_in(state, record.to, Zone::Battlefield)
+                && e9a::active_named(state, record.to.object, crate::eternal_premodern_p2c_v1::PHANTOM_NISHOBA)
+        })
+}
+
+pub(crate) fn shielded_redirect_may_hit_nishoba(
+    state: &GameState,
+    damage: &DamageProposed,
+) -> bool {
+    if read_state(state).is_none_or(|pf| pf.hallow_shields.is_empty())
+        || !redirect_may_hit_nishoba(state, damage)
+    {
+        return false;
+    }
+    damage_source_incarnation(state, damage)
+        .is_some_and(|(source, zone)| !hallow_beneficiaries(state, source, zone).is_empty())
+}
+
 /// Called by the damage pipeline before the damage is dealt. If a Hallow
 /// shield from this turn covers `damage`'s source, the damage is prevented
 /// and the shield's controller is owed that much life, gained as soon as the
@@ -518,13 +548,15 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
     if beneficiaries.is_empty() {
         return false;
     }
+    let cohort = redirect_may_hit_nishoba(state, damage)
+        && crate::eternal_premodern_p2c_v1::statics::begin_nishoba_cohort(state);
     let mut work = vec![Packet::new(damage)];
     'packets: while let Some(packet) = work.pop() {
         let damage = &packet.damage;
         let chooser = match damage.target {
             Target::Object(object) => state.objects.get(object).controller,
             Target::Player(player) => player,
-            Target::StackItem(_) => return false,
+            Target::StackItem(_) => break,
         };
         let circle = circles::circle_shield_position(state, damage)
             .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
@@ -571,6 +603,7 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
             ),
         }
     }
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, cohort);
     true
 }
 
