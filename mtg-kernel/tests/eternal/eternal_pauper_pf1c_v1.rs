@@ -1560,10 +1560,7 @@ fn woodlot_with_last_counter(state: &mut GameState) -> ObjectId {
     // real mana ability removes the first of the two depletion counters.
     state.objects.get_mut(woodlot).tapped = false;
     next(state);
-    act(
-        state,
-        Action::ActivateManaAbilityChoice(woodlot, ManaColor::G),
-    );
+    act(state, Action::ActivateManaAbility(woodlot));
     state.objects.get_mut(woodlot).tapped = false;
     state.players[0].mana_pool = [0; 6];
     assert_eq!(
