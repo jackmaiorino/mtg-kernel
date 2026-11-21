@@ -602,6 +602,19 @@ def carried_trees_unlinked(root, name):
             dirnames[:] = [d for d in dirnames if not retention.SEGMENT_DIR.fullmatch(d)]
 
 
+def carried_tree_held(man, root, name):
+    """True unless `name` is carried and its W5 root now holds a link: then the reason goes to stderr only (the
+    tree's own logs are suspect) and the caller stops without another write."""
+    if not man.get('carry'):
+        return True
+    try:
+        carried_trees_unlinked(root, name)
+        return True
+    except Stop as exc:
+        print(f'stop: {exc}', file=sys.stderr, flush=True)
+        return False
+
+
 def carried_chain_dir_ok(plan, root, name):
     """A carried chain of a plan (its plan entry names `carry`): its chain directory is a real directory with no link
     in its path, and its manifest is that chain's carried manifest, before anything reads, indexes, ends or cleans
@@ -2058,11 +2071,15 @@ def drive_locked(a, arm, root, cdir, man_path):
             code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)
         else:
             code, killed = run_trainer(arm, path, deadline, cdir)
+        if not carried_tree_held(man, root, a.chain):  # a carried chain: its tree again before any write
+            return EXIT_STOP
         if (native / 'completion.json').exists():
             if scratch:
                 t = time.time()
                 carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
                 n = persist(arm, native, cdir)
+                if not carried_tree_held(man, root, a.chain):  # and after the copy, before its commit line
+                    return EXIT_STOP
                 record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n)
                 t = time.time()
                 z = compress_config(path)
@@ -2077,6 +2094,8 @@ def drive_locked(a, arm, root, cdir, man_path):
             t = time.time()
             carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
             n = persist(arm, native, cdir)
+            if not carried_tree_held(man, root, a.chain):
+                return EXIT_STOP
             record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
         elif killed:
@@ -2893,6 +2912,8 @@ def launch(a):
     box is occupied: a chain's start restores its own box, a verified filler a filler box."""
     plan = load_plan(a.plan)
     root = Path(plan['root'])
+    for n in sorted(plan['chains']):  # carried chains: their trees before the witness, node lock or launch log
+        carried_chain_dir_ok(plan, root, n)
     settle_vector_tanh(plan['trainer'], root)
     node = w5box.NodeLog(root / 'state')
     opened = []

@@ -892,5 +892,51 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(snap(), before)
 
 
+    def test_links_planted_while_training_or_before_launch_are_refused(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        old_root = self.node.root
+        old_ck = next((old_root / 'chains' / 'c1' / 'seg-00001' / 'iterations' / '000003').glob(
+            'attempt-*/update/checkpoint.json'))
+        snap = lambda: {p: p.read_bytes() for p in old_root.rglob('*') if p.is_file() and not p.is_symlink()}
+        before = snap()
+        cdir = cont / 'chains' / 'c1c'
+        targets = (cont / 'LOG.jsonl', cdir / 'durable.jsonl', cdir / 'segments' / 'seg-00001.json.gz.tmp')
+        for planted in targets:
+            for outcome in ('complete', 'cut', 'failed'):
+                def train_and_plant(arm, config_path, deadline=None, logs=None):
+                    native = Path(json.loads(Path(config_path).read_text())['output_directory'])
+                    native.mkdir(parents=True, exist_ok=True)
+                    if outcome == 'complete':
+                        (native / 'completion.json').write_text('{}')
+                    planted.parent.mkdir(parents=True, exist_ok=True)
+                    planted.unlink(missing_ok=True)
+                    try:
+                        planted.symlink_to(old_ck)
+                    except OSError:
+                        self.skipTest('no symlink permission on this host')
+                    return (0 if outcome != 'failed' else 1), outcome == 'cut'
+                with self.subTest(planted=planted.name, outcome=outcome), \
+                        mock.patch.object(chains, 'run_trainer', side_effect=train_and_plant), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(self.drive(plan, 'c1c', cont, 9), chains.EXIT_STOP)
+                planted.unlink()
+                self.assertEqual(snap(), before)
+        # launch: a node lock linked into the old tree is refused before the witness and the lock
+        lock = cont / 'state' / 'occupancy.lock'
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.unlink(missing_ok=True)
+        lock.symlink_to(old_ck)
+        err = io.StringIO()
+        with mock.patch.object(chains, 'settle_vector_tanh', side_effect=AssertionError('no witness')), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(chains.main(['launch', '--plan', str(path)]), w5box.EXIT_REFUSED)
+        self.assertIn('is a link', err.getvalue())
+        lock.unlink()
+        self.assertEqual(snap(), before)
+
+
 if __name__ == '__main__':
     unittest.main()
