@@ -1,7 +1,7 @@
 """List red post-merge CI runs since a time, one handoff log line each, for the sessions' watch loops.
 
 usage: python tools/ci/red_push_runs.py --since 2026-11-21T07:00:00Z [--repo mtg-kernel/mtg-kernel]
-       [--branches main,release/mull-c5719e1cf] [--append HANDOFF_LOG]
+       [--branches main,release/mull-c5719e1cf] [--append HANDOFF_LOG] [--lookback-days DAYS]
 Uses the gh CLI (already authenticated where the watch loops run). A run counts when it is a push or dispatch
 run on one of the branches (a name ending in / is a prefix) that did not succeed and whose post-merge-report job
 ran (the workflow's own monitor predicate: a push run or a full dispatch with a failed or cancelled job). Each line is
@@ -15,7 +15,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -64,13 +64,14 @@ def listed_runs(repo: str) -> list[dict]:
     return sorted(found.values(), key=lambda row: (row["created_at"], row["id"]), reverse=True)
 
 
-def runs_since(repo: str, since: datetime, branches: list[str]):
+def runs_since(repo: str, since: datetime, branches: list[str], *, created_since: datetime | None = None):
     """Yield recent failed attempts, including those superseded by an already visible rerun."""
     for run in listed_runs(repo):
         branch = run.get("head_branch") or ""
         if (run["event"] not in MONITOR_EVENTS
                 or not any(branch == name or (name.endswith("/") and branch.startswith(name)) for name in branches)
                 or run["path"].split("@", 1)[0] != ".github/workflows/ci.yml"
+                or (created_since is not None and timestamp(run["created_at"]) < created_since)
                 or timestamp(run["updated_at"]) < since):
             continue
         for number in range(run["run_attempt"], 0, -1):
@@ -101,10 +102,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default="mtg-kernel/mtg-kernel")
     parser.add_argument("--branches", default="main,release/")
     parser.add_argument("--append", help="handoff log file to append new lines to")
+    parser.add_argument("--lookback-days", type=int, metavar="DAYS",
+                        help="limit run creation history to this many days before --since. "
+                             "The default scans all retained runs.")
     args = parser.parse_args(argv)
+    created_since = None
+    if args.lookback_days is not None:
+        if args.lookback_days < 0:
+            parser.error("--lookback-days must be nonnegative")
+        try:
+            created_since = args.since - timedelta(days=args.lookback_days)
+        except OverflowError:
+            parser.error("--lookback-days reaches beyond the supported date range")
+        print(f"Scanning runs created at or after {created_since.isoformat()}.", file=sys.stderr)
     branches = [b.strip() for b in args.branches.split(",") if b.strip()]
     lines, exit_code = [], 0
-    for attempt in runs_since(args.repo, args.since, branches):
+    for attempt in runs_since(args.repo, args.since, branches, created_since=created_since):
         try:
             jobs = list(post_merge_report.run_jobs(gh_get, args.repo, attempt))
             if post_merge_report.is_monitor(jobs):

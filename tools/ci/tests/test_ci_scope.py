@@ -678,6 +678,33 @@ class MonitorTests(unittest.TestCase):
         with patch.object(red, "gh_get", side_effect=pages.__getitem__):
             self.assertEqual(list(red.runs_since("o/r", cutoff, ["release/"])), [{**failed, "created_at": created}])
 
+    def test_explicit_creation_lookback_is_inclusive_and_announced(self):
+        import red_push_runs as red
+        cutoff = "2026-11-21T12:00:00Z"
+        run = {"id": 9, "event": "push", "head_branch": "release/demo", "head_sha": "c3",
+               "created_at": "2026-11-19T12:00:00Z", "updated_at": "2026-11-21T12:01:00Z",
+               "run_attempt": 1, "status": "completed", "conclusion": "failure",
+               "path": ".github/workflows/ci.yml", "html_url": "https://x/runs/9"}
+        older = {**run, "id": 8, "created_at": "2026-11-19T11:59:59Z"}
+        with (patch.object(red, "listed_runs", return_value=[run, older]),
+              patch.object(red, "gh_get", return_value={"jobs": []}) as get,
+              patch("builtins.print") as output):
+            self.assertEqual(red.main(["--repo", "o/r", "--since", cutoff, "--lookback-days", "2"]), 0)
+        get.assert_called_once_with("/repos/o/r/actions/runs/9/attempts/1/jobs?per_page=100&page=1")
+        output.assert_any_call("Scanning runs created at or after 2026-11-19T12:00:00+00:00.", file=sys.stderr)
+
+    def test_negative_creation_lookback_is_rejected_before_listing(self):
+        import io
+        import red_push_runs as red
+
+        with (patch.object(red, "listed_runs") as list_runs,
+              patch.object(sys, "stderr", new_callable=io.StringIO) as diagnostics,
+              self.assertRaises(SystemExit) as result):
+            red.main(["--since", "2026-11-21T12:00:00Z", "--lookback-days", "-1"])
+        self.assertEqual(result.exception.code, 2)
+        self.assertIn("--lookback-days must be nonnegative", diagnostics.getvalue())
+        list_runs.assert_not_called()
+
     def test_report_and_detector_share_paged_jobs_from_the_observed_attempt(self):
         import red_push_runs as red
         get_run = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")],
