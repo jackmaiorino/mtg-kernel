@@ -794,11 +794,37 @@ class BackgroundProcessTests(unittest.TestCase):
                       "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
         # The fixture is an existing native worker, not the Windows venv
         # redirector and its separately contained interpreter descendant.
-        worker = subprocess.Popen([getattr(sys, "_base_executable", sys.executable), body, str(started), str(release)])
+        worker_command = [getattr(sys, "_base_executable", sys.executable), body, str(started), str(release)]
+        worker = None
         controller = None
         try:
-            self.assertTrue(wait_for(started.exists))
-            stamp = slots.creation_time(worker.pid)
+            for _ in range(3):
+                before = slots.process_table()
+                worker = subprocess.Popen(worker_command)
+                self.assertTrue(wait_for(lambda: started.exists() or worker.poll() is not None))
+                self.assertTrue(started.exists(), "adoption fixture exited before signaling readiness")
+                self.assertIsNone(worker.poll(), "adoption fixture exited before inspection")
+                stamp = slots.creation_time(worker.pid)
+                self.assertIsNotNone(stamp, "could not verify adoption fixture creation time")
+                apparent_children = {pid: row for pid, row in slots.process_table().items()
+                                     if row[0] == worker.pid}
+                if not apparent_children:
+                    break
+                # The script is childless. Only replace a worker when every apparent
+                # child was already linked to that PID and predates this worker.
+                for pid, row in apparent_children.items():
+                    self.assertEqual(before.get(pid), row, f"unexpected adoption fixture child {pid}")
+                    child_stamp = slots.creation_time(pid)
+                    self.assertIsNotNone(child_stamp, f"could not verify apparent child {pid}")
+                    self.assertLess(child_stamp, stamp, f"unexpected adoption fixture child {pid}")
+                release.write_text("go")
+                self.assertEqual(worker.wait(timeout=30), 0)
+                worker = None
+                started.unlink()
+                release.unlink()
+            else:
+                self.fail("could not start a childless adoption fixture in three attempts")
+
             identity = self.tmp_path / "worker.json"
             slots.write_json(identity, {"pid": worker.pid, "creation": stamp, "descendants": []})
             controller = cli("adopt", "--background", "--priority", "idle", "--lane", "ci", "--work-id", "adopt",
@@ -827,11 +853,19 @@ class BackgroundProcessTests(unittest.TestCase):
             self.assertEqual(slots.status()["claims"], [])
             self.assertFalse(ready.exists())
         finally:
-            release.write_text("go")
-            worker.wait(timeout=30)
-            if controller and controller.poll() is None:
-                controller.terminate()
-                controller.wait(timeout=30)
+            try:
+                if worker is not None and worker.poll() is None:
+                    release.write_text("go")
+                    try:
+                        worker.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        worker.kill()
+                        worker.wait(timeout=30)
+                        raise
+            finally:
+                if controller and controller.poll() is None:
+                    controller.terminate()
+                    controller.wait(timeout=30)
 
 
 class OrdinaryAdmissionPathTests(unittest.TestCase):

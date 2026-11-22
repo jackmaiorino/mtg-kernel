@@ -187,10 +187,23 @@ class RoutingTests(unittest.TestCase):
 
     def test_the_budget_step_reads_the_routing_variables_for_trusted_pull_requests_only(self):
         block = job_block("detect-changes", "rust-quality")
-        step = block[block.index("      - name: Choose the self-hosted pull request groups"):]
-        step = step[:step.index("\n      - name: ", 1)]
-        self.assertIn("if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == "
-                      "github.repository && github.actor == github.repository_owner\n", step)
+        budget = block.index("      - name: Choose the self-hosted pull request groups")
+        self.assertLess(block.index("      - name: Choose the checks"), budget)
+        step = block[budget:].split("\n      - name: ", 1)[0]
+        condition, = re.findall(r"^        if: (.+)$", step, re.MULTILINE)
+        context = event(**{"steps.scope.outputs.scope": "pr",
+                           "steps.classify.outputs.rust_relevant": "true",
+                           "steps.checks.outputs.checks": "all"})
+        self.assertTrue(evaluate(condition, **context))
+        for override in ({"steps.scope.outputs.scope": "draft"},
+                         {"steps.classify.outputs.rust_relevant": "false"},
+                         {"steps.checks.outputs.checks": "trainer"},
+                         {"steps.checks.outputs.checks": "workflow"},
+                         {"github.event_name": "workflow_dispatch"},
+                         {"github.actor": "contributor"},
+                         {"github.event.pull_request.head.repo.full_name": "someone/fork"}):
+            with self.subTest(override=override):
+                self.assertFalse(evaluate(condition, **{**context, **override}))
         for line in ("PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}", "PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}",
                      "PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}", "run: python3 tools/ci/self_hosted_budget.py"):
             self.assertIn(line, step)
@@ -425,12 +438,17 @@ class MacRoutingTests(unittest.TestCase):
 
     def test_the_mac_step_runs_for_owner_events_from_this_repository_only(self):
         block = job_block("detect-changes", "rust-quality")
-        step = block[block.index("      - name: Choose the Mac groups"):]
+        index = block.index("      - name: Choose the Mac groups")
+        self.assertLess(block.index("      - name: Choose the checks"), index)
+        self.assertLess(block.index("      - name: Choose the self-hosted pull request groups"), index)
+        self.assertEqual(block.count("      - name: Check out merge ref with parents"), 1)
+        step = block[index:]
         self.assertIn("if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == "
                       "github.repository) && github.actor == github.repository_owner && vars.MTG_CI_MAC_GROUPS != ''\n",
                       step)
         self.assertIn("timeout-minutes: 2\n        continue-on-error: true\n", step)
         self.assertIn("run: python3 tools/ci/mac_route.py", step)
+        self.assertIn("CHECKS: ${{ steps.checks.outputs.checks || 'all' }}", step)
         self.assertIn("mac_groups: ${{ steps.mac.outputs.groups }}", block)
 
     def test_every_eligible_group_is_a_linux_row(self):

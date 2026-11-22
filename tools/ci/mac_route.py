@@ -18,8 +18,8 @@ Environment:
   MAC_SLOTS    Most jobs the Mac runners may hold at once, queued or running (vars.MTG_CI_MAC_SLOTS, the
                workflow passes 3 when it is unset).
   MAC_ELIGIBLE JSON list of every group with the same results on the Mac runners (the workflow's list).
-  SCOPE, PYTHON_RELEVANT, RUST_RELEVANT  detect-changes outputs: Linux rows exist only for the full and pr
-               sets, Python groups only when Python is relevant, Rust groups only when Rust is.
+  SCOPE, CHECKS, PYTHON_RELEVANT, RUST_RELEVANT  detect-changes outputs. Linux rows exist only for
+               the full and pr sets. CHECKS narrows the available job families after scope selection.
   GH_TOKEN, GITHUB_REPOSITORY, GITHUB_RUN_ID, optional GITHUB_API_URL, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY.
 
 Writes `groups=<JSON list>` to GITHUB_OUTPUT. Exit 0 always.
@@ -44,6 +44,8 @@ HEARTBEAT_WORKFLOW = "mac-heartbeat.yml"
 MAX_HEARTBEAT_AGE = 15 * 60
 MAX_HEARTBEAT_WAIT = 4 * 60
 LINUX_SCOPES = ("full", "pr")
+FULL_RUST_GROUPS = frozenset({"eternal-integration", "workspace-targets", "native-store", "standard",
+                              "limited-store"})
 NOT_STARTED = ("requested", "pending", "waiting", "queued")
 
 
@@ -85,11 +87,17 @@ def held_by_mac(jobs: list[dict], skip_run: int | None = None) -> int:
     return count
 
 
-def wanted(groups: list[str], eligible: list[str], scope: str, python: bool, rust: bool) -> list[str]:
+def wanted(groups: list[str], eligible: list[str], scope: str, python: bool, rust: bool,
+           checks: str = "all") -> list[str]:
     """The named groups this run actually has as Linux rows, in the variable's order, without repeats."""
     if scope not in LINUX_SCOPES:
         return []
-    allowed, chosen = set(eligible), []
+    python = python and checks in {"all", "python"}
+    rust = rust and checks in {"all", "rules-limited"}
+    allowed = set(eligible)
+    if checks == "rules-limited":
+        allowed -= FULL_RUST_GROUPS
+    chosen = []
     for group in groups:
         if group in allowed and group not in chosen and (python if group.startswith("python-") else rust):
             chosen.append(group)
@@ -101,7 +109,8 @@ def choose(now: float) -> tuple[list[str], str]:
     if not groups:
         return [], "MTG_CI_MAC_GROUPS is empty"
     candidates = wanted(groups, parse_list(os.environ.get("MAC_ELIGIBLE")), os.environ.get("SCOPE", ""),
-                        os.environ.get("PYTHON_RELEVANT") == "true", os.environ.get("RUST_RELEVANT") == "true")
+                        os.environ.get("PYTHON_RELEVANT") == "true", os.environ.get("RUST_RELEVANT") == "true",
+                        checks=os.environ.get("CHECKS", "all"))
     if not candidates:
         return [], "no named group runs on Linux in this run"
     slots = parse_slots(os.environ.get("MAC_SLOTS"))

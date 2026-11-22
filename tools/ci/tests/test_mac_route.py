@@ -67,6 +67,13 @@ class SlotTests(unittest.TestCase):
         for scope in ("draft", "windows-pr", "windows-complement", "windows-full", ""):
             self.assertEqual(mac_route.wanted(groups, eligible, scope, True, True), [])
 
+    def test_scoped_checks_do_not_spend_slots_on_absent_job_families(self):
+        groups = ["workspace-targets", "limited-store", "limited-model-1", "python-shard-0"]
+        for checks, expected in (("rules-limited", ["limited-model-1"]), ("python", ["python-shard-0"]),
+                                 ("trainer", []), ("docs", [])):
+            with self.subTest(checks=checks):
+                self.assertEqual(mac_route.wanted(groups, groups, "pr", True, True, checks=checks), expected)
+
 
 class MainTests(unittest.TestCase):
     def run_main(self, env, runs=(), jobs=(), error=None):
