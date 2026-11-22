@@ -140,7 +140,7 @@ jobs:
             if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               # Its run covered the whole pull request set only if its files
               # did not narrow it to one scope (tools/ci/ci_scope.py).
-              pr_scope=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files" --jq '.[] | .filename, (.previous_filename // empty)' |
+              pr_scope=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files" |
                 python3 tools/ci/ci_scope.py file-scope) || pr_scope=
               echo "its files map to: ${pr_scope:-unknown}"
               if [ "$pr_scope" = pr ]; then

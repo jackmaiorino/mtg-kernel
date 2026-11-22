@@ -10,6 +10,7 @@ Usage:
                               LABELS (JSON list), and NUL-delimited paths on stdin for pull requests;
                               writes checks=<name> to GITHUB_OUTPUT
                               and a summary (with the bit-identity rows for trainer) to GITHUB_STEP_SUMMARY.
+  ci_scope.py file-scope      print the scope of the JSON pages from the GitHub pull request files API on stdin.
   ci_scope.py commands SCOPE  print the shell commands a scope's local run executes, one per line.
   ci_scope.py trainer-filters [--shard N]  print the trainer scope's library test filters (or shard N's).
   ci_scope.py markdown        print docs/CI-SCOPES.md.
@@ -293,6 +294,23 @@ def scope_of_files(paths: list[str]) -> str:
     return "pr"
 
 
+def pull_request_paths(pages: object) -> list[str]:
+    if not isinstance(pages, list) or not pages or any(not isinstance(page, list) for page in pages):
+        raise ValueError("expected an array of file pages")
+    paths = []
+    for page in pages:
+        for entry in page:
+            if not isinstance(entry, dict) or not isinstance(entry.get("status"), str):
+                raise ValueError("expected a changed-file object with a status")
+            names = [entry.get("filename")]
+            if entry["status"] == "renamed" or "previous_filename" in entry:
+                names.append(entry.get("previous_filename"))
+            if any(not isinstance(name, str) or not name or "\0" in name for name in names):
+                raise ValueError("expected a nonempty filename for each changed path")
+            paths.extend(names)
+    return paths
+
+
 def choose(event: str, group_set: str, input_scope: str, labels: list[str], files: list[str]) -> str:
     """checks=all keeps the run's group set as chosen before (full, pr, draft, windows-*); a scope name runs
     only that scope's jobs."""
@@ -378,7 +396,12 @@ def main(argv: list[str]) -> int:
         print("\n".join(lines))
         return 0
     if command == "file-scope":
-        print(scope_of_files([line.strip() for line in sys.stdin if line.strip()]))
+        try:
+            paths = pull_request_paths(json.load(sys.stdin.buffer))
+        except ValueError as exc:
+            print(f"Invalid pull request files response: {exc}", file=sys.stderr)
+            return 2
+        print(scope_of_files(paths))
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")

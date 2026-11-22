@@ -1,4 +1,5 @@
 """A draft pull request runs only the light set; marking it ready runs the full pull request set."""
+import json
 import os
 import re
 import subprocess
@@ -22,17 +23,16 @@ def condition(body):
     return match.group(1) if match else ""
 
 
+def workflow_step(step):
+    block = jobs()["detect-changes"].split(f"      - name: {step}\n", 1)[1]
+    run = re.search(r"^        run: \|\n((?:          .*\n|\n)+)", block, re.MULTILINE)
+    return textwrap.dedent(run[1])
+
+
 class DraftLightTests(unittest.TestCase):
     def test_changed_path_gates_preserve_git_paths(self):
-        detect = jobs()["detect-changes"]
-
-        def script(step):
-            block = detect.split(f"      - name: {step}\n", 1)[1]
-            run = re.search(r"^        run: \|\n((?:          .*\n|\n)+)", block, re.MULTILINE)
-            return textwrap.dedent(run[1])
-
-        classify = script("Classify changed paths").replace("${{ github.event_name }}", "pull_request")
-        checks = script("Choose the checks").replace(
+        classify = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request")
+        checks = workflow_step("Choose the checks").replace(
             "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
         )
         bash = "C:/Program Files/Git/bin/bash.exe" if sys.platform == "win32" else "bash"
@@ -83,6 +83,59 @@ class DraftLightTests(unittest.TestCase):
 
                 self.assertEqual(output.read_text(encoding="utf-8").splitlines(),
                                  [f"python_relevant={python}", f"rust_relevant={rust}", f"checks={scope}"])
+
+    def test_manual_dispatch_uses_the_same_paths_as_pull_request_checks(self):
+        script = workflow_step("Choose the group set").replace(
+            "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
+        )
+        script = '''
+gh() {
+  if [ "$2" = --paginate ]; then
+    [ "$3" = --slurp ] || return 1
+    printf '%s' "$CI_TEST_PAGES"
+    return "$CI_TEST_API_STATUS"
+  fi
+  echo "841 $GITHUB_SHA"
+}
+''' + script
+        bash = "C:/Program Files/Git/bin/bash.exe" if sys.platform == "win32" else "bash"
+        scope_script = WORKFLOW.parents[2] / "tools/ci/ci_scope.py"
+        rename = {"status": "renamed", "filename": "docs/moved.md", "previous_filename": "tools/stage4a/café.py"}
+        cases = [
+            ([[{"status": "added", "filename": "tools/stage4a/café\nstep.py"}]], "tools", "full"),
+            ([[rename]], "tools", "full"),
+            ([[rename], [{"status": "modified", "filename": "python/tests/test café.py"}]], "all", "windows-complement"),
+            ([[{"status": "added", "filename": " tools/stage4a/café.py"}]], "all", "windows-complement"),
+            ([[{"status": "added", "filename": "README.md "}]], "all", "windows-complement"),
+        ]
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch)
+            scope_output = repo / "scope"
+            env = dict(os.environ, GITHUB_OUTPUT=scope_output.as_posix(), GITHUB_STEP_SUMMARY=(repo / "summary").as_posix(),
+                       EVENT="workflow_dispatch", WINDOWS_RUNNER="", FULL_MATRIX="false", FALLBACK_SCOPE="", INPUT_SCOPE="",
+                       GITHUB_REPOSITORY="fixture/repo", GITHUB_REPOSITORY_OWNER="fixture", GITHUB_REF_NAME="test",
+                       GITHUB_SHA="candidate", CI_TEST_PYTHON=Path(sys.executable).as_posix(), CI_TEST_SCOPE=scope_script.as_posix())
+
+            def dispatch(payload, api_status=0):
+                scope_output.unlink(missing_ok=True)
+                subprocess.run([bash, "-eo", "pipefail", "-c", script], cwd=repo, check=True, capture_output=True,
+                               env=dict(env, CI_TEST_PAGES=payload, CI_TEST_API_STATUS=str(api_status)))
+                return scope_output.read_text(encoding="utf-8").strip()
+
+            for pages, expected_checks, expected_scope in cases:
+                with self.subTest(pages=pages):
+                    self.assertEqual(dispatch(json.dumps(pages)), f"scope={expected_scope}")
+                    paths = [f[key] for page in pages for f in page for key in ("filename", "previous_filename") if key in f]
+                    checks = subprocess.run([sys.executable, scope_script, "choose"], cwd=repo, check=True, capture_output=True,
+                                            env=dict(env, EVENT="pull_request", SCOPE="pr", LABELS="[]", GITHUB_OUTPUT=""),
+                                            input=("\0".join(paths) + "\0").encode("utf-8"))
+                    self.assertTrue(checks.stdout.startswith(f"checks: {expected_checks}".encode("utf-8")))
+
+            for payload in ("{", '[[{"status":"renamed","filename":"docs/moved.md"}]]',
+                            '[[{"status":"added","filename":"Cargo.lock"}],null]'):
+                with self.subTest(malformed=payload):
+                    self.assertEqual(dispatch(payload), "scope=full")
+            self.assertEqual(dispatch('[[{"status":"added","filename":"Cargo.lock"}]]', api_status=1), "scope=full")
 
     def test_marking_a_draft_ready_starts_a_run(self):
         text = WORKFLOW.read_text(encoding="utf-8")
