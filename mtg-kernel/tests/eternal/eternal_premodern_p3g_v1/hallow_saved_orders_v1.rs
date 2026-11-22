@@ -10,7 +10,9 @@ fn load(bytes: &[u8]) -> GameState {
 // Nishoba double-blocked by Grim Lavamancer then Spellstutter Sprite.
 #[test]
 fn pre_868_combat_save_keeps_the_sprite_choice_and_both_original_outcomes() {
-    let state = load(include_bytes!("fixtures/hallow_combat_fdb210d57.json.gz"));
+    let state = load(include_bytes!(
+        "../fixtures/hallow_combat_fdb210d57.json.gz"
+    ));
     let pending = state
         .engine
         .linked_aura_operation_v1
@@ -73,7 +75,9 @@ fn pre_868_combat_save_keeps_the_sprite_choice_and_both_original_outcomes() {
 // Defender's recorded choice concerned the second attacker, Hallowed Ball Lightning.
 #[test]
 fn w1_fog_keeps_the_later_hallowed_attacker_before_the_circle_global_frontier() {
-    let state = load(include_bytes!("fixtures/hallow_combat_16ef09699.json.gz"));
+    let state = load(include_bytes!(
+        "../fixtures/hallow_combat_16ef09699.json.gz"
+    ));
     let pending = state
         .engine
         .linked_aura_operation_v1
@@ -102,7 +106,7 @@ fn w1_fog_keeps_the_later_hallowed_attacker_before_the_circle_global_frontier() 
 // Both choices finished at the same total before that redundant menu was removed.
 #[test]
 fn published_sphere_ojer_menu_resumes_both_previously_offered_orders() {
-    let state = load(include_bytes!("fixtures/damage_order_10c8c80c5.json.gz"));
+    let state = load(include_bytes!("../fixtures/damage_order_10c8c80c5.json.gz"));
     let source = state
         .engine
         .linked_aura_operation_v1
