@@ -326,10 +326,13 @@ pub const PINNED: [(&str, Census, Census); 2] = [
     ),
 ];
 
+/// Which tokens a census counts.
+type TokenFilter = fn(&str) -> bool;
+
 pub fn census_report(before: &[CardRow], after: &[CardRow]) -> (String, Vec<String>) {
     let mut report = String::new();
     let mut failures = Vec::new();
-    let scopes: [(&str, fn(&str) -> bool); 2] =
+    let scopes: [(&str, TokenFilter); 2] =
         [(PINNED[0].0, all_tokens), (PINNED[1].0, effect_tokens)];
     for (i, (scope, keep)) in scopes.iter().enumerate() {
         let b = census(before, keep);
