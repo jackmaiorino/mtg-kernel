@@ -7,7 +7,7 @@ so the choice fails closed: any error, a slow lookup, a Mac that looks off or bu
 nothing, and every group stays on GitHub's hosted runners in this same run (no rerun).
 
 The job token cannot list self-hosted runners (that needs admin rights), so liveness comes from the Mac
-heartbeat workflow (.github/workflows/mac-heartbeat.yml), a no-op job on the Mac runners every ten
+heartbeat workflow (.github/workflows/mac-heartbeat.yml), a no-op job on the Mac runners every five
 minutes. The Mac counts as available only when its last heartbeat succeeded within MAX_HEARTBEAT_AGE and
 no heartbeat has waited for a Mac runner longer than MAX_HEARTBEAT_WAIT (a Mac that is off, asleep or busy
 with other jobs leaves heartbeats queued).
@@ -36,15 +36,23 @@ import json
 import os
 import sys
 
-from self_hosted_budget import Budget, _get, active_jobs, parse_list, parse_slots
+from self_hosted_budget import Budget, _get, active_jobs, parse_slots
 
 # Every label a Mac runner carries (GitHub adds self-hosted, Linux and ARM64; the rest are custom).
 MAC_RUNNER_LABELS = frozenset({"self-hosted", "linux", "arm64", "fleet-mac-linux", "mac-studio-vm"})
 HEARTBEAT_WORKFLOW = "mac-heartbeat.yml"
-MAX_HEARTBEAT_AGE = 40 * 60
-MAX_HEARTBEAT_WAIT = 6 * 60
+MAX_HEARTBEAT_AGE = 15 * 60
+MAX_HEARTBEAT_WAIT = 4 * 60
 LINUX_SCOPES = ("full", "pr")
 NOT_STARTED = ("requested", "pending", "waiting", "queued")
+
+
+def parse_list(text: str | None) -> list[str]:
+    """A JSON list of strings; anything else (a bare string included) is an error."""
+    value = json.loads(text) if text else []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError("expected a JSON list of strings")
+    return value
 
 
 def seconds(stamp: str) -> float:

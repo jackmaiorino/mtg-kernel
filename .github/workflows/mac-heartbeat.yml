@@ -1,13 +1,13 @@
 name: Mac runner heartbeat
 
-# A no-op job on the Mac runners (Linux arm64 VM on the Mac Studio) every ten
+# A no-op job on the Mac runners (Linux arm64 VM on the Mac Studio) every five
 # minutes. CI's job token cannot list self-hosted runners, so
 # tools/ci/mac_route.py reads these runs instead: it routes groups to the Mac
 # only while the last heartbeat is recent and none waits for a runner.
 # The job checks out and runs no repository code.
 'on':
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions: {}

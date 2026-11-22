@@ -376,7 +376,8 @@ class MacRoutingTests(unittest.TestCase):
         return evaluate(self.expressions[job], **{"matrix.os": system, "matrix.group": group, **context})
 
     def test_chosen_linux_groups_go_to_the_mac_for_owner_events_only(self):
-        chosen = {"needs.detect-changes.outputs.mac_groups": '["limited-only", "standard", "python-shard-0"]'}
+        chosen = {"needs.detect-changes.outputs.mac_groups": '["limited-only", "standard", "python-shard-0"]',
+                  "vars.MTG_CI_MAC_GROUPS": '["limited-only", "standard", "python-shard-0"]'}
         for job, group in (("rust-test-groups", "standard"), ("rust-limited-groups", "limited-only"),
                            ("python-tests", "python-shard-0")):
             with self.subTest(job=job):
@@ -388,11 +389,17 @@ class MacRoutingTests(unittest.TestCase):
                 # A group detect-changes did not choose, or no choice at all, stays hosted.
                 self.assertEqual(self.route(job, "ubuntu-24.04", group + "-x", **event(), **chosen), "ubuntu-24.04")
                 self.assertEqual(self.route(job, "ubuntu-24.04", group, **event()), "ubuntu-24.04")
+                # The step output alone never routes: the variable must name the group too.
+                output_only = {"needs.detect-changes.outputs.mac_groups": chosen["needs.detect-changes.outputs.mac_groups"]}
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event(), **output_only), "ubuntu-24.04")
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event(), **output_only,
+                                            **{"vars.MTG_CI_MAC_GROUPS": "[]"}), "ubuntu-24.04")
                 # The Mac never takes a Windows row.
                 self.assertEqual(self.route(job, "windows-2025", group, **event(), **chosen), "windows-2025")
 
     def test_the_mac_comes_before_the_linux_pool(self):
-        both = {"needs.detect-changes.outputs.mac_groups": '["eternal"]', "vars.MTG_CI_LINUX_GROUPS": '["eternal"]',
+        both = {"needs.detect-changes.outputs.mac_groups": '["eternal"]', "vars.MTG_CI_MAC_GROUPS": '["eternal"]',
+                "vars.MTG_CI_LINUX_GROUPS": '["eternal"]',
                 "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)}
         self.assertEqual(self.route("rust-test-groups", "ubuntu-24.04", "eternal", **event(), **both), MAC_POOL)
 

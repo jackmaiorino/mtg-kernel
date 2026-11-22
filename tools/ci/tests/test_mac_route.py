@@ -96,6 +96,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(self.run_main({**ENV, "MAC_SLOTS": ""}, runs=[beat()]), [])
         self.assertEqual(self.run_main({**ENV, "MAC_SLOTS": "0"}, runs=[beat()]), [])
         self.assertEqual(self.run_main({**ENV, "MAC_GROUPS": "not json"}, runs=[beat()]), [])
+        self.assertEqual(self.run_main({**ENV, "MAC_GROUPS": '"standard"'}, runs=[beat()]), [])
         self.assertEqual(self.run_main({**ENV, "SCOPE": "draft"}, runs=[beat()]), [])
         self.assertEqual(self.run_main(ENV, runs=[]), [])
         self.assertEqual(self.run_main(ENV, runs=[beat(updated=3600)]), [])
