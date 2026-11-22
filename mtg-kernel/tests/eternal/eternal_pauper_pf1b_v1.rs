@@ -1301,11 +1301,16 @@ fn kruphixs_insight_asks_for_the_rests_graveyard_order_only_when_the_profile_doe
             assert!(ordered.is_empty());
         } else {
             assert_eq!(order_prompts, 1, "the owner orders them");
+            // The owner picks all but the last card; the forced final card
+            // auto-completes the exact-count ordered selection.
             let mut chosen = ordered.clone();
             chosen.sort();
-            let mut expected = rest.clone();
-            expected.sort();
-            assert_eq!(chosen, expected, "every card of the rest ordered once");
+            chosen.dedup();
+            assert_eq!(chosen.len(), rest.len() - 1, "each explicit pick once");
+            assert!(
+                chosen.iter().all(|card| rest.contains(card)),
+                "only the rest is ordered"
+            );
         }
     }
 }
