@@ -15248,7 +15248,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
+        if candidates.len() <= 1
+            && !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.controller)
+        {
             state
                 .engine
                 .pending_cast
@@ -15633,7 +15638,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+            if candidates.len() == 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller)
+            {
                 state
                     .engine
                     .pending_cast
@@ -17036,7 +17046,11 @@ pub(crate) fn spellbench_pending_trigger_announcement(
     state: &GameState,
     actor: PlayerId,
 ) -> Result<Option<StackItem>, String> {
-    if !state.engine.spellbench_neutral_v1.choices {
+    if !state
+        .engine
+        .spellbench_neutral_v1
+        .neutral_choices_for(actor)
+    {
         return Ok(None);
     }
     let Some(pending) = state.engine.pending_triggers.first() else {
@@ -25228,6 +25242,14 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             if candidates.len() < usize::from(remaining) {
                 return Err("cast graveyard-exile cost can no longer be completed".to_string());
             }
+            if candidates.len() <= 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller)
+            {
+                return Err("cast graveyard-exile choice is not currently offered".to_string());
+            }
             if !candidates.contains(&id) {
                 return Err(format!(
                     "{id} is not a legal graveyard-exile cost candidate"
@@ -25389,7 +25411,11 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .ok_or("chosen-creature cost object selected before its branch")?;
             let candidates = chosen_creature_cost_candidates(pending.controller, zone, state);
             if candidates.is_empty()
-                || (candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
+                || (candidates.len() == 1
+                    && !state
+                        .engine
+                        .spellbench_neutral_v1
+                        .neutral_choices_for(pending.controller))
             {
                 return Err(
                     "chosen-creature cost object choice is not currently offered".to_string(),
@@ -27892,10 +27918,14 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
             ability_index,
         ),
     });
-    if state.engine.spellbench_neutral_v1.choices {
+    state.engine.spellbench_neutral_v1.pending_activation = if state
+        .engine
+        .spellbench_neutral_v1
+        .neutral_choices_for(player)
+    {
         let stack_item_id = next_stack_item_id(state);
         let producer = AbilitySourceContractV4::capture(state, source);
-        state.engine.spellbench_neutral_v1.pending_activation = Some(StackItem {
+        Some(StackItem {
             kind: StackItemKind::ActivatedAbility,
             source,
             controller: player,
@@ -27914,8 +27944,10 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
                 activated_ability_index: Some(ability_index),
                 ..StackStateV4::default()
             },
-        });
-    }
+        })
+    } else {
+        None
+    };
 }
 
 pub(crate) fn spellbench_pending_activation_announcement(
@@ -27925,7 +27957,12 @@ pub(crate) fn spellbench_pending_activation_announcement(
     let Some(pending) = state.engine.pending_activation.as_ref() else {
         return Ok(None);
     };
-    if !state.engine.spellbench_neutral_v1.choices || pending.controller != actor {
+    if pending.controller != actor
+        || !state
+            .engine
+            .spellbench_neutral_v1
+            .neutral_choices_for(actor)
+    {
         return Ok(None);
     }
     validate_pending_activation(state, pending)?;
@@ -28947,8 +28984,15 @@ fn push_paid_activation(
         activation_x_value(ability, &pending.targets_chosen, state)
             .expect("validated paid activation retains its target-bound X value")
     });
-    let stack_item_id = if state.engine.spellbench_neutral_v1.choices {
-        let Some(item) = state.engine.spellbench_neutral_v1.pending_activation.take() else {
+    let reserved_item = state.engine.spellbench_neutral_v1.pending_activation.take();
+    // A restored mixed-seat activation may already carry its reserved ID.
+    let stack_item_id = if reserved_item.is_some()
+        || state
+            .engine
+            .spellbench_neutral_v1
+            .neutral_choices_for(pending.controller)
+    {
+        let Some(item) = reserved_item else {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -31618,6 +31662,100 @@ mod tests {
         }
     }
 
+    #[cfg(not(any(
+        feature = "limited-fdn-fixtures",
+        feature = "standard-magezero-fixtures",
+        feature = "eternal-fixtures"
+    )))]
+    #[test]
+    fn singleton_cast_costs_follow_the_casting_seat() {
+        for trainer in [None, Some(PlayerId::P0), Some(PlayerId::P1)] {
+            for (spell_name, cost_kind, mana_color, mana) in [
+                (
+                    "Monstrous Emergence",
+                    CostKind::ChooseCreatureOrRevealCreature,
+                    ManaColor::G,
+                    2,
+                ),
+                (
+                    "Sleep of the Dead",
+                    CostKind::ExileFromGraveyard,
+                    ManaColor::U,
+                    3,
+                ),
+            ] {
+                let mut state = ready_game_in_main1(0);
+                if let Some(trainer) = trainer {
+                    state.engine.spellbench_neutral_v1.choices = true;
+                    state.engine.spellbench_neutral_v1.trainer_choice_seats[trainer.index()] = true;
+                }
+                state.players[0].mana_pool[mana_color.pool_index()] = mana;
+                let target = put_on_battlefield(&mut state, PlayerId::P1, "Cryptic Serpent");
+                let spell = if spell_name == "Sleep of the Dead" {
+                    put_in_graveyard(&mut state, PlayerId::P0, spell_name)
+                } else {
+                    put_in_hand(&mut state, PlayerId::P0, spell_name)
+                };
+                let candidate = if spell_name == "Sleep of the Dead" {
+                    for name in ["Lightning Bolt", "Fireblast"] {
+                        put_in_graveyard(&mut state, PlayerId::P0, name);
+                    }
+                    put_in_graveyard(&mut state, PlayerId::P0, "Counterspell")
+                } else {
+                    put_on_battlefield(&mut state, PlayerId::P0, "Elvish Mystic")
+                };
+                step(&mut state, Action::CastSpell(spell)).unwrap();
+                assert!(matches!(
+                    advance_until_decision(&mut state),
+                    Decision::ChooseTargets { .. }
+                ));
+                step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+
+                if spell_name == "Sleep of the Dead" {
+                    for expected in [3, 2] {
+                        let Decision::ChooseCostTargets {
+                            remaining,
+                            candidates,
+                            ..
+                        } = advance_until_decision(&mut state)
+                        else {
+                            panic!("expected a genuine Escape cost choice");
+                        };
+                        assert_eq!(remaining, expected);
+                        step(&mut state, Action::ChooseCostTarget(candidates[0])).unwrap();
+                    }
+                    if trainer != Some(PlayerId::P1) {
+                        let mut premature = state.clone();
+                        assert!(step(&mut premature, Action::ChooseCostTarget(candidate)).is_err());
+                        assert_eq!(premature, state);
+                    }
+                }
+
+                let decision = advance_until_decision(&mut state);
+                if trainer == Some(PlayerId::P1) {
+                    assert!(
+                        matches!(
+                            decision,
+                            Decision::ChooseCostTargets {
+                                player: PlayerId::P0, source, cost_kind: kind, remaining: 1, ref candidates
+                            } if source == spell && kind == cost_kind && candidates.as_slice() == [candidate]
+                        ),
+                        "{spell_name}: {decision:?}"
+                    );
+                    step(&mut state, Action::ChooseCostTarget(candidate)).unwrap();
+                    advance_until_decision(&mut state);
+                } else {
+                    assert!(
+                        matches!(decision, Decision::CastSpellOrPass { .. }),
+                        "{spell_name}: {decision:?}"
+                    );
+                }
+                assert!(state.engine.halted.is_none());
+                assert_eq!(state.stack.last().unwrap().source, spell);
+            }
+        }
+    }
+
     #[test]
     fn spellbench_neutral_targeted_trigger_keeps_historical_source_and_prospective_id() {
         let mut state = empty_game();
@@ -31642,6 +31780,23 @@ mod tests {
         let announcement = spellbench_pending_trigger_announcement(&state, PlayerId::P0)
             .unwrap()
             .unwrap();
+        let mut trainer_state = state.clone();
+        trainer_state
+            .engine
+            .spellbench_neutral_v1
+            .trainer_choice_seats[0] = true;
+        assert!(
+            spellbench_pending_trigger_announcement(&trainer_state, PlayerId::P0)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            advance_until_decision(&mut trainer_state),
+            Decision::ChooseTargets {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
         assert!(
             validated_stack_item_target_spec(&announcement, &state).is_err(),
             "completed-item validation still rejects the empty target prefix"
@@ -32037,14 +32192,10 @@ mod tests {
 
     #[test]
     fn spellbench_neutral_activation_announcement_retains_identity_through_costs() {
-        for (name, trainer) in [
-            ("Makeshift Munitions", false),
-            ("Quirion Ranger", false),
-            ("Makeshift Munitions", true),
-        ] {
+        for name in ["Makeshift Munitions", "Quirion Ranger"] {
             let mut state = empty_game();
             state.engine.spellbench_neutral_v1.choices = true;
-            state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+            state.engine.spellbench_neutral_v1.trainer_choice_seats = [false, true];
             state.step = Step::Main1;
             state.priority_player = PlayerId::P0;
             state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
@@ -32081,6 +32232,8 @@ mod tests {
                 zone_change_count: state.objects.get(forest).zone_change_count,
             });
             assert!(spellbench_pending_activation_announcement(&tampered, PlayerId::P0).is_err());
+            tampered.engine.spellbench_neutral_v1.pending_activation = None;
+            assert!(spellbench_pending_activation_announcement(&tampered, PlayerId::P0).is_err());
             let target = if name == "Makeshift Munitions" {
                 Target::Player(PlayerId::P1)
             } else {
@@ -32096,27 +32249,42 @@ mod tests {
             let other_id = next_stack_item_id(&mut state);
             assert_ne!(other_id.0.to_string(), instance);
             let decision = advance_until_decision(&mut state);
-            if trainer {
-                assert!(
-                    matches!(decision, Decision::CastSpellOrPass { .. }),
-                    "{decision:?}"
-                );
-            } else {
-                assert!(
-                    matches!(decision, Decision::ChooseCostTargets { .. }),
-                    "{decision:?}"
-                );
-                step(
-                    &mut state,
-                    Action::ChooseCostTarget(if name == "Makeshift Munitions" {
-                        creature
-                    } else {
-                        forest
-                    }),
-                )
-                .unwrap();
-                finalize_activation(&mut state);
-            }
+            assert!(
+                matches!(decision, Decision::ChooseCostTargets { .. }),
+                "{decision:?}"
+            );
+            step(
+                &mut state,
+                Action::ChooseCostTarget(if name == "Makeshift Munitions" {
+                    creature
+                } else {
+                    forest
+                }),
+            )
+            .unwrap();
+            let mut legacy = state.clone();
+            legacy.engine.spellbench_neutral_v1.trainer_choice_seats = [true, false];
+            let bytes = serde_json::to_vec(&legacy).unwrap();
+            let mut restored_trainer: GameState = serde_json::from_slice(&bytes).unwrap();
+            finalize_activation(&mut restored_trainer);
+            assert_eq!(
+                restored_trainer
+                    .stack
+                    .last()
+                    .unwrap()
+                    .v4
+                    .stack_item_id
+                    .0
+                    .to_string(),
+                instance
+            );
+            assert!(restored_trainer
+                .engine
+                .spellbench_neutral_v1
+                .pending_activation
+                .is_none());
+
+            finalize_activation(&mut state);
             assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
             let paid = state.stack.last().unwrap();
             assert_eq!(paid.v4.stack_item_id.0.to_string(), instance);
@@ -32127,6 +32295,59 @@ mod tests {
                 .is_none());
             let public = crate::rl::stack_item_public_v2(&state, PlayerId::P0, 0, paid).unwrap();
             assert_eq!(public.source, initial.source);
+        }
+    }
+
+    #[cfg(not(any(
+        feature = "eternal-fixtures",
+        feature = "limited-fdn-fixtures",
+        feature = "standard-magezero-fixtures"
+    )))]
+    #[test]
+    fn trainer_activation_keeps_real_targets_without_reserving_an_announcement() {
+        for mixed in [false, true] {
+            let mut state = ready_game_in_main1(0);
+            if mixed {
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats = [true, false];
+            }
+            state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
+            let source = put_on_battlefield(&mut state, PlayerId::P0, "Makeshift Munitions");
+            let creature = put_on_battlefield(&mut state, PlayerId::P0, "Elvish Mystic");
+            let before = state.engine.next_stack_item_id;
+            step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::ChooseTargets { player: PlayerId::P0, spell, .. } if spell == source
+            ));
+            assert!(state
+                .engine
+                .spellbench_neutral_v1
+                .pending_activation
+                .is_none());
+            assert_eq!(state.engine.next_stack_item_id, before);
+            for player in [PlayerId::P0, PlayerId::P1] {
+                assert!(
+                    crate::rl::spellbench_pending_activation_public_v2(&state, player)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+            step(
+                &mut state,
+                Action::ChooseTarget(Target::Player(PlayerId::P1)),
+            )
+            .unwrap();
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert!(state.engine.halted.is_none());
+            assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
+            assert_eq!(
+                state.stack.last().unwrap().v4.stack_item_id,
+                StackItemId(before + 1)
+            );
         }
     }
 
