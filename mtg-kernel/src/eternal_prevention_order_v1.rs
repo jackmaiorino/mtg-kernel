@@ -9,6 +9,7 @@ use crate::eternal_pauper_pf1c_v1::ordinary_damage::{OrdinaryV1, Packet};
 use crate::eternal_sideboard_s1d_v1::statics as circles;
 use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
 use crate::ids::PlayerId;
+use crate::linked_aura_operation_v1::{legacy_damage_order_v1, legacy_sphere_order_v1};
 use crate::state::GameState;
 pub(crate) mod nomads_v1;
 
@@ -16,6 +17,20 @@ pub(crate) mod nomads_v1;
 /// operation replay. The actual packet predicate retains source/color/turn
 /// matching; a packet with just one useful prevention keeps its existing menu.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
+    if legacy_damage_order_v1() {
+        let color_fog = || {
+            state.engine.active_replacements.iter().any(|replacement| {
+            matches!(&replacement.kind,
+                ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { turn, active_player, .. }
+                    if *turn == state.turn_key_v1() && *active_player == state.active_player)
+        })
+        };
+        return cfg!(feature = "eternal-fixtures")
+            && !cannot_prevent(state)
+            && ((circles::has_live_circle_shield(state)
+                && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state) || color_fog()))
+                || (legacy_sphere_order_v1() && has_sphere_ojer(state)));
+    }
     if nomads_v1::has_active_redirects(state) {
         return true;
     }
@@ -23,10 +38,14 @@ pub(crate) fn may_need_choice(state: &GameState) -> bool {
         && !cannot_prevent(state)
         && (circles::has_live_circle_shield(state)
             || permanent_v1::may_need_choice(state)
-            || [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
-                crate::eternal_premodern_p3a_v1::statics::has_sphere_of_law(state, player)
-                    && crate::standard_cards_v1::has_active_ojer(state, player.opponent())
-            }))
+            || has_sphere_ojer(state))
+}
+
+fn has_sphere_ojer(state: &GameState) -> bool {
+    [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
+        crate::eternal_premodern_p3a_v1::statics::has_sphere_of_law(state, player)
+            && crate::standard_cards_v1::has_active_ojer(state, player.opponent())
+    })
 }
 
 fn full_prevention(state: &GameState, damage: &DamageProposed) -> bool {
@@ -55,6 +74,10 @@ pub(crate) fn cannot_prevent(state: &GameState) -> bool {
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
     if damage.amount <= 0 || cannot_prevent(state) {
         return false;
+    }
+    if legacy_damage_order_v1() {
+        return circles::circle_shield_position(state, damage).is_some()
+            && full_prevention(state, damage);
     }
     if permanent_v1::eligible(state, damage) {
         return true;
@@ -102,8 +125,15 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
             options.push(OrdinaryV1::Circle { position, shield });
         }
     }
+    let legacy = legacy_damage_order_v1();
     for effect in packet.options(state) {
-        let effect = if permanent_v1::free_prevention(&effect) {
+        let free_prevention = if legacy {
+            matches!(&effect, OrdinaryV1::Registered(replacement) if matches!(
+                replacement.kind, ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }))
+        } else {
+            permanent_v1::free_prevention(&effect)
+        };
+        let effect = if free_prevention {
             OrdinaryV1::PreventAll
         } else {
             effect
@@ -120,8 +150,10 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
             options.push(effect);
         }
     }
-    permanent_v1::coalesce_spent_nishoba(state, &mut options);
-    nomads_v1::normalize(state, packet, &mut options);
+    if !legacy {
+        permanent_v1::coalesce_spent_nishoba(state, &mut options);
+        nomads_v1::normalize(state, packet, &mut options);
+    }
     options
 }
 
@@ -129,13 +161,14 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
 /// active reduction and increase. Their authoritative matchers retain source
 /// color, controller, printed-ability, face and historical-source restrictions.
 pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed) -> bool {
-    if damage.is_combat
+    let legacy = legacy_damage_order_v1();
+    if (legacy && !legacy_sphere_order_v1()) || damage.is_combat
         || damage.amount <= 0
         || cannot_prevent(state)
         // With any matching Circle, only its observable consumption predicate
         // admits the packet. Amount changes before an inevitable identical
         // shield consumption do not introduce a redundant numeric menu.
-        || circles::circle_shield_position(state, damage).is_some()
+        || (!legacy && circles::circle_shield_position(state, damage).is_some())
         || full_prevention(state, damage)
         || crate::eternal_pauper_pf1c_v1::ordinary_damage::prevention_without_cost(state, damage)
     {
@@ -146,7 +179,7 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
         .collect();
     let spheres =
         crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage).count();
-    if powers.len() == 1 {
+    if !legacy && powers.len() == 1 {
         return single_ojer_has_distinct_outcomes(damage.amount, spheres, powers[0]);
     }
     // Keep every native Ojer's multiplicity. For multiple increases this gate
