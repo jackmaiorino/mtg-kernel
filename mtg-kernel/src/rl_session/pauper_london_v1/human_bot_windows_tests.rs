@@ -32,9 +32,10 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v7_tensor_v1, flat_v7_extension_value_v1, FlatV4EncodeScratchV1,
 };
 use crate::agent_bridge_v1::{SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1};
-use crate::rl::{ActionSemanticV1, PlayerSeatV1};
+use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
 use crate::state::SplitMix64;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 
 const DECKS: [&str; 8] = [
     "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "CawGates", "Faeries",
@@ -158,6 +159,7 @@ struct Played {
     bot_neutral_only: u64,
     neutral_only_several: u64,
     person_revealed_order_picks: u64,
+    person_canonicalized_hand_subsets: u64,
     bot_after_person_revealed_order: u64,
     /// Against the production trainer: the first difference, if any.
     diverged: Option<String>,
@@ -265,6 +267,102 @@ fn person_revealed_order_pick(
     )).expect("the next card in the trainer's zone order has a bridge row"))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct HandSubset<'a> {
+    source: crate::ids::ObjectId,
+    path: &'a [u16],
+    prefix: &'a [crate::effect::EffectObjectBinding],
+    selected_count: usize,
+}
+
+enum HandSubsetAnswer {
+    Pick(TargetRefV1),
+    Finish,
+}
+
+fn optional_hand_subset(state: &crate::state::GameState) -> Option<HandSubset<'_>> {
+    use crate::effect::{
+        EffectTargetSelectionPurpose, LibraryPartitionSelectionStage, PendingEffectChoice,
+    };
+
+    let effect = state.engine.pending_effect.as_ref()?;
+    let PendingEffectChoice::SelectTargets {
+        selected,
+        min_targets: 0,
+        purpose:
+            EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                stage: LibraryPartitionSelectionStage::ChooseMatchingSubset,
+                original_prefix,
+                canonical_path,
+                ..
+            },
+        ..
+    } = effect.choice.as_ref()?
+    else {
+        return None;
+    };
+    Some(HandSubset {
+        source: effect.resolving_item.source,
+        path: canonical_path,
+        prefix: original_prefix,
+        selected_count: selected.len(),
+    })
+}
+
+/// Take the same seeded subset as the trainer script, then submit its cards
+/// in the trainer's looked-prefix order. The neutral player's engine keeps
+/// answer order for this group; the normal trainer canonicalizes it.
+fn person_hand_subset_script(
+    raw: &RlEpisodeSessionV1,
+    training: &FastActorSessionV1,
+    rng: &mut SplitMix64,
+) -> Option<(VecDeque<HandSubsetAnswer>, bool)> {
+    let root = optional_hand_subset(training.game_state())?;
+    if root.selected_count != 0 {
+        return None;
+    }
+    assert_eq!(Some(&root), optional_hand_subset(raw.game_state()).as_ref());
+
+    let mut probe = training.clone();
+    let mut answers = Vec::new();
+    while optional_hand_subset(probe.game_state()).is_some_and(|current| {
+        current.source == root.source && current.path == root.path && current.prefix == root.prefix
+    }) {
+        let FastActorResponseV1::Decision(decision) = probe.current_response() else {
+            panic!("the subset is pending without a trainer decision");
+        };
+        let actions = probe.diagnostic_current_action_semantics().unwrap();
+        let row = (rng.next_u64() % actions.len() as u64) as usize;
+        let answer = match &actions[row] {
+            ActionSemanticV1::ChooseEffectTarget {
+                target: target @ TargetRefV1::Object { object },
+                ..
+            } => (
+                root.prefix
+                    .iter()
+                    .position(|card| card.object.0 == object.arena_id)
+                    .expect("the chosen card belongs to the current revealed prefix"),
+                HandSubsetAnswer::Pick(target.clone()),
+            ),
+            ActionSemanticV1::FinishEffectSelection { .. } => {
+                (root.prefix.len(), HandSubsetAnswer::Finish)
+            }
+            other => panic!("unexpected answer in the matching subset: {other:?}"),
+        };
+        answers.push(answer);
+        assert!(answers.len() <= root.prefix.len() + 1);
+        probe
+            .step(decision.episode_id, decision.step, row as u32)
+            .unwrap();
+    }
+    let reordered = answers.windows(2).any(|pair| pair[0].0 > pair[1].0);
+    answers.sort_by_key(|(order, _)| *order);
+    Some((
+        answers.into_iter().map(|(_, action)| action).collect(),
+        reordered,
+    ))
+}
+
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
 /// passed in the bridge sessions alone; so are the decisions only neutral
@@ -286,6 +384,7 @@ fn play(
     let neutral_training = matches!(comparison, NeutralComparison::BothNeutral);
     let mut rng = SplitMix64::seed(seed ^ 0xB07);
     let mut scratch = FlatV4EncodeScratchV1::default();
+    let mut hand_subset_answers = VecDeque::new();
     let mut out = Played::default();
     let context = |what: &str, at: u64| {
         format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows} choice profile {comparison:?}: {what} at shared decision {at}")
@@ -468,7 +567,37 @@ fn play(
                 "model input"
             );
         }
-        let row = (rng.next_u64() % rows.len() as u64) as usize;
+        if hand_subset_answers.is_empty()
+            && !neutral_training
+            && seat_index(ours.acting_player) != bot
+        {
+            if let Some((answers, reordered)) = person_hand_subset_script(&raw, &training, &mut rng)
+            {
+                hand_subset_answers = answers;
+                out.person_canonicalized_hand_subsets += u64::from(reordered);
+            }
+        }
+        let row = if let Some(answer) = hand_subset_answers.pop_front() {
+            assert_ne!(seat_index(ours.acting_player), bot);
+            assert!(optional_hand_subset(raw.game_state()).is_some());
+            rows.iter()
+                .position(
+                    |row| match (&answer, &ours.legal_actions[*row as usize].semantic) {
+                        (
+                            HandSubsetAnswer::Pick(expected),
+                            ActionSemanticV1::ChooseEffectTarget { target, .. },
+                        ) => expected == target,
+                        (
+                            HandSubsetAnswer::Finish,
+                            ActionSemanticV1::FinishEffectSelection { .. },
+                        ) => true,
+                        _ => false,
+                    },
+                )
+                .expect("the planned answer is still legal in the shared menu")
+        } else {
+            (rng.next_u64() % rows.len() as u64) as usize
+        };
         let pick = rows[row];
         let chosen = &ours.legal_actions[pick as usize];
         raw.step(ours.episode_id, ours.step, pick, &chosen.stable_id)
@@ -553,6 +682,7 @@ fn rally_against_spy_matches_the_normal_trainer_through_terminal() {
     );
     assert!(played.finished && played.diverged.is_none(), "{played:?}");
     assert!(played.bot_decisions > 10, "{played:?}");
+    assert!(played.person_canonicalized_hand_subsets > 0, "{played:?}");
 }
 
 #[test]
@@ -611,6 +741,8 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         total.person_engine_windows += played.person_engine_windows;
                         total.neutral_only += played.neutral_only;
                         total.person_revealed_order_picks += played.person_revealed_order_picks;
+                        total.person_canonicalized_hand_subsets +=
+                            played.person_canonicalized_hand_subsets;
                         total.bot_after_person_revealed_order +=
                             played.bot_after_person_revealed_order;
                         total.bot_neutral_only += played.bot_neutral_only;
