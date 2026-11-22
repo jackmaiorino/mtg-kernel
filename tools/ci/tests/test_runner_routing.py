@@ -1,7 +1,8 @@
 """The workflow's runs-on expressions send only trusted events to self-hosted runners.
 
 The expressions are evaluated here with a small evaluator for the part of GitHub's expression language
-they use (&&, ||, ==, !=, parentheses, string literals, context lookups, fromJSON and contains).
+they use (&&, ||, ==, !=, parentheses, string literals, context lookups, fromJSON, contains, startsWith, endsWith
+and format).
 """
 import json
 import re
@@ -10,7 +11,8 @@ from pathlib import Path
 
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "ci.yml"
 TOKEN = re.compile(r"\s*(&&|\|\||==|!=|[(),]|'(?:[^']|'')*'|[A-Za-z_][\w.\-]*)")
-REPOSITORY, OWNER = "owner/project", "owner"
+REPOSITORY, OWNER = "owner/project", "maintainer"
+ALLOWED = json.dumps([OWNER, "helper"])
 WINDOWS_POOL, PR_POOL, LINUX_POOL = ["self-hosted", "windows-pool"], ["self-hosted", "pr-pool"], ["self-hosted", "linux-pool"]
 
 
@@ -40,27 +42,27 @@ class Evaluator:
     def peek(self):
         return self.tokens[self.at] if self.at < len(self.tokens) else None
 
+    # Each parse method returns a thunk, so && and || short-circuit as GitHub's do: the right side of
+    # `a && fromJSON(b)` is never evaluated while a is falsy.
     def either(self):
         value = self.both()
         while self.peek() == "||":
             self.take()
-            other = self.both()
-            value = value if truthy(value) else other
+            value = (lambda left, right: lambda: left() if truthy(left()) else right())(value, self.both())
         return value
 
     def both(self):
         value = self.comparison()
         while self.peek() == "&&":
             self.take()
-            other = self.comparison()
-            value = other if truthy(value) else value
+            value = (lambda left, right: lambda: right() if truthy(left()) else left())(value, self.comparison())
         return value
 
     def comparison(self):
         value = self.operand()
         while self.peek() in ("==", "!="):
             negate = self.take() == "!="
-            value = equal(value, self.operand()) != negate
+            value = (lambda left, right, negate: lambda: equal(left(), right()) != negate)(value, self.operand(), negate)
         return value
 
     def operand(self):
@@ -70,20 +72,32 @@ class Evaluator:
             self.take(")")
             return value
         if token.startswith("'"):
-            return token[1:-1].replace("''", "'")
+            return lambda: token[1:-1].replace("''", "'")
         if self.peek() == "(":
             self.take("(")
-            arguments = [self.either()]
+            thunks = [self.either()]
             while self.peek() == ",":
                 self.take()
-                arguments.append(self.either())
+                thunks.append(self.either())
             self.take(")")
-            if token == "fromJSON":
-                return json.loads(arguments[0])
-            if token == "contains":
-                return arguments[1] in arguments[0]
-            raise ValueError(f"unsupported function {token}")
-        return self.context.get(token, "")
+            if token not in ("fromJSON", "format", "contains", "startsWith", "endsWith"):
+                raise ValueError(f"unsupported function {token}")
+            return lambda: call(token, [thunk() for thunk in thunks])
+        return lambda: self.context.get(token, "")
+
+
+def call(name, arguments):
+    if name == "fromJSON":
+        return json.loads(arguments[0])
+    if name == "format":
+        return re.sub(r"\{(\d+)\}", lambda match: str(arguments[1 + int(match.group(1))]), arguments[0])
+    if isinstance(arguments[0], str):
+        # GitHub compares strings case-insensitively; a missing value is ''.
+        search, item = arguments[0].lower(), str(arguments[1]).lower()
+        return {"contains": item in search, "startsWith": search.startswith(item), "endsWith": search.endswith(item)}[name]
+    if name == "contains":
+        return arguments[1] in arguments[0]
+    raise ValueError(f"{name} of a non-string")
 
 
 def evaluate(expression, **context):
@@ -91,7 +105,7 @@ def evaluate(expression, **context):
     value = evaluator.either()
     if evaluator.peek() is not None:
         raise ValueError("trailing tokens")
-    return value
+    return value()
 
 
 def runs_on_expressions():
@@ -106,9 +120,10 @@ def runs_on_expressions():
     return found
 
 
-def event(name="pull_request", head=REPOSITORY, actor=OWNER, **more):
-    context = {"github.event_name": name, "github.repository": REPOSITORY, "github.repository_owner": OWNER,
-               "github.actor": actor}
+def event(name="pull_request", head=REPOSITORY, actor=OWNER, triggering=None, **more):
+    # Trusted by default: the actor and the triggering actor are both in the self-hosted allow-list.
+    context = {"github.event_name": name, "github.repository": REPOSITORY, "github.actor": actor,
+               "github.triggering_actor": triggering or actor, "vars.MTG_CI_SELF_HOSTED_ACTORS": ALLOWED}
     if name == "pull_request":
         context["github.event.pull_request.head.repo.full_name"] = head
     return {**context, **more}
@@ -153,10 +168,25 @@ class RoutingTests(unittest.TestCase):
                         self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": group, **fork}),
                                          system)
 
-    def test_only_the_repository_owner_runs_on_self_hosted_runners(self):
-        # A same-repository branch pushed by any other account (a collaborator, a bot) stays hosted too.
-        for untrusted in (event(actor="someone"), event("push", actor="someone"),
-                          event("workflow_dispatch", actor="github-actions[bot]")):
+    def test_every_listed_actor_runs_on_self_hosted_runners(self):
+        for actor in (OWNER, "helper", OWNER.upper()):
+            with self.subTest(actor=actor):
+                self.assertEqual(self.route("ubuntu-24.04", "eternal", **event(actor=actor), **EVERY_POOL), LINUX_POOL)
+                self.assertEqual(self.route("windows-2025", "workspace-lib", **event("push", actor=actor), **EVERY_POOL),
+                                 WINDOWS_POOL)
+
+    def test_only_listed_actors_run_on_self_hosted_runners(self):
+        # A same-repository branch pushed by any account outside MTG_CI_SELF_HOSTED_ACTORS (a collaborator, a
+        # bot), a re-run by one, and a missing, empty or malformed list all stay hosted. No owner comparison:
+        # in an organization github.repository_owner is the organization.
+        unlisted = [event(actor="someone"), event("push", actor="someone"),
+                    event("workflow_dispatch", actor="github-actions[bot]"), event(actor="maintaine"),
+                    event(actor="maintainer2"), event(triggering="someone"), event("push", actor="someone", triggering=OWNER)]
+        bad_lists = [event(**{"vars.MTG_CI_SELF_HOSTED_ACTORS": value})
+                     for value in ("", "[]", "null", f'"{OWNER}"', f"[{OWNER}]", f'["{OWNER}"', f' ["{OWNER}"]', OWNER)]
+        for expression in self.expressions.values():
+            self.assertNotIn("repository_owner", expression)
+        for untrusted in unlisted + bad_lists:
             for name, expression in self.expressions.items():
                 for system in ("ubuntu-24.04", "windows-2025"):
                     with self.subTest(job=name, system=system, event=untrusted["github.event_name"]):
