@@ -19,7 +19,7 @@
 //!    Neutral choices (on in every human-play game) are run both ways: on
 //!    the trainer's session too (then everything is equal), and off it, the
 //!    production trainer exactly; then the bridge poses some choices training
-//!    resolves itself. For the person's revealed hand partition, the script
+//!    resolves itself. For the person's revealed hand or settled graveyard partition, the script
 //!    uses the trainer's actual move order. Other bridge-only choices must
 //!    have exactly one answer, and at every shared
 //!    bot decision the menu, the model input and the new-window marker are
@@ -150,8 +150,8 @@ struct Played {
     /// Decisions only the bridge poses, and how many of them belong to the bot.
     neutral_only: u64,
     bot_neutral_only: u64,
-    person_hand_orders: u64,
-    bot_after_person_hand_order: u64,
+    person_revealed_order_picks: u64,
+    bot_after_person_revealed_order: u64,
     shared: u64,
     finished: bool,
 }
@@ -195,9 +195,9 @@ fn state_diff(training: &FastActorSessionV1, raw: &RlEpisodeSessionV1) -> Vec<St
     out
 }
 
-/// The person can order the cards a revealed partition moves to hand. Match
-/// the normal trainer's actual hand entries, including their incarnations.
-fn person_hand_order_pick(
+/// Match the person's revealed-card order to the production trainer's committed
+/// zone order. A graveyard-order decision that the trainer exposes stays shared.
+fn person_revealed_order_pick(
     raw: &RlEpisodeSessionV1,
     training: &FastActorSessionV1,
     decision: &RlSessionDecisionV1,
@@ -205,7 +205,7 @@ fn person_hand_order_pick(
 ) -> Option<u32> {
     use crate::effect::{
         EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest,
-        LibraryPartitionSelectionStage::ChooseMatchingSubset, PendingEffectChoice::SelectTargets,
+        LibraryPartitionSelectionStage, PendingEffectChoice::SelectTargets,
     };
     use crate::rl::TargetRefV1;
     use crate::state::Target;
@@ -219,8 +219,10 @@ fn person_hand_order_pick(
         max_targets,
         purpose:
             LookTopSelectByTypeToHandBottomRest {
-                stage: ChooseMatchingSubset,
+                stage,
                 canonical_path,
+                original_prefix,
+                card_type,
                 ..
             },
         ..
@@ -241,38 +243,62 @@ fn person_hand_order_pick(
     assert_eq!(min_targets, max_targets);
     assert_eq!(selected.len() + legal.len(), count);
     let baseline = training.game_state();
-    let hand = &baseline.players[player.index()].hand;
-    let moved = &hand[hand
-        .len()
-        .checked_sub(count)
-        .expect("trainer moved the revealed cards")..];
-    for (picked, id) in selected.iter().zip(moved) {
+    let matches_type = |binding: &crate::effect::EffectObjectBinding| {
+        let card = state.objects.get(binding.object);
+        crate::card_def::CARD_DEFS[card.card_def as usize].has_type(*card_type)
+    };
+    let player_state = &baseline.players[player.index()];
+    let (destination, to_hand) = match stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => (&player_state.hand, true),
+        LibraryPartitionSelectionStage::OrderRest { .. }
+            if !crate::engine::graveyard_order_choice_exposed(baseline, *player) =>
+        {
+            (&player_state.graveyard, false)
+        }
+        LibraryPartitionSelectionStage::OrderRest { .. } => return None,
+    };
+    let expected: Vec<_> = original_prefix
+        .iter()
+        .filter(|card| matches_type(card) == to_hand)
+        .collect();
+    assert_eq!(expected.len(), count, "the whole revealed group must move");
+    // Other graveyard entries can follow the nonmatches, including the spell.
+    let moved: Vec<_> = destination
+        .iter()
+        .filter_map(|id| {
+            let binding = expected.iter().find(|card| card.object == *id)?;
+            assert_eq!(
+                baseline.objects.get(*id).zone_change_count,
+                binding.expected_zone_change_count + 1
+            );
+            Some(*id)
+        })
+        .collect();
+    assert_eq!(
+        moved.len(),
+        count,
+        "trainer moved each revealed card to its destination"
+    );
+    for (picked, id) in selected.iter().zip(&moved) {
         assert_eq!(picked.target, Target::Object(*id));
     }
     for id in &moved[selected.len()..] {
-        let binding = legal
+        assert!(legal
             .iter()
-            .find(|card| card.target == Target::Object(*id))
-            .expect("trainer moved exactly the remaining revealed cards")
-            .expected_object
-            .unwrap();
-        assert_eq!(
-            baseline.objects.get(*id).zone_change_count,
-            binding.expected_zone_change_count + 1
-        );
+            .any(|candidate| candidate.target == Target::Object(*id)));
     }
     let next = moved[selected.len()];
     Some(*rows.iter().find(|&&row| matches!(
         &decision.legal_actions[row as usize].semantic,
         ActionSemanticV1::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
             if object.arena_id == next.0
-    )).expect("the next card in the trainer's hand has a bridge row"))
+    )).expect("the next card in the trainer's zone order has a bridge row"))
 }
 
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
 /// passed in the bridge sessions alone; so are the decisions only neutral
-/// choices pose. For the person's revealed hand order, play the training order.
+/// choices pose. For the person's revealed partition order, play the training order.
 fn play(
     decks: [&str; 2],
     seed: u64,
@@ -338,16 +364,16 @@ fn play(
                 FastActorResponseV1::Terminal(_) => false,
             };
             if !shared && !neutral_training {
-                // Reproduce the person's training hand order if one is pending.
+                // Reproduce the person's training partition order if one is pending.
                 // Every other unmatched menu, including the bot's, must be forced.
                 let rows = copy.row_candidate_ids(decision).unwrap();
-                let hand_order = if seat_index(decision.acting_player) != bot && rows.len() > 1 {
-                    person_hand_order_pick(&raw, &training, decision, &rows)
+                let person_order = if seat_index(decision.acting_player) != bot && rows.len() > 1 {
+                    person_revealed_order_pick(&raw, &training, decision, &rows)
                 } else {
                     None
                 };
-                let pick = if let Some(pick) = hand_order {
-                    out.person_hand_orders += 1;
+                let pick = if let Some(pick) = person_order {
+                    out.person_revealed_order_picks += 1;
                     pick
                 } else {
                     assert_eq!(
@@ -436,7 +462,7 @@ fn play(
         let rows = copy.row_candidate_ids(&ours).unwrap();
         if seat_index(ours.acting_player) == bot {
             out.bot_decisions += 1;
-            out.bot_after_person_hand_order += u64::from(out.person_hand_orders > 0);
+            out.bot_after_person_revealed_order += u64::from(out.person_revealed_order_picks > 0);
             let marker = training.priority_pass_window_v1().unwrap();
             assert_eq!(
                 marker,
@@ -483,9 +509,17 @@ fn shared_bot_input_after_persons_winding_way_hand_order() {
         false,
         76,
     );
-    assert!(played.person_hand_orders > 0, "{played:?}");
-    assert!(played.bot_after_person_hand_order > 0, "{played:?}");
+    assert!(played.person_revealed_order_picks > 0, "{played:?}");
+    assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
     println!("Winding Way: {played:?}");
+}
+
+#[test]
+fn shared_bot_input_after_persons_winding_way_graveyard_order() {
+    let played = play(["Spy", "Spy"], 7, 0xB0_0000 + 4014, 0, true, false, 94);
+    assert!(played.person_revealed_order_picks >= 3, "{played:?}");
+    assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
+    println!("Spy Winding Way: {played:?}");
 }
 
 #[test]
@@ -532,8 +566,9 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         total.bot_new_windows += played.bot_new_windows;
                         total.person_engine_windows += played.person_engine_windows;
                         total.neutral_only += played.neutral_only;
-                        total.person_hand_orders += played.person_hand_orders;
-                        total.bot_after_person_hand_order += played.bot_after_person_hand_order;
+                        total.person_revealed_order_picks += played.person_revealed_order_picks;
+                        total.bot_after_person_revealed_order +=
+                            played.bot_after_person_revealed_order;
                         total.bot_neutral_only += played.bot_neutral_only;
                         total.shared += played.shared;
                         games += 1;
