@@ -10,15 +10,12 @@ pub struct SourceChoiceV1 {
     pub sources: Vec<ObjectLinkV4>,
 }
 
-/// Allocate a source when redirecting is the only
-/// applicable effect at the original recipient. Other replacement decisions
-/// stay in the packet frontier.
-fn applicable_shields(state: &GameState, packet: &Packet) -> Option<Vec<RedirectV1>> {
-    let damage = &packet.damage;
-    let (_, shield) = applicable_redirects(state, damage).next()?;
-    if shield.from == shield.to {
-        return None;
-    }
+/// All live redirect records apply to damage at this recipient. The chosen
+/// packet then offers its usual alternatives, including protection and Hallow.
+fn applicable_shields(
+    state: &GameState,
+    damage: &event::DamageProposed,
+) -> Option<Vec<RedirectV1>> {
     let (source, zone) = damage_source_incarnation(state, damage)?;
     // A public object choice must still identify this source incarnation.
     let live = state.objects.try_get(source.object)?;
@@ -31,20 +28,22 @@ fn applicable_shields(state: &GameState, packet: &Packet) -> Option<Vec<Redirect
     {
         return None;
     }
-    if !crate::eternal_prevention_order_v1::cannot_prevent(state)
-        && !hallow_beneficiaries(state, source, zone).is_empty()
-    {
-        return None;
-    }
-    let shields: Vec<_> = packet
-        .options(state)
-        .into_iter()
-        .map(|effect| match effect {
-            OrdinaryV1::Redirect { record, .. } if record.from != record.to => Some(record),
-            _ => None,
-        })
-        .collect::<Option<_>>()?;
-    (!shields.is_empty()).then_some(shields)
+    let shields: Vec<_> = applicable_redirects(state, damage)
+        .map(|(_, record)| record)
+        .collect();
+    // Redirecting to itself spends that record and leaves the original damage
+    // in place. At least one different recipient is needed to allocate damage.
+    shields
+        .iter()
+        .any(|record| record.from != record.to)
+        .then_some(shields)
+}
+
+fn points_that_can_move(shields: &[RedirectV1]) -> usize {
+    shields
+        .iter()
+        .filter(|record| record.from != record.to)
+        .count()
 }
 
 /// A single-source event can take its usual path. Admit all competing original
@@ -73,10 +72,10 @@ pub(super) fn shared_targets(state: &GameState, events: &[ProposedEvent]) -> Vec
                 if damage.target != *target || damage.amount <= 0 {
                     continue;
                 }
-                let Some(shields) = applicable_shields(state, &Packet::new(damage)) else {
+                let Some(shields) = applicable_shields(state, damage) else {
                     return false;
                 };
-                charges = shields.len();
+                charges = points_that_can_move(&shields);
                 total += damage.amount as u64;
                 multiple_sources |= *first.get_or_insert(damage.source) != damage.source;
             }
@@ -100,14 +99,14 @@ pub(super) fn choose(
         return Ok(Some(first));
     }
     let target = item.packet.damage.target;
-    let Some(shields) = applicable_shields(state, &item.packet) else {
+    let Some(shields) = applicable_shields(state, &item.packet.damage) else {
         return Ok(Some(first));
     };
     let mut total = 0u64;
     let mut sources = Vec::new();
     for other in work.iter().filter(|p| p.packet.damage.target == target) {
         if !other.shared_redirect
-            || applicable_shields(state, &other.packet).as_ref() != Some(&shields)
+            || applicable_shields(state, &other.packet.damage).as_ref() != Some(&shields)
         {
             return Ok(Some(first));
         }
@@ -123,7 +122,7 @@ pub(super) fn choose(
             sources.push(other.source);
         }
     }
-    if sources.len() < 2 || total <= shields.len() as u64 {
+    if sources.len() < 2 || total <= points_that_can_move(&shields) as u64 {
         return Ok(Some(first));
     }
     sources.sort_by_key(|source| source.object.0);

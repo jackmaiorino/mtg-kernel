@@ -4,6 +4,9 @@ use super::{
     P1,
 };
 
+#[path = "nomads_source_prevention_v1.rs"]
+mod nomads_source_prevention_v1;
+
 fn block(active: PlayerId, green_first: bool, charges: u8) -> (GameState, [ObjectId; 4]) {
     let mut state = turn_of(active);
     let nomads = put(&mut state, active, "Nomads en-Kor", Zone::Battlefield);
