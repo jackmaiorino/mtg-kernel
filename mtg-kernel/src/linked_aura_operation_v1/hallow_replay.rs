@@ -8,6 +8,7 @@ use std::cell::Cell;
 pub(super) enum Order {
     HallowOnly,
     CircleGlobal,
+    StampedCircleGlobal,
     SphereOjer,
     Expanded,
 }
@@ -30,6 +31,10 @@ pub(crate) fn legacy_sphere_order_v1() -> bool {
 
 pub(super) fn stamp_checkpoint() -> bool {
     ORDER.with(|mode| mode.get() == Order::Expanded)
+}
+
+pub(super) fn stamp_circle_global() -> bool {
+    ORDER.with(|mode| mode.get() == Order::StampedCircleGlobal)
 }
 
 impl Order {
@@ -71,6 +76,9 @@ pub(super) fn recorded_order(
     };
     if pending.expanded_damage_order {
         return check(Order::Expanded);
+    }
+    if pending.circle_global_order {
+        return check(Order::StampedCircleGlobal);
     }
     check(Order::HallowOnly)
         .or_else(|_| check(Order::CircleGlobal))

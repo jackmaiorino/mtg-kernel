@@ -157,6 +157,9 @@ pub enum GeneralChoiceV36 {
 /// entry-card consumer or changing the public target-selection vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HallowCheckpointV1 {
+    /// Keep #866's Circle/global frontier through every answer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub circle_global_order: bool,
     /// New operations retain their replacement rules across every answer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub expanded_damage_order: bool,
@@ -1510,6 +1513,7 @@ fn replay_general_input_v1(
         if let GeneralChoiceV36::HallowV1 { choice } = choice {
             checkpoint.engine.linked_aura_operation_v1.pending_hallow_v1 =
                 Some(Box::new(HallowCheckpointV1 {
+                    circle_global_order: hallow_replay::stamp_circle_global(),
                     expanded_damage_order: hallow_replay::stamp_checkpoint(),
                     original: Box::new(original.clone()),
                     operation: operation.clone(),

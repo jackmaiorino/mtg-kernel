@@ -102,6 +102,57 @@ fn w1_fog_keeps_the_later_hallowed_attacker_before_the_circle_global_frontier() 
     );
 }
 
+#[test]
+fn saved_circle_global_stays_distinct_from_new_expanded_replay() {
+    let legacy = load(include_bytes!(
+        "../fixtures/hallow_combat_16ef09699.json.gz"
+    ));
+    let legacy_pending = legacy
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_ref()
+        .unwrap();
+    let ball = legacy_pending.choice.damage.source;
+    let mut fresh = (*legacy_pending.original).clone();
+    let Some(Decision::ChooseEffectOption {
+        player: P1,
+        source: pup,
+        option_count: 2,
+    }) = combat_choice(&mut fresh)
+    else {
+        panic!("fresh combat should offer the Circle and fog on Jackal Pup");
+    };
+    assert_eq!(fresh.objects.get(pup).name, "Jackal Pup");
+    let pending = fresh
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_mut()
+        .unwrap();
+    assert!(pending.expanded_damage_order);
+    assert!(!pending.circle_global_order);
+
+    // This particular first menu is shared by the two rule sets. Model that
+    // same capture with the serialized stamp used by #866.
+    pending.expanded_damage_order = false;
+    pending.circle_global_order = true;
+    let mut saved = restored(&fresh);
+    choose_public(&mut saved, P1, pup, 0, 2);
+    let next = saved
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_ref()
+        .unwrap();
+    assert_eq!(next.choice.damage.source, ball);
+    assert!(next.circle_global_order);
+    assert!(!next.expanded_damage_order);
+    let mut saved = restored(&saved);
+    choose_public(&mut saved, P1, ball, 0, 2);
+    assert!(combat_choice(&mut saved).is_none());
+}
+
 // 10c8c80c5 offered the order of Ojer and two Spheres on a one-point Lava Dart.
 // Both choices finished at the same total before that redundant menu was removed.
 #[test]
