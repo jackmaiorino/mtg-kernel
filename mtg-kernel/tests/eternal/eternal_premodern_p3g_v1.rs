@@ -5,23 +5,23 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
-#[path = "circle_order_no_hallow_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/circle_order_no_hallow_v1.rs"]
 mod circle_order_no_hallow_v1;
-#[path = "hallow_circle_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/hallow_circle_v1.rs"]
 mod hallow_circle_v1;
-#[path = "hallow_ordinary_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/hallow_ordinary_v1.rs"]
 mod hallow_ordinary_v1;
-#[path = "hallow_saved_orders_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/hallow_saved_orders_v1.rs"]
 mod hallow_saved_orders_v1;
-#[path = "nishoba_protection_order_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/nishoba_protection_order_v1.rs"]
 mod nishoba_protection_order_v1;
-#[path = "nomads_replacement_order_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/nomads_replacement_order_v1.rs"]
 mod nomads_replacement_order_v1;
-#[path = "nomads_simultaneous_sources_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/nomads_simultaneous_sources_v1.rs"]
 mod nomads_simultaneous_sources_v1;
-#[path = "prevention_order_no_hallow_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/prevention_order_no_hallow_v1.rs"]
 mod prevention_order_no_hallow_v1;
-#[path = "sphere_ojer_order_no_hallow_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/sphere_ojer_order_no_hallow_v1.rs"]
 mod sphere_ojer_order_no_hallow_v1;
 
 use mtg_kernel::card_def::{
