@@ -2433,8 +2433,12 @@ fn validate_physical_spell_cast_origin(
                     .split_last()
                     .ok_or("chosen creature payment absent")?;
                 let legal_route = match (cast_method, origin.route) {
-                    (CastMethodV4::Escape, SpellCastRouteV4::GraveyardEscape) => {
-                        let count = spell_costs_v1::escape_cost_v1(def).and_then(|cost| {
+                    (CastMethodV4::Escape, route_kind) if route_kind.is_escape() => {
+                        let count = spell_costs_v1::escape_cost_v1(
+                            def,
+                            origin.route == SpellCastRouteV4::BreachEscapeV1,
+                        )
+                        .and_then(|cost| {
                             cost.iter().find_map(|part| match part {
                                 CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                                     Some(usize::from(*n))
@@ -2740,6 +2744,17 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == caster
                 && cast_method == CastMethodV4::Madness
                 && def.madness_cost.is_some()
+        }
+        SpellCastRouteV4::BreachEscapeV1 => {
+            origin.origin_zone == Zone::Graveyard
+                && source.owner == caster
+                && cast_method == CastMethodV4::Escape
+                && def.escape.is_some()
+                && crate::eternal_lurrus_v1::escape_granted(
+                    state,
+                    item.source,
+                    origin.origin_zone_change_count,
+                )
         }
         SpellCastRouteV4::GraveyardEscape => {
             origin.origin_zone == Zone::Graveyard
@@ -3268,6 +3283,7 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::Plotted { .. }
         | SpellCastRouteV4::Madness
         | SpellCastRouteV4::GraveyardEscape
+        | SpellCastRouteV4::BreachEscapeV1
         | SpellCastRouteV4::AdventureExile
         | SpellCastRouteV4::GraveyardPermissionV1 { .. }
         | SpellCastRouteV4::GraveyardAdventure { .. }
@@ -8491,7 +8507,13 @@ fn optional_additional_cost_branches(
     kind: OptionalAdditionalCostDef,
 ) -> Result<[bool; 2], String> {
     let method = pending.source_contract.cast_method;
-    if compound_cast_cost_v1::Costs::optional_escape(def, method).is_none() {
+    if compound_cast_cost_v1::Costs::optional_escape(
+        def,
+        method,
+        pending.source_contract.breach_escape(),
+    )
+    .is_none()
+    {
         return Ok([
             true,
             optional_additional_cost_is_payable(kind, pending.controller, state)?,
@@ -8555,11 +8577,13 @@ fn spell_optional_paid_refs<'a>(
     kind: OptionalAdditionalCostDef,
 ) -> Result<&'a [PaidCostRefV4], String> {
     let refs = &item.v4.paid_cost_refs;
-    if let Some(costs) = item
-        .v4
-        .cast_method
-        .and_then(|method| compound_cast_cost_v1::Costs::optional_escape(def, method))
-    {
+    if let Some(costs) = item.v4.cast_method.and_then(|method| {
+        compound_cast_cost_v1::Costs::optional_escape(
+            def,
+            method,
+            item.v4.source_contract.is_some_and(|s| s.breach_escape()),
+        )
+    }) {
         if refs.len() != costs.count() {
             return Err("optional escape has the wrong number of payment receipts".into());
         }
@@ -9135,10 +9159,7 @@ fn graveyard_exile_cards_needed(
             })
             .unwrap_or(0);
     }
-    def.escape
-        .as_ref()
-        .map(|escape| escape.cost)
-        .or_else(|| crate::eternal_lurrus_v1::granted_escape_cost(def))
+    spell_costs_v1::escape_cost_v1(def, pending.source_contract.breach_escape())
         .and_then(|cost| {
             cost.iter().find_map(|component| match component {
                 CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => Some(*amount),
@@ -9183,10 +9204,7 @@ fn escape_extra_exile_candidates(
     if pending.source_contract.cast_method != CastMethodV4::Escape {
         return None;
     }
-    let minimum = def
-        .escape
-        .as_ref()?
-        .cost
+    let minimum = spell_costs_v1::escape_cost_v1(def, pending.source_contract.breach_escape())?
         .iter()
         .find_map(|component| match component {
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => Some(*minimum),
@@ -10580,13 +10598,14 @@ fn torch_first_target_payable_v1(
     cast_method: CastMethodV4,
     player: PlayerId,
     state: &GameState,
+    grant: Option<sphinx_lore_cast_v1::CostGrant>,
 ) -> bool {
     let modes = viable_printed_spell_modes(def, id, player, state);
     let zone = state.objects.get(id).zone;
     modes.is_empty()
-        || modes
-            .into_iter()
-            .any(|mode| torch_mode_payable_v1(def, id, zone, cast_method, mode, player, state))
+        || modes.into_iter().any(|mode| {
+            torch_mode_payable_v1(def, id, zone, cast_method, mode, player, state, grant)
+        })
 }
 
 /// Kaervek's Torch (Pauper field wave Pf1c): whether spell form `mode` of
@@ -10595,6 +10614,7 @@ fn torch_first_target_payable_v1(
 /// Omniscience, which still pays the {2}), has a legal first target that
 /// isn't an unpayable Torch. A form without targets always qualifies.
 #[cfg(feature = "eternal-fixtures")]
+#[allow(clippy::too_many_arguments)]
 fn torch_mode_payable_v1(
     def: &card_def::CardDef,
     id: ObjectId,
@@ -10603,6 +10623,7 @@ fn torch_mode_payable_v1(
     mode: u8,
     player: PlayerId,
     state: &GameState,
+    grant: Option<sphinx_lore_cast_v1::CostGrant>,
 ) -> bool {
     let Some(spec) = selected_spell_target_spec(def, mode, false) else {
         return true;
@@ -10630,7 +10651,7 @@ fn torch_mode_payable_v1(
         std::slice::from_ref(&cast_method)
     };
     let quote = |quote_state: &GameState, method: CastMethodV4, target: Target| {
-        spell_costs_v1::selected_spell_quote_v1(
+        spell_costs_v1::selected_spell_quote_with_grant_v1(
             def,
             id,
             zone,
@@ -10643,6 +10664,7 @@ fn torch_mode_payable_v1(
             player,
             quote_state,
             &[],
+            grant,
         )
         .is_some()
     };
@@ -11066,6 +11088,7 @@ fn payable_pending_spell_modes(
                     mode,
                     pending.controller,
                     state,
+                    sphinx_lore_cast_v1::CostGrant::selected(state, pending.spell),
                 )
             })
             .collect();
@@ -11372,7 +11395,11 @@ fn minimum_payable_cast_x(
     state: &GameState,
 ) -> Option<u16> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
-    if let Some(limit) = compound_cast_cost_v1::Costs::escape_discard_x_limit(def, method) {
+    if let Some(limit) = compound_cast_cost_v1::Costs::escape_discard_x_limit(
+        def,
+        method,
+        pending.source_contract.breach_escape(),
+    ) {
         return (0..=u16::from(limit)).find(|&x| {
             pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
                 .is_some()
@@ -11675,7 +11702,7 @@ fn is_castable_with_cost_grant(
                 player,
                 targeting_source_for_object(state, id),
                 state,
-            ) && spell_costs_v1::selected_spell_quote_v1(
+            ) && spell_costs_v1::selected_spell_quote_with_grant_v1(
                 def,
                 id,
                 state.objects.get(id).zone,
@@ -11688,6 +11715,7 @@ fn is_castable_with_cost_grant(
                 player,
                 state,
                 &[],
+                grant,
             )
             .is_some()
         })
@@ -11747,7 +11775,7 @@ fn is_castable_with_cost_grant(
     // targets are Torches it can't pay to target isn't offered.
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_pauper_pf1c_v1::torch_on_stack(state)
-        && !torch_first_target_payable_v1(def, id, cast_method, player, state)
+        && !torch_first_target_payable_v1(def, id, cast_method, player, state, grant)
     {
         return false;
     }
@@ -11765,8 +11793,12 @@ fn is_castable_with_cost_grant(
         } else {
             vec![0]
         };
-        let limit =
-            compound_cast_cost_v1::Costs::escape_discard_x_limit(def, cast_method).unwrap_or(0);
+        let limit = compound_cast_cost_v1::Costs::escape_discard_x_limit(
+            def,
+            cast_method,
+            grant == Some(sphinx_lore_cast_v1::CostGrant::Breach),
+        )
+        .unwrap_or(0);
         modes.into_iter().any(|mode| {
             (0..=limit).any(|x| {
                 spell_costs_v1::selected_spell_quote_with_grant_v1(
@@ -12052,6 +12084,7 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             || (has_sphinx_lore_grant
                 || cfg!(feature = "eternal-fixtures")
                     && (sphinx_lore_cast_v1::has_printed_graveyard_method(def)
+                        || def.escape.is_some()
                         || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
                         || crate::eternal_lurrus_v1::flashback_granted(
                             state,
@@ -30791,7 +30824,12 @@ fn materialize_begin_cast_with_quote_v1(
     } else if let Some(choice) = omniscience_choice {
         omniscience_cast_v1::origin(choice, player, origin_zone_change_count)
     } else if let Some((_, route)) = sphinx_lore_choice {
-        sphinx_lore_cast_v1::selected_origin(route, player, origin_zone_change_count)
+        sphinx_lore_cast_v1::selected_origin(
+            route,
+            player,
+            origin_zone_change_count,
+            state.objects.get(spell_id).card_def,
+        )
     } else {
         match cast_method {
             CastMethodV4::Normal if resolution_permission.is_some() => {

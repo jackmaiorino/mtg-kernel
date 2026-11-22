@@ -69,11 +69,12 @@ impl Costs {
         def: &card_def::CardDef,
         method: CastMethodV4,
         retrace: bool,
+        breach: bool,
         mode: u8,
         x: u16,
     ) -> Option<Self> {
         let route = match method {
-            CastMethodV4::Escape => spell_costs_v1::escape_cost_v1(def)?
+            CastMethodV4::Escape => spell_costs_v1::escape_cost_v1(def, breach)?
                 .iter()
                 .copied()
                 .find(|part| matches!(part, CostComponent::ExileOtherCardsFromOwnGraveyard(_)))?,
@@ -86,7 +87,11 @@ impl Costs {
         })
     }
 
-    pub(super) fn optional_escape(def: &card_def::CardDef, method: CastMethodV4) -> Option<Self> {
+    pub(super) fn optional_escape(
+        def: &card_def::CardDef,
+        method: CastMethodV4,
+        breach: bool,
+    ) -> Option<Self> {
         if method != CastMethodV4::Escape || def.additional_cost.is_some() {
             return None;
         }
@@ -97,7 +102,7 @@ impl Costs {
         ) {
             return None;
         }
-        let route = spell_costs_v1::escape_cost_v1(def)?
+        let route = spell_costs_v1::escape_cost_v1(def, breach)?
             .iter()
             .copied()
             .find(|cost| matches!(cost, CostComponent::ExileOtherCardsFromOwnGraveyard(_)))?;
@@ -136,7 +141,9 @@ impl Costs {
     ) -> Option<Self> {
         let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
         if Self::ordered_optional(pending) {
-            if let Some(costs) = Self::optional_escape(def, method) {
+            if let Some(costs) =
+                Self::optional_escape(def, method, pending.source_contract.breach_escape())
+            {
                 return Some(costs);
             }
         }
@@ -150,6 +157,7 @@ impl Costs {
             def,
             method,
             crate::eternal_vintage_e7b_v1::pending_retrace(state, pending),
+            pending.source_contract.breach_escape(),
             pending.mode_chosen?,
             pending.selected_x_v59().unwrap_or(0),
         )
@@ -178,6 +186,7 @@ impl Costs {
     pub(super) fn escape_discard_x_limit(
         def: &card_def::CardDef,
         method: CastMethodV4,
+        breach: bool,
     ) -> Option<u8> {
         if method != CastMethodV4::Escape
             || crate::eternal_premodern_p1b_v1::statics::additional_discard_count(def, None)
@@ -185,7 +194,7 @@ impl Costs {
         {
             return None;
         }
-        Some(count(Self::new(def, method, false, 0, 0)?.route))
+        Some(count(Self::new(def, method, false, breach, 0, 0)?.route))
     }
 
     fn groups(self, route_first: bool) -> [Group; 2] {

@@ -1945,6 +1945,146 @@ fn breach_and_printed_flashback_accept_each_payable_method_without_snapcaster() 
 }
 
 #[test]
+fn printed_and_breach_escape_charge_the_selected_sleep_cost_after_restore() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    for (generic, route) in [
+        (0, RouteV1::Breach),
+        (2, RouteV1::Breach),
+        (2, RouteV1::Escape),
+    ] {
+        let mut state = plains();
+        let card = put(&mut state, P0, "Sleep of the Dead", Zone::Graveyard);
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let target = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+        put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+        let fuel =
+            ["Swamp", "Island", "Forest"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
+        pool(&mut state, P0, &[ManaColor::U], generic);
+        if generic == 0 {
+            cast(&mut state, card, &[]);
+        } else {
+            choose_graveyard_route(&mut state, card, route);
+        }
+        choose_target(&mut state, Target::Object(target));
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for game in [&mut state, &mut restored] {
+            settle_first(game);
+            assert_eq!(zone(game, card), Zone::Graveyard);
+            assert!(game.objects.get(target).tapped);
+            assert!(fuel.iter().all(|&id| zone(game, id) == Zone::Exile));
+            assert_eq!(
+                game.players[0].mana_pool.iter().sum::<u8>(),
+                if route == RouteV1::Breach { generic } else { 0 }
+            );
+        }
+        assert_eq!(state, restored);
+    }
+}
+
+#[test]
+fn printed_and_breach_escape_require_the_grant_fuel_target_and_colored_mana() {
+    for (owner, fuel, target, blue) in [
+        (P1, 3, true, true),
+        (P0, 2, true, true),
+        (P0, 3, false, true),
+        (P0, 3, true, false),
+    ] {
+        let mut state = plains();
+        let card = put(&mut state, P0, "Sleep of the Dead", Zone::Graveyard);
+        put(&mut state, owner, "Underworld Breach", Zone::Battlefield);
+        if target {
+            put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+        }
+        for _ in 0..fuel {
+            put(&mut state, P0, "Forest", Zone::Graveyard);
+        }
+        pool(
+            &mut state,
+            P0,
+            if blue {
+                &[ManaColor::U]
+            } else {
+                &[ManaColor::C]
+            },
+            0,
+        );
+        assert!(!castable(&mut state, card));
+    }
+}
+
+#[test]
+fn printed_and_breach_escape_use_nethergoyfs_selected_exile_cost() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    for route in [RouteV1::Breach, RouteV1::Escape] {
+        let mut state = plains();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let goyf = put(&mut state, P0, "Nethergoyf", Zone::Graveyard);
+        let fuel = [
+            "Island",
+            "Lightning Bolt",
+            "Ponder",
+            "Mishra's Bauble",
+            "Forest",
+        ]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+        pool(&mut state, P0, &[ManaColor::B], 2);
+        choose_graveyard_route(&mut state, goyf, route);
+        let count = if route == RouteV1::Breach { 3 } else { 4 };
+        for &card in &fuel[..count] {
+            let Decision::ChooseCostTargets { candidates, .. } = next(&mut state) else {
+                panic!("missing exile choice for {route:?}");
+            };
+            assert!(candidates.contains(&card));
+            act(&mut state, Action::ChooseCostTarget(card));
+        }
+        if route == RouteV1::Escape {
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectTargets {
+                    can_finish: true,
+                    ..
+                }
+            ));
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        settle_first(&mut state);
+        assert_eq!(zone(&state, goyf), Zone::Battlefield);
+        assert_eq!(
+            state.players[0].mana_pool.iter().sum::<u8>(),
+            if route == RouteV1::Breach { 2 } else { 0 }
+        );
+        assert!(fuel[..count]
+            .iter()
+            .all(|&id| zone(&state, id) == Zone::Exile));
+        assert!(fuel[count..]
+            .iter()
+            .all(|&id| zone(&state, id) == Zone::Graveyard));
+    }
+}
+
+#[test]
+fn printed_and_breach_escape_preserve_escaped_uro_when_only_breach_is_payable() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let uro = put(
+        &mut state,
+        P0,
+        "Uro, Titan of Nature's Wrath",
+        Zone::Graveyard,
+    );
+    for _ in 0..3 {
+        put(&mut state, P0, "Island", Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::U], 1);
+    cast(&mut state, uro, &[]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, uro), Zone::Battlefield);
+    assert_eq!(state.players[0].life, 23);
+}
+
+#[test]
 fn twinned_vision_discards_only_for_its_printed_flashback() {
     use engine::sphinx_lore_cast_v1::RouteV1;
     for route in [

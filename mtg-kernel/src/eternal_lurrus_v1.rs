@@ -569,11 +569,7 @@ pub(crate) fn granted_flashback_cost(definition: &CardDef) -> Option<&'static [C
 
 /// The escape cost Underworld Breach gives a nonland card.
 pub(crate) fn granted_escape_cost(definition: &CardDef) -> Option<&'static [CostComponent]> {
-    if !cfg!(feature = "eternal-fixtures")
-        || definition.escape.is_some()
-        || definition.is_land
-        || definition.is_token
-    {
+    if !cfg!(feature = "eternal-fixtures") || definition.is_land || definition.is_token {
         return None;
     }
     let index = definition_index(definition)?;
