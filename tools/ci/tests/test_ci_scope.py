@@ -1,7 +1,10 @@
 """The release line's scope table, workflow and docs/CI-SCOPES.md agree; changes map as the lead ruled."""
 import os
 import re
+import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -40,32 +43,70 @@ class TableTests(unittest.TestCase):
         self.assertIn("      - 'release/**'\n", text)
         self.assertIn("types: [opened, synchronize, reopened, ready_for_review]", text)
 
-    def test_changed_path_inventories_preserve_both_ends_of_a_rename(self):
-        import subprocess
-        import tempfile
-        commands = re.findall(r"git diff [^\n)]*HEAD\^1 HEAD", WORKFLOW.read_text(encoding="utf-8"))
-        self.assertEqual(len(commands), 2)
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
+    def test_changed_path_gates_preserve_git_paths(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
 
-            def git(*args):
-                return subprocess.check_output(["git", "-c", "diff.renames=true", *args],
-                                               cwd=repo, text=True).strip()
+        def script(step):
+            block = workflow.split(f"      - name: {step}\n", 1)[1]
+            run = re.search(r"^        run: \|\n((?:          .*\n|\n)+)", block, re.MULTILINE)
+            return textwrap.dedent(run[1])
 
-            def commit():
-                git("-c", "user.name=CI fixture", "-c", "user.email=ci@example.invalid",
-                    "commit", "--quiet", "-m", "fixture")
+        classify = script("Classify changed paths").replace("${{ github.event_name }}", "pull_request")
+        checks = script("Choose the checks").replace(
+            "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
+        )
+        # Replace the two API responses. Git and both file consumers still run normally.
+        checks = 'gh() { if [ "$2" = --paginate ]; then echo 0; else echo 1; fi; }\n' + checks
+        bash = "C:/Program Files/Git/bin/bash.exe" if sys.platform == "win32" else "bash"
+        trainer = "mtg-kernel/src/native_policy_train_step_v1/café.rs"
+        cases = [
+            ("tools/café.py", "docs/moved.md", "true", "false", "all"),
+            ("docs/before.md", "tools/file with spaces.py", "true", "false", "all"),
+            ("python/tests/café.py", None, "true", "false", "all"),
+            ("docs/café.md", "docs/updated.md", "false", "false", "docs"),
+            ("docs/before.md", trainer, "false", "true", "release-trainer"),
+            (trainer, "docs/moved.md", "false", "true", "release-trainer"),
+            ("tools/café.py", trainer, "true", "true", "all"),
+        ]
+        if sys.platform != "win32":
+            cases.append(('tools/"quoted"\nname.py', None, "true", "false", "all"))
 
-            git("init", "--quiet")
-            (repo / "before.txt").write_text("unchanged contents\n", encoding="utf-8")
-            git("add", "before.txt")
-            commit()
-            git("mv", "before.txt", "after.txt")
-            commit()
-            self.assertEqual(git("diff", "--name-only", "HEAD^1", "HEAD"), "after.txt")
-            for command in commands:
-                with self.subTest(command=command):
-                    self.assertEqual(set(git(*command.split()[1:]).splitlines()), {"before.txt", "after.txt"})
+        for before, after, python, rust, scope in cases:
+            with self.subTest(before=before, after=after), tempfile.TemporaryDirectory() as scratch:
+                repo = Path(scratch)
+                env = os.environ.copy()
+                env.pop("GIT_CONFIG_COUNT", None)
+
+                def git(*args):
+                    git_options = ["-c", "user.name=CI fixture", "-c", "user.email=fixture@example.invalid",
+                                   "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={repo / 'no-hooks'}"]
+                    subprocess.run(["git", *git_options, *args], cwd=repo, env=env, check=True)
+
+                git("init", "--quiet")
+                git("config", "core.quotePath", "true")
+                git("config", "diff.renames", "true")
+                (repo / before).parent.mkdir(parents=True, exist_ok=True)
+                (repo / before).write_text("example\n", encoding="utf-8")
+                git("add", "--", before)
+                git("commit", "--quiet", "-m", "Add example")
+                if after is None:
+                    git("rm", "--quiet", "--", before)
+                else:
+                    (repo / after).parent.mkdir(parents=True, exist_ok=True)
+                    git("mv", "--", before, after)
+                git("commit", "--quiet", "-m", "Change example")
+
+                output = repo / "outputs"
+                env.update(RUNNER_TEMP=repo.as_posix(), GITHUB_OUTPUT=output.as_posix(),
+                           GITHUB_STEP_SUMMARY=(repo / "summary").as_posix(), INPUT_SCOPE="", EVENT="pull_request",
+                           DRAFT="false", LABELS="[]", HEAD_REF="fixture", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
+                           CI_TEST_SCOPE=(ROOT / "tools/ci/ci_scope.py").as_posix())
+                for rendered in (classify, checks):
+                    subprocess.run([bash, "-eo", "pipefail", "-c", rendered], cwd=repo, env=env, check=True,
+                                   capture_output=True)
+
+                self.assertEqual(output.read_text(encoding="utf-8").splitlines(),
+                                 [f"python_relevant={python}", f"rust_relevant={rust}", f"checks={scope}"])
 
     def test_the_filters_cover_every_qualifying_shared_module_in_full(self):
         for module in ("native_policy_value_net_v1::", "native_flat_tensorizer_v", "fast_sampler::",

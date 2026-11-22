@@ -8,7 +8,8 @@ this line and main). Pushes to the line run the full matrix as a coalesced monit
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE, INPUT_SCOPE, LABELS (JSON list),
-                              CHANGED_FILES (newline list), MERGE_COMMITS (count); writes checks=<name>.
+                              MERGE_COMMITS (count), and NUL-delimited paths on stdin for pull requests;
+                              writes checks=<name>.
   ci_scope.py file-scope      print the scope of the file list on stdin.
   ci_scope.py commands SCOPE  print the shell commands of a scope's local run.
   ci_scope.py trainer-filters print the library test filters of release-trainer, space separated.
@@ -311,9 +312,13 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")
-        files = [line for line in (os.environ.get("CHANGED_FILES") or "").splitlines() if line.strip()]
-        checks = choose(os.environ.get("EVENT", ""), os.environ.get("SCOPE", ""), os.environ.get("INPUT_SCOPE", ""),
-                        labels, files, int(os.environ.get("MERGE_COMMITS") or 0), os.environ.get("HEAD_REF", ""))
+        event = os.environ.get("EVENT", "")
+        files = []
+        if event == "pull_request":
+            paths = sys.stdin.buffer.read().split(b"\0")
+            files = [path.decode("utf-8", errors="surrogateescape") for path in paths if path]
+        checks = choose(event, os.environ.get("SCOPE", ""), os.environ.get("INPUT_SCOPE", ""), labels, files,
+                        int(os.environ.get("MERGE_COMMITS") or 0), os.environ.get("HEAD_REF", ""))
         lines = [f"checks: {checks}" + ("" if checks == "all" else f" ({SCOPES[checks]['summary']})")]
         if checks == "release-trainer":
             lines.append(trainer_record())
