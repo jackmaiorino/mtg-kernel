@@ -5853,7 +5853,11 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                                         .to_string(),
                                 )
                             }
-                            1 if !state.engine.spellbench_neutral_v1.choices => {
+                            1 if !state
+                                .engine
+                                .spellbench_neutral_v1
+                                .neutral_choices_for(graveyard_player) =>
+                            {
                                 let chosen = candidates[0];
                                 let expected_remaining_frames = continuation.frames.clone();
                                 let frame = EffectFrame::ExileChosenMatchingGraveyardCard {
@@ -9081,7 +9085,11 @@ fn validate_undercity_throne_frame(
         || path != canonical_path
         || !expected_remaining_frames.is_empty()
         || (candidates.is_empty()
-            || (candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices))
+            || (candidates.len() == 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(binding.player)))
     {
         return Err("Throne answered frame has noncanonical progress".to_string());
     }
@@ -9366,7 +9374,12 @@ fn stage_or_apply_undercity_throne(
             apply_undercity_throne_result(state, binding, None)?;
             Ok(false)
         }
-        [chosen] if !state.engine.spellbench_neutral_v1.choices => {
+        [chosen]
+            if !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(binding.player) =>
+        {
             apply_undercity_throne_result(state, binding, Some(*chosen))?;
             Ok(false)
         }
@@ -11263,7 +11276,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     )?;
                     if *remaining == 0
                         || original_hand.is_empty()
-                        || (original_hand.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
+                        || (original_hand.len() == 1
+                            && !state
+                                .engine
+                                .spellbench_neutral_v1
+                                .neutral_choices_for(*hand_player))
                     {
                         return Err(
                             "hand-to-library policy prompt has no genuine choice".to_string()
@@ -11888,7 +11905,10 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !selected.is_empty()
                         || (candidates.is_empty()
                             || (candidates.len() == 1
-                                && !state.engine.spellbench_neutral_v1.choices))
+                                && !state
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .neutral_choices_for(*graveyard_player)))
                     {
                         return Err(
                             "filtered graveyard exile prompt has a noncanonical shape".to_string()
@@ -12100,7 +12120,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         .collect::<Vec<_>>();
                     if expected.len()
                         < 2 - usize::from(
-                            kind.optional() || state.engine.spellbench_neutral_v1.choices,
+                            kind.optional()
+                                || state
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .neutral_choices_for(*chooser),
                         )
                     {
                         return Err(
@@ -12135,7 +12159,10 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !selected.is_empty()
                         || (candidates.is_empty()
                             || (candidates.len() == 1
-                                && !state.engine.spellbench_neutral_v1.choices))
+                                && !state
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .neutral_choices_for(binding.player)))
                         || !pending.frames.is_empty()
                     {
                         return Err("Throne prompt has a noncanonical shape".to_string());
@@ -13735,7 +13762,12 @@ fn drive_resumable_inner_with_native_row_v1(
                         continue;
                     }
                     state.clear_nonowner_hand_knowledge(player);
-                    if current_hand.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+                    if current_hand.len() == 1
+                        && !state
+                            .engine
+                            .spellbench_neutral_v1
+                            .neutral_choices_for(player)
+                    {
                         continuation
                             .frames
                             .push(EffectFrame::PutCardsFromHandOnLibraryTop {
@@ -16252,6 +16284,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     return Err("linked-exile hand choice must be a root effect".to_string());
                 }
                 let player = continuation.ctx.resolve_player(player, state);
+                let chooser = continuation.ctx.controller;
                 let source = continuation
                     .resolving_item
                     .v4
@@ -16291,7 +16324,10 @@ fn drive_resumable_inner_with_native_row_v1(
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] if !kind.optional() && !state.engine.spellbench_neutral_v1.choices => {
+                    [chosen]
+                        if !kind.optional()
+                            && !state.engine.spellbench_neutral_v1.neutral_choices_for(chooser) =>
+                    {
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::LinkedExileChosenHandCard {
                             player,
@@ -16309,7 +16345,6 @@ fn drive_resumable_inner_with_native_row_v1(
                         continuation.frames.push(frame);
                     }
                     _ => {
-                        let chooser = continuation.ctx.controller;
                         stage_linked_exile_hand_choice(
                             &mut continuation,
                             chooser,
@@ -24807,6 +24842,111 @@ mod tests {
     use super::*;
     use crate::event::CommittedEvent;
     use crate::ids::PlayerId;
+
+    #[test]
+    fn trainer_choice_seat_fiend_uses_trigger_controller_not_hand_owner() {
+        use crate::engine::{self, Action, Decision};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let hand_owner = controller.opponent();
+            for bot in [controller, hand_owner] {
+                let mut state = ready_state_for(controller);
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats[bot.index()] = true;
+                let fiend = put(&mut state, controller, "Mesmeric Fiend", Zone::Hand);
+                let exiled = put(&mut state, hand_owner, "Lightning Bolt", Zone::Hand);
+                let forest = put(&mut state, hand_owner, "Forest", Zone::Hand);
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(fiend, Zone::Battlefield),
+                );
+                let triggers = crate::trigger::collect_and_process(&mut state);
+                state.engine.pending_triggers.extend(triggers);
+
+                let mut posed = false;
+                for _ in 0..12 {
+                    let action = match engine::advance_until_decision(&mut state) {
+                        Decision::ChooseTargets { player, spell, .. } => {
+                            assert_eq!((player, spell), (controller, fiend));
+                            Action::ChooseTarget(Target::Player(hand_owner))
+                        }
+                        Decision::ChooseEffectTargets {
+                            player,
+                            source,
+                            legal_targets,
+                            ..
+                        } => {
+                            assert_eq!((player, source), (controller, fiend));
+                            assert_eq!(legal_targets, vec![Target::Object(exiled)]);
+                            posed = true;
+                            Action::ChooseEffectTarget(Target::Object(exiled))
+                        }
+                        Decision::CastSpellOrPass { .. }
+                            if state.objects.get(exiled).zone == Zone::Exile =>
+                        {
+                            break
+                        }
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        other => panic!("unexpected Mesmeric Fiend decision {other:?}"),
+                    };
+                    engine::step(&mut state, action).unwrap();
+                }
+                assert_eq!(state.objects.get(exiled).zone, Zone::Exile);
+                assert_eq!(state.objects.get(forest).zone, Zone::Hand);
+                assert_eq!(posed, controller != bot);
+            }
+        }
+    }
+
+    #[test]
+    fn trainer_choice_seat_brainstorm_auto_puts_the_last_card_before_decking() {
+        use crate::engine::{self, Action, Decision};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+        for chooser in [PlayerId::P0, PlayerId::P1] {
+            for bot in [chooser, chooser.opponent()] {
+                let mut state = ready_state_for(chooser);
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats[bot.index()] = true;
+                put(&mut state, chooser, "Island", Zone::Battlefield);
+                let brainstorm = put(&mut state, chooser, "Brainstorm", Zone::Hand);
+                let first = put(&mut state, chooser, "Lightning Bolt", Zone::Library);
+                let second = put(&mut state, chooser, "Island", Zone::Library);
+                engine::step(&mut state, Action::CastSpell(brainstorm)).unwrap();
+
+                let mut widths = Vec::new();
+                let mut lost = false;
+                for _ in 0..12 {
+                    let action = match engine::advance_until_decision(&mut state) {
+                        Decision::ChooseEffectTargets {
+                            player,
+                            source,
+                            legal_targets,
+                            ..
+                        } => {
+                            assert_eq!((player, source), (chooser, brainstorm));
+                            widths.push(legal_targets.len());
+                            let target = if widths.len() == 1 { first } else { second };
+                            assert!(legal_targets.contains(&Target::Object(target)));
+                            Action::ChooseEffectTarget(Target::Object(target))
+                        }
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        Decision::GameOver { winner } => {
+                            assert_eq!(winner, Some(chooser.opponent()));
+                            lost = true;
+                            break;
+                        }
+                        other => panic!("unexpected Brainstorm decision {other:?}"),
+                    };
+                    engine::step(&mut state, action).unwrap();
+                }
+                assert!(lost);
+                assert_eq!(state.players[chooser.index()].library, vec![second, first]);
+                assert_eq!(widths, if chooser == bot { vec![2] } else { vec![2, 1] });
+            }
+        }
+    }
 
     #[test]
     fn individual_ability_target_guards_skip_illegal_targets_and_keep_captured_source() {
