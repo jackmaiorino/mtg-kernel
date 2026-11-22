@@ -25240,14 +25240,8 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             if candidates.len() < usize::from(remaining) {
                 return Err("cast graveyard-exile cost can no longer be completed".to_string());
             }
-            if candidates.len() <= 1
-                && !state
-                    .engine
-                    .spellbench_neutral_v1
-                    .neutral_choices_for(pending.controller)
-            {
-                return Err("cast graveyard-exile choice is not currently offered".to_string());
-            }
+            // An already issued decision may name the same final card that a
+            // newly advanced trainer decision would select automatically.
             if !candidates.contains(&id) {
                 return Err(format!(
                     "{id} is not a legal graveyard-exile cost candidate"
@@ -25408,12 +25402,10 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .chosen_creature_cost_zone
                 .ok_or("chosen-creature cost object selected before its branch")?;
             let candidates = chosen_creature_cost_candidates(pending.controller, zone, state);
+            // Older mixed-seat decisions offered the singleton whenever the
+            // bridge's neutral profile was enabled.
             if candidates.is_empty()
-                || (candidates.len() == 1
-                    && !state
-                        .engine
-                        .spellbench_neutral_v1
-                        .neutral_choices_for(pending.controller))
+                || (candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
             {
                 return Err(
                     "chosen-creature cost object choice is not currently offered".to_string(),
@@ -31700,6 +31692,7 @@ mod tests {
                     }
                     put_in_graveyard(&mut state, PlayerId::P0, "Counterspell")
                 } else {
+                    put_in_hand(&mut state, PlayerId::P0, "Elvish Mystic");
                     put_on_battlefield(&mut state, PlayerId::P0, "Elvish Mystic")
                 };
                 step(&mut state, Action::CastSpell(spell)).unwrap();
@@ -31722,12 +31715,35 @@ mod tests {
                         assert_eq!(remaining, expected);
                         step(&mut state, Action::ChooseCostTarget(candidates[0])).unwrap();
                     }
-                    if trainer != Some(PlayerId::P1) {
-                        let mut premature = state.clone();
-                        assert!(step(&mut premature, Action::ChooseCostTarget(candidate)).is_err());
-                        assert_eq!(premature, state);
-                    }
+                } else {
+                    assert!(matches!(
+                        advance_until_decision(&mut state),
+                        Decision::ChooseEffectOption {
+                            player: PlayerId::P0, source, option_count: 2,
+                        } if source == spell
+                    ));
+                    step(&mut state, Action::ChooseEffectOption(0)).unwrap();
                 }
+
+                let replayed = if trainer == Some(PlayerId::P0) {
+                    // Preserve the real pending cast immediately before the
+                    // final cost pick that the older mixed bridge offered.
+                    let bytes =
+                        serde_json::to_vec(&(&state, Action::ChooseCostTarget(candidate))).unwrap();
+                    let (mut restored, recorded): (GameState, Action) =
+                        serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(restored, state);
+                    assert!(step(&mut restored, Action::ChooseCostTarget(target)).is_err());
+                    assert_eq!(restored, state);
+                    step(&mut restored, recorded).unwrap();
+                    assert!(matches!(
+                        advance_until_decision(&mut restored),
+                        Decision::CastSpellOrPass { .. }
+                    ));
+                    Some(restored)
+                } else {
+                    None
+                };
 
                 let decision = advance_until_decision(&mut state);
                 if trainer == Some(PlayerId::P1) {
@@ -31750,6 +31766,9 @@ mod tests {
                 }
                 assert!(state.engine.halted.is_none());
                 assert_eq!(state.stack.last().unwrap().source, spell);
+                if let Some(replayed) = replayed {
+                    assert_eq!(replayed, state);
+                }
             }
         }
     }
