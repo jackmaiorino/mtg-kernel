@@ -9340,6 +9340,23 @@ fn island_discard_cost_candidates(
     }
 }
 
+/// Possible Foil payments in enumeration order: Islands first, then the
+/// cards that can occupy the second position. Explicit picks are validated
+/// in their submitted order by `validate_cost_component_choices_v1`.
+fn foil_discard_candidates(player: PlayerId, source: ObjectId, state: &GameState) -> Vec<ObjectId> {
+    let islands = island_discard_cost_candidates(player, source, state, &[]);
+    let Some(&first) = islands.first() else {
+        return islands;
+    };
+    let mut cards = islands.clone();
+    cards.extend(
+        island_discard_cost_candidates(player, source, state, &[first])
+            .into_iter()
+            .filter(|id| !islands.contains(id)),
+    );
+    cards
+}
+
 /// Exiles one more graveyard card for Nethergoyf's escape after its card
 /// types are covered.
 fn choose_escape_extra_exile(state: &mut GameState, target: Target) -> Result<(), String> {
@@ -15051,15 +15068,14 @@ fn collect_and_queue_triggers(state: &mut GameState) {
     state.engine.pending_triggers.extend(triggers);
 }
 
-fn remaining_cast_payment_is_payable(
+fn pending_cast_condition_met(
     state: &GameState,
     pending: &PendingCast,
-    staged_method: CastMethodV4,
+    def: &card_def::CardDef,
+    method: CastMethodV4,
 ) -> bool {
-    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let method = finalized_cast_method(pending, staged_method, def);
-    if method == CastMethodV4::Alternative
-        && !def.alt_cost.is_some_and(|alt| {
+    method != CastMethodV4::Alternative
+        || def.alt_cost.is_some_and(|alt| {
             alt_cost_condition_met(
                 alt.condition,
                 pending.controller,
@@ -15067,7 +15083,16 @@ fn remaining_cast_payment_is_payable(
                 state,
             )
         })
-    {
+}
+
+fn remaining_cast_payment_is_payable(
+    state: &GameState,
+    pending: &PendingCast,
+    staged_method: CastMethodV4,
+) -> bool {
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let method = finalized_cast_method(pending, staged_method, def);
+    if !pending_cast_condition_met(state, pending, def, method) {
         return false;
     }
     let Some(selected) = spell_costs_v1::selected_spell_mana_costs_for_source_v1(
@@ -16863,6 +16888,16 @@ pub(crate) fn validate_pending_cast(
     }
 
     let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
+    if compound.is_some()
+        && !pending_cast_condition_met(
+            state,
+            pending,
+            def,
+            finalized_cast_method(pending, method, def),
+        )
+    {
+        return Err("compound cast no longer meets its alternative cost condition".into());
+    }
     match (
         def.optional_additional_cost,
         pending.optional_additional_cost_paid,

@@ -29,14 +29,9 @@
 //! entry forms (excluding Fanatic itself). Make it Full only with a
 //! trigger-owned copy choice and an entry-time counter.
 //!
-//! Six follows Full Wrenn and Six's retrace conventions: another graveyard
-//! permission takes precedence over retrace, and spell_costs_v1 declines a
-//! quote requiring two independent object-cost selections. Thus retrace plus
-//! delve, Solitude's pitch-evoke or Abhorrent Oculus's graveyard-exile cost
-//! is not offered. Wrenn's emblem shares this guard and cannot retrace
-//! Force of Will's pitch cost either.
-//! Native flashback/escape routes retain the same precedence as with Wrenn.
-//! No new payment subsystem is introduced.
+//! Six shares Wrenn and Six's retrace payment path. Its land discard can
+//! accompany Abhorrent Oculus's graveyard exile or Solitude's pitch-evoke
+//! cost. Retrace still declines delve spells, including Gurmag Angler.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
