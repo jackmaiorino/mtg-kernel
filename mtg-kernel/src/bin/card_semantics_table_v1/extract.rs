@@ -311,8 +311,7 @@ impl<'m> Walker<'m> {
             | CostComponent::Crew(n)
             | CostComponent::PayEnergyV1(n)
             | CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(n)
-            | CostComponent::DiscardLandCardsV1(n)
-            | CostComponent::PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(n) => {
+            | CostComponent::DiscardLandCardsV1(n) => {
                 self.value(format!("{source}.n"), i64::from(*n));
             }
             CostComponent::SacrificeControlled { count, .. }
