@@ -1,7 +1,9 @@
 """Pooled-lineage proof comparison tests on synthetic run trees."""
 import hashlib
+import importlib
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,7 +11,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
-import pooled_proof as pp  # noqa: E402
+pp = importlib.import_module("pooled_proof")
 
 
 def _pin(path: Path) -> dict:
@@ -22,32 +24,62 @@ def write_run(root: Path, recorded_root: str, states, trajectories, backend="poo
     since); iterations in `resumed` publish their update in attempt-000001 beside the collection
     of attempt-000000, as a crash-resumed iteration does."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "completion.json").write_text(json.dumps({
-        "complete": complete, "planned_iterations": planned or len(states), "completed_iterations": len(states)}))
+    planned = planned or len(states)
+    plan = [
+        {"episodes": [{"episode": {"id": f"game-{index}-{slot}", "seed": slot}}
+                      for slot in range(len(trajectories[min(index, len(trajectories) - 1)]))]}
+        for index in range(planned)
+    ]
+    (root / "run.json").write_text(json.dumps({"schema": pp.RUN_SCHEMA, "config": {"iterations": plan}}))
+
+    def recorded(path):
+        return {"path": recorded_root + "/" + path.relative_to(root).as_posix(),
+                "sha256": _pin(path)["sha256"]}
+
+    def sha(value):
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    markers = []
+    before = sha("initial")
     for index, (state, hashes) in enumerate(zip(states, trajectories)):
         iteration = root / "iterations" / f"{index:06d}"
         collect = iteration / "attempt-000000" / "collect"
         update_dir = iteration / ("attempt-000001" if index in resumed else "attempt-000000") / "update"
         collect.mkdir(parents=True)
         update_dir.mkdir(parents=True)
+        after = sha(state)
+        pins = [{"path": f"{recorded_root}/{collect.relative_to(root).as_posix()}/episode-{slot:04d}.json",
+                 "sha256": sha(h)} for slot, h in enumerate(hashes)]
+        checkpoint = {"path": f"{recorded_root}/{update_dir.relative_to(root).as_posix()}/checkpoint.json",
+                      "sha256": sha(f"checkpoint-{state}")}
         (update_dir / "update.json").write_text(json.dumps({
-            "after_state_sha256": state,
-            "checkpoint": {"path": f"{recorded_root}/iterations/{index:06d}/attempt-000000/update/checkpoint.json"},
-            "trajectories": [{"path": "x", "sha256": h} for h in hashes]}))
-        (collect / "collection.json").write_text(json.dumps({"collection_backend": backend}))
-        def recorded(path):
-            return {"path": recorded_root + "/" + path.relative_to(root).as_posix(),
-                    "sha256": _pin(path)["sha256"]}
-        (iteration / "complete.json").write_text(json.dumps({
+            "complete": True, "before_state_sha256": before, "after_state_sha256": after,
+            "checkpoint": checkpoint, "trajectories": pins}))
+        (collect / "collection.json").write_text(json.dumps({
+            "complete": True, "behavior_state_sha256": before, "trajectories": pins,
+            "collection_backend": backend}))
+        identity = {"state_sha256": after, "checkpoint_sha256": checkpoint["sha256"]}
+        marker = iteration / "complete.json"
+        marker.write_text(json.dumps({
+            "schema": "mtg-kernel-native-expanded-iteration/v1", "iteration": index,
+            "episodes_sha256": sha(f"resolved-episodes-{index}"), "output_identity": identity,
             "update": recorded(update_dir / "update.json"), "collection": recorded(collect / "collection.json")}))
+        markers.append(recorded(marker))
+        before = after
+    (root / "completion.json").write_text(json.dumps({
+        "schema": pp.RUN_SCHEMA, "complete": complete, "planned_iterations": planned,
+        "completed_iterations": len(states), "iterations": markers, "actual_identity": identity}))
 
 
-LOCAL = "native-cpu-parallel-episodes-v1"
+def edit_json(path, edit):
+    data = json.loads(path.read_text())
+    edit(data)
+    path.write_text(json.dumps(data))
 
 
 def write_ref(*args, **kwargs):
     """A single-process reference run (the control)."""
-    kwargs.setdefault("backend", LOCAL)
+    kwargs.setdefault("backend", "native-cpu-parallel-episodes-v1")
     write_run(*args, **kwargs)
 
 
@@ -98,6 +130,55 @@ class PooledProofTests(unittest.TestCase):
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], planned=2)
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
 
+    def test_a_backup_directory_cannot_replace_a_missing_planned_iteration(self):
+        for name, writer in [("ref", write_ref), ("pool", write_run)]:
+            root = self.root / name
+            writer(root, "/r", ["s0", "s1"], [["a"], ["b"]])
+            its = root / "iterations"
+            shutil.rmtree(its / "000000")
+            shutil.copytree(its / "000001", its / "000001.backup")
+        with self.assertRaises(FileNotFoundError):
+            pp.compare(self.root / "ref", self.root / "pool", same_root=True)
+
+    def test_pins_must_point_to_the_iteration_they_confirm(self):
+        ref = self.root / "ref"
+        write_ref(ref, "/r", ["s", "s"], [["a"], ["a"]])
+        for field in ("complete", "iteration", "collection", "update"):
+            with self.subTest(field=field):
+                pool = self.root / field
+                write_run(pool, "/r", ["s", "s"], [["a"], ["a"]], resumed=(1,))
+                completion = pool / "completion.json"
+                done = json.loads(completion.read_text())
+                if field == "complete":
+                    done["iterations"][1] = done["iterations"][0]
+                else:
+                    its = pool / "iterations"
+                    first = json.loads((its / "000000" / "complete.json").read_text())
+                    receipt = its / "000001" / "complete.json"
+                    second = json.loads(receipt.read_text())
+                    second[field] = first[field]
+                    receipt.write_text(json.dumps(second))
+                    done["iterations"][1]["sha256"] = _pin(receipt)["sha256"]
+                completion.write_text(json.dumps(done))
+                with self.assertRaises(ValueError):
+                    pp.compare(ref, pool, same_root=True)
+
+    def test_malformed_completion_pin_is_reported_as_bad_input(self):
+        reference = self.root / "ref"
+        pooled = self.root / "pool"
+        write_ref(reference, "/r", ["s0"], [["a"]])
+        write_run(pooled, "/r", ["s0"], [["a"]])
+        path = pooled / "completion.json"
+        done = json.loads(path.read_bytes())
+        done["iterations"][0] = None
+        path.write_text(json.dumps(done), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, pp.__file__, "compare", str(reference), str(pooled)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("expected a native receipt pin", result.stderr)
+
     def test_an_unfinished_run_fails(self):
         write_ref(self.root / "ref", "/r", ["s0"], [["a"]])
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], complete=False)
@@ -117,7 +198,7 @@ class PooledProofTests(unittest.TestCase):
         write_ref(self.root / "ref", "/srv/run", ["s0"], [["a"]])
         write_run(self.root / "pool", "/srv/run", ["s0"], [["a"]])
         update = self.root / "pool" / "iterations" / "000000" / "attempt-000000" / "update" / "update.json"
-        update.write_text(update.read_text().replace("s0", "s9"))
+        edit_json(update, lambda doc: doc.update(after_state_sha256="9" * 64))
         with self.assertRaises(ValueError):
             pp.compare(self.root / "ref", self.root / "pool")
 
@@ -125,6 +206,28 @@ class PooledProofTests(unittest.TestCase):
         write_ref(self.root / "ref", "/r", ["s0"], [["a"]])
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], backend="native-cpu-parallel-episodes-v1")
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
+
+
+    def test_episode_schedule_matters_even_when_the_state_matches(self):
+        ref, pool = self.root / "ref", self.root / "pool"
+        write_run(ref, "/r", ["s0"], [["a", "b"]], backend=None)
+        write_run(pool, "/r", ["s0"], [["a", "b"]])
+        edit_json(pool / "run.json", lambda doc: doc["config"]["iterations"][0]["episodes"].reverse())
+        self.assertFalse(pp.compare(ref, pool)["pass"])
+
+    def test_update_and_collection_must_agree_on_ordered_trajectory_pins(self):
+        ref, pool = self.root / "ref", self.root / "pool"
+        write_run(ref, "/r", ["s0"], [["a", "b"]], backend=None)
+        write_run(pool, "/r", ["s0"], [["a", "b"]], resumed=(0,))
+        iteration = pool / "iterations" / "000000"
+        collection = iteration / "attempt-000000" / "collect" / "collection.json"
+        edit_json(collection, lambda doc: doc["trajectories"].reverse())
+        edit_json(iteration / "complete.json", lambda doc: doc["collection"].update(
+            sha256=_pin(collection)["sha256"]))
+        edit_json(pool / "completion.json", lambda doc: doc["iterations"][0].update(
+            sha256=_pin(iteration / "complete.json")["sha256"]))
+        with self.assertRaisesRegex(ValueError, "trajectory pins"):
+            pp.compare(ref, pool, same_root=True)
 
 
 if __name__ == "__main__":
