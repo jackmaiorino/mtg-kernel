@@ -94,9 +94,10 @@ def call(name, arguments):
         # GitHub compares strings case-insensitively; a missing value is ''.
         search, item = arguments[0].lower(), str(arguments[1]).lower()
         return {"contains": item in search, "startsWith": search.startswith(item), "endsWith": search.endswith(item)}[name]
-    if name == "contains":
-        return arguments[1] in arguments[0]
-    raise ValueError(f"{name} of a non-string")
+    if name == "contains" and isinstance(arguments[0], list):
+        # Array membership uses the == comparison (case-insensitive for strings); an object never equals a name.
+        return any(equal(element, arguments[1]) for element in arguments[0])
+    raise ValueError(f"{name} of a {type(arguments[0]).__name__}")
 
 
 def evaluate(expression, **context):
@@ -159,6 +160,8 @@ class EvaluatorTests(unittest.TestCase):
         self.assertTrue(evaluate("startsWith(a, '[') && endsWith(a, ']') && contains(a, format('\"{0}\"', b))",
                                  a='["Who"]', b="who"))
         self.assertFalse(evaluate("startsWith(a, '[')"))
+        self.assertTrue(evaluate("contains(fromJSON(a), b)", a='["Who"]', b="wHO"))
+        self.assertFalse(evaluate("contains(fromJSON(a), b)", a='[{"who": true}, ["who"]]', b="who"))
 
 
 class RoutingTests(unittest.TestCase):
@@ -297,12 +300,25 @@ class LightJobRoutingTests(unittest.TestCase):
         self.assertRoutes("ubuntu-24.04", **event(head="someone/fork"), **by(OWNER), **LIGHT)
         self.assertRoutes("ubuntu-24.04", **event(head="someone/fork"), **by("someone"), **LIGHT)
 
-    def test_an_empty_or_malformed_list_admits_nobody_without_an_error(self):
-        for value in ("", "[]", "null", f'"{OWNER}"', f"[{OWNER}]", f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
-                      f'{{"{OWNER}": 1}}'):
+    def test_an_empty_or_unbracketed_list_admits_nobody_without_an_error(self):
+        # A bare JSON string would make contains() a substring test, so the value must be bracketed.
+        for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
+                      f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]'):
             with self.subTest(value=value):
                 self.assertRoutes("ubuntu-24.04", **event(), **by(OWNER),
                                   **{**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value})
+
+    def test_a_bracketed_invalid_list_fails_closed(self):
+        # GitHub fails the job when fromJSON cannot parse: the job never reaches a self-hosted runner. A fork
+        # pull request, an unset runner variable or an unlisted actor never parses the list, so stays hosted.
+        for value in (f"[{OWNER}]", f'["{OWNER}" garbage]'):
+            with self.subTest(value=value):
+                bad = {**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value}
+                for expression in self.light.values():
+                    with self.assertRaises(ValueError):
+                        evaluate(expression, **event(), **by(OWNER), **bad)
+                self.assertRoutes("ubuntu-24.04", **event(head="someone/fork"), **by(OWNER), **bad)
+                self.assertRoutes("ubuntu-24.04", **event(), **by(OWNER), **{**bad, "vars.MTG_CI_DETECT_RUNNER": ""})
 
     def test_other_routing_variables_do_not_move_the_light_jobs(self):
         self.assertRoutes("ubuntu-24.04", **event("push"), **by(OWNER), **EVERY_POOL)
