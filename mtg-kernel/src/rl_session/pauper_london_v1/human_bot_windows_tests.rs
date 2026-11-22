@@ -152,6 +152,7 @@ struct Played {
     neutral_only_several: u64,
     person_revealed_order_picks: u64,
     person_canonicalized_hand_subsets: u64,
+    terminal_person_fireblast_cost: bool,
     bot_after_person_revealed_order: u64,
     /// Against the production trainer: the first difference, if any.
     diverged: Option<String>,
@@ -355,6 +356,57 @@ fn person_hand_subset_script(
     ))
 }
 
+/// After a shared two-Mountain Fireblast payment, the ordinary engine pays the
+/// last Mountain in the same step. The neutral human explicitly confirms it.
+fn person_fireblast_remainder(
+    raw: &RlEpisodeSessionV1,
+    decision: &RlSessionDecisionV1,
+    rows: &[u32],
+    pick: u32,
+) -> Option<ActionSemanticV1> {
+    use crate::engine::CostKind;
+    let [left, right] = rows else { return None };
+    let ActionSemanticV1::ChooseCostTarget {
+        source,
+        actor,
+        candidate,
+        cost_kind: CostKind::SacrificeLands,
+        remaining: 2,
+    } = &decision.legal_actions[pick as usize].semantic
+    else {
+        return None;
+    };
+    if raw
+        .game_state()
+        .objects
+        .get(crate::ids::ObjectId(source.arena_id))
+        .name
+        != "Fireblast"
+    {
+        return None;
+    }
+    let other = if *left == pick { right } else { left };
+    let ActionSemanticV1::ChooseCostTarget {
+        source: other_source,
+        actor: other_actor,
+        candidate: last,
+        cost_kind: CostKind::SacrificeLands,
+        remaining: 2,
+    } = &decision.legal_actions[*other as usize].semantic
+    else {
+        panic!("expected a second eligible Mountain")
+    };
+    assert_eq!((source, actor), (other_source, other_actor));
+    assert_ne!(candidate, last);
+    Some(ActionSemanticV1::ChooseCostTarget {
+        actor: *actor,
+        source: source.clone(),
+        cost_kind: CostKind::SacrificeLands,
+        remaining: 1,
+        candidate: last.clone(),
+    })
+}
+
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
 /// passed in the bridge sessions alone; so are the decisions only neutral
@@ -407,6 +459,13 @@ fn play(
                 // The person's engine window: Pass, as the trained surface
                 // would have; the training game never sees it.
                 let rows = copy.row_candidate_ids(decision).unwrap();
+                if out.terminal_person_fireblast_cost {
+                    assert_eq!(
+                        rows.len(),
+                        1,
+                        "only a forced human Pass may follow the final payment"
+                    );
+                }
                 let pass = *rows
                     .iter()
                     .find(|id| {
@@ -524,6 +583,31 @@ fn play(
                     (ours.terminal_outcome, ours.winner, &ours.terminal_reason),
                     "terminal"
                 );
+                if out.terminal_person_fireblast_cost {
+                    let mut expected = training.game_state().clone();
+                    let profile = &raw.game_state().engine.spellbench_neutral_v1;
+                    expected.engine.spellbench_neutral_v1.choices = profile.choices;
+                    expected.engine.spellbench_neutral_v1.trainer_choice_seats =
+                        profile.trainer_choice_seats;
+                    require_eq!(&expected, raw.game_state(), "terminal Fireblast game state");
+                    require_eq!(
+                        (
+                            theirs.terminal_reward,
+                            theirs.terminal_classification,
+                            theirs.terminal_code,
+                            theirs.policy_step_count + ahead,
+                            theirs.physical_decision_count + ahead
+                        ),
+                        (
+                            ours.terminal_reward,
+                            ours.terminal_classification,
+                            ours.terminal_code,
+                            ours.policy_step_count,
+                            ours.physical_decision_count
+                        ),
+                        "terminal Fireblast result and counters"
+                    );
+                }
                 out.finished = true;
                 return out;
             }
@@ -614,12 +698,42 @@ fn play(
         };
         let pick = rows[row];
         let chosen = &ours.legal_actions[pick as usize];
+        let final_cost = if matches!(comparison, NeutralComparison::TrainerChoicesForBot)
+            && seat_index(ours.acting_player) != bot
+        {
+            person_fireblast_remainder(&raw, &ours, &rows, pick)
+        } else {
+            None
+        };
         raw.step(ours.episode_id, ours.step, pick, &chosen.stable_id)
             .unwrap();
         copy.mirror_step(&rows, ours.step, pick).unwrap();
+        if let Some(expected) = &final_cost {
+            let response = raw.current_response();
+            copy.verify(&raw, &response).unwrap();
+            let RlSessionResponseV1::Decision(cost) = response else {
+                panic!("the human's Fireblast payment is pending")
+            };
+            assert_eq!(cost.acting_player, ours.acting_player);
+            let rows = copy.row_candidate_ids(&cost).unwrap();
+            let [only] = rows.as_slice() else {
+                panic!("the two-card payment leaves exactly one Mountain")
+            };
+            let confirmed = &cost.legal_actions[*only as usize];
+            assert_eq!(&confirmed.semantic, expected);
+            raw.step(cost.episode_id, cost.step, *only, &confirmed.stable_id)
+                .unwrap();
+            copy.mirror_step(&rows, cost.step, *only).unwrap();
+            out.neutral_only += 1;
+        }
         training
             .step(theirs.episode_id, theirs.step, row as u32)
             .unwrap();
+        out.terminal_person_fireblast_cost = final_cost.is_some()
+            && matches!(
+                training.current_response(),
+                FastActorResponseV1::Terminal(_)
+            );
         out.shared += 1;
     }
 }
@@ -697,6 +811,29 @@ fn rally_against_spy_matches_the_normal_trainer_through_terminal() {
     assert!(played.finished && played.diverged.is_none(), "{played:?}");
     assert!(played.bot_decisions > 10, "{played:?}");
     assert!(played.person_canonicalized_hand_subsets > 0, "{played:?}");
+}
+
+#[test]
+fn human_fireblast_final_mountain_matches_the_terminal_board_in_both_window_settings() {
+    for windows in [true, false] {
+        let played = play(
+            ["Burn", "Wildfire"],
+            31,
+            0xB0_0000 + 5163,
+            1,
+            windows,
+            NeutralComparison::TrainerChoicesForBot,
+            8000,
+        );
+        assert!(
+            played.finished && played.diverged.is_none() && played.terminal_person_fireblast_cost,
+            "{played:?}"
+        );
+        assert_eq!(
+            (played.shared, played.bot_decisions, played.bot_neutral_only),
+            (166, 97, 0)
+        );
+    }
 }
 
 #[test]
