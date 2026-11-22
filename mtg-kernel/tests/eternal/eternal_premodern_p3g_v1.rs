@@ -5,11 +5,11 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
-#[path = "hallow_circle_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/hallow_circle_v1.rs"]
 mod hallow_circle_v1;
-#[path = "hallow_ordinary_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/hallow_ordinary_v1.rs"]
 mod hallow_ordinary_v1;
-#[path = "prevention_order_no_hallow_v1.rs"]
+#[path = "eternal_premodern_p3g_v1/prevention_order_no_hallow_v1.rs"]
 mod prevention_order_no_hallow_v1;
 
 use mtg_kernel::card_def::{
