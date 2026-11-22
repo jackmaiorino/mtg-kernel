@@ -151,8 +151,8 @@ jobs:
             # with tools/ci/pr_lookup.py.
             if command -v gh > /dev/null 2>&1; then
               open_pr() {
-                gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-                  --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0] | "\(.number // "") \(.head.sha // "")"'
+                gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" |
+                  python3 tools/ci/pr_lookup.py ready-pr
               }
               pr_files() { gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"; }
             else
@@ -160,14 +160,16 @@ jobs:
               pr_files() { python3 tools/ci/pr_lookup.py pr-files "$1"; }
             fi
             pr=$(open_pr) || pr=
-            read -r pr_number pr_head <<< "$pr"
+            read -r pr_number pr_head pr_base <<< "$pr"
             echo "open pull request ${pr_number:-none} head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
-            if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
+            if [ -n "$pr_base" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               # Its run covered the whole pull request set only if its files
               # did not narrow it to one scope (tools/ci/ci_scope.py).
               pr_scope=$(pr_files "$pr_number" | python3 tools/ci/ci_scope.py file-scope) || pr_scope=
               echo "its files map to: ${pr_scope:-unknown}"
-              if [ "$pr_scope" = pr ]; then
+              # File listing is live and paginated. Narrow only if the same
+              # PR is still ready with the same head and base after that read.
+              if [ "$pr_scope" = pr ] && rechecked=$(open_pr) && [ "$rechecked" = "$pr" ]; then
                 scope=windows-complement
               fi
             fi

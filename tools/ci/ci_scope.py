@@ -295,13 +295,15 @@ def scope_of_files(paths: list[str]) -> str:
 
 
 def pull_request_paths(pages: object) -> list[str]:
+    # GitHub's REST OpenAPI diff-entry.status enum.
+    statuses = ("added", "removed", "modified", "renamed", "copied", "changed", "unchanged")
     if not isinstance(pages, list) or not pages or any(not isinstance(page, list) for page in pages):
         raise ValueError("expected an array of file pages")
     paths = []
     for page in pages:
         for entry in page:
-            if not isinstance(entry, dict) or not isinstance(entry.get("status"), str):
-                raise ValueError("expected a changed-file object with a status")
+            if not isinstance(entry, dict) or entry.get("status") not in statuses:
+                raise ValueError("expected a changed-file object with a recognized status")
             names = [entry.get("filename")]
             if entry["status"] == "renamed" or "previous_filename" in entry:
                 names.append(entry.get("previous_filename"))
