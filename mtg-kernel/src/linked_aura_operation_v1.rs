@@ -1109,6 +1109,7 @@ fn request_hallow(
 /// Hallow-covered packets apply replacement choices in actual APNAP order.
 /// The enclosing operation owns suspension, so confirmed mutations are visible
 /// to every later frontier, including newly redirected portions.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 pub(crate) fn prepare_hallow_batch(
     state: &mut GameState,
     events: &mut Vec<ProposedEvent>,
