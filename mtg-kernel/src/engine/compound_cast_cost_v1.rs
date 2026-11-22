@@ -72,6 +72,23 @@ impl Costs {
         mode: u8,
         x: u16,
     ) -> Option<Self> {
+        if method == CastMethodV4::Alternative && retrace {
+            // The alternative replaces the mana cost. Retrace is still an
+            // additional cost, and a returned land can pay its discard.
+            let [cost @ (CostComponent::ReturnControlledPermanentToOwnersHand(_)
+            | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. })] =
+                def.alt_cost?.components
+            else {
+                return None;
+            };
+            if def.additional_cost.is_some() {
+                return None;
+            }
+            return Some(Self {
+                printed: Group::Component(*cost),
+                route: CostComponent::DiscardLandCardsV1(1),
+            });
+        }
         let route = match method {
             CastMethodV4::Escape => spell_costs_v1::escape_cost_v1(def)?
                 .iter()
@@ -140,7 +157,9 @@ impl Costs {
                 return Some(costs);
             }
         }
-        def.additional_cost?;
+        if method != CastMethodV4::Alternative {
+            def.additional_cost?;
+        }
         if pending.cast_mode == Some(CastMode::Alternative)
             && crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, pending.origin_zone, method)
         {
@@ -465,6 +484,7 @@ impl Costs {
 fn count(group: CostComponent) -> u8 {
     match group {
         CostComponent::SacrificeControlled { count, .. }
+        | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, .. }
         | CostComponent::SacrificeOtherControlledCreatures(count)
         | CostComponent::ExileOtherCardsFromOwnGraveyard(count)
         | CostComponent::DiscardCards(count)
@@ -482,7 +502,10 @@ fn kind(group: CostComponent) -> CostKind {
             ..
         } => CostKind::SacrificeCreatures,
         CostComponent::SacrificeControlled { filter, .. } => cost_kind_for_permanent_filter(filter),
-        CostComponent::ReturnControlledPermanentToOwnersHand(_) => CostKind::ReturnPermanentsToHand,
+        CostComponent::ReturnControlledPermanentToOwnersHand(_)
+        | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. } => {
+            CostKind::ReturnPermanentsToHand
+        }
         CostComponent::ExileOtherCardsFromOwnGraveyard(_) => CostKind::ExileFromGraveyard,
         CostComponent::DiscardLandCardsV1(_) | CostComponent::DiscardCards(_) => {
             CostKind::DiscardCards
@@ -519,7 +542,8 @@ impl Context<'_> {
             CostComponent::SacrificeOtherControlledCreatures(_) => {
                 sacrificeable_other_controlled_creatures(player, self.source, state, &[])
             }
-            CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+            CostComponent::ReturnControlledPermanentToOwnersHand(filter)
+            | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { filter, .. } => {
                 return_permanent_cost_candidates(player, state, filter, &[])
                     .into_iter()
                     .map(|b| b.object)
