@@ -563,6 +563,7 @@ pub(crate) fn needs_redirect_batch(state: &GameState, damage: &DamageProposed) -
 /// One original damage event or one redirected portion. The interpreter's
 /// operation replay retains the actual mutation prefix at every choice.
 struct HallowPacketV1 {
+    shared_redirect: bool,
     packet: Packet,
     event: usize,
     source: ObjectLinkV4,
@@ -589,6 +590,7 @@ fn covered_packet(
         return None;
     }
     Some(HallowPacketV1 {
+        shared_redirect,
         packet: Packet::new(damage),
         event,
         source,
@@ -721,6 +723,7 @@ fn prevent_packets(
                 circles::consume_circle_shield(state, damage);
             }
             HallowPreventionV1::Ordinary(index) => {
+                let original_target = item.packet.damage.target;
                 let mut children = Vec::new();
                 item.packet.apply(
                     state,
@@ -730,6 +733,8 @@ fn prevent_packets(
                 work.splice(
                     at..at,
                     children.into_iter().rev().map(|packet| HallowPacketV1 {
+                        shared_redirect: item.shared_redirect
+                            && packet.damage.target == original_target,
                         packet,
                         event: item.event,
                         source: item.source,
@@ -746,10 +751,11 @@ fn prevent_packets(
 /// owns the Nishoba cohort across this phase and all remaining ordinary events.
 pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEvent]) -> bool {
     (may_need_hallow_choice(state) || crate::eternal_prevention_order_v1::may_need_choice(state))
-        && events.iter().any(|event| {
-            matches!(event,
-            ProposedEvent::Damage(damage) if (redirect_source::shared(state, events, damage) || covered_packet(state, damage, 0, false).is_some()))
-        })
+        && (!redirect_source::shared_targets(state, events).is_empty()
+            || events.iter().any(|event| {
+                matches!(event,
+                ProposedEvent::Damage(damage) if covered_packet(state, damage, 0, false).is_some())
+            }))
 }
 
 /// Process all covered portions of one simultaneous batch as a live frontier.
@@ -765,14 +771,12 @@ pub(crate) fn prevent_hallow_batch(
     };
     let mut work = Vec::new();
     let mut covered = vec![false; events.len()];
+    let shared_targets = redirect_source::shared_targets(state, events);
     for (at, event) in events.iter().enumerate() {
         if let ProposedEvent::Damage(damage) = event {
-            if let Some(packet) = covered_packet(
-                state,
-                damage,
-                at,
-                redirect_source::shared(state, events, damage),
-            ) {
+            if let Some(packet) =
+                covered_packet(state, damage, at, shared_targets.contains(&damage.target))
+            {
                 if u32::try_from(at).is_err() || !event::preflight_hallow_damage_v1(state, event) {
                     return Err("damage cohort rejected its original historical damage".into());
                 }

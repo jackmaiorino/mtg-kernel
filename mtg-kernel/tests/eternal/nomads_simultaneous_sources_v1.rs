@@ -159,3 +159,45 @@ fn two_charges_recompute_which_sources_still_have_redirectable_damage() {
         }
     }
 }
+
+#[test]
+fn two_nomads_controllers_choose_their_sources_in_apnap_order() {
+    use mtg_kernel::event::{self, ProposedEvent};
+    for active in [P0, P1] {
+        let mut state = turn_of(active);
+        let seats = [active, active.opponent()].map(|owner| {
+            let nomads = put(&mut state, owner, "Nomads en-Kor", Zone::Battlefield);
+            let ally = put(&mut state, owner, "Llanowar Elves", Zone::Battlefield);
+            let red = put(
+                &mut state,
+                owner.opponent(),
+                "Grim Lavamancer",
+                Zone::Battlefield,
+            );
+            let green = put(
+                &mut state,
+                owner.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            give_priority(&mut state, owner);
+            activate(&mut state, nomads, 0, &[Target::Object(ally)]);
+            settled(&mut state);
+            (owner, nomads, red, green)
+        });
+        let events = seats
+            .iter()
+            .rev()
+            .flat_map(|&(_, nomads, red, green)| {
+                [red, green].map(|id| ProposedEvent::damage(id, Target::Object(nomads), 1))
+            })
+            .collect();
+        event::propose_and_commit_batch(&mut state, events);
+        for (owner, nomads, red, green) in seats {
+            source_menu(&mut state, owner, nomads, red, green);
+            state = restored(&state);
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(red)));
+        }
+        settled(&mut state);
+    }
+}

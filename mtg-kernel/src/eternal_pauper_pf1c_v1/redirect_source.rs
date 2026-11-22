@@ -1,7 +1,7 @@
 //! One or more identical en-Kor shields can redirect damage from different
 //! simultaneous sources. The affected controller allocates one charge at a time.
 use super::*;
-use crate::eternal_legacy_e9a_v1::{statics::applicable_redirects, RedirectV1};
+use crate::eternal_legacy_e9a_v1::{read_state, statics::applicable_redirects, RedirectV1};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceChoiceV1 {
@@ -20,6 +20,17 @@ fn sole_destination(state: &GameState, packet: &Packet) -> Option<(RedirectV1, u
         return None;
     }
     let (source, zone) = damage_source_incarnation(state, damage)?;
+    // A public object choice must still identify this source incarnation.
+    let live = state.objects.try_get(source.object)?;
+    if live.zone_change_count != source.zone_change_count
+        || live.zone != zone
+        || !matches!(
+            zone,
+            Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Command
+        )
+    {
+        return None;
+    }
     if !crate::eternal_prevention_order_v1::cannot_prevent(state)
         && !hallow_beneficiaries(state, source, zone).is_empty()
     {
@@ -34,31 +45,41 @@ fn sole_destination(state: &GameState, packet: &Packet) -> Option<(RedirectV1, u
 
 /// A single-source event can take its usual path. Admit all competing original
 /// sources together before any one of them spends a shared shield.
-pub(super) fn shared(state: &GameState, events: &[ProposedEvent], damage: &DamageProposed) -> bool {
-    if damage.amount <= 0
-        || applicable_redirects(state, damage).next().is_none()
-        || !events.iter().any(|event| {
-            matches!(event, ProposedEvent::Damage(other)
-            if other.amount > 0 && other.target == damage.target && other.source != damage.source)
-        })
-    {
-        return false;
+pub(super) fn shared_targets(state: &GameState, events: &[ProposedEvent]) -> Vec<Target> {
+    let mut targets = Vec::new();
+    if events.len() < 2 {
+        return targets;
     }
-    let Some((_, charges)) = sole_destination(state, &Packet::new(damage)) else {
-        return false;
+    let Some(records) = read_state(state) else {
+        return targets;
     };
-    let mut total = 0u64;
-    for event in events {
-        if let ProposedEvent::Damage(other) = event {
-            if other.target == damage.target && other.amount > 0 {
-                if sole_destination(state, &Packet::new(other)).is_none() {
-                    return false;
-                }
-                total += other.amount as u64;
-            }
+    for record in &records.redirects {
+        let target = Target::Object(record.from.object);
+        if !targets.contains(&target) {
+            targets.push(target);
         }
     }
-    total > charges as u64
+    targets.retain(|target| {
+        let mut first = None;
+        let mut multiple_sources = false;
+        let mut total = 0u64;
+        let mut charges = 0;
+        for event in events {
+            if let ProposedEvent::Damage(damage) = event {
+                if damage.target != *target || damage.amount <= 0 {
+                    continue;
+                }
+                let Some((_, count)) = sole_destination(state, &Packet::new(damage)) else {
+                    return false;
+                };
+                charges = count;
+                total += damage.amount as u64;
+                multiple_sources |= *first.get_or_insert(damage.source) != damage.source;
+            }
+        }
+        multiple_sources && total > charges as u64
+    });
+    targets
 }
 
 /// Keep the original event ordinal and historical damage source with every
@@ -71,6 +92,9 @@ pub(super) fn choose(
     step: u32,
 ) -> Result<Option<usize>, String> {
     let item = &work[first];
+    if work.len() < 2 || !item.shared_redirect {
+        return Ok(Some(first));
+    }
     let target = item.packet.damage.target;
     let Some((shield, charges)) = sole_destination(state, &item.packet) else {
         return Ok(Some(first));
@@ -78,7 +102,7 @@ pub(super) fn choose(
     let mut total = 0u64;
     let mut sources = Vec::new();
     for other in work.iter().filter(|p| p.packet.damage.target == target) {
-        if sole_destination(state, &other.packet).is_none() {
+        if !other.shared_redirect || sole_destination(state, &other.packet).is_none() {
             return Ok(Some(first));
         }
         total += other.packet.damage.amount as u64;
