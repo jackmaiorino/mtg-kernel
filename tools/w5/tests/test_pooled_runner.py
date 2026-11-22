@@ -64,7 +64,7 @@ class ExecutorConfigTests(AgentCase):
         spool = os.path.join(str(self.scratch), ".spool")
         for bad in ("spool", {"kind": "queue"}, {"kind": "direct", "heartbeat_seconds": 2},
                     {"kind": "spool", "extra": 1}, {"kind": "spool", "heartbeat_seconds": 0},
-                    {"kind": "spool", "stop_grace_seconds": True},
+                    {"kind": "spool", "stop_grace_seconds": True}, {"kind": "spool", "watchdog_grace_seconds": 86401},
                     {"kind": "spool", "stop_file": str(self.root / "STOP")},
                     {"kind": "spool", "end_file": os.path.join(spool, "runner.lock")},
                     {"kind": "spool", "stop_file": os.path.join(spool, TAG + ".result")},
@@ -388,56 +388,89 @@ class SpoolServiceTests(RunnerCase):
         self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 15), self.spool_leftovers())
         self.assertEqual(self.stop_runner(runner)[0], 0)
 
-    def test_runner_check_reports_the_heartbeat_age_for_root(self):
-        def check(*extra):
-            result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-check",
-                                     str(self.spool_config), *extra], capture_output=True, text=True, timeout=60)
-            return result.returncode, json.loads(result.stdout or "{}")
-        self.assertEqual(check()[0], 3)  # no runner: absent, never a reason to kill
-        runner = self.start_runner()
-        code, report = check()
-        self.assertEqual((code, report["state"], report["pid"]), (0, "fresh", runner.pid))
-        self.stop_runner(runner)
-        self.spool.joinpath("runner.heartbeat").write_text("{}")
-        os.utime(self.spool / "runner.heartbeat", (time.time() - 100, time.time() - 100))
-        self.assertEqual(check()[1]["state"], "stale")
-        self.assertEqual(check("1000")[0], 0)
-        self.assertEqual(check("-1")[0], 2)
-        bad = self.root / "bad.json"
-        bad.write_text("{}")
-        result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-check", str(bad)],
+    def check(self, config, *extra, command="runner-check"):
+        result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), command, str(config), *extra],
                                 capture_output=True, text=True, timeout=60)
-        self.assertEqual(result.returncode, 2)
+        return result.returncode, json.loads(result.stdout or "{}")
 
-    def test_runner_watch_tells_root_to_kill_only_a_stale_unfrozen_runner(self):
+    def test_runner_check_reports_the_heartbeat_for_root_and_refuses_odd_configs(self):
+        self.assertEqual(self.check(self.spool_config)[0], 3)  # nothing ran
+        runner = self.start_runner()
+        code, report = self.check(self.spool_config)
+        self.assertEqual((code, report["state"], report["pid"], report["runner_lock_held"]),
+                         (0, "fresh", runner.pid, True))
+        self.stop_runner(runner)
+        self.assertEqual(self.check(self.spool_config)[1]["state"], "stopped")
+        heartbeat = self.spool / "runner.heartbeat"
+        heartbeat.write_text("{}")  # a dead runner's leftover: no runner holds the lock, nothing to kill
+        os.utime(heartbeat, (time.time() - 100, time.time() - 100))
+        code, report = self.check(self.spool_config)
+        self.assertEqual((code, report["state"], report["runner_lock_held"]), (3, "stopped", False))
+        self.assertEqual(self.check(self.spool_config, "1000")[0], 0)
+        self.assertEqual(self.check(self.spool_config, "-1")[0], 2)
+        document = json.loads(self.spool_config.read_text())
+        for bad in ([], dict(document, executor="spool"), dict(document, executor=dict(document["executor"],
+                    heartbeat_seconds=True)), dict(document, executor=dict(document["executor"], heartbeat_seconds=0)),
+                    dict(document, scratch="relative"), dict(document, scratch=str(self.scratch) + "/../scratch")):
+            path = self.root / "odd.json"
+            path.write_text(json.dumps(bad))
+            self.assertEqual(self.check(path)[0], 2, bad)
+        (self.root / "deep.json").write_text("[" * 100000 + "]" * 100000)
+        self.assertEqual(self.check(self.root / "deep.json")[0], 2)
+        # A symlinked spool is never followed (root reads the collector account's tree).
+        os.rename(self.spool, self.root / "real-spool")
+        os.symlink(self.root / "real-spool", self.spool)
+        self.assertEqual(self.check(self.spool_config)[0], 2)
+
+    def test_runner_watch_tells_root_to_kill_only_a_held_stale_unfrozen_runner_twice(self):
+        quick = self.spool_config_at(self.root / "quick.json", heartbeat_seconds=1)
         cgroup = self.root / "cgroup"
         cgroup.mkdir()
-
-        def watch(*extra):
-            result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-watch",
-                                     str(self.spool_config), "--plan", "/p.json", "--chain", "c1", *extra],
-                                    capture_output=True, text=True, timeout=60)
-            return result.returncode, json.loads(result.stdout or "{}")
-        self.assertEqual(watch()[0], 3, "absent: starting or stopped")
-        runner = self.start_runner()
-        self.assertEqual(watch()[0], 0)
-        self.stop_runner(runner)
-        heartbeat = self.spool / "runner.heartbeat"
-        heartbeat.write_text("{}")
-        os.utime(heartbeat, (time.time() - 100, time.time() - 100))
-        code, report = watch()
-        self.assertEqual((code, report["state"]), (1, "stale"))
-        self.assertEqual(report["kill_command"][1:], [str(HERE / "w5box.py"), "kill", "--plan", "/p.json", "--chain", "c1"])
         (cgroup / "cgroup.freeze").write_text("0\n")
         (cgroup / "cgroup.events").write_text("populated 1\nfrozen 0\n")
-        self.assertEqual(watch("--cgroup", str(cgroup))[0], 1)
-        (cgroup / "cgroup.events").write_text("populated 1\nfrozen 1\n")
-        code, report = watch("--cgroup", str(cgroup))
-        self.assertEqual((code, report["state"], "kill_command" in report), (4, "stale-frozen", False))
-        (cgroup / "cgroup.events").write_text("populated 1\nfrozen 0\n")
-        (cgroup / "cgroup.freeze").write_text("1\n")
-        self.assertEqual(watch("--cgroup", str(cgroup))[0], 4)
+        args = ("--plan", "/p.json", "--chain", "c1", "--cgroup", str(cgroup), "--confirm-seconds", "0.5")
+
+        def watch(*extra):
+            return self.check(quick, *args, *extra, command="runner-watch")
+        self.assertEqual(self.check(quick, "--plan", "/p.json", "--chain", "c1", command="runner-watch")[0], 2,
+                         "--cgroup is required")
+        self.assertEqual(watch()[0], 3, "nothing ran")
+        runner = self.start_runner(quick)
+        self.assertEqual(watch()[0], 0)
+        runner.send_signal(signal.SIGSTOP)  # hung: holds the lock, beats no more
+        try:
+            time.sleep(2)
+            code, report = watch()
+            self.assertEqual((code, report["state"]), (1, "stale"), report)
+            self.assertEqual(report["kill_command"][1:],
+                             [str(HERE / "w5box.py"), "kill", "--plan", "/p.json", "--chain", "c1"])
+            (cgroup / "cgroup.events").write_text("populated 1\nfrozen 1\n")
+            code, report = watch()
+            self.assertEqual((code, report["state"], "kill_command" in report), (4, "stale-frozen", False))
+            (cgroup / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+            (cgroup / "cgroup.freeze").write_text("1\n")
+            self.assertEqual(watch()[0], 4)
+            (cgroup / "cgroup.freeze").write_text("0\n")
+            # A thaw between the two readings: the runner beats again before the confirming reading.
+            pending = subprocess.Popen([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-watch",
+                                        str(quick), *args[:-1], "3"], stdout=subprocess.PIPE, text=True)
+            time.sleep(1)
+            runner.send_signal(signal.SIGCONT)
+            out, _ = pending.communicate(timeout=60)
+            self.assertEqual((pending.returncode, json.loads(out)["first_reading"]), (5, "stale"), out)
+            self.assertNotIn("kill_command", json.loads(out))
+        finally:
+            runner.send_signal(signal.SIGCONT)
+        runner.send_signal(signal.SIGKILL)  # dead, its heartbeat left behind: w5box's business, not a kill
+        runner.wait()
+        time.sleep(1.5)
+        self.assertEqual(watch()[0], 3)
         self.assertEqual(watch("--max-age", "-5")[0], 2)
+
+    def test_a_lock_that_cannot_be_opened_is_never_a_departed_agent(self):
+        with mock.patch.object(pc.os, "open", side_effect=OSError(24, "Too many open files")):
+            self.assertFalse(pc._agent_gone(str(self.spool / f"{TAG}.lock")))
+        self.assertTrue(pc._agent_gone(str(self.spool / f"{TAG}.lock")), "absent: gone")
 
     def test_the_heartbeat_exists_before_recovery_runs(self):
         runner = pc.BoxRunner(pc.load_agent_config(self.spool_config))
@@ -494,7 +527,7 @@ class SpoolServiceTests(RunnerCase):
         command = self.scratch / ".run" / f"{TAG}.{'0' * 32}.json"
         command.write_text(json.dumps(self.shard_command(episodes=[{"id": "sleep", "seed": 1}],
                                                          output_directory=str(run_dir / "out"))))
-        process = pc._launch_spooled(config, str(command), str(run_dir), 2)  # never watched: a hung runner
+        process = pc._launch_spooled(config, str(command), str(run_dir), 0)  # clamped to 1 s; never watched
         try:
             self.assertEqual(process.wait(30), -signal.SIGALRM)
         finally:

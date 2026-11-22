@@ -40,10 +40,11 @@ Two more entry points run on collector hosts:
                                                  collector account, it runs the collectors the agent hands
                                                  it through `<scratch>/.spool`, so they use the box's CPUs
     pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS]
-                                                 the heartbeat's age: exit 0 fresh, 1 stale, 3 absent
-    pooled_collect.py runner-watch AGENT_CONFIG.json --plan P --chain C [--cgroup DIR] [--max-age S]
-                                                 root's timer: exit 1 (and the w5box kill to run) only for a
-                                                 stale runner whose chain is not frozen; acts on nothing
+                                                 a diagnostic: exit 0 fresh, 1 stale with a runner holding the
+                                                 spool, 3 nothing to judge (not for timers: no freezer check)
+    pooled_collect.py runner-watch AGENT_CONFIG.json --plan P --chain C --cgroup DIR [--max-age S]
+                                                 root's timer: exit 1 (and the w5box kill to run) only when two
+                                                 readings find a held, stale, unfrozen runner; acts on nothing
 
 With the agent config's `"executor": {"kind": "spool"}` the agent's run_shard keeps every check it makes and
 hands the run to the runner instead of starting the collector itself (a process started by sshd cannot leave
@@ -917,6 +918,7 @@ SPOOL_CANCEL_GRACE = 10  # after a cancel, the agent waits this long for the run
 SPOOL_SWEEP_SECONDS = 5.0
 SPOOL_STAGE_AGE = 60.0  # a stage file older than this was left by a crash
 SPOOL_WATCHDOG_GRACE = 30  # default: a collector's own alarm fires this long after its deadline (a hung runner)
+SPOOL_WATCHDOG_MAX = 5 * 86400  # the alarm ceiling: far above any job deadline plus grace, far inside alarm()'s range
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 BINARY = getattr(os, "O_BINARY", 0)
 
@@ -1208,8 +1210,8 @@ def _load_executor(config: dict) -> dict:
     for key, default, least in (("heartbeat_seconds", 10, 1), ("stop_grace_seconds", 300, 0),
                                 ("watchdog_grace_seconds", SPOOL_WATCHDOG_GRACE, 1)):
         executor[key] = executor.get(key, default)
-        if not isinstance(executor[key], int) or isinstance(executor[key], bool) or executor[key] < least:
-            raise ValueError(f"agent executor {key} must be an integer of at least {least}")
+        if not isinstance(executor[key], int) or isinstance(executor[key], bool) or not least <= executor[key] <= 86400:
+            raise ValueError(f"agent executor {key} must be an integer from {least} to 86400")
     spool = os.path.join(config["scratch"], SPOOL_DIR)
     for key, default in (("stop_file", "STOP"), ("end_file", "END.json")):
         executor[key] = path = executor.get(key, os.path.join(spool, default))
@@ -1693,8 +1695,9 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 # leader; it survives exec) watchdog_grace_seconds after its deadline, and root's timer runs
 # `pooled_collect.py runner-watch CONFIG --plan P --chain C --cgroup <root>/box<k>/chain` (say every minute)
 # and, on its exit 1 only, the `w5box.py kill` it prints, which kills the chain cgroup with every collector
-# descendant. runner-watch acts on nothing itself; an absent heartbeat (starting, stopped) and a chain frozen on
-# purpose (`w5box.py pause --now`) are never killed. The runner writes its heartbeat before recovering. It
+# descendant. runner-watch acts on nothing itself and kills nothing that is starting, stopped or dead (no runner
+# holds the spool's lock), frozen (a w5box pause, a node freeze or an outage freeze) or fresh again on its
+# confirming second reading. The runner writes its heartbeat before recovering. It
 # ignores W5_CONTROL_DIR (no pause handshake). A spool scratch root is never shared with a direct-executor
 # config.
 
@@ -1803,8 +1806,10 @@ def _agent_gone(lock_path: str) -> bool:
     import fcntl
     try:
         fd = os.open(lock_path, os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
-    except OSError:
+    except FileNotFoundError:
         return True
+    except OSError:
+        return False  # no descriptor to spare, or not our file: never taken as a departed agent
     with os.fdopen(fd, "rb") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
@@ -2023,7 +2028,10 @@ def _spool_remove(config: dict, tag: str) -> None:
             trash = os.path.join(scratch, f".trash-{uuid.uuid4().hex}")
             os.rename(os.path.join(scratch, tag), trash)
     if trash is not None:
-        _remove_tree(trash)
+        try:
+            _remove_tree(trash)
+        except FileNotFoundError:
+            pass  # the runner's sweep removed (part of) an old trash tree meanwhile
 
 
 def _remove_tree(path: str) -> None:
@@ -2093,7 +2101,8 @@ def _launch_spooled(config: dict, command_file: str, run_dir: str, watchdog_seco
             confine()
         signal.signal(signal.SIGALRM, signal.SIG_DFL)
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGALRM})
-        signal.alarm(watchdog_seconds)
+        signal.alarm(seconds)
+    seconds = max(1, min(int(watchdog_seconds), SPOOL_WATCHDOG_MAX))  # never alarm(0) (none) or a wrapped value
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, start_new_session=True, preexec_fn=preexec,
@@ -2290,7 +2299,9 @@ class BoxRunner:
             snapshot = os.path.join(self.config["scratch"], ".run", f"{tag}.{uuid.uuid4().hex}.snap.json")
             _write_new(snapshot, data, AGENT_SHARD_BYTES)
             try:
-                watchdog = max(1, math.ceil(deadline - time.monotonic()) + self.executor["watchdog_grace_seconds"])
+                if time.monotonic() >= deadline:
+                    raise ValueError("the job's deadline passed before its launch")
+                watchdog = math.ceil(deadline - time.monotonic()) + self.executor["watchdog_grace_seconds"]
                 process = _launch_spooled(self.config, snapshot, run_dir, watchdog)
             except BaseException:
                 os.unlink(snapshot)
@@ -2479,39 +2490,92 @@ def format_cpus(cpus: list[int]) -> str:
     return ",".join(runs)
 
 
+def _flock_held(path_fd: int) -> bool:
+    """Whether any process holds a flock on the open file `path_fd`, read from /proc/locks (never by trying one:
+    a probe could make a starting runner's own lock fail). True where /proc/locks cannot be read."""
+    info = os.fstat(path_fd)
+    try:
+        lines = Path("/proc/locks").read_text().splitlines()
+    except OSError:
+        return True
+    for line in lines:
+        fields = line.split()
+        if "FLOCK" in fields and len(fields) >= 6 and fields[-3].rsplit(":", 1)[-1] == str(info.st_ino):
+            return True
+    return False
+
+
 def runner_check(config_path: str, max_age: float | None, stdout) -> int:
-    """`pooled_collect.py runner-check CONFIG [MAX_AGE_SECONDS]`, for root's watch over a box runner: reads
-    only the config's scratch and executor fields (root does not own the roots, so no full config check) and
-    the heartbeat without following a symlink. Exit 0 while the heartbeat is younger than MAX_AGE_SECONDS
-    (default: the executor's heartbeat_seconds), 1 when it is older (stale), 3 when there is none (a runner
-    starting or stopped), 2 for an unusable config. runner-watch turns this into root's decision."""
+    """`pooled_collect.py runner-check CONFIG [MAX_AGE_SECONDS]`: a diagnostic of a box runner's heartbeat. It
+    does not read the chain's freezer, so root's timer uses runner-watch, which does. Safe as root on a scratch
+    root the collector account owns: it reads only the config's scratch and executor fields, requires a canonical
+    scratch path, opens the scratch root and the spool one level at a time without following a symlink and reads
+    the heartbeat relative to them. Exit 0 fresh, 1 stale while a runner holds the spool's runner lock (hung or
+    frozen), 3 none to judge (no heartbeat yet, or no runner holds the lock: starting, stopped or dead, which
+    w5box handles), 2 unusable."""
     try:
         config = json.loads(Path(config_path).read_text())
-        executor = config.get("executor") or {}
-        if config.get("schema") != AGENT_SCHEMA or executor.get("kind") != "spool" \
-                or not isinstance(config.get("scratch"), str) or not os.path.isabs(config["scratch"]):
+        if not isinstance(config, dict) or config.get("schema") != AGENT_SCHEMA:
+            raise ValueError("not an agent config")
+        executor, scratch = config.get("executor"), config.get("scratch")
+        if not isinstance(executor, dict) or executor.get("kind") != "spool":
             raise ValueError("not an agent config with the spool executor")
-        limit = float(max_age if max_age is not None else executor.get("heartbeat_seconds", 10))
-    except (OSError, ValueError, TypeError) as error:
-        stdout.write(json.dumps({"state": "unusable", "error": str(error)[:200]}) + "\n")
-        return 2
-    path = os.path.join(config["scratch"], SPOOL_DIR, "runner.heartbeat")
-    try:
-        info = os.lstat(path)
-    except FileNotFoundError:  # not started yet, or stopped: never a reason to kill
-        stdout.write(json.dumps({"state": "absent", "heartbeat": path}) + "\n")
+        if not isinstance(scratch, str) or _canonical(scratch) != scratch:
+            raise ValueError("the config's scratch is not a canonical absolute path without symlinks")
+        beat = executor.get("heartbeat_seconds", 10)
+        if type(beat) is not int or beat < 1:
+            raise ValueError("the executor's heartbeat_seconds must be an integer of at least 1")
+        limit = float(max_age if max_age is not None else beat)
+        if not (math.isfinite(limit) and limit > 0):
+            raise ValueError("the age limit must be a positive number")
+        flags = os.O_RDONLY | NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
+        scratch_fd = os.open(scratch, flags)
+        try:
+            spool_fd = os.open(SPOOL_DIR, flags, dir_fd=scratch_fd)
+        finally:
+            os.close(scratch_fd)
+        try:
+            report = {"heartbeat": os.path.join(scratch, SPOOL_DIR, "runner.heartbeat"), "limit_seconds": limit}
+            try:
+                lock_fd = os.open("runner.lock", os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+                                  dir_fd=spool_fd)
+            except FileNotFoundError:
+                held = False
+            else:
+                try:
+                    held = _flock_held(lock_fd)
+                finally:
+                    os.close(lock_fd)
+            report["runner_lock_held"] = held
+            try:
+                info = os.stat("runner.heartbeat", dir_fd=spool_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                report["state"] = "starting" if held else "stopped"
+                stdout.write(json.dumps(report) + "\n")
+                return 3
+            age = time.time() - info.st_mtime
+            fresh = stat.S_ISREG(info.st_mode) and age <= limit
+            report.update(age_seconds=round(age, 3), state="fresh" if fresh else "stale" if held else "stopped")
+            try:
+                fd = os.open("runner.heartbeat", os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+                             dir_fd=spool_fd)
+                with os.fdopen(fd, "rb") as handle:
+                    content = json.loads(handle.read(SPOOL_FILE_BYTES)) if stat.S_ISREG(
+                        os.fstat(handle.fileno()).st_mode) else {}
+                if isinstance(content, dict):
+                    report.update({k: content.get(k) for k in ("pid", "generation", "w5_chain", "w5_box_slot")})
+            except (OSError, ValueError, RecursionError):
+                pass
+        finally:
+            os.close(spool_fd)
+    except FileNotFoundError as error:  # no spool yet: nothing ran
+        stdout.write(json.dumps({"state": "stopped", "error": str(error)[:200]}) + "\n")
         return 3
-    age = time.time() - info.st_mtime
-    fresh = stat.S_ISREG(info.st_mode) and age <= limit
-    report = {"state": "fresh" if fresh else "stale", "age_seconds": round(age, 3), "limit_seconds": limit,
-              "heartbeat": path}
-    try:
-        beat = json.loads(_read_single(path, SPOOL_FILE_BYTES) or b"{}")
-        report.update({k: beat.get(k) for k in ("pid", "generation", "w5_chain", "w5_box_slot")})
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError, TypeError, RecursionError) as error:
+        stdout.write(json.dumps({"state": "unusable", "error": f"{type(error).__name__}: {str(error)[:200]}"}) + "\n")
+        return 2
     stdout.write(json.dumps(report) + "\n")
-    return 0 if fresh else 1
+    return 0 if fresh else 1 if held else 3
 
 
 def _close_inherited() -> None:
@@ -2530,13 +2594,24 @@ def _close_inherited() -> None:
                 pass  # the listing's own descriptor, already closed
 
 
+def _chain_frozen(cgroup: str) -> bool:
+    """Whether the chain cgroup is frozen or freezing (`cgroup.freeze` 1, or `frozen 1` in `cgroup.events`)."""
+    try:
+        return Path(cgroup, "cgroup.freeze").read_text().strip() == "1" or any(
+            line.split() == ["frozen", "1"] for line in Path(cgroup, "cgroup.events").read_text().splitlines())
+    except OSError:
+        return False  # no such cgroup is no pause
+
+
 def runner_watch(argv: list[str], stdout) -> int:
-    """`pooled_collect.py runner-watch CONFIG --plan PLAN --chain CHAIN [--cgroup DIR] [--max-age S]`, the
-    one-shot command root's timer runs (say every minute, MAX_AGE a few heartbeat periods). It takes no action
-    itself. Exit 1 only when the runner's heartbeat is stale and its chain cgroup (w5box's `<root>/box<k>/chain`,
-    if given) is not frozen: it then prints the JSON report with `kill_command`, w5box's kill of that chain,
-    which root runs. Exit 0 fresh, 3 absent (starting or stopped), 4 stale but frozen on purpose (a w5box pause),
-    2 unusable. Root's timer, for example:
+    """`pooled_collect.py runner-watch CONFIG --plan PLAN --chain CHAIN --cgroup DIR [--max-age S]
+    [--confirm-seconds S]`: the one-shot, stateless command root's timer runs (say every minute, MAX_AGE a few
+    heartbeat periods), with DIR the runner's w5box chain cgroup (`<cgroup_root>/box<k>/chain`). It acts on
+    nothing itself. Exit 1 only when two readings CONFIRM seconds apart (default 5) both find the heartbeat stale
+    while a runner holds the spool's lock and the chain is not frozen; it then prints the JSON report with
+    `kill_command`, w5box's kill of that chain, which root runs. Exit 0 fresh, 3 nothing to judge (starting,
+    stopped, dead), 4 stale but frozen (a w5box pause or a node freeze), 5 stale once but not on the
+    confirming reading (a thaw), 2 unusable. Root's timer, for example:
         python3 -I pooled_collect.py runner-watch A.json --plan P.json --chain C --cgroup G > watch.json
         [ $? -eq 1 ] && python3 w5box.py kill --plan P.json --chain C"""
     import argparse
@@ -2544,28 +2619,34 @@ def runner_watch(argv: list[str], stdout) -> int:
     parser.add_argument("config")
     parser.add_argument("--plan", required=True)
     parser.add_argument("--chain", required=True)
-    parser.add_argument("--cgroup", default=None)
+    parser.add_argument("--cgroup", required=True)
     parser.add_argument("--max-age", type=float, default=None)
+    parser.add_argument("--confirm-seconds", type=float, default=5.0)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         return 2
-    if args.max_age is not None and not (math.isfinite(args.max_age) and args.max_age > 0):
+    if (args.max_age is not None and not (math.isfinite(args.max_age) and args.max_age > 0)) \
+            or not (math.isfinite(args.confirm_seconds) and 0 < args.confirm_seconds <= 600):
         return 2
-    report = io.StringIO()
-    code = runner_check(args.config, args.max_age, report)
-    try:
-        result = json.loads(report.getvalue())
-    except ValueError:
-        result = {}
-    if code == 1 and args.cgroup:
+
+    def reading():
+        report = io.StringIO()
+        code = runner_check(args.config, args.max_age, report)
         try:
-            frozen = Path(args.cgroup, "cgroup.freeze").read_text().strip() == "1" or any(
-                line.split() == ["frozen", "1"] for line in Path(args.cgroup, "cgroup.events").read_text().splitlines())
-        except OSError:
-            frozen = False  # a missing cgroup is no pause: the stale runner is reported
-        if frozen:
+            result = json.loads(report.getvalue())
+        except ValueError:
+            result = {}
+        if code == 1 and _chain_frozen(args.cgroup):
             result["state"], code = "stale-frozen", 4
+        return code, result
+
+    code, result = reading()
+    if code == 1:  # confirm: a reading just after a thaw must not kill
+        time.sleep(args.confirm_seconds)
+        code, result = reading()
+        if code != 1:
+            result["first_reading"], code = "stale", (code if code in (2, 4) else 5)
     if code == 1:
         result["kill_command"] = [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), "w5box.py"),
                                   "kill", "--plan", args.plan, "--chain", args.chain]
@@ -2744,10 +2825,15 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                         code, tail = _run_collector(config, private, run_dir, seconds)
                     reply({"code": code, "stderr": tail})
                 finally:
-                    os.unlink(private)
+                    if spool:
+                        with _alarm_deferred():
+                            os.unlink(private)
+                    else:
+                        os.unlink(private)
             finally:
                 if admitted is not None:
-                    _spool_release(admitted)
+                    with _alarm_deferred():
+                        _spool_release(admitted)
     elif op == "fetch_shard":
         tag = _tag_arg(args)
         _no_more_input(stdin)
@@ -3037,8 +3123,8 @@ def main(argv: list[str]) -> int:
               " | pooled_collect.py runner AGENT_CONFIG.json (box runner for the executor \"spool\";"
               " stops on its stop file)"
               " | pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS] (exit 1 stale, 3 absent)"
-              " | pooled_collect.py runner-watch AGENT_CONFIG.json --plan PLAN --chain CHAIN [--cgroup DIR]"
-              " [--max-age S] (exit 1: root kills the chain)",
+              " | pooled_collect.py runner-watch AGENT_CONFIG.json --plan PLAN --chain CHAIN --cgroup DIR"
+              " [--max-age S] [--confirm-seconds S] (exit 1: root kills the chain)",
               file=sys.stderr)
         return 2
     config_path = os.environ.get("MTG_POOLED_COLLECT_CONFIG")
