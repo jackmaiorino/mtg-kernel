@@ -80,6 +80,7 @@ import hashlib
 import json
 import os
 import socket
+import struct
 import sys
 
 RESIDENT_ENV = "MTG_POOLED_COLLECT_RESIDENT"  # the resident dispatcher's socket directory
@@ -113,7 +114,13 @@ def _resident_context() -> dict:
     return context
 
 
-def _private_dir(path: str) -> bool:
+def _peer_uid(conn) -> int:
+    """The connected peer's uid (Linux SO_PEERCRED: pid_t, uid_t, gid_t)."""
+    _, uid, _ = struct.unpack("iII", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII")))
+    return uid
+
+
+def _resident_private_dir(path: str) -> bool:
     """A directory (not a symlink) owned by this account with no group or other access."""
     try:
         info = os.lstat(path)
@@ -163,10 +170,12 @@ def resident_client(command: str, socket_dir: str, hosts: str | None, stderr) ->
     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         try:
-            if not _private_dir(socket_dir):
+            if not _resident_private_dir(socket_dir):
                 raise RuntimeError(f"{socket_dir} is not a directory of this account with mode 700")
             conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
             conn.connect(os.path.join(socket_dir, RESIDENT_SOCKET))
+            if hasattr(socket, "SO_PEERCRED") and _peer_uid(conn) != os.getuid():
+                raise RuntimeError("the socket's server runs as another account")
             _send_line(conn, request)
             answer = _read_line(conn)
             if not answer or answer.get("ready") is not True:
@@ -191,7 +200,7 @@ def resident_client(command: str, socket_dir: str, hosts: str | None, stderr) ->
         conn.close()
 
 
-if __name__ == "__main__" and len(sys.argv) == 2 and os.environ.get(RESIDENT_ENV):
+if __name__ == "__main__" and len(sys.argv) == 2 and not sys.argv[1].startswith("-") and os.environ.get(RESIDENT_ENV):
     # The program the trainer starts per update, in resident mode: only the client above runs (no further
     # imports or definitions), unless no resident dispatcher takes the request.
     _code = resident_client(sys.argv[1], os.environ[RESIDENT_ENV], os.environ.get("MTG_POOLED_COLLECT_CONFIG"),
@@ -590,8 +599,8 @@ def sha256_file_known(path: Path) -> str:
     modification and change times) differs from the last hash this process took. For the learner's
     own inputs and a local collector: every byte they send is verified again where it lands (the
     push's staged digest, the agent's checks), so the shortcut never admits other bytes there. File
-    times come from a coarse clock, so a same-size rewrite within one tick of a hash can keep the
-    signature; the checks where bytes land then refuse the push or report the input missing."""
+    times come from a coarse clock, so a file changed within the last 50 ms is never remembered (a
+    same-size rewrite within one tick would keep its signature)."""
     key = os.path.abspath(path)
     before = _signature(key)
     with _HASHED_LOCK:
@@ -599,7 +608,8 @@ def sha256_file_known(path: Path) -> str:
     if known is not None and known[0] == before:
         return known[1]
     digest = sha256_file(Path(key))
-    if _signature(key) == before:  # unchanged while hashed
+    settled = time.time_ns() - max(before[3], before[4]) > 50_000_000  # past a coarse clock's tick
+    if settled and _signature(key) == before:  # unchanged while hashed
         with _HASHED_LOCK:
             if len(_HASHED) >= 4096:  # a long resident run names a new checkpoint every update
                 _HASHED.clear()
@@ -1200,6 +1210,7 @@ class Dispatcher:
                 except BaseException as error:  # noqa: BLE001
                     failures.append(f"audit of slot {slot} on {host.name}: {type(error).__name__}: {error}")
                     self.forget(host)
+                    shutil.rmtree(staging / tag, ignore_errors=True)
                     return
 
         threads = [threading.Thread(target=replay_on, args=entry) for entry in plan.values()]
@@ -3635,6 +3646,10 @@ class ResidentServer:
         command = request.get("command")
         if not isinstance(command, str) or not os.path.isabs(command):
             return "the command path must be absolute"
+        try:
+            iteration_of(Path(command))
+        except ValueError:
+            return "not an iteration's collect command"
         if request.get("hosts") != self.hosts_path or request.get("hosts_sha256") != self.hosts_sha256:
             return "this resident dispatcher serves another hosts file (or other bytes of it)"
         if request.get("source_sha256") != self.source_sha256:
@@ -3662,9 +3677,7 @@ class ResidentServer:
         try:
             conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
             if hasattr(socket, "SO_PEERCRED"):
-                _, uid, _ = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
-                                                                struct.calcsize("3i")))
-                if uid != os.getuid():
+                if _peer_uid(conn) != os.getuid():
                     return
             request = _read_line(conn)
             reason = self.refusal(request)
@@ -3739,8 +3752,13 @@ class ResidentServer:
                     continue
                 self.last = time.monotonic()
                 threading.Thread(target=self.handle, args=(conn,), daemon=True).start()
-            with self.committed_change:  # every accepted request is answered before the server exits
+            with self.committed_change:  # from here on a request is refused before "ready"
                 self.stopping.set()
+            self.listener.close()  # stop accepting at once: new clients fall back without waiting
+            self.listener = None
+            if os.path.lexists(path):
+                os.unlink(path)
+            with self.committed_change:  # every accepted request is answered before the lock is released
                 while self.committed:
                     self.committed_change.wait()
             return 0
@@ -3764,8 +3782,14 @@ def serve_main(socket_dir: str, idle: str | None, stderr) -> int:
         stderr.write("the resident dispatcher needs a POSIX learner (unix sockets)\n")
         return 2
     try:
-        server = ResidentServer(socket_dir, config_path, float(idle) if idle else RESIDENT_IDLE_SECONDS,
-                                stderr=stderr)
+        idle_seconds = float(idle) if idle else RESIDENT_IDLE_SECONDS
+    except ValueError:
+        idle_seconds = -1.0
+    if not (math.isfinite(idle_seconds) and idle_seconds > 0):
+        stderr.write("serve: IDLE_SECONDS must be a positive number\n")
+        return 2
+    try:
+        server = ResidentServer(socket_dir, config_path, idle_seconds, stderr=stderr)
     except (OSError, ValueError) as error:
         stderr.write(f"resident dispatcher: {error}\n")
         return 2

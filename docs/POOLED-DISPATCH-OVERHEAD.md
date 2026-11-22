@@ -94,7 +94,7 @@ launch with its environment: the merge and local collectors run as the server's 
 request only when the client's working directory, CPU set, cgroup, niceness and the variables listed in
 `RESIDENT_CONTEXT_*` (PATH, library and thread settings, `MTG_*`, ...) equal its own, and it needs absolute
 `merge_binary` and `state_path`. The socket directory is the account's, mode 700 (created so, refused otherwise,
-checked by the client too); one server per directory; it stops on SIGTERM, on `<dir>/STOP`, or after
+checked by the client too, with the server's uid on Linux); one server per directory; it stops on SIGTERM, on `<dir>/STOP`, or after
 IDLE_SECONDS (default 1800) idle, answering every request it accepted first.
 
 The per-update program then runs only a small client at the top of the file (no other imports): it sends the

@@ -27,25 +27,44 @@ from test_pooled_collect import FakeTransport, episode_bytes, fake_merge  # noqa
 MUX = ["-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=/srv/work/run/.ssh-mux/%C",
        "-o", "ControlPersist=120"]
 
-# A fake ssh with connection reuse: the first call leaves a background "master" (its standard streams on
-# /dev/null, as OpenSSH's ControlPersist master has) that outlives the call; a call fails as a dead master
-# does (exit 255) while the host's DEAD file exists. argv: mux_ssh.py AGENT_CONFIG STATE_DIR REQUEST
-MUX_SSH = textwrap.dedent('''
-    import os, subprocess, sys
+# A fake ssh with connection reuse (POSIX): a call finds the host's master by MASTER (a pid file) and starts a new
+# one when it is absent or dead, as `ControlMaster=auto` replaces a stale control socket; the master is a
+# background process with its standard streams on /dev/null (as OpenSSH's ControlPersist master), outliving the
+# call. Fault injection: with KILL_DURING_RUN present, a run_shard request kills the master while the request
+# runs and then fails as a session on a dead master does (exit 255). argv: mux_ssh.py AGENT_CONFIG STATE_DIR REQUEST
+MUX_SSH = textwrap.dedent(r'''
+    import base64, json, os, signal, subprocess, sys
     config, state, request = sys.argv[1], sys.argv[2], sys.argv[3]
-    with open(os.path.join(state, "calls"), "a") as log:
-        log.write(request[:0] + "call\\n")
-    if os.path.exists(os.path.join(state, "DEAD")):
-        sys.stderr.write("mux_client_request_session: read from master failed: Broken pipe\\n")
-        sys.exit(255)
-    master = os.path.join(state, "master.pid")
-    if not os.path.exists(master):
-        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+
+    def alive(pid):
+        try:
+            with open("/proc/%d/stat" % pid) as handle:
+                return handle.read().rsplit(")", 1)[1].split()[0] != "Z"
+        except (OSError, IndexError):
+            return False
+
+    master = os.path.join(state, "MASTER")
+    pid = int(open(master).read()) if os.path.exists(master) else 0
+    if not pid or not alive(pid):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True,
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        open(master, "w").write(str(child.pid))
+        pid = child.pid
+        open(master, "w").write(str(pid))
+        with open(os.path.join(state, "masters"), "a") as log:
+            log.write("%d\n" % pid)
+    op = json.loads(base64.urlsafe_b64decode(request + "=" * (-len(request) % 4)))["op"]
+    kill = os.path.join(state, "KILL_DURING_RUN")
+    dies = op == "run_shard" and os.path.exists(kill)
+    if dies:
+        os.unlink(kill)
+        os.kill(pid, signal.SIGKILL)
     env = dict(os.environ, SSH_ORIGINAL_COMMAND=request)
-    sys.exit(subprocess.run([sys.executable, "-I", os.environ["POOLED_AGENT_SCRIPT"], "agent", config],
-                            env=env).returncode)
+    code = subprocess.run([sys.executable, "-I", os.environ["POOLED_AGENT_SCRIPT"], "agent", config], env=env,
+                          stdout=subprocess.DEVNULL if dies else None).returncode
+    if dies:
+        sys.stderr.write("mux_client_request_session: read from master failed: Broken pipe\n")
+        sys.exit(255)
+    sys.exit(code)
 ''')
 
 
@@ -104,6 +123,17 @@ class AgentLikeFake(pc.AgentTransport):
         self._count("remove_shard")
         shutil.rmtree(out, ignore_errors=True)
         self.files.pop(command_path, None)
+
+    def storage_id(self):
+        self._count("storage_id")
+        return "0" * 32
+
+    def remove_owned(self, remote, digest):
+        self._count("remove_pin")
+        if self.files.get(remote) != digest:
+            return "not-owned"
+        del self.files[remote]
+        return "removed"
 
 
 def types_namespace(**fields):
@@ -252,6 +282,20 @@ class RequestsPerShardTests(OverheadCase):
         self.assertIn(str(leaf), fake.files)
         self.assertNotIn("pins-rechecked", [e["event"] for e in receipt["events"]], "asked, not refused")
 
+    def test_an_input_replaced_with_other_bytes_fails_its_host_over(self):
+        hosts = [self.host("a"), self.host("b")]
+        dispatcher = self.dispatcher(hosts)
+        fakes = {h.name: AgentLikeFake(h, self.counts) for h in hosts}
+        dispatcher.transports.update(fakes)
+        dispatcher.collect(self.iteration(1), fake_merge)
+        fakes["a"].files[str(self.opponent)] = "f" * 64  # another file at the pinned path
+        receipt = dispatcher.collect(self.iteration(2), fake_merge)
+        self.assertEqual(receipt["merged"]["slots"], self.expected())
+        self.assertEqual(receipt["failed_hosts"], ["a"])
+        self.assertTrue(any(e["event"] == "host-failed" and "exists with other bytes" in e["error"]
+                            for e in receipt["events"]))
+        self.assertEqual(fakes["a"].files[str(self.opponent)], "f" * 64, "never replaced")
+
     def test_shell_and_local_hosts_ask_again_every_collection(self):
         config = {"hosts": [pc.Host(name="l", kind="local", collector="/bin/l", collector_sha256="c" * 64,
                                     workers=2, weight=1.0, scratch=str(self.root / "scratch-l"), arch="x86")]}
@@ -268,18 +312,23 @@ class RequestsPerShardTests(OverheadCase):
         self.assertEqual(sum(1 for p in asked if (str(self.opponent), pc.sha256_file(self.opponent)) in p), 2)
 
 
+@unittest.skipUnless(os.name == "posix", "the fake mux ssh probes and kills processes by pid (/proc)")
 class ReusedConnectionTests(OverheadCase):
     def mux_host(self, name, arch="x86"):
         state = self.root / f"mux-{name}"
         state.mkdir()
         return self.host(name, arch, MUX_SSH, state), state
 
+    @staticmethod
+    def masters(state):
+        log = state / "masters"
+        return [int(line) for line in log.read_text().split()] if log.exists() else []
+
     def tearDown(self):
         for state in self.root.glob("mux-*"):
-            pid = state / "master.pid"
-            if pid.exists():
+            for pid in self.masters(state):
                 try:
-                    os.kill(int(pid.read_text()), 9)
+                    os.kill(pid, 9)
                 except OSError:
                     pass
         super().tearDown()
@@ -291,36 +340,33 @@ class ReusedConnectionTests(OverheadCase):
         receipt = dispatcher.collect(self.iteration(1), fake_merge)
         self.assertLess(time.monotonic() - started, 30, "no call waited for the master to exit")
         self.assertEqual(receipt["merged"]["slots"], self.expected())
-        self.assertTrue((state / "master.pid").exists())
+        self.assertEqual(len(self.masters(state)), 1, "every call of the update rode one master")
 
     def test_a_master_dying_mid_update_fails_the_host_over_and_is_replaced_next_time(self):
         (a, state_a), (b, _) = self.mux_host("a"), self.mux_host("b")
         dispatcher = self.dispatcher([a, b])
         dispatcher.collect(self.iteration(1), fake_merge)
-        original_run = CountingAgentTransport.run
-
-        def run_then_die(transport, argv, timeout):
-            if transport.host.name == "a":
-                (state_a / "DEAD").write_text("")  # the master dies under the running request's peers
-                raise RuntimeError("a: agent run_shard: mux_client_request_session: read from master failed")
-            return original_run(transport, argv, timeout)
-
-        with mock.patch.object(CountingAgentTransport, "run", run_then_die):
-            receipt = dispatcher.collect(self.iteration(2), fake_merge)
+        first = self.masters(state_a)
+        (state_a / "KILL_DURING_RUN").write_text("")  # the master dies while a's run_shard is in flight
+        receipt = dispatcher.collect(self.iteration(2), fake_merge)
         self.assertEqual(receipt["merged"]["slots"], self.expected())
         self.assertEqual(receipt["failed_hosts"], ["a"])
         self.assertEqual([s[3] for s in receipt["shards"]], ["b", "b"])
-        self.assertTrue(any(e["event"] == "scratch-cleanup-failed" and e["host"] == "a" for e in receipt["events"]))
+        self.assertTrue(any(e["event"] == "host-failed" and "read from master failed" in e["error"]
+                            for e in receipt["events"]))
         self.assertNotIn("a", dispatcher.known, "a failed host's pin knowledge is dropped")
-        (state_a / "DEAD").unlink()  # the next call starts a new master
-        (state_a / "master.pid").unlink()
+        self.assertNotIn("a", dispatcher.earlier)
+        replaced = self.masters(state_a)
+        self.assertEqual(len(replaced), 2, "the failed run's cleanup started a new master")
+        self.assertTrue(self.scratch_empty(a), "the failed run's shard was removed through the new master")
         self.counts.clear()
         receipt = dispatcher.collect(self.iteration(3), fake_merge)
         self.assertEqual(receipt["merged"]["slots"], self.expected())
         self.assertEqual(receipt["failed_hosts"], [])
-        self.assertEqual(self.counts["a"][0], "pin_status")
-        # The stale shard of the dead update is gone or left only on the failed host's scratch.
-        self.assertTrue(self.scratch_empty(b))
+        self.assertEqual(self.counts["a"][0], "pin_status", "its inputs are asked again")
+        self.assertEqual(self.masters(state_a), replaced, "the new master serves the next update")
+        self.assertNotEqual(replaced[1], first[0])
+        self.assertTrue(self.scratch_empty(a) and self.scratch_empty(b))
 
 
 class ConcurrentAuditTests(unittest.TestCase):
@@ -397,11 +443,15 @@ class LearnerSideTests(unittest.TestCase):
     def test_a_known_hash_is_taken_again_once_the_file_changes(self):
         path = self.root / "input.bin"
         path.write_bytes(b"first")
+        with mock.patch.object(pc, "sha256_file", wraps=pc.sha256_file) as hashed:
+            pc.sha256_file_known(path)
+            pc.sha256_file_known(path)
+        self.assertEqual(hashed.call_count, 2, "a file changed within the clock's tick is never remembered")
+        time.sleep(0.06)
         self.assertEqual(pc.sha256_file_known(path), pc.sha256_file(path))
         with mock.patch.object(pc, "sha256_file", side_effect=AssertionError("rehashed")):
             self.assertEqual(pc.sha256_file_known(path), pc.sha256_file_known(path))
-        time.sleep(0.01)
-        path.write_bytes(b"second, longer")
+        path.write_bytes(b"other")  # same size, at once
         self.assertEqual(pc.sha256_file_known(path), pc.sha256_file(path))
 
     def test_a_local_shard_moves_into_staging(self):

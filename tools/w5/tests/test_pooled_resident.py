@@ -88,8 +88,7 @@ class ResidentCase(unittest.TestCase):
         self.hosts_path.write_text(json.dumps({"schema": pc.SCHEMA, "merge_binary": str(merge), "hosts": hosts,
                                                "audit": {"every": 2, "episodes": 2}}))
 
-    def tearDown(self):
-        shutil.rmtree(self.root, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.root, True)  # runs after the servers' own cleanups
 
     def command(self, iteration, run="run"):
         command = {"mode": "collect_parallel", "workers": 4, "episodes": self.episodes,
@@ -202,16 +201,11 @@ class ResidentServiceTests(ResidentCase):
     def test_a_client_that_never_commits_starts_nothing(self):
         server, _ = self.start_server()
         path = self.command(1)
-        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        conn.connect(str(self.sockets / pc.RESIDENT_SOCKET))
-        pc._send_line(conn, {"schema": pc.RESIDENT_SCHEMA, "command": str(path), "hosts": str(self.hosts_path),
-                             "hosts_sha256": pc._file_sha256(str(self.hosts_path)),
-                             "source_sha256": pc._file_sha256(os.path.realpath(pc.__file__))})
-        self.assertEqual(pc._read_line(conn), {"ready": True})
-        conn.close()  # gone before "go"
+        self.assertEqual(self.request(path), {"ready": True})  # gone before "go"
         time.sleep(0.5)
         self.assertFalse((path.parent / "pooled-shards").exists())
         self.assertEqual(server.dispatcher.collections, 0)
+        self.assertEqual(server.committed, 0)
 
     def test_the_socket_directory_is_private_and_served_once(self):
         self.sockets.mkdir(parents=True)
@@ -295,26 +289,122 @@ class ResidentServiceTests(ResidentCase):
         self.assertIn("mode 700", text)
 
     def test_pin_knowledge_and_retention_carry_across_updates(self):
+        from test_pooled_dispatch_overhead import AgentLikeFake  # noqa: E402  (an in-memory agent host)
+        scratch = self.root / "scratch-agent"
+        scratch.mkdir()
         hosts = [pc.Host(name="a", kind="ssh", collector="/bin/a", collector_sha256="c" * 64, workers=2, weight=1.0,
-                         scratch=str(self.root / "scratch-fake"), arch="x86", ssh=["ssh", "a"], transport="agent",
-                         prune_pushed=True)]
-        transport = FakeTransport(hosts[0], {"/bin/a": "c" * 64})
+                         scratch=str(scratch), arch="x86", ssh=["ssh", "a"], transport="agent", prune_pushed=True)]
+        counts = {}
+        transport = AgentLikeFake(hosts[0], counts)
         asked = []
         real = transport.pin_status
         transport.pin_status = lambda pins: asked.append(sorted(p[0] for p in pins)) or real(pins)
         dispatcher = pc.Dispatcher({"hosts": hosts, "state_path": str(self.root / "pushed.json")}, {"a": transport})
         self.start_server(dispatcher=dispatcher, merge=fake_merge)
-        checkpoints = []
+        opponent = self.root / "learner" / "opponent.json"
+        opponent.write_bytes(b"fixed opponent")
+        checkpoints, receipts = [], []
         for iteration in (1, 2, 3):
             self.checkpoint = self.root / "learner" / f"checkpoint-{iteration}.json"
             self.checkpoint.write_bytes(b"policy %d" % iteration)
             checkpoints.append(str(self.checkpoint))
-            code, text = self.client(self.command(iteration))
+            path = self.command(iteration)
+            command = json.loads(path.read_text())
+            command["opponent"] = {"path": str(opponent), "sha256": pc.sha256_file(opponent)}
+            path.write_text(json.dumps(command))
+            code, text = self.client(path)
             self.assertEqual(code, 0, text)
-        self.assertEqual(asked, [["/bin/a"]] + [[c] for c in checkpoints], "only each new checkpoint is asked for")
-        self.assertTrue(wait_for(lambda: str(checkpoints[1]) not in transport.files))
-        self.assertNotIn(checkpoints[0], transport.files, "earlier checkpoints are pruned after the answer")
+            receipts.append(json.loads((path.parent / "pooled-shards" / "dispatch.json").read_text()))
+        self.assertEqual(asked, [sorted([checkpoints[0], str(opponent)]), [checkpoints[1]], [checkpoints[2]]],
+                         "the opponent is asked once; each new checkpoint once")
+        self.assertNotIn(checkpoints[0], transport.files)
+        self.assertNotIn(checkpoints[1], transport.files)
         self.assertIn(checkpoints[2], transport.files)
+        self.assertIn(str(opponent), transport.files)
+        for receipt, old in zip(receipts[1:], checkpoints):  # retention runs before the answer, in its receipt
+            self.assertIn({"event": "pruned", "host": "a", "path": old},
+                          [{k: e[k] for k in ("event", "host", "path")} for e in receipt["events"]
+                           if e["event"] == "pruned"])
+
+    def gated_server(self):
+        """A server whose collector runs wait for `release` (a collection in progress on demand)."""
+        release, running = threading.Event(), threading.Event()
+        hosts = pc.load_hosts(self.hosts_path)["hosts"]
+
+        class Gated(FakeTransport):
+            def run(self, argv, timeout):
+                running.set()
+                release.wait(30)
+                return super().run(argv, timeout)
+
+        transports = {h.name: Gated(h, {h.collector: h.collector_sha256}) for h in hosts}
+        dispatcher = pc.Dispatcher({"hosts": hosts}, transports)
+        server, thread = self.start_server(dispatcher=dispatcher, merge=fake_merge)
+        return server, thread, release, running
+
+    def commit_raw(self, path):
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.connect(str(self.sockets / pc.RESIDENT_SOCKET))
+        pc._send_line(conn, {"schema": pc.RESIDENT_SCHEMA, "command": str(path), "hosts": str(self.hosts_path),
+                             "hosts_sha256": pc._file_sha256(str(self.hosts_path)),
+                             "source_sha256": pc._file_sha256(os.path.realpath(pc.__file__)),
+                             "context": pc._resident_context()})
+        self.assertEqual(pc._read_line(conn), {"ready": True})
+        pc._send_line(conn, {"go": True})
+        return conn
+
+    def test_a_client_gone_after_its_commit_finishes_and_its_successor_is_served(self):
+        server, _, release, running = self.gated_server()
+        first = self.command(1)
+        self.commit_raw(first).close()  # the trainer killed after committing
+        self.assertTrue(running.wait(10))
+        outcome = {}
+        second = self.command(2)
+        waiter = threading.Thread(target=lambda: outcome.update(answer=self.client(second)))
+        waiter.start()
+        time.sleep(0.3)
+        self.assertNotIn("answer", outcome, "the successor waits for the running collection")
+        release.set()
+        waiter.join(30)
+        self.assertEqual(outcome["answer"][0], 0, outcome["answer"][1])
+        self.assertTrue((first.parent / "pooled-shards" / "dispatch.json").exists(), "the orphaned collection finished")
+        self.assertTrue((second.parent / "pooled-shards" / "dispatch.json").exists())
+
+    def test_a_stop_during_a_collection_answers_it_and_turns_new_clients_away_at_once(self):
+        server, thread, release, running = self.gated_server()
+        outcome = {}
+        first = self.command(1)
+        client = threading.Thread(target=lambda: outcome.update(answer=self.client(first)))
+        client.start()
+        self.assertTrue(running.wait(10))
+        (self.sockets / "STOP").write_text("")
+        self.assertTrue(wait_for(lambda: not (self.sockets / pc.RESIDENT_SOCKET).exists()),
+                        "the socket goes as soon as the server stops accepting")
+        started = time.monotonic()
+        code, text = self.client(self.command(2))
+        self.assertIsNone(code, "a new client falls back at once")
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertTrue(thread.is_alive(), "the server waits for the committed collection")
+        release.set()
+        client.join(30)
+        thread.join(30)
+        self.assertEqual(outcome["answer"][0], 0, outcome["answer"][1])
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(server.committed, 0)
+
+    def test_serve_refuses_a_bad_idle_time(self):
+        os.environ["MTG_POOLED_COLLECT_CONFIG"] = str(self.hosts_path)
+        try:
+            for idle in ("nan", "0", "-5", "soon"):
+                stderr = io.StringIO()
+                self.assertEqual(pc.serve_main(str(self.sockets), idle, stderr), 2)
+                self.assertIn("IDLE_SECONDS", stderr.getvalue())
+        finally:
+            del os.environ["MTG_POOLED_COLLECT_CONFIG"]
+
+    def test_a_request_that_is_no_iteration_command_is_refused(self):
+        self.start_server()
+        self.assertEqual(self.request(self.root / "--help")["reason"], "not an iteration's collect command")
 
 
 @unittest.skipUnless(POSIX, "unix sockets")
