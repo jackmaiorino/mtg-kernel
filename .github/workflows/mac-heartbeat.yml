@@ -17,7 +17,7 @@ jobs:
     name: Mac runner heartbeat
     # Scheduled runs use the default branch's file; a manual run only by an
     # account in MTG_CI_SELF_HOSTED_ACTORS (as in ci.yml).
-    if: github.event_name == 'schedule' || (startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor))
+    if: github.event_name == 'schedule' || (startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor))
     runs-on: [self-hosted, Linux, ARM64, fleet-mac-linux]
     timeout-minutes: 5
     steps:

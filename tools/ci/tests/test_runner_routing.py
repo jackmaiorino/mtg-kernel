@@ -20,10 +20,29 @@ def truthy(value):
     return value not in ("", None, False, 0)
 
 
+def number(value):
+    """GitHub's conversion for a loose comparison: null 0, booleans 1 and 0, strings parsed (NaN if not a number)."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (bool, int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip() or 0)
+        except ValueError:
+            return float("nan")
+    return float("nan")
+
+
 def equal(left, right):
     if isinstance(left, str) and isinstance(right, str):
         return left.lower() == right.lower()
-    return left == right
+    if isinstance(left, (list, dict)) or isinstance(right, (list, dict)):
+        return left is right
+    if type(left) is type(right):
+        return left == right
+    # Different primitive types compare as numbers: true == '1', null == '0', 100 == '1e2'.
+    return number(left) == number(right)
 
 
 class Evaluator:
@@ -87,15 +106,29 @@ class Evaluator:
                 arguments.append(self.either(resolve))
             self.take(")")
             # Parse skipped branches without evaluating any functions in them.
-            if token not in ("fromJSON", "format", "contains", "startsWith", "endsWith"):
+            if token not in ("fromJSON", "format", "contains", "startsWith", "endsWith", "join"):
                 raise ValueError(f"unsupported function {token}")
             return call(token, arguments) if resolve else None
         return self.context.get(token, "")
 
 
+def text(value):
+    """GitHub's string conversion of a primitive."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return value if isinstance(value, str) else ("Array" if isinstance(value, list) else "Object" if isinstance(value, dict) else str(value))
+
+
 def call(name, arguments):
     if name == "fromJSON":
         return json.loads(arguments[0])
+    if name == "join":
+        return arguments[1].join(text(element) for element in arguments[0]) if isinstance(arguments[0], list) \
+            else text(arguments[0])
     if name == "format":
         return re.sub(r"\{(\d+)\}", lambda match: str(arguments[1 + int(match.group(1))]), arguments[0])
     if isinstance(arguments[0], str):
@@ -149,7 +182,8 @@ UNLISTED = [event(actor="someone"), event("push", actor="someone"), event("workf
             event("push", actor="someone", triggering=OWNER)]
 BAD_LISTS = [event(**{"vars.MTG_CI_SELF_HOSTED_ACTORS": value})
              for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
-                           f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]')]
+                           f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]',
+                                   f'["{OWNER}","helper"]', f'["{OWNER}" , "helper"]')]
 
 class EvaluatorTests(unittest.TestCase):
     def test_operators_follow_github_semantics(self):
@@ -210,6 +244,18 @@ class RoutingTests(unittest.TestCase):
                         self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": "eternal",
                                                                  **untrusted, **EVERY_POOL}), system)
 
+    def test_a_non_string_member_never_admits_a_coerced_name(self):
+        # Array contains() compares loosely (true == '1', null == '0', 100 == '1e2'); the rejoin check refuses any
+        # list with a non-string member, so such a list admits nobody.
+        for value, actor in ((f'["{OWNER}", true]', "1"), (f'["{OWNER}", null]', "0"), (f'["{OWNER}", 100]', "1e2"),
+                             (f'["{OWNER}", 8]', "8")):
+            with self.subTest(value=value):
+                self.assertTrue(evaluate("contains(fromJSON(list), name)", list=value, name=actor))
+                for context in (event(triggering=actor), event()):
+                    self.assertEqual(self.route("ubuntu-24.04", "eternal",
+                                                **{**context, **EVERY_POOL, "vars.MTG_CI_SELF_HOSTED_ACTORS": value}),
+                                     "ubuntu-24.04")
+
     def test_a_bracketed_invalid_list_fails_closed(self):
         # GitHub fails the job when fromJSON cannot parse, before any runner takes it. A fork pull request
         # never parses the list, so it stays hosted.
@@ -226,8 +272,10 @@ class RoutingTests(unittest.TestCase):
         condition, = re.findall(r"^    if: (.+)$", text, re.MULTILINE)
         self.assertTrue(evaluate(condition, **{"github.event_name": "schedule"}))
         self.assertTrue(evaluate(condition, **event("workflow_dispatch")))
-        for untrusted in (event("workflow_dispatch", actor="someone"),
-                          event("workflow_dispatch", **{"vars.MTG_CI_SELF_HOSTED_ACTORS": ""})):
+        self.assertTrue(evaluate(condition, **event("workflow_dispatch", actor="helper")))
+        for untrusted in (event("workflow_dispatch", actor="someone"), event("workflow_dispatch", triggering="someone"),
+                          event("workflow_dispatch", **{"vars.MTG_CI_SELF_HOSTED_ACTORS": ""}),
+                          event("workflow_dispatch", **{"vars.MTG_CI_SELF_HOSTED_ACTORS": f'["{OWNER}", 1]'})):
             self.assertFalse(evaluate(condition, **untrusted))
 
     def test_pull_request_windows_groups_follow_the_budget_output(self):
@@ -255,6 +303,8 @@ class RoutingTests(unittest.TestCase):
                          {"steps.checks.outputs.checks": "workflow"},
                          {"github.event_name": "workflow_dispatch"},
                          {"github.actor": "contributor"},
+                         {"github.triggering_actor": "contributor"},
+                         {"vars.MTG_CI_SELF_HOSTED_ACTORS": ""},
                          {"github.event.pull_request.head.repo.full_name": "someone/fork"}):
             with self.subTest(override=override):
                 self.assertFalse(evaluate(condition, **{**context, **override}))
