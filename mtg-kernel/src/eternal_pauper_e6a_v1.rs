@@ -1342,10 +1342,6 @@ fn active_global_fogs(state: &GameState) -> impl Iterator<Item = &FogV1> {
         .filter(move |fog| fog.turn == turn && fog.active_player == active)
 }
 
-pub(crate) fn has_active_global_fog(state: &GameState) -> bool {
-    active_global_fogs(state).next().is_some()
-}
-
 /// These global fogs remain applicable to every portion of this source's
 /// damage; choosing one does not consume any finite prevention resource.
 pub(crate) fn global_prevents_damage(state: &GameState, damage: &DamageProposed) -> bool {

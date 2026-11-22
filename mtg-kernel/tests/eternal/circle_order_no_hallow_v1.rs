@@ -70,7 +70,9 @@ fn confinement_can_save_the_exact_circle_for_damage_after_it_leaves_both_seats()
         menu(&mut start, actor, pillar, 2);
         for option in 0..2 {
             let mut state = restored(&start);
-            choose_public(&mut state, actor, pillar, option, 2);
+            super::prevention_order_no_hallow_v1::choose_public_with_shroud_refusal(
+                &mut state, actor, pillar, option, 2,
+            );
             settled(&mut state);
             assert_eq!(state.objects.get(confinement).zone, Zone::Graveyard);
             assert_eq!(life(&state, actor), 20);

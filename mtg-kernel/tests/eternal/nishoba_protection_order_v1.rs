@@ -158,3 +158,39 @@ fn bare_phantom_can_keep_its_counter_with_fog_strands_or_maze_both_seats() {
         }
     }
 }
+
+#[test]
+fn a_forced_single_redirect_exposes_the_destinations_counter_choice_both_seats() {
+    for caster in [P0, P1] {
+        let owner = caster.opponent();
+        let (mut start, phantom) = board(caster, true);
+        let nomads = put(&mut start, owner, "Nomads en-Kor", Zone::Battlefield);
+        super::give_priority(&mut start, owner);
+        super::activate(&mut start, nomads, 0, &[Target::Object(phantom)]);
+        settled(&mut start);
+        super::give_priority(&mut start, caster);
+        let dart = put(&mut start, caster, "Lava Dart", Zone::Hand);
+        pool(&mut start, caster, &[ManaColor::R], 0);
+        cast(&mut start, dart, &[Target::Object(nomads)]);
+        assert!(
+            matches!(settle(&mut start), Some(Decision::ChooseEffectOption {
+            player, source, option_count: 2,
+        }) if player == owner && source == dart)
+        );
+        for (option, expected) in [(0, 7), (1, 6)] {
+            let mut branch = restored(&start);
+            super::prevention_order_no_hallow_v1::choose_public(
+                &mut branch,
+                owner,
+                dart,
+                option,
+                2,
+            );
+            settled(&mut branch);
+            assert_eq!(counters(&branch, phantom), expected);
+            assert_eq!(branch.objects.get(nomads).zone, Zone::Battlefield);
+            assert_eq!(branch.objects.get(nomads).damage, 0);
+            assert_eq!(branch.objects.get(dart).zone, Zone::Graveyard);
+        }
+    }
+}
