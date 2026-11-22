@@ -45,6 +45,8 @@ POOLED_LINEAGE_STAGE1_SOURCE = "237c39ed5f8e99db9b2eecc80fc37b5c5cac5fa6"
 POOLED_LINEAGE_STAGE1_REVIEWED_SOURCE = "7bec154586c9548bf4ca5b3bbe0806c185f1ded5"
 # The release head after the merge of PR 874 on release/mull-c5719e1cf, for the fast pooled lineage (this guard branch only).
 POOLED_FAST_RELEASE_HEAD_SOURCE = "cf36c1a14f00496480d1e20a47db1fe80b634f26"
+# Pooled collection, stage 3 trainer (draft PR 885 on release/mull-c5719e1cf), a proof build for bit-identity rows (this guard branch only).
+POOLED_STAGE3_PROOF_SOURCE = "dbfac6359f761f12424681b237227f4fb7055293"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -69,6 +71,7 @@ SOURCES = (
     POOLED_LINEAGE_STAGE1_SOURCE,
     POOLED_LINEAGE_STAGE1_REVIEWED_SOURCE,
     POOLED_FAST_RELEASE_HEAD_SOURCE,
+    POOLED_STAGE3_PROOF_SOURCE,
 )
 # The image follows the host (this guard branch only): the amd64 image for the portable x86-64 build (unchanged),
 # and on an arm64 hosted runner the linux/arm64 member of the python:3.12-slim-bookworm index 935c3c5b... that the
