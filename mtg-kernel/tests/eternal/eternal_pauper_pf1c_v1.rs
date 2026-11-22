@@ -1562,11 +1562,7 @@ fn compound_retrace_deprive_returns_then_discards_the_same_land() {
     assert_eq!(zone(&state, deprive), Zone::Graveyard);
 }
 
-fn retrace_alternative_fixture(
-    player: PlayerId,
-    active: PlayerId,
-    name: &str,
-) -> (GameState, ObjectId, Option<ObjectId>) {
+fn retrace_game_on_turn(player: PlayerId, active: PlayerId) -> GameState {
     let mut state = game_for(&["Plains"; 20], player);
     retrace_emblem(&mut state);
     if active != player {
@@ -1576,6 +1572,15 @@ fn retrace_alternative_fixture(
             |_, _| None,
         );
     }
+    state
+}
+
+fn retrace_alternative_fixture(
+    player: PlayerId,
+    active: PlayerId,
+    name: &str,
+) -> (GameState, ObjectId, Option<ObjectId>) {
+    let mut state = retrace_game_on_turn(player, active);
     let spell = put(&mut state, player, name, Zone::Graveyard);
     let bolt = (name != "Gush").then(|| {
         let opponent = player.opponent();
@@ -1677,6 +1682,145 @@ fn retrace_pitch_alternative(name: &str, pitch_count: usize, life_cost: i32) {
             }
             assert_eq!(state, restored);
         }
+    }
+}
+
+#[test]
+fn retrace_foil_reserves_a_third_card_for_the_land_discard() {
+    for player in [P0, P1] {
+        let (mut base, foil, bolt) = retrace_alternative_fixture(player, player, "Foil");
+        let bolt = bolt.unwrap();
+        let forest = put(&mut base, player, "Forest", Zone::Hand);
+        let mut only_two = base.clone();
+        put(&mut only_two, player, "Island", Zone::Hand);
+        assert!(!castable(&mut only_two, foil));
+        let other = put(&mut base, player, "Opt", Zone::Hand);
+        let mut no_island = base.clone();
+        put(&mut no_island, player, "Mountain", Zone::Hand);
+        assert!(!castable(&mut no_island, foil));
+        let island = put(&mut base, player, "Island", Zone::Hand);
+        for route_first in [false, true] {
+            let mut state = base.clone();
+            cast(&mut state, foil, &[Target::Object(bolt)]);
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption {
+                    option_count: 2,
+                    ..
+                }
+            ));
+            act(
+                &mut state,
+                Action::ChooseEffectOption(u16::from(route_first)),
+            );
+            let picks = if route_first {
+                [forest, island, other]
+            } else {
+                [island, other, forest]
+            };
+            for pick in picks {
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseCostTargets { cost_kind: CostKind::DiscardCards, candidates, .. } if candidates == [pick])
+                );
+                payment_pick(&mut state, CostKind::DiscardCards, pick);
+            }
+            settled(&mut state);
+            for card in [foil, bolt, island, other, forest] {
+                assert_eq!(zone(&state, card), Zone::Graveyard);
+            }
+            assert_eq!(life(&state, player), 20);
+        }
+    }
+}
+
+#[test]
+fn retrace_mine_collapse_sacrifices_a_mountain_only_on_its_controllers_turn() {
+    for player in [P0, P1] {
+        for active in [player, player.opponent()] {
+            let mut state = retrace_game_on_turn(player, active);
+            if active != player {
+                act(&mut state, Action::Pass);
+            }
+            let spell = put(&mut state, player, "Mine Collapse", Zone::Graveyard);
+            let wall = put(
+                &mut state,
+                player.opponent(),
+                "Wall of Roots",
+                Zone::Battlefield,
+            );
+            let furnace = put(&mut state, player, "Great Furnace", Zone::Battlefield);
+            state.objects.get_mut(furnace).tapped = true;
+            let land = put(&mut state, player, "Island", Zone::Hand);
+            assert!(!castable(&mut state, spell));
+            let mountain = put(&mut state, player, "Mountain", Zone::Battlefield);
+            state.objects.get_mut(mountain).tapped = true;
+            assert_eq!(castable(&mut state, spell), active == player);
+            if active != player {
+                continue;
+            }
+            cast(&mut state, spell, &[Target::Object(wall)]);
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption {
+                    option_count: 2,
+                    ..
+                }
+            ));
+            act(&mut state, Action::ChooseEffectOption(1));
+            payment_pick(&mut state, CostKind::DiscardCards, land);
+            assert!(
+                matches!(next(&mut state),Decision::ChooseCostTargets{candidates,..} if candidates==[mountain])
+            );
+            payment_pick(&mut state, CostKind::SacrificePermanents, mountain);
+            settled(&mut state);
+            for card in [spell, land, mountain, wall] {
+                assert_eq!(zone(&state, card), Zone::Graveyard);
+            }
+            assert_eq!(zone(&state, furnace), Zone::Battlefield);
+        }
+    }
+}
+
+#[test]
+fn retrace_ramosian_rally_needs_a_plains_and_taps_an_untapped_creature() {
+    for player in [P0, P1] {
+        let mut state = retrace_game_on_turn(player, player);
+        let spell = put(&mut state, player, "Ramosian Rally", Zone::Graveyard);
+        let land = put(&mut state, player, "Plains", Zone::Hand);
+        let inspector = put(&mut state, player, "Thraben Inspector", Zone::Battlefield);
+        let opposing = put(
+            &mut state,
+            player.opponent(),
+            "Thraben Inspector",
+            Zone::Battlefield,
+        );
+        assert!(!castable(&mut state, spell));
+        let plains = put(&mut state, player, "Plains", Zone::Battlefield);
+        state.objects.get_mut(plains).tapped = true;
+        state.objects.get_mut(inspector).tapped = true;
+        assert!(!castable(&mut state, spell));
+        state.objects.get_mut(inspector).tapped = false;
+        cast(&mut state, spell, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(0));
+        assert!(
+            matches!(next(&mut state),Decision::ChooseCostTargets{candidates,..} if candidates==[inspector])
+        );
+        payment_pick(&mut state, CostKind::TapPermanents, inspector);
+        payment_pick(&mut state, CostKind::DiscardCards, land);
+        settled(&mut state);
+        assert!(state.objects.get(inspector).tapped);
+        assert_eq!(power_toughness(&state, inspector), (2, 3));
+        assert!(!state.objects.get(opposing).tapped);
+        assert_eq!(power_toughness(&state, opposing), (1, 2));
+        assert_eq!(zone(&state, land), Zone::Graveyard);
+        assert_eq!(zone(&state, spell), Zone::Graveyard);
     }
 }
 

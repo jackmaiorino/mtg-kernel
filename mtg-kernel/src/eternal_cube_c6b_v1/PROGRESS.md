@@ -5,12 +5,10 @@ Six extends the existing retrace permission and land-discard payment path.
 Compilation and test execution are reserved for the coordinator.
 
 Both cards are registered Full using the guide's existing-Full convention
-exception. Six inherits Wrenn and Six's retrace restrictions: another
-graveyard permission takes precedence, and a quote needing two independent
-object-cost selections is not offered (for example land discard plus
-Solitude's pitch-evoke or Abhorrent Oculus's graveyard-exile cost).
-Wrenn's emblem shares this limitation for Force of Will. Native
-flashback/escape routes retain the same precedence as with Wrenn.
+exception. Six shares Wrenn and Six's retrace payment path. The #858
+casting changes support the land discard alongside Abhorrent Oculus's
+graveyard exile, Solitude's pitch-evoke cost and, for Wrenn's emblem,
+Force of Will's pitch cost. Retrace with delve remains withheld.
 
 The announced Six cast stores its exact stack incarnation, following
 Underworld Breach's announced-escape record, so source removal cannot
