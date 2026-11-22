@@ -363,5 +363,67 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("matrix.group == env.MTG_CI_BUILD_GROUP", block)
 
 
+MAC_POOL = ["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]
+MAC_JOBS = ("rust-test-groups", "rust-limited-groups", "python-tests")
+
+
+class MacRoutingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.expressions = runs_on_expressions()
+
+    def route(self, job, system, group, **context):
+        return evaluate(self.expressions[job], **{"matrix.os": system, "matrix.group": group, **context})
+
+    def test_chosen_linux_groups_go_to_the_mac_for_owner_events_only(self):
+        chosen = {"needs.detect-changes.outputs.mac_groups": '["limited-only", "standard", "python-shard-0"]'}
+        for job, group in (("rust-test-groups", "standard"), ("rust-limited-groups", "limited-only"),
+                           ("python-tests", "python-shard-0")):
+            with self.subTest(job=job):
+                for trusted in (event(), event("push"), event("workflow_dispatch")):
+                    self.assertEqual(self.route(job, "ubuntu-24.04", group, **trusted, **chosen), MAC_POOL)
+                for untrusted in (event(head="someone/fork"), event(actor="someone"), event("push", actor="someone"),
+                                  event("workflow_dispatch", actor="github-actions[bot]")):
+                    self.assertEqual(self.route(job, "ubuntu-24.04", group, **untrusted, **chosen), "ubuntu-24.04")
+                # A group detect-changes did not choose, or no choice at all, stays hosted.
+                self.assertEqual(self.route(job, "ubuntu-24.04", group + "-x", **event(), **chosen), "ubuntu-24.04")
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event()), "ubuntu-24.04")
+                # The Mac never takes a Windows row.
+                self.assertEqual(self.route(job, "windows-2025", group, **event(), **chosen), "windows-2025")
+
+    def test_the_mac_comes_before_the_linux_pool(self):
+        both = {"needs.detect-changes.outputs.mac_groups": '["eternal"]', "vars.MTG_CI_LINUX_GROUPS": '["eternal"]',
+                "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)}
+        self.assertEqual(self.route("rust-test-groups", "ubuntu-24.04", "eternal", **event(), **both), MAC_POOL)
+
+    def test_the_mac_step_runs_for_owner_events_from_this_repository_only(self):
+        block = job_block("detect-changes", "rust-quality")
+        step = block[block.index("      - name: Choose the Mac groups"):]
+        self.assertIn("if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == "
+                      "github.repository) && github.actor == github.repository_owner && vars.MTG_CI_MAC_GROUPS != ''\n",
+                      step)
+        self.assertIn("timeout-minutes: 2\n        continue-on-error: true\n", step)
+        self.assertIn("run: python3 tools/ci/mac_route.py", step)
+        self.assertIn("mac_groups: ${{ steps.mac.outputs.groups }}", block)
+
+    def test_every_eligible_group_is_a_linux_row(self):
+        detect = job_block("detect-changes", "rust-quality")
+        (line,) = [line for line in detect.splitlines() if "MAC_ELIGIBLE:" in line]
+        eligible = json.loads(line.split("MAC_ELIGIBLE:", 1)[1].strip().strip("'"))
+        rows = set(matrix_groups(job_block("rust-test-groups", "limited-build"))) - {"native-store-1"}
+        rows |= set(matrix_groups(job_block("rust-limited-groups", "rust-tests")))
+        rows |= {"python-shard-0", "python-shard-1"}
+        self.assertTrue(eligible)
+        self.assertLessEqual(set(eligible), rows)
+
+    def test_python_shards_carry_their_group_names(self):
+        block = job_block("python-tests", "hosted-fallback")
+        for shard in (0, 1, 2):
+            self.assertIn(f"- {{shard: {shard}, group: python-shard-{shard}}}", block)
+        # An arm64 runner builds its own binaries instead of the shared x86-64 ones.
+        self.assertIn("if: runner.arch == 'ARM64'", block)
+        self.assertEqual(block.count("if: runner.arch != 'ARM64'"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
