@@ -10,6 +10,82 @@ use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
 use mtg_kernel::rl::{observe_policy_v5, policy_legal_action_candidates_v5, ActionSemanticV1};
 use mtg_kernel::state::Step;
 
+// W1 automatically used the Circle on Jackal Pup before it offered the saved
+// choice for Hallowed Ball Lightning. A fresh operation now offers Pup first.
+#[test]
+fn w1_fog_keeps_the_later_hallowed_attacker_before_the_circle_global_frontier() {
+    let state: GameState = serde_json::from_reader(flate2::read::GzDecoder::new(
+        &include_bytes!("../fixtures/hallow_combat_16ef09699.json.gz")[..],
+    ))
+    .unwrap();
+    let pending = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_ref()
+        .unwrap();
+    let ball = pending.choice.damage.source;
+    assert_eq!(state.objects.get(ball).name, "Ball Lightning");
+    assert!(serde_json::to_value(pending)
+        .unwrap()
+        .get("circle_global_order")
+        .is_none());
+    for (option, total, old_hash) in [
+        (0, 26, 2_038_007_262_687_466_995),
+        (1, 20, 13_281_683_953_369_186_478),
+    ] {
+        let mut branch = restored(&state);
+        choose_public(&mut branch, P1, ball, option, 2);
+        assert!(combat_choice(&mut branch).is_none());
+        assert_eq!((life(&branch, P1), shields(&branch)), (total, 0));
+        assert_eq!(branch.state_hash(), old_hash);
+    }
+
+    let mut fresh = (*pending.original).clone();
+    let Some(Decision::ChooseEffectOption {
+        player: P1,
+        source: pup,
+        option_count: 2,
+    }) = combat_choice(&mut fresh)
+    else {
+        panic!("fresh combat should offer the Circle and fog on Jackal Pup");
+    };
+    assert_eq!(fresh.objects.get(pup).name, "Jackal Pup");
+    assert!(
+        fresh
+            .engine
+            .linked_aura_operation_v1
+            .pending_hallow_v1
+            .as_ref()
+            .unwrap()
+            .circle_global_order
+    );
+
+    let mut unstamped = fresh.clone();
+    unstamped
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_mut()
+        .unwrap()
+        .circle_global_order = false;
+    for (saved, stamped) in [(fresh, true), (unstamped, false)] {
+        let mut branch = restored(&saved);
+        choose_public(&mut branch, P1, pup, 0, 2);
+        let next = branch
+            .engine
+            .linked_aura_operation_v1
+            .pending_hallow_v1
+            .as_ref()
+            .unwrap();
+        assert_eq!(next.choice.damage.source, ball);
+        assert_eq!(next.circle_global_order, stamped);
+        let mut branch = restored(&branch);
+        choose_public(&mut branch, P1, ball, 0, 2);
+        assert!(combat_choice(&mut branch).is_none());
+    }
+}
+
 fn global_prevention(state: &mut GameState, player: PlayerId, name: &str, color: ManaColor) {
     give_priority(state, player);
     let spell = put(state, player, name, Zone::Hand);

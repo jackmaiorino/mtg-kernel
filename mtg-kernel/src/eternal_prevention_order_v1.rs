@@ -22,6 +22,7 @@ fn has_color_prevention(state: &GameState) -> bool {
 /// replay. No matching Circle/global prevention leaves the old path intact.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
+        && !crate::linked_aura_operation_v1::legacy_hallow_only_v1()
         && !cannot_prevent(state)
         && circles::has_live_circle_shield(state)
         && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
@@ -52,7 +53,8 @@ fn cannot_prevent(state: &GameState) -> bool {
 }
 
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
-    damage.amount > 0
+    !crate::linked_aura_operation_v1::legacy_hallow_only_v1()
+        && damage.amount > 0
         && circles::circle_shield_position(state, damage).is_some()
         && !cannot_prevent(state)
         && full_prevention(state, damage)
