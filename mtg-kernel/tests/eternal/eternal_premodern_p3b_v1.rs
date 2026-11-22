@@ -11,36 +11,46 @@ use mtg_kernel::eternal_premodern_p3b_v1::{read_state, statics};
 use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
+use mtg_kernel::premodern_ordered_public_v1::{self, FullTextProgramV1, ProducerStageV1};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
+
+fn cast_engineered_plague(
+    state: &mut GameState,
+    player: PlayerId,
+    named_type: Subtype,
+) -> ObjectId {
+    let option = statics::plague_type_options()
+        .iter()
+        .position(|subtype| subtype.same_subtype_as(named_type))
+        .unwrap();
+
+    let plague = put(state, player, "Engineered Plague", Zone::Hand);
+    pool(state, player, &[ManaColor::B], 2);
+    cast(state, plague, &[]);
+    assert!(matches!(
+        settle(state),
+        Some(Decision::ChooseEffectOption { player: chooser, source, .. })
+            if chooser == player && source == plague
+    ));
+    act(state, Action::ChooseEffectOption(option as u16));
+    settled(state);
+    assert_eq!(zone(state, plague), Zone::Battlefield);
+    assert_eq!(
+        statics::plague_chosen_type(state, plague),
+        Some(statics::plague_type_options()[option])
+    );
+    plague
+}
 
 fn volrath_monk_realist_and_engineered_plague(player: PlayerId, named_type: Subtype) {
     let mut state = islands();
     state.active_player = player;
     state.priority_player = player;
     state.engine.runtime_rules = RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1;
-    let option = statics::plague_type_options()
-        .iter()
-        .position(|subtype| subtype.same_subtype_as(named_type))
-        .unwrap();
-
-    let plague = put(&mut state, player, "Engineered Plague", Zone::Hand);
-    pool(&mut state, player, &[ManaColor::B], 2);
-    cast(&mut state, plague, &[]);
-    assert!(matches!(
-        settle(&mut state),
-        Some(Decision::ChooseEffectOption { player: chooser, source, .. })
-            if chooser == player && source == plague
-    ));
-    act(&mut state, Action::ChooseEffectOption(option as u16));
-    settled(&mut state);
-    assert_eq!(zone(&state, plague), Zone::Battlefield);
-    assert_eq!(
-        statics::plague_chosen_type(&state, plague),
-        Some(statics::plague_type_options()[option])
-    );
+    let plague = cast_engineered_plague(&mut state, player, named_type);
 
     let donor = put(&mut state, player, "Monk Realist", Zone::Graveyard);
     let source = put(&mut state, player, "Volrath's Shapeshifter", Zone::Hand);
@@ -85,6 +95,141 @@ fn volrath_monk_realist_trigger_survives_sba_in_p0() {
 #[test]
 fn volrath_monk_realist_trigger_survives_sba_in_p1() {
     volrath_monk_realist_and_engineered_plague(P1, Subtype::Human);
+}
+
+struct VolrathLegendChoice {
+    state: GameState,
+    plague: ObjectId,
+    source: ObjectId,
+    donor: ObjectId,
+    old_cradle: ObjectId,
+    new_cradle: ObjectId,
+}
+
+fn volrath_at_simultaneous_legend_choice(player: PlayerId) -> VolrathLegendChoice {
+    let mut state = islands();
+    let opponent = player.opponent();
+    state.active_player = opponent;
+    state.priority_player = opponent;
+    state.engine.runtime_rules = RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1;
+    let plague = cast_engineered_plague(&mut state, opponent, Subtype::Human);
+    let donor = put(&mut state, player, "Monk Realist", Zone::Graveyard);
+    let source = put(&mut state, player, "Volrath's Shapeshifter", Zone::Hand);
+    let old_cradle = put(&mut state, opponent, "Gaea's Cradle", Zone::Battlefield);
+    let new_cradle = put(&mut state, opponent, "Gaea's Cradle", Zone::Hand);
+    let show = put(&mut state, opponent, "Show and Tell", Zone::Hand);
+    pool(&mut state, opponent, &[ManaColor::U], 2);
+    cast(&mut state, show, &[]);
+
+    for (chooser, permanent) in [(opponent, new_cradle), (player, source)] {
+        let decision = settle(&mut state);
+        assert!(
+            matches!(
+                decision,
+                Some(Decision::ChooseEffectTargets { player, ref legal_targets, .. })
+                    if player == chooser && legal_targets.contains(&Target::Object(permanent))
+            ),
+            "{chooser:?}: {decision:?}"
+        );
+        assert_eq!(zone(&state, source), Zone::Hand);
+        assert_eq!(zone(&state, new_cradle), Zone::Hand);
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(permanent)),
+        );
+    }
+
+    let decision = settle(&mut state);
+    assert!(
+        matches!(
+            decision,
+            Some(Decision::ChooseLegendPermanent { player, ref candidates })
+                if player == opponent && candidates == &[old_cradle, new_cradle]
+        ),
+        "{opponent:?}: {decision:?}"
+    );
+    assert_eq!(zone(&state, old_cradle), Zone::Battlefield);
+    assert_eq!(zone(&state, new_cradle), Zone::Battlefield);
+    assert_eq!(zone(&state, source), Zone::Battlefield);
+    assert_eq!(power_toughness(&state, source), (0, 0));
+    assert_eq!(zone(&state, donor), Zone::Graveyard);
+    assert!(state
+        .engine
+        .event_history
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::FullTextTriggerCapturedV1 { .. })));
+    VolrathLegendChoice {
+        state,
+        plague,
+        source,
+        donor,
+        old_cradle,
+        new_cradle,
+    }
+}
+
+#[test]
+fn volrath_monk_realist_lki_survives_simultaneous_legend_choice() {
+    for player in [P0, P1] {
+        let VolrathLegendChoice {
+            mut state,
+            plague,
+            source,
+            old_cradle,
+            new_cradle,
+            ..
+        } = volrath_at_simultaneous_legend_choice(player);
+        act(&mut state, Action::ChooseLegendPermanent(new_cradle));
+        let decision = settle(&mut state);
+        assert_eq!(zone(&state, new_cradle), Zone::Battlefield);
+        assert_eq!(zone(&state, old_cradle), Zone::Graveyard);
+        assert_eq!(zone(&state, source), Zone::Graveyard);
+        assert!(
+            matches!(
+                decision,
+                Some(Decision::ChooseTargets { player: chooser, spell, ref legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&Target::Object(plague))
+            ),
+            "{player:?}: {decision:?}"
+        );
+        act(&mut state, Action::ChooseTarget(Target::Object(plague)));
+        settled(&mut state);
+        assert_eq!(zone(&state, plague), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn volrath_monk_realist_producer_is_public_during_legend_choice() {
+    for player in [P0, P1] {
+        let VolrathLegendChoice {
+            state,
+            source,
+            donor,
+            ..
+        } = volrath_at_simultaneous_legend_choice(player);
+        for viewer in [P0, P1] {
+            let observation = premodern_ordered_public_v1::observe(&state, viewer).unwrap();
+            let [producer] = observation.producers.as_slice() else {
+                panic!(
+                    "{player:?} viewed by {viewer:?}: {:?}",
+                    observation.producers
+                );
+            };
+            assert_eq!(
+                producer.stage,
+                ProducerStageV1::TriggerPending { ordinal: 0 }
+            );
+            assert_eq!(
+                producer.program,
+                FullTextProgramV1::MonkRealistDestroyEnchantment
+            );
+            assert_eq!(producer.physical.arena_id, source.0);
+            assert_eq!(producer.physical.controller, player.into());
+            assert_eq!(producer.physical.zone, Zone::Battlefield);
+            assert_eq!(producer.text_donor.arena_id, donor.0);
+            assert_eq!(producer.text_donor.zone, Zone::Graveyard);
+        }
+    }
 }
 
 const P3B_CARDS: [&str; 10] = [
