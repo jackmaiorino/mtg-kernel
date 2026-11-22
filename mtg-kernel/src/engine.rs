@@ -11876,7 +11876,7 @@ fn is_castable_with_cost_grant(
                 if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() {
                     return false;
                 }
-                spell_costs_v1::selected_spell_quote_v1(
+                spell_costs_v1::selected_spell_quote_with_grant_v1(
                     def,
                     id,
                     state.objects.get(id).zone,
@@ -11889,6 +11889,7 @@ fn is_castable_with_cost_grant(
                     player,
                     state,
                     &[],
+                    grant,
                 )
                 .is_some()
             };

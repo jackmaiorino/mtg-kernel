@@ -14,6 +14,7 @@ pub(super) struct Costs {
 #[derive(Clone, Copy)]
 enum Group {
     Component(CostComponent),
+    Alternative(&'static [CostComponent]),
     OptionalSacrifice(OptionalAdditionalCostDef),
 }
 
@@ -21,6 +22,7 @@ impl Group {
     fn component(self) -> Option<CostComponent> {
         match self {
             Self::Component(cost) => Some(cost),
+            Self::Alternative(components) => components.last().copied(),
             Self::OptionalSacrifice(_) => None,
         }
     }
@@ -73,6 +75,30 @@ impl Costs {
         mode: u8,
         x: u16,
     ) -> Option<Self> {
+        if method == CastMethodV4::Alternative && retrace {
+            // The alternative replaces the mana cost. Retrace is still an
+            // additional cost. Retain the entire alternative, including any life payment.
+            let components = def.alt_cost?.components;
+            let object_cost = match components {
+                [cost] | [CostComponent::PayLife(_), cost] => *cost,
+                _ => return None,
+            };
+            if def.additional_cost.is_some()
+                || !matches!(
+                    object_cost,
+                    CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+                        | CostComponent::ExileCardFromHandWithColorV1(_)
+                        | CostComponent::ExileCardsFromHandWithColorV1 { .. }
+                )
+            {
+                return None;
+            }
+            return Some(Self {
+                printed: Group::Alternative(components),
+                route: CostComponent::DiscardLandCardsV1(1),
+            });
+        }
         let route = match method {
             CastMethodV4::Escape => spell_costs_v1::escape_cost_v1(def, breach)?
                 .iter()
@@ -147,7 +173,9 @@ impl Costs {
                 return Some(costs);
             }
         }
-        def.additional_cost?;
+        if method != CastMethodV4::Alternative {
+            def.additional_cost?;
+        }
         if pending.cast_mode == Some(CastMode::Alternative)
             && crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, pending.origin_zone, method)
         {
@@ -230,9 +258,18 @@ impl Costs {
             self.route,
             CostComponent::ExileOtherCardsFromOwnGraveyard(_)
         );
+        let needs_permanents = self.pays_optional()
+            || matches!(
+                self.printed.component(),
+                Some(
+                    CostComponent::SacrificeControlled { .. }
+                        | CostComponent::SacrificeOtherControlledCreatures(_)
+                        | CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+                )
+            );
         if prefix.len() > self.count()
-            || (!self.printed_discard()
-                && !printed_exiles
+            || (needs_permanents
                 && state.players[player.index()].battlefield.len()
                     < usize::from(self.printed.count()))
         {
@@ -434,9 +471,12 @@ impl Costs {
         let seat = &state.players[pending.controller.index()];
         let mut candidates = match group.component() {
             Some(CostComponent::ExileOtherCardsFromOwnGraveyard(_)) => seat.graveyard.clone(),
-            Some(CostComponent::DiscardLandCardsV1(_) | CostComponent::DiscardCards(_)) => {
-                seat.hand.clone()
-            }
+            Some(
+                CostComponent::DiscardLandCardsV1(_)
+                | CostComponent::DiscardCards(_)
+                | CostComponent::ExileCardFromHandWithColorV1(_)
+                | CostComponent::ExileCardsFromHandWithColorV1 { .. },
+            ) => seat.hand.clone(),
             _ => Vec::new(),
         };
         if len >= first_count
@@ -474,11 +514,14 @@ impl Costs {
 fn count(group: CostComponent) -> u8 {
     match group {
         CostComponent::SacrificeControlled { count, .. }
+        | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, .. }
+        | CostComponent::ExileCardsFromHandWithColorV1 { count, .. }
         | CostComponent::SacrificeOtherControlledCreatures(count)
         | CostComponent::ExileOtherCardsFromOwnGraveyard(count)
         | CostComponent::DiscardCards(count)
         | CostComponent::DiscardLandCardsV1(count) => count,
-        CostComponent::ReturnControlledPermanentToOwnersHand(_) => 1,
+        CostComponent::ReturnControlledPermanentToOwnersHand(_)
+        | CostComponent::ExileCardFromHandWithColorV1(_) => 1,
         _ => unreachable!(),
     }
 }
@@ -491,8 +534,13 @@ fn kind(group: CostComponent) -> CostKind {
             ..
         } => CostKind::SacrificeCreatures,
         CostComponent::SacrificeControlled { filter, .. } => cost_kind_for_permanent_filter(filter),
-        CostComponent::ReturnControlledPermanentToOwnersHand(_) => CostKind::ReturnPermanentsToHand,
+        CostComponent::ReturnControlledPermanentToOwnersHand(_)
+        | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. } => {
+            CostKind::ReturnPermanentsToHand
+        }
         CostComponent::ExileOtherCardsFromOwnGraveyard(_) => CostKind::ExileFromGraveyard,
+        CostComponent::ExileCardFromHandWithColorV1(_)
+        | CostComponent::ExileCardsFromHandWithColorV1 { .. } => CostKind::ExileFromHandV1,
         CostComponent::DiscardLandCardsV1(_) | CostComponent::DiscardCards(_) => {
             CostKind::DiscardCards
         }
@@ -509,18 +557,16 @@ struct Context<'a> {
 impl Context<'_> {
     fn candidates(&self, state: &GameState, group: Group) -> Option<Vec<ObjectId>> {
         let player = self.player;
-        let group = match group {
-            Group::Component(cost) => cost,
-            Group::OptionalSacrifice(kind) => {
-                return Some(
-                    bargain_candidates(kind, player, state)
-                        .ok()?
-                        .into_iter()
-                        .map(|binding| binding.object)
-                        .collect(),
-                )
-            }
-        };
+        if let Group::OptionalSacrifice(kind) = group {
+            return Some(
+                bargain_candidates(kind, player, state)
+                    .ok()?
+                    .into_iter()
+                    .map(|binding| binding.object)
+                    .collect(),
+            );
+        }
+        let group = group.component()?;
         Some(match group {
             CostComponent::SacrificeControlled { filter, .. } => {
                 sacrificeable_controlled_permanents(player, filter, state, &[])
@@ -528,7 +574,8 @@ impl Context<'_> {
             CostComponent::SacrificeOtherControlledCreatures(_) => {
                 sacrificeable_other_controlled_creatures(player, self.source, state, &[])
             }
-            CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+            CostComponent::ReturnControlledPermanentToOwnersHand(filter)
+            | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { filter, .. } => {
                 return_permanent_cost_candidates(player, state, filter, &[])
                     .into_iter()
                     .map(|b| b.object)
@@ -549,6 +596,10 @@ impl Context<'_> {
                             })
                     })
                     .collect()
+            }
+            CostComponent::ExileCardFromHandWithColorV1(color)
+            | CostComponent::ExileCardsFromHandWithColorV1 { color, .. } => {
+                hand_exile_cost_candidates(player, self.source, color, state)
             }
             CostComponent::DiscardCards(_) => state.players[player.index()]
                 .hand
@@ -621,7 +672,18 @@ impl Context<'_> {
             }
             None
         }
-        fill(&candidates, needed, &mut prefix.to_vec(), &mut finish)
+        fill(&candidates, needed, &mut prefix.to_vec(), &mut |picks| {
+            if let Group::Alternative(components) = group {
+                validate_cost_component_choices_v1(
+                    state,
+                    self.player,
+                    self.source,
+                    components,
+                    &picks,
+                )?;
+            }
+            finish(picks)
+        })
     }
 
     fn canonicalize(&self, state: &GameState, group: Group, picks: &mut Vec<ObjectId>) {
@@ -640,27 +702,31 @@ impl Context<'_> {
 
     fn pay(&self, state: &mut GameState, group: Group, picks: &mut Vec<ObjectId>) {
         self.canonicalize(state, group, picks);
-        let Group::Component(group) = group else {
+        let Some(cost) = group.component() else {
             commit_sacrifice(state, picks);
             return;
         };
-        if matches!(group, CostComponent::DiscardCards(_)) {
+        if matches!(cost, CostComponent::DiscardCards(_)) {
             commit_discarded_cards(state, picks);
             return;
         }
         if matches!(
-            group,
+            cost,
             CostComponent::SacrificeControlled { .. }
                 | CostComponent::SacrificeOtherControlledCreatures(_)
         ) {
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_pauper_pf1c_v1::note_sacrifice_power(state, self.source, picks);
         }
+        let components = match group {
+            Group::Alternative(components) => components,
+            _ => std::slice::from_ref(&cost),
+        };
         let paid = commit_cost_components_from_plan_v1(
             state,
             self.player,
             self.source,
-            &[group],
+            components,
             picks,
             None,
         );

@@ -31,15 +31,18 @@ fn id(name: &str) -> u16 {
 /// A first main phase with P0 active and holding priority. Each library
 /// holds `library` in order, top first.
 fn game(library: &[&str]) -> GameState {
+    game_for(library, P0)
+}
+
+fn game_for(library: &[&str], player: PlayerId) -> GameState {
     let ids: Vec<u16> = library.iter().map(|name| id(name)).collect();
-    let mut state = GameState::new_from_libraries(
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
         &ids,
         &ids,
         |id| CARD_DEFS[id as usize].object_name.into(),
         0x5046_0000_0000 + 0x3163,
+        player,
     );
-    state.active_player = P0;
-    state.priority_player = P0;
     state.step = Step::Main1;
     state
 }
@@ -821,8 +824,9 @@ fn compound_escape_fling_sacrifices_then_exiles_the_same_card() {
 }
 
 fn retrace_emblem(state: &mut GameState) {
-    let wrenn = put(state, P0, "Wrenn and Six", Zone::Hand);
-    pool(state, P0, &[ManaColor::R, ManaColor::G], 0);
+    let player = state.active_player;
+    let wrenn = put(state, player, "Wrenn and Six", Zone::Hand);
+    pool(state, player, &[ManaColor::R, ManaColor::G], 0);
     cast(state, wrenn, &[]);
     settled(state);
     mtg_kernel::planeswalker_v1::change_loyalty(state, wrenn, 4);
@@ -1556,6 +1560,265 @@ fn compound_retrace_deprive_returns_then_discards_the_same_land() {
     settled(&mut state);
     assert_eq!(life(&state, P0), 20);
     assert_eq!(zone(&state, deprive), Zone::Graveyard);
+}
+
+fn retrace_alternative_fixture(
+    player: PlayerId,
+    name: &str,
+) -> (GameState, ObjectId, Option<ObjectId>) {
+    let mut state = game_for(&["Plains"; 20], player);
+    retrace_emblem(&mut state);
+    let spell = put(&mut state, player, name, Zone::Graveyard);
+    let bolt = (name != "Gush").then(|| {
+        let opponent = player.opponent();
+        state.priority_player = opponent;
+        let bolt = put(&mut state, opponent, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, opponent, &[ManaColor::R], 0);
+        cast(&mut state, bolt, &[Target::Player(player)]);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { player: holder, .. } if holder == opponent));
+        act(&mut state, Action::Pass);
+        bolt
+    });
+    (state, spell, bolt)
+}
+
+fn retrace_pitch_group(state: &mut GameState, kind: CostKind, picks: &[ObjectId], wrong: ObjectId) {
+    for (index, &pick) in picks.iter().enumerate() {
+        assert!(
+            matches!(next(state), Decision::ChooseCostTargets { remaining, .. }
+                if usize::from(remaining) == picks.len() - index)
+        );
+        let before = state.clone();
+        assert!(engine::step(state, Action::ChooseCostTarget(wrong)).is_err());
+        assert_eq!(*state, before);
+        payment_pick(state, kind, pick);
+    }
+}
+
+fn retrace_pitch_alternative(name: &str, pitch_count: usize, life_cost: i32) {
+    for player in [P0, P1] {
+        let (mut base, spell, bolt) = retrace_alternative_fixture(player, name);
+        let bolt = bolt.unwrap();
+        let red = put(&mut base, player, "Lightning Bolt", Zone::Hand);
+        let mut no_land = base.clone();
+        let land = put(&mut base, player, "Forest", Zone::Hand);
+        let other_land = put(&mut base, player, "Island", Zone::Hand);
+        let blue_names = ["Brainstorm", "Ponder", "Preordain"];
+        let mut blue = Vec::new();
+        for &card in &blue_names[..pitch_count] {
+            assert!(!castable(&mut base, spell), "{name}: too few blue cards");
+            blue.push(put(&mut base, player, card, Zone::Hand));
+            put(&mut no_land, player, card, Zone::Hand);
+        }
+        assert!(!castable(&mut no_land, spell), "{name}: no land to discard");
+        let spare = put(&mut base, player, blue_names[pitch_count], Zone::Hand);
+
+        let land_group = (CostKind::DiscardCards, std::slice::from_ref(&land));
+        let pitch_group = (CostKind::ExileFromHandV1, blue.as_slice());
+        for discard_first in [false, true] {
+            let mut state = base.clone();
+            cast(&mut state, spell, &[Target::Object(bolt)]);
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption { source, option_count: 2, .. } if source == spell
+            ));
+            act(
+                &mut state,
+                Action::ChooseEffectOption(u16::from(discard_first)),
+            );
+            let [first, second] = if discard_first {
+                [land_group, pitch_group]
+            } else {
+                [pitch_group, land_group]
+            };
+            retrace_pitch_group(&mut state, first.0, first.1, red);
+            assert_eq!(life(&state, player), 20);
+            for &pick in first.1 {
+                assert_eq!(zone(&state, pick), Zone::Hand);
+            }
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for game in [&mut state, &mut restored] {
+                retrace_pitch_group(game, second.0, second.1, first.1[0]);
+                assert!(matches!(next(game), Decision::CastSpellOrPass { .. }));
+                assert_eq!(
+                    game.stack.last().unwrap().v4.cast_method,
+                    Some(mtg_kernel::state::CastMethodV4::Alternative)
+                );
+                assert_eq!(zone(game, land), Zone::Graveyard);
+                for &card in &blue {
+                    assert_eq!(zone(game, card), Zone::Exile);
+                }
+                for card in [other_land, spare, red] {
+                    assert_eq!(zone(game, card), Zone::Hand);
+                }
+                assert_eq!(life(game, player), 20 - life_cost);
+                settle_with(game, |_, decision| match decision {
+                    Decision::ChooseEffectTargets { legal_targets, .. } => {
+                        let new_target = Target::Player(player.opponent());
+                        assert!(legal_targets.contains(&new_target));
+                        Action::ChooseEffectTarget(new_target)
+                    }
+                    other => first_answer(other),
+                });
+                assert_eq!(zone(game, spell), Zone::Graveyard);
+                assert_eq!(zone(game, bolt), Zone::Graveyard);
+                assert_eq!(life(game, player), 20 - life_cost);
+                let opponent_life = if name == "Commandeer" { 17 } else { 20 };
+                assert_eq!(life(game, player.opponent()), opponent_life);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+}
+
+#[test]
+fn retrace_force_of_will_exiles_blue_discards_land_and_pays_one_life() {
+    retrace_pitch_alternative("Force of Will", 1, 1);
+}
+
+#[test]
+fn retrace_commandeer_exiles_two_distinct_blue_cards_and_discards_land() {
+    retrace_pitch_alternative("Commandeer", 2, 0);
+}
+
+#[test]
+fn retrace_daze_returns_and_discards_the_same_island_after_restore() {
+    for player in [P0, P1] {
+        let (mut state, daze, bolt) = retrace_alternative_fixture(player, "Daze");
+        let bolt = bolt.unwrap();
+        let forest = put(&mut state, player, "Forest", Zone::Battlefield);
+        state.objects.get_mut(forest).tapped = true;
+        assert!(!castable(&mut state, daze));
+        let island = put(&mut state, player, "Island", Zone::Battlefield);
+        state.objects.get_mut(island).tapped = true;
+        cast(&mut state, daze, &[Target::Object(bolt)]);
+        payment_pick(&mut state, CostKind::ReturnPermanentsToHand, island);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseCostTargets { cost_kind: CostKind::DiscardCards, candidates, .. } if candidates == [island])
+        );
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let before = restored.clone();
+        assert!(engine::step(&mut restored, Action::ChooseCostTarget(forest)).is_err());
+        assert_eq!(restored, before);
+        for game in [&mut state, &mut restored] {
+            payment_pick(game, CostKind::DiscardCards, island);
+            assert!(matches!(next(game), Decision::CastSpellOrPass { .. }));
+            let item = game.stack.last().unwrap();
+            assert_eq!(
+                item.v4.cast_method,
+                Some(mtg_kernel::state::CastMethodV4::Alternative)
+            );
+            let receipts: Vec<_> = item
+                .v4
+                .paid_cost_refs
+                .iter()
+                .map(|r| (r.object, r.zone, r.zone_change_count))
+                .collect();
+            assert_eq!(
+                receipts,
+                [(island, Zone::Hand, 1), (island, Zone::Graveyard, 2)]
+            );
+            settle_first(game);
+            assert_eq!(life(game, player), 20);
+            assert_eq!(zone(game, daze), Zone::Graveyard);
+            assert_eq!(zone(game, bolt), Zone::Graveyard);
+        }
+        assert_eq!(state, restored);
+    }
+}
+
+#[test]
+fn retrace_return_alternatives_allow_either_payment_order_and_require_distinct_islands() {
+    for player in [P0, P1] {
+        for (name, count) in [("Daze", 1), ("Gush", 2), ("Thwart", 3)] {
+            let (mut base, spell, bolt) = retrace_alternative_fixture(player, name);
+            let land = put(&mut base, player, "Forest", Zone::Hand);
+            let mut islands = Vec::new();
+            for _ in 0..count {
+                assert!(!castable(&mut base, spell));
+                let island = put(&mut base, player, "Island", Zone::Battlefield);
+                base.objects.get_mut(island).tapped = true;
+                islands.push(island);
+            }
+            let targets: Vec<_> = bolt.into_iter().map(Target::Object).collect();
+            if name == "Daze" {
+                pool(&mut base, player, &[ManaColor::U], 1);
+                let mut normal = base.clone();
+                let spare = put(&mut normal, player, "Plains", Zone::Hand);
+                cast(&mut normal, spell, &targets);
+                assert!(
+                    matches!(next(&mut normal), Decision::ChooseCastMode { options, .. }
+                    if options.contains(&engine::CastMode::Normal) && options.contains(&engine::CastMode::Alternative))
+                );
+                act(
+                    &mut normal,
+                    Action::ChooseCastMode(engine::CastMode::Normal),
+                );
+                payment_pick(&mut normal, CostKind::DiscardCards, land);
+                settle_first(&mut normal);
+                assert_eq!(normal.players[player.index()].mana_pool, [0; 6]);
+                assert_eq!(zone(&normal, islands[0]), Zone::Battlefield);
+                assert_eq!(zone(&normal, land), Zone::Graveyard);
+                assert_eq!(zone(&normal, spare), Zone::Hand);
+                assert_eq!(life(&normal, player), 20);
+            }
+            for discard_first in [false, true] {
+                let mut state = base.clone();
+                cast(&mut state, spell, &targets);
+                if name == "Daze" {
+                    assert!(matches!(next(&mut state), Decision::ChooseCastMode { .. }));
+                    act(
+                        &mut state,
+                        Action::ChooseCastMode(engine::CastMode::Alternative),
+                    );
+                }
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::ChooseEffectOption {
+                        option_count: 2,
+                        ..
+                    }
+                ));
+                act(
+                    &mut state,
+                    Action::ChooseEffectOption(u16::from(discard_first)),
+                );
+                if discard_first {
+                    payment_pick(&mut state, CostKind::DiscardCards, land);
+                }
+                for (at, &island) in islands.iter().enumerate() {
+                    assert!(
+                        matches!(next(&mut state),Decision::ChooseCostTargets{remaining,candidates,..}
+                        if usize::from(remaining)==islands.len()-at && sorted(candidates)==sorted(islands[at..].to_vec()))
+                    );
+                    payment_pick(&mut state, CostKind::ReturnPermanentsToHand, island);
+                }
+                if !discard_first {
+                    payment_pick(&mut state, CostKind::DiscardCards, land);
+                }
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                assert_eq!(zone(&state, land), Zone::Graveyard);
+                for &island in &islands {
+                    assert_eq!(zone(&state, island), Zone::Hand);
+                }
+                assert_eq!(
+                    state.players[player.index()].mana_pool,
+                    base.players[player.index()].mana_pool
+                );
+                let hand = state.players[player.index()].hand.len();
+                settle_first(&mut state);
+                assert_eq!(zone(&state, spell), Zone::Graveyard);
+                if let Some(bolt) = bolt {
+                    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+                    assert_eq!(life(&state, player), 20);
+                } else {
+                    assert_eq!(state.players[player.index()].hand.len(), hand + 2);
+                }
+            }
+        }
+    }
 }
 
 #[test]
