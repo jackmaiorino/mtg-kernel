@@ -3412,9 +3412,7 @@ fn ojer_source_controller(state: &GameState, damage: &DamageProposed) -> Option<
     let Target::Player(damaged) = damage.target else {
         return None;
     };
-    let Some(source) = state.objects.try_get(damage.source) else {
-        return None;
-    };
+    let source = state.objects.try_get(damage.source)?;
     let controller = damage
         .historical_facts(state)
         .expect("validated historical source")
