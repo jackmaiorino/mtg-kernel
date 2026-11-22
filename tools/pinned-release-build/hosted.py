@@ -31,6 +31,20 @@ LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
 LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 # The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
 ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
+# The merge commit of PR 791 (optional max_trajectory_batch_mebibytes) on release/mull-c5719e1cf (this guard branch only).
+BATCHBOUND_SOURCE_MERGED = "66b532ed669cff0c9713d4e96b1f1bdbc20a81be"
+# The merge commit of PR 792 (the same key scales the physical-group bound) on release/mull-c5719e1cf.
+BATCHBOUND_GROUPS_SOURCE_MERGED = "a9388d185a53815f114528c805ef4e15b33c3722"
+# The merge commit of PR 799 (per-seat priority-window rules) on release/mull-c5719e1cf (this guard branch only).
+PRIORITY_WINDOWS_SOURCE_MERGED = "fe06baa32227b9319a1f53d1d11f9d2abe916e27"
+# The merge commit of PR 811 (action-windows-v1 combat-participant grouping) on release/mull-c5719e1cf (this guard branch only).
+PRIORITY_WINDOWS_811_SOURCE_MERGED = "572de58807a51254212e1cb2e4904f24a676e3d9"
+# Pooled collection, stage 1 (draft PR 817 on release/mull-c5719e1cf; this guard branch only).
+POOLED_LINEAGE_STAGE1_SOURCE = "237c39ed5f8e99db9b2eecc80fc37b5c5cac5fa6"
+# Pooled collection, stage 1 after the first independent review (draft PR 817; this guard branch only).
+POOLED_LINEAGE_STAGE1_REVIEWED_SOURCE = "7bec154586c9548bf4ca5b3bbe0806c185f1ded5"
+# The release head after the merge of PR 874 on release/mull-c5719e1cf, for the fast pooled lineage (this guard branch only).
+POOLED_FAST_RELEASE_HEAD_SOURCE = "cf36c1a14f00496480d1e20a47db1fe80b634f26"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -48,8 +62,25 @@ SOURCES = (
     LONDON_VECTOR_SOURCE_B,
     LONDON_VECTOR_SOURCE_MERGED,
     ANNOUNCE_STEP_SOURCE_MERGED,
+    BATCHBOUND_SOURCE_MERGED,
+    BATCHBOUND_GROUPS_SOURCE_MERGED,
+    PRIORITY_WINDOWS_SOURCE_MERGED,
+    PRIORITY_WINDOWS_811_SOURCE_MERGED,
+    POOLED_LINEAGE_STAGE1_SOURCE,
+    POOLED_LINEAGE_STAGE1_REVIEWED_SOURCE,
+    POOLED_FAST_RELEASE_HEAD_SOURCE,
 )
-IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
+# The image follows the host (this guard branch only): the amd64 image for the portable x86-64 build (unchanged),
+# and on an arm64 hosted runner the linux/arm64 member of the python:3.12-slim-bookworm index 935c3c5b... that the
+# Mac's native trainer 7cff4ff3 was built in, for a native aarch64 build of the same source. No variant on aarch64.
+IMAGES = {
+    "x86_64": ("linux/amd64",
+               "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"),
+    "aarch64": ("linux/arm64",
+                "mirror.gcr.io/library/python@sha256:df540bfd30bd380e89a349611ce42aa67bcb542d58c047706616eb6ba2f86a1b"),
+}
+ARCH = platform.machine() if platform.machine() in IMAGES else "x86_64"
+PLATFORM, IMAGE = IMAGES[ARCH]
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2
 GROWTH = 5 * GIB
@@ -292,7 +323,7 @@ def run(root, source, wall):
             require(daemon.poll() is None, f"private Docker daemon exited {daemon.returncode}")
             resources.pause()
         resources.check()
-        builder = start([*docker, "run", "--name", CONTAINER, "--network=host", "--platform=linux/amd64",
+        builder = start([*docker, "run", "--name", CONTAINER, "--network=host", "--platform=" + PLATFORM,
                          "--cpus=4", "--memory=12g", "--memory-swap=28g", "--sig-proxy=false",
                          "--env", "PINNED_TARGET_CPU=" + TARGET_CPU,
                          "--mount", f"type=bind,src={work},dst=/work",
@@ -347,7 +378,7 @@ def run(root, source, wall):
                 cleanup_errors.append(f"owned swap verification: {exc}")
         receipt = {"schema": "pinned-release-hosted-build/v1", "pass": error is None and not cleanup_errors,
                    "source_commit": source, "image": IMAGE, "work_root": str(root), "output": str(root / "work/out"),
-                   "target_cpu": TARGET_CPU,
+                   "target_cpu": TARGET_CPU, "arch": ARCH, "platform": PLATFORM,
                    "guard_sha256": guard_sha, "build_helper_sha256": helper_sha,
                    "limits": {"minimum_start_free_bytes": FREE_FLOOR + TOTAL_GROWTH, "free_floor_bytes": FREE_FLOOR,
                               "growth_bytes": TOTAL_GROWTH, "build_growth_bytes": GROWTH, "owned_swap_bytes": SWAP,
@@ -378,8 +409,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         require(0 < args.wall_seconds <= MAX_WALL, f"wall limit must be 1 to {MAX_WALL} seconds")
-        require(sys.platform.startswith("linux") and platform.machine() == "x86_64" and os.geteuid() == 0,
-                "run the hosted guard as root on Linux x86-64")
+        require(sys.platform.startswith("linux") and platform.machine() in IMAGES and os.geteuid() == 0,
+                "run the hosted guard as root on Linux x86-64 or aarch64")
+        require(ARCH == "x86_64" or TARGET_CPU == "default", "an aarch64 build takes no PINNED_TARGET_CPU variant")
         os.umask(0o022)
         create_root(args.work_root)
     except (OSError, ValueError) as exc:
