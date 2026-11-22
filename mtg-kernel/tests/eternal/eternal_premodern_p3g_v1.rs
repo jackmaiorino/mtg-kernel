@@ -11,6 +11,8 @@ mod circle_order_no_hallow_v1;
 mod hallow_circle_v1;
 #[path = "hallow_ordinary_v1.rs"]
 mod hallow_ordinary_v1;
+#[path = "hallow_saved_orders_v1.rs"]
+mod hallow_saved_orders_v1;
 #[path = "nishoba_protection_order_v1.rs"]
 mod nishoba_protection_order_v1;
 #[path = "nomads_replacement_order_v1.rs"]

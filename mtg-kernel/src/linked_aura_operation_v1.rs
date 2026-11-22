@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 use std::hash::{Hash, Hasher};
 
 mod hallow_replay;
-pub(crate) use hallow_replay::{legacy_damage_order_v1, legacy_sphere_order_v1};
+pub(crate) use hallow_replay::{
+    legacy_damage_order_v1, legacy_hallow_only_v1, legacy_sphere_order_v1,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationV1 {
@@ -1905,8 +1907,6 @@ pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids
     }
 }
 
-/// Complete checkpoint reconstruction authenticates source incarnation,
-/// owner, menu, already committed choices, actual journal and operation tail.
 fn validate_checkpoint_owners(state: &GameState) -> Result<(), String> {
     let owners = usize::from(
         state
@@ -1943,6 +1943,8 @@ fn validate_checkpoint_owners(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 
+/// Complete checkpoint reconstruction authenticates source incarnation,
+/// owner, menu, already committed choices, actual journal and operation tail.
 pub fn validate(state: &GameState) -> Result<(), String> {
     validate_checkpoint_owners(state)?;
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
