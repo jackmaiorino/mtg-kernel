@@ -174,7 +174,9 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
 fn single_ojer_has_distinct_outcomes(amount: i32, spheres: usize, power: i32) -> bool {
     let amount = i64::from(amount);
     let power = i64::from(power);
-    let spheres = i64::try_from(spheres).unwrap_or(i64::MAX / 4);
+    let spheres = i64::try_from(spheres)
+        .unwrap_or(i64::MAX / 4)
+        .min(i64::MAX / 4);
     if amount <= 0 || spheres == 0 {
         return false;
     }

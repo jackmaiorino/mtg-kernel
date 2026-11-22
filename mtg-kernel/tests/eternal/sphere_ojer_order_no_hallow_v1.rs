@@ -225,3 +225,56 @@ fn one_ring_player_protection_keeps_untargeted_damage_order_unobservable() {
         assert!(state.engine.linked_aura_operation_v1.is_empty());
     }
 }
+
+#[test]
+fn one_damage_two_spheres_and_one_ojer_do_not_add_a_redundant_order_menu() {
+    for active in [P0, P1] {
+        let mut state = board(active, true, true);
+        put(
+            &mut state,
+            active.opponent(),
+            "Sphere of Law",
+            Zone::Battlefield,
+        );
+        bolt(&mut state, active, "Lava Dart");
+        settled(&mut state);
+        assert_eq!(life(&state, active.opponent()), 20);
+        assert!(state.engine.linked_aura_operation_v1.is_empty());
+    }
+}
+
+#[test]
+fn council_keeps_each_ojer_increase_and_its_multiplicity() {
+    for active in [P0, P1] {
+        for different_power in [false, true] {
+            let mut start = board(active, true, true);
+            put(&mut start, active, "Council of Reeds", Zone::Battlefield);
+            let second = put(
+                &mut start,
+                active,
+                "Ojer Axonil, Deepest Might",
+                Zone::Battlefield,
+            );
+            if different_power {
+                let rancor = put(&mut start, active, "Rancor", Zone::Hand);
+                pool(&mut start, active, &[ManaColor::G], 0);
+                cast(&mut start, rancor, &[Target::Object(second)]);
+                settled(&mut start);
+            }
+            let source = bolt(&mut start, active, "Lightning Bolt");
+            assert!(matches!(
+                settle(&mut start),
+                Some(Decision::ChooseEffectOption {
+                    option_count: 3,
+                    ..
+                })
+            ));
+            for (option, damage) in [(1, if different_power { 6 } else { 4 }), (2, 4)] {
+                let mut state = restored(&start);
+                choose_public(&mut state, active.opponent(), source, option, 3);
+                settled(&mut state);
+                assert_eq!(life(&state, active.opponent()), 20 - damage);
+            }
+        }
+    }
+}

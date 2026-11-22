@@ -5,6 +5,8 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
+#[path = "circle_order_no_hallow_v1.rs"]
+mod circle_order_no_hallow_v1;
 #[path = "hallow_circle_v1.rs"]
 mod hallow_circle_v1;
 #[path = "hallow_ordinary_v1.rs"]
