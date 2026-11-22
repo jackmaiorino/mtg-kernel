@@ -3079,7 +3079,10 @@ fn flat_validate_origin_decision_common_scoped_v42(
                         minimum: 0,
                         maximum: 0,
                     } => {
-                        state.engine.spellbench_neutral_v1.choices
+                        state
+                            .engine
+                            .spellbench_neutral_v1
+                            .neutral_choices_for(*player)
                             && *option_count == 1
                             && index == 0
                             && actor_matches(*actor, *player)

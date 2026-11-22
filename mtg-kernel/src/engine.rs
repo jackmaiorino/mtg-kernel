@@ -13941,7 +13941,12 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
                 source: pending.source,
             });
         }
-        if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
+        if candidates.len() <= 1
+            && !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.player)
+        {
             state
                 .engine
                 .pending_optional_cost_sacrifice
@@ -15372,7 +15377,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+            if candidates.len() == 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller)
+            {
                 state
                     .engine
                     .pending_cast
@@ -15665,7 +15675,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         };
         // The Spellbench neutral contract poses the forced X = 0 as an
         // explicit singleton numeric choice.
-        if maximum == minimum && !(state.engine.spellbench_neutral_v1.choices && maximum == 0) {
+        let neutral_forced_zero = maximum == 0
+            && state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.controller);
+        if maximum == minimum && !neutral_forced_zero {
             state
                 .engine
                 .pending_cast
@@ -15906,7 +15921,10 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             );
             let remaining = needed - pending.object_cost_chosen.len() as u8;
             if candidates.len() == usize::from(remaining)
-                && !state.engine.spellbench_neutral_v1.choices
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller)
             {
                 state
                     .engine
@@ -16026,7 +16044,12 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 source: pending.source,
             });
         }
-        if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+        if candidates.len() == 1
+            && !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.controller)
+        {
             state
                 .engine
                 .pending_activation
@@ -16070,7 +16093,10 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         // including a singleton menu, before either tap or mana is collected.
         if candidates.len() == 1
             && !crate::fishing_pole_v39::named_cost(ability.cost)
-            && !state.engine.spellbench_neutral_v1.choices
+            && !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.controller)
         {
             let chosen = candidates[0];
             let object = state.objects.get(chosen);
@@ -27300,8 +27326,12 @@ fn apply_pending_cast_effect_option(
                 .ok_or_else(|| "chosen X exceeds the native u16 range".to_string())?;
             // A forced X (maximum equal to minimum) is never posed, except the
             // Spellbench neutral contract's explicit X = 0 singleton.
-            let neutral_forced_zero =
-                state.engine.spellbench_neutral_v1.choices && maximum == 0 && minimum == 0;
+            let neutral_forced_zero = maximum == 0
+                && minimum == 0
+                && state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller);
             if (maximum <= minimum && !neutral_forced_zero) || x_value > maximum {
                 return Err("chosen X is outside the currently payable range".to_string());
             }
@@ -31656,6 +31686,15 @@ mod tests {
             Decision::ChooseSpellMode { .. }
         ));
         step(&mut state, Action::ChooseSpellMode(0)).unwrap();
+        let mut trainer = state.clone();
+        trainer.engine.spellbench_neutral_v1.trainer_choice_seats = [true, false];
+        assert!(step(&mut trainer, Action::ChooseEffectOption(0)).is_err());
+        assert!(matches!(
+            advance_until_decision(&mut trainer),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(trainer.stack.last().unwrap().v4.x_value, 0);
+
         let decision = advance_until_decision(&mut state);
         assert!(matches!(
             decision,
@@ -31998,9 +32037,14 @@ mod tests {
 
     #[test]
     fn spellbench_neutral_activation_announcement_retains_identity_through_costs() {
-        for name in ["Makeshift Munitions", "Quirion Ranger"] {
+        for (name, trainer) in [
+            ("Makeshift Munitions", false),
+            ("Quirion Ranger", false),
+            ("Makeshift Munitions", true),
+        ] {
             let mut state = empty_game();
             state.engine.spellbench_neutral_v1.choices = true;
+            state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
             state.step = Step::Main1;
             state.priority_player = PlayerId::P0;
             state.players[0].mana_pool[ManaColor::R.pool_index()] = 2;
@@ -32049,22 +32093,30 @@ mod tests {
             assert_eq!(after.0, instance);
             assert_eq!(after.1.source, initial.source);
             assert_eq!(after.1.targets.len(), 1);
-            assert!(matches!(
-                advance_until_decision(&mut state),
-                Decision::ChooseCostTargets { .. }
-            ));
             let other_id = next_stack_item_id(&mut state);
             assert_ne!(other_id.0.to_string(), instance);
-            step(
-                &mut state,
-                Action::ChooseCostTarget(if name == "Makeshift Munitions" {
-                    creature
-                } else {
-                    forest
-                }),
-            )
-            .unwrap();
-            finalize_activation(&mut state);
+            let decision = advance_until_decision(&mut state);
+            if trainer {
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+            } else {
+                assert!(
+                    matches!(decision, Decision::ChooseCostTargets { .. }),
+                    "{decision:?}"
+                );
+                step(
+                    &mut state,
+                    Action::ChooseCostTarget(if name == "Makeshift Munitions" {
+                        creature
+                    } else {
+                        forest
+                    }),
+                )
+                .unwrap();
+                finalize_activation(&mut state);
+            }
             assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
             let paid = state.stack.last().unwrap();
             assert_eq!(paid.v4.stack_item_id.0.to_string(), instance);

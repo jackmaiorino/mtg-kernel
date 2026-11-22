@@ -7321,7 +7321,10 @@ fn core_surface_action_candidates_fake_scoped_v50(
                             )),
                         )?;
                     }
-                } else if state.engine.spellbench_neutral_v1.choices
+                } else if state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(*player)
                     && *option_count == 1
                     && state.engine.pending_cast.as_ref().is_some_and(|pending| {
                         pending.controller == *player
