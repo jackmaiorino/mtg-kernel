@@ -168,6 +168,7 @@ impl FlatV4LockstepV1 {
     /// before any advance, the same legacy deal, the same per-seat engine
     /// windows and the same per-seat training window rules as the raw
     /// session's `RlEpisodeSessionV1::reset_pauper_london_human_seat_windows_v1`.
+    #[cfg(test)]
     pub(crate) fn reset_london_human(
         episode_id: u64,
         env_seed: u64,
@@ -177,18 +178,33 @@ impl FlatV4LockstepV1 {
         engine_window_seats: [bool; 2],
         action_windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
     ) -> Result<Self, FlatV4LockstepErrorV1> {
-        let fast = FastActorSessionV1::reset_pauper_london_human_seat_windows_v1(
-            episode_id,
+        use crate::rl_session::pauper_london_v1::PauperMulliganModeV1;
+        Self::reset_london_human_start_v1(
+            crate::rl_session::pauper_london_v1::LondonHumanStartV1 {
+                episode_id,
+                max_physical_decisions,
+                max_policy_steps,
+                modes: [PauperMulliganModeV1::Learned; 2],
+                engine_window_seats,
+                action_windows,
+                trainer_choice_seats: [false; 2],
+            },
             env_seed,
-            max_physical_decisions,
-            max_policy_steps,
             deck_ids,
-            [crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned; 2],
-            engine_window_seats,
-            action_windows,
         )
-        .map_err(|error| FlatV4LockstepErrorV1::Reset(error.message))?;
-        Ok(Self { episode_id, fast })
+    }
+
+    pub(crate) fn reset_london_human_start_v1(
+        start: crate::rl_session::pauper_london_v1::LondonHumanStartV1,
+        env_seed: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, FlatV4LockstepErrorV1> {
+        let fast = FastActorSessionV1::reset_london_human_start_v1(start, env_seed, deck_ids)
+            .map_err(|error| FlatV4LockstepErrorV1::Reset(error.message))?;
+        Ok(Self {
+            episode_id: start.episode_id,
+            fast,
+        })
     }
 
     pub(crate) fn fast_session(&self) -> &FastActorSessionV1 {

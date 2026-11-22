@@ -939,6 +939,7 @@ use crate::card_def::{
     self, CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
     PermanentFilterDef, Subtype,
 };
+use crate::engine::SpellbenchNeutralStateV1;
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
@@ -5227,6 +5228,18 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
     }
 }
 
+fn target_selection_neutral_order(
+    profile: &SpellbenchNeutralStateV1,
+    purpose: &EffectTargetSelectionPurpose,
+) -> bool {
+    match purpose {
+        EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { player, .. } => {
+            profile.neutral_choices_for(*player)
+        }
+        _ => profile.choices,
+    }
+}
+
 /// Records one target in an effect-owned selection. Exact-count selections
 /// auto-append every forced remaining target, so an N-card ordering exposes
 /// only N-1 picks. Validation precedes mutation, making stale, duplicate, or
@@ -5315,7 +5328,8 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         None
     };
     let exact_five = matches!(purpose, EffectTargetSelectionPurpose::SelectObjectsV1 { rule, .. } if rule.action == ObjectSelectionActionV1::TapFiveThenTransformSource);
-    let neutral_choices = state.engine.spellbench_neutral_v1.choices;
+    let choice_profile = &state.engine.spellbench_neutral_v1;
+    let neutral_order = target_selection_neutral_order(choice_profile, purpose);
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
         selected,
@@ -5339,12 +5353,12 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     let required = usize::from(*min_targets).saturating_sub(selected.len());
     if ward_minimum.is_none()
         && ((*ordered && required == 1 && legal.len() == 1)
-            || (!*ordered && required > 0 && required == legal.len() && !neutral_choices))
+            || (!*ordered && required > 0 && required == legal.len() && !choice_profile.choices))
     {
         selected.append(legal);
     }
     if selected.len() == usize::from(*max_targets) {
-        complete_resumable_target_selection(continuation, fiend_artisan, neutral_choices)?;
+        complete_resumable_target_selection(continuation, fiend_artisan, neutral_order)?;
     }
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
@@ -5378,6 +5392,7 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
     let PendingEffectChoice::SelectTargets {
         selected,
         min_targets,
+        purpose,
         ..
     } = choice
     else {
@@ -5427,11 +5442,12 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
-    let neutral_choices = state.engine.spellbench_neutral_v1.choices;
+    let neutral_order =
+        target_selection_neutral_order(&state.engine.spellbench_neutral_v1, purpose);
     complete_resumable_target_selection(
         state.engine.pending_effect.as_mut().unwrap(),
         fiend_artisan,
-        neutral_choices,
+        neutral_order,
     )?;
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
@@ -5837,7 +5853,11 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                                         .to_string(),
                                 )
                             }
-                            1 if !state.engine.spellbench_neutral_v1.choices => {
+                            1 if !state
+                                .engine
+                                .spellbench_neutral_v1
+                                .neutral_choices_for(graveyard_player) =>
+                            {
                                 let chosen = candidates[0];
                                 let expected_remaining_frames = continuation.frames.clone();
                                 let frame = EffectFrame::ExileChosenMatchingGraveyardCard {
@@ -9065,7 +9085,11 @@ fn validate_undercity_throne_frame(
         || path != canonical_path
         || !expected_remaining_frames.is_empty()
         || (candidates.is_empty()
-            || (candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices))
+            || (candidates.len() == 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(binding.player)))
     {
         return Err("Throne answered frame has noncanonical progress".to_string());
     }
@@ -9350,7 +9374,12 @@ fn stage_or_apply_undercity_throne(
             apply_undercity_throne_result(state, binding, None)?;
             Ok(false)
         }
-        [chosen] if !state.engine.spellbench_neutral_v1.choices => {
+        [chosen]
+            if !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(binding.player) =>
+        {
             apply_undercity_throne_result(state, binding, Some(*chosen))?;
             Ok(false)
         }
@@ -11247,7 +11276,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     )?;
                     if *remaining == 0
                         || original_hand.is_empty()
-                        || (original_hand.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
+                        || (original_hand.len() == 1
+                            && !state
+                                .engine
+                                .spellbench_neutral_v1
+                                .neutral_choices_for(*hand_player))
                     {
                         return Err(
                             "hand-to-library policy prompt has no genuine choice".to_string()
@@ -11872,7 +11905,10 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !selected.is_empty()
                         || (candidates.is_empty()
                             || (candidates.len() == 1
-                                && !state.engine.spellbench_neutral_v1.choices))
+                                && !state
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .neutral_choices_for(*graveyard_player)))
                     {
                         return Err(
                             "filtered graveyard exile prompt has a noncanonical shape".to_string()
@@ -12084,7 +12120,11 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         .collect::<Vec<_>>();
                     if expected.len()
                         < 2 - usize::from(
-                            kind.optional() || state.engine.spellbench_neutral_v1.choices,
+                            kind.optional()
+                                || state
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .neutral_choices_for(*chooser),
                         )
                     {
                         return Err(
@@ -12119,7 +12159,10 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !selected.is_empty()
                         || (candidates.is_empty()
                             || (candidates.len() == 1
-                                && !state.engine.spellbench_neutral_v1.choices))
+                                && !state
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .neutral_choices_for(binding.player)))
                         || !pending.frames.is_empty()
                     {
                         return Err("Throne prompt has a noncanonical shape".to_string());
@@ -13719,7 +13762,12 @@ fn drive_resumable_inner_with_native_row_v1(
                         continue;
                     }
                     state.clear_nonowner_hand_knowledge(player);
-                    if current_hand.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+                    if current_hand.len() == 1
+                        && !state
+                            .engine
+                            .spellbench_neutral_v1
+                            .neutral_choices_for(player)
+                    {
                         continuation
                             .frames
                             .push(EffectFrame::PutCardsFromHandOnLibraryTop {
@@ -15667,7 +15715,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     reveal_top_and_partition(state, player, count, card_type, matching_to, rest_to);
                 // The Spellbench neutral contract poses the hand/graveyard
                 // partition as forced choices so both move orders are chosen.
-                if state.engine.spellbench_neutral_v1.choices
+                if state.engine.spellbench_neutral_v1.neutral_choices_for(player)
                     && matching_to == Zone::Hand
                     && rest_to == Zone::Graveyard
                     && !original_prefix.is_empty()
@@ -16236,6 +16284,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     return Err("linked-exile hand choice must be a root effect".to_string());
                 }
                 let player = continuation.ctx.resolve_player(player, state);
+                let chooser = continuation.ctx.controller;
                 let source = continuation
                     .resolving_item
                     .v4
@@ -16275,7 +16324,10 @@ fn drive_resumable_inner_with_native_row_v1(
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] if !kind.optional() && !state.engine.spellbench_neutral_v1.choices => {
+                    [chosen]
+                        if !kind.optional()
+                            && !state.engine.spellbench_neutral_v1.neutral_choices_for(chooser) =>
+                    {
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::LinkedExileChosenHandCard {
                             player,
@@ -16293,7 +16345,6 @@ fn drive_resumable_inner_with_native_row_v1(
                         continuation.frames.push(frame);
                     }
                     _ => {
-                        let chooser = continuation.ctx.controller;
                         stage_linked_exile_hand_choice(
                             &mut continuation,
                             chooser,
@@ -17387,7 +17438,7 @@ fn stage_library_partition_choice(
             (matching, min, max, false)
         }
         LibraryPartitionSelectionStage::OrderRest { selected } => {
-            validate_library_partition_selected(state, filter, &original_prefix, selected)?;
+            validate_library_partition_selected(state, filter, player, &original_prefix, selected)?;
             if !filter.orders_rest() {
                 return Err("library-partition rule keeps its rest in looked-at order".to_string());
             }
@@ -17720,14 +17771,16 @@ fn begin_library_partition(
 fn validate_library_partition_selected(
     state: &GameState,
     filter: LibraryPartitionFilter,
+    player: PlayerId,
     original_prefix: &[EffectObjectBinding],
     selected: &[EffectObjectBinding],
 ) -> Result<(), String> {
-    validate_library_partition_subset(
-        state.engine.spellbench_neutral_v1.choices,
-        original_prefix,
-        selected,
-    )?;
+    let choice_profile = &state.engine.spellbench_neutral_v1;
+    let neutral_order = match filter {
+        LibraryPartitionFilter::ByType(_) => choice_profile.neutral_choices_for(player),
+        LibraryPartitionFilter::Pick(_) => choice_profile.choices,
+    };
+    validate_library_partition_subset(neutral_order, original_prefix, selected)?;
     let matching = library_partition_matching_prefix(state, filter, original_prefix)?;
     if selected.iter().any(|binding| !matching.contains(binding)) {
         return Err("library-partition selected card does not match the typed filter".to_string());
@@ -17881,7 +17934,13 @@ fn validate_library_partition_prompt(
             )?;
         }
         LibraryPartitionSelectionStage::OrderRest { selected: chosen } => {
-            validate_library_partition_selected(state, filter, original_prefix, chosen)?;
+            validate_library_partition_selected(
+                state,
+                filter,
+                library_player,
+                original_prefix,
+                chosen,
+            )?;
             if !filter.orders_rest() {
                 return Err("library-partition rule keeps its rest in looked-at order".to_string());
             }
@@ -17942,7 +18001,13 @@ fn resume_library_partition_frame(
     )?;
     match progress {
         LibraryPartitionProgress::MatchingSubsetChosen { selected } => {
-            validate_library_partition_selected(state, filter, &original_prefix, &selected)?;
+            validate_library_partition_selected(
+                state,
+                filter,
+                player,
+                &original_prefix,
+                &selected,
+            )?;
             let rest = binding_partition_rest(&original_prefix, &selected)?;
             if filter.orders_rest() && rest.len() >= 2 {
                 stage_library_partition_choice(
@@ -17981,7 +18046,13 @@ fn resume_library_partition_frame(
             selected,
             ordered_rest,
         } => {
-            validate_library_partition_selected(state, filter, &original_prefix, &selected)?;
+            validate_library_partition_selected(
+                state,
+                filter,
+                player,
+                &original_prefix,
+                &selected,
+            )?;
             let rest = binding_partition_rest(&original_prefix, &selected)?;
             if !filter.orders_rest() && ordered_rest != rest {
                 return Err("library-partition rest left its looked-at order".to_string());
@@ -24771,6 +24842,111 @@ mod tests {
     use super::*;
     use crate::event::CommittedEvent;
     use crate::ids::PlayerId;
+
+    #[test]
+    fn trainer_choice_seat_fiend_uses_trigger_controller_not_hand_owner() {
+        use crate::engine::{self, Action, Decision};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+        for controller in [PlayerId::P0, PlayerId::P1] {
+            let hand_owner = controller.opponent();
+            for bot in [controller, hand_owner] {
+                let mut state = ready_state_for(controller);
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats[bot.index()] = true;
+                let fiend = put(&mut state, controller, "Mesmeric Fiend", Zone::Hand);
+                let exiled = put(&mut state, hand_owner, "Lightning Bolt", Zone::Hand);
+                let forest = put(&mut state, hand_owner, "Forest", Zone::Hand);
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change(fiend, Zone::Battlefield),
+                );
+                let triggers = crate::trigger::collect_and_process(&mut state);
+                state.engine.pending_triggers.extend(triggers);
+
+                let mut posed = false;
+                for _ in 0..12 {
+                    let action = match engine::advance_until_decision(&mut state) {
+                        Decision::ChooseTargets { player, spell, .. } => {
+                            assert_eq!((player, spell), (controller, fiend));
+                            Action::ChooseTarget(Target::Player(hand_owner))
+                        }
+                        Decision::ChooseEffectTargets {
+                            player,
+                            source,
+                            legal_targets,
+                            ..
+                        } => {
+                            assert_eq!((player, source), (controller, fiend));
+                            assert_eq!(legal_targets, vec![Target::Object(exiled)]);
+                            posed = true;
+                            Action::ChooseEffectTarget(Target::Object(exiled))
+                        }
+                        Decision::CastSpellOrPass { .. }
+                            if state.objects.get(exiled).zone == Zone::Exile =>
+                        {
+                            break
+                        }
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        other => panic!("unexpected Mesmeric Fiend decision {other:?}"),
+                    };
+                    engine::step(&mut state, action).unwrap();
+                }
+                assert_eq!(state.objects.get(exiled).zone, Zone::Exile);
+                assert_eq!(state.objects.get(forest).zone, Zone::Hand);
+                assert_eq!(posed, controller != bot);
+            }
+        }
+    }
+
+    #[test]
+    fn trainer_choice_seat_brainstorm_auto_puts_the_last_card_before_decking() {
+        use crate::engine::{self, Action, Decision};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+        for chooser in [PlayerId::P0, PlayerId::P1] {
+            for bot in [chooser, chooser.opponent()] {
+                let mut state = ready_state_for(chooser);
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats[bot.index()] = true;
+                put(&mut state, chooser, "Island", Zone::Battlefield);
+                let brainstorm = put(&mut state, chooser, "Brainstorm", Zone::Hand);
+                let first = put(&mut state, chooser, "Lightning Bolt", Zone::Library);
+                let second = put(&mut state, chooser, "Island", Zone::Library);
+                engine::step(&mut state, Action::CastSpell(brainstorm)).unwrap();
+
+                let mut widths = Vec::new();
+                let mut lost = false;
+                for _ in 0..12 {
+                    let action = match engine::advance_until_decision(&mut state) {
+                        Decision::ChooseEffectTargets {
+                            player,
+                            source,
+                            legal_targets,
+                            ..
+                        } => {
+                            assert_eq!((player, source), (chooser, brainstorm));
+                            widths.push(legal_targets.len());
+                            let target = if widths.len() == 1 { first } else { second };
+                            assert!(legal_targets.contains(&Target::Object(target)));
+                            Action::ChooseEffectTarget(Target::Object(target))
+                        }
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        Decision::GameOver { winner } => {
+                            assert_eq!(winner, Some(chooser.opponent()));
+                            lost = true;
+                            break;
+                        }
+                        other => panic!("unexpected Brainstorm decision {other:?}"),
+                    };
+                    engine::step(&mut state, action).unwrap();
+                }
+                assert!(lost);
+                assert_eq!(state.players[chooser.index()].library, vec![second, first]);
+                assert_eq!(widths, if chooser == bot { vec![2] } else { vec![2, 1] });
+            }
+        }
+    }
 
     #[test]
     fn individual_ability_target_guards_skip_illegal_targets_and_keep_captured_source() {

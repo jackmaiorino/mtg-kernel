@@ -4,28 +4,15 @@
 //!
 //! Proven here:
 //!
-//! 1. The bot seat on `action-windows-v1`, the person's seat on engine
-//!    windows (or on nothing): at every bot decision the bridge's sessions
-//!    (the raw session and its lockstep copy) and the trainer's own London
-//!    session (`FastActorSessionV1::reset_pauper_london_windows_v1`, the
-//!    bot's seat on `action-windows-v1`, the other on `harness-v2`, the
-//!    training runtime rule where the game allows it) have the same game
-//!    state, the same menu, the same model input and the same trainer
-//!    marker of a new priority window (`priority_pass_window_v1`). Both
-//!    take the same deal: the trainer's explicit-deck deal, handed to the
-//!    constructor the bridge reset calls after its own deal. The person
-//!    passes at every engine window the trainer's other seat does not have,
-//!    and answers everything else as the training game is answered.
-//!    Neutral choices (on in every human-play game) are run both ways: on
-//!    the trainer's session too (then everything is equal), and off it, the
-//!    production trainer exactly. Then the bridge poses some choices
-//!    training resolves itself (answered with their first row), the game
-//!    states are not compared (neutral choices keep a pending activation in
-//!    their own fields and number stack items differently), and the menu,
-//!    model input and new-window marker are compared at each bot decision
-//!    until the first difference, which is recorded, not required: some
-//!    games (with Elves, Spy or Wildfire) leave the training game there,
-//!    with or without the person's engine windows alike.
+//! 1. The bridge and trainer start from the same explicit-deck deal. The bot
+//!    uses `action-windows-v1` and the trainer's other seat uses `harness-v2`.
+//!    The person passes any extra engine windows in the bridge. Every bot
+//!    decision must have the trainer's menu, FlatV7 input and new-window marker.
+//!    When all sessions use neutral choices, the full game states must match.
+//!    Against the ordinary production trainer the bridge selects the trained
+//!    bot's choice profile. The person replays extra revealed-card choices
+//!    in the trainer's hand or graveyard order. The verifier records the first
+//!    discrepancy in each game and requires every pair to reach matching terminals.
 //! 2. Both rules `harness-v2` is the engine-windows reset exactly.
 //! 3. The bridge takes the rules on its reset request, marks the bot's new
 //!    windows in the private support block, and refuses the field anywhere
@@ -37,9 +24,10 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v7_tensor_v1, flat_v7_extension_value_v1, FlatV4EncodeScratchV1,
 };
 use crate::agent_bridge_v1::{SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1};
-use crate::rl::{ActionSemanticV1, PlayerSeatV1};
+use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
 use crate::state::SplitMix64;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 
 const DECKS: [&str; 8] = [
     "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "CawGates", "Faeries",
@@ -67,6 +55,13 @@ fn tensor(fast: &FastActorSessionV1, rows: &[u32], scratch: &mut FlatV4EncodeScr
     value["tensor"].take()
 }
 
+#[derive(Clone, Copy, Debug)]
+enum NeutralComparison {
+    BothNeutral,
+    BridgeNeutral,
+    TrainerChoicesForBot,
+}
+
 struct Sessions {
     training: FastActorSessionV1,
     raw: RlEpisodeSessionV1,
@@ -84,7 +79,7 @@ fn sessions(
     episode: u64,
     bot: usize,
     person_windows: bool,
-    neutral_training: bool,
+    comparison: NeutralComparison,
 ) -> Sessions {
     let deck_ids: SessionDeckIdsV1 = [decks[0].to_string(), decks[1].to_string()];
     let boards = mainboards(&deck_ids);
@@ -111,6 +106,9 @@ fn sessions(
         modes: LEARNED,
         engine_window_seats: engine_windows,
         action_windows: rules,
+        trainer_choice_seats: std::array::from_fn(|seat| {
+            seat == bot && matches!(comparison, NeutralComparison::TrainerChoicesForBot)
+        }),
     };
     let deal = || {
         build_session_deck_pair_state_from_explicit_decks(&boards, seed, Some(PlayerId::P0))
@@ -124,7 +122,7 @@ fn sessions(
     let fast =
         FastActorSessionV1::london_human_from_state_v1(start, deck_ids, hashes, state).unwrap();
     let mut copy = FlatV4LockstepV1::from_fast_session_for_test(episode, fast);
-    if neutral_training {
+    if matches!(comparison, NeutralComparison::BothNeutral) {
         training.enable_spellbench_neutral_choices();
     }
     raw.enable_spellbench_neutral_choices();
@@ -148,46 +146,295 @@ struct Played {
     bot_decisions: u64,
     bot_new_windows: u64,
     person_engine_windows: u64,
-    /// Decisions only the bridge poses (neutral choices), each with one
-    /// answer: all of them, and the bot's.
+    /// Decisions only the bridge poses, and how many of them belong to the bot.
     neutral_only: u64,
     bot_neutral_only: u64,
-    /// Of those, the ones with more than one row (substeps of a forced set).
     neutral_only_several: u64,
+    person_revealed_order_picks: u64,
+    person_canonicalized_hand_subsets: u64,
+    terminal_person_fireblast_cost: bool,
+    bot_after_person_revealed_order: u64,
     /// Against the production trainer: the first difference, if any.
     diverged: Option<String>,
     shared: u64,
     finished: bool,
 }
 
+/// Match the person's revealed-card order to the production trainer's committed
+/// zone order. A graveyard-order decision that the trainer exposes stays shared.
+fn person_revealed_order_pick(
+    raw: &RlEpisodeSessionV1,
+    training: &FastActorSessionV1,
+    decision: &RlSessionDecisionV1,
+    rows: &[u32],
+) -> Option<u32> {
+    use crate::effect::{
+        EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest,
+        LibraryPartitionSelectionStage, PendingEffectChoice::SelectTargets,
+    };
+    use crate::rl::TargetRefV1;
+    use crate::state::Target;
+
+    let state = raw.game_state();
+    let SelectTargets {
+        player,
+        selected,
+        legal,
+        min_targets,
+        max_targets,
+        purpose:
+            LookTopSelectByTypeToHandBottomRest {
+                stage,
+                canonical_path,
+                original_prefix,
+                card_type,
+                ..
+            },
+        ..
+    } = state.engine.pending_effect.as_ref()?.choice.as_ref()?
+    else {
+        return None;
+    };
+    if state
+        .engine
+        .spellbench_neutral_v1
+        .revealed_partition
+        .as_ref()
+        != Some(canonical_path)
+    {
+        return None;
+    }
+    let count = usize::from(*max_targets);
+    assert_eq!(min_targets, max_targets);
+    assert_eq!(selected.len() + legal.len(), count);
+    let baseline = training.game_state();
+    let matches_type = |binding: &crate::effect::EffectObjectBinding| {
+        let card = state.objects.get(binding.object);
+        crate::card_def::CARD_DEFS[card.card_def as usize].has_type(*card_type)
+    };
+    let player_state = &baseline.players[player.index()];
+    let (destination, to_hand) = match stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => (&player_state.hand, true),
+        LibraryPartitionSelectionStage::OrderRest { .. }
+            if !crate::engine::graveyard_order_choice_exposed(baseline, *player) =>
+        {
+            (&player_state.graveyard, false)
+        }
+        LibraryPartitionSelectionStage::OrderRest { .. } => return None,
+    };
+    let expected: Vec<_> = original_prefix
+        .iter()
+        .filter(|card| matches_type(card) == to_hand)
+        .collect();
+    assert_eq!(expected.len(), count, "the whole revealed group must move");
+    // Other graveyard entries can follow the nonmatches, including the spell.
+    let moved: Vec<_> = destination
+        .iter()
+        .filter_map(|id| {
+            let binding = expected.iter().find(|card| card.object == *id)?;
+            assert_eq!(
+                baseline.objects.get(*id).zone_change_count,
+                binding.expected_zone_change_count + 1
+            );
+            Some(*id)
+        })
+        .collect();
+    assert_eq!(
+        moved.len(),
+        count,
+        "trainer moved each revealed card to its destination"
+    );
+    for (picked, id) in selected.iter().zip(&moved) {
+        assert_eq!(picked.target, Target::Object(*id));
+    }
+    for id in &moved[selected.len()..] {
+        assert!(legal
+            .iter()
+            .any(|candidate| candidate.target == Target::Object(*id)));
+    }
+    let next = moved[selected.len()];
+    Some(*rows.iter().find(|&&row| matches!(
+        &decision.legal_actions[row as usize].semantic,
+        ActionSemanticV1::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
+            if object.arena_id == next.0
+    )).expect("the next card in the trainer's zone order has a bridge row"))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct HandSubset<'a> {
+    source: crate::ids::ObjectId,
+    path: &'a [u16],
+    prefix: &'a [crate::effect::EffectObjectBinding],
+    selected_count: usize,
+}
+
+enum HandSubsetAnswer {
+    Pick(TargetRefV1),
+    Finish,
+}
+
+fn optional_hand_subset(state: &crate::state::GameState) -> Option<HandSubset<'_>> {
+    use crate::effect::{
+        EffectTargetSelectionPurpose, LibraryPartitionSelectionStage, PendingEffectChoice,
+    };
+
+    let effect = state.engine.pending_effect.as_ref()?;
+    let PendingEffectChoice::SelectTargets {
+        selected,
+        min_targets: 0,
+        purpose:
+            EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                stage: LibraryPartitionSelectionStage::ChooseMatchingSubset,
+                original_prefix,
+                canonical_path,
+                ..
+            },
+        ..
+    } = effect.choice.as_ref()?
+    else {
+        return None;
+    };
+    Some(HandSubset {
+        source: effect.resolving_item.source,
+        path: canonical_path,
+        prefix: original_prefix,
+        selected_count: selected.len(),
+    })
+}
+
+/// Take the same seeded subset as the trainer script, then submit its cards
+/// in the trainer's looked-prefix order. The neutral player's engine keeps
+/// answer order for this group; the normal trainer canonicalizes it.
+fn person_hand_subset_script(
+    raw: &RlEpisodeSessionV1,
+    training: &FastActorSessionV1,
+    rng: &mut SplitMix64,
+) -> Option<(VecDeque<HandSubsetAnswer>, bool)> {
+    let root = optional_hand_subset(training.game_state())?;
+    if root.selected_count != 0 {
+        return None;
+    }
+    assert_eq!(Some(&root), optional_hand_subset(raw.game_state()).as_ref());
+
+    let mut probe = training.clone();
+    let mut answers = Vec::new();
+    while optional_hand_subset(probe.game_state()).is_some_and(|current| {
+        current.source == root.source && current.path == root.path && current.prefix == root.prefix
+    }) {
+        let FastActorResponseV1::Decision(decision) = probe.current_response() else {
+            panic!("the subset is pending without a trainer decision");
+        };
+        let actions = probe.diagnostic_current_action_semantics().unwrap();
+        let row = (rng.next_u64() % actions.len() as u64) as usize;
+        let answer = match &actions[row] {
+            ActionSemanticV1::ChooseEffectTarget {
+                target: target @ TargetRefV1::Object { object },
+                ..
+            } => (
+                root.prefix
+                    .iter()
+                    .position(|card| card.object.0 == object.arena_id)
+                    .expect("the chosen card belongs to the current revealed prefix"),
+                HandSubsetAnswer::Pick(target.clone()),
+            ),
+            ActionSemanticV1::FinishEffectSelection { .. } => {
+                (root.prefix.len(), HandSubsetAnswer::Finish)
+            }
+            other => panic!("unexpected answer in the matching subset: {other:?}"),
+        };
+        answers.push(answer);
+        assert!(answers.len() <= root.prefix.len() + 1);
+        probe
+            .step(decision.episode_id, decision.step, row as u32)
+            .unwrap();
+    }
+    let reordered = answers.windows(2).any(|pair| pair[0].0 > pair[1].0);
+    answers.sort_by_key(|(order, _)| *order);
+    Some((
+        answers.into_iter().map(|(_, action)| action).collect(),
+        reordered,
+    ))
+}
+
+/// After a shared two-Mountain Fireblast payment, the ordinary engine pays the
+/// last Mountain in the same step. The neutral human explicitly confirms it.
+fn person_fireblast_remainder(
+    raw: &RlEpisodeSessionV1,
+    decision: &RlSessionDecisionV1,
+    rows: &[u32],
+    pick: u32,
+) -> Option<ActionSemanticV1> {
+    use crate::engine::CostKind;
+    let [left, right] = rows else { return None };
+    let ActionSemanticV1::ChooseCostTarget {
+        source,
+        actor,
+        candidate,
+        cost_kind: CostKind::SacrificeLands,
+        remaining: 2,
+    } = &decision.legal_actions[pick as usize].semantic
+    else {
+        return None;
+    };
+    if raw
+        .game_state()
+        .objects
+        .get(crate::ids::ObjectId(source.arena_id))
+        .name
+        != "Fireblast"
+    {
+        return None;
+    }
+    let other = if *left == pick { right } else { left };
+    let ActionSemanticV1::ChooseCostTarget {
+        source: other_source,
+        actor: other_actor,
+        candidate: last,
+        cost_kind: CostKind::SacrificeLands,
+        remaining: 2,
+    } = &decision.legal_actions[*other as usize].semantic
+    else {
+        panic!("expected a second eligible Mountain")
+    };
+    assert_eq!((source, actor), (other_source, other_actor));
+    assert_ne!(candidate, last);
+    Some(ActionSemanticV1::ChooseCostTarget {
+        actor: *actor,
+        source: source.clone(),
+        cost_kind: CostKind::SacrificeLands,
+        remaining: 1,
+        candidate: last.clone(),
+    })
+}
+
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
 /// passed in the bridge sessions alone; so are the decisions only neutral
-/// choices pose (production trainer only), answered with their first row.
+/// choices pose. For the person's revealed partition order, play the training order.
 fn play(
     decks: [&str; 2],
     seed: u64,
     episode: u64,
     bot: usize,
     person_windows: bool,
-    neutral_training: bool,
+    comparison: NeutralComparison,
     max_shared: u64,
 ) -> Played {
     let Sessions {
         mut training,
         mut raw,
         mut copy,
-    } = sessions(decks, seed, episode, bot, person_windows, neutral_training);
+    } = sessions(decks, seed, episode, bot, person_windows, comparison);
+    let neutral_training = matches!(comparison, NeutralComparison::BothNeutral);
     let mut rng = SplitMix64::seed(seed ^ 0xB07);
     let mut scratch = FlatV4EncodeScratchV1::default();
+    let mut hand_subset_answers = VecDeque::new();
     let mut out = Played::default();
     let context = |what: &str, at: u64| {
-        format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows} neutral training {neutral_training}: {what} at shared decision {at}")
+        format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows} choice profile {comparison:?}: {what} at shared decision {at}")
     };
-    // With neutral choices on the trainer's session too, every comparison
-    // must hold. Against the production trainer, the first difference ends
-    // the game and is recorded (neutral choices are a bridge option of every
-    // human-play game, not part of the window rule).
+    // Keep the first mismatch for each normal-training game so the matrix
+    // can report all affected deals before enforcing equality.
     macro_rules! require_eq {
         ($left:expr, $right:expr, $what:expr) => {{
             let (left, right) = (&$left, &$right);
@@ -212,6 +459,13 @@ fn play(
                 // The person's engine window: Pass, as the trained surface
                 // would have; the training game never sees it.
                 let rows = copy.row_candidate_ids(decision).unwrap();
+                if out.terminal_person_fireblast_cost {
+                    assert_eq!(
+                        rows.len(),
+                        1,
+                        "only a forced human Pass may follow the final payment"
+                    );
+                }
                 let pass = *rows
                     .iter()
                     .find(|id| {
@@ -255,8 +509,7 @@ fn play(
                 }
             };
             if !shared && !neutral_training {
-                // Only a choice can be bridge-only: a priority window (a menu
-                // with Pass) that differs is a divergence.
+                // A mismatched priority menu is a divergence for either seat.
                 let priority = copy
                     .fast_session()
                     .diagnostic_current_action_semantics()
@@ -268,22 +521,45 @@ fn play(
                     out.diverged = Some(format!("menu at shared decision {}", out.shared));
                     return out;
                 }
-                // Neutral choices pose choices training resolves itself (a
-                // forced discard, a forced number, all of a forced target
-                // set, one substep at a time). Answered with the first row:
-                // if the answer could matter, the comparisons at the next
-                // shared decision fail.
                 let rows = copy.row_candidate_ids(decision).unwrap();
+                if matches!(comparison, NeutralComparison::TrainerChoicesForBot)
+                    && seat_index(decision.acting_player) == bot
+                {
+                    out.diverged = Some(format!(
+                        "{} bridge {:?} training {:?}",
+                        context("unmatched trained bot decision", out.shared),
+                        copy.fast_session().diagnostic_current_action_semantics(),
+                        training.diagnostic_current_action_semantics()
+                    ));
+                    return out;
+                }
                 out.neutral_only_several += u64::from(rows.len() > 1);
-                let chosen = &decision.legal_actions[rows[0] as usize];
-                raw.step(
-                    decision.episode_id,
-                    decision.step,
-                    rows[0],
-                    &chosen.stable_id,
-                )
-                .unwrap();
-                copy.mirror_step(&rows, decision.step, rows[0]).unwrap();
+                let person_order = if seat_index(decision.acting_player) != bot && rows.len() > 1 {
+                    person_revealed_order_pick(&raw, &training, decision, &rows)
+                } else {
+                    None
+                };
+                let pick = if let Some(pick) = person_order {
+                    out.person_revealed_order_picks += 1;
+                    pick
+                } else {
+                    assert_eq!(
+                        rows.len(),
+                        1,
+                        "{} bridge {:?} training {:?}",
+                        context(
+                            "a bridge-only decision with more than one answer",
+                            out.shared
+                        ),
+                        copy.fast_session().diagnostic_current_action_semantics(),
+                        training.diagnostic_current_action_semantics()
+                    );
+                    rows[0]
+                };
+                let chosen = &decision.legal_actions[pick as usize];
+                raw.step(decision.episode_id, decision.step, pick, &chosen.stable_id)
+                    .unwrap();
+                copy.mirror_step(&rows, decision.step, pick).unwrap();
                 out.neutral_only += 1;
                 out.bot_neutral_only += u64::from(seat_index(decision.acting_player) == bot);
                 continue;
@@ -307,6 +583,31 @@ fn play(
                     (ours.terminal_outcome, ours.winner, &ours.terminal_reason),
                     "terminal"
                 );
+                if out.terminal_person_fireblast_cost {
+                    let mut expected = training.game_state().clone();
+                    let profile = &raw.game_state().engine.spellbench_neutral_v1;
+                    expected.engine.spellbench_neutral_v1.choices = profile.choices;
+                    expected.engine.spellbench_neutral_v1.trainer_choice_seats =
+                        profile.trainer_choice_seats;
+                    require_eq!(&expected, raw.game_state(), "terminal Fireblast game state");
+                    require_eq!(
+                        (
+                            theirs.terminal_reward,
+                            theirs.terminal_classification,
+                            theirs.terminal_code,
+                            theirs.policy_step_count + ahead,
+                            theirs.physical_decision_count + ahead
+                        ),
+                        (
+                            ours.terminal_reward,
+                            ours.terminal_classification,
+                            ours.terminal_code,
+                            ours.policy_step_count,
+                            ours.physical_decision_count
+                        ),
+                        "terminal Fireblast result and counters"
+                    );
+                }
                 out.finished = true;
                 return out;
             }
@@ -344,6 +645,7 @@ fn play(
         let rows = copy.row_candidate_ids(&ours).unwrap();
         if seat_index(ours.acting_player) == bot {
             out.bot_decisions += 1;
+            out.bot_after_person_revealed_order += u64::from(out.person_revealed_order_picks > 0);
             let marker = training.priority_pass_window_v1().unwrap();
             require_eq!(
                 marker,
@@ -363,16 +665,174 @@ fn play(
                 "model input"
             );
         }
-        let row = (rng.next_u64() % rows.len() as u64) as usize;
+        if hand_subset_answers.is_empty()
+            && !neutral_training
+            && seat_index(ours.acting_player) != bot
+        {
+            if let Some((answers, reordered)) = person_hand_subset_script(&raw, &training, &mut rng)
+            {
+                hand_subset_answers = answers;
+                out.person_canonicalized_hand_subsets += u64::from(reordered);
+            }
+        }
+        let row = if let Some(answer) = hand_subset_answers.pop_front() {
+            assert_ne!(seat_index(ours.acting_player), bot);
+            assert!(optional_hand_subset(raw.game_state()).is_some());
+            rows.iter()
+                .position(
+                    |row| match (&answer, &ours.legal_actions[*row as usize].semantic) {
+                        (
+                            HandSubsetAnswer::Pick(expected),
+                            ActionSemanticV1::ChooseEffectTarget { target, .. },
+                        ) => expected == target,
+                        (
+                            HandSubsetAnswer::Finish,
+                            ActionSemanticV1::FinishEffectSelection { .. },
+                        ) => true,
+                        _ => false,
+                    },
+                )
+                .expect("the planned answer is still legal in the shared menu")
+        } else {
+            (rng.next_u64() % rows.len() as u64) as usize
+        };
         let pick = rows[row];
         let chosen = &ours.legal_actions[pick as usize];
+        let final_cost = if matches!(comparison, NeutralComparison::TrainerChoicesForBot)
+            && seat_index(ours.acting_player) != bot
+        {
+            person_fireblast_remainder(&raw, &ours, &rows, pick)
+        } else {
+            None
+        };
         raw.step(ours.episode_id, ours.step, pick, &chosen.stable_id)
             .unwrap();
         copy.mirror_step(&rows, ours.step, pick).unwrap();
+        if let Some(expected) = &final_cost {
+            let response = raw.current_response();
+            copy.verify(&raw, &response).unwrap();
+            let RlSessionResponseV1::Decision(cost) = response else {
+                panic!("the human's Fireblast payment is pending")
+            };
+            assert_eq!(cost.acting_player, ours.acting_player);
+            let rows = copy.row_candidate_ids(&cost).unwrap();
+            let [only] = rows.as_slice() else {
+                panic!("the two-card payment leaves exactly one Mountain")
+            };
+            let confirmed = &cost.legal_actions[*only as usize];
+            assert_eq!(&confirmed.semantic, expected);
+            raw.step(cost.episode_id, cost.step, *only, &confirmed.stable_id)
+                .unwrap();
+            copy.mirror_step(&rows, cost.step, *only).unwrap();
+            out.neutral_only += 1;
+        }
         training
             .step(theirs.episode_id, theirs.step, row as u32)
             .unwrap();
+        out.terminal_person_fireblast_cost = final_cost.is_some()
+            && matches!(
+                training.current_response(),
+                FastActorResponseV1::Terminal(_)
+            );
         out.shared += 1;
+    }
+}
+
+#[test]
+fn shared_bot_input_after_persons_winding_way_hand_order() {
+    let played = play(
+        ["Wildfire", "Elves"],
+        7,
+        0xB0_0000 + 114,
+        0,
+        true,
+        NeutralComparison::BridgeNeutral,
+        76,
+    );
+    assert!(played.person_revealed_order_picks > 0, "{played:?}");
+    assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
+    println!("Winding Way: {played:?}");
+}
+
+#[test]
+fn shared_bot_input_after_persons_winding_way_graveyard_order() {
+    let played = play(
+        ["Spy", "Spy"],
+        7,
+        0xB0_0000 + 4014,
+        0,
+        true,
+        NeutralComparison::BridgeNeutral,
+        94,
+    );
+    assert!(played.person_revealed_order_picks >= 3, "{played:?}");
+    assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
+    println!("Spy Winding Way: {played:?}");
+}
+
+#[test]
+fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
+    let mut extra_bot_decisions = [0; 2];
+    for (bot, last_shared) in [(0, 277), (1, 65)] {
+        let played = play(
+            ["Spy", "Spy"],
+            7,
+            0xB0_0000 + 4014 + bot as u64,
+            bot,
+            true,
+            NeutralComparison::TrainerChoicesForBot,
+            last_shared,
+        );
+        assert_eq!(played.shared, last_shared, "{played:?}");
+        if bot == 0 {
+            assert!(played.person_revealed_order_picks >= 3, "{played:?}");
+        }
+        extra_bot_decisions[bot] = played.bot_neutral_only;
+        println!("Spy seat {bot}: {played:?}");
+    }
+    assert_eq!(
+        extra_bot_decisions,
+        [0, 0],
+        "the production trainer has no corresponding decisions"
+    );
+}
+
+#[test]
+fn rally_against_spy_matches_the_normal_trainer_through_terminal() {
+    let played = play(
+        ["Rally", "Spy"],
+        7,
+        0xB0_0000 + 1114,
+        0,
+        true,
+        NeutralComparison::TrainerChoicesForBot,
+        8_000,
+    );
+    assert!(played.finished && played.diverged.is_none(), "{played:?}");
+    assert!(played.bot_decisions > 10, "{played:?}");
+    assert!(played.person_canonicalized_hand_subsets > 0, "{played:?}");
+}
+
+#[test]
+fn human_fireblast_final_mountain_matches_the_terminal_board_in_both_window_settings() {
+    for windows in [true, false] {
+        let played = play(
+            ["Burn", "Wildfire"],
+            31,
+            0xB0_0000 + 5163,
+            1,
+            windows,
+            NeutralComparison::TrainerChoicesForBot,
+            8000,
+        );
+        assert!(
+            played.finished && played.diverged.is_none() && played.terminal_person_fireblast_cost,
+            "{played:?}"
+        );
+        assert_eq!(
+            (played.shared, played.bot_decisions, played.bot_neutral_only),
+            (166, 97, 0)
+        );
     }
 }
 
@@ -400,7 +860,11 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                             episode,
                             bot,
                             person_windows,
-                            neutral_training,
+                            if neutral_training {
+                                NeutralComparison::BothNeutral
+                            } else {
+                                NeutralComparison::TrainerChoicesForBot
+                            },
                             8_000,
                         );
                         if neutral_training {
@@ -427,6 +891,11 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         total.bot_new_windows += played.bot_new_windows;
                         total.person_engine_windows += played.person_engine_windows;
                         total.neutral_only += played.neutral_only;
+                        total.person_revealed_order_picks += played.person_revealed_order_picks;
+                        total.person_canonicalized_hand_subsets +=
+                            played.person_canonicalized_hand_subsets;
+                        total.bot_after_person_revealed_order +=
+                            played.bot_after_person_revealed_order;
                         total.bot_neutral_only += played.bot_neutral_only;
                         total.neutral_only_several += played.neutral_only_several;
                         total.shared += played.shared;
@@ -437,8 +906,6 @@ fn the_bot_on_action_windows_plays_the_training_session() {
         }
     }
     println!("human bot windows proof: {games} games, {total:?}");
-    // Descriptive: games against the production trainer (neutral choices off
-    // on its session) in which the bridge's game left the training game.
     println!(
         "against the production trainer, {} of {} games diverged:",
         diverged.len(),
@@ -447,6 +914,10 @@ fn the_bot_on_action_windows_plays_the_training_session() {
     for line in &diverged {
         println!("  {line}");
     }
+    assert!(
+        diverged.is_empty(),
+        "production comparison failed: {diverged:#?}"
+    );
     // The proof is not vacuous: the bot meets new windows and the person
     // meets engine windows the training game does not have.
     assert!(total.bot_new_windows > 100, "{total:?}");

@@ -420,6 +420,8 @@ pub(crate) struct LondonHumanStartV1 {
     pub(crate) engine_window_seats: [bool; 2],
     /// Each seat's training priority-window rule (a bot seat's, as trained).
     pub(crate) action_windows: [SeatPriorityWindowsV1; 2],
+    /// Use ordinary trainer presentation for these seats at supported choices.
+    pub(crate) trainer_choice_seats: [bool; 2],
 }
 
 impl LondonHumanStartV1 {
@@ -507,12 +509,7 @@ impl RlEpisodeSessionV1 {
         engine_window_seats: [bool; 2],
         action_windows: [SeatPriorityWindowsV1; 2],
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, state) = build_session_deck_pair_state(
-            &deck_ids,
-            ResetRandomization::Legacy { env_seed },
-            None,
-        )?;
-        Self::london_human_from_state_v1(
+        Self::reset_london_human_start_v1(
             LondonHumanStartV1 {
                 episode_id,
                 max_physical_decisions,
@@ -520,11 +517,24 @@ impl RlEpisodeSessionV1 {
                 modes,
                 engine_window_seats,
                 action_windows,
+                trainer_choice_seats: [false; 2],
             },
+            env_seed,
             deck_ids,
-            deck_hashes,
-            state,
         )
+    }
+
+    pub(crate) fn reset_london_human_start_v1(
+        start: LondonHumanStartV1,
+        env_seed: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(
+            &deck_ids,
+            ResetRandomization::Legacy { env_seed },
+            None,
+        )?;
+        Self::london_human_from_state_v1(start, deck_ids, deck_hashes, state)
     }
 
     /// The human-play London session on a dealt state (before London is
@@ -537,6 +547,7 @@ impl RlEpisodeSessionV1 {
     ) -> Result<Self, RlSessionError> {
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = start.trainer_choice_seats;
         let surface = start.surface()?;
         let mut session = RlEpisodeSessionV1 {
             deck_ids,
@@ -678,12 +689,7 @@ impl FastActorSessionV1 {
         engine_window_seats: [bool; 2],
         action_windows: [SeatPriorityWindowsV1; 2],
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, state) = build_session_deck_pair_state(
-            &deck_ids,
-            ResetRandomization::Legacy { env_seed },
-            None,
-        )?;
-        Self::london_human_from_state_v1(
+        Self::reset_london_human_start_v1(
             LondonHumanStartV1 {
                 episode_id,
                 max_physical_decisions,
@@ -691,11 +697,24 @@ impl FastActorSessionV1 {
                 modes,
                 engine_window_seats,
                 action_windows,
+                trainer_choice_seats: [false; 2],
             },
+            env_seed,
             deck_ids,
-            deck_hashes,
-            state,
         )
+    }
+
+    pub(crate) fn reset_london_human_start_v1(
+        start: LondonHumanStartV1,
+        env_seed: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(
+            &deck_ids,
+            ResetRandomization::Legacy { env_seed },
+            None,
+        )?;
+        Self::london_human_from_state_v1(start, deck_ids, deck_hashes, state)
     }
 
     /// The lockstep twin of `RlEpisodeSessionV1::london_human_from_state_v1`.
@@ -707,6 +726,7 @@ impl FastActorSessionV1 {
     ) -> Result<Self, RlSessionError> {
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = start.trainer_choice_seats;
         let surface = start.surface()?;
         let mut session = FastActorSessionV1 {
             deck_ids,
