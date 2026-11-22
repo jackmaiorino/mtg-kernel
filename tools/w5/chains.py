@@ -1524,6 +1524,13 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
 #   commits) has no such fields, as before. qual.summarize differences within a run, which a crash and resume inside
 #   one segment already broke before this change. trainer.out holds every segment of one process.
 # - Memory: the process keeps its working set and its caches between segments; its peak is one segment's.
+# - Pooled collection: a followed pooled arm starts its trainer with the command and environment trainer_command
+#   gives a fresh segment (`--collect-external` with the pinned dispatcher, the pinned hosts file in the environment,
+#   merged with the vector-tanh folder). Before each hand-over the driver checks every pin again (trainer, dispatcher,
+#   hosts file) as a fresh segment's start does, before next.json is published; a failed check fails the segment as
+#   it fails a fresh start. The process keeps the command and environment it was started with (the collector is
+#   installed once per process), so when a segment's command or environment identity differs from the process's, the
+#   driver ends that process and starts the segment in a new one.
 
 FOLLOW_POLL = 0.05  # how often the driver looks for a followed trainer's done record or exit
 FOLLOW_REFUSED = 3  # mtg-kernel follow_v1::REFUSED_EXIT_CODE: a refused next config, nothing of it ran
@@ -1548,6 +1555,7 @@ class Follower:
         self.active = False  # a run is in flight (set before its start or hand-over, cleared at its done record)
         self.handed = False  # whether the run in flight, or the last one, was handed to a waiting process
         self.attempt = {}  # the last run attempted: its process and its run index there
+        self.identity = None  # the started process's command and environment identity (launch_identity)
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
@@ -1566,6 +1574,11 @@ class Follower:
         """Runs one segment, handed to the waiting process or in a new one. Returns (exit code, killed) as
         run_trainer does, with (0, False) once the segment's done record is published (the process then waits)."""
         check_pin(self.arm['trainer'], 'the trainer')
+        if self.waiting():
+            # Every pin is checked as a fresh segment's start checks it, before next.json is published.
+            argv, env = trainer_command(self.arm, config_path)
+            if launch_identity(self.arm, config_path, argv, env) != self.identity:
+                self.close()  # a different command or environment: a new process, as a fresh segment
         if self.waiting():
             self.handed = self.active = True
             self.attempt = {'trainer_pid': self.pid, 'trainer_run': self.runs}
@@ -1608,14 +1621,15 @@ class Follower:
         try:
             self.driver_lock = lock(self.spool / FOLLOW_DRIVER_LOCK)
             require(self.driver_lock is not None, f'cannot hold the follow driver lock: {self.spool}')
-            self.proc = subprocess.Popen(exe(self.arm['trainer']['path']) +
-                                         [str(config_path), '--follow', str(self.spool), '--follow-driver-lock'],
-                                         stdout=out, stderr=err,
-                                         **trainer_launch(self.arm))
+            argv, env = trainer_command(self.arm, config_path)  # a pooled arm: its dispatcher and hosts file
+            launch = trainer_launch(self.arm, env)
+            identity = launch_identity(self.arm, config_path, argv, env)
+            self.proc = subprocess.Popen(argv + ['--follow', str(self.spool), '--follow-driver-lock'],
+                                         stdout=out, stderr=err, **launch)
         except BaseException:
             self.release()
             raise
-        self.pid, self.runs = self.proc.pid, 0
+        self.pid, self.runs, self.identity = self.proc.pid, 0, identity
 
     def hand(self, config_path):
         """Publishes the config's bytes as next.json: written aside and synced, renamed, the directory synced."""
@@ -1694,16 +1708,28 @@ class Follower:
         self.runs = 0
 
 
-def trainer_launch(arm):
-    """run_trainer's process group and environment, for a followed trainer."""
+def trainer_launch(arm, env=None):
+    """run_trainer's process group and environment, for a followed trainer: `env` (trainer_command's, which keeps a
+    pooled arm's hosts file) or this process's, with the vector-tanh folder added as run_trainer adds it."""
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
-    env = dict(os.environ)
+    env = dict(os.environ if env is None else env)
     if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
         target = vector_tanh_dir(arm['root'])
         target.mkdir(parents=True, exist_ok=True)
         env['MTG_KERNEL_VECTOR_TANH_DIR'] = str(target)
     return dict(kwargs, env=env, stdin=subprocess.DEVNULL)
+
+
+def launch_identity(arm, config_path, argv, env):
+    """What a followed process keeps from its start, for trainer_command's `argv` and `env` of a segment: the command
+    without the segment's config path, the pins it runs on, and the environment settings the driver gives it (the
+    hosts file and the vector-tanh folder, as trainer_launch adds them)."""
+    env = trainer_launch(arm, env)['env']
+    pooled = arm.get('pooled_collect') or {}
+    pins = [arm['trainer']] + [pooled[k] for k in ('dispatcher', 'hosts') if k in pooled]
+    return (tuple(a for a in argv if a != str(config_path)), tuple((p['path'], p['sha256']) for p in pins),
+            env.get(POOLED_COLLECT_ENV), env.get('MTG_KERNEL_VECTOR_TANH_DIR'))
 
 
 def kill_group(proc):
@@ -2028,8 +2054,8 @@ def make_plan(inputs_path):
                     f'{a}: follow is for C-recipe chain arms without a ladder')
             # The trainer never continues a resident-reads run: its rereads at a process start would be lost.
             require(verified_reads is None, f'{a}: follow and verified_reads resident exclude each other')
-            # The trainer refuses --follow with --collect-external: a followed run collects in its own process.
-            require(pooled is None, f'{a}: follow and pooled_collect exclude each other')
+            # A followed pooled arm needs a trainer that admits --follow with --collect-external (it installs the
+            # collector before following); an older trainer refuses the pair at its start.
             doc['follow'] = True  # absent otherwise: existing arm files unchanged; never in the recipe identity
         if ladder is not None:
             doc['ladder'] = ladder  # CG only: other arm files unchanged

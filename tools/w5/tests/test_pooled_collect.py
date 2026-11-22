@@ -766,3 +766,123 @@ class ChainsPassThroughTests(unittest.TestCase):
         self.assertEqual(passed[self.chains.POOLED_COLLECT_ENV], (self.root / "hosts.json").as_posix())
         self.assertEqual(passed["MTG_KERNEL_VECTOR_TANH_DIR"], str(self.chains.vector_tanh_dir(self.root)))
         self.assertIn("--collect-external", popen.call_args.args[0])
+
+
+class FakeFollowedProcess:
+    """A followed trainer that never exits on its own: it waits for its spool, as the native one does."""
+    pid = 2 ** 30
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
+class FollowedPooledTrainerTests(unittest.TestCase):
+    """A followed pooled arm: the trainer starts with its dispatcher, hosts file and vector-tanh folder; every pin is
+    checked before each hand-over, before next.json is published; a changed command or environment identity ends the
+    process and starts the segment in a new one."""
+
+    def setUp(self):
+        import chains  # noqa: E402  (heavy import, only for these tests)
+        self.chains = chains
+        self.root = Path(tempfile.mkdtemp(prefix="pooled-follow-test-"))
+        for name in ("trainer", "pooled_collect.py", "hosts.json", "hosts-2.json"):
+            (self.root / name).write_text(name)
+        (self.root / "pooled_collect.py").chmod(0o755)
+        self.cdir = self.root / "chains" / "c1"
+        self.cdir.mkdir(parents=True)
+        for index in (1, 2):
+            (self.root / f"cfg-{index}.json").write_text(json.dumps({"segment": index}))
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("MTG_KERNEL_VECTOR_TANH_DIR", chains.POOLED_COLLECT_ENV)}
+        patch = mock.patch.dict(os.environ, env, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def arm(self):
+        c = self.chains
+        return {"arm": "C", "recipe": "C", "trainer": c.pin(self.root / "trainer"), "root": str(self.root),
+                "follow": True,
+                "pooled_collect": {"dispatcher": c.pin(self.root / "pooled_collect.py"),
+                                   "hosts": c.pin(self.root / "hosts.json")}}
+
+    def popen(self):
+        """Popen for a followed trainer that completes the run it was started with at once (its done record)."""
+        def start(argv, **kwargs):
+            spool = Path(argv[argv.index("--follow") + 1])
+            (spool / "done-000000.json").write_text("{}")
+            return FakeFollowedProcess()
+        return mock.patch.object(self.chains.subprocess, "Popen", side_effect=start)
+
+    def started(self, follower, popen):
+        self.assertEqual(follower.run(self.root / "cfg-1.json"), (0, False))
+        self.assertTrue(follower.waiting())
+        return popen.call_args
+
+    def test_the_followed_trainer_starts_with_the_dispatcher_hosts_and_vector_tanh(self):
+        follower = self.chains.Follower(self.arm(), self.cdir, self.cdir)
+        with self.popen() as popen:
+            call = self.started(follower, popen)
+        argv, env = call.args[0], call.kwargs["env"]
+        self.assertEqual(argv, [(self.root / "trainer").as_posix(), str(self.root / "cfg-1.json"), "--collect-external",
+                                (self.root / "pooled_collect.py").as_posix(), "--follow", str(follower.spool),
+                                "--follow-driver-lock"])
+        self.assertEqual(env[self.chains.POOLED_COLLECT_ENV], (self.root / "hosts.json").as_posix())
+        self.assertEqual(env["MTG_KERNEL_VECTOR_TANH_DIR"], str(self.chains.vector_tanh_dir(self.root)))
+        follower.close()
+
+    def test_an_unchanged_segment_is_handed_over_after_its_pins_are_checked(self):
+        follower = self.chains.Follower(self.arm(), self.cdir, self.cdir)
+        with self.popen() as popen:
+            self.started(follower, popen)
+            spool = follower.spool
+            (spool / "done-000001.json").write_text("{}")
+            self.assertEqual(follower.run(self.root / "cfg-2.json"), (0, False))
+            self.assertEqual(popen.call_count, 1)
+        self.assertTrue(follower.handed)
+        self.assertEqual((spool / "next.json").read_bytes(), (self.root / "cfg-2.json").read_bytes())
+        follower.close()
+
+    def test_a_replaced_or_deleted_pinned_file_fails_the_hand_over_before_next_json(self):
+        for name in ("pooled_collect.py", "hosts.json"):
+            for change in ("replace", "delete"):
+                with self.subTest(file=name, change=change):
+                    (self.root / name).write_text(name)
+                    follower = self.chains.Follower(self.arm(), self.cdir, self.cdir)
+                    with self.popen() as popen:
+                        self.started(follower, popen)
+                        if change == "replace":
+                            (self.root / name).write_text("another " + name)
+                        else:
+                            (self.root / name).unlink()
+                        with self.assertRaisesRegex(self.chains.Stop, "differs from its pin"):
+                            follower.run(self.root / "cfg-2.json")
+                        self.assertEqual(popen.call_count, 1)
+                    self.assertFalse((follower.spool / "next.json").exists())
+                    follower.abandon()
+                    (self.root / name).write_text(name)
+
+    def test_a_changed_launch_identity_starts_the_segment_in_a_new_process(self):
+        follower = self.chains.Follower(self.arm(), self.cdir, self.cdir)
+        with self.popen() as popen:
+            self.started(follower, popen)
+            first = follower.spool
+            follower.arm = dict(follower.arm, pooled_collect=dict(follower.arm["pooled_collect"],
+                                                                  hosts=self.chains.pin(self.root / "hosts-2.json")))
+            self.assertEqual(follower.run(self.root / "cfg-2.json"), (0, False))
+            self.assertEqual(popen.call_count, 2)
+            env = popen.call_args.kwargs["env"]
+        self.assertFalse(follower.handed)
+        self.assertNotEqual(follower.spool, first)
+        self.assertFalse(first.exists(), "the old process's spool is removed")
+        self.assertEqual(env[self.chains.POOLED_COLLECT_ENV], (self.root / "hosts-2.json").as_posix())
+        self.assertFalse((follower.spool / "next.json").exists())
+        follower.close()

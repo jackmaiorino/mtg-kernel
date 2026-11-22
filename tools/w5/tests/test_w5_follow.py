@@ -22,7 +22,7 @@ from test_w5_chains import Node, STEP_C, STEP_X, jwrite  # noqa: E402
 import test_w5_scratch_short  # noqa: E402
 
 
-def follow_plan(node, follow=True, segment_updates=4, c_wall=600.0, label=None):
+def follow_plan(node, follow=True, segment_updates=4, c_wall=600.0, label=None, pooled=None):
     """A Stage 0 independent plan with one C chain (c1, seed root oc/c1) in the node's root."""
     inputs = json.loads(Path(node.inputs('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'}},
                                          label=label or 'follow', c_wall_seconds=c_wall,
@@ -30,6 +30,9 @@ def follow_plan(node, follow=True, segment_updates=4, c_wall=600.0, label=None):
     inputs['arms']['C'] = dict(inputs['arms']['C'], segment_updates=segment_updates)
     if follow:
         inputs['arms']['C']['follow'] = True
+    if pooled:
+        inputs['arms']['C'] = dict(inputs['arms']['C'], pooled_collect=pooled,
+                                   workers=max(2, int(inputs['arms']['C']['workers'])))
     return chains.make_plan(jwrite(node.t / f'inputs-{label or "follow"}.json', inputs))[1]
 
 
@@ -51,6 +54,17 @@ class FollowPlan(unittest.TestCase):
         self.assertEqual(strip(plain_arm), strip(followed_arm))
         self.assertEqual(chains.recipe_identity(plain_arm).keys(), chains.recipe_identity(followed_arm).keys())
         node = Node(Path(self.tmp.name))
+        # Follow and pooled collection plan together (the trainer installs the collector before following).
+        c = Path(self.tmp.name) / 'c'
+        c.mkdir()
+        for name in ('dispatcher.py', 'hosts.json'):
+            (c / name).write_text(name)
+            (c / name).chmod(0o755)
+        pooled = {'dispatcher': str(c / 'dispatcher.py'), 'hosts': str(c / 'hosts.json')}
+        both = chains.load_arm(follow_plan(Node(c), pooled=pooled)['arms']['C']['file']['path'])
+        self.assertIs(both['follow'], True)
+        self.assertEqual(both['pooled_collect']['hosts']['path'], Path(pooled['hosts']).as_posix())
+        self.assertEqual(chains.recipe_identity(both).keys(), chains.recipe_identity(followed_arm).keys())
         for arm, value, why in (('X8', True, 'C-recipe'), ('F', True, 'C-recipe'), ('C', 'yes', 'true or absent'),
                                 ('C', 'resident', 'resident')):
             inputs = json.loads(Path(node.inputs('0', {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
