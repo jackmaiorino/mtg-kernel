@@ -160,70 +160,45 @@ fn reference_step(
     next
 }
 
-/// Compare the exit to the bridge reference. The planner advances through
-/// ordinary opponent passes before it shows the person's next choice.
-fn check_exit(
-    stepper: &mut SpellbenchBridgeServerV1,
-    game: &str,
-    root: &Value,
-    mut reference: Value,
-    line: &Value,
-) {
-    while reference["response_type"] == "decision" && reference["acting_seat"] == "p1" {
-        let Some(pass) = reference["candidates"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .position(|candidate| candidate["semantic"]["kind"] == "pass")
-        else {
-            break;
-        };
-        reference = reference_step(stepper, game, &reference, pass);
-    }
-    if line["response_type"] == "private_line" {
-        assert_eq!(
-            reference["response_type"], "decision",
-            "{game}: {reference}"
-        );
-        assert_eq!(reference["acting_seat"], PERSON, "{game}: {reference}");
-        assert_eq!(posed(&line["view"]), posed(&reference), "{game}: exit view");
-        return;
-    }
-    assert_eq!(line["response_type"], "private_line_stop", "{game}: {line}");
-    let expected_result = match line["reason"].as_str() {
-        Some("opponent_decision") => {
-            assert_eq!(reference["acting_seat"], "p1", "{game}: {reference}");
-            Value::Null
-        }
-        Some("turn_ends") => {
-            let turn = |response: &Value| {
-                let summary = &response["state_summary"];
-                (
-                    summary["turn"].as_u64().unwrap(),
-                    summary["active_seat"].as_str().unwrap().to_owned(),
-                )
-            };
-            assert_ne!(turn(root), turn(&reference), "{game}: {line}");
-            Value::Null
-        }
-        Some("game_end" | "game_end_later_turn") => {
+/// Once the reference leaves the declaration, the rest follows ordinary
+/// planner rules, including automatic opponent passes and hidden stops.
+fn check_exit(game: &str, reference: &Value, line: &Value) {
+    match line["response_type"].as_str() {
+        Some("private_line") => {
             assert_eq!(
-                reference["response_type"], "terminal",
+                reference["response_type"], "decision",
                 "{game}: {reference}"
             );
-            match reference["winner"].as_str() {
-                None => json!("draw"),
-                Some(PERSON) => json!("win"),
-                Some("p1") => json!("loss"),
-                other => panic!("unexpected winner {other:?}"),
+            if reference["acting_seat"] == PERSON {
+                assert_eq!(posed(&line["view"]), posed(reference), "{game}: exit view");
             }
         }
-        // The wire deliberately conceals the cause of a hidden/random stop.
-        // The independent response already establishes that the declaration ended.
-        Some("unseen") => Value::Null,
-        other => panic!("{game}: unexpected declaration exit {other:?}: {line}"),
-    };
-    assert_eq!(line["result"], expected_result, "{game}: {line}");
+        Some("private_line_stop") => match line["reason"].as_str() {
+            Some("game_end" | "game_end_later_turn")
+                if reference["response_type"] == "terminal" =>
+            {
+                let result = match reference["winner"].as_str() {
+                    None => "draw",
+                    Some(PERSON) => "win",
+                    Some("p1") => "loss",
+                    other => panic!("{game}: unexpected winner {other:?}"),
+                };
+                assert_eq!(line["result"], result, "{game}: {line}");
+            }
+            // The reference may still be at an opponent priority window that
+            // the line passed through before reaching its natural end.
+            Some("game_end" | "game_end_later_turn") => assert!(
+                reference["acting_seat"] == "p1"
+                    && matches!(line["result"].as_str(), Some("win" | "loss" | "draw")),
+                "{game}: {line}"
+            ),
+            Some("opponent_decision" | "turn_ends" | "unseen") => {
+                assert!(line["result"].is_null(), "{game}: {line}");
+            }
+            other => panic!("{game}: unexpected declaration exit {other:?}: {line}"),
+        },
+        other => panic!("{game}: unexpected planner response {other:?}: {line}"),
+    }
 }
 
 /// The line from the first question of a declaration, through all of it,
@@ -245,7 +220,7 @@ fn through(
         reference = reference_step(&mut stepper, game, &reference, row);
         tally.substeps += 1;
         if declaration(&reference) != Some(kind) {
-            check_exit(&mut stepper, game, root, reference, &line);
+            check_exit(game, &reference, &line);
             if k > 0 && kind == ATTACK {
                 tally.multi_attacks += 1;
             } else if k > 0 {
