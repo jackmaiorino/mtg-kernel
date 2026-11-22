@@ -1871,7 +1871,10 @@ pub(crate) fn public_producers(
             )?);
         }
     }
-    for (ordinal, pending) in state.engine.pending_triggers.iter().enumerate() {
+    for (ordinal, pending) in crate::optional_trigger_public_v1::held(state)
+        .into_iter()
+        .enumerate()
+    {
         if let Some(index) = trigger_index(&pending.effect) {
             crate::engine::validate_pending_trigger_identity(state, pending)?;
             let record = trigger_record(state, index)?;
