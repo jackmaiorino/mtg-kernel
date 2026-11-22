@@ -102,6 +102,27 @@ pub(super) fn choose_public(
     option: u16,
     count: u16,
 ) {
+    choose_public_inner(state, actor, source, option, count, false);
+}
+
+pub(super) fn choose_public_with_shroud_refusal(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+    option: u16,
+    count: u16,
+) {
+    choose_public_inner(state, actor, source, option, count, true);
+}
+
+fn choose_public_inner(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+    option: u16,
+    count: u16,
+    expect_shroud_refusal: bool,
+) {
     let before = state.state_hash();
     assert!(engine::step(state, Action::ChooseEffectOption(count)).is_err());
     assert_eq!(state.state_hash(), before);
@@ -110,12 +131,22 @@ pub(super) fn choose_public(
     let mut replay_surface = PolicySurfaceV5::new();
     let live_decision = live_surface.next_decision(state).unwrap();
     let replay_decision = replay_surface.next_decision(&mut replay).unwrap();
-    let observation = observe_policy_v5(state, &live_surface, actor, 0, 0, 0, 1).unwrap();
-    assert_eq!(observation.schema_version, 5);
-    assert_eq!(
-        observation,
-        observe_policy_v5(&replay, &replay_surface, actor, 0, 0, 0, 1).unwrap()
-    );
+    let observation = observe_policy_v5(state, &live_surface, actor, 0, 0, 0, 1);
+    let replay_observation = observe_policy_v5(&replay, &replay_surface, actor, 0, 0, 0, 1);
+    if expect_shroud_refusal {
+        // #365 remains fail closed. The engine and public action decoder still
+        // expose this choice; no shroud observation schema is invented here.
+        for observation in [observation, replay_observation] {
+            assert_eq!(
+                observation.unwrap_err().0,
+                "player shroud requires an explicit public representation"
+            );
+        }
+    } else {
+        let observation = observation.unwrap();
+        assert_eq!(observation.schema_version, 5);
+        assert_eq!(observation, replay_observation.unwrap());
+    }
     let live = policy_legal_action_candidates_v5(&live_decision, &live_surface, state).unwrap();
     let actions =
         policy_legal_action_candidates_v5(&replay_decision, &replay_surface, &replay).unwrap();
