@@ -47,6 +47,15 @@ class TargetVariantTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, name)
             self.assertIn("unknown PINNED_TARGET_CPU", result.stderr)
 
+    def test_the_workflow_names_the_repository_by_id_so_a_move_to_another_owner_keeps_the_job(self):
+        workflow = (HERE.parents[1] / ".github/workflows/pinned-release-build.yml").read_text(encoding="utf-8")
+        condition = re.search(r"\n  build:\n(?:    #.*\n)*    if: >-\n((?:      .*\n)+)", workflow).group(1)
+        self.assertIn("github.repository_id == '1303347549' &&", condition)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", condition)
+        # No owner or repository name: either would skip the job after a rename or a transfer.
+        self.assertNotRegex(condition, r"github\.repository\s*==\s*'")
+        self.assertNotIn("repository_owner", condition)
+
     def test_the_workflow_the_guard_and_the_build_helper_name_the_same_variants(self):
         workflow = (HERE.parents[1] / ".github/workflows/pinned-release-build.yml").read_text(encoding="utf-8")
         options = re.search(r"target_cpu:\n(?:.*\n)*?\s+options:\n((?:\s+- \S+\n)+)", workflow).group(1)
