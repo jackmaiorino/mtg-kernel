@@ -187,7 +187,7 @@ enum SpellbenchRequestV1 {
         request_id: String,
         game_id: String,
         format: String,
-        seats: [SpellbenchResetSeatV1; 2],
+        seats: Box<[SpellbenchResetSeatV1; 2]>,
         game_seed: u64,
         max_decisions: u64,
         max_steps: u64,
