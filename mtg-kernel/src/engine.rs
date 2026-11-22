@@ -12042,7 +12042,7 @@ fn is_castable_with_cost_grant(
                             targeting_source_for_spell_form(state, id, def, CastMethodV4::Omen),
                             state,
                         )
-                        && spell_costs_v1::selected_spell_quote_v1(
+                        && spell_costs_v1::selected_spell_quote_with_grant_v1(
                             def,
                             id,
                             state.objects.get(id).zone,
@@ -12055,6 +12055,7 @@ fn is_castable_with_cost_grant(
                             player,
                             state,
                             &[],
+                            grant,
                         )
                         .is_some()
                 })

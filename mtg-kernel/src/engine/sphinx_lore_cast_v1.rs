@@ -120,8 +120,7 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                 || !d.is_executable()
                 || !(d.has_type(CardType::Instant)
                     || d.has_type(CardType::Sorcery)
-                    || (options.routes.contains(&RouteV1::Breach)
-                        && (d.escape.is_some() || options.routes.contains(&RouteV1::Retrace))
+                    || (has_competing_grant(d, &options.routes)
                         && options.routes.iter().all(|r| {
                             matches!(
                                 r,
@@ -310,12 +309,13 @@ pub(super) fn has_printed_graveyard_method(d: &card_def::CardDef) -> bool {
 }
 
 fn has_competing_grant(d: &card_def::CardDef, routes: &[RouteV1]) -> bool {
-    (routes.contains(&RouteV1::Breach)
-        && (d.escape.is_some() || routes.contains(&RouteV1::Retrace)))
-        || has_printed_graveyard_method(d)
-            && routes
-                .iter()
-                .any(|r| matches!(r, RouteV1::Breach | RouteV1::Normal | RouteV1::Retrace))
+    let permissions = routes
+        .iter()
+        .filter(|r| matches!(r, RouteV1::Breach | RouteV1::Normal | RouteV1::Retrace))
+        .count();
+    (d.escape.is_some() && routes.contains(&RouteV1::Breach))
+        || permissions >= 2
+        || (permissions == 1 && has_printed_graveyard_method(d))
 }
 
 pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<RouteV1> {
@@ -332,7 +332,10 @@ pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<R
         || (cfg!(feature = "eternal-fixtures") && d.escape.is_some());
     let breach = cfg!(feature = "eternal-fixtures")
         && crate::eternal_lurrus_v1::escape_granted(state, id, o.zone_change_count);
-    if grants.is_empty() && !snapcaster && !beam && !printed && !breach {
+    let retrace = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_vintage_e7b_v1::retrace_permission(state, id, player);
+    let competing_grants = breach && retrace;
+    if grants.is_empty() && !snapcaster && !beam && !printed && !competing_grants {
         return vec![];
     }
     let mut routes = vec![];
@@ -356,9 +359,7 @@ pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<R
     ) {
         routes.push(RouteV1::Normal);
     }
-    if cfg!(feature = "eternal-fixtures")
-        && crate::eternal_vintage_e7b_v1::retrace_permission(state, id, player)
-    {
+    if retrace {
         routes.push(RouteV1::Retrace);
     }
     if snapcaster {

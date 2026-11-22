@@ -2587,6 +2587,71 @@ fn breach_and_retrace_keep_overload_available_only_with_the_land_discard() {
 }
 
 #[test]
+fn breach_and_retrace_do_not_borrow_wills_permission_to_overload_without_a_land() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    for player in [P0, P1] {
+        let mut base = retrace_game_on_turn(player, player);
+        let will = put(&mut base, player, "Yawgmoth's Will", Zone::Hand);
+        pool(&mut base, player, &[ManaColor::B], 2);
+        cast(&mut base, will, &[]);
+        settled(&mut base);
+        put(&mut base, player, "Underworld Breach", Zone::Battlefield);
+        for _ in 0..3 {
+            put(&mut base, player, "Island", Zone::Graveyard);
+        }
+        let creatures = [(); 2].map(|_| {
+            put(
+                &mut base,
+                player.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            )
+        });
+        let spell = put(&mut base, player, "Electrickery", Zone::Graveyard);
+        pool(&mut base, player, &[ManaColor::R], 1);
+        assert!(base.players[player.index()].hand.is_empty());
+        cast(&mut base, spell, &[]);
+        assert!(
+            matches!(next(&mut base), Decision::ChooseEffectOption { source, option_count: 2, .. } if source == spell)
+        );
+        let choice = base
+            .engine
+            .pending_cast
+            .as_ref()
+            .unwrap()
+            .sphinx_lore_v1
+            .unwrap();
+        assert!(
+            matches!(&base.engine.event_history[choice.options_history_index as usize],
+            mtg_kernel::event::CommittedEvent::SphinxLoreCastOptionsV1 { options }
+                if options.routes == [RouteV1::Breach, RouteV1::Normal])
+        );
+        for index in [0, 1] {
+            let mut state = base.clone();
+            act(&mut state, Action::ChooseEffectOption(index));
+            if index == 1 {
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes == [0, 1])
+                );
+                act(&mut state, Action::ChooseSpellMode(1));
+            } else {
+                choose_target(&mut state, Target::Object(creatures[0]));
+            }
+            settle_first(&mut state);
+            assert_eq!(zone(&state, creatures[0]), Zone::Graveyard);
+            assert_eq!(
+                zone(&state, creatures[1]),
+                if index == 1 {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+        }
+    }
+}
+
+#[test]
 fn breach_and_retrace_keep_the_legacy_cast_when_only_one_route_is_payable() {
     use mtg_kernel::state::SpellCastRouteV4;
     for player in [P0, P1] {
