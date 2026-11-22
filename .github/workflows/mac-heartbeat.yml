@@ -9,6 +9,9 @@ name: Mac runner heartbeat
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+  # Measurement branch only: lets pushes feed heartbeats before the file is on main.
+  push:
+    branches: [claude/speed-ci-mac-heartbeat-probe]
 
 permissions: {}
 
