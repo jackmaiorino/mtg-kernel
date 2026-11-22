@@ -379,3 +379,4 @@ class ActionIngressStaticAdmissionV1Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+# CI timing probe (not for merge)
