@@ -32,7 +32,10 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   trajectory and checkpoint in one zstd frame of its exact bytes, mtg-kernel `record_envelope_v1`; same states, about
   a fifth of the bytes) and optional `verified_reads` (`resident`: the trainer reuses bytes its process already
   verified against a pin instead of rereading them, mtg-kernel `verified_bytes_cache_v1`; same states and bytes,
-  less memory traffic per update), optional `keep_offset` (`{b0, end_update, shape: "linear-v1"}`, qual.py: every
+  less memory traffic per update), optional `follow` (`true`: the chain's consecutive segments run in one trainer
+  process, mtg-kernel `--follow`, section "followed trainer" in the code; same configs, states and receipts;
+  C-recipe chain arms without a ladder or resident reads; outside the recipe identity, so a running chain can
+  take it or drop it through a re-plan), optional `keep_offset` (`{b0, end_update, shape: "linear-v1"}`, qual.py: every
   episode with an `opening` carries `london_keep_offset = b(u)` while the chain's update u (counted from 0 at its
   first segment, so from the fork point) is below `end_update`, and no such field from there on; C-recipe arms only,
   on a base whose every episode has the London opening and its modes and whose loss and backend are the plain CPU GAE
@@ -41,6 +44,11 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   (`{b0, end_update, shape: "linear-v1"}`, qual.py: every episode with `priority_windows` carries the trainer's
   `priority_pass_offset = b(u)` on the same terms; C-recipe arms only, on a base whose every episode has
   `priority_windows` with an action-window seat and the plain CPU GAE update; recipe identity only when present),
+  optional `postboard_exposure` (`{share: [n, d], max_swaps, rule: "uniform-swaps-v1", seats:
+  "learner-and-current-v1", keep_ids}`, qual.py: a share n / d of the chain's episodes are post-board games, in which
+  the learner seat and a current-policy opponent seat play their registered 75 with 1 to max_swaps cards exchanged
+  between mainboard and sideboard, never taking out a card id in keep_ids; drawn per (seed root, update, slot);
+  C-recipe arms only, on a game-one base with exact 60 and 15 registrations; recipe identity only when present),
   optional
   `pregame_advantage` (`"terminal_v1"`, qual.py: the trainer's loss_selection key, the pregame decisions' advantage
   and value target from the terminal result; C-recipe arms on a London base with gamma 1.0; recipe identity only when
@@ -1349,6 +1357,7 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     pass_offset = arm.get('pass_offset')  # absent otherwise, as keep_offset
     pregame_advantage = arm.get('pregame_advantage')  # absent otherwise, as keep_offset
     pregame_announcement_step_scale = arm.get('pregame_announcement_step_scale')  # absent otherwise, as keep_offset
+    postboard_exposure = arm.get('postboard_exposure')  # absent otherwise, as keep_offset
     try:
         cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
                                 updates, arm['workers'], x.get('budget'), x.get('coefficient'),
@@ -1356,11 +1365,12 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
                                 prep_workers=arm.get('preparation_workers'), keep_offset=keep_offset,
                                 pregame_advantage=pregame_advantage,
                                 pregame_announcement_step_scale=pregame_announcement_step_scale,
-                                pass_offset=pass_offset)
+                                pass_offset=pass_offset,
+                                **({} if postboard_exposure is None else {'postboard_exposure': postboard_exposure}))
         if source is not None:
             qual.check_pass_offset_source(pass_offset, source, offset)
     except ValueError as exc:
-        if keep_offset is None and pregame_advantage is None and pass_offset is None:
+        if keep_offset is None and pregame_advantage is None and pass_offset is None and postboard_exposure is None:
             raise
         raise Stop(f'{arm["arm"]}: {exc}') from exc
     if source is not None:
@@ -1418,13 +1428,38 @@ def settle_vector_tanh(trainer, root):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
+POOLED_COLLECT_ENV = 'MTG_POOLED_COLLECT_CONFIG'
+
+
+def check_dispatcher_executable(path):
+    if os.name == 'posix':
+        require(os.access(path, os.X_OK), f'pooled collection dispatcher must be executable: {path}')
+
+
+def trainer_command(arm, config_path):
+    """The trainer's argv and environment for one segment. A pooled arm (`pooled_collect`, execution only and
+    outside `recipe_identity`) hands each iteration's collection to its pinned dispatcher, with its pinned
+    hosts file in the environment (tools/w5/pooled_collect.py)."""
+    check_pin(arm['trainer'], 'the trainer')
+    argv = exe(arm['trainer']['path']) + [str(config_path)]
+    env = None
+    pooled = arm.get('pooled_collect')
+    if pooled:
+        check_pin(pooled['dispatcher'], 'the pooled-collection dispatcher')
+        check_dispatcher_executable(pooled['dispatcher']['path'])
+        check_pin(pooled['hosts'], 'the pooled-collection hosts file')
+        argv += ['--collect-external', pooled['dispatcher']['path']]
+        env = dict(os.environ, **{POOLED_COLLECT_ENV: pooled['hosts']['path']})
+    return argv, env
+
+
 def run_trainer(arm, config_path, deadline=None, logs=None):
     """Runs one native segment in its own process group; at `deadline` (C's wall) the group is killed. With
     `logs` (a directory) the segment's stdout replaces `trainer.out` and stderr is appended to `trainer.err`."""
-    check_pin(arm['trainer'], 'the trainer')
+    argv, env = trainer_command(arm, config_path)
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
-    env = dict(os.environ)
+    env = dict(os.environ if env is None else env)  # a pooled arm keeps its hosts file in the environment
     if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
         target = vector_tanh_dir(arm['root'])
         target.mkdir(parents=True, exist_ok=True)
@@ -1434,8 +1469,7 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
     out = open(Path(logs) / 'trainer.out', 'wb') if logs else None
     err = open(Path(logs) / 'trainer.err', 'ab') if logs else None
     try:
-        proc = subprocess.Popen(exe(arm['trainer']['path']) + [str(config_path)], stdout=out, stderr=err,
-                                stdin=subprocess.DEVNULL, env=env, **kwargs)
+        proc = subprocess.Popen(argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env, **kwargs)
         if deadline is None:
             return proc.wait(), False
         while True:
@@ -1455,6 +1489,231 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
         for f in (out, err):
             if f:
                 f.close()
+
+
+# ---------------------------------------------------------------- followed trainer (arm key `follow`)
+#
+# An arm with `follow: true` (a C-recipe chain arm without a ladder) runs consecutive segments in one trainer process
+# (mtg-kernel `native_expanded_training_run_v1 CONFIG --follow SPOOL`, module `follow_v1`). The first segment of a
+# process runs as a fresh process runs it. Once its done record (`<spool>/done-NNNNNN.json`, published after the run
+# has returned and released its lock) appears, the driver does the segment's bookkeeping (persist, commit) as for an
+# exited trainer; for the next segment it publishes that segment's config file bytes as `<spool>/next.json` instead
+# of starting a process. The trainer admits it only as a continuation of the run it just finished (every field
+# equal except output_directory, iterations and the initial checkpoint, which must be that run's last output
+# checkpoint pin, as next_source gives it) and runs it through the unchanged run entry point, so every record is a
+# fresh process's. The flag is not a config or recipe key: configs, run.json, recipe_identity and every receipt are
+# unchanged, and `follow` stays out of the recipe identity, like scratch_root.
+# - Ending: whenever the driver leaves its loop (END, STOP, the guard, a failure) it creates `<spool>/STOP` for a
+#   waiting process (exclusively, never through a link) and kills it only after FOLLOW_STOP_GRACE; the C wall still
+#   kills a segment in flight. A carried chain whose tree check fails, or an exception, ends the process by a kill
+#   and writes or deletes nothing in the tree (`Follower.abandon`).
+# - Fallback: a handed segment whose process exits with a positive status and no completion.json (a refused config,
+#   status FOLLOW_REFUSED, or a crash) goes back through the loop's top (settle, admission, the re-derived config,
+#   quarantine) and runs in a new process, which runs it as a fresh process does; a failure there is the usual
+#   failure. After a refusal the driver runs its remaining segments in plain processes and logs why. An exit by a
+#   signal is never a fallback (an OOM kill stays a failure).
+# - Recovery is unchanged: a crash leaves the trees a fresh process leaves (every publication is the same one), and a
+#   driver start begins a new process. Each process has its own spool (`chains/<name>/follow/<pid>-<ns>`; earlier
+#   ones are removed at a start) and a waiting trainer whose parent has ended exits, so no two processes share one.
+# - Accounting: per-update ledger_usec comes from the chain cgroup and is unchanged. A receipt's
+#   driver_process_cpu_seconds (the trainer's process CPU, record_process_cpu) is cumulative over the segments of
+#   one process. Every followed segment's commit line (cut ones included) and segment-done log row name the process
+#   (`trainer_pid`, and `trainer_run`: the run's index in that process, 0 for its first) and the segment's attempts in
+#   this driver (`trainer_attempts`, each with `trainer_from_iteration`: the iterations it found complete), so a
+#   reader differences it only within one attempt. A segment finished after a driver restart (recovered or late
+#   commits) has no such fields, as before. qual.summarize differences within a run, which a crash and resume inside
+#   one segment already broke before this change. trainer.out holds every segment of one process.
+# - Memory: the process keeps its working set and its caches between segments; its peak is one segment's.
+
+FOLLOW_POLL = 0.05  # how often the driver looks for a followed trainer's done record or exit
+FOLLOW_REFUSED = 3  # mtg-kernel follow_v1::REFUSED_EXIT_CODE: a refused next config, nothing of it ran
+FOLLOW_STOP_GRACE = 30.0
+FOLLOW_SPOOLS = 'follow'  # chains/<name>/follow/<spool of one process>
+FOLLOW_DRIVER_LOCK = 'driver.lock'  # follow_v1::driver_lock::NAME
+
+
+def follow_done_name(index):
+    return f'done-{index:06d}.json'
+
+
+class Follower:
+    """A chain's followed trainer process (module section "followed trainer")."""
+
+    def __init__(self, arm, cdir, logs):
+        self.arm, self.cdir, self.logs = arm, Path(cdir), Path(logs)
+        self.proc = self.spool = self.pid = None
+        self.driver_lock = None
+        self.files = ()
+        self.runs = 0  # complete runs of the current process (the next done record's index)
+        self.active = False  # a run is in flight (set before its start or hand-over, cleared at its done record)
+        self.handed = False  # whether the run in flight, or the last one, was handed to a waiting process
+        self.attempt = {}  # the last run attempted: its process and its run index there
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def waiting(self):
+        """A live process whose last run published its done record and that has no run in flight."""
+        return (self.alive() and not self.active and self.runs > 0 and
+                (self.spool / follow_done_name(self.runs - 1)).exists())
+
+    def detail(self):
+        """The last run attempted: its process and its run index there (0 for a process's first), whether or not
+        it completed."""
+        return dict(self.attempt)
+
+    def run(self, config_path, deadline=None):
+        """Runs one segment, handed to the waiting process or in a new one. Returns (exit code, killed) as
+        run_trainer does, with (0, False) once the segment's done record is published (the process then waits)."""
+        check_pin(self.arm['trainer'], 'the trainer')
+        if self.waiting():
+            self.handed = self.active = True
+            self.attempt = {'trainer_pid': self.pid, 'trainer_run': self.runs}
+            self.hand(config_path)
+        else:
+            self.close()
+            self.handed, self.active = False, True
+            self.start(config_path)
+            self.attempt = {'trainer_pid': self.pid, 'trainer_run': 0}
+        while True:
+            if (self.spool / follow_done_name(self.runs)).exists():
+                self.runs += 1
+                self.active = False
+                return 0, False
+            code = self.proc.poll()
+            if code is not None:
+                if (self.spool / follow_done_name(self.runs)).exists():  # published, then exited
+                    self.runs += 1
+                self.release()
+                return code, False
+            if deadline is not None and time.time() >= deadline:
+                kill_group(self.proc)
+                code = self.proc.wait()
+                self.release()
+                return code, True
+            time.sleep(FOLLOW_POLL)
+
+    def start(self, config_path):
+        spools = self.cdir / FOLLOW_SPOOLS
+        if spools.exists() and not is_link(spools):
+            for old in spools.iterdir():  # earlier processes' spools
+                if old.is_dir() and not is_link(old):
+                    shutil.rmtree(old, ignore_errors=True)
+        self.spool = spools / f'{os.getpid()}-{time.time_ns()}'
+        self.spool.mkdir(parents=True)
+        self.logs.mkdir(parents=True, exist_ok=True)
+        out = open(self.logs / 'trainer.out', 'wb')
+        err = open(self.logs / 'trainer.err', 'ab')
+        self.files = (out, err)
+        try:
+            self.driver_lock = lock(self.spool / FOLLOW_DRIVER_LOCK)
+            require(self.driver_lock is not None, f'cannot hold the follow driver lock: {self.spool}')
+            self.proc = subprocess.Popen(exe(self.arm['trainer']['path']) +
+                                         [str(config_path), '--follow', str(self.spool), '--follow-driver-lock'],
+                                         stdout=out, stderr=err,
+                                         **trainer_launch(self.arm))
+        except BaseException:
+            self.release()
+            raise
+        self.pid, self.runs = self.proc.pid, 0
+
+    def hand(self, config_path):
+        """Publishes the config's bytes as next.json: written aside and synced, renamed, the directory synced."""
+        tmp = self.spool / f'.next.json.{time.time_ns()}.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(Path(config_path).read_bytes())
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.spool / 'next.json')
+        if os.name != 'nt':
+            fsync_path(self.spool)
+
+    def release(self):
+        if self.driver_lock is not None:
+            self.driver_lock.close()
+            self.driver_lock = None
+        for f in self.files:
+            f.close()
+        self.files = ()
+        self.proc = None
+        self.active = False
+
+    def spool_real(self):
+        """The spool and the folder holding it are plain directories (no link to follow)."""
+        return (self.spool is not None and not is_link(self.spool) and not is_link(self.spool.parent) and
+                self.spool.is_dir())
+
+    def stop_file(self):
+        """Creates the spool's STOP file exclusively and without following a link; False if it cannot."""
+        if not self.spool_real():
+            return False
+        path = self.spool / 'STOP'
+        try:
+            if os.name == 'nt':
+                from _winapi import CloseHandle, CreateFile, GENERIC_WRITE
+                # CREATE_NEW applies to the directory entry itself when OPEN_REPARSE_POINT is set.
+                create_new, open_reparse_point = 1, 0x00200000
+                share_read_write_delete = 7
+                handle = CreateFile(str(path), GENERIC_WRITE, share_read_write_delete, 0,
+                                    create_new, open_reparse_point, 0)
+                CloseHandle(handle)
+                return True
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0))
+        except OSError:
+            return False
+        os.close(fd)
+        return True
+
+    def close(self):
+        """STOP for a waiting process (killed after FOLLOW_STOP_GRACE, or at once when STOP cannot be created
+        safely), a kill for any other live one; then the spool is removed if it is still a plain directory."""
+        if self.proc is not None:
+            if self.waiting() and self.stop_file():
+                try:
+                    self.proc.wait(timeout=FOLLOW_STOP_GRACE)
+                except subprocess.TimeoutExpired:
+                    kill_group(self.proc)
+            elif self.alive():
+                kill_group(self.proc)  # a run in flight (an exception in the driver), or no safe STOP: no grace
+            self.proc.wait()
+            self.release()
+        if self.spool_real():
+            shutil.rmtree(self.spool, ignore_errors=True)
+        self.spool = None
+        self.runs = 0
+
+    def abandon(self):
+        """Ends the process without writing or deleting anything in the chain's tree (a carried chain whose tree
+        check failed, or an exception): a kill of a live process; the spool is left as it is."""
+        if self.proc is not None:
+            if self.alive():
+                kill_group(self.proc)
+            self.proc.wait()
+            self.release()
+        self.spool = None
+        self.runs = 0
+
+
+def trainer_launch(arm):
+    """run_trainer's process group and environment, for a followed trainer."""
+    kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
+        {'start_new_session': True}
+    env = dict(os.environ)
+    if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
+        target = vector_tanh_dir(arm['root'])
+        target.mkdir(parents=True, exist_ok=True)
+        env['MTG_KERNEL_VECTOR_TANH_DIR'] = str(target)
+    return dict(kwargs, env=env, stdin=subprocess.DEVNULL)
+
+
+def kill_group(proc):
+    if os.name == 'nt':
+        proc.kill()
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 # ---------------------------------------------------------------- plan
@@ -1486,6 +1745,8 @@ def recipe_identity(arm):
         identity['pregame_advantage'] = arm['pregame_advantage']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_announcement_step_scale') is not None:
         identity['pregame_announcement_step_scale'] = arm['pregame_announcement_step_scale']  # absent otherwise: manifests unchanged
+    if arm.get('postboard_exposure') is not None:
+        identity['postboard_exposure'] = arm['postboard_exposure']  # absent otherwise: existing manifests unchanged
     return identity
 
 
@@ -1498,6 +1759,8 @@ def check_pair(x_arm, c_arm, seed_root, scratch):
     the seed root and the global update fix every episode id, deal seed, seat and opponent), and identical
     generated iterations at two offsets; X8 differs from C only in the search block and resource keys. Returns
     XS's other differences (reported)."""
+    require(c_arm.get('postboard_exposure') is None,
+            f'{x_arm["arm"]} and C cannot pair with postboard_exposure for {seed_root}')
     x_base, c_base = read(x_arm['base']['path']), read(c_arm['base']['path'])
     require(x_base['iterations'] == c_base['iterations'] and x_base.get('opponents') == c_base.get('opponents'),
             f'{x_arm["arm"]} and C use different opponent schedules for {seed_root}')
@@ -1687,6 +1950,17 @@ def make_plan(inputs_path):
                 qual.check_pass_offset_source(pass_offset, parent['source'], 0)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
+        # postboard_exposure: the declared share of post-board games {share, max_swaps, rule, seats, keep_ids}
+        # (qual.validate_postboard_exposure): in that share of a chain's episodes the exposed seats play their
+        # registered 75 with cards exchanged between mainboard and sideboard. It needs a game-one base with exact 60
+        # and 15 registrations and is part of the arm's frozen recipe. Absent (or null): nothing changes.
+        postboard_exposure = spec.get('postboard_exposure')
+        if postboard_exposure is not None:
+            require(recipe == 'C', f'{a}: postboard_exposure is for the plain CPU update of a C-recipe arm')
+            try:
+                postboard_exposure = qual.validate_postboard_exposure(postboard_exposure, base_doc)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
         # pregame_advantage: the trainer's loss_selection.pregame_advantage ("terminal_v1": the pregame decisions'
         # advantage and value target come from the game's terminal result; qual.validate_pregame_advantage). Part of
         # the arm's frozen recipe, C-recipe arms on a London base with gamma 1.0 only. Absent (or null): nothing changes.
@@ -1721,6 +1995,14 @@ def make_plan(inputs_path):
             require(spec.get('scratch'), f'{a}: mull_monitor is kept by the scratch reaper (a scratch arm only)')
             require(any(entry['episode'].get('opening') is not None for item in base_doc['iterations']
                         for entry in item['episodes']), f'{a}: mull_monitor needs a base with an opening')
+        pooled = spec.get('pooled_collect')
+        if pooled is not None:
+            require(isinstance(pooled, dict) and set(pooled) == {'dispatcher', 'hosts'} and recipe == 'C'
+                    and int(spec['workers']) >= 2
+                    and all(Path(pooled[k]).is_absolute() and Path(pooled[k]).is_file() for k in pooled),
+                    f'{a}: pooled_collect names an absolute dispatcher and hosts file, for C-recipe arms '
+                    f'with at least two workers')
+            check_dispatcher_executable(pooled['dispatcher'])
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
@@ -1737,6 +2019,18 @@ def make_plan(inputs_path):
                     f'{full}, so segment ends hold every ladder state')
             require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
+        follow = spec.get('follow')
+        require(follow is None or isinstance(follow, bool), f'{a}: follow is true or absent')
+        if follow:
+            # A followed trainer admits only a config that differs from the last in its directory, iterations and
+            # initial checkpoint: a C-recipe chain arm without a ladder (whose roster changes every segment).
+            require(recipe == 'C' and a != 'F' and ladder is None,
+                    f'{a}: follow is for C-recipe chain arms without a ladder')
+            # The trainer never continues a resident-reads run: its rereads at a process start would be lost.
+            require(verified_reads is None, f'{a}: follow and verified_reads resident exclude each other')
+            # The trainer refuses --follow with --collect-external: a followed run collects in its own process.
+            require(pooled is None, f'{a}: follow and pooled_collect exclude each other')
+            doc['follow'] = True  # absent otherwise: existing arm files unchanged; never in the recipe identity
         if ladder is not None:
             doc['ladder'] = ladder  # CG only: other arm files unchanged
         if initial_opponent is not None:  # absent otherwise, so existing arm files keep their bytes
@@ -1755,8 +2049,12 @@ def make_plan(inputs_path):
             doc['pregame_advantage'] = pregame_advantage
         if pregame_announcement_step_scale is not None:  # absent otherwise, as record_envelope
             doc['pregame_announcement_step_scale'] = pregame_announcement_step_scale
+        if postboard_exposure is not None:  # absent otherwise, as record_envelope
+            doc['postboard_exposure'] = postboard_exposure
         if monitor:  # absent otherwise, as record_envelope
             doc['mull_monitor'] = True
+        if pooled is not None:  # execution only: absent otherwise, and never part of recipe_identity
+            doc['pooled_collect'] = {k: pin(pooled[k]) for k in ('dispatcher', 'hosts')}
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
@@ -1978,7 +2276,9 @@ def make_plan(inputs_path):
                     (' (pregame_advantage differs)' if have['recipe'].get('pregame_advantage') != header[
                         'recipe'].get('pregame_advantage') else '') +
                     (' (pregame_announcement_step_scale differs)' if have['recipe'].get('pregame_announcement_step_scale') != header[
-                        'recipe'].get('pregame_announcement_step_scale') else ''))
+                        'recipe'].get('pregame_announcement_step_scale') else '') +
+                    (' (postboard_exposure differs)' if have['recipe'].get('postboard_exposure') != header[
+                        'recipe'].get('postboard_exposure') else ''))
             require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
             if name in guarded_names:  # once on, never off: the guards only refuse, outputs are unchanged
@@ -2430,9 +2730,9 @@ def unmount(native, tries=20):
             f'{native} is still mounted or not empty after the unmount')
 
 
-def run_reaped(arm, config_path, deadline, logs, native):
-    """run_trainer with the reaper running beside it in this (the chain's) process; returns (code, killed,
-    files reaped)."""
+def run_reaped(arm, config_path, deadline, logs, native, follower=None):
+    """run_trainer (or the followed trainer's run) with the reaper running beside it in this (the chain's)
+    process; returns (code, killed, files reaped)."""
     import threading
     log = monitor_module().opening_log_path(native) if arm.get('mull_monitor') else None
     stop, count, reaper = threading.Event(), [0], Reaper(native, log)
@@ -2443,7 +2743,10 @@ def run_reaped(arm, config_path, deadline, logs, native):
     t = threading.Thread(target=loop, daemon=True)
     t.start()
     try:
-        code, killed = run_trainer(arm, config_path, deadline, logs)
+        if follower is not None:
+            code, killed = follower.run(config_path, deadline)
+        else:
+            code, killed = run_trainer(arm, config_path, deadline, logs)
     finally:
         stop.set()
         t.join()
@@ -2704,13 +3007,30 @@ def drive(a):
         carried_trees_unlinked(root, a.chain)
     held = lock(cdir / 'DRIVE.lock')
     require(held is not None, f'{a.chain} already has a driver')
+    follower = Follower(arm, cdir, cdir) if arm.get('follow') else None
     try:
-        return drive_locked(a, arm, root, cdir, man_path)
+        return drive_locked(a, arm, root, cdir, man_path, follower)
+    except BaseException:
+        if follower is not None:
+            follower.abandon()  # an exception (a refused carried tree among them): no write through the tree
+        raise
     finally:
-        unlock(held)
+        try:
+            if follower is not None:
+                follower.close()  # STOP for a waiting trainer whenever the driver leaves its loop
+        finally:
+            unlock(held)
 
 
-def drive_locked(a, arm, root, cdir, man_path):
+def abandoned(follower):
+    """EXIT_STOP for a carried chain whose tree check failed: a followed trainer is killed and nothing is written or
+    deleted in the tree (no STOP file, no spool removal)."""
+    if follower is not None:
+        follower.abandon()
+    return EXIT_STOP
+
+
+def drive_locked(a, arm, root, cdir, man_path, follower=None):
     man = read(man_path)
     if (cdir / 'END.json').exists():
         log(root, chain=a.chain, event='ended-already')
@@ -2725,6 +3045,7 @@ def drive_locked(a, arm, root, cdir, man_path):
     if arm.get('mull_monitor'):
         monitor_module()  # loaded at the driver's start, like every pinned tool file
     instance, recovered = ledger_instance(a.ledger_source), False
+    attempts, attempts_of = [], None  # follow: the current segment's process attempts in this driver
     while True:
         if (cdir / 'END.json').exists():
             return 0
@@ -2735,7 +3056,7 @@ def drive_locked(a, arm, root, cdir, man_path):
                 carried_segment_ok(man, arm, cdir, seg['root'])
         except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
             print(f'stop: {exc}', file=sys.stderr, flush=True)
-            return EXIT_STOP
+            return abandoned(follower)
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
             scratch_settle(arm, root, cdir, man, instance)
             if (cdir / 'END.json').exists():
@@ -2758,7 +3079,7 @@ def drive_locked(a, arm, root, cdir, man_path):
                 carried_trees_unlinked(root, a.chain)
             except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
                 print(f'stop: {exc}', file=sys.stderr, flush=True)
-                return EXIT_STOP
+                return abandoned(follower)
         if hold is not None:
             log(root, chain=a.chain, event='stop', reason=hold)
             return EXIT_STOP
@@ -2786,46 +3107,72 @@ def drive_locked(a, arm, root, cdir, man_path):
             scratch_link(arm, cdir, native)
         moved = quarantine(native, cdir)
         log(root, chain=a.chain, event='segment', segment=s, config=pin(path), moved=moved)
-        if scratch:
-            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)
+        if follower is not None:
+            if attempts_of != s:
+                attempts, attempts_of = [], s
+            first = completed(native)  # the iterations this attempt finds complete (none after a scratch reset)
+        if scratch and follower is not None:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native, follower=follower)
+        elif scratch:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)  # main's call, unchanged
+        elif follower is not None:
+            code, killed = follower.run(path, deadline)
         else:
             code, killed = run_trainer(arm, path, deadline, cdir)
+        followed = {}  # absent without follow: commit lines and log rows unchanged
+        if follower is not None:
+            attempts.append(dict(follower.detail(), trainer_from_iteration=first))
+            # The segment's process attempts in this driver, in order: iteration i's receipt was written by the last
+            # attempt whose trainer_from_iteration is at most i (an earlier driver's process when i is below the
+            # first one's); driver_process_cpu_seconds differences only within one attempt.
+            followed = dict(attempts[-1], trainer_attempts=list(attempts))
         if not carried_tree_held(man, root, a.chain):  # a carried chain: its tree again before any write
-            return EXIT_STOP
+            return abandoned(follower)
         if (native / 'completion.json').exists():
             if scratch:
                 t = time.time()
                 carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
                 n = persist(arm, native, cdir)
                 if not carried_tree_held(man, root, a.chain):  # and after the copy, before its commit line
-                    return EXIT_STOP
-                record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n)
+                    return abandoned(follower)
+                record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n,
+                              **followed)
                 t = time.time()
                 z = compress_config(path)
                 record_housekeeping(cdir, s, time.time() - t, config_gz_bytes=z)
                 log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped,
                     config_gz_bytes=z)
             else:
-                record_commit(cdir, man, s, 'native', instance)  # the trainer published every receipt durably
-            log(root, chain=a.chain, event='segment-done', segment=s)
+                record_commit(cdir, man, s, 'native', instance, **followed)  # every receipt is published durably
+            log(root, chain=a.chain, event='segment-done', segment=s, **followed)
+            continue
+        if follower is not None and follower.handed and not killed and code > 0:
+            # A handed segment that a waiting trainer refused (nothing of it ran) or crashed in: rerun it in a new
+            # process through the loop's top, as a driver start would (module section "followed trainer").
+            refused = code == FOLLOW_REFUSED
+            log(root, chain=a.chain, event='follow-fallback', segment=s, exit=code, refused=refused, **followed)
+            if refused:
+                follower.close()
+                follower = None  # the remaining segments run in plain processes
             continue
         if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
             t = time.time()
             carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
             n = persist(arm, native, cdir)
             if not carried_tree_held(man, root, a.chain):
-                return EXIT_STOP
-            record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n)
+                return abandoned(follower)
+            record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n,
+                          **followed)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
         elif killed:
-            record_commit(cdir, man, s, 'native-cut', instance)
+            record_commit(cdir, man, s, 'native-cut', instance, **followed)
         boundary, receipt = latest(man)
         if killed:
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
         if code == 0 and reached_stop(man, a.ledger_source):
-            record_commit(cdir, man, s, 'native-stop', instance)
+            record_commit(cdir, man, s, 'native-stop', instance, **followed)
             return end_at_stop(a, arm, root, cdir, man)
         write(cdir / 'FAILURE.json', {'segment': s, 'exit': code, 'boundary': boundary, 'unix': time.time()})
         log(root, chain=a.chain, event='segment-failed', segment=s, exit=code, boundary=boundary)

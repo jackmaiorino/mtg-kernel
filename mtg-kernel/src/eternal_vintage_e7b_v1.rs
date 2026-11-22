@@ -2684,6 +2684,27 @@ fn note_prepare_cast(state: &mut GameState, spell: ObjectId) {
     }
 }
 
+/// Prepared spells are cast like other spells, but their copies are never cards.
+pub(crate) fn is_prepare_copy(state: &GameState, object: ObjectId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && read_state(state).is_some_and(|e7b| e7b.prepare_copies.contains(&object))
+}
+
+/// Clears the prepare relationship and permission after the copy ceases.
+pub(crate) fn forget_prepare_copy(state: &mut GameState, copy: ObjectId) {
+    if !is_prepare_copy(state, copy) {
+        return;
+    }
+    let e7b = e7b_state(state);
+    e7b.prepared
+        .retain(|(_, prepared_copy)| *prepared_copy != copy);
+    e7b.prepare_copies.retain(|live| *live != copy);
+    state
+        .engine
+        .exile_play_permissions
+        .retain(|permission| permission.object != copy);
+}
+
 /// Keeps each prepare copy's cast permission with its creature's current
 /// controller, and makes copies cease to exist once their creature left or
 /// they left exile and the stack.
@@ -2712,9 +2733,9 @@ fn maintain_prepared(state: &mut GameState) {
             .filter(|(creature, _)| in_exile && link_live_in(state, *creature, Zone::Battlefield))
             .map(|(creature, _)| state.objects.get(creature.object).controller);
         let generation = state.objects.get(copy).zone_change_count;
-        let permissions = &mut state.engine.exile_play_permissions;
         match holder {
             Some(holder) => {
+                let permissions = &mut state.engine.exile_play_permissions;
                 let current = permissions
                     .iter()
                     .filter(|permission| permission.object == copy)
@@ -2743,12 +2764,8 @@ fn maintain_prepared(state: &mut GameState) {
                 }
             }
             None => {
-                permissions.retain(|permission| permission.object != copy);
                 event::cease_to_exist(state, copy);
-                let e7b = e7b_state(state);
-                e7b.prepared
-                    .retain(|(_, prepared_copy)| *prepared_copy != copy);
-                e7b.prepare_copies.retain(|live| *live != copy);
+                forget_prepare_copy(state, copy);
             }
         }
     }

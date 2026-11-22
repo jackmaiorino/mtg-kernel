@@ -7,6 +7,19 @@ use crate::native_policy_value_net_v1::public_inputs_v1::{
     NativePublicInputNetV1, PublicInputWeightsV1,
 };
 
+/// Retained canonical JSON from the completed FlatV7 fill, including London decisions.
+#[cfg(test)]
+pub(crate) fn last_flat_v7_observation_for_test(policy: &FrozenPlayPolicyV1) -> &[u8] {
+    let fresh = policy
+        .fresh_successor
+        .as_ref()
+        .expect("FlatV7 probe policy");
+    assert!(fresh.flat_v7 && !fresh.flat_v8);
+    let observation = fresh.tensorizer_v7.canonical_observation_v1();
+    assert!(!observation.is_empty(), "expected a completed FlatV7 fill");
+    observation
+}
+
 /// Evaluation-only forced V3 action. Matches the qualified unscored adapter:
 /// the singleton still consumes the physical seat's usual sampler draw.
 pub(crate) fn select_forced_v3_for_evaluation(
