@@ -360,7 +360,8 @@ class LightJobRoutingTests(unittest.TestCase):
 
     def test_a_bracketed_invalid_list_fails_closed(self):
         # GitHub fails the job when fromJSON cannot parse: the job never reaches a self-hosted runner. A fork
-        # pull request, an unset runner variable or an unlisted actor never parses the list, so stays hosted.
+        # pull request or an unset runner variable never parses the list, so stays hosted. (Any other event,
+        # listed or not, parses it and fails closed.)
         for value in (f"[{OWNER}]", f'["{OWNER}" garbage]'):
             with self.subTest(value=value):
                 bad = {**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value}
