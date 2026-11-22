@@ -319,7 +319,7 @@ pub(crate) fn begin_damage_batch(state: &mut GameState, events: &[ProposedEvent]
             ProposedEvent::Damage(damage)
                 if matches!(damage.target, Target::Object(target)
                     if active_named(state, target, PHANTOM_NISHOBA))
-                || crate::eternal_pauper_pf1c_v1::redirect_may_hit_nishoba(state, damage)
+                || crate::eternal_pauper_pf1c_v1::batch_redirect_may_hit_nishoba(state, damage)
         )
     });
     hits_nishoba && begin_nishoba_cohort(state)

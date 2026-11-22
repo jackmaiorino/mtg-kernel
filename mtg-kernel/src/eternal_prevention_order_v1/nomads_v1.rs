@@ -24,7 +24,8 @@ pub(crate) fn has_active_redirects(state: &GameState) -> bool {
 /// A lone point with one destination can use the ordinary path. Splits must
 /// keep their surviving damage simultaneous, even when no decision is needed.
 pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool {
-    if !matches!(damage.target, Target::Object(_))
+    if crate::linked_aura_operation_v1::legacy_damage_order_v1()
+        || !matches!(damage.target, Target::Object(_))
         || damage.amount <= 0
         || read_state(state).is_none_or(|records| records.redirects.is_empty())
     {

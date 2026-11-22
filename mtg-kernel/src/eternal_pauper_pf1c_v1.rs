@@ -151,20 +151,6 @@ pub enum HallowPreventionV1 {
 }
 
 impl HallowChoiceV1 {
-    /// Earlier Hallow checkpoints offered only the first paid Circle. That
-    /// exact menu is a prefix: new Circles follow every old ordinary option.
-    pub(crate) fn use_saved_circle_menu(&mut self, saved: &Self) {
-        if self.circle.is_some()
-            && self
-                .ordinary
-                .iter()
-                .position(|option| matches!(option, OrdinaryV1::Circle { .. }))
-                == Some(saved.ordinary.len())
-        {
-            self.ordinary.truncate(saved.ordinary.len());
-        }
-    }
-
     pub(crate) fn mixed(&self) -> bool {
         self.circle.is_some() || !self.ordinary.is_empty()
     }
@@ -550,6 +536,14 @@ pub(crate) fn redirect_may_hit_nishoba(state: &GameState, damage: &DamagePropose
         })
 }
 
+pub(crate) fn batch_redirect_may_hit_nishoba(state: &GameState, damage: &DamageProposed) -> bool {
+    redirect_may_hit_nishoba(state, damage)
+        && (!crate::linked_aura_operation_v1::legacy_damage_order_v1()
+            || damage_source_incarnation(state, damage).is_some_and(|(source, zone)| {
+                !hallow_beneficiaries(state, source, zone).is_empty()
+            }))
+}
+
 /// An unshielded redirection may split a single proposal into several
 /// simultaneous survivors. Keep Hallow's established single-event checkpoint.
 pub(crate) fn needs_redirect_batch(state: &GameState, damage: &DamageProposed) -> bool {
@@ -663,7 +657,9 @@ fn prevent_packets(
             let mut matching = circles::matching_circle_shields(state, damage);
             let first = matching.next().map(|(_, shield)| shield);
             let mut distinct = Vec::new();
-            for (position, shield) in matching {
+            for (position, shield) in
+                matching.take_while(|_| !crate::linked_aura_operation_v1::legacy_damage_order_v1())
+            {
                 if Some(shield) != first && !distinct.contains(&shield) {
                     distinct.push(shield);
                     ordinary.push(OrdinaryV1::Circle { position, shield });
@@ -750,7 +746,10 @@ fn prevent_packets(
 /// Whether this batch needs Hallow's scoped replacement phase. Its caller
 /// owns the Nishoba cohort across this phase and all remaining ordinary events.
 pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEvent]) -> bool {
-    (may_need_hallow_choice(state) || crate::eternal_prevention_order_v1::may_need_choice(state))
+    let legacy = crate::linked_aura_operation_v1::legacy_damage_order_v1();
+    (may_need_hallow_choice(state)
+        || (!legacy && crate::eternal_prevention_order_v1::may_need_choice(state)))
+        && !(legacy && crate::eternal_prevention_order_v1::cannot_prevent(state))
         && (!redirect_source::shared_targets(state, events).is_empty()
             || events.iter().any(|event| {
                 matches!(event,

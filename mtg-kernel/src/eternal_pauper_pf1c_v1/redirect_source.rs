@@ -47,7 +47,7 @@ fn sole_destination(state: &GameState, packet: &Packet) -> Option<(RedirectV1, u
 /// sources together before any one of them spends a shared shield.
 pub(super) fn shared_targets(state: &GameState, events: &[ProposedEvent]) -> Vec<Target> {
     let mut targets = Vec::new();
-    if events.len() < 2 {
+    if events.len() < 2 || crate::linked_aura_operation_v1::legacy_damage_order_v1() {
         return targets;
     }
     let Some(records) = read_state(state) else {

@@ -162,13 +162,14 @@ fn hallow_restores_the_original_circle_and_sphere_menu_in_order() {
     let (mut state, source, _) = painted_bombardment(P1, true);
     expect_menu(&mut state, source, 4);
     let mut old = restored(&state);
-    let choice = &mut old
+    let checkpoint = old
         .engine
         .linked_aura_operation_v1
         .pending_hallow_v1
         .as_mut()
-        .unwrap()
-        .choice;
+        .unwrap();
+    checkpoint.expanded_damage_order = false;
+    let choice = &mut checkpoint.choice;
     assert_eq!(choice.ordinary.len(), 2);
     // A save made before the second distinct Circle was offered.
     choice.ordinary.pop();
