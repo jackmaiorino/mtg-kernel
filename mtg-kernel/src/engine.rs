@@ -31991,7 +31991,7 @@ mod tests {
                 }
                 let paid = state.stack.last().unwrap();
                 assert_eq!(paid.source, spell);
-                assert_eq!(paid.mode_chosen, 1);
+                assert_eq!(paid.v4.cast_method, Some(CastMethodV4::Omen));
             }
         }
     }
