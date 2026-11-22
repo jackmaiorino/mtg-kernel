@@ -40,48 +40,55 @@ class Evaluator:
     def peek(self):
         return self.tokens[self.at] if self.at < len(self.tokens) else None
 
-    def either(self):
-        value = self.both()
+    def either(self, resolve=True):
+        value = self.both(resolve)
         while self.peek() == "||":
             self.take()
-            other = self.both()
-            value = value if truthy(value) else other
+            use_other = resolve and not truthy(value)
+            other = self.both(use_other)
+            if use_other:
+                value = other
         return value
 
-    def both(self):
-        value = self.comparison()
+    def both(self, resolve):
+        value = self.comparison(resolve)
         while self.peek() == "&&":
             self.take()
-            other = self.comparison()
-            value = other if truthy(value) else value
+            use_other = resolve and truthy(value)
+            other = self.comparison(use_other)
+            if use_other:
+                value = other
         return value
 
-    def comparison(self):
-        value = self.operand()
+    def comparison(self, resolve):
+        value = self.operand(resolve)
         while self.peek() in ("==", "!="):
             negate = self.take() == "!="
-            value = equal(value, self.operand()) != negate
+            other = self.operand(resolve)
+            if resolve:
+                value = equal(value, other) != negate
         return value
 
-    def operand(self):
+    def operand(self, resolve):
         token = self.take()
         if token == "(":
-            value = self.either()
+            value = self.either(resolve)
             self.take(")")
             return value
         if token.startswith("'"):
             return token[1:-1].replace("''", "'")
         if self.peek() == "(":
             self.take("(")
-            arguments = [self.either()]
+            arguments = [self.either(resolve)]
             while self.peek() == ",":
                 self.take()
-                arguments.append(self.either())
+                arguments.append(self.either(resolve))
             self.take(")")
+            # Parse skipped branches without evaluating any functions in them.
             if token == "fromJSON":
-                return json.loads(arguments[0])
+                return json.loads(arguments[0]) if resolve else None
             if token == "contains":
-                return arguments[1] in arguments[0]
+                return arguments[1] in arguments[0] if resolve else None
             raise ValueError(f"unsupported function {token}")
         return self.context.get(token, "")
 
@@ -129,6 +136,12 @@ class EvaluatorTests(unittest.TestCase):
         self.assertFalse(evaluate("contains(fromJSON(list || '[]'), item)", item="k"))
         with self.assertRaises(ValueError):
             evaluate("a ? b : c")
+
+    def test_and_or_short_circuit_function_calls(self):
+        self.assertEqual(evaluate("missing && fromJSON(setting) || 'hosted'", setting="["), "hosted")
+        self.assertEqual(evaluate("'hosted' || fromJSON(setting)", setting="["), "hosted")
+        with self.assertRaises(json.JSONDecodeError):
+            evaluate("'selected' && fromJSON(setting)", setting="[")
 
 
 class RoutingTests(unittest.TestCase):
@@ -402,6 +415,13 @@ class MacRoutingTests(unittest.TestCase):
                 "vars.MTG_CI_LINUX_GROUPS": '["eternal"]',
                 "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)}
         self.assertEqual(self.route("rust-test-groups", "ubuntu-24.04", "eternal", **event(), **both), MAC_POOL)
+
+    def test_malformed_mac_setting_keeps_linux_on_hosted_runners(self):
+        settings = {"vars.MTG_CI_MAC_GROUPS": '["python-shard-0"',
+                    "needs.detect-changes.outputs.mac_groups": "[]"}
+        for job, group in zip(MAC_JOBS, ("standard", "limited-only", "python-shard-0")):
+            with self.subTest(job=job):
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event(), **settings), "ubuntu-24.04")
 
     def test_the_mac_step_runs_for_owner_events_from_this_repository_only(self):
         block = job_block("detect-changes", "rust-quality")
