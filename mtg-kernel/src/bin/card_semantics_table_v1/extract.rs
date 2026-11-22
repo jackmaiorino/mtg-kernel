@@ -544,7 +544,7 @@ impl<'m> Walker<'m> {
     /// A created token is described by its own power and toughness, not by
     /// its registry id.
     fn token_def(&mut self, path: &str, id: u64) {
-        self.count(format!("{path}"));
+        self.count(path.to_string());
         if let Some(token) = CARD_DEFS.get(id as usize) {
             if let Some(power) = token.power {
                 self.value(format!("{path}.power"), i64::from(power));

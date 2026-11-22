@@ -190,7 +190,7 @@ const ENCODING: [&str; 6] = [
 /// The committed table text: JSON with one vocabulary entry and one card
 /// per line, and a content hash over every other line.
 pub fn render(table: &Table) -> String {
-    assert!(VALUE_LIMIT > 0);
+    const { assert!(VALUE_LIMIT > 0) };
     let mut body = String::new();
     body.push_str("{\n");
     let field = |body: &mut String, key: &str, value: String| {

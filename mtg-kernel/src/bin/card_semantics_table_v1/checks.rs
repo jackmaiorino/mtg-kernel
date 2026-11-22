@@ -329,11 +329,11 @@ pub const PINNED: [(&str, Census, Census); 2] = [
 pub fn census_report(before: &[CardRow], after: &[CardRow]) -> (String, Vec<String>) {
     let mut report = String::new();
     let mut failures = Vec::new();
-    let scopes: [(&str, &dyn Fn(&str) -> bool); 2] =
-        [(PINNED[0].0, &all_tokens), (PINNED[1].0, &effect_tokens)];
+    let scopes: [(&str, fn(&str) -> bool); 2] =
+        [(PINNED[0].0, all_tokens), (PINNED[1].0, effect_tokens)];
     for (i, (scope, keep)) in scopes.iter().enumerate() {
-        let b = census(before, *keep);
-        let a = census(after, *keep);
+        let b = census(before, keep);
+        let a = census(after, keep);
         for (label, measured, pinned) in [
             ("before mapping", b, PINNED[i].1),
             ("after mapping", a, PINNED[i].2),
