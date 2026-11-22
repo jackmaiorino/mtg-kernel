@@ -20769,7 +20769,11 @@ fn plan_spell_departure(
     if item.kind != StackItemKind::Spell {
         return Err("only a spell stack item has a spell departure".to_string());
     }
-    Ok(if item.is_copy {
+    // A prepare copy was cast from exile, so it has a real cast contract.
+    // Like a copy created on the stack, it leaves no card behind.
+    let is_copy =
+        item.is_copy || crate::eternal_vintage_e7b_v1::is_prepare_copy(state, item.source);
+    Ok(if is_copy {
         SpellDeparture::Cease {
             source: item.source,
         }
@@ -20846,6 +20850,7 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
             } {
                 return Err("the virtual spell copy could not cease to exist".to_string());
             }
+            crate::eternal_vintage_e7b_v1::forget_prepare_copy(state, source);
         }
     }
     crate::faebloom_trick_v43::record_departure(

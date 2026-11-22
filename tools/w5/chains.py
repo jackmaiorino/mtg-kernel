@@ -32,7 +32,10 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   trajectory and checkpoint in one zstd frame of its exact bytes, mtg-kernel `record_envelope_v1`; same states, about
   a fifth of the bytes) and optional `verified_reads` (`resident`: the trainer reuses bytes its process already
   verified against a pin instead of rereading them, mtg-kernel `verified_bytes_cache_v1`; same states and bytes,
-  less memory traffic per update), optional `keep_offset` (`{b0, end_update, shape: "linear-v1"}`, qual.py: every
+  less memory traffic per update), optional `follow` (`true`: the chain's consecutive segments run in one trainer
+  process, mtg-kernel `--follow`, section "followed trainer" in the code; same configs, states and receipts;
+  C-recipe chain arms without a ladder or resident reads; outside the recipe identity, so a running chain can
+  take it or drop it through a re-plan), optional `keep_offset` (`{b0, end_update, shape: "linear-v1"}`, qual.py: every
   episode with an `opening` carries `london_keep_offset = b(u)` while the chain's update u (counted from 0 at its
   first segment, so from the fork point) is below `end_update`, and no such field from there on; C-recipe arms only,
   on a base whose every episode has the London opening and its modes and whose loss and backend are the plain CPU GAE
@@ -41,6 +44,11 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   (`{b0, end_update, shape: "linear-v1"}`, qual.py: every episode with `priority_windows` carries the trainer's
   `priority_pass_offset = b(u)` on the same terms; C-recipe arms only, on a base whose every episode has
   `priority_windows` with an action-window seat and the plain CPU GAE update; recipe identity only when present),
+  optional `postboard_exposure` (`{share: [n, d], max_swaps, rule: "uniform-swaps-v1", seats:
+  "learner-and-current-v1", keep_ids}`, qual.py: a share n / d of the chain's episodes are post-board games, in which
+  the learner seat and a current-policy opponent seat play their registered 75 with 1 to max_swaps cards exchanged
+  between mainboard and sideboard, never taking out a card id in keep_ids; drawn per (seed root, update, slot);
+  C-recipe arms only, on a game-one base with exact 60 and 15 registrations; recipe identity only when present),
   optional
   `pregame_advantage` (`"terminal_v1"`, qual.py: the trainer's loss_selection key, the pregame decisions' advantage
   and value target from the terminal result; C-recipe arms on a London base with gamma 1.0; recipe identity only when
@@ -238,6 +246,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import statistics
 import subprocess
 import sys
@@ -593,6 +602,33 @@ def old_trees(manifest_path):
         raise Stop(f'the carried chain\'s trees cannot be established from {manifest_path} ({exc})') from exc
 
 
+def linked_file(path, siblings=()):
+    """A regular file with more than one hard link (False when absent), unless every extra link is a `write_once`
+    temporary beside it (`<name>.<pid>.<ns>.tmp`, the same inode: a publication in progress, or one a crash left)."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink == 1:
+        return False
+    name = os.path.basename(path)
+    temps = 0
+    for s in siblings:
+        if s.startswith(name + '.') and s.endswith('.tmp'):
+            try:
+                t = os.lstat(os.path.join(os.path.dirname(path), s))
+            except FileNotFoundError:
+                continue
+            temps += (t.st_dev, t.st_ino) == (st.st_dev, st.st_ino)
+    # against the first and the last count: a temporary removed meanwhile can only make this refuse (the caller looks
+    # again with a fresh listing), and one added meanwhile cannot hide an outside link
+    try:
+        last = os.lstat(path).st_nlink
+    except FileNotFoundError:
+        last = 0
+    return st.st_nlink > 1 + temps or last > 1 + temps
+
+
 def carried_trees_unlinked(root, name):
     """A carried chain's W5 root has a canonical path and no link anywhere in it: plan, state (instance logs and
     locks), retention logs, segment configs, records and logs alike. Segment directories (`chains/<any>/seg-*`)
@@ -607,6 +643,13 @@ def carried_trees_unlinked(root, name):
         for entry in dirnames + filenames:
             require(not os.path.islink(os.path.join(dirpath, entry)),
                     f'{name}: {os.path.join(dirpath, entry)} is a link in a carried chain\'s tree')
+        for entry in filenames:  # no hard link either: an append (LOG.jsonl, an index) would modify the other file
+            if entry.endswith('.tmp'):
+                continue  # write_once's temporary: accounted for beside its destination
+            path = os.path.join(dirpath, entry)
+            require(not (linked_file(path, filenames) and linked_file(path, os.listdir(dirpath))),  # fresh look: a
+                    # temporary removed between the listing and the check
+                    f'{name}: {path} has more than one hard link in a carried chain\'s tree')
         if os.path.dirname(os.path.abspath(dirpath)) == chains_abs:
             dirnames[:] = [d for d in dirnames if not retention.SEGMENT_DIR.fullmatch(d)]
 
@@ -628,10 +671,21 @@ def carried_tree_still_ok(plan):
         return False
 
 
+def guarded(man):
+    """A carried chain, or an ordinary chain whose manifest names `guards`: its tree, segments and retention are
+    under the link and containment checks (retention.guarded)."""
+    return retention.guarded(man)
+
+
+def guarded_entry(entry):
+    """A plan chain entry whose chain is guarded (it names `carry` or `guards`)."""
+    return bool((entry or {}).get('carry') or (entry or {}).get('guards'))
+
+
 def carried_tree_held(man, root, name):
     """True unless `name` is carried and its W5 root now holds a link: then the reason goes to stderr only (the
     tree's own logs are suspect) and the caller stops without another write."""
-    if not man.get('carry'):
+    if not guarded(man):
         return True
     try:
         carried_trees_unlinked(root, name)
@@ -645,17 +699,25 @@ def carried_chain_dir_ok(plan, root, name):
     """A carried chain of a plan (its plan entry names `carry`): its chain directory is a real directory with no link
     in its path, and its manifest is that chain's carried manifest, before anything reads, indexes, ends or cleans
     it. Ordinary chains: nothing is checked."""
-    if not (plan['chains'].get(name) or {}).get('carry'):
+    entry = plan['chains'].get(name) or {}
+    if not guarded_entry(entry):
         return
     cdir = chain_dir(root, name)
     carried_trees_unlinked(root, name)
     man = read(cdir / 'chain.json')
-    require(man.get('chain') == name and isinstance(man.get('carry'), dict),
-            f'{name}: {cdir / "chain.json"} is not this carried chain\'s manifest')
-    arm_file = ((plan.get('arms') or {}).get(plan['chains'][name].get('arm')) or {}).get('file') or {}
+    require(man.get('chain') == name and (isinstance(man.get('carry'), dict) if entry.get('carry')
+                                          else man.get('guards') is True),
+            f'{name}: {cdir / "chain.json"} is not this {"carried" if entry.get("carry") else "guarded"} '
+            f'chain\'s manifest')
+    arm_file = ((plan.get('arms') or {}).get(entry.get('arm')) or {}).get('file') or {}
     if arm_file.get('path'):  # its scratch root and scratch directory: canonical, apart, and with no link inside
         scratch_root = read(arm_file['path']).get('scratch_root')
-        carried_dirs_apart(man['carry'], name, root, scratch_root)
+        if man.get('carry'):
+            carried_dirs_apart(man['carry'], name, root, scratch_root)
+        elif scratch_root:
+            absolute = os.path.abspath(scratch_root)
+            require(os.path.realpath(absolute) == absolute and '..' not in Path(scratch_root).parts,
+                    f'{name}: {scratch_root} must be a canonical path with no link in it')
         if scratch_root and Path(scratch_root).is_dir():
             for dirpath, dirnames, filenames in os.walk(scratch_root, followlinks=False):
                 for entry in dirnames + filenames:
@@ -723,24 +785,30 @@ def carried_segment_ok(man, arm, cdir, native):
     """A carried chain's concrete segment directory and its scratch directory are real directories (no link) in
     their own parents, apart from the old chain's trees, before anything mounts, settles, quarantines, persists or
     deletes them. Ordinary chains: nothing is checked."""
-    carry = man.get('carry')
-    if not carry:
+    if not guarded(man):
         return
+    carry = man.get('carry')
     cdir, native = Path(cdir), Path(native)
-    carried_dirs_apart(carry, cdir.name, cdir.parent.parent, arm.get('scratch_root'))
-    old_root, old_scratch = old_trees(carry['from']['manifest']['path'])
+    old_root, old_scratch = None, None
+    if carry:
+        carried_dirs_apart(carry, cdir.name, cdir.parent.parent, arm.get('scratch_root'))
+        old_root, old_scratch = old_trees(carry['from']['manifest']['path'])
     targets = [(native, cdir), (cdir / f'.{native.name}.persist', cdir)]
     if arm.get('scratch_root'):
         targets.append((scratch_dir(arm, cdir, native), Path(arm['scratch_root']) / cdir.name))
     for d, parent in targets:
         require(not d.is_symlink() and d.resolve().parent == parent.resolve(),
                 f'{cdir.name}: {d} is a link or resolves outside {parent}')
+        for p in (d, parent):  # no link in any component of the path either (a linked ancestor moves both)
+            absolute = os.path.abspath(p)
+            require(os.path.realpath(absolute) == absolute and '..' not in Path(p).parts,
+                    f'{cdir.name}: {p} has a link or ".." in its path')
         if d.is_dir():  # nothing below it may be a link either (quarantine, settle and persist walk it)
             for dirpath, dirnames, filenames in os.walk(d, followlinks=False):
                 for entry in dirnames + filenames:
                     require(not os.path.islink(os.path.join(dirpath, entry)),
                             f'{cdir.name}: {os.path.join(dirpath, entry)} is a link inside a carried segment')
-        for t in [old_root] + ([old_scratch] if old_scratch else []):
+        for t in ([old_root] if old_root else []) + ([old_scratch] if old_scratch else []):
             require(disjoint(d.resolve(), t), f'{cdir.name}: {d} reaches the carried chain\'s {t}')
 
 
@@ -825,6 +893,75 @@ def carried_from_stopped(man):
 REPIN_SCHEMA = 'w5-repin/v1'
 REPIN_PROOF_SCHEMA = 'w5-repin-proof/v1'
 REPIN_PENDING = 'REPIN-PENDING.json'
+# Gate (a) before the hold (collab LANES/speed-lead/repin-downtime/DESIGN-DELTA.md, change 1): a pre-hold receipt
+# (`w5-repin-proof-a/v1`) proves gate (a) on a recent completed segment while the chain still trains; the in-hold
+# receipt (`w5-repin-proof-c/v1`) proves gate (c) only and cites it; the request names both (`proof`, `proof_a`).
+REPIN_PREHOLD_SCHEMA = 'w5-repin-proof-a/v1'
+REPIN_PROOF_C_SCHEMA = 'w5-repin-proof-c/v1'
+REPIN_PREHOLD_MAX_SEGMENTS = 8  # completed segments after the proven one, at the hold
+REPIN_PREHOLD_MAX_SECONDS = 3600.0  # from the pre-hold proof's end to the in-hold proof's start
+REPIN_CONFIRM_SCHEMA = 'w5-repin-confirm/v1'
+INDEX_TAIL_BYTES = 64 * 2**20
+
+
+def finite_time(t):
+    return isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t)
+
+
+def pin_holds(p):
+    """A pin whose file exists with that content (no refusal: the caller words it)."""
+    try:
+        return isinstance(p, dict) and Path(p['path']).is_file() and sha(p['path']) == p['sha256']
+    except (OSError, KeyError, TypeError):
+        return False
+
+
+def history_sha256(man):
+    return hashlib.sha256(json.dumps(man.get('trainer_history') or [], sort_keys=True).encode()).hexdigest()
+
+
+def config_bytes(path, tries=3):
+    """A segment config's bytes, decompressed (the driver gzips a finished scratch segment's config after its commit:
+    the plain file first, then `.gz`, retried so that a gzip landing between the two is read); None if absent."""
+    path = Path(path)
+    for _ in range(tries):
+        for p in (path, path.with_name(path.name + '.gz')):
+            try:
+                raw = p.read_bytes()
+            except FileNotFoundError:
+                continue
+            return gzip.decompress(raw) if p.name.endswith('.gz') else raw
+    return None
+
+
+def index_rows_tail(index_path, lo, hi):
+    """{boundary: after_state_sha256} for lo <= boundary <= hi from the tail of a chain index, read directly (never
+    `retention.index`, which takes the index lock and can write)."""
+    found = {}
+    try:
+        with open(index_path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - INDEX_TAIL_BYTES))
+            lines = f.read().decode('utf-8', 'replace').splitlines()[1 if size > INDEX_TAIL_BYTES else 0:]
+    except FileNotFoundError:
+        return found
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        b = r.get('boundary') if isinstance(r, dict) else None
+        if isinstance(b, int) and lo <= b <= hi:
+            require(found.get(b, r.get('after_state_sha256')) == r.get('after_state_sha256'), f'index rows at {b} disagree')
+            found[b] = r.get('after_state_sha256')
+    return found
+
+
+def newest_iteration(native):
+    its = sorted(p for p in (Path(native) / 'iterations').iterdir() if (p / 'complete.json').exists())
+    require(its, f'{native} has no completed iteration')
+    return its[-1]
 
 
 def repin_pending(cdir):
@@ -883,13 +1020,18 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
     require(isinstance(req.get('id'), str) and req['id'], f'{name}: the re-pin request has no id')
     segs = man['segments']
     require(segs, f'{name}: a re-pin needs a started chain')
-    require(man.get('carry'), f'{name}: re-pin v1 is for carried chains (their segment and retention guards); '
-                              f'an ordinary chain needs those guards first')
+    require(guarded(man) or req.get('guards') is True,
+            f'{name}: a re-pin needs the segment and retention guards: a carried chain, or a request with '
+            f'`guards: true` (the plan then names `guards: true` for the chain too)')
     require(req.get('from_sha256') == man['recipe']['trainer_sha256'],
             f'{name}: the request re-pins from {req.get("from_sha256")}, the chain runs {man["recipe"]["trainer_sha256"]}')
     require(req.get('to_sha256') not in (None, req['from_sha256']), f'{name}: the request names no other trainer')
     if to_sha is not None:
         require(req['to_sha256'] == to_sha, f'{name}: the plan trainer is not the request\'s new trainer')
+    owed = repin_unconfirmed(man)  # its first segment on the current trainer is not confirmed: only the way back
+    require(owed is None or req['to_sha256'] == owed['from_sha256'],
+            f'{name}: its first segment on {owed and owed["to_sha256"]} is unconfirmed: only a re-pin back to '
+            f'{owed and owed["from_sha256"]} (or repin confirm first)')
     last = Path(segs[-1]['root'])
     require((last / 'completion.json').exists() and not os.path.ismount(last),
             f'{name}: its last segment is not complete and persisted')
@@ -901,15 +1043,23 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
     check_pin(proof, 'the re-pin proof receipt')
     doc = read(proof['path'])
     length = segs[-1]['updates']
-    require(doc.get('schema') == REPIN_PROOF_SCHEMA and doc.get('pass') is True, f'{name}: the proof did not pass')
+    prehold = req.get('proof_a') is not None  # gate (a) before the hold: the in-hold receipt proves gate (c) only
+    require(doc.get('schema') == (REPIN_PROOF_C_SCHEMA if prehold else REPIN_PROOF_SCHEMA) and doc.get('pass') is True,
+            f'{name}: the proof did not pass')
     require(doc.get('chain') == name and doc.get('boundary') == boundary and doc.get('next_segment') == len(segs)
             and doc.get('old_sha256') == req['from_sha256'] and doc.get('new_sha256') == req['to_sha256'],
             f'{name}: the proof is for another chain, boundary, segment or trainer pair')
-    for gate in ('gate_a', 'gate_c'):
+    for gate in (('gate_c',) if prehold else ('gate_a', 'gate_c')):
         g = doc.get(gate) or {}
         require(g.get('updates') == length and g.get('equal') == length, f'{name}: proof {gate} is not {length} of {length}')
     require(not doc.get('rehearsal'), f'{name}: a rehearsal receipt authorises nothing')
-    if man_path is not None:  # bound to this chain's own manifest, as it stands held, and its next segment
+    if prehold:
+        require(man_path is not None, f'{name}: a pre-hold proof is checked against the held manifest')
+        mp = Path(man_path).resolve()
+        require(doc.get('manifest') == {'path': mp.as_posix(), 'sha256': sha(mp)},
+                f'{name}: the proof was made on another manifest, or the chain changed since')
+        check_prehold_receipt(req, doc, name, man, mp)
+    elif man_path is not None:  # bound to this chain's own manifest, as it stands held, and its next segment
         mp = Path(man_path).resolve()
         require(doc.get('manifest') == {'path': mp.as_posix(), 'sha256': sha(mp)},
                 f'{name}: the proof was made on another manifest, or the chain changed since')
@@ -921,6 +1071,161 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
         config_sha, source = repin_next_config_sha256(arm, man)
         require(doc['gate_c'].get('config_sha256') == config_sha and doc['gate_c'].get('source_checkpoint') ==
                 source['checkpoint'], f'{name}: gate (c) ran another configuration or source than the next segment')
+
+
+def check_prehold_receipt(req, cdoc, name, man, man_path):
+    """The pre-hold receipt the request names (`proof_a`) against the held chain (DESIGN-DELTA 1.3, in order): the one
+    the in-hold receipt checked; passed; this chain; this trainer pair; the chain unchanged since (arm file, its bytes,
+    trainer history, the segment's trainer); the exact segment; fresh (segments and seconds, from recorded times);
+    its evidence still retained (the predecessor's actual source, every state part, the config content); gate (a)
+    whole; its rows the index's; both proofs on the same tools. Deterministic: no clock, no index lock."""
+    require(cdoc.get('gate_a_receipt') == req['proof_a'], f'{name}: the in-hold proof cites another pre-hold proof')
+    check_pin(req['proof_a'], 'the pre-hold proof receipt')
+    a = read(req['proof_a']['path'])
+    require(isinstance(a, dict) and a.get('schema') == REPIN_PREHOLD_SCHEMA and a.get('pass') is True
+            and not a.get('rehearsal'), f'{name}: pre-hold proof did not pass')
+    require(a.get('chain') == name and a.get('manifest_path') == Path(man_path).as_posix(),
+            f'{name}: pre-hold proof is for another chain')
+    require(a.get('old_sha256') == req['from_sha256'] and a.get('new_sha256') == req['to_sha256'],
+            f'{name}: pre-hold proof is for another trainer pair')
+    segs, k = man['segments'], a.get('segment')
+    in_range = type(k) is int and 1 <= k <= len(segs) - 1
+    require(a.get('arm_file') == man.get('arm_file') and pin_holds(man.get('arm_file'))
+            and a.get('trainer_history_sha256') == history_sha256(man)
+            and (not in_range or trainer_of_segment(man, k) == req['from_sha256']),
+            f'{name}: the chain changed since the pre-hold proof')
+    require(in_range and segs[k] == a.get('segment_entry')
+            and a.get('boundary') == segs[k]['offset'] + segs[k]['updates'],
+            f'{name}: pre-hold proof replayed another segment')
+    finished, started = a.get('finished_unix'), cdoc.get('started_unix')
+    require(finite_time(finished) and finite_time(started) and started - finished >= 0,
+            f'{name}: pre-hold proof times are out of order')
+    behind, age = len(segs) - 1 - k, started - finished
+    require(behind <= REPIN_PREHOLD_MAX_SEGMENTS,
+            f'{name}: pre-hold proof is stale: {behind} completed segments after the proven one, over the bound of '
+            f'{REPIN_PREHOLD_MAX_SEGMENTS} (rerun gate (a), or the combined proof in the hold)')
+    require(age <= REPIN_PREHOLD_MAX_SECONDS,
+            f'{name}: pre-hold proof is stale: {age:.0f} s from its end to the in-hold proof, over the bound of '
+            f'{REPIN_PREHOLD_MAX_SECONDS:.0f} s (rerun gate (a), or the combined proof in the hold)')
+    lost = f"{name}: the pre-hold proof's source or config is no longer retained"
+    try:
+        source = next_source(segs[k - 1]['root'])
+        required = scratch_kept_pins(newest_iteration(segs[k - 1]['root']))
+    except (Stop, OSError, ValueError, KeyError):
+        raise Stop(lost)
+    require(source['checkpoint'] == a.get('source_checkpoint'), lost)
+    parts = a.get('source_parts')
+    try:
+        named = sorted((Path(p['path']).resolve().as_posix(), p['sha256']) for p in parts)
+    except (TypeError, KeyError):
+        named = None
+    require(named == sorted((Path(p).resolve().as_posix(), d) for p, d in required.items()),
+            f'{name}: pre-hold proof does not name every source state part')
+    require(all(pin_holds(p) for p in parts), lost)
+    data = config_bytes(segs[k]['config'])
+    require(data is not None and hashlib.sha256(data).hexdigest() == a.get('config_sha256'), lost)
+    length, lo = segs[k]['updates'], segs[k]['offset']
+    rows = a.get('rows')
+    require(a.get('updates') == length == a.get('equal') and isinstance(rows, list) and len(rows) == length
+            and [r.get('boundary') for r in rows] == list(range(lo + 1, lo + length + 1))
+            and all(isinstance(r.get('index'), str) and r.get('new') == r['index'] for r in rows)
+            and a.get('first_before_equal') is True, f'{name}: pre-hold proof gate (a) is not {length} of {length}')
+    index = index_rows_tail(retention.index_path(man_path), lo, lo + length)
+    require(all(index.get(r['boundary']) == r['index'] for r in rows)
+            and isinstance(a.get('first_before'), str) and index.get(lo) == a['first_before'],
+            f'{name}: pre-hold proof rows differ from the index (or its first before-state from the row at {lo})')
+    a_tools, c_tools = a.get('tools_chains_sha256'), cdoc.get('tools_chains_sha256')
+    require(all(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest)
+                for digest in (a_tools, c_tools)), f'{name}: both proofs need a valid tools digest')
+    require(a_tools == c_tools, f'{name}: the two proofs ran different tools')
+
+
+def repin_effective(history):
+    """(index, entry) of the switch in force: the last history entry that is not a revert and was not reverted (a
+    `repin abort` of a later re-pin puts the earlier one, and any confirmation it still owes, back in force); else
+    (None, None)."""
+    reverted = set()
+    for i in range(len(history) - 1, -1, -1):
+        e = history[i]
+        if e.get('reverts') is not None:
+            reverted.add(e['reverts'])
+        elif e['id'] not in reverted:
+            return i, e
+    return None, None
+
+
+def repin_requires_confirmation(entry):
+    # Older end clients could clear pending without recording the hold on a split-proof switch.
+    return entry is not None and (entry.get('proof_a') is not None or entry.get('confirm_required'))
+
+
+def repin_unconfirmed(man):
+    """The effective split-proof or explicitly held switch until its first segment has been confirmed."""
+    _, entry = repin_effective(man.get('trainer_history') or [])
+    return entry if repin_requires_confirmation(entry) and not entry.get('confirmed') else None
+
+
+def repin_first_hold(man, cdir):
+    """Why the chain holds after its first segment on a new trainer (`repin end --hold-first`), or None: the switch
+    in force owes a confirmation and has none, and its first segment is persisted, complete and committed. A segment
+    finished in its scratch mount but not persisted or committed does not hold: the driver settles and commits it
+    first."""
+    entry = repin_unconfirmed(man)
+    if entry is None:
+        return None
+    s, segs = entry['segment'], man['segments']
+    count = len(segs) - s
+    if count > 1:
+        return (f'{man["chain"]}: {count} segments recorded since unconfirmed re-pin {entry["id"]}; '
+                'cannot confirm a one-segment hold')
+    if len(segs) <= s:
+        return None
+    root = Path(segs[s]['root'])
+    if mounted(root) or not (root / 'completion.json').exists():
+        return None
+    rows, _ = read_commits(cdir)
+    if not any(r.get('event') == 'commit' and r.get('segment') == s for r in rows):
+        return None
+    return f'{man["chain"]}: the first segment on the new trainer awaits its confirmation (repin confirm)'
+
+
+def repin_confirm(a, root, cdir, man, history, pending):
+    """`repin confirm`: the first segment on the new trainer against gate (c)'s rows; on equality its confirmation is
+    pinned in the history entry and the hold ends."""
+    require(pending is None, f'{a.chain}: a re-pin is pending (repin end first)')
+    at, entry = repin_effective(history)
+    require(repin_requires_confirmation(entry), f'{a.chain}: no re-pin awaits a confirmation')
+    if entry.get('confirmed'):
+        print(json.dumps({'chain': a.chain, 'confirmed': entry['id'], 'again': True}))
+        return 0
+    require(not live(root, a.chain), f'{a.chain} still has an open instance (its trainer has not exited)')
+    hold = repin_first_hold(man, cdir)
+    require(hold is not None, f'{a.chain}: its first segment on the new trainer is not persisted and committed yet')
+    require(len(man['segments']) == entry['segment'] + 1, hold)
+    check_pin(entry['proof'], 'the re-pin proof receipt')
+    seg = man['segments'][entry['segment']]
+    lo, length = seg['offset'], seg['updates']
+    want = {r.get('boundary'): r.get('new') for r in (read(entry['proof']['path']).get('gate_c') or {}).get('rows') or []}
+    require(sorted(want) == list(range(lo + 1, lo + length + 1)),
+            f'{a.chain}: the proof names no gate (c) rows for the first segment on the new trainer')
+    got = index_rows_tail(retention.index_path(cdir / 'chain.json'), lo + 1, lo + length)
+    require(len(got) == length, f'{a.chain}: the index lacks rows of the first segment on the new trainer '
+                                f'(the supervise loop indexes it)')
+    equal = sum(1 for b, v in want.items() if got.get(b) == v)
+    require(equal == length, f'{a.chain}: the first segment on the new trainer differs from the proven rows '
+                             f'({equal} of {length} equal)')
+    path = cdir / f'REPIN-CONFIRM-{entry["id"]}.json'
+    write(path, {'schema': REPIN_CONFIRM_SCHEMA, 'chain': a.chain, 'id': entry['id'], 'segment': entry['segment'],
+                 'rows': length, 'equal': equal, 'proof': entry['proof'], 'unix': time.time()})
+    if os.name != 'nt':
+        fsync_path(path)
+    durable_entry(path)
+    man['trainer_history'] = history[:at] + [dict(entry, confirmed=pin(path))] + history[at + 1:]
+    write(cdir / 'chain.json', man)
+    durable_entry(cdir / 'chain.json')
+    log(root, chain=a.chain, event='repin-confirm', id=entry['id'], rows=length)
+    print(json.dumps({'chain': a.chain, 'confirmed': entry['id'], 'rows': length}))
+    return 0
 
 
 def repin_cmd(a):
@@ -956,8 +1261,13 @@ def repin_cmd(a):
             to=req['to_sha256'])
         print(json.dumps({'chain': a.chain, 'pending': req['id'], 'boundary': req['boundary']}))
         return 0
+    if a.step == 'confirm':
+        return repin_confirm(a, root, cdir, man, history, pending)
     if pending is None and a.step == 'end' and history and history[-1].get('reverts') is None:
-        print(json.dumps({'chain': a.chain, 'switched': history[-1]['id'], 'again': True}))
+        entry = history[-1]
+        require(entry.get('proof_a') is None or entry.get('confirm_required') is True or entry.get('confirmed'),
+                f'{a.chain}: the completed re-pin {entry["id"]} did not install a first-segment hold')
+        print(json.dumps({'chain': a.chain, 'switched': entry['id'], 'again': True}))
         return 0
     require(pending is not None, f'{a.chain}: no re-pin is pending')
     committed = any(e['id'] == pending['id'] for e in history)
@@ -993,6 +1303,12 @@ def repin_cmd(a):
             == plan['trainer']['sha256'], f'{a.chain}: the plan, arm file and manifest do not all name the new trainer')
     require(arm_spec['w5box_plan'] and read(arm_spec['w5box_plan']['path']).get('throughput') is not None,
             f'{a.chain}: the arm\'s launch plan names no throughput record (qualify on the new trainer first)')
+    hold_required = getattr(a, 'hold_first', False) or pending.get('proof_a') is not None
+    if hold_required and history[-1].get('confirm_required') is not True:
+        # A split proof always needs confirmation before a second segment. Record the hold before clearing pending.
+        man['trainer_history'] = history[:-1] + [dict(history[-1], confirm_required=True)]
+        write(cdir / 'chain.json', man)
+        durable_entry(cdir / 'chain.json')
     (cdir / REPIN_PENDING).unlink()
     durable_entry(cdir / REPIN_PENDING)
     log(root, chain=a.chain, event='repin-end', id=pending['id'], to=pending['to_sha256'])
@@ -1041,6 +1357,7 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     pass_offset = arm.get('pass_offset')  # absent otherwise, as keep_offset
     pregame_advantage = arm.get('pregame_advantage')  # absent otherwise, as keep_offset
     pregame_announcement_step_scale = arm.get('pregame_announcement_step_scale')  # absent otherwise, as keep_offset
+    postboard_exposure = arm.get('postboard_exposure')  # absent otherwise, as keep_offset
     try:
         cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
                                 updates, arm['workers'], x.get('budget'), x.get('coefficient'),
@@ -1048,11 +1365,12 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
                                 prep_workers=arm.get('preparation_workers'), keep_offset=keep_offset,
                                 pregame_advantage=pregame_advantage,
                                 pregame_announcement_step_scale=pregame_announcement_step_scale,
-                                pass_offset=pass_offset)
+                                pass_offset=pass_offset,
+                                **({} if postboard_exposure is None else {'postboard_exposure': postboard_exposure}))
         if source is not None:
             qual.check_pass_offset_source(pass_offset, source, offset)
     except ValueError as exc:
-        if keep_offset is None and pregame_advantage is None and pass_offset is None:
+        if keep_offset is None and pregame_advantage is None and pass_offset is None and postboard_exposure is None:
             raise
         raise Stop(f'{arm["arm"]}: {exc}') from exc
     if source is not None:
@@ -1110,13 +1428,38 @@ def settle_vector_tanh(trainer, root):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
+POOLED_COLLECT_ENV = 'MTG_POOLED_COLLECT_CONFIG'
+
+
+def check_dispatcher_executable(path):
+    if os.name == 'posix':
+        require(os.access(path, os.X_OK), f'pooled collection dispatcher must be executable: {path}')
+
+
+def trainer_command(arm, config_path):
+    """The trainer's argv and environment for one segment. A pooled arm (`pooled_collect`, execution only and
+    outside `recipe_identity`) hands each iteration's collection to its pinned dispatcher, with its pinned
+    hosts file in the environment (tools/w5/pooled_collect.py)."""
+    check_pin(arm['trainer'], 'the trainer')
+    argv = exe(arm['trainer']['path']) + [str(config_path)]
+    env = None
+    pooled = arm.get('pooled_collect')
+    if pooled:
+        check_pin(pooled['dispatcher'], 'the pooled-collection dispatcher')
+        check_dispatcher_executable(pooled['dispatcher']['path'])
+        check_pin(pooled['hosts'], 'the pooled-collection hosts file')
+        argv += ['--collect-external', pooled['dispatcher']['path']]
+        env = dict(os.environ, **{POOLED_COLLECT_ENV: pooled['hosts']['path']})
+    return argv, env
+
+
 def run_trainer(arm, config_path, deadline=None, logs=None):
     """Runs one native segment in its own process group; at `deadline` (C's wall) the group is killed. With
     `logs` (a directory) the segment's stdout replaces `trainer.out` and stderr is appended to `trainer.err`."""
-    check_pin(arm['trainer'], 'the trainer')
+    argv, env = trainer_command(arm, config_path)
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
-    env = dict(os.environ)
+    env = dict(os.environ if env is None else env)  # a pooled arm keeps its hosts file in the environment
     if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
         target = vector_tanh_dir(arm['root'])
         target.mkdir(parents=True, exist_ok=True)
@@ -1126,8 +1469,7 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
     out = open(Path(logs) / 'trainer.out', 'wb') if logs else None
     err = open(Path(logs) / 'trainer.err', 'ab') if logs else None
     try:
-        proc = subprocess.Popen(exe(arm['trainer']['path']) + [str(config_path)], stdout=out, stderr=err,
-                                stdin=subprocess.DEVNULL, env=env, **kwargs)
+        proc = subprocess.Popen(argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env, **kwargs)
         if deadline is None:
             return proc.wait(), False
         while True:
@@ -1147,6 +1489,231 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
         for f in (out, err):
             if f:
                 f.close()
+
+
+# ---------------------------------------------------------------- followed trainer (arm key `follow`)
+#
+# An arm with `follow: true` (a C-recipe chain arm without a ladder) runs consecutive segments in one trainer process
+# (mtg-kernel `native_expanded_training_run_v1 CONFIG --follow SPOOL`, module `follow_v1`). The first segment of a
+# process runs as a fresh process runs it. Once its done record (`<spool>/done-NNNNNN.json`, published after the run
+# has returned and released its lock) appears, the driver does the segment's bookkeeping (persist, commit) as for an
+# exited trainer; for the next segment it publishes that segment's config file bytes as `<spool>/next.json` instead
+# of starting a process. The trainer admits it only as a continuation of the run it just finished (every field
+# equal except output_directory, iterations and the initial checkpoint, which must be that run's last output
+# checkpoint pin, as next_source gives it) and runs it through the unchanged run entry point, so every record is a
+# fresh process's. The flag is not a config or recipe key: configs, run.json, recipe_identity and every receipt are
+# unchanged, and `follow` stays out of the recipe identity, like scratch_root.
+# - Ending: whenever the driver leaves its loop (END, STOP, the guard, a failure) it creates `<spool>/STOP` for a
+#   waiting process (exclusively, never through a link) and kills it only after FOLLOW_STOP_GRACE; the C wall still
+#   kills a segment in flight. A carried chain whose tree check fails, or an exception, ends the process by a kill
+#   and writes or deletes nothing in the tree (`Follower.abandon`).
+# - Fallback: a handed segment whose process exits with a positive status and no completion.json (a refused config,
+#   status FOLLOW_REFUSED, or a crash) goes back through the loop's top (settle, admission, the re-derived config,
+#   quarantine) and runs in a new process, which runs it as a fresh process does; a failure there is the usual
+#   failure. After a refusal the driver runs its remaining segments in plain processes and logs why. An exit by a
+#   signal is never a fallback (an OOM kill stays a failure).
+# - Recovery is unchanged: a crash leaves the trees a fresh process leaves (every publication is the same one), and a
+#   driver start begins a new process. Each process has its own spool (`chains/<name>/follow/<pid>-<ns>`; earlier
+#   ones are removed at a start) and a waiting trainer whose parent has ended exits, so no two processes share one.
+# - Accounting: per-update ledger_usec comes from the chain cgroup and is unchanged. A receipt's
+#   driver_process_cpu_seconds (the trainer's process CPU, record_process_cpu) is cumulative over the segments of
+#   one process. Every followed segment's commit line (cut ones included) and segment-done log row name the process
+#   (`trainer_pid`, and `trainer_run`: the run's index in that process, 0 for its first) and the segment's attempts in
+#   this driver (`trainer_attempts`, each with `trainer_from_iteration`: the iterations it found complete), so a
+#   reader differences it only within one attempt. A segment finished after a driver restart (recovered or late
+#   commits) has no such fields, as before. qual.summarize differences within a run, which a crash and resume inside
+#   one segment already broke before this change. trainer.out holds every segment of one process.
+# - Memory: the process keeps its working set and its caches between segments; its peak is one segment's.
+
+FOLLOW_POLL = 0.05  # how often the driver looks for a followed trainer's done record or exit
+FOLLOW_REFUSED = 3  # mtg-kernel follow_v1::REFUSED_EXIT_CODE: a refused next config, nothing of it ran
+FOLLOW_STOP_GRACE = 30.0
+FOLLOW_SPOOLS = 'follow'  # chains/<name>/follow/<spool of one process>
+FOLLOW_DRIVER_LOCK = 'driver.lock'  # follow_v1::driver_lock::NAME
+
+
+def follow_done_name(index):
+    return f'done-{index:06d}.json'
+
+
+class Follower:
+    """A chain's followed trainer process (module section "followed trainer")."""
+
+    def __init__(self, arm, cdir, logs):
+        self.arm, self.cdir, self.logs = arm, Path(cdir), Path(logs)
+        self.proc = self.spool = self.pid = None
+        self.driver_lock = None
+        self.files = ()
+        self.runs = 0  # complete runs of the current process (the next done record's index)
+        self.active = False  # a run is in flight (set before its start or hand-over, cleared at its done record)
+        self.handed = False  # whether the run in flight, or the last one, was handed to a waiting process
+        self.attempt = {}  # the last run attempted: its process and its run index there
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def waiting(self):
+        """A live process whose last run published its done record and that has no run in flight."""
+        return (self.alive() and not self.active and self.runs > 0 and
+                (self.spool / follow_done_name(self.runs - 1)).exists())
+
+    def detail(self):
+        """The last run attempted: its process and its run index there (0 for a process's first), whether or not
+        it completed."""
+        return dict(self.attempt)
+
+    def run(self, config_path, deadline=None):
+        """Runs one segment, handed to the waiting process or in a new one. Returns (exit code, killed) as
+        run_trainer does, with (0, False) once the segment's done record is published (the process then waits)."""
+        check_pin(self.arm['trainer'], 'the trainer')
+        if self.waiting():
+            self.handed = self.active = True
+            self.attempt = {'trainer_pid': self.pid, 'trainer_run': self.runs}
+            self.hand(config_path)
+        else:
+            self.close()
+            self.handed, self.active = False, True
+            self.start(config_path)
+            self.attempt = {'trainer_pid': self.pid, 'trainer_run': 0}
+        while True:
+            if (self.spool / follow_done_name(self.runs)).exists():
+                self.runs += 1
+                self.active = False
+                return 0, False
+            code = self.proc.poll()
+            if code is not None:
+                if (self.spool / follow_done_name(self.runs)).exists():  # published, then exited
+                    self.runs += 1
+                self.release()
+                return code, False
+            if deadline is not None and time.time() >= deadline:
+                kill_group(self.proc)
+                code = self.proc.wait()
+                self.release()
+                return code, True
+            time.sleep(FOLLOW_POLL)
+
+    def start(self, config_path):
+        spools = self.cdir / FOLLOW_SPOOLS
+        if spools.exists() and not is_link(spools):
+            for old in spools.iterdir():  # earlier processes' spools
+                if old.is_dir() and not is_link(old):
+                    shutil.rmtree(old, ignore_errors=True)
+        self.spool = spools / f'{os.getpid()}-{time.time_ns()}'
+        self.spool.mkdir(parents=True)
+        self.logs.mkdir(parents=True, exist_ok=True)
+        out = open(self.logs / 'trainer.out', 'wb')
+        err = open(self.logs / 'trainer.err', 'ab')
+        self.files = (out, err)
+        try:
+            self.driver_lock = lock(self.spool / FOLLOW_DRIVER_LOCK)
+            require(self.driver_lock is not None, f'cannot hold the follow driver lock: {self.spool}')
+            self.proc = subprocess.Popen(exe(self.arm['trainer']['path']) +
+                                         [str(config_path), '--follow', str(self.spool), '--follow-driver-lock'],
+                                         stdout=out, stderr=err,
+                                         **trainer_launch(self.arm))
+        except BaseException:
+            self.release()
+            raise
+        self.pid, self.runs = self.proc.pid, 0
+
+    def hand(self, config_path):
+        """Publishes the config's bytes as next.json: written aside and synced, renamed, the directory synced."""
+        tmp = self.spool / f'.next.json.{time.time_ns()}.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(Path(config_path).read_bytes())
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.spool / 'next.json')
+        if os.name != 'nt':
+            fsync_path(self.spool)
+
+    def release(self):
+        if self.driver_lock is not None:
+            self.driver_lock.close()
+            self.driver_lock = None
+        for f in self.files:
+            f.close()
+        self.files = ()
+        self.proc = None
+        self.active = False
+
+    def spool_real(self):
+        """The spool and the folder holding it are plain directories (no link to follow)."""
+        return (self.spool is not None and not is_link(self.spool) and not is_link(self.spool.parent) and
+                self.spool.is_dir())
+
+    def stop_file(self):
+        """Creates the spool's STOP file exclusively and without following a link; False if it cannot."""
+        if not self.spool_real():
+            return False
+        path = self.spool / 'STOP'
+        try:
+            if os.name == 'nt':
+                from _winapi import CloseHandle, CreateFile, GENERIC_WRITE
+                # CREATE_NEW applies to the directory entry itself when OPEN_REPARSE_POINT is set.
+                create_new, open_reparse_point = 1, 0x00200000
+                share_read_write_delete = 7
+                handle = CreateFile(str(path), GENERIC_WRITE, share_read_write_delete, 0,
+                                    create_new, open_reparse_point, 0)
+                CloseHandle(handle)
+                return True
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0))
+        except OSError:
+            return False
+        os.close(fd)
+        return True
+
+    def close(self):
+        """STOP for a waiting process (killed after FOLLOW_STOP_GRACE, or at once when STOP cannot be created
+        safely), a kill for any other live one; then the spool is removed if it is still a plain directory."""
+        if self.proc is not None:
+            if self.waiting() and self.stop_file():
+                try:
+                    self.proc.wait(timeout=FOLLOW_STOP_GRACE)
+                except subprocess.TimeoutExpired:
+                    kill_group(self.proc)
+            elif self.alive():
+                kill_group(self.proc)  # a run in flight (an exception in the driver), or no safe STOP: no grace
+            self.proc.wait()
+            self.release()
+        if self.spool_real():
+            shutil.rmtree(self.spool, ignore_errors=True)
+        self.spool = None
+        self.runs = 0
+
+    def abandon(self):
+        """Ends the process without writing or deleting anything in the chain's tree (a carried chain whose tree
+        check failed, or an exception): a kill of a live process; the spool is left as it is."""
+        if self.proc is not None:
+            if self.alive():
+                kill_group(self.proc)
+            self.proc.wait()
+            self.release()
+        self.spool = None
+        self.runs = 0
+
+
+def trainer_launch(arm):
+    """run_trainer's process group and environment, for a followed trainer."""
+    kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
+        {'start_new_session': True}
+    env = dict(os.environ)
+    if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
+        target = vector_tanh_dir(arm['root'])
+        target.mkdir(parents=True, exist_ok=True)
+        env['MTG_KERNEL_VECTOR_TANH_DIR'] = str(target)
+    return dict(kwargs, env=env, stdin=subprocess.DEVNULL)
+
+
+def kill_group(proc):
+    if os.name == 'nt':
+        proc.kill()
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 # ---------------------------------------------------------------- plan
@@ -1178,6 +1745,8 @@ def recipe_identity(arm):
         identity['pregame_advantage'] = arm['pregame_advantage']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_announcement_step_scale') is not None:
         identity['pregame_announcement_step_scale'] = arm['pregame_announcement_step_scale']  # absent otherwise: manifests unchanged
+    if arm.get('postboard_exposure') is not None:
+        identity['postboard_exposure'] = arm['postboard_exposure']  # absent otherwise: existing manifests unchanged
     return identity
 
 
@@ -1190,6 +1759,8 @@ def check_pair(x_arm, c_arm, seed_root, scratch):
     the seed root and the global update fix every episode id, deal seed, seat and opponent), and identical
     generated iterations at two offsets; X8 differs from C only in the search block and resource keys. Returns
     XS's other differences (reported)."""
+    require(c_arm.get('postboard_exposure') is None,
+            f'{x_arm["arm"]} and C cannot pair with postboard_exposure for {seed_root}')
     x_base, c_base = read(x_arm['base']['path']), read(c_arm['base']['path'])
     require(x_base['iterations'] == c_base['iterations'] and x_base.get('opponents') == c_base.get('opponents'),
             f'{x_arm["arm"]} and C use different opponent schedules for {seed_root}')
@@ -1260,6 +1831,25 @@ def make_plan(inputs_path):
     carry_bytes = {}  # one read of each carry record: every check, the pin and the manifest use these bytes
     repin_bytes = {name: Path(c['repin']).read_bytes() for name, c in chains_in.items()
                    if c.get('repin') is not None}  # one read of each re-pin request (absent otherwise)
+    # the input's `guards`, or an existing plan or manifest that names them (once on, never off); a linked manifest
+    # counts as guarded, so the tree check below refuses it rather than dropping the guards
+    guarded_names = set()
+    old_plan = Path(root) / 'plan' / label / 'CHAINS-PLAN.json'
+    old_guarded = set()
+    if old_plan.is_file() and not old_plan.is_symlink():
+        old_guarded = {n for n, e in (read(old_plan).get('chains') or {}).items() if isinstance(e, dict) and e.get('guards')}
+    for name, c in chains_in.items():
+        man_path = Path(root) / 'chains' / name / 'chain.json'
+        if (c.get('guards') or name in old_guarded or man_path.is_symlink()
+                or (man_path.is_file() and read(man_path).get('guards'))):
+            guarded_names.add(name)
+    for name in sorted(guarded_names):  # before any write: the root, existing or not, is canonical and unlinked
+        if Path(root).exists() or Path(root).is_symlink():
+            carried_trees_unlinked(root, name)
+        else:
+            absolute = os.path.abspath(root)
+            require(os.path.realpath(absolute) == absolute and '..' not in Path(root).parts,
+                    f'{name}: {root} must be a canonical path with no link in it')
     for name in repin_bytes:  # before any write: the chain is held, its tree real and unlinked
         require(Path(root).exists() and (Path(root) / 'chains' / name / 'chain.json').exists(),
                 f'{name}: a re-pin needs the chain\'s existing manifest in this root')
@@ -1360,6 +1950,17 @@ def make_plan(inputs_path):
                 qual.check_pass_offset_source(pass_offset, parent['source'], 0)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
+        # postboard_exposure: the declared share of post-board games {share, max_swaps, rule, seats, keep_ids}
+        # (qual.validate_postboard_exposure): in that share of a chain's episodes the exposed seats play their
+        # registered 75 with cards exchanged between mainboard and sideboard. It needs a game-one base with exact 60
+        # and 15 registrations and is part of the arm's frozen recipe. Absent (or null): nothing changes.
+        postboard_exposure = spec.get('postboard_exposure')
+        if postboard_exposure is not None:
+            require(recipe == 'C', f'{a}: postboard_exposure is for the plain CPU update of a C-recipe arm')
+            try:
+                postboard_exposure = qual.validate_postboard_exposure(postboard_exposure, base_doc)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
         # pregame_advantage: the trainer's loss_selection.pregame_advantage ("terminal_v1": the pregame decisions'
         # advantage and value target come from the game's terminal result; qual.validate_pregame_advantage). Part of
         # the arm's frozen recipe, C-recipe arms on a London base with gamma 1.0 only. Absent (or null): nothing changes.
@@ -1394,6 +1995,14 @@ def make_plan(inputs_path):
             require(spec.get('scratch'), f'{a}: mull_monitor is kept by the scratch reaper (a scratch arm only)')
             require(any(entry['episode'].get('opening') is not None for item in base_doc['iterations']
                         for entry in item['episodes']), f'{a}: mull_monitor needs a base with an opening')
+        pooled = spec.get('pooled_collect')
+        if pooled is not None:
+            require(isinstance(pooled, dict) and set(pooled) == {'dispatcher', 'hosts'} and recipe == 'C'
+                    and int(spec['workers']) >= 2
+                    and all(Path(pooled[k]).is_absolute() and Path(pooled[k]).is_file() for k in pooled),
+                    f'{a}: pooled_collect names an absolute dispatcher and hosts file, for C-recipe arms '
+                    f'with at least two workers')
+            check_dispatcher_executable(pooled['dispatcher'])
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
@@ -1410,6 +2019,18 @@ def make_plan(inputs_path):
                     f'{full}, so segment ends hold every ladder state')
             require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
+        follow = spec.get('follow')
+        require(follow is None or isinstance(follow, bool), f'{a}: follow is true or absent')
+        if follow:
+            # A followed trainer admits only a config that differs from the last in its directory, iterations and
+            # initial checkpoint: a C-recipe chain arm without a ladder (whose roster changes every segment).
+            require(recipe == 'C' and a != 'F' and ladder is None,
+                    f'{a}: follow is for C-recipe chain arms without a ladder')
+            # The trainer never continues a resident-reads run: its rereads at a process start would be lost.
+            require(verified_reads is None, f'{a}: follow and verified_reads resident exclude each other')
+            # The trainer refuses --follow with --collect-external: a followed run collects in its own process.
+            require(pooled is None, f'{a}: follow and pooled_collect exclude each other')
+            doc['follow'] = True  # absent otherwise: existing arm files unchanged; never in the recipe identity
         if ladder is not None:
             doc['ladder'] = ladder  # CG only: other arm files unchanged
         if initial_opponent is not None:  # absent otherwise, so existing arm files keep their bytes
@@ -1428,8 +2049,12 @@ def make_plan(inputs_path):
             doc['pregame_advantage'] = pregame_advantage
         if pregame_announcement_step_scale is not None:  # absent otherwise, as record_envelope
             doc['pregame_announcement_step_scale'] = pregame_announcement_step_scale
+        if postboard_exposure is not None:  # absent otherwise, as record_envelope
+            doc['postboard_exposure'] = postboard_exposure
         if monitor:  # absent otherwise, as record_envelope
             doc['mull_monitor'] = True
+        if pooled is not None:  # execution only: absent otherwise, and never part of recipe_identity
+            doc['pooled_collect'] = {k: pin(pooled[k]) for k in ('dispatcher', 'hosts')}
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
@@ -1497,6 +2122,12 @@ def make_plan(inputs_path):
             check_carry(carry_docs[name], name, seed_root, arms[a],
                         new=not Path(chains[name]['manifest']).exists())
             chains[name]['carry'] = {'path': Path(c['carry']).as_posix(), 'sha256': w5box.sha256_bytes(data)}
+        if c.get('guards') is not None:
+            require(c['guards'] is True, f'{name}: `guards` is true or absent')
+        if name in guarded_names:  # absent otherwise: existing plans and manifests keep their bytes
+            require(a != 'F' and stage == '0' and independent and c.get('pair') is None,
+                    f'{name}: guards are for a chain of an independent Stage 0 plan without a pair')
+            chains[name]['guards'] = True
         if c.get('repin') is not None:  # absent otherwise: existing plans and manifests keep their bytes
             require(a != 'F', f'{name}: a filler is not re-pinned')
             data = repin_bytes[name]
@@ -1510,6 +2141,8 @@ def make_plan(inputs_path):
                     f'{name}: the re-pin {req.get("id")} is not pending with these request bytes (`repin begin` first)')
             hold = repin_held(root, name)
             require(hold is None, hold)
+            require(req.get('guards') is not True or name in guarded_names,
+                    f'{name}: the request switches the guards on: the plan names `guards: true` for the chain')
             if committed:  # the same request again (the plan citing the new throughput record): nothing more
                 require(have['recipe']['trainer_sha256'] == req['to_sha256'] == common['trainer']['sha256'],
                         f'{name}: the committed re-pin and the plan trainer disagree')
@@ -1593,8 +2226,11 @@ def make_plan(inputs_path):
                     f're-pin: the {a} launch plan\'s memory limits would change')
         require(sorted(old['chains']) == sorted(chains), 're-pin: the plan\'s chains would change')
         for n in chains:
-            require({k: v for k, v in old['chains'][n].items() if k != 'repin'} ==
-                    {k: v for k, v in chains[n].items() if k != 'repin'}, f're-pin: chain {n}\'s entry would change')
+            require({k: v for k, v in old['chains'][n].items() if k not in ('repin', 'guards')} ==
+                    {k: v for k, v in chains[n].items() if k not in ('repin', 'guards')},
+                    f're-pin: chain {n}\'s entry would change')
+            require(not old['chains'][n].get('guards') or chains[n].get('guards'),
+                    f're-pin: chain {n}\'s guards are on and stay on')
     # manifests
     for name, c in chains.items():
         if c['arm'] == 'F':
@@ -1607,9 +2243,13 @@ def make_plan(inputs_path):
                   'snapshot_dir': (root / 'chains' / name / 'snapshots').as_posix()}
         if c.get('carry'):
             header['carry'] = carry_docs[name]
+        if name in guarded_names:
+            header['guards'] = True
         path = Path(c['manifest'])
         if path.exists():
             have = read(path)
+            require(not have.get('guards') or name in guarded_names,
+                    f'{name}: the manifest is guarded but the plan does not guard it')
             for k in ('chain', 'arm', 'arm_name', 'seed_root', 'pair', 'stage', 'frozen', 'x_cap_seconds',
                       'c_wall_seconds', 'snapshot_dir', 'carry'):
                 require(have.get(k) == header.get(k), f'{name}: the manifest has another {k}')
@@ -1624,6 +2264,7 @@ def make_plan(inputs_path):
                     'id': req['id'], 'segment': req['segment'], 'boundary': req['boundary'],
                     'from_sha256': req['from_sha256'], 'to_sha256': req['to_sha256'],
                     'to_path': common['trainer']['path'], 'request': repin[1], 'proof': req['proof'],
+                    **({'proof_a': req['proof_a']} if req.get('proof_a') is not None else {}),
                     'unix': time.time()}]
                 have['recipe'] = dict(have['recipe'], trainer_sha256=header['recipe']['trainer_sha256'])
             require(not have['segments'] or have['recipe'] == header['recipe'],
@@ -1635,9 +2276,13 @@ def make_plan(inputs_path):
                     (' (pregame_advantage differs)' if have['recipe'].get('pregame_advantage') != header[
                         'recipe'].get('pregame_advantage') else '') +
                     (' (pregame_announcement_step_scale differs)' if have['recipe'].get('pregame_announcement_step_scale') != header[
-                        'recipe'].get('pregame_announcement_step_scale') else ''))
+                        'recipe'].get('pregame_announcement_step_scale') else '') +
+                    (' (postboard_exposure differs)' if have['recipe'].get('postboard_exposure') != header[
+                        'recipe'].get('postboard_exposure') else ''))
             require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
+            if name in guarded_names:  # once on, never off: the guards only refuse, outputs are unchanged
+                have['guards'] = True
             write(path, have)
             if repin is not None:  # the commit's manifest entry made durable
                 durable_entry(path)
@@ -2085,9 +2730,9 @@ def unmount(native, tries=20):
             f'{native} is still mounted or not empty after the unmount')
 
 
-def run_reaped(arm, config_path, deadline, logs, native):
-    """run_trainer with the reaper running beside it in this (the chain's) process; returns (code, killed,
-    files reaped)."""
+def run_reaped(arm, config_path, deadline, logs, native, follower=None):
+    """run_trainer (or the followed trainer's run) with the reaper running beside it in this (the chain's)
+    process; returns (code, killed, files reaped)."""
     import threading
     log = monitor_module().opening_log_path(native) if arm.get('mull_monitor') else None
     stop, count, reaper = threading.Event(), [0], Reaper(native, log)
@@ -2098,7 +2743,10 @@ def run_reaped(arm, config_path, deadline, logs, native):
     t = threading.Thread(target=loop, daemon=True)
     t.start()
     try:
-        code, killed = run_trainer(arm, config_path, deadline, logs)
+        if follower is not None:
+            code, killed = follower.run(config_path, deadline)
+        else:
+            code, killed = run_trainer(arm, config_path, deadline, logs)
     finally:
         stop.set()
         t.join()
@@ -2122,7 +2770,7 @@ def scratch_settle(arm, root, cdir, man, instance=None):
                 with retention.index_lock(cdir / 'chain.json'):
                     os.rename(tmp, native)  # the driver stopped between the unmount and the rename
                     fsync_path(native.parent)  # as persist: the rename is durable before the commit names it
-                if man.get('carry'):  # a carried chain: its tree again before the commit line and the log
+                if guarded(man):  # a guarded chain: its tree again before the commit line and the log
                     carried_trees_unlinked(root, cdir.name)
                 record_commit(cdir, man, s, 'scratch-swap', instance)
                 log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
@@ -2132,7 +2780,7 @@ def scratch_settle(arm, root, cdir, man, instance=None):
         if mounted(native) and (native / 'completion.json').exists():
             t = time.time()
             n = persist(arm, native, cdir)
-            if man.get('carry'):  # a carried chain: its tree again after the copy, before any further write
+            if guarded(man):  # a guarded chain: its tree again after the copy, before any further write
                 carried_trees_unlinked(root, cdir.name)
             record_commit(cdir, man, s, 'scratch-late', instance, persist_seconds=time.time() - t, persist_bytes=n)
             t = time.time()
@@ -2355,16 +3003,34 @@ def drive(a):
     require(why is None, f'{a.chain}: {why}')
     if man.get('carry'):
         carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
+    if guarded(man):
         carried_trees_unlinked(root, a.chain)
     held = lock(cdir / 'DRIVE.lock')
     require(held is not None, f'{a.chain} already has a driver')
+    follower = Follower(arm, cdir, cdir) if arm.get('follow') else None
     try:
-        return drive_locked(a, arm, root, cdir, man_path)
+        return drive_locked(a, arm, root, cdir, man_path, follower)
+    except BaseException:
+        if follower is not None:
+            follower.abandon()  # an exception (a refused carried tree among them): no write through the tree
+        raise
     finally:
-        unlock(held)
+        try:
+            if follower is not None:
+                follower.close()  # STOP for a waiting trainer whenever the driver leaves its loop
+        finally:
+            unlock(held)
 
 
-def drive_locked(a, arm, root, cdir, man_path):
+def abandoned(follower):
+    """EXIT_STOP for a carried chain whose tree check failed: a followed trainer is killed and nothing is written or
+    deleted in the tree (no STOP file, no spool removal)."""
+    if follower is not None:
+        follower.abandon()
+    return EXIT_STOP
+
+
+def drive_locked(a, arm, root, cdir, man_path, follower=None):
     man = read(man_path)
     if (cdir / 'END.json').exists():
         log(root, chain=a.chain, event='ended-already')
@@ -2379,17 +3045,18 @@ def drive_locked(a, arm, root, cdir, man_path):
     if arm.get('mull_monitor'):
         monitor_module()  # loaded at the driver's start, like every pinned tool file
     instance, recovered = ledger_instance(a.ledger_source), False
+    attempts, attempts_of = [], None  # follow: the current segment's process attempts in this driver
     while True:
         if (cdir / 'END.json').exists():
             return 0
-        try:  # a carried chain: its tree and the segments settle may touch are real and its own
-            if man.get('carry'):
+        try:  # a guarded chain: its tree and the segments settle may touch are real and its own
+            if guarded(man):
                 carried_trees_unlinked(root, a.chain)
             for seg in man['segments'][-2:]:
                 carried_segment_ok(man, arm, cdir, seg['root'])
         except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
             print(f'stop: {exc}', file=sys.stderr, flush=True)
-            return EXIT_STOP
+            return abandoned(follower)
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
             scratch_settle(arm, root, cdir, man, instance)
             if (cdir / 'END.json').exists():
@@ -2400,14 +3067,19 @@ def drive_locked(a, arm, root, cdir, man_path):
         if stopped(root, cdir):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
+        first = repin_first_hold(man, cdir)  # None without `repin end --hold-first`: after settle and commit recovery
+        if first is not None:
+            log(root, chain=a.chain, event='stop', reason=first)
+            return EXIT_STOP
         hold = carried_from_stopped(man)  # None unless carried: before every segment, the old chain must stay held
-        if man.get('carry'):
+        if guarded(man):
             try:
-                carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
+                if man.get('carry'):
+                    carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
                 carried_trees_unlinked(root, a.chain)
             except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
                 print(f'stop: {exc}', file=sys.stderr, flush=True)
-                return EXIT_STOP
+                return abandoned(follower)
         if hold is not None:
             log(root, chain=a.chain, event='stop', reason=hold)
             return EXIT_STOP
@@ -2435,46 +3107,72 @@ def drive_locked(a, arm, root, cdir, man_path):
             scratch_link(arm, cdir, native)
         moved = quarantine(native, cdir)
         log(root, chain=a.chain, event='segment', segment=s, config=pin(path), moved=moved)
-        if scratch:
-            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)
+        if follower is not None:
+            if attempts_of != s:
+                attempts, attempts_of = [], s
+            first = completed(native)  # the iterations this attempt finds complete (none after a scratch reset)
+        if scratch and follower is not None:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native, follower=follower)
+        elif scratch:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)  # main's call, unchanged
+        elif follower is not None:
+            code, killed = follower.run(path, deadline)
         else:
             code, killed = run_trainer(arm, path, deadline, cdir)
+        followed = {}  # absent without follow: commit lines and log rows unchanged
+        if follower is not None:
+            attempts.append(dict(follower.detail(), trainer_from_iteration=first))
+            # The segment's process attempts in this driver, in order: iteration i's receipt was written by the last
+            # attempt whose trainer_from_iteration is at most i (an earlier driver's process when i is below the
+            # first one's); driver_process_cpu_seconds differences only within one attempt.
+            followed = dict(attempts[-1], trainer_attempts=list(attempts))
         if not carried_tree_held(man, root, a.chain):  # a carried chain: its tree again before any write
-            return EXIT_STOP
+            return abandoned(follower)
         if (native / 'completion.json').exists():
             if scratch:
                 t = time.time()
                 carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
                 n = persist(arm, native, cdir)
                 if not carried_tree_held(man, root, a.chain):  # and after the copy, before its commit line
-                    return EXIT_STOP
-                record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n)
+                    return abandoned(follower)
+                record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n,
+                              **followed)
                 t = time.time()
                 z = compress_config(path)
                 record_housekeeping(cdir, s, time.time() - t, config_gz_bytes=z)
                 log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped,
                     config_gz_bytes=z)
             else:
-                record_commit(cdir, man, s, 'native', instance)  # the trainer published every receipt durably
-            log(root, chain=a.chain, event='segment-done', segment=s)
+                record_commit(cdir, man, s, 'native', instance, **followed)  # every receipt is published durably
+            log(root, chain=a.chain, event='segment-done', segment=s, **followed)
+            continue
+        if follower is not None and follower.handed and not killed and code > 0:
+            # A handed segment that a waiting trainer refused (nothing of it ran) or crashed in: rerun it in a new
+            # process through the loop's top, as a driver start would (module section "followed trainer").
+            refused = code == FOLLOW_REFUSED
+            log(root, chain=a.chain, event='follow-fallback', segment=s, exit=code, refused=refused, **followed)
+            if refused:
+                follower.close()
+                follower = None  # the remaining segments run in plain processes
             continue
         if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
             t = time.time()
             carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
             n = persist(arm, native, cdir)
             if not carried_tree_held(man, root, a.chain):
-                return EXIT_STOP
-            record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n)
+                return abandoned(follower)
+            record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n,
+                          **followed)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
         elif killed:
-            record_commit(cdir, man, s, 'native-cut', instance)
+            record_commit(cdir, man, s, 'native-cut', instance, **followed)
         boundary, receipt = latest(man)
         if killed:
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
         if code == 0 and reached_stop(man, a.ledger_source):
-            record_commit(cdir, man, s, 'native-stop', instance)
+            record_commit(cdir, man, s, 'native-stop', instance, **followed)
             return end_at_stop(a, arm, root, cdir, man)
         write(cdir / 'FAILURE.json', {'segment': s, 'exit': code, 'boundary': boundary, 'unix': time.time()})
         log(root, chain=a.chain, event='segment-failed', segment=s, exit=code, boundary=boundary)
@@ -2537,6 +3235,9 @@ def run(a):
     require(not stopped(root, chain_dir(root, a.chain)), 'a STOP file is present')
     require(not (chain_dir(root, a.chain) / REPIN_PENDING).exists(),
             f'{a.chain}: a trainer re-pin is pending (repin end or abort first)')
+    if c.get('repin'):  # a re-pinned chain's plan entry names its request: absent otherwise, nothing more is read
+        first = repin_first_hold(read(chain_dir(root, a.chain) / 'chain.json'), chain_dir(root, a.chain))
+        require(first is None, first)
     if c.get('carry'):  # absent otherwise: an ordinary run reads nothing more than before
         why = carried_from_stopped(read(chain_dir(root, a.chain) / 'chain.json'))
         require(why is None, f'{a.chain}: {why}')
@@ -2941,7 +3642,7 @@ def launch_replay(plan, plan_path, rdir, arm, budget):
 def replay_cmd(a):
     plan = load_plan(a.plan)
     rdir = Path(a.dir)
-    if any(c.get('carry') for c in plan['chains'].values()):  # a carried plan: its trees and the replay folder
+    if any(guarded_entry(c) for c in plan['chains'].values()):  # a guarded plan: its trees and the replay folder
         carried_plan_ok(plan)
         absolute = os.path.abspath(rdir)
         require(os.path.realpath(absolute) == absolute, f'{rdir} is a link or lies under one')
@@ -3511,14 +4212,17 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
         fresh_chain, fresh = chain_index(info['path'], caches)
         info = dict(info, chain=fresh_chain, records=fresh)
         looks[n] = look(info, plan['r_nom_usec'])
-        keep = protected_paths(info, {looks[n]['boundary']} if looks.get(n) else set())
+        owed = repin_unconfirmed(fresh_chain)  # the first segment on a new trainer awaits its confirmation: the
+        # state it started from stays (the re-pin back proves gate (a) on that segment, from that state)
+        keep = protected_paths(info, ({looks[n]['boundary']} if looks.get(n) else set())
+                               | ({owed['boundary']} if owed else set()))
         doc['checkpoints'] = [i for i in doc['checkpoints'] if i['path'] not in keep]
         c = plan['chains'][n]
         if replay_sample.sampled(plan['stage'], c['arm']):  # selected updates not yet staged keep their files
             sample = replay_sample.protected(root, c['arm'], n, c['seed_root'], info['chain'], fresh)
             doc['trajectories'] = [i for i in doc['trajectories'] if i['path'] not in sample]
         (root / 'retention').mkdir(parents=True, exist_ok=True)
-        if (info.get('chain') or {}).get('carry'):  # a carried chain deletes only its own files
+        if guarded(info.get('chain') or {}):  # a guarded chain deletes only its own files
             own = Path(info['path']).parent.resolve()
             stray = [i['path'] for i in doc['checkpoints'] + doc['trajectories']
                      if own not in Path(i['path']).resolve().parents]
@@ -3670,7 +4374,7 @@ def segcheck(a):
     """On this host: two updates of the arm's recipe as one native run and as two one-update segments; equal after
     states and trajectories (path and timing fields aside) are the regeneration receipt for segmenting."""
     plan = load_plan(a.plan)
-    require(not any(c.get('carry') for c in plan['chains'].values()),
+    require(not any(guarded_entry(c) for c in plan['chains'].values()),
             'segcheck does not run on a carried plan (use an ordinary plan of the same recipe)')
     arm = load_arm(plan['arms'][a.arm]['file']['path'])
     out = Path(plan['root']) / 'segcheck' / f'{a.arm}-{time.strftime("%Y%m%dT%H%M%S")}'
@@ -4198,7 +4902,7 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
     carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
-    if any(c.get('carry') for c in target['chains'].values()):  # and the record's destinations
+    if any(guarded_entry(c) for c in target['chains'].values()):  # and the record's destinations
         for dest in (Path(out), Path(f'{out}.failed.json')):
             retention.carried_output_unlinked(dest)
     held = lock(root / 'SUPERVISE.lock')
@@ -4404,7 +5108,7 @@ def mix_run(plan_path, slots, label, updates, out, counts=None, max_wall=w5box.U
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
     carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
-    if any(c.get('carry') for c in target['chains'].values()):  # and the record's destinations
+    if any(guarded_entry(c) for c in target['chains'].values()):  # and the record's destinations
         for dest in (Path(out), Path(f'{out}.failed.json')):
             retention.carried_output_unlinked(dest)
     held = lock(root / 'SUPERVISE.lock')
@@ -4770,10 +5474,12 @@ def main(argv=None):
     p.add_argument('--objects', required=True)
     p.add_argument('--out', required=True)
     p = sub.add_parser('repin')
-    p.add_argument('step', choices=('begin', 'end', 'abort'))
+    p.add_argument('step', choices=('begin', 'end', 'abort', 'confirm'))
     p.add_argument('--plan', required=True)
     p.add_argument('--chain', required=True)
     p.add_argument('--request')
+    p.add_argument('--hold-first', action='store_true',
+                   help='end: hold after the first segment on the new trainer until `repin confirm`')
     p = sub.add_parser('segcheck')
     p.add_argument('--plan', required=True)
     p.add_argument('--arm', required=True, choices=sorted(ARMS))
