@@ -24,6 +24,7 @@ from typing import Callable
 
 # The aggregate checks only repeat the groups' results.
 REPORT_JOB = "Report a red post-merge run"
+ENTRY_JOB = "Detect changed paths"
 AGGREGATES = ("Rust tests (ubuntu-24.04)", "Rust tests (windows-2025)", REPORT_JOB,
               "Hosted fallback for self-hosted admission timeouts")
 HANDOFF_LOG = "HANDOFFS/20261114/README.md"
@@ -83,12 +84,15 @@ def ran(get: Get, repo: str, run: dict, before: str = "") -> bool:
         page += 1
 
 
-def first_attempt_start(get: Get, repo: str, run: dict) -> str:
-    """When the run's first attempt started (its own reruns do not move it)."""
-    if (run.get("run_attempt") or 1) == 1 and run.get("run_started_at"):
-        return run["run_started_at"]
-    first = get(f"/repos/{repo}/actions/runs/{run['id']}/attempts/1")
-    return first.get("run_started_at") or first.get("created_at") or run.get("created_at", "")
+def first_attempt_admission(get: Get, repo: str, run: dict) -> str | None:
+    """When concurrency admitted the first attempt and created its entry job."""
+    # run_started_at can still be the push timestamp after a run waited for
+    # another monitor. The job's started_at also includes the runner wait.
+    timestamps = [job.get("created_at") for job in run_jobs(get, repo, {"id": run["id"], "run_attempt": 1})
+                  if job["name"] == ENTRY_JOB]
+    if len(timestamps) != 1:
+        return None
+    return timestamps[0] or None
 
 
 # Earlier push runs a report examines for the last monitored commit before calling the range incomplete.
@@ -97,7 +101,9 @@ MAX_HISTORY_PAGES = 5
 
 def last_monitored_commit(get: Get, repo: str, branch: str, this: dict) -> tuple[str | None, bool]:
     """Return the latest checked predecessor and whether the monitored history search was exhausted."""
-    before = first_attempt_start(get, repo, this)
+    before = first_attempt_admission(get, repo, this)
+    if before is None:
+        return None, False
     for page in range(1, MAX_HISTORY_PAGES + 1):
         # Run ids increase with creation, so an earlier run created in the same second still counts.
         # No status filter: an earlier run being rerun is still listed, and ran() judges it only by its jobs that

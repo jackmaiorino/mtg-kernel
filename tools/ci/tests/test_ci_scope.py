@@ -369,6 +369,9 @@ class MonitorTests(unittest.TestCase):
             if path.startswith("/repos/o/r/actions/workflows/ci.yml/runs"):
                 return {"workflow_runs": [{"id": i, "head_sha": h, "conclusion": c, "created_at": t}
                                           for i, h, c, t in runs]}
+            if path == f"/repos/o/r/actions/runs/{run_id}/attempts/1/jobs?per_page=100&page=1":
+                return {"jobs": [{"name": "Detect changed paths", "created_at": "2026-11-21T12:30:00Z"},
+                                 {"name": "Rust tests (ubuntu-24.04, limited)", "conclusion": "failure"}]}
             if "/jobs" in path:
                 rid = int(path.split("/runs/")[1].split("/")[0])
                 ran = {i: c for i, h, c, t in runs}.get(rid) == "ran-cancelled"
@@ -566,6 +569,54 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c2", 836), ("c3", 837)])
         self.assertIn("first responder the author of #836", line)
 
+    def test_a_preceding_monitor_is_counted_while_the_red_push_waits(self):
+        import post_merge_report as report
+        get_run = self.fake_api(
+            ["c1", "c2", "c3"],
+            [(8, "c2", "success", "2026-11-21T11:30:00Z"), (6, "c1", "success", "2026-11-21T11:00:00Z")],
+            {"c2": (836, "a"), "c3": (837, "b")},
+        )
+        queued_at = "2026-11-21T12:00:00Z"
+
+        def get(path):
+            if path == "/repos/o/r/actions/runs/8/jobs?per_page=100&filter=all&page=1":
+                return {"jobs": [{"name": "Detect changed paths", "started_at": "2026-11-21T12:15:00Z",
+                                  "conclusion": "success"}]}
+            return get_run(path)
+
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                run = {**get_run("/repos/o/r/actions/runs/9"), "head_branch": "main", "run_attempt": attempt,
+                       "run_started_at": queued_at if attempt == 1 else "2026-11-21T14:30:00Z"}
+                merges, complete = report.covered_merges(get, "o/r", run)
+                self.assertTrue(complete)
+                self.assertEqual([merge["pull"] for merge in merges], [837])
+
+    def test_unverified_first_attempt_entry_leaves_monitor_coverage_incomplete(self):
+        import post_merge_report as report
+        get_run = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:30:00Z")],
+                                {"c3": (837, "b")})
+
+        def get(path):
+            if path == "/repos/o/r/actions/runs/9/attempts/1/jobs?per_page=100&page=1":
+                return {"jobs": attempt_jobs}
+            if "workflows/ci.yml/runs" in path:
+                self.fail("monitor history needs the first attempt's entry timestamp")
+            return get_run(path)
+
+        run = {**get_run("/repos/o/r/actions/runs/9"), "head_branch": "main"}
+        created_at = "2026-11-21T12:30:00Z"
+        entry = {"name": "Detect changed paths", "created_at": created_at}
+        for attempt_jobs in (
+            [{"name": "Rust tests (ubuntu-24.04)", "created_at": created_at, "conclusion": "success"}],
+            [{"name": "Detect changed paths"}],
+            [entry, entry],
+        ):
+            with self.subTest(attempt_jobs=attempt_jobs):
+                merges, complete = report.covered_merges(get, "o/r", run)
+                self.assertFalse(complete)
+                self.assertEqual([merge["pull"] for merge in merges], [837])
+
     def test_an_earlier_run_being_rerun_still_bounds_the_range(self):
         # Push run 8 (c2) ran before the red run; it is being rerun now (in progress, a second attempt queued).
         get = self.fake_api(["c0", "c1", "c2", "c3"],
@@ -711,7 +762,6 @@ class MonitorTests(unittest.TestCase):
                                 {"c3": (837, "someone")})
         old = {**get_run("/repos/o/r/actions/runs/9"), "head_branch": "main", "event": "push",
                "html_url": "https://x/runs/9", "run_attempt": 2}
-        first = {**old, "run_attempt": 1}
         report_job = {"name": "Report a red post-merge run", "conclusion": "success", "started_at": "t"}
         failed = {"name": "Linux check", "conclusion": "failure"}
         calls = []
@@ -720,7 +770,8 @@ class MonitorTests(unittest.TestCase):
             if "/runs/9/" in path:
                 calls.append(path)
                 return {
-                    "/repos/o/r/actions/runs/9/attempts/1": first,
+                    "/repos/o/r/actions/runs/9/attempts/1/jobs?per_page=100&page=1":
+                        {"jobs": [{"name": "Detect changed paths", "created_at": "2026-11-21T12:30:00Z"}]},
                     "/repos/o/r/actions/runs/9/attempts/2/jobs?per_page=100&page=1":
                         {"jobs": [{"name": "Other", "conclusion": "success"}] * 100},
                     "/repos/o/r/actions/runs/9/attempts/2/jobs?per_page=100&page=2":
@@ -733,6 +784,7 @@ class MonitorTests(unittest.TestCase):
               patch("builtins.print") as output):
             self.assertEqual(red.main(["--repo", "o/r", "--since", "2026-11-21T12:00:00Z"]), 0)
         self.assertEqual(sum("/attempts/2/jobs" in path for path in calls), 2)
+        self.assertEqual(sum("/attempts/1/jobs" in path for path in calls), 1)
         line = output.call_args.args[0]
         self.assertIn("Linux check", line)
         self.assertTrue(line.endswith("https://x/runs/9/attempts/2"))
