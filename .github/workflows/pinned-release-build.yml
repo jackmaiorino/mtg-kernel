@@ -34,8 +34,10 @@ concurrency:
 jobs:
   build:
     # Build artifacts only. Native qualification runs separately on an admitted host.
+    # The repository is named by its numeric id, which stays the same when the
+    # repository is renamed or moved to another owner; a fork has another id.
     if: >-
-      github.repository == 'jackmaiorino/mtg-kernel' &&
+      github.repository_id == '1303347549' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
