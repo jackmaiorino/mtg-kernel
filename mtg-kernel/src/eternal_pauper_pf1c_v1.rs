@@ -34,6 +34,7 @@ use crate::effect::{EffectContinuation, EffectOp, ExecCtx, TargetRef};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_cube_c1c_v1::C1cOpV1;
 pub mod ordinary_damage;
+mod redirect_source;
 use crate::eternal_sideboard_s1d_v1::{statics as circles, CopShieldV1};
 use crate::event::{self, DamageProposed, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
@@ -137,6 +138,8 @@ pub struct HallowChoiceV1 {
     pub circle: Option<CopShieldV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ordinary: Vec<OrdinaryV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_sources: Option<redirect_source::SourceChoiceV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +147,7 @@ pub enum HallowPreventionV1 {
     Hallow(PlayerId),
     Circle,
     Ordinary(u16),
+    RedirectSource(ObjectLinkV4),
 }
 
 impl HallowChoiceV1 {
@@ -189,6 +193,10 @@ impl HallowChoiceV1 {
             HallowPreventionV1::Hallow(player) => self.beneficiaries.contains(&player),
             HallowPreventionV1::Circle => self.circle.is_some(),
             HallowPreventionV1::Ordinary(index) => usize::from(index) < self.ordinary.len(),
+            HallowPreventionV1::RedirectSource(source) => self
+                .redirect_sources
+                .as_ref()
+                .is_some_and(|choice| choice.sources.contains(&source)),
         }
     }
 }
@@ -565,12 +573,14 @@ fn covered_packet(
     state: &GameState,
     damage: &DamageProposed,
     event: usize,
+    shared_redirect: bool,
 ) -> Option<HallowPacketV1> {
     if damage.amount <= 0 {
         return None;
     }
     let (source, source_zone) = damage_source_incarnation(state, damage)?;
-    if !crate::eternal_prevention_order_v1::nomads_v1::needs_frontier(state, damage)
+    if !shared_redirect
+        && !crate::eternal_prevention_order_v1::nomads_v1::needs_frontier(state, damage)
         && (crate::eternal_prevention_order_v1::cannot_prevent(state)
             || (hallow_beneficiaries(state, source, source_zone).is_empty()
                 && !crate::eternal_prevention_order_v1::eligible(state, damage)
@@ -618,6 +628,16 @@ fn prevent_packets(
             })
             .map(|(at, _)| at)
             .expect("nonempty Hallow frontier");
+        let at = if let Some(batch) = batch {
+            let Some(selected) =
+                redirect_source::choose(state, &work, at, batch, steps[work[at].event])?
+            else {
+                return Ok(false);
+            };
+            selected
+        } else {
+            at
+        };
         let item = work.remove(at);
         let damage = &item.packet.damage;
         if damage.amount <= 0 {
@@ -668,6 +688,7 @@ fn prevent_packets(
             beneficiaries,
             circle,
             ordinary,
+            redirect_sources: None,
         };
         let selected = if choice.count() == 0 {
             residuals.push((item.event, damage.clone()));
@@ -690,6 +711,9 @@ fn prevent_packets(
             effect
         };
         match selected {
+            HallowPreventionV1::RedirectSource(_) => {
+                return Err("unexpected source in a packet effect choice".into())
+            }
             HallowPreventionV1::Hallow(controller) => pf1c_state(state)
                 .hallow_life_owed
                 .push((controller, damage.amount)),
@@ -724,7 +748,7 @@ pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEven
     (may_need_hallow_choice(state) || crate::eternal_prevention_order_v1::may_need_choice(state))
         && events.iter().any(|event| {
             matches!(event,
-            ProposedEvent::Damage(damage) if covered_packet(state, damage, 0).is_some())
+            ProposedEvent::Damage(damage) if (redirect_source::shared(state, events, damage) || covered_packet(state, damage, 0, false).is_some()))
         })
 }
 
@@ -743,7 +767,12 @@ pub(crate) fn prevent_hallow_batch(
     let mut covered = vec![false; events.len()];
     for (at, event) in events.iter().enumerate() {
         if let ProposedEvent::Damage(damage) = event {
-            if let Some(packet) = covered_packet(state, damage, at) {
+            if let Some(packet) = covered_packet(
+                state,
+                damage,
+                at,
+                redirect_source::shared(state, events, damage),
+            ) {
                 if u32::try_from(at).is_err() || !event::preflight_hallow_damage_v1(state, event) {
                     return Err("damage cohort rejected its original historical damage".into());
                 }
@@ -783,7 +812,7 @@ pub(crate) fn replace_damage(
     damage: &event::DamageProposed,
 ) -> crate::eternal_prevention_order_v1::DamageResultV1 {
     use crate::eternal_prevention_order_v1::DamageResultV1;
-    let Some(packet) = covered_packet(state, damage, 0) else {
+    let Some(packet) = covered_packet(state, damage, 0, false) else {
         return DamageResultV1::Uncovered;
     };
     let cohort = redirect_may_hit_nishoba(state, damage)

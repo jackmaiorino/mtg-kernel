@@ -995,6 +995,21 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn hallow_decision(choice: &HallowChoiceV1) -> Decision {
+    if let Some(redirect) = &choice.redirect_sources {
+        return Decision::ChooseEffectTargets {
+            player: choice.chooser,
+            source: redirect.shield.from.object,
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            can_finish: false,
+            legal_targets: redirect
+                .sources
+                .iter()
+                .map(|source| Target::Object(source.object))
+                .collect(),
+        };
+    }
     if choice.mixed() {
         return Decision::ChooseEffectOption {
             player: choice.chooser,
@@ -2233,6 +2248,20 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
         validate(state)?;
         let prevention = match action {
+            Action::ChooseEffectTarget(Target::Object(id))
+                if pending.choice.redirect_sources.is_some() =>
+            {
+                let source = pending
+                    .choice
+                    .redirect_sources
+                    .as_ref()
+                    .unwrap()
+                    .sources
+                    .iter()
+                    .find(|source| source.object == id)
+                    .ok_or("damage source is outside the redirect menu")?;
+                HallowPreventionV1::RedirectSource(*source)
+            }
             Action::ChooseEffectTarget(Target::Player(beneficiary)) if !pending.choice.mixed() => {
                 HallowPreventionV1::Hallow(beneficiary)
             }
