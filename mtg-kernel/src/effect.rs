@@ -15667,7 +15667,9 @@ fn drive_resumable_inner_with_native_row_v1(
                     reveal_top_and_partition(state, player, count, card_type, matching_to, rest_to);
                 // The Spellbench neutral contract poses the hand/graveyard
                 // partition as forced choices so both move orders are chosen.
-                if state.engine.spellbench_neutral_v1.choices
+                let presentation = &state.engine.spellbench_neutral_v1;
+                if presentation.choices
+                    && !presentation.trainer_partition_seats[player.index()]
                     && matching_to == Zone::Hand
                     && rest_to == Zone::Graveyard
                     && !original_prefix.is_empty()

@@ -350,6 +350,13 @@ pub struct SpellbenchNeutralStateV1 {
     /// Legacy training and replay sessions keep the automatic choices.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub choices: bool,
+    /// These seats resolve revealed hand/graveyard partitions on the ordinary
+    /// trainer path, even while the bridge is presenting neutral choices.
+    #[serde(
+        default,
+        skip_serializing_if = "SpellbenchNeutralStateV1::no_trainer_seats"
+    )]
+    pub trainer_partition_seats: [bool; 2],
     /// The current publicly revealed, forced hand/graveyard partition.
     /// Reuses the typed library-partition continuation and exact bindings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -361,6 +368,10 @@ pub struct SpellbenchNeutralStateV1 {
 }
 
 impl SpellbenchNeutralStateV1 {
+    fn no_trainer_seats(seats: &[bool; 2]) -> bool {
+        *seats == [false; 2]
+    }
+
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
@@ -373,6 +384,10 @@ impl std::hash::Hash for SpellbenchNeutralStateV1 {
             self.choices.hash(h);
             self.revealed_partition.hash(h);
             self.pending_activation.hash(h);
+            if !Self::no_trainer_seats(&self.trainer_partition_seats) {
+                b"trainer-revealed-partition/v1".hash(h);
+                self.trainer_partition_seats.hash(h);
+            }
         }
     }
 }
@@ -31556,6 +31571,63 @@ mod tests {
             .spellbench_neutral_v1
             .revealed_partition
             .is_none());
+    }
+
+    #[test]
+    fn trainer_partition_restores_and_keeps_the_normal_graveyard_order_choice() {
+        let cards = ["Elvish Mystic", "Quirion Ranger", "Island", "Mountain"]
+            .map(|name| card_id_by_name(name).unwrap());
+        let mut state = GameState::new_from_libraries(
+            &cards,
+            &cards,
+            |id| card_def::CARD_DEFS[id as usize].name.to_string(),
+            9,
+        );
+        state.engine.spellbench_neutral_v1.choices = true;
+        state.step = Step::Main1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
+        let original = state.players[0].library.clone();
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Winding Way");
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(
+            resolve_top_of_stack(&mut state),
+            ResolutionProgress::Suspended
+        );
+
+        // The previous snapshot shape still opts both seats into neutral orders.
+        let legacy = serde_json::to_vec(&state).unwrap();
+        assert!(!std::str::from_utf8(&legacy)
+            .unwrap()
+            .contains("trainer_partition_seats"));
+        let restored: GameState = serde_json::from_slice(&legacy).unwrap();
+        assert_eq!(restored, state);
+        let legacy_hash = state.state_hash();
+        state.engine.spellbench_neutral_v1.trainer_partition_seats = [true, false];
+        assert_ne!(state.state_hash(), legacy_hash);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored, state);
+
+        // P0's hand cards move in library order. Under ordinary graveyard
+        // rules P0 still chooses which nonmatching card goes in first.
+        effect::choose_resumable_option(&mut restored, 0).unwrap();
+        assert_eq!(
+            effect::resume_resumable_resolution(&mut restored).unwrap(),
+            effect::ResumableProgress::Suspended
+        );
+        assert_eq!(restored.players[0].hand, original[..2]);
+        assert!(restored
+            .engine
+            .spellbench_neutral_v1
+            .revealed_partition
+            .is_none());
+        effect::choose_resumable_target(&mut restored, Target::Object(original[3])).unwrap();
+        assert!(matches!(
+            effect::resume_resumable_resolution(&mut restored).unwrap(),
+            effect::ResumableProgress::Complete(_)
+        ));
+        assert_eq!(restored.players[0].graveyard, [original[3], original[2]]);
     }
 
     /// Winding Way with no card of the chosen type: the neutral contract

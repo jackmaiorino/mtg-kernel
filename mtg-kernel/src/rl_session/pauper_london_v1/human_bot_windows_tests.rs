@@ -66,6 +66,13 @@ fn tensor(fast: &FastActorSessionV1, rows: &[u32], scratch: &mut FlatV4EncodeScr
     value["tensor"].take()
 }
 
+#[derive(Clone, Copy)]
+enum NeutralComparison {
+    BothNeutral,
+    BridgeNeutral,
+    TrainerPartitionForBot,
+}
+
 struct Sessions {
     training: FastActorSessionV1,
     raw: RlEpisodeSessionV1,
@@ -83,7 +90,7 @@ fn sessions(
     episode: u64,
     bot: usize,
     person_windows: bool,
-    neutral_training: bool,
+    comparison: NeutralComparison,
 ) -> Sessions {
     let deck_ids: SessionDeckIdsV1 = [decks[0].to_string(), decks[1].to_string()];
     let boards = mainboards(&deck_ids);
@@ -110,6 +117,9 @@ fn sessions(
         modes: LEARNED,
         engine_window_seats: engine_windows,
         action_windows: rules,
+        trainer_partition_seats: std::array::from_fn(|seat| {
+            seat == bot && matches!(comparison, NeutralComparison::TrainerPartitionForBot)
+        }),
     };
     let deal = || {
         build_session_deck_pair_state_from_explicit_decks(&boards, seed, Some(PlayerId::P0))
@@ -123,7 +133,7 @@ fn sessions(
     let fast =
         FastActorSessionV1::london_human_from_state_v1(start, deck_ids, hashes, state).unwrap();
     let mut copy = FlatV4LockstepV1::from_fast_session_for_test(episode, fast);
-    if neutral_training {
+    if matches!(comparison, NeutralComparison::BothNeutral) {
         training.enable_spellbench_neutral_choices();
     }
     raw.enable_spellbench_neutral_choices();
@@ -305,14 +315,15 @@ fn play(
     episode: u64,
     bot: usize,
     person_windows: bool,
-    neutral_training: bool,
+    comparison: NeutralComparison,
     max_shared: u64,
 ) -> Played {
     let Sessions {
         mut training,
         mut raw,
         mut copy,
-    } = sessions(decks, seed, episode, bot, person_windows, neutral_training);
+    } = sessions(decks, seed, episode, bot, person_windows, comparison);
+    let neutral_training = matches!(comparison, NeutralComparison::BothNeutral);
     let mut rng = SplitMix64::seed(seed ^ 0xB07);
     let mut scratch = FlatV4EncodeScratchV1::default();
     let mut out = Played::default();
@@ -506,7 +517,7 @@ fn shared_bot_input_after_persons_winding_way_hand_order() {
         0xB0_0000 + 114,
         0,
         true,
-        false,
+        NeutralComparison::BridgeNeutral,
         76,
     );
     assert!(played.person_revealed_order_picks > 0, "{played:?}");
@@ -516,10 +527,38 @@ fn shared_bot_input_after_persons_winding_way_hand_order() {
 
 #[test]
 fn shared_bot_input_after_persons_winding_way_graveyard_order() {
-    let played = play(["Spy", "Spy"], 7, 0xB0_0000 + 4014, 0, true, false, 94);
+    let played = play(
+        ["Spy", "Spy"],
+        7,
+        0xB0_0000 + 4014,
+        0,
+        true,
+        NeutralComparison::BridgeNeutral,
+        94,
+    );
     assert!(played.person_revealed_order_picks >= 3, "{played:?}");
     assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
     println!("Spy Winding Way: {played:?}");
+}
+
+#[test]
+fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
+    for (bot, last_shared) in [(0, 277), (1, 65)] {
+        let played = play(
+            ["Spy", "Spy"],
+            7,
+            0xB0_0000 + 4014 + bot as u64,
+            bot,
+            true,
+            NeutralComparison::TrainerPartitionForBot,
+            last_shared,
+        );
+        assert_eq!(played.shared, last_shared, "{played:?}");
+        if bot == 0 {
+            assert!(played.person_revealed_order_picks >= 3, "{played:?}");
+        }
+        println!("Spy seat {bot}: {played:?}");
+    }
 }
 
 #[test]
@@ -545,7 +584,11 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                             episode,
                             bot,
                             person_windows,
-                            neutral_training,
+                            if neutral_training {
+                                NeutralComparison::BothNeutral
+                            } else {
+                                NeutralComparison::BridgeNeutral
+                            },
                             8_000,
                         );
                         if neutral_training {
