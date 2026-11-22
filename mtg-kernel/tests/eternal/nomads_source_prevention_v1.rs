@@ -100,7 +100,7 @@ fn a_blocker_can_redirect_or_use_its_prevention_on_nomads() {
                 );
                 assert_eq!(
                     branch.objects.get(ally).damage,
-                    i32::from(!hallow || !redirect_covered)
+                    u32::from(!hallow || !redirect_covered)
                 );
                 assert_eq!(life(&branch, active), 20 + i32::from(hallow));
             }
