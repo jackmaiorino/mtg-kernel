@@ -280,6 +280,28 @@ fn the_retention_bound_decides_what_is_held() {
         100
     ));
     assert_eq!(held(&state), ["b"]);
+
+    // Evicting an entry also drops its queued parses.
+    let mut state = StateV1::default();
+    let queued = || [SlotV1::Queued, SlotV1::Queued];
+    assert!(insert_locked_v1(
+        &mut state,
+        "a",
+        sized("a", 60, 60),
+        queued(),
+        100
+    ));
+    assert!(insert_locked_v1(
+        &mut state,
+        "b",
+        sized("b", 60, 60),
+        queued(),
+        100
+    ));
+    assert_eq!(held(&state), ["b"]);
+    for queue in &state.queues {
+        assert_eq!(queue.iter().collect::<Vec<_>>(), ["b"]);
+    }
 }
 
 /// The process setting admits 0..=16384 MiB once; the same value again is

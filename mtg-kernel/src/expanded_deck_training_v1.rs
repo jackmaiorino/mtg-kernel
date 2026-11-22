@@ -144,8 +144,9 @@ pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
     configure_retained_mebibytes_v1 as configure_parse_ahead_mebibytes_v1,
     offer_v1 as offer_parse_ahead_v1, release_under_v1 as release_parse_ahead_under_v1,
-    retains_v1 as parse_ahead_retains_v1, start_helpers_up_to_v1 as start_parse_ahead_helpers_v1,
-    take_collection_fields_v1, CollectionTrajectoryFieldsV1,
+    retained_limit_v1 as parse_ahead_retained_bytes_v1, retains_v1 as parse_ahead_retains_v1,
+    start_helpers_up_to_v1 as start_parse_ahead_helpers_v1, take_collection_fields_v1,
+    CollectionTrajectoryFieldsV1,
 };
 #[cfg(test)]
 pub(crate) use trajectory_parse_ahead_v1::{

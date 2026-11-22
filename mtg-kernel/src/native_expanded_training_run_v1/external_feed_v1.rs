@@ -29,7 +29,8 @@
 //! the watcher is joined before the collection returns on every path.
 
 use crate::expanded_deck_training_v1::{
-    offer_parse_ahead_v1, parse_ahead_retains_v1, start_parse_ahead_helpers_v1,
+    offer_parse_ahead_v1, parse_ahead_retained_bytes_v1, parse_ahead_retains_v1,
+    start_parse_ahead_helpers_v1,
 };
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -104,7 +105,12 @@ fn offer_file_v1(path: &Path) -> bool {
     let read = || -> std::io::Result<Option<Vec<u8>>> {
         let file = std::fs::File::open(path)?;
         let meta = file.metadata()?;
-        if !meta.is_file() || meta.len() > MAX_FILE_BYTES_V1 {
+        // A file larger than the retention is never held (an entry is
+        // charged at least its length): it is not read at all.
+        if !meta.is_file()
+            || meta.len() > MAX_FILE_BYTES_V1
+            || meta.len() > parse_ahead_retained_bytes_v1() as u64
+        {
             return Ok(None);
         }
         let mut bytes = Vec::with_capacity(meta.len() as usize);

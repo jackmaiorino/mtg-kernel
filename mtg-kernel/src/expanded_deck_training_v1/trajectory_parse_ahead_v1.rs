@@ -58,7 +58,8 @@ static RETAINED_BYTES_V1: AtomicUsize = AtomicUsize::new(DEFAULT_RETAINED_MEBIBY
 /// The bound the process was configured with, if any.
 static CONFIGURED_MEBIBYTES_V1: OnceLock<usize> = OnceLock::new();
 
-fn retained_limit_v1() -> usize {
+/// The retention bound in force, in bytes.
+pub(crate) fn retained_limit_v1() -> usize {
     RETAINED_BYTES_V1.load(Ordering::Relaxed)
 }
 
@@ -410,14 +411,25 @@ fn insert_v1(sha256: &str, path: &Path, bytes: impl Into<Arc<Vec<u8>>>, slots: [
     }
 }
 
-/// Drops the oldest entries until at most `limit` bytes are held.
+/// Drops the oldest entries until at most `limit` bytes are held, and the
+/// queue keys of the entries dropped.
 fn evict_to_v1(state: &mut StateV1, limit: usize) {
+    let mut evicted = false;
     while state.retained_bytes > limit {
         let Some(oldest) = state.order.pop_front() else {
             break;
         };
         if let Some(entry) = state.entries.remove(&oldest) {
             state.retained_bytes -= entry.charge;
+            evicted = true;
+        }
+    }
+    if evicted {
+        let StateV1 {
+            entries, queues, ..
+        } = state;
+        for queue in queues.iter_mut() {
+            queue.retain(|key| entries.contains_key(key));
         }
     }
 }
