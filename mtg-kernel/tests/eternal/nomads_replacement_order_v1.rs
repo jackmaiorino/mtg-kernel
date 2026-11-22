@@ -144,3 +144,36 @@ fn unpreventable_redirected_points_remove_one_nishoba_counter_per_event() {
     assert_eq!((creature.damage, creature.counters.plus1_plus1), (2, 6));
     assert_eq!(state.objects.get(nomads).zone, Zone::Graveyard);
 }
+
+#[test]
+fn one_redirect_splits_lavamancer_damage_but_lifelink_gains_life_once() {
+    let mut state = turn_of(P0);
+    let lavamancer = put(&mut state, P0, "Grim Lavamancer", Zone::Battlefield);
+    let aura = put(&mut state, P0, "Lifelink", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, aura, &[Target::Object(lavamancer)]);
+    settled(&mut state);
+    let nomads = put(&mut state, P1, "Nomads en-Kor", Zone::Battlefield);
+    let ally = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
+    shields(&mut state, P1, nomads, &[ally]);
+    give_priority(&mut state, P0);
+    for _ in 0..2 {
+        put(&mut state, P0, "Mountain", Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    activate(&mut state, lavamancer, 0, &[Target::Object(nomads)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(nomads).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(ally).damage, 1);
+    assert_eq!(super::life(&state, P0), 22);
+    let gains = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|event| match event {
+            mtg_kernel::event::CommittedEvent::LifeGain { player: P0, amount } => Some(*amount),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(gains, [2]);
+}

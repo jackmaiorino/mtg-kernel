@@ -21,8 +21,8 @@ pub(crate) fn has_active_redirects(state: &GameState) -> bool {
         })
 }
 
-/// A lone redirect with an ordinary recipient keeps its existing event shape.
-/// A competing effect or another redirect on the next recipient needs the entire frontier.
+/// A lone point with one destination can use the ordinary path. Splits must
+/// keep their surviving damage simultaneous, even when no decision is needed.
 pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool {
     if !matches!(damage.target, Target::Object(_))
         || damage.amount <= 0
@@ -41,6 +41,9 @@ pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool
         return true;
     }
     if first.from != first.to {
+        if damage.amount > 1 {
+            return true;
+        }
         let mut next = damage.clone();
         next.amount = 1;
         next.target = Target::Object(first.to.object);
