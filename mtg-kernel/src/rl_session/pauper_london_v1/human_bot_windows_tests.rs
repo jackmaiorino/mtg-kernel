@@ -445,9 +445,31 @@ fn play(
                         && training.diagnostic_current_action_semantics()
                             == copy.fast_session().diagnostic_current_action_semantics()
                 }
-                FastActorResponseV1::Terminal(_) => false,
+                FastActorResponseV1::Terminal(_) => {
+                    // The training game is over and the bridge's is not.
+                    if !neutral_training {
+                        out.diverged = Some(format!(
+                            "the training game ended first at shared decision {}",
+                            out.shared
+                        ));
+                        return out;
+                    }
+                    false
+                }
             };
             if !shared && !neutral_training {
+                // A mismatched priority menu is a divergence for either seat.
+                let priority = copy
+                    .fast_session()
+                    .diagnostic_current_action_semantics()
+                    .is_some_and(|menu| {
+                        menu.iter()
+                            .any(|action| matches!(action, ActionSemanticV1::Pass { .. }))
+                    });
+                if priority {
+                    out.diverged = Some(format!("menu at shared decision {}", out.shared));
+                    return out;
+                }
                 let rows = copy.row_candidate_ids(decision).unwrap();
                 if matches!(comparison, NeutralComparison::TrainerChoicesForBot)
                     && seat_index(decision.acting_player) == bot
