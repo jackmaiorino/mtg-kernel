@@ -23,8 +23,8 @@
 //! ended or stopped (null when it stopped before a session existed). A
 //! completed Pass A session records successful score-and-selection calls and
 //! successful steps separately. Its digests cover the ordered V6 scoring
-//! observations, encoded tensors and scores (including encoded V7 and London
-//! inputs), and selected ordinals actually submitted to the session. A step
+//! observations, the canonical JSON bytes from the FlatV7 tensorizer (including
+//! London inputs), encoded tensors and scores, and submitted ordinals. A step
 //! error includes the final scored row and attempted ordinal in the digests.
 //!
 //! A selection error is recorded with its decision, the full error text, the
@@ -90,6 +90,7 @@
 //!   MTG_KERNEL_FIELD_PROBE_SELECT   `policy` (default) or `uniform`
 
 use super::*;
+use crate::sideboard_play_policy_v1::public_inputs::last_flat_v7_observation_for_test;
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::time::Instant;
@@ -377,6 +378,7 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
     // hash, and round-trip Debug text for the tensor and scores.
     let mut inputs = Sha256::new();
     let mut observations = Sha256::new();
+    let mut canonical_observations = Sha256::new();
     let mut selected_ordinals = Sha256::new();
     let mut scored = 0u64;
     let mut result = loop {
@@ -453,6 +455,8 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
             .flat_policy_observation_v4(d)
             .expect("successfully scored decision still has its scoring observation");
         hash_json_record(&mut observations, &observation);
+        canonical_observations.update(last_flat_v7_observation_for_test(policy));
+        canonical_observations.update(b"\n");
         selected_ordinals.update(selected.to_le_bytes());
         scored += 1;
         *kinds.entry(kind.clone()).or_default() += 1;
@@ -465,6 +469,7 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
     };
     result["inputs_sha256"] = json!(hex(&inputs.finalize()));
     result["scoring_observations_sha256"] = json!(hex(&observations.finalize()));
+    result["canonical_observations_sha256"] = json!(hex(&canonical_observations.finalize()));
     result["selected_ordinals_sha256"] = json!(hex(&selected_ordinals.finalize()));
     result["scored_decisions"] = json!(scored);
     result["stepped_decisions"] = json!(decisions);
