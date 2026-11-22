@@ -16,13 +16,11 @@
 //!    constructor the bridge reset calls after its own deal. The person
 //!    passes at every engine window the trainer's other seat does not have,
 //!    and answers everything else as the training game is answered.
-//!    Neutral choices (on in every human-play game) are run both ways: on
-//!    the trainer's session too (then everything is equal), and off it, the
-//!    production trainer exactly; then the bridge poses some choices training
-//!    resolves itself (answered with their first row), and at every other
-//!    bot decision the menu, the model input and the new-window marker are
-//!    equal (the game states are not: neutral choices keep a pending
-//!    activation in their own fields and number stack items differently).
+//!    With neutral training, the full game states must also match. With the
+//!    normal trainer, the bridge enables the bot's trainer choice profile.
+//!    Every bot decision must match in actor, menu, model input and window
+//!    marker. For the person's extra revealed-card choices, the script uses
+//!    the trainer's actual hand or graveyard order.
 //! 2. Both rules `harness-v2` is the engine-windows reset exactly.
 //! 3. The bridge takes the rules on its reset request, marks the bot's new
 //!    windows in the private support block, and refuses the field anywhere
@@ -64,6 +62,13 @@ fn tensor(fast: &FastActorSessionV1, rows: &[u32], scratch: &mut FlatV4EncodeScr
     value["tensor"].take()
 }
 
+#[derive(Clone, Copy, Debug)]
+enum NeutralComparison {
+    BothNeutral,
+    BridgeNeutral,
+    TrainerChoicesForBot,
+}
+
 struct Sessions {
     training: FastActorSessionV1,
     raw: RlEpisodeSessionV1,
@@ -81,7 +86,7 @@ fn sessions(
     episode: u64,
     bot: usize,
     person_windows: bool,
-    neutral_training: bool,
+    comparison: NeutralComparison,
 ) -> Sessions {
     let deck_ids: SessionDeckIdsV1 = [decks[0].to_string(), decks[1].to_string()];
     let boards = mainboards(&deck_ids);
@@ -108,6 +113,9 @@ fn sessions(
         modes: LEARNED,
         engine_window_seats: engine_windows,
         action_windows: rules,
+        trainer_choice_seats: std::array::from_fn(|seat| {
+            seat == bot && matches!(comparison, NeutralComparison::TrainerChoicesForBot)
+        }),
     };
     let deal = || {
         build_session_deck_pair_state_from_explicit_decks(&boards, seed, Some(PlayerId::P0))
@@ -121,7 +129,7 @@ fn sessions(
     let fast =
         FastActorSessionV1::london_human_from_state_v1(start, deck_ids, hashes, state).unwrap();
     let mut copy = FlatV4LockstepV1::from_fast_session_for_test(episode, fast);
-    if neutral_training {
+    if matches!(comparison, NeutralComparison::BothNeutral) {
         training.enable_spellbench_neutral_choices();
     }
     raw.enable_spellbench_neutral_choices();
@@ -145,39 +153,140 @@ struct Played {
     bot_decisions: u64,
     bot_new_windows: u64,
     person_engine_windows: u64,
-    /// Decisions only the bridge poses (neutral choices), each with one
-    /// answer: all of them, and the bot's.
+    /// Decisions only the bridge poses, and how many of them belong to the bot.
     neutral_only: u64,
     bot_neutral_only: u64,
-    /// Of those, the ones with more than one row (substeps of a forced set).
     neutral_only_several: u64,
+    person_revealed_order_picks: u64,
+    bot_after_person_revealed_order: u64,
     shared: u64,
     finished: bool,
+}
+
+/// Match the person's revealed-card order to the production trainer's committed
+/// zone order. A graveyard-order decision that the trainer exposes stays shared.
+fn person_revealed_order_pick(
+    raw: &RlEpisodeSessionV1,
+    training: &FastActorSessionV1,
+    decision: &RlSessionDecisionV1,
+    rows: &[u32],
+) -> Option<u32> {
+    use crate::effect::{
+        EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest,
+        LibraryPartitionSelectionStage, PendingEffectChoice::SelectTargets,
+    };
+    use crate::rl::TargetRefV1;
+    use crate::state::Target;
+
+    let state = raw.game_state();
+    let SelectTargets {
+        player,
+        selected,
+        legal,
+        min_targets,
+        max_targets,
+        purpose:
+            LookTopSelectByTypeToHandBottomRest {
+                stage,
+                canonical_path,
+                original_prefix,
+                card_type,
+                ..
+            },
+        ..
+    } = state.engine.pending_effect.as_ref()?.choice.as_ref()?
+    else {
+        return None;
+    };
+    if state
+        .engine
+        .spellbench_neutral_v1
+        .revealed_partition
+        .as_ref()
+        != Some(canonical_path)
+    {
+        return None;
+    }
+    let count = usize::from(*max_targets);
+    assert_eq!(min_targets, max_targets);
+    assert_eq!(selected.len() + legal.len(), count);
+    let baseline = training.game_state();
+    let matches_type = |binding: &crate::effect::EffectObjectBinding| {
+        let card = state.objects.get(binding.object);
+        crate::card_def::CARD_DEFS[card.card_def as usize].has_type(*card_type)
+    };
+    let player_state = &baseline.players[player.index()];
+    let (destination, to_hand) = match stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => (&player_state.hand, true),
+        LibraryPartitionSelectionStage::OrderRest { .. }
+            if !crate::engine::graveyard_order_choice_exposed(baseline, *player) =>
+        {
+            (&player_state.graveyard, false)
+        }
+        LibraryPartitionSelectionStage::OrderRest { .. } => return None,
+    };
+    let expected: Vec<_> = original_prefix
+        .iter()
+        .filter(|card| matches_type(card) == to_hand)
+        .collect();
+    assert_eq!(expected.len(), count, "the whole revealed group must move");
+    // Other graveyard entries can follow the nonmatches, including the spell.
+    let moved: Vec<_> = destination
+        .iter()
+        .filter_map(|id| {
+            let binding = expected.iter().find(|card| card.object == *id)?;
+            assert_eq!(
+                baseline.objects.get(*id).zone_change_count,
+                binding.expected_zone_change_count + 1
+            );
+            Some(*id)
+        })
+        .collect();
+    assert_eq!(
+        moved.len(),
+        count,
+        "trainer moved each revealed card to its destination"
+    );
+    for (picked, id) in selected.iter().zip(&moved) {
+        assert_eq!(picked.target, Target::Object(*id));
+    }
+    for id in &moved[selected.len()..] {
+        assert!(legal
+            .iter()
+            .any(|candidate| candidate.target == Target::Object(*id)));
+    }
+    let next = moved[selected.len()];
+    Some(*rows.iter().find(|&&row| matches!(
+        &decision.legal_actions[row as usize].semantic,
+        ActionSemanticV1::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
+            if object.arena_id == next.0
+    )).expect("the next card in the trainer's zone order has a bridge row"))
 }
 
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
 /// passed in the bridge sessions alone; so are the decisions only neutral
-/// choices pose (production trainer only), answered with their first row.
+/// choices pose. For the person's revealed partition order, play the training order.
 fn play(
     decks: [&str; 2],
     seed: u64,
     episode: u64,
     bot: usize,
     person_windows: bool,
-    neutral_training: bool,
+    comparison: NeutralComparison,
     max_shared: u64,
 ) -> Played {
     let Sessions {
         mut training,
         mut raw,
         mut copy,
-    } = sessions(decks, seed, episode, bot, person_windows, neutral_training);
+    } = sessions(decks, seed, episode, bot, person_windows, comparison);
+    let neutral_training = matches!(comparison, NeutralComparison::BothNeutral);
     let mut rng = SplitMix64::seed(seed ^ 0xB07);
     let mut scratch = FlatV4EncodeScratchV1::default();
     let mut out = Played::default();
     let context = |what: &str, at: u64| {
-        format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows} neutral training {neutral_training}: {what} at shared decision {at}")
+        format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows} choice profile {comparison:?}: {what} at shared decision {at}")
     };
     loop {
         let response = raw.current_response();
@@ -224,24 +333,42 @@ fn play(
                 FastActorResponseV1::Terminal(_) => false,
             };
             if !shared && !neutral_training {
-                // A choice training resolves itself (a forced discard, a
-                // forced number), posed by neutral choices: one answer.
-                // Neutral choices pose choices training resolves itself (a
-                // forced discard, a forced number, all of a forced target
-                // set, one substep at a time). Answered with the first row:
-                // if the answer could matter, the comparisons at the next
-                // shared decision fail.
                 let rows = copy.row_candidate_ids(decision).unwrap();
+                assert!(
+                    !matches!(comparison, NeutralComparison::TrainerChoicesForBot)
+                        || seat_index(decision.acting_player) != bot,
+                    "{} bridge {:?} training {:?}",
+                    context("unmatched trained bot decision", out.shared),
+                    copy.fast_session().diagnostic_current_action_semantics(),
+                    training.diagnostic_current_action_semantics()
+                );
                 out.neutral_only_several += u64::from(rows.len() > 1);
-                let chosen = &decision.legal_actions[rows[0] as usize];
-                raw.step(
-                    decision.episode_id,
-                    decision.step,
-                    rows[0],
-                    &chosen.stable_id,
-                )
-                .unwrap();
-                copy.mirror_step(&rows, decision.step, rows[0]).unwrap();
+                let person_order = if seat_index(decision.acting_player) != bot && rows.len() > 1 {
+                    person_revealed_order_pick(&raw, &training, decision, &rows)
+                } else {
+                    None
+                };
+                let pick = if let Some(pick) = person_order {
+                    out.person_revealed_order_picks += 1;
+                    pick
+                } else {
+                    assert_eq!(
+                        rows.len(),
+                        1,
+                        "{} bridge {:?} training {:?}",
+                        context(
+                            "a bridge-only decision with more than one answer",
+                            out.shared
+                        ),
+                        copy.fast_session().diagnostic_current_action_semantics(),
+                        training.diagnostic_current_action_semantics()
+                    );
+                    rows[0]
+                };
+                let chosen = &decision.legal_actions[pick as usize];
+                raw.step(decision.episode_id, decision.step, pick, &chosen.stable_id)
+                    .unwrap();
+                copy.mirror_step(&rows, decision.step, pick).unwrap();
                 out.neutral_only += 1;
                 out.bot_neutral_only += u64::from(seat_index(decision.acting_player) == bot);
                 continue;
@@ -310,6 +437,7 @@ fn play(
         let rows = copy.row_candidate_ids(&ours).unwrap();
         if seat_index(ours.acting_player) == bot {
             out.bot_decisions += 1;
+            out.bot_after_person_revealed_order += u64::from(out.person_revealed_order_picks > 0);
             let marker = training.priority_pass_window_v1().unwrap();
             assert_eq!(
                 marker,
@@ -346,6 +474,65 @@ fn play(
 }
 
 #[test]
+fn shared_bot_input_after_persons_winding_way_hand_order() {
+    let played = play(
+        ["Wildfire", "Elves"],
+        7,
+        0xB0_0000 + 114,
+        0,
+        true,
+        NeutralComparison::BridgeNeutral,
+        76,
+    );
+    assert!(played.person_revealed_order_picks > 0, "{played:?}");
+    assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
+    println!("Winding Way: {played:?}");
+}
+
+#[test]
+fn shared_bot_input_after_persons_winding_way_graveyard_order() {
+    let played = play(
+        ["Spy", "Spy"],
+        7,
+        0xB0_0000 + 4014,
+        0,
+        true,
+        NeutralComparison::BridgeNeutral,
+        94,
+    );
+    assert!(played.person_revealed_order_picks >= 3, "{played:?}");
+    assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
+    println!("Spy Winding Way: {played:?}");
+}
+
+#[test]
+fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
+    let mut extra_bot_decisions = [0; 2];
+    for (bot, last_shared) in [(0, 277), (1, 65)] {
+        let played = play(
+            ["Spy", "Spy"],
+            7,
+            0xB0_0000 + 4014 + bot as u64,
+            bot,
+            true,
+            NeutralComparison::TrainerChoicesForBot,
+            last_shared,
+        );
+        assert_eq!(played.shared, last_shared, "{played:?}");
+        if bot == 0 {
+            assert!(played.person_revealed_order_picks >= 3, "{played:?}");
+        }
+        extra_bot_decisions[bot] = played.bot_neutral_only;
+        println!("Spy seat {bot}: {played:?}");
+    }
+    assert_eq!(
+        extra_bot_decisions,
+        [0, 0],
+        "the production trainer has no corresponding decisions"
+    );
+}
+
+#[test]
 fn the_bot_on_action_windows_plays_the_training_session() {
     let mut total = Played::default();
     let mut games = 0;
@@ -368,7 +555,11 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                             episode,
                             bot,
                             person_windows,
-                            neutral_training,
+                            if neutral_training {
+                                NeutralComparison::BothNeutral
+                            } else {
+                                NeutralComparison::TrainerChoicesForBot
+                            },
                             8_000,
                         );
                         if neutral_training {
@@ -389,6 +580,9 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         total.bot_new_windows += played.bot_new_windows;
                         total.person_engine_windows += played.person_engine_windows;
                         total.neutral_only += played.neutral_only;
+                        total.person_revealed_order_picks += played.person_revealed_order_picks;
+                        total.bot_after_person_revealed_order +=
+                            played.bot_after_person_revealed_order;
                         total.bot_neutral_only += played.bot_neutral_only;
                         total.neutral_only_several += played.neutral_only_several;
                         total.shared += played.shared;

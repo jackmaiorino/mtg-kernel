@@ -350,6 +350,13 @@ pub struct SpellbenchNeutralStateV1 {
     /// Legacy training and replay sessions keep the automatic choices.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub choices: bool,
+    /// Use the normal trainer path for these seats at choices with per-seat
+    /// presentation support.
+    #[serde(
+        default,
+        skip_serializing_if = "SpellbenchNeutralStateV1::no_trainer_seats"
+    )]
+    pub trainer_choice_seats: [bool; 2],
     /// The current publicly revealed, forced hand/graveyard partition.
     /// Reuses the typed library-partition continuation and exact bindings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -361,6 +368,14 @@ pub struct SpellbenchNeutralStateV1 {
 }
 
 impl SpellbenchNeutralStateV1 {
+    pub(crate) fn neutral_choices_for(&self, chooser: PlayerId) -> bool {
+        self.choices && !self.trainer_choice_seats[chooser.index()]
+    }
+
+    fn no_trainer_seats(seats: &[bool; 2]) -> bool {
+        *seats == [false; 2]
+    }
+
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
@@ -373,6 +388,10 @@ impl std::hash::Hash for SpellbenchNeutralStateV1 {
             self.choices.hash(h);
             self.revealed_partition.hash(h);
             self.pending_activation.hash(h);
+            if !Self::no_trainer_seats(&self.trainer_choice_seats) {
+                b"trainer-choice-seats/v1".hash(h);
+                self.trainer_choice_seats.hash(h);
+            }
         }
     }
 }
@@ -13090,7 +13109,11 @@ fn drain_pending_discard_or_decide(state: &mut GameState) -> Option<Decision> {
     }
     let choices = pending_discard_choices(state, &pd);
 
-    if state.engine.spellbench_neutral_v1.choices {
+    if state
+        .engine
+        .spellbench_neutral_v1
+        .neutral_choices_for(pd.player)
+    {
         // The neutral contract poses every nonempty discard, even a forced
         // one; nothing to choose means nothing is discarded.
         if pd.count == 0 || choices.is_empty() {
@@ -15045,7 +15068,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+        if viable_modes.len() == 1
+            && !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.controller)
+        {
             state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(viable_modes[0]);
             return drain_pending_cast_or_decide(state);
         }
@@ -15148,7 +15176,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
+        if candidates.len() <= 1
+            && !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.controller)
+        {
             // No real choice for *this single pick* (0 or 1 legal
             // candidate) -- auto-resolve just this one and let the next
             // loop pass re-derive whether the *following* pick (if any)
@@ -15285,7 +15318,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
-            if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
+            if candidates.len() <= 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller)
+            {
                 if let Some(&object) = candidates.first() {
                     mandatory_cast_cost_v1::bind_creature(state, &pending, object)
                         .expect("validated mandatory sacrifice candidate");
@@ -15829,7 +15867,12 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     source: pending.source,
                 });
             }
-            if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+            if candidates.len() == 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller)
+            {
                 state
                     .engine
                     .pending_activation
@@ -24586,7 +24629,7 @@ pub(crate) fn step_without_linked_aura_v1(
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
             let viable_modes = viable_pending_spell_forms(def, pending, state);
-            if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
+            if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.neutral_choices_for(pending.controller))
                 || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));
             }
@@ -25560,7 +25603,12 @@ fn apply_discard_action(state: &mut GameState, chosen: Vec<ObjectId>) -> Result<
             | DiscardResume::FinishOptionalCost { .. }
     );
     let eligible = hand.iter().filter(|&&id| Some(id) != exclude).count() as u32;
-    let required = if is_cost || !state.engine.spellbench_neutral_v1.choices {
+    let required = if is_cost
+        || !state
+            .engine
+            .spellbench_neutral_v1
+            .neutral_choices_for(pd.player)
+    {
         pd.count
     } else {
         pd.count.min(eligible)
@@ -31345,6 +31393,202 @@ mod tests {
     }
 
     #[test]
+    fn trainer_neutral_choice_costs_keep_shared_picks_and_skip_the_forced_final_pick() {
+        for trainer in [false, true] {
+            for (name, permanent, cost_kind, count) in [
+                ("Fireblast", "Mountain", CostKind::SacrificeLands, 2),
+                (
+                    "Dread Return",
+                    "Elvish Mystic",
+                    CostKind::SacrificeCreatures,
+                    3,
+                ),
+            ] {
+                let mut state = ready_game_in_main1(0);
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+                let permanents: Vec<_> = (0..count)
+                    .map(|_| put_on_battlefield(&mut state, PlayerId::P0, permanent))
+                    .collect();
+                let (spell, target) = if name == "Fireblast" {
+                    (
+                        put_in_hand(&mut state, PlayerId::P0, name),
+                        Target::Player(PlayerId::P1),
+                    )
+                } else {
+                    (
+                        put_in_graveyard(&mut state, PlayerId::P0, name),
+                        Target::Object(put_in_graveyard(&mut state, PlayerId::P0, "Lotleth Giant")),
+                    )
+                };
+                step(&mut state, Action::CastSpell(spell)).unwrap();
+                assert!(matches!(
+                    advance_until_decision(&mut state),
+                    Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&target)
+                ));
+                step(&mut state, Action::ChooseTarget(target)).unwrap();
+                for (index, &chosen) in permanents.iter().enumerate() {
+                    if trainer && index + 1 == permanents.len() {
+                        break;
+                    }
+                    assert!(
+                        matches!(
+                            advance_until_decision(&mut state),
+                            Decision::ChooseCostTargets {
+                                player: PlayerId::P0,
+                                source,
+                                cost_kind: offered_kind,
+                                remaining,
+                                candidates,
+                            } if source == spell
+                                && offered_kind == cost_kind
+                                && usize::from(remaining) == permanents.len() - index
+                                && candidates == permanents[index..]
+                        ),
+                        "{name}, trainer {trainer}, payment pick {index}"
+                    );
+                    step(&mut state, Action::ChooseCostTarget(chosen)).unwrap();
+                }
+                assert!(matches!(
+                    advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                assert_eq!(state.stack.last().map(|item| item.source), Some(spell));
+                assert!(permanents
+                    .iter()
+                    .all(|&id| state.objects.get(id).zone == Zone::Graveyard));
+            }
+        }
+    }
+
+    #[test]
+    fn trainer_neutral_choice_faithless_looting_keeps_genuine_discards() {
+        let lands = ["Island", "Mountain"].map(|name| card_id_by_name(name).unwrap());
+        for trainer in [false, true] {
+            for extra_card in [false, true] {
+                let mut state = GameState::new_from_libraries(
+                    &lands,
+                    &lands,
+                    |id| card_def::CARD_DEFS[id as usize].name.to_string(),
+                    9,
+                );
+                state.step = Step::Main1;
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+                state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+                let drawn = state.players[0].library.clone();
+                let extra = extra_card.then(|| put_in_hand(&mut state, PlayerId::P0, "Forest"));
+                let looting = put_in_hand(&mut state, PlayerId::P0, "Faithless Looting");
+                step(&mut state, Action::CastSpell(looting)).unwrap();
+                let _ = advance_until_decision(&mut state);
+                let _ = resolve_top_of_stack(&mut state);
+                assert_eq!(
+                    state
+                        .engine
+                        .pending_discard
+                        .as_ref()
+                        .map(|discard| (discard.player, discard.count)),
+                    Some((PlayerId::P0, 2))
+                );
+
+                if !trainer || extra_card {
+                    assert!(matches!(
+                        advance_until_decision(&mut state),
+                        Decision::Discard { player: PlayerId::P0, count: 2, choices }
+                            if choices.len() == 2 + usize::from(extra_card)
+                                && drawn.iter().all(|id| choices.contains(id))
+                    ));
+                    step(&mut state, Action::Discard(drawn.clone())).unwrap();
+                }
+                assert!(matches!(
+                    advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                assert_eq!(state.players[0].hand, extra.into_iter().collect::<Vec<_>>());
+                assert!(drawn
+                    .iter()
+                    .all(|&id| state.objects.get(id).zone == Zone::Graveyard));
+                assert_eq!(state.objects.get(looting).zone, Zone::Graveyard);
+            }
+        }
+    }
+
+    #[test]
+    fn trainer_neutral_choice_lead_the_stampede_canonicalizes_only_hand_order() {
+        let definitions = [
+            "Elvish Mystic",
+            "Island",
+            "Quirion Ranger",
+            "Forest",
+            "Mountain",
+        ]
+        .map(|name| card_id_by_name(name).unwrap());
+        for trainer in [false, true] {
+            let mut state = GameState::new_from_libraries(
+                &definitions,
+                &definitions,
+                |id| card_def::CARD_DEFS[id as usize].name.to_string(),
+                9,
+            );
+            state.step = Step::Main1;
+            state.engine.spellbench_neutral_v1.choices = true;
+            state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+            state.players[0].mana_pool[ManaColor::G.pool_index()] = 3;
+            let original = state.players[0].library.clone();
+            let lead = put_in_hand(&mut state, PlayerId::P0, "Lead the Stampede");
+            step(&mut state, Action::CastSpell(lead)).unwrap();
+            let _ = advance_until_decision(&mut state);
+            assert_eq!(
+                resolve_top_of_stack(&mut state),
+                ResolutionProgress::Suspended
+            );
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::ChooseEffectTargets { player: PlayerId::P0, can_finish: true, legal_targets, .. }
+                    if legal_targets == [Target::Object(original[0]), Target::Object(original[2])]
+            ));
+            for index in [2, 0] {
+                step(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(original[index])),
+                )
+                .unwrap();
+            }
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::ChooseEffectTargets {
+                    player: PlayerId::P0,
+                    min_targets: 3,
+                    max_targets: 3,
+                    ..
+                }
+            ));
+            state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+            for index in [4, 3] {
+                step(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(original[index])),
+                )
+                .unwrap();
+            }
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            let hand = if trainer {
+                [original[0], original[2]]
+            } else {
+                [original[2], original[0]]
+            };
+            assert_eq!(state.players[0].hand, hand);
+            assert_eq!(
+                state.players[0].library,
+                [original[4], original[3], original[1]]
+            );
+        }
+    }
+
+    #[test]
     fn spellbench_neutral_targeted_trigger_keeps_historical_source_and_prospective_id() {
         let mut state = empty_game();
         state.engine.spellbench_neutral_v1.choices = true;
@@ -31558,6 +31802,63 @@ mod tests {
             .is_none());
     }
 
+    #[test]
+    fn trainer_partition_restores_and_keeps_the_normal_graveyard_order_choice() {
+        let cards = ["Elvish Mystic", "Quirion Ranger", "Island", "Mountain"]
+            .map(|name| card_id_by_name(name).unwrap());
+        let mut state = GameState::new_from_libraries(
+            &cards,
+            &cards,
+            |id| card_def::CARD_DEFS[id as usize].name.to_string(),
+            9,
+        );
+        state.engine.spellbench_neutral_v1.choices = true;
+        state.step = Step::Main1;
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 2;
+        let original = state.players[0].library.clone();
+        let spell = put_in_hand(&mut state, PlayerId::P0, "Winding Way");
+        step(&mut state, Action::CastSpell(spell)).unwrap();
+        let _ = advance_until_decision(&mut state);
+        assert_eq!(
+            resolve_top_of_stack(&mut state),
+            ResolutionProgress::Suspended
+        );
+
+        // The previous snapshot shape still opts both seats into neutral orders.
+        let legacy = serde_json::to_vec(&state).unwrap();
+        assert!(!std::str::from_utf8(&legacy)
+            .unwrap()
+            .contains("trainer_choice_seats"));
+        let restored: GameState = serde_json::from_slice(&legacy).unwrap();
+        assert_eq!(restored, state);
+        let legacy_hash = state.state_hash();
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = [true, false];
+        assert_ne!(state.state_hash(), legacy_hash);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored, state);
+
+        // P0's hand cards move in library order. Under ordinary graveyard
+        // rules P0 still chooses which nonmatching card goes in first.
+        effect::choose_resumable_option(&mut restored, 0).unwrap();
+        assert_eq!(
+            effect::resume_resumable_resolution(&mut restored).unwrap(),
+            effect::ResumableProgress::Suspended
+        );
+        assert_eq!(restored.players[0].hand, original[..2]);
+        assert!(restored
+            .engine
+            .spellbench_neutral_v1
+            .revealed_partition
+            .is_none());
+        effect::choose_resumable_target(&mut restored, Target::Object(original[3])).unwrap();
+        assert!(matches!(
+            effect::resume_resumable_resolution(&mut restored).unwrap(),
+            effect::ResumableProgress::Complete(_)
+        ));
+        assert_eq!(restored.players[0].graveyard, [original[3], original[2]]);
+    }
+
     /// Winding Way with no card of the chosen type: the neutral contract
     /// still poses the (empty) forced subset, then the graveyard order of all
     /// four revealed cards, for both the creature and land options.
@@ -31629,6 +31930,69 @@ mod tests {
                 .spellbench_neutral_v1
                 .revealed_partition
                 .is_none());
+        }
+    }
+
+    #[test]
+    fn trainer_choices_preserve_the_choice_between_forests_and_auto_return_a_sole_forest() {
+        for trainer in [false, true] {
+            for forest_count in [1, 2] {
+                let mut state = empty_game();
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+                state.step = Step::Main1;
+                let p = PlayerId::P0;
+                let ranger = put_on_battlefield(&mut state, p, "Quirion Ranger");
+                let forests: Vec<_> = (0..forest_count)
+                    .map(|_| put_on_battlefield(&mut state, p, "Forest"))
+                    .collect();
+                begin_activation(&mut state, p, ranger, 0);
+                step(&mut state, Action::ChooseTarget(Target::Object(ranger))).unwrap();
+                let choice = drain_pending_activation_or_decide(&mut state);
+                let returned = *forests.last().unwrap();
+                if trainer && forest_count == 1 {
+                    assert!(choice.is_none());
+                } else {
+                    assert!(
+                        matches!(choice, Some(Decision::ChooseCostTargets { candidates, .. }) if candidates == forests)
+                    );
+                    step(&mut state, Action::ChooseCostTarget(returned)).unwrap();
+                    assert!(drain_pending_activation_or_decide(&mut state).is_none());
+                }
+                assert_eq!(state.objects.get(returned).zone, Zone::Hand);
+                assert_eq!(state.stack.last().unwrap().source, ranger);
+            }
+        }
+    }
+
+    #[test]
+    fn trainer_choices_preserve_both_spell_forms_and_auto_choose_a_sole_omen() {
+        for trainer in [false, true] {
+            for green in [1, 5] {
+                let mut state = empty_game();
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+                state.step = Step::Main1;
+                let p = PlayerId::P0;
+                state.players[p.index()].mana_pool[ManaColor::G.pool_index()] = green;
+                let spell = put_in_hand(&mut state, p, "Sagu Wildling");
+                begin_cast(&mut state, p, spell);
+                if trainer && green == 1 {
+                    let before = state.clone();
+                    assert!(step(&mut state, Action::ChooseSpellMode(1)).is_err());
+                    assert_eq!(state, before);
+                    assert!(drain_pending_cast_or_decide(&mut state).is_none());
+                } else {
+                    let expected = if green == 1 { vec![1] } else { vec![0, 1] };
+                    assert!(matches!(drain_pending_cast_or_decide(&mut state),
+                        Some(Decision::ChooseSpellMode { legal_modes, .. }) if legal_modes == expected));
+                    step(&mut state, Action::ChooseSpellMode(1)).unwrap();
+                    assert!(drain_pending_cast_or_decide(&mut state).is_none());
+                }
+                let paid = state.stack.last().unwrap();
+                assert_eq!(paid.source, spell);
+                assert_eq!(paid.mode_chosen, 1);
+            }
         }
     }
 
