@@ -101,3 +101,60 @@ fn protected_and_uncovered_damage_share_one_phantom_counter_per_batch() {
         }
     }
 }
+
+#[test]
+fn bare_phantom_can_keep_its_counter_with_fog_strands_or_maze_both_seats() {
+    use super::prevention_order_no_hallow_v1::{combat_choice, global_prevention};
+    use mtg_kernel::state::Step;
+
+    for attacker in [P0, P1] {
+        let defender = attacker.opponent();
+        for (name, color) in [
+            ("Moment's Peace", ManaColor::G),
+            ("Prismatic Strands", ManaColor::G),
+            ("Prismatic Strands", ManaColor::U),
+            ("Maze of Ith", ManaColor::C),
+        ] {
+            let (mut game, phantom) = board(attacker, false);
+            let mongrel = put(&mut game, attacker, "Wild Mongrel", Zone::Battlefield);
+            let maze = if name == "Maze of Ith" {
+                Some(put(&mut game, defender, name, Zone::Battlefield))
+            } else {
+                global_prevention(&mut game, defender, name, color);
+                None
+            };
+            super::pass_until(&mut game, |state| state.step == Step::DeclareAttackers);
+            act(&mut game, Action::DeclareAttackers(vec![mongrel]));
+            if let Some(maze) = maze {
+                super::give_priority(&mut game, defender);
+                super::activate(&mut game, maze, 0, &[Target::Object(mongrel)]);
+                settled(&mut game);
+            }
+            super::pass_until(&mut game, |state| state.step == Step::DeclareBlockers);
+            act(&mut game, Action::DeclareBlockers(vec![(phantom, mongrel)]));
+            if color == ManaColor::U {
+                super::pass_until(&mut game, |state| state.step == Step::EndCombat);
+                assert_eq!(counters(&game, phantom), 6);
+                continue;
+            }
+            assert!(
+                matches!(combat_choice(&mut game), Some(Decision::ChooseEffectOption {
+                player, source, option_count: 2
+            }) if player == defender && source == mongrel),
+                "{name}"
+            );
+            // Registered replacements follow the static abilities in the existing packet order.
+            let outcomes = if name == "Prismatic Strands" {
+                [6, 7]
+            } else {
+                [7, 6]
+            };
+            for (option, expected) in outcomes.into_iter().enumerate() {
+                let mut branch = restored(&game);
+                act(&mut branch, Action::ChooseEffectOption(option as u16));
+                super::pass_until(&mut branch, |state| state.step == Step::EndCombat);
+                assert_eq!(counters(&branch, phantom), expected, "{name}");
+            }
+        }
+    }
+}

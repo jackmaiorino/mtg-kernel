@@ -77,7 +77,7 @@ fn start_attack(state: &mut GameState, attacker: ObjectId) {
     act(state, Action::DeclareBlockers(Vec::new()));
 }
 
-fn combat_choice(state: &mut GameState) -> Option<Decision> {
+pub(super) fn combat_choice(state: &mut GameState) -> Option<Decision> {
     for _ in 0..100 {
         let decision = next(state);
         if state.step == Step::EndCombat {
