@@ -27027,7 +27027,7 @@ fn pending_cast_action_stage(
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
     if pending.optional_additional_cost_paid == Some(true)
-        && !compound_cast_cost_v1::Costs::pending(state, &pending, def)
+        && !compound_cast_cost_v1::Costs::pending(state, pending, def)
             .is_some_and(|costs| costs.pays_optional())
     {
         match def
