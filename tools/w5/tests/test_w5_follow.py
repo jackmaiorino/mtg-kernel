@@ -316,8 +316,8 @@ class FollowDrive(unittest.TestCase):
         victim = node.t / 'victim.bin'  # absent: a dangling link, which a plain create would follow and create
         start = chains.Follower.start
 
-        def planting(follower, config_path):
-            start(follower, config_path)
+        def planting(follower, config_path, argv, env):
+            start(follower, config_path, argv, env)
             try:
                 os.symlink(victim, follower.spool / 'STOP')
             except (OSError, NotImplementedError):

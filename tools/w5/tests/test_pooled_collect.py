@@ -784,8 +784,8 @@ class FakeFollowedProcess:
 
 class FollowedPooledTrainerTests(unittest.TestCase):
     """A followed pooled arm: the trainer starts with its dispatcher, hosts file and vector-tanh folder; every pin is
-    checked before each hand-over, before next.json is published; a changed command or environment identity ends the
-    process and starts the segment in a new one."""
+    checked before each hand-over, before next.json is published, and a refused pin ends the waiting process; a
+    changed command, pin or environment ends the process and starts the segment in a new one."""
 
     def setUp(self):
         import chains  # noqa: E402  (heavy import, only for these tests)
@@ -855,7 +855,9 @@ class FollowedPooledTrainerTests(unittest.TestCase):
         for name in ("pooled_collect.py", "hosts.json"):
             for change in ("replace", "delete"):
                 with self.subTest(file=name, change=change):
-                    (self.root / name).write_text(name)
+                    for restored in ("pooled_collect.py", "hosts.json"):
+                        (self.root / restored).write_text(restored)
+                    (self.root / "pooled_collect.py").chmod(0o755)  # executable again after a restore
                     follower = self.chains.Follower(self.arm(), self.cdir, self.cdir)
                     with self.popen() as popen:
                         self.started(follower, popen)
@@ -863,12 +865,26 @@ class FollowedPooledTrainerTests(unittest.TestCase):
                             (self.root / name).write_text("another " + name)
                         else:
                             (self.root / name).unlink()
+                        spool = follower.spool
                         with self.assertRaisesRegex(self.chains.Stop, "differs from its pin"):
                             follower.run(self.root / "cfg-2.json")
                         self.assertEqual(popen.call_count, 1)
-                    self.assertFalse((follower.spool / "next.json").exists())
-                    follower.abandon()
+                    # The waiting process was stopped (STOP, then waited for) and its spool removed; no next.json.
+                    self.assertIsNone(follower.proc)
+                    self.assertFalse(spool.exists())
                     (self.root / name).write_text(name)
+
+    def test_a_changed_environment_variable_starts_the_segment_in_a_new_process(self):
+        follower = self.chains.Follower(self.arm(), self.cdir, self.cdir)
+        with self.popen() as popen:
+            self.started(follower, popen)
+            with mock.patch.dict(os.environ, {"MTG_KERNEL_SOMETHING_NEW": "1"}):
+                self.assertEqual(follower.run(self.root / "cfg-2.json"), (0, False))
+                env = popen.call_args.kwargs["env"]
+            self.assertEqual(popen.call_count, 2)
+        self.assertFalse(follower.handed)
+        self.assertEqual(env["MTG_KERNEL_SOMETHING_NEW"], "1")
+        follower.close()
 
     def test_a_changed_launch_identity_starts_the_segment_in_a_new_process(self):
         follower = self.chains.Follower(self.arm(), self.cdir, self.cdir)

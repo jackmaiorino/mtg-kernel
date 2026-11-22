@@ -1527,10 +1527,12 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
 # - Pooled collection: a followed pooled arm starts its trainer with the command and environment trainer_command
 #   gives a fresh segment (`--collect-external` with the pinned dispatcher, the pinned hosts file in the environment,
 #   merged with the vector-tanh folder). Before each hand-over the driver checks every pin again (trainer, dispatcher,
-#   hosts file) as a fresh segment's start does, before next.json is published; a failed check fails the segment as
-#   it fails a fresh start. The process keeps the command and environment it was started with (the collector is
-#   installed once per process), so when a segment's command or environment identity differs from the process's, the
-#   driver ends that process and starts the segment in a new one.
+#   hosts file) as a fresh segment's start does, before next.json is published or a process is started; a failed
+#   check ends a waiting process (STOP, then a kill after FOLLOW_STOP_GRACE; it has exited when the driver goes on)
+#   and fails the segment as it fails a fresh start. The process keeps the command and environment it was started
+#   with (the collector is installed once per process), so when a segment's command, pins or environment (every
+#   variable the process receives) differ from the process's, the driver ends that process and starts the segment in
+#   a new one.
 
 FOLLOW_POLL = 0.05  # how often the driver looks for a followed trainer's done record or exit
 FOLLOW_REFUSED = 3  # mtg-kernel follow_v1::REFUSED_EXIT_CODE: a refused next config, nothing of it ran
@@ -1573,12 +1575,15 @@ class Follower:
     def run(self, config_path, deadline=None):
         """Runs one segment, handed to the waiting process or in a new one. Returns (exit code, killed) as
         run_trainer does, with (0, False) once the segment's done record is published (the process then waits)."""
-        check_pin(self.arm['trainer'], 'the trainer')
-        if self.waiting():
-            # Every pin is checked as a fresh segment's start checks it, before next.json is published.
+        try:
+            # Every pin (trainer, dispatcher, hosts file) is checked as a fresh segment's start checks it, before
+            # next.json is published or a process is started.
             argv, env = trainer_command(self.arm, config_path)
-            if launch_identity(self.arm, config_path, argv, env) != self.identity:
-                self.close()  # a different command or environment: a new process, as a fresh segment
+        except BaseException:
+            self.close()  # a waiting process is stopped and has exited before the refusal goes on
+            raise
+        if self.waiting() and launch_identity(self.arm, config_path, argv, env) != self.identity:
+            self.close()  # a different command, pins or environment: a new process, as a fresh segment
         if self.waiting():
             self.handed = self.active = True
             self.attempt = {'trainer_pid': self.pid, 'trainer_run': self.runs}
@@ -1586,7 +1591,7 @@ class Follower:
         else:
             self.close()
             self.handed, self.active = False, True
-            self.start(config_path)
+            self.start(config_path, argv, env)
             self.attempt = {'trainer_pid': self.pid, 'trainer_run': 0}
         while True:
             if (self.spool / follow_done_name(self.runs)).exists():
@@ -1606,7 +1611,8 @@ class Follower:
                 return code, True
             time.sleep(FOLLOW_POLL)
 
-    def start(self, config_path):
+    def start(self, config_path, argv, env):
+        """Starts a process on `argv` and `env` (trainer_command's, pins already checked) for the config."""
         spools = self.cdir / FOLLOW_SPOOLS
         if spools.exists() and not is_link(spools):
             for old in spools.iterdir():  # earlier processes' spools
@@ -1621,8 +1627,7 @@ class Follower:
         try:
             self.driver_lock = lock(self.spool / FOLLOW_DRIVER_LOCK)
             require(self.driver_lock is not None, f'cannot hold the follow driver lock: {self.spool}')
-            argv, env = trainer_command(self.arm, config_path)  # a pooled arm: its dispatcher and hosts file
-            launch = trainer_launch(self.arm, env)
+            launch = trainer_launch(self.arm, env)  # a pooled arm keeps its hosts file in the environment
             identity = launch_identity(self.arm, config_path, argv, env)
             self.proc = subprocess.Popen(argv + ['--follow', str(self.spool), '--follow-driver-lock'],
                                          stdout=out, stderr=err, **launch)
@@ -1708,28 +1713,34 @@ class Follower:
         self.runs = 0
 
 
-def trainer_launch(arm, env=None):
-    """run_trainer's process group and environment, for a followed trainer: `env` (trainer_command's, which keeps a
-    pooled arm's hosts file) or this process's, with the vector-tanh folder added as run_trainer adds it."""
-    kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
-        {'start_new_session': True}
+def launch_env(arm, env=None):
+    """The environment a followed trainer receives: `env` (trainer_command's, which keeps a pooled arm's hosts file)
+    or this process's, with the vector-tanh folder added as run_trainer adds it."""
     env = dict(os.environ if env is None else env)
     if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
-        target = vector_tanh_dir(arm['root'])
-        target.mkdir(parents=True, exist_ok=True)
-        env['MTG_KERNEL_VECTOR_TANH_DIR'] = str(target)
+        env['MTG_KERNEL_VECTOR_TANH_DIR'] = str(vector_tanh_dir(arm['root']))
+    return env
+
+
+def trainer_launch(arm, env=None):
+    """run_trainer's process group and environment (launch_env, with the vector-tanh folder created), for a followed
+    trainer."""
+    kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
+        {'start_new_session': True}
+    env = launch_env(arm, env)
+    if arm.get('root') and env['MTG_KERNEL_VECTOR_TANH_DIR'] == str(vector_tanh_dir(arm['root'])):
+        vector_tanh_dir(arm['root']).mkdir(parents=True, exist_ok=True)
     return dict(kwargs, env=env, stdin=subprocess.DEVNULL)
 
 
 def launch_identity(arm, config_path, argv, env):
     """What a followed process keeps from its start, for trainer_command's `argv` and `env` of a segment: the command
-    without the segment's config path, the pins it runs on, and the environment settings the driver gives it (the
-    hosts file and the vector-tanh folder, as trainer_launch adds them)."""
-    env = trainer_launch(arm, env)['env']
+    without the segment's config path, the pins it runs on, and every environment variable it receives
+    (launch_env)."""
     pooled = arm.get('pooled_collect') or {}
     pins = [arm['trainer']] + [pooled[k] for k in ('dispatcher', 'hosts') if k in pooled]
     return (tuple(a for a in argv if a != str(config_path)), tuple((p['path'], p['sha256']) for p in pins),
-            env.get(POOLED_COLLECT_ENV), env.get('MTG_KERNEL_VECTOR_TANH_DIR'))
+            tuple(sorted(launch_env(arm, env).items())))
 
 
 def kill_group(proc):
