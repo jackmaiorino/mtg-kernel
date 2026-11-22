@@ -1,13 +1,13 @@
 """List red post-merge CI runs since a time, one handoff log line each, for the sessions' watch loops.
 
-usage: python tools/ci/red_push_runs.py --since 2026-11-21T07:00:00Z (runs that finished since then) [--repo jackmaiorino/mtg-kernel]
+usage: python tools/ci/red_push_runs.py --since 2026-11-21T07:00:00Z [--repo mtg-kernel/mtg-kernel]
        [--branches main,release/mull-c5719e1cf] [--append HANDOFF_LOG]
 Uses the gh CLI (already authenticated where the watch loops run). A run counts when it is a push or dispatch
 run on one of the branches (a name ending in / is a prefix) that did not succeed and whose post-merge-report job
 ran (the workflow's own monitor predicate: a push run or a full dispatch with a failed or cancelled job). Each line is
 the post-merge report's line: every merge the run covers, oldest first, with its pull request, and the first
-responder. With --append, also appends each line the file does not already contain (the handoff log). Prints
-nothing when there is none; exit 0 unless gh fails.
+responder when known. Recent red attempts without a confirmed reporter are printed separately. With --append,
+only confirmed monitor lines are appended to the handoff log. Exits nonzero if GitHub cannot be queried.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -28,50 +28,57 @@ def gh_get(path: str):
     return json.loads(out or "null")
 
 
-# GitHub returns at most this many runs for one filtered listing.
+# GitHub limits queries with workflow filters to this many results.
 RESULT_CAP = 1000
+MONITOR_EVENTS = ("push", "workflow_dispatch")
+RED_CONCLUSIONS = ("failure", "cancelled", "timed_out")
 
 
-def listing(repo: str, start: datetime, end: datetime) -> tuple[int, list[dict]]:
-    created = f"{start:%Y-%m-%dT%H:%M:%SZ}..{end:%Y-%m-%dT%H:%M:%SZ}"
-    out = subprocess.run(["gh", "api", "--paginate", f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed"
-                          f"&created={created}&per_page=100", "--jq", "{total: .total_count, runs: .workflow_runs} "
-                          "| tojson"], capture_output=True, text=True, encoding="utf-8", check=True).stdout
-    pages = [json.loads(line) for line in out.splitlines() if line.strip()]
-    return (pages[0]["total"] if pages else 0), [run for page in pages for run in page["runs"]]
+def timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"invalid ISO 8601 timestamp: {value}") from error
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def runs_in(repo: str, start: datetime, end: datetime, depth: int = 0) -> list[dict]:
-    """Completed runs created in [start, end], split into halves while a listing would exceed RESULT_CAP."""
-    total, runs = listing(repo, start, end)
-    if total <= RESULT_CAP:
-        return runs
-    if depth >= 12 or end - start <= timedelta(minutes=1):
-        raise SystemExit(f"more than {RESULT_CAP} runs created in {start}..{end}: listing incomplete")
-    middle = start + (end - start) / 2
-    return runs_in(repo, start, middle, depth + 1) + runs_in(repo, middle + timedelta(seconds=1), end, depth + 1)
+def listed_runs(repo: str) -> list[dict]:
+    """List retained monitor events without a creation-time cutoff."""
+    base = f"/repos/{repo}/actions/workflows/ci.yml/runs?per_page=100"
+    found = {}
+    for event in MONITOR_EVENTS:
+        query, page = f"{base}&event={event}", 1
+        while True:
+            result = gh_get(f"{query}&page={page}")
+            if query != base and result["total_count"] >= RESULT_CAP:
+                query, page = base, 1
+                found.clear()
+                continue
+            runs = result["workflow_runs"]
+            found.update({run["id"]: run for run in runs})
+            if len(runs) < 100:
+                break
+            page += 1
+        if query == base:
+            break
+    return sorted(found.values(), key=lambda row: (row["created_at"], row["id"]), reverse=True)
 
 
-def runs_since(repo: str, since: str, lookback_days: int) -> list[dict]:
-    """Completed push and dispatch runs that finished at or after since. GitHub lists runs by creation only, so
-    runs created up to lookback_days before since are examined (the default 30 covers any rerun GitHub allows),
-    in slices below its result cap."""
-    start = datetime.fromisoformat(since.replace("Z", "+00:00"))
-    runs = runs_in(repo, start - timedelta(days=lookback_days), datetime.now(timezone.utc))
-    unique = {run["id"]: run for run in runs}.values()
-    return [r for r in unique if r.get("event") in ("push", "workflow_dispatch")
-            and datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")) >= start]
-
-
-def red_runs(runs: list[dict], branches: list[str], get=None, repo: str = "") -> list[dict]:
-    """Completed push or dispatch runs on the branches that did not succeed and whose post-merge-report job
-    executed, the same predicate as the workflow's monitor (with get=None only the cheap filters apply)."""
-    candidates = [r for r in runs if r.get("conclusion") in ("failure", "cancelled", "timed_out")
-                  and r.get("event") in ("push", "workflow_dispatch")
-                  and (r.get("head_branch") in branches
-                       or any(b.endswith("/") and (r.get("head_branch") or "").startswith(b) for b in branches))
-                  and r.get("path", ".github/workflows/ci.yml").endswith("ci.yml")]
-    return [r for r in candidates if get is None or post_merge_report.is_monitor(get, repo, r)]
+def runs_since(repo: str, since: datetime, branches: list[str]):
+    """Yield recent failed attempts, including those superseded by an already visible rerun."""
+    for run in listed_runs(repo):
+        branch = run.get("head_branch") or ""
+        if (run["event"] not in MONITOR_EVENTS
+                or not any(branch == name or (name.endswith("/") and branch.startswith(name)) for name in branches)
+                or run["path"].split("@", 1)[0] != ".github/workflows/ci.yml"
+                or timestamp(run["updated_at"]) < since):
+            continue
+        for number in range(run["run_attempt"], 0, -1):
+            attempt = post_merge_report.exact_attempt(gh_get, repo, run, number)
+            if timestamp(attempt["updated_at"]) < since:
+                break
+            if attempt["status"] == "completed" and attempt["conclusion"] in RED_CONCLUSIONS:
+                yield attempt
 
 
 def append_new(path: str, lines: list[str]) -> list[str]:
@@ -90,21 +97,29 @@ def append_new(path: str, lines: list[str]) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--since", required=True)
-    parser.add_argument("--repo", default="jackmaiorino/mtg-kernel")
+    parser.add_argument("--since", required=True, type=timestamp)
+    parser.add_argument("--repo", default="mtg-kernel/mtg-kernel")
     parser.add_argument("--branches", default="main,release/")
     parser.add_argument("--append", help="handoff log file to append new lines to")
-    parser.add_argument("--lookback-days", type=int, default=30,
-                        help="examine runs created this many days before --since (default 30, GitHub's rerun limit)")
     args = parser.parse_args(argv)
     branches = [b.strip() for b in args.branches.split(",") if b.strip()]
-    lines = [post_merge_report.report(gh_get, args.repo, run)[1]
-             for run in red_runs(runs_since(args.repo, args.since, args.lookback_days), branches, gh_get, args.repo)]
-    for text in lines:
-        print(text)
+    lines, exit_code = [], 0
+    for attempt in runs_since(args.repo, args.since, branches):
+        try:
+            jobs = list(post_merge_report.run_jobs(gh_get, args.repo, attempt))
+            if post_merge_report.is_monitor(jobs):
+                line = post_merge_report.report(gh_get, args.repo, attempt, jobs=jobs)[1]
+                print(line)
+                lines.append(line)
+                continue
+        except subprocess.CalledProcessError as error:
+            print(f"Could not verify report for {attempt['id']}: {(error.stderr or '').strip()}", file=sys.stderr)
+            exit_code = 1
+        print(f"[CI] {attempt['event']} {attempt['conclusion']} on {attempt['head_branch']} at "
+              f"{attempt['head_sha'][:9]} (post-merge report unconfirmed); {post_merge_report.attempt_url(attempt)}")
     if args.append:
         append_new(args.append, lines)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

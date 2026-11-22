@@ -23,7 +23,8 @@ import urllib.request
 from typing import Callable
 
 # The aggregate checks only repeat the groups' results.
-AGGREGATES = ("Rust tests (ubuntu-24.04)", "Rust tests (windows-2025)", "Report a red post-merge run",
+REPORT_JOB = "Report a red post-merge run"
+AGGREGATES = ("Rust tests (ubuntu-24.04)", "Rust tests (windows-2025)", REPORT_JOB,
               "Hosted fallback for self-hosted admission timeouts")
 HANDOFF_LOG = "HANDOFFS/20261114/README.md"
 Get = Callable[[str], object]
@@ -39,16 +40,33 @@ def request(method: str, path: str, body: dict | None = None):
         return json.loads(response.read() or b"null")
 
 
-def failed_jobs(get: Get, repo: str, run_id) -> list[str]:
-    names, page = [], 1
+def run_jobs(get: Get, repo: str, run: dict):
+    """Read every page for the observed attempt, even if another rerun has started."""
+    path = f"/repos/{repo}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs"
+    page = 1
     while True:
-        rows = get(f"/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100&page={page}")["jobs"]
-        # A shard stopped at its job timeout concludes cancelled (or timed_out).
-        names += [job["name"] for job in rows if job.get("conclusion") in ("failure", "cancelled", "timed_out")
-                  and job["name"] not in AGGREGATES]
+        rows = get(f"{path}?per_page=100&page={page}")["jobs"]
+        yield from rows
         if len(rows) < 100:
-            return sorted(set(names))
+            return
         page += 1
+
+
+def failed_jobs(jobs) -> list[str]:
+    # A shard stopped at its job timeout concludes cancelled (or timed_out).
+    return sorted({job["name"] for job in jobs if job.get("conclusion") in ("failure", "cancelled", "timed_out")
+                   and job["name"] not in AGGREGATES})
+
+
+def exact_attempt(get: Get, repo: str, run: dict, number: int) -> dict:
+    if run["run_attempt"] == number:
+        return run
+    attempt = get(f"/repos/{repo}/actions/runs/{run['id']}/attempts/{number}")
+    if (attempt["id"], attempt["run_attempt"], attempt["head_sha"]) != (run["id"], number, run["head_sha"]):
+        raise ValueError("workflow attempt identity changed")
+    # The branch history is anchored at the original push, even when a
+    # particular attempt was created later.
+    return {**run, **attempt, "created_at": run["created_at"]}
 
 
 def ran(get: Get, repo: str, run: dict, before: str = "") -> bool:
@@ -152,10 +170,10 @@ def first_release_push_boundary(get: Get, repo: str, branch: str, run: dict, hea
 MAX_COVERED = 100
 
 
-def covered_merges(get: Get, repo: str, branch: str, run_id, head: str,
+def covered_merges(get: Get, repo: str, run: dict,
                    current_event: dict | None = None) -> tuple[list[dict], bool]:
     """First-parent commits up to head, oldest first, and whether the walk reached a verified boundary."""
-    run = get(f"/repos/{repo}/actions/runs/{run_id}")
+    branch, head = run["head_branch"], run["head_sha"]
     base, history_examined = last_monitored_commit(get, repo, branch, run)
     if not base and history_examined:
         base = first_release_push_boundary(get, repo, branch, run, head, current_event)
@@ -193,11 +211,10 @@ def merged_pull_request(get: Get, repo: str, branch: str, sha: str) -> dict:
             "author": (pull.get("user") or {}).get("login") if pull else None}
 
 
-def is_monitor(get: Get, repo: str, run: dict) -> bool:
+def is_monitor(jobs) -> bool:
     """Whether a completed run is a red monitor: its post-merge-report job executed (the workflow starts it only
     for a push run, or a full dispatch, on main or a release line with a failed or cancelled job)."""
-    jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
-    return any(job["name"] == "Report a red post-merge run" and job.get("started_at")
+    return any(job["name"] == REPORT_JOB and job.get("started_at")
                and job.get("conclusion") in ("success", "failure", "cancelled", "timed_out") for job in jobs)
 
 
@@ -226,28 +243,36 @@ def label(merge: dict) -> str:
     return f"`{merge['sha'][:9]}`" + (f" (#{merge['pull']})" if merge["pull"] else " (no pull request)")
 
 
+def attempt_url(run: dict) -> str:
+    return f"{run['html_url']}/attempts/{run['run_attempt']}"
+
+
 def compose(run_url: str, ref: str, event: str, failed: list[str], merges: list[dict],
             complete: bool = True) -> tuple[str, str]:
     kind = "push run" if event == "push" else "full dispatch run"
-    oldest = merges[0]
-    responder = (f"the author of #{oldest['pull']}" if oldest["pull"] else f"the author of `{oldest['sha'][:9]}`")
-    if not complete:
-        responder = "the author of the oldest merge in the range (beyond the listed commits)"
     scope = rerun_scope(failed)
     rerun = f"a `{scope}` dispatch" if scope else "a full dispatch"
+    if complete:
+        oldest = merges[0]
+        responder = f"the author of #{oldest['pull']}" if oldest["pull"] else f"the author of `{oldest['sha'][:9]}`"
+        coverage = f"It covers {len(merges)} merge{'s' if len(merges) != 1 else ''}, oldest first:"
+        action = (f"First responder: {responder} (the oldest covered merge). They bisect by rerunning the failed jobs "
+                  f"({rerun}) on each covered commit, then fix forward or revert the same day (merge rule of "
+                  "2026-11-21) and say which in the handoff log:")
+        handoff = f"first responder {responder}, who bisects with {rerun} on each covered commit"
+    else:
+        coverage = "The coverage boundary could not be verified. Listed commits, oldest first:"
+        action = (f"First responder: undetermined. To start bisecting, rerun the failed jobs "
+                  f"({rerun}) on each listed commit:")
+        handoff = f"first responder undetermined; bisect with {rerun} on each listed commit"
     body = "\n".join([
         f"Post-merge CI {kind} on `{ref}` failed: {run_url}", "",
-        (f"It covers {len(merges)} merge{'s' if len(merges) != 1 else ''}, oldest first:" if complete else
-         f"It covers more than {len(merges)} merges; the newest {len(merges)}, oldest first (the range continues "
-         "before the first one listed):"),
+        coverage,
         *[f"- {label(m)}" for m in merges], "", "Failed jobs:", *[f"- {name}" for name in failed], "",
-        f"First responder: {responder} (the oldest covered merge). They bisect by rerunning the failed jobs "
-        f"({rerun}) on each covered commit, then fix forward or revert the same day (merge rule of 2026-11-21) "
-        "and say which in the handoff log:", "", "```", *bisect_commands(merges, scope), "```"])
-    line = (f"[CI] post-merge {kind} red on {ref} covering " + ("" if complete else "(incomplete, newest only) ")
+        action, "", "```", *bisect_commands(merges, scope), "```"])
+    line = (f"[CI] post-merge {kind} red on {ref} covering " + ("" if complete else "(incomplete) ")
             + ", ".join(label(m).replace("`", "") for m in merges)
-            + f": {', '.join(failed)}; first responder {responder}, who bisects with {rerun.replace('`', '')} on "
-            f"each covered commit; {run_url}")
+            + f": {', '.join(failed)}; {handoff.replace('`', '')}; {run_url}")
     return strip_mentions(body), strip_mentions(line)
 
 
@@ -256,18 +281,20 @@ def append_command(line: str) -> str:
     return f"printf '%s\\n' {shlex.quote(line)} >> {HANDOFF_LOG}"
 
 
-def report(get: Get, repo: str, run: dict, current_event: dict | None = None) -> tuple[str, str, list[dict]]:
-    """Comment body, handoff line and covered merges of a red run (run: id, head_sha, head_branch, event, url)."""
-    failed = failed_jobs(get, repo, run["id"]) or ["(no failed job identified; see the run)"]
-    merges, complete = covered_merges(get, repo, run["head_branch"], run["id"], run["head_sha"], current_event)
-    body, line = compose(run["html_url"], run["head_branch"], run["event"], failed, merges, complete)
+def report(get: Get, repo: str, run: dict, current_event: dict | None = None, *, jobs=None
+           ) -> tuple[str, str, list[dict]]:
+    """Comment body, handoff line and covered merges of a red run attempt."""
+    failed = failed_jobs(run_jobs(get, repo, run) if jobs is None else jobs)
+    merges, complete = covered_merges(get, repo, run, current_event)
+    body, line = compose(attempt_url(run), run["head_branch"], run["event"],
+                         failed or ["(no failed job identified; see the run)"], merges, complete)
     return body, line, merges
 
 
 def main() -> int:
     repo, run_id = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]
     get = lambda path: request("GET", path)
-    run = get(f"/repos/{repo}/actions/runs/{run_id}")
+    run = exact_attempt(get, repo, get(f"/repos/{repo}/actions/runs/{run_id}"), int(os.environ["GITHUB_RUN_ATTEMPT"]))
     run.update(head_sha=os.environ.get("GITHUB_SHA", run["head_sha"]),
                head_branch=os.environ.get("GITHUB_REF_NAME", run["head_branch"]),
                event=os.environ.get("GITHUB_EVENT_NAME", run["event"]))

@@ -398,8 +398,9 @@ class MonitorTests(unittest.TestCase):
 
     def run_report(self, get):
         import post_merge_report as report
-        return report.report(get, "o/r", {"id": 9, "head_sha": "c3", "head_branch": "main", "event": "push",
-                                          "html_url": "https://x/runs/9"})
+        run = {**get("/repos/o/r/actions/runs/9"), "head_branch": "main", "event": "push",
+               "html_url": "https://x/runs/9"}
+        return report.report(get, "o/r", run)
 
     def test_a_run_covering_one_merge(self):
         get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")],
@@ -443,13 +444,14 @@ class MonitorTests(unittest.TestCase):
         finally:
             report.MAX_COVERED = saved
         self.assertEqual([m["sha"] for m in merges], ["c2", "c3"])
-        self.assertIn("It covers more than 2 merges", body)
-        self.assertIn("(incomplete, newest only)", line)
+        self.assertIn("The coverage boundary could not be verified", body)
+        self.assertIn("(incomplete)", line)
+        self.assertIn("first responder undetermined", line)
         self.assertNotIn("the author of #836", line)
 
     def test_the_collector_uses_the_monitor_predicate(self):
         import red_push_runs as red
-        runs = [{"id": 1, "conclusion": "cancelled", "event": "push", "head_branch": "main"},
+        rows = [{"id": 1, "conclusion": "cancelled", "event": "push", "head_branch": "main"},
                 {"id": 2, "conclusion": "failure", "event": "workflow_dispatch", "head_branch": "main"},
                 {"id": 3, "conclusion": "failure", "event": "pull_request", "head_branch": "main"},
                 {"id": 4, "conclusion": "success", "event": "push", "head_branch": "main"},
@@ -457,12 +459,25 @@ class MonitorTests(unittest.TestCase):
                 {"id": 6, "conclusion": "cancelled", "event": "push", "head_branch": "release/x"}]
         report_ran = {1: "success", 2: "skipped", 6: None}   # 2: a scoped dispatch; 6: replaced before running
 
+        runs = [{**row, "path": ".github/workflows/ci.yml", "created_at": "2026-11-21T12:00:00Z",
+                 "updated_at": "2026-11-21T12:01:00Z", "status": "completed", "run_attempt": 1,
+                 "head_sha": str(row["id"]), "html_url": f"https://x/runs/{row['id']}"} for row in rows]
+
         def get(path):
+            if "/workflows/ci.yml/runs" in path:
+                return {"total_count": len(runs), "workflow_runs": runs}
             rid = int(path.split("/runs/")[1].split("/")[0])
             conclusion = report_ran.get(rid)
             return {"jobs": [{"name": "Report a red post-merge run", "conclusion": conclusion,
                               "started_at": None if conclusion == "skipped" else "t"}] if conclusion else []}
-        self.assertEqual([r["id"] for r in red.red_runs(runs, ["main", "release/"], get, "o/r")], [1])
+        with (patch.object(red, "gh_get", side_effect=get),
+              patch.object(red.post_merge_report, "report", return_value=("", "confirmed", [])) as report,
+              patch.object(red, "append_new") as append,
+              patch("builtins.print") as output):
+            self.assertEqual(red.main(["--repo", "o/r", "--since", "2026-11-21T12:00:00Z", "--append", "log"]), 0)
+        self.assertEqual(report.call_args.args[2]["id"], 1)
+        append.assert_called_once_with("log", ["confirmed"])
+        self.assertEqual(sum("post-merge report unconfirmed" in call.args[0] for call in output.call_args_list), 2)
 
     def test_exhausted_history_is_incomplete_not_a_range_of_one(self):
         import post_merge_report as report
@@ -474,7 +489,7 @@ class MonitorTests(unittest.TestCase):
                                            "created_at": "2026-11-21T11:00:00Z"} for i in range(50)]}
             return get(path)
         body, line, merges = self.run_report(get_full_pages)
-        self.assertIn("(incomplete, newest only)", line)
+        self.assertIn("(incomplete)", line)
         self.assertNotIn("the author of #837", line)
 
     def test_a_cancelled_report_job_still_marks_a_monitor(self):
@@ -482,7 +497,7 @@ class MonitorTests(unittest.TestCase):
         for conclusion, expected in (("cancelled", True), ("timed_out", True), ("skipped", False)):
             jobs = [{"name": "Report a red post-merge run", "conclusion": conclusion,
                      "started_at": None if conclusion == "skipped" else "t"}]
-            self.assertEqual(report.is_monitor(lambda path: {"jobs": jobs}, "o/r", {"id": 1}), expected)
+            self.assertEqual(report.is_monitor(jobs), expected)
 
     def test_an_earlier_run_in_the_same_second_is_the_last_monitored(self):
         get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T12:00:00Z")],
@@ -500,10 +515,17 @@ class MonitorTests(unittest.TestCase):
         def request(method, path, body=None):
             if method == "POST":
                 raise OSError("403")
-            return run if path.endswith("/runs/9") else get(path)
+            if path.endswith("/runs/9"):
+                return {**run, "run_attempt": 2, "run_started_at": "2026-11-21T14:30:00Z"}
+            if path.endswith("/runs/9/attempts/1"):
+                return run
+            if "/runs/9/" in path:
+                self.assertIn("/attempts/1/jobs", path)
+            return get(path)
         saved = report.request
         report.request = request
-        env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "GITHUB_SHA": "c3", "GITHUB_REF_NAME": "main",
+        env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "GITHUB_RUN_ATTEMPT": "1",
+               "GITHUB_SHA": "c3", "GITHUB_REF_NAME": "main",
                "GITHUB_EVENT_NAME": "push"}
         old_env = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
@@ -517,6 +539,7 @@ class MonitorTests(unittest.TestCase):
                 os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
         self.assertEqual(code, 1)
         self.assertIn("Handoff log line: [CI] post-merge push run red on main covering c3 (#837)", out.getvalue())
+        self.assertIn("u/attempts/1", out.getvalue())
         self.assertIn(">> HANDOFFS/20261114/README.md", out.getvalue())
         self.assertIn("Could not comment on #837", err.getvalue())
 
@@ -530,7 +553,7 @@ class MonitorTests(unittest.TestCase):
         get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "cancelled", "2026-11-21T11:30:00Z"),
                                                  (7, "c1", "cancelled", "2026-11-21T11:00:00Z")], {"c3": (837, "x")})
         body, line, merges = self.run_report(get)
-        self.assertIn("(incomplete, newest only)", line)
+        self.assertIn("(incomplete)", line)
         self.assertNotIn("first responder the author of #837", line)
 
     def test_a_later_rerun_of_an_earlier_push_never_changes_the_report(self):
@@ -569,7 +592,7 @@ class MonitorTests(unittest.TestCase):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
         body, line, merges = self.run_report(get)
         self.assertEqual([m["sha"] for m in merges], ["c3"])
-        self.assertIn("(incomplete, newest only)", line)
+        self.assertIn("(incomplete)", line)
 
     def test_first_release_monitor_covers_replaced_pushes_from_rollout(self):
         import post_merge_report as report
@@ -602,7 +625,7 @@ class MonitorTests(unittest.TestCase):
                     pull["base"]["ref"] = branch
             return result
 
-        run = {"id": 9, "head_sha": c, "head_branch": branch, "event": "push", "html_url": "u"}
+        run = {**get("/repos/o/r/actions/runs/9"), "head_branch": branch, "event": "push", "html_url": "u"}
         body, _, merges = report.report(get, "o/r", run, current)
         self.assertEqual([(m["sha"], m["pull"]) for m in merges], [(early, 201), (a, 202), (b, 203), (c, 204)])
         self.assertIn("First responder: the author of #201", body)
@@ -611,7 +634,7 @@ class MonitorTests(unittest.TestCase):
         events[1] = {**push_a, "created_at": "2026-11-21T12:01:00Z"}
         body, line, merges = report.report(get, "o/r", run, current)
         self.assertEqual([m["sha"] for m in merges], [c])
-        self.assertIn("(incomplete, newest only)", line)
+        self.assertIn("(incomplete)", line)
         self.assertNotIn("First responder: the author of #204", body)
 
     def test_the_comment_mentions_no_one(self):
@@ -621,40 +644,98 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn("@s", body + line)
         self.assertIn("full dispatch run", body)
 
-    def test_the_collector_splits_listings_above_the_result_cap(self):
+    def test_the_collector_reads_uncapped_pages_when_an_event_listing_hits_the_cap(self):
         import red_push_runs as red
-        from datetime import datetime, timezone
+        base = "/repos/o/r/actions/workflows/ci.yml/runs?per_page=100"
+        rows = [{"id": number, "created_at": "2026-11-21T12:00:00Z"} for number in range(101)]
+        pages = {
+            f"{base}&event=push&page=1": {"total_count": 1000},
+            f"{base}&page=1": {"workflow_runs": rows[:100]},
+            f"{base}&page=2": {"workflow_runs": rows[100:]},
+        }
+        with patch.object(red, "gh_get", side_effect=pages.__getitem__):
+            self.assertEqual(red.listed_runs("o/r"), list(reversed(rows)))
+
+    def test_release_failure_survives_cutoff_and_a_newer_rerun(self):
+        import red_push_runs as red
+        cutoff = red.timestamp("2026-11-21T12:00:00Z")
+        created = "2026-10-22T10:00:00Z"  # Over 30 days before cutoff.
+        latest = {"id": 9, "event": "push", "head_branch": "release/demo", "head_sha": "c3",
+                  "created_at": created, "updated_at": "2026-11-21T12:02:00Z", "run_attempt": 3,
+                  "status": "queued", "conclusion": None, "path": ".github/workflows/ci.yml"}
+        failed = {**latest, "run_attempt": 2, "created_at": "2026-11-21T09:00:00Z",
+                  "updated_at": "2026-11-21T12:01:00Z", "status": "completed", "conclusion": "failure"}
+        earlier = {**failed, "run_attempt": 1, "updated_at": "2026-10-22T11:00:00Z"}
+        base = "/repos/o/r/actions"
+        pages = {
+            f"{base}/workflows/ci.yml/runs?per_page=100&event=push&page=1":
+                {"total_count": 1, "workflow_runs": [latest]},
+            f"{base}/workflows/ci.yml/runs?per_page=100&event=workflow_dispatch&page=1":
+                {"total_count": 0, "workflow_runs": []},
+            f"{base}/runs/9/attempts/2": failed,
+            f"{base}/runs/9/attempts/1": earlier,
+        }
+        with patch.object(red, "gh_get", side_effect=pages.__getitem__):
+            self.assertEqual(list(red.runs_since("o/r", cutoff, ["release/"])), [{**failed, "created_at": created}])
+
+    def test_report_and_detector_share_paged_jobs_from_the_observed_attempt(self):
+        import red_push_runs as red
+        get_run = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")],
+                                {"c3": (837, "someone")})
+        old = {**get_run("/repos/o/r/actions/runs/9"), "head_branch": "main", "event": "push",
+               "html_url": "https://x/runs/9", "run_attempt": 2}
+        first = {**old, "run_attempt": 1}
+        report_job = {"name": "Report a red post-merge run", "conclusion": "success", "started_at": "t"}
+        failed = {"name": "Linux check", "conclusion": "failure"}
         calls = []
 
-        def listing(repo, start, end):
-            calls.append((start, end))
-            hours = (end - start).total_seconds() / 3600
-            return (1500 if hours > 24 else 10), [{"id": len(calls), "event": "push",
-                                                     "updated_at": "2026-11-21T12:00:00Z"}]
-        saved = red.listing
-        red.listing = listing
-        try:
-            runs = red.runs_in("o/r", datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 11, 3, tzinfo=timezone.utc))
-        finally:
-            red.listing = saved
-        self.assertGreater(len(calls), 1)
-        self.assertEqual(len(runs), len(calls) - sum(1 for s_, e_ in calls if (e_ - s_).total_seconds() > 86400))
+        def get(path):
+            if "/runs/9/" in path:
+                calls.append(path)
+                return {
+                    "/repos/o/r/actions/runs/9/attempts/1": first,
+                    "/repos/o/r/actions/runs/9/attempts/2/jobs?per_page=100&page=1":
+                        {"jobs": [{"name": "Other", "conclusion": "success"}] * 100},
+                    "/repos/o/r/actions/runs/9/attempts/2/jobs?per_page=100&page=2":
+                        {"jobs": [report_job, failed]},
+                }[path]
+            return get_run(path)
 
-    def test_straddling_release_failure_survives_scan_cutoff(self):
-        import red_push_runs as red
-        from datetime import datetime, timezone
-        cutoff = "2026-11-21T12:00:00Z"
-        branch = "release/demo"
-        created = "2026-11-21T10:00:00Z"
-        run = {"id": 1, "event": "push", "head_branch": branch, "created_at": created,
-               "updated_at": "2026-11-21T12:01:00Z", "conclusion": "failure"}
-        earlier = {**run, "id": 2, "updated_at": "2026-11-21T11:59:59Z"}
-        with patch.object(red, "listing", return_value=(2, [run, earlier])) as listing:
-            runs = red.runs_since("o/r", cutoff, lookback_days=1)
-        self.assertLess(listing.call_args.args[1], datetime.fromisoformat(created.replace("Z", "+00:00")))
-        self.assertEqual(listing.call_args.args[1].tzinfo, timezone.utc)
-        job = {"name": "Report a red post-merge run", "conclusion": "success", "started_at": cutoff}
-        self.assertEqual(red.red_runs(runs, ["release/"], lambda path: {"jobs": [job]}, "o/r"), [run])
+        with (patch.object(red, "runs_since", return_value=[old]),
+              patch.object(red, "gh_get", side_effect=get),
+              patch("builtins.print") as output):
+            self.assertEqual(red.main(["--repo", "o/r", "--since", "2026-11-21T12:00:00Z"]), 0)
+        self.assertEqual(sum("/attempts/2/jobs" in path for path in calls), 2)
+        line = output.call_args.args[0]
+        self.assertIn("Linux check", line)
+        self.assertTrue(line.endswith("https://x/runs/9/attempts/2"))
+        self.assertNotIn("unconfirmed", line)
+
+    def test_initial_release_with_no_push_events_leaves_the_responder_unknown(self):
+        import post_merge_report as report
+        head = "a" * 40
+        get_run = self.fake_api([head], [], {head: (837, "owner")})
+        run = {**get_run("/repos/o/r/actions/runs/9"), "head_branch": "release/demo",
+               "event": "push", "html_url": "https://x/runs/9"}
+        workflow = base64.b64encode(WORKFLOW.read_bytes()).decode()
+
+        def get(path):
+            if "/contents/" in path:
+                return {"encoding": "base64", "content": workflow}
+            if "/events?" in path:
+                return []
+            rows = get_run(path)
+            if "/pulls?" in path:
+                rows[0]["base"]["ref"] = "release/demo"
+            return rows
+
+        body, line, merges = report.report(get, "o/r", run)
+        self.assertEqual([(merge["sha"], merge["pull"]) for merge in merges], [(head, 837)])
+        self.assertIn("The coverage boundary could not be verified", body)
+        self.assertIn("First responder: undetermined", body)
+        self.assertIn("first responder undetermined", line)
+        self.assertNotIn("covers more", body)
+        self.assertNotIn("author of #837", body + line)
 
     def test_the_append_command_and_append_are_exact(self):
         import post_merge_report as report
