@@ -782,19 +782,18 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         ),
         NativePolicyTrainErrorV1,
     > {
-        if semantics.is_some() {
-            if !is_net8_dims_v1::<D>()
+        if semantics.is_some()
+            && (!is_net8_dims_v1::<D>()
                 || imitation
                 || line_b.is_some()
                 || exploration.is_some()
-                || self.pregame_announcement_step_scale_mut_dims_v1().is_some()
-            {
-                return Err(card_semantics_v1::unsupported_v1());
-            }
-            #[cfg(feature = "gpu-exact-v1")]
-            if crate::gpu_exact_v1::learner_installed_v1() {
-                return Err(card_semantics_v1::unsupported_v1());
-            }
+                || self.pregame_announcement_step_scale_mut_dims_v1().is_some())
+        {
+            return Err(card_semantics_v1::unsupported_v1());
+        }
+        #[cfg(feature = "gpu-exact-v1")]
+        if semantics.is_some() && crate::gpu_exact_v1::learner_installed_v1() {
+            return Err(card_semantics_v1::unsupported_v1());
         }
         // The London keep offset of this step's batch, or None (every
         // existing step): taken before anything can return, so a step that
