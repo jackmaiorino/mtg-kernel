@@ -52,13 +52,7 @@ fn block(active: PlayerId, green_first: bool, charges: u8) -> (GameState, [Objec
     (state, [nomads, ally, red, green])
 }
 
-fn source_menu(
-    state: &mut GameState,
-    active: PlayerId,
-    nomads: ObjectId,
-    red: ObjectId,
-    green: ObjectId,
-) {
+fn source_menu(state: &mut GameState, active: PlayerId, nomads: ObjectId, sources: &[ObjectId]) {
     for _ in 0..24 {
         match next(state) {
             Decision::CastSpellOrPass { .. } if state.step != Step::EndCombat => {
@@ -76,7 +70,11 @@ fn source_menu(
                 assert_eq!((player, source), (active, nomads));
                 assert_eq!(
                     legal_targets,
-                    vec![Target::Object(red), Target::Object(green)]
+                    sources
+                        .iter()
+                        .copied()
+                        .map(Target::Object)
+                        .collect::<Vec<_>>()
                 );
                 return;
             }
@@ -91,7 +89,7 @@ fn one_charge_chooses_which_blocker_deals_its_point_to_the_protected_ally() {
     for active in [P0, P1] {
         for green_first in [false, true] {
             let (mut state, [nomads, ally, red, green]) = block(active, green_first, 1);
-            source_menu(&mut state, active, nomads, red, green);
+            source_menu(&mut state, active, nomads, &[red, green]);
             let mut invalid = restored(&state);
             let before = invalid.clone();
             assert!(mtg_kernel::engine::step(
@@ -129,12 +127,12 @@ fn one_charge_chooses_which_blocker_deals_its_point_to_the_protected_ally() {
 fn two_charges_recompute_which_sources_still_have_redirectable_damage() {
     for active in [P0, P1] {
         let (mut state, [nomads, ally, red, green]) = block(active, true, 2);
-        source_menu(&mut state, active, nomads, red, green);
+        source_menu(&mut state, active, nomads, &[red, green]);
         for choices in [vec![green], vec![red, green], vec![red, red]] {
             let mut branch = restored(&state);
             for (index, chosen) in choices.iter().enumerate() {
                 if index > 0 {
-                    source_menu(&mut branch, active, nomads, red, green);
+                    source_menu(&mut branch, active, nomads, &[red, green]);
                     branch = restored(&branch);
                 }
                 act(
@@ -194,10 +192,111 @@ fn two_nomads_controllers_choose_their_sources_in_apnap_order() {
             .collect();
         event::propose_and_commit_batch(&mut state, events);
         for (owner, nomads, red, green) in seats {
-            source_menu(&mut state, owner, nomads, red, green);
+            source_menu(&mut state, owner, nomads, &[red, green]);
             state = restored(&state);
             act(&mut state, Action::ChooseEffectTarget(Target::Object(red)));
         }
         settled(&mut state);
+    }
+}
+
+#[test]
+fn distinct_shields_choose_each_source_and_then_its_destination() {
+    use mtg_kernel::event::CommittedEvent;
+
+    for active in [P0, P1] {
+        // Either three one-point blockers or two blockers assigning two and one.
+        for three_blockers in [true, false] {
+            let mut state = turn_of(active);
+            let nomads = put(&mut state, active, "Nomads en-Kor", Zone::Battlefield);
+            let recipients = ["Wild Mongrel", "Kor Skyfisher"]
+                .map(|name| put(&mut state, active, name, Zone::Battlefield));
+            let red = put(
+                &mut state,
+                active.opponent(),
+                "Grim Lavamancer",
+                Zone::Battlefield,
+            );
+            let green = put(
+                &mut state,
+                active.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let mut blockers = vec![red, green];
+            let (first, second) = if three_blockers {
+                let blue = put(
+                    &mut state,
+                    active.opponent(),
+                    "Spellstutter Sprite",
+                    Zone::Battlefield,
+                );
+                blockers.push(blue);
+                (green, blue)
+            } else {
+                state.objects.get_mut(red).counters.plus1_plus1 = 1;
+                (red, green)
+            };
+            for receiver in recipients {
+                give_priority(&mut state, active);
+                activate(&mut state, nomads, 0, &[Target::Object(receiver)]);
+                settled(&mut state);
+            }
+            pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+            act(&mut state, Action::DeclareAttackers(vec![nomads]));
+            pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+            act(
+                &mut state,
+                Action::DeclareBlockers(blockers.iter().map(|&b| (b, nomads)).collect()),
+            );
+            source_menu(&mut state, active, nomads, &blockers);
+            for first_destination in [0, 1] {
+                let mut branch = restored(&state);
+                act(
+                    &mut branch,
+                    Action::ChooseEffectTarget(Target::Object(first)),
+                );
+                assert!(matches!(next(&mut branch), Decision::ChooseEffectOption {
+                    player, source, option_count: 2
+                } if player == active && source == first));
+                branch = restored(&branch);
+                act(
+                    &mut branch,
+                    Action::ChooseEffectOption(first_destination as u16),
+                );
+                let remaining_sources = if three_blockers {
+                    vec![red, second]
+                } else {
+                    vec![red, green]
+                };
+                source_menu(&mut branch, active, nomads, &remaining_sources);
+                act(
+                    &mut branch,
+                    Action::ChooseEffectTarget(Target::Object(second)),
+                );
+                pass_until(&mut branch, |s| s.step == Step::EndCombat);
+                let mut damage = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::Damage {
+                            source,
+                            target: Target::Object(target),
+                            amount,
+                        } if blockers.contains(source) => Some((*source, *target, *amount)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                damage.sort_by_key(|(source, target, _)| (source.0, target.0));
+                let mut expected = [
+                    (red, nomads, 1),
+                    (first, recipients[first_destination], 1),
+                    (second, recipients[1 - first_destination], 1),
+                ];
+                expected.sort_by_key(|(source, target, _)| (source.0, target.0));
+                assert_eq!(damage, expected);
+            }
+        }
     }
 }

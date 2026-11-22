@@ -58,7 +58,12 @@ pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool
         .any(|effect| !matches!(effect, OrdinaryV1::Redirect { .. }))
 }
 
-pub(super) fn normalize(state: &GameState, packet: &Packet, options: &mut Vec<OrdinaryV1>) {
+pub(super) fn normalize(
+    state: &GameState,
+    packet: &Packet,
+    options: &mut Vec<OrdinaryV1>,
+    competing_source: bool,
+) {
     if !options
         .iter()
         .any(|option| matches!(option, OrdinaryV1::Redirect { .. }))
@@ -75,9 +80,10 @@ pub(super) fn normalize(state: &GameState, packet: &Packet, options: &mut Vec<Or
         }
         _ => true,
     });
-    // If every charge must be spent and each recipient simply takes its point,
+    // If this source must spend every charge and each recipient simply takes its point,
     // the order changes neither the damage nor any remaining shield.
-    if options.len() > 1
+    if !competing_source
+        && options.len() > 1
         && options.len() == redirects.len()
         && usize::try_from(packet.damage.amount).is_ok_and(|amount| amount >= original_count)
         && redirects.iter().all(|redirect| {

@@ -119,7 +119,11 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
 /// Re-evaluate all state-bearing replacements after each chosen effect.
 /// A portion with no remaining applicable effect returns its final damage;
 /// finite shields retain their distinct consumption choice.
-pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<OrdinaryV1> {
+pub(crate) fn packet_options(
+    state: &GameState,
+    packet: &Packet,
+    competing_source: bool,
+) -> Vec<OrdinaryV1> {
     let mut options = Vec::new();
     // Preserve the already published Circle/global menu. On the new residual
     // path, identical reductions are one initial choice; each real Sphere is
@@ -160,7 +164,7 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
     }
     if !legacy {
         permanent_v1::coalesce_spent_nishoba(state, &mut options);
-        nomads_v1::normalize(state, packet, &mut options);
+        nomads_v1::normalize(state, packet, &mut options, competing_source);
     }
     options
 }

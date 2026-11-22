@@ -1,19 +1,19 @@
-//! One or more identical en-Kor shields can redirect damage from different
+//! One or more en-Kor shields can redirect damage from different
 //! simultaneous sources. The affected controller allocates one charge at a time.
 use super::*;
 use crate::eternal_legacy_e9a_v1::{read_state, statics::applicable_redirects, RedirectV1};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceChoiceV1 {
-    pub shield: RedirectV1,
-    pub charges: usize,
+    pub receiver: ObjectLinkV4,
+    pub shields: Vec<RedirectV1>,
     pub sources: Vec<ObjectLinkV4>,
 }
 
-/// This allocation owns a common destination when redirecting is the only
+/// Allocate a source when redirecting is the only
 /// applicable effect at the original recipient. Other replacement decisions
 /// stay in the packet frontier.
-fn sole_destination(state: &GameState, packet: &Packet) -> Option<(RedirectV1, usize)> {
+fn applicable_shields(state: &GameState, packet: &Packet) -> Option<Vec<RedirectV1>> {
     let damage = &packet.damage;
     let (_, shield) = applicable_redirects(state, damage).next()?;
     if shield.from == shield.to {
@@ -36,11 +36,15 @@ fn sole_destination(state: &GameState, packet: &Packet) -> Option<(RedirectV1, u
     {
         return None;
     }
-    let effects = packet.options(state);
-    effects
-        .iter()
-        .all(|effect| matches!(effect, OrdinaryV1::Redirect { record, .. } if *record == shield))
-        .then_some((shield, effects.len()))
+    let shields: Vec<_> = packet
+        .options(state)
+        .into_iter()
+        .map(|effect| match effect {
+            OrdinaryV1::Redirect { record, .. } if record.from != record.to => Some(record),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    (!shields.is_empty()).then_some(shields)
 }
 
 /// A single-source event can take its usual path. Admit all competing original
@@ -69,10 +73,10 @@ pub(super) fn shared_targets(state: &GameState, events: &[ProposedEvent]) -> Vec
                 if damage.target != *target || damage.amount <= 0 {
                     continue;
                 }
-                let Some((_, count)) = sole_destination(state, &Packet::new(damage)) else {
+                let Some(shields) = applicable_shields(state, &Packet::new(damage)) else {
                     return false;
                 };
-                charges = count;
+                charges = shields.len();
                 total += damage.amount as u64;
                 multiple_sources |= *first.get_or_insert(damage.source) != damage.source;
             }
@@ -96,13 +100,15 @@ pub(super) fn choose(
         return Ok(Some(first));
     }
     let target = item.packet.damage.target;
-    let Some((shield, charges)) = sole_destination(state, &item.packet) else {
+    let Some(shields) = applicable_shields(state, &item.packet) else {
         return Ok(Some(first));
     };
     let mut total = 0u64;
     let mut sources = Vec::new();
     for other in work.iter().filter(|p| p.packet.damage.target == target) {
-        if !other.shared_redirect || sole_destination(state, &other.packet).is_none() {
+        if !other.shared_redirect
+            || applicable_shields(state, &other.packet).as_ref() != Some(&shields)
+        {
             return Ok(Some(first));
         }
         total += other.packet.damage.amount as u64;
@@ -117,10 +123,11 @@ pub(super) fn choose(
             sources.push(other.source);
         }
     }
-    if sources.len() < 2 || total <= charges as u64 {
+    if sources.len() < 2 || total <= shields.len() as u64 {
         return Ok(Some(first));
     }
     sources.sort_by_key(|source| source.object.0);
+    let receiver = shields[0].from;
     let choice = HallowChoiceV1 {
         cohort: Some((
             batch,
@@ -130,13 +137,13 @@ pub(super) fn choose(
         damage: item.packet.damage.clone(),
         source: item.source,
         source_zone: item.source_zone,
-        chooser: state.objects.get(shield.from.object).controller,
+        chooser: state.objects.get(receiver.object).controller,
         beneficiaries: Vec::new(),
         circle: None,
         ordinary: Vec::new(),
         redirect_sources: Some(SourceChoiceV1 {
-            shield,
-            charges,
+            receiver,
+            shields,
             sources,
         }),
     };

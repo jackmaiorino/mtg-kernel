@@ -648,9 +648,19 @@ fn prevent_packets(
         };
         let ordinary_only = beneficiaries.is_empty();
         let (circle, ordinary) = if ordinary_only {
+            let competing_source = item.shared_redirect
+                && work.iter().any(|other| {
+                    other.shared_redirect
+                        && other.packet.damage.target == damage.target
+                        && other.source != item.source
+                });
             (
                 None,
-                crate::eternal_prevention_order_v1::packet_options(state, &item.packet),
+                crate::eternal_prevention_order_v1::packet_options(
+                    state,
+                    &item.packet,
+                    competing_source,
+                ),
             )
         } else {
             let mut ordinary = item.packet.options(state);

@@ -1006,7 +1006,7 @@ fn hallow_decision(choice: &HallowChoiceV1) -> Decision {
     if let Some(redirect) = &choice.redirect_sources {
         return Decision::ChooseEffectTargets {
             player: choice.chooser,
-            source: redirect.shield.from.object,
+            source: redirect.receiver.object,
             selected_count: 0,
             min_targets: 1,
             max_targets: 1,
