@@ -12,7 +12,8 @@
 //!    Against the ordinary production trainer the bridge selects the trained
 //!    bot's choice profile. The person replays extra revealed-card choices
 //!    in the trainer's hand or graveyard order. The verifier records the first
-//!    discrepancy in each game and requires every pair to reach matching terminals.
+//!    discrepancy in each game and requires every pair to reach matching
+//!    natural terminals.
 //! 2. Both rules `harness-v2` is the engine-windows reset exactly.
 //! 3. The bridge takes the rules on its reset request, marks the bot's new
 //!    windows in the private support block, and refuses the field anywhere
@@ -24,7 +25,7 @@ use crate::agent_bridge_flat_v4_encode::{
     encode_flat_v7_tensor_v1, flat_v7_extension_value_v1, FlatV4EncodeScratchV1,
 };
 use crate::agent_bridge_v1::{SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1};
-use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1};
+use crate::rl::{ActionSemanticV1, PlayerSeatV1, TargetRefV1, TerminalClassificationV1};
 use crate::state::SplitMix64;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -575,6 +576,14 @@ fn play(
             }
             (FastActorResponseV1::Terminal(theirs), RlSessionResponseV1::Terminal(ours)) => {
                 require_eq!(
+                    (theirs.terminal_classification, ours.terminal_classification),
+                    (
+                        TerminalClassificationV1::Natural,
+                        TerminalClassificationV1::Natural
+                    ),
+                    "natural terminal classifications"
+                );
+                require_eq!(
                     (
                         theirs.terminal_outcome,
                         theirs.winner,
@@ -644,8 +653,6 @@ fn play(
         );
         let rows = copy.row_candidate_ids(&ours).unwrap();
         if seat_index(ours.acting_player) == bot {
-            out.bot_decisions += 1;
-            out.bot_after_person_revealed_order += u64::from(out.person_revealed_order_picks > 0);
             let marker = training.priority_pass_window_v1().unwrap();
             require_eq!(
                 marker,
@@ -658,12 +665,14 @@ fn play(
                 raw.engine_window_v1().is_some(),
                 "support mark"
             );
-            out.bot_new_windows += u64::from(marker.is_some());
             require_eq!(
                 tensor(&training, &rows, &mut scratch),
                 tensor(copy.fast_session(), &rows, &mut scratch),
                 "model input"
             );
+            out.bot_decisions += 1;
+            out.bot_new_windows += u64::from(marker.is_some());
+            out.bot_after_person_revealed_order += u64::from(out.person_revealed_order_picks > 0);
         }
         if hand_subset_answers.is_empty()
             && !neutral_training
@@ -749,6 +758,7 @@ fn shared_bot_input_after_persons_winding_way_hand_order() {
         NeutralComparison::BridgeNeutral,
         76,
     );
+    assert!(played.diverged.is_none(), "{played:?}");
     assert!(played.person_revealed_order_picks > 0, "{played:?}");
     assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
     println!("Winding Way: {played:?}");
@@ -765,6 +775,7 @@ fn shared_bot_input_after_persons_winding_way_graveyard_order() {
         NeutralComparison::BridgeNeutral,
         94,
     );
+    assert!(played.diverged.is_none(), "{played:?}");
     assert!(played.person_revealed_order_picks >= 3, "{played:?}");
     assert!(played.bot_after_person_revealed_order > 0, "{played:?}");
     println!("Spy Winding Way: {played:?}");
@@ -772,7 +783,6 @@ fn shared_bot_input_after_persons_winding_way_graveyard_order() {
 
 #[test]
 fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
-    let mut extra_bot_decisions = [0; 2];
     for (bot, last_shared) in [(0, 277), (1, 65)] {
         let played = play(
             ["Spy", "Spy"],
@@ -783,18 +793,14 @@ fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
             NeutralComparison::TrainerChoicesForBot,
             last_shared,
         );
+        assert!(played.diverged.is_none(), "{played:?}");
         assert_eq!(played.shared, last_shared, "{played:?}");
+        assert!(played.bot_decisions > 0, "{played:?}");
         if bot == 0 {
             assert!(played.person_revealed_order_picks >= 3, "{played:?}");
         }
-        extra_bot_decisions[bot] = played.bot_neutral_only;
         println!("Spy seat {bot}: {played:?}");
     }
-    assert_eq!(
-        extra_bot_decisions,
-        [0, 0],
-        "the production trainer has no corresponding decisions"
-    );
 }
 
 #[test]
@@ -829,10 +835,7 @@ fn human_fireblast_final_mountain_matches_the_terminal_board_in_both_window_sett
             played.finished && played.diverged.is_none() && played.terminal_person_fireblast_cost,
             "{played:?}"
         );
-        assert_eq!(
-            (played.shared, played.bot_decisions, played.bot_neutral_only),
-            (166, 97, 0)
-        );
+        assert_eq!((played.shared, played.bot_decisions), (166, 97));
     }
 }
 
@@ -1047,6 +1050,13 @@ fn bridge_game(extra: Value, seed: u64, pass_seat: Option<&str>) -> (Vec<String>
                                  "semantic_echo": candidates[pick]["semantic"]}}),
         )));
     }
+    let last: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(last["response_type"], "terminal", "{last}");
+    assert_eq!(last["classification"], "natural", "{last}");
+    assert!(
+        matches!(last["outcome"].as_str(), Some("p0_win" | "p1_win" | "draw")),
+        "{last}"
+    );
     (lines, marked)
 }
 
@@ -1068,7 +1078,7 @@ fn the_bridge_takes_the_rules_on_reset_and_marks_the_bots_new_windows() {
     assert_eq!(none[1], 0);
     // The bot in p1 on action windows: its new windows are marked; the
     // person in p0 keeps engine windows; the game plays to its end.
-    let (bot, marked) = bridge_game(
+    let (_, marked) = bridge_game(
         json!({"engine_window_seats": ["p0"], "auto_graveyard_order": true,
                "priority_windows": ["harness-v2", "action-windows-v1"]}),
         23,
@@ -1076,8 +1086,6 @@ fn the_bridge_takes_the_rules_on_reset_and_marks_the_bots_new_windows() {
     );
     assert!(marked[1] > 0, "{marked:?}");
     assert!(marked[0] > 0, "{marked:?}");
-    let last: Value = serde_json::from_str(bot.last().unwrap()).unwrap();
-    assert_eq!(last["response_type"], "terminal", "{last}");
 }
 
 #[test]
