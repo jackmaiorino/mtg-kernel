@@ -1564,10 +1564,18 @@ fn compound_retrace_deprive_returns_then_discards_the_same_land() {
 
 fn retrace_alternative_fixture(
     player: PlayerId,
+    active: PlayerId,
     name: &str,
 ) -> (GameState, ObjectId, Option<ObjectId>) {
     let mut state = game_for(&["Plains"; 20], player);
     retrace_emblem(&mut state);
+    if active != player {
+        run_until(
+            &mut state,
+            |s| s.active_player == active && s.step == Step::Main1,
+            |_, _| None,
+        );
+    }
     let spell = put(&mut state, player, name, Zone::Graveyard);
     let bolt = (name != "Gush").then(|| {
         let opponent = player.opponent();
@@ -1597,7 +1605,7 @@ fn retrace_pitch_group(state: &mut GameState, kind: CostKind, picks: &[ObjectId]
 
 fn retrace_pitch_alternative(name: &str, pitch_count: usize, life_cost: i32) {
     for player in [P0, P1] {
-        let (mut base, spell, bolt) = retrace_alternative_fixture(player, name);
+        let (mut base, spell, bolt) = retrace_alternative_fixture(player, player, name);
         let bolt = bolt.unwrap();
         let red = put(&mut base, player, "Lightning Bolt", Zone::Hand);
         let mut no_land = base.clone();
@@ -1683,9 +1691,99 @@ fn retrace_commandeer_exiles_two_distinct_blue_cards_and_discards_land() {
 }
 
 #[test]
+fn retrace_force_of_negation_rechecks_its_turn_condition_after_restore() {
+    use engine::CastMode;
+    for player in [P0, P1] {
+        for active in [player, player.opponent()] {
+            let (mut state, force, bolt) =
+                retrace_alternative_fixture(player, active, "Force of Negation");
+            let bolt = bolt.unwrap();
+            let pitch = put(&mut state, player, "Brainstorm", Zone::Hand);
+            let land = put(&mut state, player, "Forest", Zone::Hand);
+            let other = put(&mut state, player, "Swamp", Zone::Hand);
+            assert_eq!(castable(&mut state, force), active != player);
+            pool(&mut state, player, &[ManaColor::U, ManaColor::U], 1);
+            cast(&mut state, force, &[Target::Object(bolt)]);
+            if active != player {
+                assert!(
+                    matches!(next(&mut state), Decision::ChooseCastMode { options, .. }
+                    if options.contains(&CastMode::Normal) && options.contains(&CastMode::Alternative))
+                );
+                act(&mut state, Action::ChooseCastMode(CastMode::Alternative));
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::ChooseEffectOption {
+                        option_count: 2,
+                        ..
+                    }
+                ));
+                act(&mut state, Action::ChooseEffectOption(0));
+                payment_pick(&mut state, CostKind::ExileFromHandV1, pitch);
+            } else {
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::ChooseCostTargets {
+                        cost_kind: CostKind::DiscardCards,
+                        ..
+                    }
+                ));
+                assert_eq!(
+                    state.engine.pending_cast.as_ref().unwrap().cast_mode,
+                    Some(CastMode::Normal)
+                );
+                // Forge the alternative on a genuine own-turn payment checkpoint,
+                // both before choosing the order and after selecting the blue card.
+                for (ordered, action) in [
+                    (false, Action::ChooseEffectOption(0)),
+                    (true, Action::ChooseCostTarget(land)),
+                ] {
+                    let mut forged: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    let pending = forged.engine.pending_cast.as_mut().unwrap();
+                    pending.cast_mode = Some(CastMode::Alternative);
+                    if ordered {
+                        pending.graveyard_cost_first_v1 = Some(false);
+                        pending.sacrifice_chosen.push(pitch);
+                    }
+                    let before = forged.clone();
+                    assert_eq!(
+                        engine::step(&mut forged, action).unwrap_err(),
+                        "compound cast no longer meets its alternative cost condition"
+                    );
+                    assert_eq!(forged, before);
+                }
+            }
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for game in [&mut state, &mut restored] {
+                payment_pick(game, CostKind::DiscardCards, land);
+                settle_first(game);
+                assert_eq!(zone(game, force), Zone::Graveyard);
+                assert_eq!(zone(game, bolt), Zone::Exile);
+                assert_eq!(zone(game, other), Zone::Hand);
+                assert_eq!(zone(game, land), Zone::Graveyard);
+                assert_eq!(
+                    zone(game, pitch),
+                    if active == player {
+                        Zone::Hand
+                    } else {
+                        Zone::Exile
+                    }
+                );
+                assert_eq!(
+                    game.players[player.index()].mana_pool.iter().sum::<u8>(),
+                    if active == player { 0 } else { 3 }
+                );
+            }
+            assert_eq!(state, restored);
+        }
+    }
+}
+
+#[test]
 fn retrace_daze_returns_and_discards_the_same_island_after_restore() {
     for player in [P0, P1] {
-        let (mut state, daze, bolt) = retrace_alternative_fixture(player, "Daze");
+        let (mut state, daze, bolt) = retrace_alternative_fixture(player, player, "Daze");
         let bolt = bolt.unwrap();
         let forest = put(&mut state, player, "Forest", Zone::Battlefield);
         state.objects.get_mut(forest).tapped = true;
@@ -1733,7 +1831,7 @@ fn retrace_daze_returns_and_discards_the_same_island_after_restore() {
 fn retrace_return_alternatives_allow_either_payment_order_and_require_distinct_islands() {
     for player in [P0, P1] {
         for (name, count) in [("Daze", 1), ("Gush", 2), ("Thwart", 3)] {
-            let (mut base, spell, bolt) = retrace_alternative_fixture(player, name);
+            let (mut base, spell, bolt) = retrace_alternative_fixture(player, player, name);
             let land = put(&mut base, player, "Forest", Zone::Hand);
             let mut islands = Vec::new();
             for _ in 0..count {
