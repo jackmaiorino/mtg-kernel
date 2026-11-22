@@ -17046,11 +17046,9 @@ pub(crate) fn spellbench_pending_trigger_announcement(
     state: &GameState,
     actor: PlayerId,
 ) -> Result<Option<StackItem>, String> {
-    if !state
-        .engine
-        .spellbench_neutral_v1
-        .neutral_choices_for(actor)
-    {
+    // The adapter needs the pending source and bounds for a real trigger target
+    // in either seat profile. This preview does not reserve a stack identity.
+    if !state.engine.spellbench_neutral_v1.choices {
         return Ok(None);
     }
     let Some(pending) = state.engine.pending_triggers.first() else {
@@ -31785,11 +31783,15 @@ mod tests {
             .engine
             .spellbench_neutral_v1
             .trainer_choice_seats[0] = true;
-        assert!(
-            spellbench_pending_trigger_announcement(&trainer_state, PlayerId::P0)
+        let next_id = trainer_state.engine.next_stack_item_id;
+        let (instance, public, min, max, selected) =
+            crate::rl::spellbench_pending_trigger_public_v2(&trainer_state, PlayerId::P0)
                 .unwrap()
-                .is_none()
-        );
+                .unwrap();
+        assert_eq!(instance, announcement.v4.stack_item_id.0.to_string());
+        assert_eq!(public.source.zone_change_count, generation);
+        assert_eq!((min, max, selected), (1, 1, 0));
+        assert_eq!(trainer_state.engine.next_stack_item_id, next_id);
         assert!(matches!(
             advance_until_decision(&mut trainer_state),
             Decision::ChooseTargets {

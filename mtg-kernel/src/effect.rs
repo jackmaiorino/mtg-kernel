@@ -1811,7 +1811,7 @@ pub enum EffectOp {
         player: PlayerRef,
     },
     /// The selected player chooses one card from their own graveyard and
-    /// exiles it. A sole card is automatic unless the chooser uses neutral choices.
+    /// exiles it. Empty and singleton graveyards need no policy choice.
     ExileOneFromPlayersGraveyard {
         player: PlayerRef,
     },
@@ -11974,11 +11974,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !*ordered
                         || !selected.is_empty()
                         || original_candidates.is_empty()
-                        || (original_candidates.len() == 1
-                            && !state
-                                .engine
-                                .spellbench_neutral_v1
-                                .neutral_choices_for(*sacrifice_player))
+                        // Older mixed-seat saves can already contain this singleton prompt.
+                        || (original_candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
                     {
                         return Err(
                             "creature-sacrifice prompt has a noncanonical shape".to_string()
@@ -16184,15 +16181,13 @@ fn drive_resumable_inner_with_native_row_v1(
                 validate_bound_graveyard_exact(state, player, &original_graveyard)?;
                 match original_graveyard.len() {
                     0 => {}
-                    1 if !state.engine.spellbench_neutral_v1.neutral_choices_for(player) => {
-                        continuation.frames.push(EffectFrame::MoveObjectsBatch {
-                            objects: original_graveyard,
-                            to_zone: Zone::Exile,
-                            preserve_known_identity: false,
-                            order_resolved: true,
-                            path,
-                        });
-                    }
+                    1 => continuation.frames.push(EffectFrame::MoveObjectsBatch {
+                        objects: original_graveyard,
+                        to_zone: Zone::Exile,
+                        preserve_known_identity: false,
+                        order_resolved: true,
+                        path,
+                    }),
                     _ => {
                         stage_graveyard_exile_choice(
                             &mut continuation,
@@ -24863,7 +24858,12 @@ mod tests {
 
         for chooser in [PlayerId::P0, PlayerId::P1] {
             let controller = chooser.opponent();
-            for trainer in [None, Some(chooser), Some(controller)] {
+            for (neutral, trainer) in [
+                (false, None),
+                (true, None),
+                (true, Some(chooser)),
+                (true, Some(controller)),
+            ] {
                 for (name, source_zone, candidate_zone, destination) in [
                     (
                         "Relic of Progenitus",
@@ -24879,8 +24879,8 @@ mod tests {
                     ),
                 ] {
                     let mut state = ready_state_for(controller);
+                    state.engine.spellbench_neutral_v1.choices = neutral;
                     if let Some(trainer) = trainer {
-                        state.engine.spellbench_neutral_v1.choices = true;
                         state.engine.spellbench_neutral_v1.trainer_choice_seats[trainer.index()] =
                             true;
                     }
@@ -24918,7 +24918,20 @@ mod tests {
                                     .trainer_choice_seats;
                                 seats[chooser.index()] = true;
                                 seats[controller.index()] = false;
-                                assert!(validate_pending_effect_choice(&reclassified).is_err());
+                                // A prompt emitted before per-seat routing must still be answerable
+                                // after loading a game whose chooser has the trainer profile.
+                                validate_pending_effect_choice(&reclassified).unwrap();
+                                let mut restored: GameState = serde_json::from_slice(
+                                    &serde_json::to_vec(&reclassified).unwrap(),
+                                )
+                                .unwrap();
+                                assert!(matches!(engine::advance_until_decision(&mut restored),
+                                    Decision::ChooseEffectTargets { player, .. } if player == chooser));
+                                engine::step(
+                                    &mut restored,
+                                    Action::ChooseEffectTarget(Target::Object(candidate)),
+                                )
+                                .unwrap();
                                 Action::ChooseEffectTarget(Target::Object(candidate))
                             }
                             Decision::CastSpellOrPass { .. }
@@ -24934,7 +24947,7 @@ mod tests {
                     assert_eq!(state.objects.get(candidate).zone, destination);
                     assert_eq!(
                         prompted,
-                        trainer == Some(controller),
+                        name == "Extract a Confession" && neutral && trainer != Some(chooser),
                         "{name}, chooser {chooser:?}"
                     );
                 }
