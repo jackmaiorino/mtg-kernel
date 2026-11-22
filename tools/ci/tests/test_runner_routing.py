@@ -19,10 +19,29 @@ def truthy(value):
     return value not in ("", None, False, 0)
 
 
+def number(value):
+    """GitHub's conversion for a loose comparison: null 0, booleans 1 and 0, strings parsed (NaN if not a number)."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (bool, int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip() or 0)
+        except ValueError:
+            return float("nan")
+    return float("nan")
+
+
 def equal(left, right):
     if isinstance(left, str) and isinstance(right, str):
         return left.lower() == right.lower()
-    return left == right
+    if isinstance(left, (list, dict)) or isinstance(right, (list, dict)):
+        return left is right
+    if type(left) is type(right):
+        return left == right
+    # Different primitive types compare as numbers: true == '1', null == '0', 100 == '1e2'.
+    return number(left) == number(right)
 
 
 class Evaluator:
@@ -79,15 +98,28 @@ class Evaluator:
                 self.take()
                 thunks.append(self.either())
             self.take(")")
-            if token not in ("fromJSON", "format", "contains", "startsWith", "endsWith"):
+            if token not in ("fromJSON", "format", "contains", "startsWith", "endsWith", "join"):
                 raise ValueError(f"unsupported function {token}")
             return lambda: call(token, [thunk() for thunk in thunks])
         return lambda: self.context.get(token, "")
 
 
+def text(value):
+    """GitHub's string conversion of a primitive."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return value if isinstance(value, str) else ("Array" if isinstance(value, list) else "Object" if isinstance(value, dict) else str(value))
+
+
 def call(name, arguments):
     if name == "fromJSON":
         return json.loads(arguments[0])
+    if name == "join":
+        return arguments[1].join(text(element) for element in arguments[0]) if isinstance(arguments[0], list)             else text(arguments[0])
     if name == "format":
         return re.sub(r"\{(\d+)\}", lambda match: str(arguments[1 + int(match.group(1))]), arguments[0])
     if isinstance(arguments[0], str):
@@ -303,10 +335,28 @@ class LightJobRoutingTests(unittest.TestCase):
     def test_an_empty_or_unbracketed_list_admits_nobody_without_an_error(self):
         # A bare JSON string would make contains() a substring test, so the value must be bracketed.
         for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
-                      f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]'):
+                      f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]', f'["{OWNER}","helper"]',
+                      f'["{OWNER}" , "helper"]', f'["{OWNER}",  "helper"]'):
             with self.subTest(value=value):
                 self.assertRoutes("ubuntu-24.04", **event(), **by(OWNER),
                                   **{**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value})
+
+    def test_a_non_string_member_never_admits_a_coerced_name(self):
+        # Array contains() compares loosely: true == '1', null == '0', 100 == '1e2'. The rejoin check refuses
+        # any list with a non-string member, so such a list admits nobody (GitHub's parser also reads [010]
+        # as [8]; a number never survives the rejoin either way).
+        for value, actor in ((f'["{OWNER}", true]', "1"), (f'["{OWNER}", null]', "0"), (f'["{OWNER}", 100]', "1e2"),
+                             (f'["{OWNER}", 8]', "8"), (f'["{OWNER}", ["1"]]', "1")):
+            with self.subTest(value=value):
+                listed = {**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value}
+                self.assertTrue(evaluate("contains(fromJSON(list), name)", list=value, name=actor) or "[" in value[2:])
+                self.assertRoutes("ubuntu-24.04", **event(), **by(OWNER, actor), **listed)
+                self.assertRoutes("ubuntu-24.04", **event(), **by(OWNER), **listed)
+
+    def test_only_the_exact_list_form_admits(self):
+        for value in (f'["{OWNER}"]', f'["{OWNER}", "helper"]', f'["helper", "{OWNER}"]', f'["{OWNER.upper()}"]'):
+            with self.subTest(value=value):
+                self.assertRoutes(DETECT_POOL, **event(), **by(OWNER), **{**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value})
 
     def test_a_bracketed_invalid_list_fails_closed(self):
         # GitHub fails the job when fromJSON cannot parse: the job never reaches a self-hosted runner. A fork
