@@ -151,7 +151,13 @@ fn write_outputs(repo: &Path, generated: &Generated) -> Result<(), String> {
     let table = repo.join(table::TABLE_PATH);
     let dump = repo.join(table::DUMP_PATH);
     let stage = table.with_extension("staging");
-    fs::create_dir(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    // This generator always has a mapping file. Lock its existing handle so
+    // interruption releases ownership and a retry can reuse leftover staging.
+    let mapping = fs::File::open(repo.join(table::MAPPING_PATH)).map_err(|e| e.to_string())?;
+    mapping
+        .try_lock()
+        .map_err(|e| format!("cannot lock the card semantics mapping for regeneration: {e}"))?;
+    fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
     let next_table = stage.join("table.json");
     let next_dump = stage.join("dump.txt");
     let old_dump = stage.join("previous.txt");
@@ -236,6 +242,11 @@ mod tests {
         let temp = std::env::temp_dir().join(format!("cardsem-{label}-{}", std::process::id()));
         std::fs::create_dir(&temp).unwrap();
         std::fs::create_dir_all(temp.join(table::DUMP_PATH).parent().unwrap()).unwrap();
+        std::fs::copy(
+            repo_root().join(table::MAPPING_PATH),
+            temp.join(table::MAPPING_PATH),
+        )
+        .unwrap();
         temp
     }
 
@@ -271,6 +282,36 @@ mod tests {
         };
         assert!(write_outputs(&temp, &generated).is_err());
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "original");
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn interrupted_staging_is_reused_after_the_writer_releases_its_lock() {
+        let temp = scratch_repo("retry");
+        let table = temp.join(table::TABLE_PATH);
+        let stage = table.with_extension("staging");
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::write(stage.join("table.json"), "interrupted").unwrap();
+        let lock = std::fs::File::open(temp.join(table::MAPPING_PATH)).unwrap();
+        lock.try_lock().unwrap();
+        let generated = Generated {
+            table_text: "new table".into(),
+            dump_text: "new dump".into(),
+            report: String::new(),
+            failures: Vec::new(),
+        };
+        assert!(write_outputs(&temp, &generated)
+            .unwrap_err()
+            .contains("cannot lock"));
+        assert_eq!(
+            std::fs::read_to_string(stage.join("table.json")).unwrap(),
+            "interrupted"
+        );
+        drop(lock);
+        write_outputs(&temp, &generated).unwrap();
+        assert_eq!(std::fs::read_to_string(table).unwrap(), "new table");
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
+        assert!(!stage.exists());
         std::fs::remove_dir_all(temp).unwrap();
     }
 
