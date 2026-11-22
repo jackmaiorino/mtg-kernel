@@ -119,7 +119,7 @@ fn declaration(response: &Value) -> Option<&'static str> {
 /// else the first row. Reaches multi-blocker and multi-attacker declarations.
 fn answer(view: &Value, k: usize) -> usize {
     let rows = rows(view);
-    let want = k % 2 == 0;
+    let want = k.is_multiple_of(2);
     rows.iter()
         .copied()
         .find(|row| view["candidates"][*row]["semantic"]["include"] == want)
