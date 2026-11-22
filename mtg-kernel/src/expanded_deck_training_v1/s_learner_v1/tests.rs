@@ -171,6 +171,7 @@ fn update(
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: source.clone(),
         trajectories,
         learning_rate: 1.0e-3,
@@ -485,6 +486,7 @@ fn run_config(
     };
     let fixed = || ExpandedOpponentAssignmentV1::Fixed { id: "net8".into() };
     NativeExpandedTrainingRunV1 {
+        card_semantics: None,
         schema: "mtg-kernel-native-expanded-training-run/v1".into(),
         initial_source: initial_source.clone(),
         opponents: vec![NamedExpandedOpponentV1 {
@@ -611,6 +613,7 @@ fn s_learner_refusals_v1() {
     .contains("GAE loss"));
     assert!(refused(gae(), CheckpointRecordFormatV1::V2, "v2").contains("record format v2"));
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: s.clone(),
         trajectories: fake.clone(),
         learning_rate: 1.0e-3,

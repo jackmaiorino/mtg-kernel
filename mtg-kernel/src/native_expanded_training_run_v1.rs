@@ -392,6 +392,8 @@ impl SearchTargetsRunOptionsV1 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeExpandedTrainingRunV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_semantics: Option<crate::expanded_deck_training_v1::CardSemanticsConfigV1>,
     pub schema: String,
     pub initial_source: ExpandedModelSourceV1,
     pub opponents: Vec<NamedExpandedOpponentV1>,
@@ -602,6 +604,17 @@ impl NativeExpandedTrainingRunV1 {
     }
 
     pub fn validate_v1(&self) -> Result<(), String> {
+        crate::expanded_deck_training_v1::validate_card_semantics_run_v1(
+            self.card_semantics.as_ref(),
+            &self.initial_source,
+            self.update_backend,
+            &self.loss_selection,
+            self.line_b.is_some()
+                || self.e_supported.is_some()
+                || self.soft_q.is_some()
+                || self.search_targets.is_some()
+                || self.ex1.is_some(),
+        )?;
         check(self.schema == SCHEMA, "unknown successor run schema")?;
         // Line (b) teacher seeds are explicit per update and come from the
         // launcher's manifest (CODEX #572); this driver invents no schedule.
@@ -1733,6 +1746,7 @@ fn update_command(
         }
     } else if config.preparation_workers == 1 {
         ExpandedTrainingCommandV1::Update {
+            card_semantics: config.card_semantics.clone(),
             line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
@@ -1747,6 +1761,7 @@ fn update_command(
         }
     } else {
         ExpandedTrainingCommandV1::UpdatePrepared {
+            card_semantics: config.card_semantics.clone(),
             line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
@@ -2510,6 +2525,7 @@ mod tests {
         };
         let registered = [list("Affinity"), list("Elves")];
         NativeExpandedTrainingRunV1 {
+            card_semantics: None,
             schema: SCHEMA.into(),
             initial_source: source.clone(),
             opponents: vec![NamedExpandedOpponentV1 {
@@ -3838,6 +3854,7 @@ mod tests {
             })
             .collect();
         NativeExpandedTrainingRunV1 {
+            card_semantics: None,
             schema: SCHEMA.into(),
             initial_source,
             opponents: vec![],

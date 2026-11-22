@@ -1876,6 +1876,7 @@ pub(super) fn phase1_v1(
     update_scope: ArchiveDistillationUpdateScopeV1,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
+    super::card_semantics_e1::load_training_v1(&parent, None)?;
     let started = std::time::Instant::now();
     ensure(
         !output_directory.exists(),

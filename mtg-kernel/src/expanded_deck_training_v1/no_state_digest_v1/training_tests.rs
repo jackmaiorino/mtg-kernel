@@ -98,6 +98,7 @@ fn checkpoint_of(
         rows.iter().map(ParameterBitsV1::from_native).collect()
     };
     ExpandedCheckpointV1 {
+        card_semantics: None,
         schema: ordinary_checkpoint_schema_v1(policy.identity_v1()).into(),
         feature_contract_digest: match &input_contract {
             Some(_) => converted_contract_digest_v1(identity.feature_contract_digest),
@@ -1527,6 +1528,7 @@ fn run_config(
         opponent,
     };
     NativeExpandedTrainingRunV1 {
+        card_semantics: None,
         schema: "mtg-kernel-native-expanded-training-run/v1".into(),
         initial_source: initial_source.clone(),
         opponents: vec![],
@@ -1602,6 +1604,7 @@ fn converted_run_end_to_end_v1() {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(collection["trajectories"].clone()).unwrap();
     let update = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: base.clone(),
         trajectories: trajectories.clone(),
         learning_rate: 0.0003,
@@ -1797,6 +1800,7 @@ fn converted_run_end_to_end_v1() {
 
     // Only the ordinary CPU update: an auxiliary (line (b)) update is refused.
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: converted.clone(),
         trajectories: vec![PinnedFileV1 {
             path: root.join("unused.json"),

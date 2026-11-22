@@ -2153,6 +2153,7 @@ fn world_v1(label: &str) -> WorldV1 {
         root.join("parent-collect"),
     );
     let update = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: parent.clone(),
         trajectories,
         learning_rate: 0.0001,
@@ -2962,6 +2963,7 @@ fn retention_run_config_v1(
         },
     ];
     NativeExpandedTrainingRunV1 {
+        card_semantics: None,
         schema: "mtg-kernel-native-expanded-training-run/v1".into(),
         initial_source,
         opponents: vec![],
