@@ -2033,7 +2033,7 @@ fn retrace_return_alternatives_allow_either_payment_order_and_require_distinct_i
                 for (at, &island) in islands.iter().enumerate() {
                     assert!(
                         matches!(next(&mut state),Decision::ChooseCostTargets{remaining,candidates,..}
-                        if usize::from(remaining)==islands.len()-at && sorted(candidates)==sorted(islands[at..].to_vec()))
+                        if usize::from(remaining)==islands.len()-at && sorted(candidates.clone())==sorted(islands[at..].to_vec()))
                     );
                     payment_pick(&mut state, CostKind::ReturnPermanentsToHand, island);
                 }
