@@ -124,6 +124,7 @@ fn a_queued_parse_is_left_to_its_reader_and_a_running_one_is_awaited() {
                 training_math: None,
                 input_contract: None,
             })),
+            arithmetic_controls_v1(),
         );
         shared.changed.notify_all();
     }
@@ -357,6 +358,7 @@ fn released_entries_are_dropped_and_late_parses_never_refill_them() {
                 training_math: None,
                 input_contract: None,
             })),
+            arithmetic_controls_v1(),
         );
         assert!(matches!(
             state.entries[key].slots[KindV1::CollectionFields as usize],
@@ -367,4 +369,119 @@ fn released_entries_are_dropped_and_late_parses_never_refill_them() {
     release_under_v1(test_path(other).parent().unwrap());
     let state = lock_v1(shared_v1());
     assert!(!state.entries.contains_key(key) && !state.entries.contains_key(other));
+}
+
+/// Rounds toward negative infinity on the calling thread until dropped.
+#[cfg(target_arch = "x86_64")]
+struct RoundDownV1(u32);
+
+#[cfg(target_arch = "x86_64")]
+impl RoundDownV1 {
+    fn set_v1() -> Self {
+        let saved = crate::deterministic_math_v1::read_mxcsr_v1();
+        crate::deterministic_math_v1::write_mxcsr_v1((saved & !(0b11 << 13)) | (0b01 << 13));
+        Self(saved)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for RoundDownV1 {
+    fn drop(&mut self) {
+        crate::deterministic_math_v1::write_mxcsr_v1(self.0);
+    }
+}
+
+/// A parse depends on the reader's rounding: an exact-f32 offset in an episode
+/// parses one f64 ulp lower when rounding down. A result made under the
+/// default controls (parsed by a helper, or handed over by a collection
+/// worker) is never taken by a reader rounding down, which parses as before
+/// (and so fails where its own parse fails); a reader under the same controls
+/// takes it.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn a_result_is_taken_only_under_the_controls_it_was_made_under() {
+    let _retention = default_retention_for_test_v1();
+    let bytes = br#"{"episode":{"london_keep_offset":0.0004882813082076609}}"#.to_vec();
+    let nearest: Value = serde_json::from_slice(&bytes).unwrap();
+    let down: Value = {
+        let _down = RoundDownV1::set_v1();
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    assert_ne!(nearest, down, "the parse depends on the rounding mode");
+
+    let key = "parse-ahead-test-rounding-down";
+    offer_v1(key, &test_path(key), bytes.clone());
+    wait_until_parsed_for_test_v1(key);
+    {
+        let _down = RoundDownV1::set_v1();
+        assert_eq!(take_collection_fields_v1(key, &bytes), None);
+    }
+    assert_eq!(served_for_test_v1(key), [false, false]);
+
+    let key = "parse-ahead-test-rounding-same";
+    offer_v1(key, &test_path(key), bytes.clone());
+    wait_until_parsed_for_test_v1(key);
+    assert_eq!(
+        take_collection_fields_v1(key, &bytes),
+        Some(CollectionTrajectoryFieldsV1::of_document_v1(&nearest))
+    );
+
+    // A handed-over trajectory counts as parsed under the default controls.
+    let key = "parse-ahead-test-rounding-seeded";
+    let seeded = trajectory_bytes(key);
+    let trajectory: ExpandedTrajectoryV1 = serde_json::from_slice(&seeded).unwrap();
+    offer_serialized_v1(key, &test_path(key), seeded.clone(), trajectory).unwrap();
+    {
+        let _down = RoundDownV1::set_v1();
+        assert_eq!(take_collection_fields_v1(key, &seeded), None);
+        assert!(take_trajectory_v1(key, &seeded).is_none());
+    }
+    assert_eq!(served_for_test_v1(key), [false, false]);
+}
+
+/// Helper threads fail to start until dropped.
+struct FailHelperSpawnV1;
+
+impl FailHelperSpawnV1 {
+    fn set_v1() -> Self {
+        FAIL_HELPER_SPAWN_V1.store(true, Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for FailHelperSpawnV1 {
+    fn drop(&mut self) {
+        FAIL_HELPER_SPAWN_V1.store(false, Ordering::Relaxed);
+    }
+}
+
+/// When no helper starts, readers withdraw the queued parses and parse
+/// themselves (getting what a fresh parse gives), and their entries go once
+/// both are taken; the queue keys they leave are pruned by the next release,
+/// even one that matches no entry.
+#[test]
+fn readers_parse_when_no_helper_starts_and_cleanup_prunes_dead_queue_keys() {
+    let _exclusive = retention_for_test_v1();
+    let _fail = FailHelperSpawnV1::set_v1();
+    let key = "parse-ahead-test-no-helper";
+    let bytes = trajectory_bytes(key);
+    offer_v1(key, &test_path(key), bytes.clone());
+    start_helper_v1();
+    start_helpers_up_to_v1(4);
+    assert_eq!(take_collection_fields_v1(key, &bytes), None);
+    assert!(take_trajectory_v1(key, &bytes).is_none());
+    {
+        let state = lock_v1(shared_v1());
+        assert!(!state.entries.contains_key(key));
+        assert!(state
+            .queues
+            .iter()
+            .any(|queue| queue.iter().any(|k| k == key)));
+    }
+    release_under_v1(&std::env::temp_dir().join("parse-ahead-unit-tests-nothing-here"));
+    let state = lock_v1(shared_v1());
+    assert!(!state
+        .queues
+        .iter()
+        .any(|queue| queue.iter().any(|k| k == key)));
 }

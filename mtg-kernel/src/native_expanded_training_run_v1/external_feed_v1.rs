@@ -19,10 +19,11 @@
 //! feed moves them earlier and onto helpers, it does not merge them.
 //!
 //! Bounds: only the schedule's file names are read (one per slot, at most
-//! three attempts each), one file at a time while the collector runs and on
-//! at most `workers` threads after it, each file within the per-file bound;
-//! the store's retention bounds what is held, and at most `workers` helpers
-//! (the chain's collection allocation) are started for it. Any failure of the
+//! three attempts each), one file at a time (by the watcher while the
+//! collector runs, then by the caller), each file within the per-file bound,
+//! so at most one buffer is held outside the store; the store's retention
+//! bounds what is held, and at most `workers` helpers (the chain's collection
+//! allocation) parse for it. Any failure of the
 //! watcher (an unreadable file, a panic) only leaves files to their readers;
 //! the collector's outcome and its errors are reported exactly as before, and
 //! the watcher is joined before the collection returns on every path.
@@ -119,30 +120,16 @@ fn offer_file_v1(path: &Path) -> bool {
     true
 }
 
-/// Offers `files` on up to `workers` threads, recording each outcome.
+/// Offers `files` one after another, recording each outcome and starting
+/// helpers (at most `workers` alive) for what is queued.
 fn offer_all_v1(files: Vec<(usize, PathBuf)>, workers: usize, feed: &Mutex<FeedV1>) {
-    let next = Mutex::new(files.into_iter());
-    let work = || loop {
-        let Some((slot, path)) = next.lock().ok().and_then(|mut files| files.next()) else {
-            return;
-        };
+    for (slot, path) in files {
         let offered = offer_file_v1(&path);
         if let Ok(mut feed) = feed.lock() {
             feed.record_v1(slot, offered);
         }
-    };
-    std::thread::scope(|scope| {
-        for _ in 1..workers.max(1) {
-            if std::thread::Builder::new()
-                .name("external-feed".into())
-                .spawn_scoped(scope, work)
-                .is_err()
-            {
-                break;
-            }
-        }
-        work();
-    });
+        start_parse_ahead_helpers_v1(workers);
+    }
 }
 
 /// Runs `collect` (the external collector) while feeding the trajectories it
@@ -210,7 +197,6 @@ pub(super) fn collect_fed_v1<T>(
                 Err(_) => return,
             };
             offer_all_v1(files, workers, &feed);
-            start_parse_ahead_helpers_v1(workers);
         }));
     }
     if let Ok(feed) = feed.lock() {

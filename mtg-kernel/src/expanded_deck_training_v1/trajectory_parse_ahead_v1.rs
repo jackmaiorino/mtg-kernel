@@ -28,6 +28,14 @@
 //! their readers parse as before. Every entry remembers the file it was
 //! published as, and a run drops the entries under an iteration's directory
 //! when that iteration ends, failed or not (`release_under_v1`).
+//!
+//! A parse is not a function of the bytes alone: a trajectory's episode holds
+//! `f64` offsets, and serde_json's float path divides, so a parse under other
+//! rounding or flush-to-zero controls can differ in the last bit. Every result
+//! therefore records the floating-point controls it was made under (the
+//! parsing thread's; for a handed-over trajectory, the default controls, under
+//! which parsing its bytes returns it), and a reader takes it only when its
+//! own thread's controls are the same; otherwise it parses as before.
 
 use super::*;
 use std::collections::{HashMap, VecDeque};
@@ -171,10 +179,41 @@ fn parse_v1(kind: KindV1, bytes: &[u8]) -> Option<ParsedV1> {
     }
 }
 
+/// The calling thread's floating-point controls a parse can depend on: the
+/// MXCSR control field on x86_64 (exception masks, rounding, flush-to-zero,
+/// denormals-are-zero; the sticky flags left out), FPCR on aarch64, 0 where
+/// neither is read.
+pub(crate) fn arithmetic_controls_v1() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        u64::from(crate::deterministic_math_v1::read_mxcsr_v1() & 0xffc0)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let fpcr: u64;
+        // SAFETY: reading FPCR has no side effect.
+        unsafe { std::arch::asm!("mrs {}, fpcr", out(reg) fpcr) };
+        fpcr
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        0
+    }
+}
+
+/// The default controls (all exceptions masked, round to nearest, no
+/// flush-to-zero), under which parsing a handed-over trajectory's bytes
+/// returns that trajectory.
+#[cfg(target_arch = "x86_64")]
+const DEFAULT_ARITHMETIC_CONTROLS_V1: u64 = 0x1f80;
+#[cfg(not(target_arch = "x86_64"))]
+const DEFAULT_ARITHMETIC_CONTROLS_V1: u64 = 0;
+
 enum SlotV1 {
     Queued,
     Running,
-    Ready(ParsedV1),
+    /// A result and the floating-point controls it was made under.
+    Ready(ParsedV1, u64),
     Gone,
 }
 
@@ -228,13 +267,15 @@ impl StateV1 {
         None
     }
 
-    /// Stores a finished parse if its entry still waits for it.
+    /// Stores a finished parse, made under `controls`, if its entry still
+    /// waits for it.
     fn finish_v1(
         &mut self,
         key: &str,
         kind: KindV1,
         bytes: &Arc<Vec<u8>>,
         parsed: Option<ParsedV1>,
+        controls: u64,
     ) {
         if let Some(entry) = self
             .entries
@@ -243,7 +284,7 @@ impl StateV1 {
         {
             let slot = &mut entry.slots[kind as usize];
             if matches!(slot, SlotV1::Running) {
-                *slot = parsed.map_or(SlotV1::Gone, SlotV1::Ready);
+                *slot = parsed.map_or(SlotV1::Gone, |parsed| SlotV1::Ready(parsed, controls));
             }
         }
     }
@@ -331,8 +372,14 @@ pub(super) fn offer_serialized_v1(
         path,
         bytes,
         [
-            SlotV1::Ready(ParsedV1::CollectionFields(fields)),
-            SlotV1::Ready(ParsedV1::Trajectory(Box::new(trajectory))),
+            SlotV1::Ready(
+                ParsedV1::CollectionFields(fields),
+                DEFAULT_ARITHMETIC_CONTROLS_V1,
+            ),
+            SlotV1::Ready(
+                ParsedV1::Trajectory(Box::new(trajectory)),
+                DEFAULT_ARITHMETIC_CONTROLS_V1,
+            ),
         ],
     );
     Ok(())
@@ -424,12 +471,11 @@ pub(crate) fn release_under_v1(directory: &Path) {
         .filter(|(_, entry)| entry.path.starts_with(directory))
         .map(|(key, _)| key.clone())
         .collect();
-    if released.is_empty() {
-        return;
-    }
     for key in &released {
         state.remove_v1(key);
     }
+    // Queue keys outlive their entries when readers withdrew queued parses
+    // (no helper ran): every dead key goes, whether or not anything matched.
     let StateV1 {
         entries, queues, ..
     } = &mut *state;
@@ -463,6 +509,11 @@ pub(crate) fn start_helpers_up_to_v1(limit: usize) {
     }
 }
 
+/// Test hook: helper threads fail to start while set.
+#[cfg(test)]
+static FAIL_HELPER_SPAWN_V1: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// [`start_helper_v1`] with at most `limit` helpers alive; whether one started.
 fn start_helper_below_v1(limit: usize) -> bool {
     let shared = shared_v1();
@@ -472,6 +523,11 @@ fn start_helper_below_v1(limit: usize) -> bool {
             return false;
         }
         state.helpers += 1;
+    }
+    #[cfg(test)]
+    if FAIL_HELPER_SPAWN_V1.load(Ordering::Relaxed) {
+        lock_v1(shared).helpers -= 1;
+        return false;
     }
     let spawned = thread::Builder::new()
         .name("trajectory-parse-ahead".into())
@@ -496,7 +552,7 @@ struct ClaimV1 {
 impl Drop for ClaimV1 {
     fn drop(&mut self) {
         let mut state = lock_v1(self.shared);
-        state.finish_v1(&self.key, self.kind, &self.bytes, None);
+        state.finish_v1(&self.key, self.kind, &self.bytes, None, 0);
         self.shared.changed.notify_all();
     }
 }
@@ -513,20 +569,24 @@ fn helper_v1(shared: &'static ParseAheadV1) {
             kind,
             bytes,
         };
+        let controls = arithmetic_controls_v1();
         let parsed = catch_unwind(AssertUnwindSafe(|| parse_v1(claim.kind, &claim.bytes)))
             .ok()
             .flatten();
         let mut state = lock_v1(shared);
-        state.finish_v1(&claim.key, claim.kind, &claim.bytes, parsed);
+        state.finish_v1(&claim.key, claim.kind, &claim.bytes, parsed, controls);
         drop(state);
         drop(claim);
     }
     lock_v1(shared).helpers -= 1;
 }
 
-/// The parse of exactly `bytes`, if it was parsed ahead; waits while it is
-/// being parsed. A queued parse is withdrawn and left to the caller.
+/// The parse of exactly `bytes`, if it was parsed ahead under the calling
+/// thread's floating-point controls; waits while it is being parsed. A
+/// queued parse is withdrawn and left to the caller, as is a result made
+/// under other controls.
 fn take_v1(sha256: &str, bytes: &[u8], kind: KindV1) -> Option<ParsedV1> {
+    let controls = arithmetic_controls_v1();
     let shared = shared_v1();
     let stored = Arc::clone(&lock_v1(shared).entries.get(sha256)?.bytes);
     // The very allocation the entry holds (a resident read of the bytes the
@@ -550,7 +610,7 @@ fn take_v1(sha256: &str, bytes: &[u8], kind: KindV1) -> Option<ParsedV1> {
             continue;
         }
         let parsed = match std::mem::replace(slot, SlotV1::Gone) {
-            SlotV1::Ready(parsed) => Some(parsed),
+            SlotV1::Ready(parsed, made) if made == controls => Some(parsed),
             _ => None,
         };
         if entry.slots.iter().all(|slot| matches!(slot, SlotV1::Gone)) {

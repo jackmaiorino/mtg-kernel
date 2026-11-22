@@ -134,7 +134,11 @@ fn run() -> Result<(), String> {
             || gpu_kernels.is_some()
             || gpu_wait.is_some())
     {
-        return Err("--follow takes no other option".into());
+        return Err(
+            "--follow takes no --max-new-iterations and no GPU option (--gpu-exact-inference, \
+             --gpu-exact-latency-us, --gpu-exact-learner, --gpu-exact-kernels, --gpu-exact-wait)"
+                .into(),
+        );
     }
     if gpu_latency_us.is_some() && gpu_inference.is_none() {
         return Err("--gpu-exact-latency-us needs --gpu-exact-inference".into());
