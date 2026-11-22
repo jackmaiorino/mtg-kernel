@@ -4,23 +4,15 @@
 //!
 //! Proven here:
 //!
-//! 1. The bot seat on `action-windows-v1`, the person's seat on engine
-//!    windows (or on nothing): at every bot decision the bridge's sessions
-//!    (the raw session and its lockstep copy) and the trainer's own London
-//!    session (`FastActorSessionV1::reset_pauper_london_windows_v1`, the
-//!    bot's seat on `action-windows-v1`, the other on `harness-v2`, the
-//!    training runtime rule where the game allows it) have the same game
-//!    state, the same menu, the same model input and the same trainer
-//!    marker of a new priority window (`priority_pass_window_v1`). Both
-//!    take the same deal: the trainer's explicit-deck deal, handed to the
-//!    constructor the bridge reset calls after its own deal. The person
-//!    passes at every engine window the trainer's other seat does not have,
-//!    and answers everything else as the training game is answered.
-//!    With neutral training, the full game states must also match. With the
-//!    normal trainer, the bridge enables the bot's trainer choice profile.
-//!    Every bot decision must match in actor, menu, model input and window
-//!    marker. For the person's extra revealed-card choices, the script uses
-//!    the trainer's actual hand or graveyard order.
+//! 1. The bridge and trainer start from the same explicit-deck deal. The bot
+//!    uses `action-windows-v1` and the trainer's other seat uses `harness-v2`.
+//!    The person passes any extra engine windows in the bridge. Every bot
+//!    decision must have the trainer's menu, FlatV7 input and new-window marker.
+//!    When all sessions use neutral choices, the full game states must match.
+//!    Against the ordinary production trainer the bridge selects the trained
+//!    bot's choice profile. The person replays extra revealed-card choices
+//!    in the trainer's hand or graveyard order. The verifier records the first
+//!    discrepancy in each game and requires every pair to reach matching terminals.
 //! 2. Both rules `harness-v2` is the engine-windows reset exactly.
 //! 3. The bridge takes the rules on its reset request, marks the bot's new
 //!    windows in the private support block, and refuses the field anywhere
