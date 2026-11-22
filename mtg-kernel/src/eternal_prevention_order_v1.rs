@@ -69,14 +69,15 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
     {
         return true;
     }
-    // A registered complete shield can be used instead of the Circle. Its
-    // existing application path retains any finite charge and touched-by data.
+    // A registered finite shield may be spent instead of, or before, the
+    // Circle. Its application retains the existing charge/touched-by data.
     let event = ProposedEvent::Damage(damage.clone());
-    if state.engine.active_replacements.iter().any(|replacement|
+    if state.engine.active_replacements.iter().any(|replacement| {
         !damage.touched_by.contains(&replacement.id)
             && event::replacement_applies(replacement, &event, state)
             && matches!(replacement.kind,
-                ReplacementEffectKind::PreventNextDamage { remaining, .. } if remaining >= damage.amount)) {
+                ReplacementEffectKind::PreventNextDamage { remaining, .. } if remaining > 0)
+    }) {
         return true;
     }
     let spheres =

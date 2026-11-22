@@ -1,9 +1,9 @@
 //! Observable paid-Circle consumption without Hallow.
 use super::prevention_order_no_hallow_v1::choose_public;
 use super::{
-    act, activate_paying, cast, decoy, give_priority, life, link, pool, put, restored, settle,
-    settled, shield, shields, turn_of, Action, CircleColorV1, Decision, GameState, ManaColor,
-    ObjectId, Target, Zone, BLUE_CIRCLE, P0, P1, RED_CIRCLE,
+    activate_paying, cast, decoy, give_priority, life, link, pool, put, restored, settle, settled,
+    shield, shields, turn_of, CircleColorV1, Decision, GameState, ManaColor, ObjectId, Target,
+    Zone, BLUE_CIRCLE, P0, P1, RED_CIRCLE,
 };
 use mtg_kernel::ids::PlayerId;
 
@@ -258,48 +258,88 @@ fn an_inevitable_single_circle_does_not_offer_irrelevant_numeric_orders() {
 }
 
 #[test]
-fn registered_complete_prevention_can_preserve_a_circle_without_a_global_fog() {
+fn a_full_or_partial_registered_shield_can_be_consumed_before_the_circle() {
     use mtg_kernel::event::{ActiveReplacement, ReplacementEffectKind};
-    let actor = P0;
-    let mut start = turn_of(actor);
-    let pillar = put(&mut start, P1, "Pyrostatic Pillar", Zone::Battlefield);
-    let circle = put(&mut start, actor, RED_CIRCLE, Zone::Battlefield);
-    decoy(&mut start, P1, CircleColorV1::Red);
-    let source = link(&start, pillar);
-    shield(&mut start, actor, circle, source);
-    // Existing supported private shield state; no printed card producer is claimed.
-    start.engine.active_replacements.push(ActiveReplacement {
-        id: 900,
-        source: pillar,
-        kind: ReplacementEffectKind::PreventNextDamage {
-            target: Target::Player(actor),
-            remaining: 3,
-        },
-    });
-    spell(
-        &mut start,
-        actor,
-        "Lightning Bolt",
-        &[ManaColor::R],
-        0,
-        Target::Player(P1),
-    );
-    menu(&mut start, actor, pillar, 2);
-    for option in 0..2 {
-        let mut state = restored(&start);
-        choose_public(&mut state, actor, pillar, option, 2);
-        settled(&mut state);
-        assert_eq!(life(&state, actor), 20);
-        assert_eq!(shields(&state), usize::from(option == 1));
-        let remaining = state
-            .engine
-            .active_replacements
-            .iter()
-            .find(|r| r.id == 900)
-            .unwrap();
-        assert!(
-            matches!(remaining.kind, ReplacementEffectKind::PreventNextDamage { remaining, .. }
-            if remaining == if option == 0 { 3 } else { 1 })
+    for initial in [1, 3] {
+        let actor = P0;
+        let mut start = turn_of(actor);
+        let pillar = put(&mut start, P1, "Pyrostatic Pillar", Zone::Battlefield);
+        let circle = put(&mut start, actor, RED_CIRCLE, Zone::Battlefield);
+        decoy(&mut start, P1, CircleColorV1::Red);
+        let source = link(&start, pillar);
+        shield(&mut start, actor, circle, source);
+        // Existing private representation; no printed card producer is claimed.
+        start.engine.active_replacements.push(ActiveReplacement {
+            id: 900,
+            source: pillar,
+            kind: ReplacementEffectKind::PreventNextDamage {
+                target: Target::Player(actor),
+                remaining: initial,
+            },
+        });
+        spell(
+            &mut start,
+            actor,
+            "Lightning Bolt",
+            &[ManaColor::R],
+            0,
+            Target::Player(P1),
         );
+        menu(&mut start, actor, pillar, 2);
+        for option in 0..2 {
+            let mut state = restored(&start);
+            choose_public(&mut state, actor, pillar, option, 2);
+            settled(&mut state);
+            assert_eq!(life(&state, actor), 20);
+            assert_eq!(shields(&state), usize::from(option == 1 && initial >= 2));
+            let remaining = state
+                .engine
+                .active_replacements
+                .iter()
+                .find(|replacement| replacement.id == 900)
+                .map(|replacement| match replacement.kind {
+                    ReplacementEffectKind::PreventNextDamage { remaining, .. } => remaining,
+                    _ => panic!("wrong registered shield"),
+                })
+                .unwrap_or(0);
+            assert_eq!(
+                remaining,
+                if option == 0 {
+                    initial
+                } else {
+                    (initial - 2).max(0)
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn several_spheres_can_save_a_circle_without_an_equivalent_first_menu_entry() {
+    for attacker in [P0, P1] {
+        let actor = attacker.opponent();
+        let mut start = turn_of(attacker);
+        for _ in 0..2 {
+            put(&mut start, actor, "Sphere of Law", Zone::Battlefield);
+        }
+        let circle = put(&mut start, actor, RED_CIRCLE, Zone::Battlefield);
+        decoy(&mut start, attacker, CircleColorV1::Red);
+        let source = put(&mut start, attacker, "Lightning Bolt", Zone::Hand);
+        pool(&mut start, attacker, &[ManaColor::R], 0);
+        cast(&mut start, source, &[Target::Player(actor)]);
+        let binding = link(&start, source);
+        shield(&mut start, actor, circle, binding);
+        menu(&mut start, actor, source, 2);
+        for option in 0..2 {
+            let mut state = restored(&start);
+            choose_public(&mut state, actor, source, option, 2);
+            if option == 1 {
+                menu(&mut state, actor, source, 2);
+                choose_public(&mut state, actor, source, 1, 2);
+            }
+            settled(&mut state);
+            assert_eq!(life(&state, actor), 20);
+            assert_eq!(shields(&state), usize::from(option == 1));
+        }
     }
 }

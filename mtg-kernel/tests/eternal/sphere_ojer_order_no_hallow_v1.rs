@@ -272,6 +272,16 @@ fn council_keeps_each_ojer_increase_and_its_multiplicity() {
             for (option, damage) in [(1, if different_power { 6 } else { 4 }), (2, 4)] {
                 let mut state = restored(&start);
                 choose_public(&mut state, active.opponent(), source, option, 3);
+                if different_power && option == 1 {
+                    assert!(matches!(
+                        settle(&mut state),
+                        Some(Decision::ChooseEffectOption {
+                            option_count: 2,
+                            ..
+                        })
+                    ));
+                    choose_public(&mut state, active.opponent(), source, 0, 2);
+                }
                 settled(&mut state);
                 assert_eq!(life(&state, active.opponent()), 20 - damage);
             }
