@@ -50,6 +50,7 @@
 //!
 //! No policy plays a game here, and no outcome is ever a label or a readout.
 
+use super::checkpoint_container_v1::TensorBitsV1 as _;
 use super::*;
 use crate::line_b_teacher_target_v1::{
     line_b_divergence_v1, line_b_softmax_v1, LineBDivergenceV1, LineBSoftmaxV1,
@@ -722,7 +723,9 @@ pub struct ArchiveDistillationProbeEvidenceV1 {
 /// no value term); it has no GAE scalars or update inputs; and its named
 /// parent holds exactly its optimizer state (moments, Adam step and gauge
 /// anchor) and feature identity. Any other checkpoint carries no provenance.
-pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+pub(super) fn validate_phase1_checkpoint_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
+) -> Result<(), String> {
     let is_phase1 = saved.loss_identity == PHASE1_LOSS_IDENTITY_V1;
     ensure(
         is_phase1 == saved.archive_distillation.is_some(),
@@ -757,7 +760,8 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
             && saved.registry_transfer.is_none(),
         "phase-1 checkpoint fields differ from its identity",
     )?;
-    let parent = read_ordinary_checkpoint_v1(&provenance.parent, &saved.source_import)?;
+    let parent_record = read_checkpoint_record_v1(&provenance.parent)?;
+    let parent = parse_ordinary_checkpoint_borrowed_v1(&parent_record, &saved.source_import)?;
     ensure(
         parent.archive_distillation.is_none()
             && parent.loss_identity != PHASE1_LOSS_IDENTITY_V1
@@ -775,8 +779,14 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
     ensure(
         parent.adam_step == saved.adam_step
             && parent.scorer_bias_anchor_bits == saved.scorer_bias_anchor_bits
-            && parent.first_moments == saved.first_moments
-            && parent.second_moments == saved.second_moments,
+            && checkpoint_container_v1::same_tensors_v1(
+                &parent.first_moments,
+                &saved.first_moments,
+            )
+            && checkpoint_container_v1::same_tensors_v1(
+                &parent.second_moments,
+                &saved.second_moments,
+            ),
         "phase-1 checkpoint does not hold its parent's exact optimizer state",
     )?;
     let representation = provenance
@@ -797,9 +807,14 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
         let table = saved
             .parameters
             .first()
-            .filter(|p| p.name == "card_embedding.weight")
+            .filter(|p| p.name_v1() == "card_embedding.weight")
             .ok_or("a rules checkpoint's first parameter is the card table")?;
-        validate_rules_checkpoint_v1(representation, sidecar, provenance.steps, &table.values)?;
+        validate_rules_checkpoint_v1(
+            representation,
+            sidecar,
+            provenance.steps,
+            table.values_u32_v1(),
+        )?;
     }
     if provenance.update_scope == ArchiveDistillationUpdateScopeV1::ScorerOnly {
         ensure(
@@ -810,9 +825,11 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
                     .zip(&parent.parameters)
                     .all(|(after, before)| {
                         matches!(
-                            after.name.as_str(),
+                            after.name_v1(),
                             "scorer.0.weight" | "scorer.0.bias" | "scorer.2.weight"
-                        ) || after == before
+                        ) || (after.name_v1() == before.name_v1()
+                            && after.shape_v1() == before.shape_v1()
+                            && after.values_u32_v1() == before.values_u32_v1())
                     }),
             "scorer-only phase-1 checkpoint changed a frozen parameter",
         )?;
@@ -1049,6 +1066,9 @@ fn load_inputs_v1(
         let game: ArchiveGameV1 = serde_json::from_str(line).map_err(err)?;
         ensure(game.lineage == lineage, "archive game from another lineage")?;
         ensure(ids.insert(game.id.clone()), "duplicate archive game id")?;
+        // Extraction captures raw parent logits and distillation never
+        // applies the offset: refused before any extraction or cache lookup.
+        refuse_priority_pass_offset_v1([&game.episode], "archive distillation")?;
         parsed.push(game);
     }
     ensure(!parsed.is_empty(), "no archive games")?;
@@ -1253,7 +1273,9 @@ fn read_parent_trajectory_v1(
             && trajectory.source_import == *policy.identity_v1()
             && trajectory.behavior_state_sha256 == parent_state_sha256
             && trajectory.learner_sampler.is_none()
-            && trajectory.episode.reset.is_none(),
+            && trajectory.episode.reset.is_none()
+            && trajectory.episode.london_keep_offset.is_none()
+            && trajectory.episode.priority_pass_offset.is_none(),
         "trajectory is not the parent's own ordinary play",
     )?;
     ensure(

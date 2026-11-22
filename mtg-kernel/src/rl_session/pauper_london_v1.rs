@@ -17,9 +17,12 @@
 use super::*;
 use crate::engine::Action;
 use crate::london_mulligan_v1;
+use crate::priority_action_windows_v1::SeatPriorityWindowsV1;
 
 #[cfg(test)]
 mod flat_v7_tests;
+#[cfg(test)]
+mod human_bot_windows_tests;
 #[cfg(test)]
 mod human_bridge_tests;
 #[cfg(test)]
@@ -30,6 +33,8 @@ mod human_planned_line_tests;
 mod human_windows_tests;
 // Binds the Pauper registry (its parity fixture), so the appended-registry
 // builds leave it out.
+#[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
+mod action_windows_tests;
 #[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
 mod flat_v8_tests;
 #[cfg(test)]
@@ -184,12 +189,44 @@ impl FastActorSessionV1 {
         starting_player: PlayerId,
         modes: [PauperMulliganModeV1; 2],
     ) -> Result<Self, RlSessionError> {
+        Self::reset_pauper_london_windows_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            modes,
+            [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    /// `reset_pauper_london_v1` with each seat's priority-window rule
+    /// (`HarnessSurfaceV2::set_action_window_seats_v1`), set before the first
+    /// advance. Both `HarnessV2` is that reset exactly.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_pauper_london_windows_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        modes: [PauperMulliganModeV1; 2],
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, mut state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
             Some(starting_player),
         )?;
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        let mut surface = PolicySurfaceV5::new_for_session();
+        surface
+            .set_action_window_seats_v1(windows)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = FastActorSessionV1 {
             deck_ids,
@@ -198,7 +235,7 @@ impl FastActorSessionV1 {
             max_physical_decisions,
             max_policy_steps,
             state,
-            surface: PolicySurfaceV5::new_for_session(),
+            surface,
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,
@@ -369,6 +406,37 @@ fn london_public_v1(
     })
 }
 
+/// The non-deal part of a human-play London session's start (both lockstep
+/// sessions take the same one).
+#[derive(Clone, Copy)]
+pub(crate) struct LondonHumanStartV1 {
+    pub(crate) episode_id: u64,
+    pub(crate) max_physical_decisions: u64,
+    pub(crate) max_policy_steps: u64,
+    pub(crate) modes: [PauperMulliganModeV1; 2],
+    /// The person's seat: every engine priority window.
+    pub(crate) engine_window_seats: [bool; 2],
+    /// Each seat's training priority-window rule (a bot seat's, as trained).
+    pub(crate) action_windows: [SeatPriorityWindowsV1; 2],
+    /// Use ordinary trainer presentation for these seats at supported choices.
+    pub(crate) trainer_choice_seats: [bool; 2],
+}
+
+impl LondonHumanStartV1 {
+    /// A fresh session surface with both window settings, engine windows
+    /// first, then the rules (a seat with both is refused).
+    fn surface(&self) -> Result<PolicySurfaceV5, RlSessionError> {
+        let mut surface = PolicySurfaceV5::new_for_session();
+        surface
+            .set_engine_window_seats_v1(self.engine_window_seats)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        surface
+            .set_action_window_seats_v1(self.action_windows)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        Ok(surface)
+    }
+}
+
 impl RlEpisodeSessionV1 {
     /// The human-play London opening on the Spellbench bridge's raw session:
     /// the same deal as `reset_with_decks_and_limits` (legacy seed, seat P0
@@ -409,23 +477,82 @@ impl RlEpisodeSessionV1 {
         modes: [PauperMulliganModeV1; 2],
         engine_window_seats: [bool; 2],
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, mut state) = build_session_deck_pair_state(
+        Self::reset_pauper_london_human_seat_windows_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            modes,
+            engine_window_seats,
+            [SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    /// `reset_pauper_london_human_windows_v1` with each seat's training
+    /// priority-window rule as well
+    /// (`HarnessSurfaceV2::set_action_window_seats_v1`): a bot seat plays on
+    /// the rule it trained with (`action-windows-v1`), the person's seat on
+    /// engine windows. A seat cannot have both (refused). Both `HarnessV2`
+    /// is `reset_pauper_london_human_windows_v1` exactly. The lockstep copy
+    /// takes the same arguments.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_pauper_london_human_seat_windows_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        modes: [PauperMulliganModeV1; 2],
+        engine_window_seats: [bool; 2],
+        action_windows: [SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_london_human_start_v1(
+            LondonHumanStartV1 {
+                episode_id,
+                max_physical_decisions,
+                max_policy_steps,
+                modes,
+                engine_window_seats,
+                action_windows,
+                trainer_choice_seats: [false; 2],
+            },
+            env_seed,
+            deck_ids,
+        )
+    }
+
+    pub(crate) fn reset_london_human_start_v1(
+        start: LondonHumanStartV1,
+        env_seed: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(
             &deck_ids,
             ResetRandomization::Legacy { env_seed },
             None,
         )?;
+        Self::london_human_from_state_v1(start, deck_ids, deck_hashes, state)
+    }
+
+    /// The human-play London session on a dealt state (before London is
+    /// enabled): the body of `reset_pauper_london_human_seat_windows_v1`.
+    pub(crate) fn london_human_from_state_v1(
+        start: LondonHumanStartV1,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        mut state: crate::state::GameState,
+    ) -> Result<Self, RlSessionError> {
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        let mut surface = PolicySurfaceV5::new_for_session();
-        surface
-            .set_engine_window_seats_v1(engine_window_seats)
-            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = start.trainer_choice_seats;
+        let surface = start.surface()?;
         let mut session = RlEpisodeSessionV1 {
             deck_ids,
             deck_hashes,
-            episode_id,
-            max_physical_decisions,
-            max_policy_steps,
+            episode_id: start.episode_id,
+            max_physical_decisions: start.max_physical_decisions,
+            max_policy_steps: start.max_policy_steps,
             state,
             surface,
             environment_revision: 0,
@@ -435,7 +562,7 @@ impl RlEpisodeSessionV1 {
             terminal: None,
             scan_menu: ScanMenuV1::LegalAnswersOnly,
             pauper_london_v1: Some(Box::new(PauperLondonSessionV1 {
-                modes,
+                modes: start.modes,
                 exposed: [0; 2],
                 record: None,
             })),
@@ -535,23 +662,76 @@ impl FastActorSessionV1 {
         modes: [PauperMulliganModeV1; 2],
         engine_window_seats: [bool; 2],
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, mut state) = build_session_deck_pair_state(
+        Self::reset_pauper_london_human_seat_windows_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            modes,
+            engine_window_seats,
+            [SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    /// The lockstep twin of
+    /// `RlEpisodeSessionV1::reset_pauper_london_human_seat_windows_v1`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_pauper_london_human_seat_windows_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        modes: [PauperMulliganModeV1; 2],
+        engine_window_seats: [bool; 2],
+        action_windows: [SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_london_human_start_v1(
+            LondonHumanStartV1 {
+                episode_id,
+                max_physical_decisions,
+                max_policy_steps,
+                modes,
+                engine_window_seats,
+                action_windows,
+                trainer_choice_seats: [false; 2],
+            },
+            env_seed,
+            deck_ids,
+        )
+    }
+
+    pub(crate) fn reset_london_human_start_v1(
+        start: LondonHumanStartV1,
+        env_seed: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(
             &deck_ids,
             ResetRandomization::Legacy { env_seed },
             None,
         )?;
+        Self::london_human_from_state_v1(start, deck_ids, deck_hashes, state)
+    }
+
+    /// The lockstep twin of `RlEpisodeSessionV1::london_human_from_state_v1`.
+    pub(crate) fn london_human_from_state_v1(
+        start: LondonHumanStartV1,
+        deck_ids: SessionDeckIdsV1,
+        deck_hashes: SessionDeckHashesV1,
+        mut state: crate::state::GameState,
+    ) -> Result<Self, RlSessionError> {
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        let mut surface = PolicySurfaceV5::new_for_session();
-        surface
-            .set_engine_window_seats_v1(engine_window_seats)
-            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = start.trainer_choice_seats;
+        let surface = start.surface()?;
         let mut session = FastActorSessionV1 {
             deck_ids,
             deck_hashes,
-            episode_id,
-            max_physical_decisions,
-            max_policy_steps,
+            episode_id: start.episode_id,
+            max_physical_decisions: start.max_physical_decisions,
+            max_policy_steps: start.max_policy_steps,
             state,
             surface,
             environment_revision: 0,
@@ -565,7 +745,7 @@ impl FastActorSessionV1 {
             flat_action_cache_spare: None,
             flat_action_cache_spare_v2: None,
             pauper_london_v1: Some(Box::new(PauperLondonSessionV1 {
-                modes,
+                modes: start.modes,
                 exposed: [0; 2],
                 record: None,
             })),

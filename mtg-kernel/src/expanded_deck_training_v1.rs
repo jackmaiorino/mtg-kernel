@@ -36,10 +36,11 @@ use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCOD
 use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
-    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TrainTensorsV1,
 };
 use crate::native_policy_value_net_v1::{
-    NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+    NativeNamedParameterV1, NativeNamedTensorRefV1, NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1,
 };
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecorderV1,
@@ -75,6 +76,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 const TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v1";
 const POPULATION_TRAJECTORY_SCHEMA: &str = "mtg-kernel-expanded-deck-trajectory/v2";
@@ -100,7 +102,9 @@ pub(crate) use bootstrapped_advantage_v1::{
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 pub(crate) use ordered_update_preparation::{
-    validate_max_prepared_tensor_mebibytes_v1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    preparation_groups_bound_v1, trajectory_batch_bytes_v1,
+    validate_max_prepared_tensor_mebibytes_v1, validate_max_trajectory_batch_mebibytes_v1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 
 fn default_max_prepared_tensor_mebibytes() -> usize {
@@ -110,6 +114,14 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
 }
+
+fn default_max_trajectory_batch_mebibytes() -> usize {
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
+
+fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
 pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
@@ -117,12 +129,15 @@ mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
+pub(crate) mod london_keep_offset_v1;
+pub(crate) mod priority_pass_offset_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
+use checkpoint_container_v1::{BorrowedParameterBitsV1, ParameterBitsRefV1};
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
@@ -284,6 +299,23 @@ pub enum ExpandedLossSelectionV1 {
         gamma: f32,
         lambda: f32,
         entropy_coefficient: f32,
+        /// How the London pregame rows' advantage is formed
+        /// ([`PregameAdvantageV1`]); absent is the default GAE, so every
+        /// existing config, manifest and receipt keeps its bytes.
+        #[serde(default, skip_serializing_if = "PregameAdvantageV1::is_gae")]
+        pregame_advantage: PregameAdvantageV1,
+        /// Scale `s` (`0 < s < 1`) on the pregame ANNOUNCEMENT rows' part of
+        /// the optimizer step, applied after Adam's normalisation
+        /// (`native_policy_train_step_v1::pregame_announcement_step_v1`): the
+        /// backward keeps their policy term in a second gradient buffer `a`
+        /// beside the rest `r`, and Adam takes `m = EMA(r + s a)`,
+        /// `v = EMA((r + a)^2)`. Nothing before the optimizer changes. Absent
+        /// (the default, never written) leaves every byte of every existing
+        /// config, manifest and receipt unchanged. Valid only with
+        /// `pregame_advantage: terminal_v1`, on the plain CPU GAE update with
+        /// the sequential backward.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pregame_announcement_step_scale: Option<f32>,
     },
     GaeUniformKlRecoveryV1 {
         gamma: f32,
@@ -294,7 +326,65 @@ pub enum ExpandedLossSelectionV1 {
     },
 }
 
+/// How an update forms the advantage and value target of the London pregame
+/// rows (keep or mulligan announcements and put-back decisions: the learner's
+/// physical decisions whose first tensor has state column 89 set).
+///
+/// `Gae` (the default, never written) is the update's ordinary bootstrapped
+/// GAE for every row. `TerminalV1` keeps that for every in-game row, bit for
+/// bit, and gives each pregame row the advantage `R - V` and the value target
+/// `R`, where `R` is the game's terminal win/loss result for the learner seat
+/// and `V` the row's own value estimate: no bootstrap through the later value
+/// estimates. Nothing in it decays; it is the terminal result alone.
+/// `ExpandedLossSelectionV1::GaeAdvantageValueV1` carries it, so the choice is
+/// part of every command, run manifest and run identity that records the loss
+/// selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PregameAdvantageV1 {
+    #[default]
+    Gae,
+    TerminalV1,
+}
+
+impl PregameAdvantageV1 {
+    pub(crate) fn is_gae(&self) -> bool {
+        matches!(self, Self::Gae)
+    }
+
+    /// The receipt string of a non-default mode.
+    pub(crate) fn name_v1(&self) -> &'static str {
+        match self {
+            Self::Gae => "gae",
+            Self::TerminalV1 => "terminal_v1",
+        }
+    }
+}
+
 impl ExpandedLossSelectionV1 {
+    /// The pregame advantage mode this selection names (`Gae` for every loss
+    /// but the plain GAE one).
+    pub(crate) fn pregame_advantage_v1(&self) -> PregameAdvantageV1 {
+        match self {
+            Self::GaeAdvantageValueV1 {
+                pregame_advantage, ..
+            } => *pregame_advantage,
+            _ => PregameAdvantageV1::Gae,
+        }
+    }
+
+    /// The pregame announcement step scale this selection names (`None` for
+    /// every loss but the plain GAE one, and when absent).
+    pub(crate) fn pregame_announcement_step_scale_v1(&self) -> Option<f32> {
+        match self {
+            Self::GaeAdvantageValueV1 {
+                pregame_announcement_step_scale,
+                ..
+            } => *pregame_announcement_step_scale,
+            _ => None,
+        }
+    }
+
     pub(crate) fn is_terminal_reinforce_value_v3(&self) -> bool {
         matches!(self, Self::TerminalReinforceValueV3)
     }
@@ -319,15 +409,35 @@ impl ExpandedLossSelectionV1 {
                 gamma,
                 lambda,
                 entropy_coefficient,
+                pregame_advantage,
+                pregame_announcement_step_scale,
             } => {
                 ensure(
                     gamma.is_finite() && (0.0..=1.0).contains(gamma),
                     "gae gamma must be finite in 0.0..=1.0",
                 )?;
                 ensure(
+                    pregame_advantage.is_gae() || gamma.to_bits() == 1.0_f32.to_bits(),
+                    "the terminal pregame advantage requires gamma exactly 1.0",
+                )?;
+                ensure(
                     lambda.is_finite() && (0.0..=1.0).contains(lambda),
                     "gae lambda must be finite in 0.0..=1.0",
                 )?;
+                if let Some(scale) = pregame_announcement_step_scale {
+                    ensure(
+                        *pregame_advantage == PregameAdvantageV1::TerminalV1,
+                        "pregame_announcement_step_scale requires pregame_advantage terminal_v1",
+                    )?;
+                    // 1.0 is refused: the two-buffer sum is another
+                    // arithmetic than the single buffer, and the key absent is
+                    // the unscaled update. A value that rounds to f32 zero is
+                    // refused by the lower bound.
+                    ensure(
+                        scale.is_finite() && *scale > 0.0 && *scale < 1.0,
+                        "pregame_announcement_step_scale must be finite and in (0, 1) exclusive",
+                    )?;
+                }
                 ensure(
                     *entropy_coefficient == 0.0,
                     "gae entropy_coefficient is schema-reserved for a future change \
@@ -668,7 +778,8 @@ pub(crate) fn load_ordinary_bo3_parent_v1(
     model
         .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
         .map_err(err)?;
-    let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    let record = read_checkpoint_record_v1(pin)?;
+    let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
     ensure(
         saved.training_math.is_platform_libm(),
         "BO3 transition does not support portable training math",
@@ -793,6 +904,10 @@ impl OpponentCacheV1 {
 /// Revalidate every external byte pin once at a collection boundary before
 /// reusing a process-cached model. Schema-specific semantic validation remains
 /// the cache miss loader's responsibility; changed bytes cannot hit that cache.
+///
+/// The import and checkpoint are read as shared bytes: with resident reads on
+/// (`verified_bytes_cache_v1`) each read checks the file's metadata and
+/// borrows the held verified bytes, without copying a 20 MB checkpoint.
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
@@ -810,18 +925,19 @@ fn verify_collection_opponent_sources_v1(
         if source.s_learner.is_some() {
             continue;
         }
-        let bytes = read_pinned_bytes(&source.play_import)?;
+        let bytes = read_pinned_shared_v1(&source.play_import)?;
         let checkpoint_bytes = source
             .checkpoint
             .as_ref()
-            .map(read_pinned_bytes)
+            .map(read_pinned_shared_v1)
             .transpose()?;
+        let checkpoint_bytes = checkpoint_bytes.as_deref().map(Vec::as_slice);
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
         // A converted source whose base trains verifies the conversion's
         // pins and the base's own, then is served like its base.
         let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes.as_deref())?
+            no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes)?
         } else {
             let mut pins_ok = verify_import_pins_v1(&bytes)?;
             // A checkpoint that names a further file (a phase-1
@@ -830,7 +946,7 @@ fn verify_collection_opponent_sources_v1(
             // The process cache holds only sources whose checkpoint the same
             // probe found clean, and this pin was just verified, so a held
             // source needs no probe.
-            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes.as_deref()) {
+            if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes) {
                 pins_ok = ordered_update_preparation::holds_source_v1(source)
                     || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
             }
@@ -1047,6 +1163,33 @@ pub struct ExpandedEpisodeV1 {
     /// Per-physical-seat mulligan modes, present exactly when `opening` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
+    /// Some subtracts a logit offset (each number at most 1e6 and an f64
+    /// holding exactly an f32 value) from the mulligan row of every London
+    /// announcement, in collection, record validation and the update
+    /// (`london_keep_offset_v1`): one positive number for every announcement,
+    /// or seven numbers, one per number of mulligans the acting seat has
+    /// already taken (0 to 6). Those rows are drawn from the unclamped softmax
+    /// sampler. Only with `opening`. None keeps every prior serialized byte
+    /// and every behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub london_keep_offset: Option<london_keep_offset_v1::LondonKeepOffsetV1>,
+    /// Some gives each physical seat a priority-window rule
+    /// (`priority_action_windows_v1`: `"harness-v2"`, `"action-windows-v1"`,
+    /// `"action-windows-end-step-v1"`), set on the surface before the first
+    /// decision. Refused with a reset start and with a search opponent. None
+    /// keeps every prior serialized byte and today's surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_windows: Option<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2]>,
+    /// Some adds a logit offset (finite, at least 0, at most 1e6 and an f64
+    /// holding exactly an f32 value) to the Pass row of every new priority
+    /// window, the windows an action-window seat is handed where HarnessV2
+    /// would have passed, in collection, record validation and the update
+    /// (`priority_pass_offset_v1`). Those rows are drawn from the unclamped
+    /// softmax sampler and marked in their records. Only with
+    /// `priority_windows` naming an action-window seat. None keeps every
+    /// prior serialized byte and every behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_pass_offset: Option<f64>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1110,14 +1253,62 @@ impl ExpandedEpisodeV1 {
     /// The opt-in opening's own refusals (design section 3). The feature
     /// identity refusal needs the loaded policies and is checked by the
     /// collector (`require_opening_feature_identity_v1`).
+    /// Each seat's priority-window rule; both `HarnessV2` when the field is
+    /// absent. Refused with a reset start (its recorded prefix was played on
+    /// today's surface) and with a search opponent (its simulations build
+    /// their own sessions).
+    pub(crate) fn priority_windows_v1(
+        &self,
+    ) -> Result<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2], String> {
+        let Some(windows) = self.priority_windows else {
+            return Ok([crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2]);
+        };
+        ensure(
+            self.reset.is_none(),
+            "priority_windows is refused with a reset start",
+        )?;
+        ensure(
+            self.opponent_search.is_none(),
+            "priority_windows is refused with a search opponent",
+        )?;
+        Ok(windows)
+    }
+
+    /// The episode's priority pass offset as the f32 the trainer applies, or
+    /// None. Refused without `priority_windows`, and when no seat is on an
+    /// action-window rule (no window would ever be adjusted); the windows'
+    /// own refusals (reset start, search opponent) apply too.
+    pub(crate) fn priority_pass_offset_v1(&self) -> Result<Option<f32>, String> {
+        let Some(offset) = self.priority_pass_offset else {
+            return Ok(None);
+        };
+        ensure(
+            self.priority_windows.is_some(),
+            "priority_pass_offset requires priority_windows",
+        )?;
+        ensure(
+            self.priority_windows_v1()?
+                .iter()
+                .any(|rule| !rule.is_harness_v2()),
+            "priority_pass_offset requires a seat on an action-window rule",
+        )?;
+        priority_pass_offset_v1::pass_offset_f32_v1(offset).map(Some)
+    }
+
     pub(crate) fn validate_opening_v1(&self) -> Result<(), String> {
         ensure(
             self.opening.is_some() == self.mulligan_modes.is_some(),
             "mulligan modes are present exactly when an opening is",
         )?;
         let Some(modes) = self.mulligan_modes else {
-            return Ok(());
+            return ensure(
+                self.london_keep_offset.is_none(),
+                "london_keep_offset requires a London opening",
+            );
         };
+        if let Some(offset) = self.london_keep_offset {
+            offset.resolve_v1()?;
+        }
         ensure(
             self.reset.is_none(),
             "an opening is refused with a reset start (recorded prefixes predate London)",
@@ -1173,11 +1364,16 @@ impl ExpandedEpisodeV1 {
             self.opening.is_none(),
             "an opening is admitted only by the expanded collector",
         )?;
+        ensure(
+            self.priority_pass_offset.is_none(),
+            "priority_pass_offset is admitted only by the expanded collector",
+        )?;
         self.configurations_checked_v1()
     }
 
     fn configurations_checked_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         self.validate_opening_v1()?;
+        self.priority_pass_offset_v1()?;
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
@@ -1358,6 +1554,11 @@ struct DecisionRecordV1 {
     /// Wide menus require an explicit runtime receipt, not an ancestry edit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sampler_identity: Option<String>,
+    /// The Pass row index of a new priority window adjusted by the episode's
+    /// `priority_pass_offset` (`priority_pass_offset_v1`); absent on every
+    /// other decision, preserving every prior byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pass_offset_action: Option<u32>,
 }
 
 fn decision_sampler_identity_v1(width: usize) -> Option<&'static str> {
@@ -1489,12 +1690,38 @@ struct SearchPlayedRowV1 {
     policy_selected: u32,
 }
 
+/// One checkpoint tensor's name, shape and values' `f32` bit patterns, owned:
+/// what a checkpoint decodes to. A published checkpoint borrows its tensors
+/// from the snapshot instead (`checkpoint_container_v1::ParameterBitsRefV1`),
+/// with the same serialization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ParameterBitsV1 {
+pub(crate) struct ParameterBitsV1 {
     name: String,
     shape: Vec<usize>,
     values: Vec<u32>,
+}
+
+/// Views a `u32` bit slice as the `f32`s whose bits it holds, in place:
+/// element for element what `floats` copies out.
+pub(crate) fn slice_u32_as_f32_v1(values: &[u32]) -> &[f32] {
+    const _: () = assert!(
+        std::mem::size_of::<u32>() == std::mem::size_of::<f32>()
+            && std::mem::align_of::<u32>() == std::mem::align_of::<f32>()
+    );
+    // SAFETY: `u32` and `f32` have the same size and alignment (asserted
+    // above) and every bit pattern is a valid `f32`, so the values' memory
+    // reads as as many `f32`s, each `f32::from_bits` of its `u32`. The borrow
+    // is shared and ends with `values`'s.
+    unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<f32>(), values.len()) }
+}
+
+/// A decoded checkpoint tensor whose `u32` bit patterns and `f32` values can
+/// be read in place, whether owned ([`ParameterBitsV1`]) or borrowed from a
+/// container section ([`BorrowedParameterBitsV1`]).
+pub(crate) trait CheckpointTensorV1: checkpoint_container_v1::TensorBitsV1 {
+    fn values_u32_v1(&self) -> &[u32];
+    fn values_f32_v1(&self) -> &[f32];
 }
 
 impl ParameterBitsV1 {
@@ -1505,10 +1732,81 @@ impl ParameterBitsV1 {
             values: bits(&p.values),
         }
     }
+
+    /// The values as the `f32`s whose bits they hold, read in place: element
+    /// for element what `floats` copies out.
+    fn values_f32_v1(&self) -> &[f32] {
+        slice_u32_as_f32_v1(&self.values)
+    }
 }
 
-fn restore_parameters(
-    saved: &[ParameterBitsV1],
+impl CheckpointTensorV1 for ParameterBitsV1 {
+    fn values_u32_v1(&self) -> &[u32] {
+        &self.values
+    }
+
+    fn values_f32_v1(&self) -> &[f32] {
+        ParameterBitsV1::values_f32_v1(self)
+    }
+}
+
+impl CheckpointTensorV1 for BorrowedParameterBitsV1<'_> {
+    fn values_u32_v1(&self) -> &[u32] {
+        &self.values
+    }
+
+    fn values_f32_v1(&self) -> &[f32] {
+        slice_u32_as_f32_v1(&self.values)
+    }
+}
+
+/// The checkpoint's three sections as a train state's tensors, borrowed:
+/// each section must hold `model`'s tensors, in order, under their names and
+/// shapes, refused as [`restore_parameters`] refuses them and in its order,
+/// and each tensor reads its values from the checkpoint in place under the
+/// model's name. Nothing else is checked here.
+fn checkpoint_tensors_v1<'a, T: CheckpointTensorV1>(
+    saved: &'a ExpandedCheckpointV1<T>,
+    model: &NativePolicyValueNetV1,
+) -> Result<TrainTensorsV1<'a>, String> {
+    let mut template = Vec::new();
+    model.visit_parameters_v1(|name, shape, values| {
+        template.push((name, shape.to_vec(), values.len()));
+    });
+    let section = |tensors: &'a [T]| {
+        ensure(
+            tensors.len() == template.len(),
+            "checkpoint parameter count differs",
+        )?;
+        tensors
+            .iter()
+            .zip(&template)
+            .map(|(s, &(name, ref shape, length))| {
+                ensure(
+                    s.name_v1() == name
+                        && s.shape_v1() == shape.as_slice()
+                        && s.values_u32_v1().len() == length,
+                    "checkpoint parameter layout differs",
+                )?;
+                Ok(NativeNamedTensorRefV1 {
+                    name,
+                    shape: shape.clone(),
+                    values: s.values_f32_v1(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()
+    };
+    Ok(TrainTensorsV1 {
+        adam_step: saved.adam_step,
+        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+        parameters: section(&saved.parameters)?,
+        first_moments: section(&saved.first_moments)?,
+        second_moments: section(&saved.second_moments)?,
+    })
+}
+
+fn restore_parameters<T: CheckpointTensorV1>(
+    saved: &[T],
     template: &[NativeNamedParameterV1],
 ) -> Result<Vec<NativeNamedParameterV1>, String> {
     ensure(
@@ -1520,21 +1818,27 @@ fn restore_parameters(
         .zip(template)
         .map(|(s, t)| {
             ensure(
-                s.name == t.name && s.shape == t.shape && s.values.len() == t.values.len(),
+                s.name_v1() == t.name
+                    && s.shape_v1() == t.shape.as_slice()
+                    && s.values_u32_v1().len() == t.values.len(),
                 "checkpoint parameter layout differs",
             )?;
             Ok(NativeNamedParameterV1 {
                 name: t.name,
                 shape: t.shape.clone(),
-                values: floats(&s.values),
+                values: floats(s.values_u32_v1()),
             })
         })
         .collect()
 }
 
+/// A checkpoint record. `T` is how it holds its tensors
+/// (`checkpoint_container_v1::TensorBitsV1`): owned bits for every checkpoint
+/// read back, and borrowed snapshot tensors for the one an update publishes.
+/// Both serialize, and encode, to the same bytes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ExpandedCheckpointV1 {
+pub(crate) struct ExpandedCheckpointV1<T = ParameterBitsV1> {
     schema: String,
     feature_contract_digest: String,
     feature_encoding_digest: String,
@@ -1554,9 +1858,9 @@ pub(crate) struct ExpandedCheckpointV1 {
     ex1: Option<Value>,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
-    parameters: Vec<ParameterBitsV1>,
-    first_moments: Vec<ParameterBitsV1>,
-    second_moments: Vec<ParameterBitsV1>,
+    parameters: Vec<T>,
+    first_moments: Vec<T>,
+    second_moments: Vec<T>,
     trajectories: Vec<PinnedFileV1>,
     loss_identity: String,
     /// `Some` exactly when `loss_identity == "gae_advantage_value/v1"`,
@@ -1729,7 +2033,8 @@ fn initialize_from_source_bytes_v1(
         )?;
         let mut policy = policy.into_flat_v8_v1()?;
         let model = policy.training_model_v3();
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        let record = read_checkpoint_record_v1(pin)?;
+        let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
                 &saved.trajectories,
@@ -1791,7 +2096,8 @@ fn initialize_from_source_bytes_v1(
         )?;
         let mut policy = policy.into_flat_v7_transfer_v1()?;
         let model = policy.training_model_v3();
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        let record = read_checkpoint_record_v1(pin)?;
+        let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
                 &saved.trajectories,
@@ -1837,8 +2143,13 @@ fn initialize_from_source_bytes_v1(
     // clone retains every bit and derived transpose without rebuilding a
     // deterministic template and converting/installing all parameters again.
     let model = policy.training_model_v3();
-    let (state, saved) = if let Some(pin) = &source.checkpoint {
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    let checkpoint_record = source
+        .checkpoint
+        .as_ref()
+        .map(read_checkpoint_record_v1)
+        .transpose()?;
+    let (state, saved) = if let Some(record) = checkpoint_record.as_deref() {
+        let saved = parse_ordinary_checkpoint_borrowed_v1(record, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
                 &saved.trajectories,
@@ -1948,6 +2259,26 @@ fn load_ordinary_policy_v1(
     }
     let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
     FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)
+}
+
+fn parse_ordinary_checkpoint_borrowed_v1<'a>(
+    record: &'a [u8],
+    origin: &PlayPolicyOriginV1,
+) -> Result<ExpandedCheckpointV1<BorrowedParameterBitsV1<'a>>, String> {
+    let saved = checkpoint_container_v1::parse_record_borrowed_v1(record)?;
+    if !origin.is_fresh_v1() {
+        ensure(
+            saved.registry_transfer.is_none() && !saved.source_import.is_fresh_v1(),
+            "ordinary checkpoint does not admit registry-transfer metadata",
+        )?;
+    }
+    ensure(
+        saved.registry_transfer.is_none()
+            && saved.schema == ordinary_checkpoint_schema_v1(origin)
+            && saved.source_import.is_fresh_v1() == origin.is_fresh_v1(),
+        "ordinary checkpoint schema/origin differs",
+    )?;
+    Ok(saved)
 }
 
 fn read_ordinary_checkpoint_v1(
@@ -2075,8 +2406,8 @@ pub fn inspect_fresh_initialization_v1(
     )
 }
 
-fn restore_checkpoint_state_v1(
-    saved: &ExpandedCheckpointV1,
+fn restore_checkpoint_state_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
     policy: &mut FrozenPlayPolicyV1,
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
@@ -2088,7 +2419,7 @@ fn restore_checkpoint_state_v1(
     restore_checkpoint_fields_v1(saved, policy, model)
 }
 
-fn validate_exploration_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+fn validate_exploration_checkpoint_v1<T>(saved: &ExpandedCheckpointV1<T>) -> Result<(), String> {
     let is_recovery = saved.loss_identity == "gae_uniform_kl_recovery/v1";
     ensure(
         is_recovery == saved.exploration.is_some(),
@@ -2121,11 +2452,38 @@ fn validate_exploration_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<()
     Ok(())
 }
 
-fn restore_checkpoint_fields_v1(
-    saved: &ExpandedCheckpointV1,
+fn restore_checkpoint_fields_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
     policy: &mut FrozenPlayPolicyV1,
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
+    check_checkpoint_fields_v1(saved, policy)?;
+    // The checkpoint's tensors, borrowed in place of a restored snapshot:
+    // the snapshot's refusals, then its validation and digest of the same
+    // stream, before the state is built from them (milestone 3 of #596).
+    let tensors = checkpoint_tensors_v1(saved, &model)?;
+    let state_sha256 = tensors.state_sha256_v1().map_err(err)?;
+    ensure(
+        hex(&state_sha256) == saved.state_sha256,
+        "checkpoint state hash differs",
+    )?;
+    // Validate the model's gauge anchor and full optimizer state before the
+    // live policy or copied sideboard embeddings are replaced.
+    let mut state = NativePolicyValueTrainStateV1::from_tensors_v1(model, &tensors).map_err(err)?;
+    policy.replace_training_parameters_v3(&state.model_v1().parameter_snapshot_v1())?;
+    // Inference and probes run a checkpoint under the math it trained with.
+    state.set_training_math_v1(saved.training_math);
+    state.record_verified_state_sha256_v1(state_sha256);
+    policy.set_training_math_v1(saved.training_math);
+    Ok(state)
+}
+
+/// What the restore checks before it reads the checkpoint's tensors: its
+/// input contract, provenance, loss and the scalars that loss requires.
+fn check_checkpoint_fields_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
+    policy: &FrozenPlayPolicyV1,
+) -> Result<(), String> {
     // An ordinary source refuses a converted checkpoint, and a converted
     // source an unconverted one or another conversion's.
     no_state_digest_v1::resolve_contract_v1(
@@ -2165,28 +2523,7 @@ fn restore_checkpoint_fields_v1(
                 && saved.gae_lambda_bits.is_some()
                 && saved.entropy_coefficient_bits.is_some()),
         "checkpoint gae scalar presence does not match its loss_identity",
-    )?;
-    let template = model.parameter_snapshot_v1();
-    let snapshot = NativePolicyValueTrainSnapshotV1 {
-        adam_step: saved.adam_step,
-        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
-        parameters: restore_parameters(&saved.parameters, &template)?,
-        first_moments: restore_parameters(&saved.first_moments, &template)?,
-        second_moments: restore_parameters(&saved.second_moments, &template)?,
-    };
-    ensure(
-        hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
-        "checkpoint state hash differs",
-    )?;
-    // Validate the model's gauge anchor and full optimizer state before the
-    // live policy or copied sideboard embeddings are replaced.
-    let mut state =
-        NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
-    policy.replace_training_parameters_v3(&snapshot.parameters)?;
-    // Inference and probes run a checkpoint under the math it trained with.
-    state.set_training_math_v1(saved.training_math);
-    policy.set_training_math_v1(saved.training_math);
-    Ok(state)
+    )
 }
 
 /// Binds a training command's math to its learner. A checkpoint must have
@@ -2310,10 +2647,11 @@ fn episode_session_v1(
 ) -> Result<FastActorSessionV1, String> {
     let (steps, physical) = episode.reset_offsets_v1();
     let game_seed = episode.reset.as_ref().map_or(episode.seed, |r| r.game_seed);
+    let windows = episode.priority_windows_v1()?;
     let mut session = if let Some(modes) = episode.mulligan_modes {
         // `opening` (London v1) with its refusals; never a reset start.
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_pauper_london_v1(
+        FastActorSessionV1::reset_pauper_london_windows_v1(
             1,
             game_seed,
             episode.max_physical_decisions,
@@ -2322,13 +2660,14 @@ fn episode_session_v1(
             configs.each_ref().map(|d| d.mainboard().to_vec()),
             PlayerId(episode.starting_player),
             modes,
+            windows,
         )
         .map_err(err)?
     } else {
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
         1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player), windows).map_err(err)?
     };
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
@@ -2460,6 +2799,20 @@ fn collect_episode_hooked_v1(
         })
     });
     let config_hashes = configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1()));
+    // The priority pass offset (`priority_pass_offset_v1`): V4-generation
+    // policies only (the V3 path has no offset sampler), and never under the
+    // EX1 hook, whose W5 mode can replace a draw.
+    let priority_pass_offset = episode.priority_pass_offset_v1()?;
+    if priority_pass_offset.is_some() {
+        ensure(
+            hook.is_none(),
+            "priority_pass_offset is refused with the EX1 collection hook",
+        )?;
+        ensure(
+            policy.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
+            "priority_pass_offset requires a V4-generation policy",
+        )?;
+    }
     let mut session = episode_session_v1(episode, &configs)?;
     restore_reset_cut_v1(&mut session, episode)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
@@ -2529,27 +2882,39 @@ fn collect_episode_hooked_v1(
                     Some(hook) if hook.hooks_v1(&d) => Some(hook.before_select_v1(&session, d)?),
                     _ => None,
                 };
-                let (selected, scores, tensor_bits) =
-                    if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
-                        let (selected, scores, tensor) =
-                            acting.select_with_training_tensor_v4(&session)?;
-                        // FlatV8 rows also record their pairing relation.
-                        let bits = if acting.feature_identity_v1().feature_contract_digest
-                            == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
-                        {
-                            TensorBitsV1::from_tensor_v8(
-                                &tensor.common,
-                                acting.last_scored_pairing_v8()?,
-                            )
-                        } else {
-                            TensorBitsV1::from_tensor(&tensor.common)
-                        };
-                        (selected, scores, bits)
+                // A new priority window's Pass row, marked in the record.
+                let pass_offset_action = match priority_pass_offset {
+                    Some(_) => session.priority_pass_window_v1()?,
+                    None => None,
+                };
+                let (selected, scores, tensor_bits) = if acting.feature_identity_v1().generation
+                    == FreshLineageGenerationV1::V4
+                {
+                    let (selected, scores, tensor) = acting.select_with_training_tensor_offset_v4(
+                        &session,
+                        episode
+                            .london_keep_offset
+                            .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
+                            .transpose()?,
+                        pass_offset_action.zip(priority_pass_offset),
+                    )?;
+                    // FlatV8 rows also record their pairing relation.
+                    let bits = if acting.feature_identity_v1().feature_contract_digest
+                        == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
+                    {
+                        TensorBitsV1::from_tensor_v8(
+                            &tensor.common,
+                            acting.last_scored_pairing_v8()?,
+                        )
                     } else {
-                        let (selected, scores, tensor) =
-                            acting.select_with_training_tensor_v3(&session)?;
-                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        TensorBitsV1::from_tensor(&tensor.common)
                     };
+                    (selected, scores, bits)
+                } else {
+                    let (selected, scores, tensor) =
+                        acting.select_with_training_tensor_v3(&session)?;
+                    (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                };
                 let logits = bits(&scores.logits);
                 let played = match (hook.as_deref_mut(), pending) {
                     (Some(hook), Some(pending)) => {
@@ -2577,12 +2942,72 @@ fn collect_episode_hooked_v1(
                     sampler_identity: acting_sampler
                         .or_else(|| decision_sampler_identity_v1(scores.logits.len()))
                         .map(str::to_owned),
+                    pass_offset_action,
                 };
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
                 decisions.push(record);
             }
         }
     }
+}
+
+/// The London keep offset shared by every trajectory of an update batch,
+/// compared as seven f32 bit patterns (a scalar is seven equal entries); a
+/// batch mixing values (or offset and no offset) is refused.
+fn batch_london_keep_offset_v1(
+    offsets: impl IntoIterator<Item = Option<london_keep_offset_v1::LondonKeepOffsetV1>>,
+) -> Result<Option<london_keep_offset_v1::OffsetVectorV1>, String> {
+    let mut values = offsets
+        .into_iter()
+        .map(|offset| offset.map(|offset| offset.resolve_v1()).transpose());
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    let first = first?;
+    for value in values {
+        ensure(
+            value?.map(|offset| offset.bits()) == first.map(|offset| offset.bits()),
+            "an update batch mixes London keep offsets",
+        )?;
+    }
+    Ok(first)
+}
+
+/// Refuses `episodes` when any carries a priority pass offset: for a path
+/// that would collect or learn from them without applying it (the S learner,
+/// archive distillation), so it fails before any game is played.
+pub(crate) fn refuse_priority_pass_offset_v1<'a>(
+    episodes: impl IntoIterator<Item = &'a ExpandedEpisodeV1>,
+    path: &str,
+) -> Result<(), String> {
+    ensure(
+        episodes
+            .into_iter()
+            .all(|episode| episode.priority_pass_offset.is_none()),
+        &format!("{path} refuses the priority pass offset"),
+    )
+}
+
+/// The priority pass offset shared by every trajectory of an update batch
+/// (`priority_pass_offset_v1`), compared as f32 bits; a batch mixing values
+/// (or offset and no offset) is refused.
+fn batch_priority_pass_offset_v1<'a>(
+    episodes: impl IntoIterator<Item = &'a ExpandedEpisodeV1>,
+) -> Result<Option<f32>, String> {
+    let mut values = episodes
+        .into_iter()
+        .map(ExpandedEpisodeV1::priority_pass_offset_v1);
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    let first = first?;
+    for value in values {
+        ensure(
+            value?.map(f32::to_bits) == first.map(f32::to_bits),
+            "an update batch mixes priority pass offsets",
+        )?;
+    }
+    Ok(first)
 }
 
 /// One non-natural collection attempt, preserved for audit even though it is
@@ -3027,7 +3452,59 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
         decisions,
         &t.terminal,
         t.learner_sampler.as_deref(),
-    )
+    )?;
+    if t.episode.priority_pass_offset.is_some() {
+        validate_pass_offset_marks_v1(&t.episode, &t.decisions, &t.terminal)?;
+    }
+    Ok(())
+}
+
+/// The priority pass offset's row marks (`priority_pass_offset_v1`): replays
+/// the episode through a fresh session with its recorded actions and requires
+/// every decision's `pass_offset_action` to be exactly the Pass row the
+/// session reports for a new priority window, and absent everywhere else, so
+/// a record can neither claim a row that was not a new window nor omit one
+/// that was. The replay must end, after the last row, at exactly the recorded
+/// terminal (so a replay that stops at a cap or a halt cannot stand for a
+/// recorded natural ending). Only for an
+/// episode carrying the field (an episode without it has no marks, which
+/// record validation checks row by row).
+fn validate_pass_offset_marks_v1(
+    episode: &ExpandedEpisodeV1,
+    decisions: &[DecisionRecordV1],
+    terminal: &RlSessionTerminalV1,
+) -> Result<(), String> {
+    ensure(
+        episode.priority_pass_offset_v1()?.is_some(),
+        "pass offset marks need priority_pass_offset",
+    )?;
+    let mut session = episode_session_v1(episode, &episode.configurations()?)?;
+    restore_reset_cut_v1(&mut session, episode)?;
+    for row in decisions {
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            return Err("pass offset replay reaches a terminal before the last decision".into());
+        };
+        ensure(
+            d.step == row.step && seat(d.acting_player) == row.actor,
+            "pass offset replay decision differs from the record",
+        )?;
+        ensure(
+            session.priority_pass_window_v1()? == row.pass_offset_action,
+            "pass offset mark differs from the replayed new priority window",
+        )?;
+        session
+            .step(d.episode_id, d.step, row.selected)
+            .map_err(err)?;
+    }
+    match session.current_response() {
+        FastActorResponseV1::Terminal(replayed) => ensure(
+            replayed == *terminal,
+            "pass offset replay ends at another terminal than the recorded one",
+        ),
+        FastActorResponseV1::Decision(_) => {
+            Err("pass offset replay continues past the last decision".into())
+        }
+    }
 }
 
 /// An episode with `opening` records its opening exactly once, with the
@@ -3176,6 +3653,10 @@ fn validate_episode_records_with_search_v1(
         terminal.terminal_reward == expected_rewards,
         "terminal rewards contradict winner",
     )?;
+    // The priority pass offset (`priority_pass_offset_v1`): a marked row was
+    // drawn from its offset logits with the unclamped sampler. Whether each
+    // mark names a new window is checked by `validate_pass_offset_marks_v1`.
+    let pass_offset = episode.priority_pass_offset_v1()?;
     let mut physical = physical_offset;
     let mut index = 0usize;
     let mut rng = paired_policy_seeds_v1(episode.seed).map(SplitMix64::seed);
@@ -3202,6 +3683,10 @@ fn validate_episode_records_with_search_v1(
                     && row.substep_index == substep as u32
                     && row.actor == first.actor,
                 "physical decision grouping or step sequence differs",
+            )?;
+            ensure(
+                pass_offset.is_some() || row.pass_offset_action.is_none(),
+                "a decision marks a pass offset row without priority_pass_offset",
             )?;
             let captured = |row: &DecisionRecordV1| {
                 ensure(
@@ -3239,8 +3724,51 @@ fn validate_episode_records_with_search_v1(
             let logits = match draw {
                 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
                 SeatRowDrawV1::None => continue,
-                SeatRowDrawV1::Logits => floats(&row.logits),
-                SeatRowDrawV1::Singleton => vec![0.0],
+                SeatRowDrawV1::Logits => {
+                    let raw = floats(&row.logits);
+                    // The London keep offset (`london_keep_offset_v1`): the
+                    // draw was made from the offset logits; the stored
+                    // logits stay raw.
+                    // An adjusted row was drawn from the unclamped sampler.
+                    let kept = match episode
+                        .london_keep_offset
+                        .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
+                        .transpose()?
+                    {
+                        Some(offset) => {
+                            let tensor = row.tensor.tensor();
+                            match london_keep_offset_v1::offset_logits_v1(
+                                &raw,
+                                &tensor.state,
+                                &tensor.action_features,
+                                &offset,
+                            )? {
+                                Some(adjusted) => {
+                                    use_unclamped = true;
+                                    adjusted
+                                }
+                                None => raw,
+                            }
+                        }
+                        None => raw,
+                    };
+                    // Then the priority pass offset, as collection applies
+                    // them (`priority_pass_offset_v1`).
+                    match (row.pass_offset_action, pass_offset) {
+                        (Some(pass_row), Some(offset)) => {
+                            use_unclamped = true;
+                            priority_pass_offset_v1::pass_offset_logits_v1(&kept, pass_row, offset)?
+                        }
+                        _ => kept,
+                    }
+                }
+                SeatRowDrawV1::Singleton => {
+                    ensure(
+                        row.pass_offset_action.is_none(),
+                        "an unscored singleton row marks a pass offset row",
+                    )?;
+                    vec![0.0]
+                }
             };
             let bits = rng[row.actor as usize].next_u64();
             let selected = if use_unclamped {
@@ -3514,6 +4042,15 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        /// Trajectory batch bound for this prepared update in MiB (record
+        /// bytes, decompressed for sealed files); absent means the historical
+        /// 512 (byte-identical wire for every existing command). See
+        /// `ordered_update_preparation`.
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
         /// G115 line (b) options (head-only optimizer mask); omitted when
         /// absent, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3707,6 +4244,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             Some(teacher),
             None,
@@ -3733,6 +4271,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             Some(teacher),
@@ -3759,6 +4298,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -3787,6 +4327,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -3944,6 +4485,13 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
+                ensure(
+                    episodes
+                        .iter()
+                        .all(|episode| episode.london_keep_offset.is_none()),
+                    "an S learner collection refuses the London keep offset",
+                )?;
+                refuse_priority_pass_offset_v1(&episodes, "an S learner collection")?;
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
                 let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
@@ -4085,6 +4633,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             line_b,
             None,
             None,
@@ -4102,6 +4651,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             line_b,
             training_math,
             record_format,
@@ -4110,6 +4660,13 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
+            // As on the run config: one preparation worker keeps the default.
+            ensure(
+                preparation_workers > 1
+                    || max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
+            )?;
             execute_update_v1(
                 source,
                 trajectories,
@@ -4121,6 +4678,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 line_b,
                 None,
                 None,
@@ -4178,6 +4736,21 @@ struct GaeTargetsV1 {
     value_targets: Vec<f32>,
     advantages: Vec<f32>,
     statistics: AdvantageStatisticsV1,
+    /// Present exactly under `PregameAdvantageV1::TerminalV1`.
+    pregame: Option<PregameAdvantageReceiptV1>,
+}
+
+/// What the terminal pregame advantage changed, for the update receipt (a key
+/// `pregame_advantage`, written only when the mode is on): the mode, how many
+/// learner decisions were pregame rows, and the mean raw (before
+/// normalization) advantage of those rows under the terminal result and under
+/// the default GAE. A mean over no pregame rows is null.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+struct PregameAdvantageReceiptV1 {
+    mode: &'static str,
+    pregame_groups: usize,
+    raw_terminal_mean: Option<f32>,
+    raw_default_mean: Option<f32>,
 }
 
 /// Computes this update's GAE value targets and normalized advantages from
@@ -4228,6 +4801,36 @@ fn compute_gae_targets_of_values_v1(
     gamma: f32,
     lambda: f32,
 ) -> Result<GaeTargetsV1, String> {
+    let advantage_and_target =
+        gae_pairs_of_values_v1(values, terminal_returns, episode_ordinals, gamma, lambda)?;
+    let raw_advantages: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(advantage, _)| *advantage)
+        .collect();
+    let value_targets: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(_, value_target)| *value_target)
+        .collect();
+    let (advantages, statistics) =
+        normalize_advantages_v1(&raw_advantages, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1)?;
+    Ok(GaeTargetsV1 {
+        value_targets,
+        advantages,
+        statistics,
+        pregame: None,
+    })
+}
+
+/// Every group's raw `(advantage, value_target)` under the ordinary GAE, one
+/// episode at a time (the part of [`compute_gae_targets_of_values_v1`] before
+/// the whole-update normalization).
+fn gae_pairs_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<Vec<(f32, f32)>, String> {
     ensure(
         values.len() == episode_ordinals.len() && terminal_returns.len() == values.len(),
         "gae group and episode-ordinal counts differ",
@@ -4258,20 +4861,133 @@ fn compute_gae_targets_of_values_v1(
         advantage_and_target[start..end].copy_from_slice(&episode_results);
         start = end;
     }
-    let raw_advantages: Vec<f32> = advantage_and_target
+    Ok(advantage_and_target)
+}
+
+/// [`compute_gae_targets_v1`] under a pregame advantage mode. `Gae` is that
+/// function. `TerminalV1` ([`terminal_pregame_targets_of_values_v1`]) marks
+/// each group a pregame row from its first substep's tensor: state column 89
+/// (the London pregame stage) set, which holds for announcements and
+/// put-back decisions alike.
+fn compute_gae_targets_with_pregame_v1(
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+    pregame_advantage: PregameAdvantageV1,
+) -> Result<GaeTargetsV1, String> {
+    if pregame_advantage.is_gae() {
+        return compute_gae_targets_v1(groups, episode_ordinals, gamma, lambda);
+    }
+    ensure(
+        groups.len() == episode_ordinals.len(),
+        "gae group and episode-ordinal counts differ",
+    )?;
+    let mut values = Vec::with_capacity(groups.len());
+    let mut pregame = Vec::with_capacity(groups.len());
+    for (index, group) in groups.iter().enumerate() {
+        let first = group
+            .substeps
+            .first()
+            .ok_or_else(|| format!("gae group {index} has no substeps"))?;
+        values.push(f32::from_bits(first.expected_value_bits));
+        let NativePolicyForwardInputV1::Encoded(encoded) = &first.forward else {
+            return Err("the terminal pregame advantage requires encoded decision input".into());
+        };
+        pregame.push(
+            encoded
+                .state
+                .get(london_keep_offset_v1::PREGAME_STATE_COLUMN_V1)
+                .copied()
+                == Some(1.0),
+        );
+    }
+    let terminal_returns: Vec<i8> = groups.iter().map(|group| group.terminal_return).collect();
+    terminal_pregame_targets_of_values_v1(
+        &values,
+        &terminal_returns,
+        &pregame,
+        episode_ordinals,
+        gamma,
+        lambda,
+    )
+}
+
+/// The terminal pregame advantage (`PregameAdvantageV1::TerminalV1`) on each
+/// group's first-substep value, terminal return and pregame mark.
+///
+/// Every row first gets the ordinary GAE advantage and value target. Each
+/// pregame row is then overwritten with `(R - V, R)`: `R` its game's terminal
+/// result for the learner seat, `V` its own value estimate, nothing
+/// bootstrapped through any later value. The recursion runs backward from the
+/// end of an episode and the pregame rows open it, so no in-game row reads
+/// them: in-game raw advantages and targets stay as the default mode computed
+/// them (a pregame row after an in-game row of its episode is refused, since
+/// that would break this). Mean and std come from the default series (all rows
+/// before the overwrite) and are applied to every row, so in-game rows
+/// normalize bit for bit as in the default mode; the statistics in the receipt
+/// describe the final series. Requires gamma exactly 1.0.
+fn terminal_pregame_targets_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    pregame: &[bool],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<GaeTargetsV1, String> {
+    ensure(
+        gamma.to_bits() == 1.0_f32.to_bits(),
+        "the terminal pregame advantage requires gamma exactly 1.0",
+    )?;
+    ensure(
+        pregame.len() == values.len(),
+        "gae group and pregame-mark counts differ",
+    )?;
+    let default_pairs =
+        gae_pairs_of_values_v1(values, terminal_returns, episode_ordinals, gamma, lambda)?;
+    for index in 1..values.len() {
+        ensure(
+            !(pregame[index]
+                && !pregame[index - 1]
+                && episode_ordinals[index] == episode_ordinals[index - 1]),
+            "a pregame decision follows an in-game decision of its episode",
+        )?;
+    }
+    let mut pairs = default_pairs.clone();
+    let mut pregame_groups = 0usize;
+    let mut terminal_sum = 0.0f32;
+    let mut default_sum = 0.0f32;
+    for index in 0..values.len() {
+        if pregame[index] {
+            let result = f32::from(terminal_returns[index]);
+            pairs[index] = (result - values[index], result);
+            pregame_groups += 1;
+            terminal_sum += pairs[index].0;
+            default_sum += default_pairs[index].0;
+        }
+    }
+    let default_raw: Vec<f32> = default_pairs
         .iter()
         .map(|(advantage, _)| *advantage)
         .collect();
-    let value_targets: Vec<f32> = advantage_and_target
-        .iter()
-        .map(|(_, value_target)| *value_target)
-        .collect();
-    let (advantages, statistics) =
-        normalize_advantages_v1(&raw_advantages, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1)?;
+    let final_raw: Vec<f32> = pairs.iter().map(|(advantage, _)| *advantage).collect();
+    let value_targets: Vec<f32> = pairs.iter().map(|(_, target)| *target).collect();
+    let (advantages, statistics) = bootstrapped_advantage_v1::normalize_advantages_against_v1(
+        &final_raw,
+        &default_raw,
+        GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1,
+    )?;
+    let mean = |sum: f32| (pregame_groups > 0).then(|| sum / pregame_groups as f32);
     Ok(GaeTargetsV1 {
         value_targets,
         advantages,
         statistics,
+        pregame: Some(PregameAdvantageReceiptV1 {
+            mode: PregameAdvantageV1::TerminalV1.name_v1(),
+            pregame_groups,
+            raw_terminal_mean: mean(terminal_sum),
+            raw_default_mean: mean(default_sum),
+        }),
     })
 }
 
@@ -4290,6 +5006,7 @@ fn execute_update_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
@@ -4308,6 +5025,7 @@ fn execute_update_v1(
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         line_b,
         e_supported,
         soft_q,
@@ -4334,6 +5052,7 @@ fn execute_update_inner_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
@@ -4430,6 +5149,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_batch_bytes,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
@@ -4495,7 +5215,8 @@ fn execute_update_inner_v1(
                 .checkpoint
                 .as_ref()
                 .ok_or("recovery continuation requires checkpoint")?;
-            let saved = read_checkpoint_v1(pin)?;
+            let record = read_checkpoint_record_v1(pin)?;
+            let saved = checkpoint_container_v1::parse_record_borrowed_v1(&record)?;
             ensure(
                 saved.exploration == Some(loss_selection),
                 "recovery continuation selection differs",
@@ -4574,12 +5295,95 @@ fn execute_update_inner_v1(
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
+    }
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
+    // The London keep offset (`london_keep_offset_v1`): one value per update,
+    // carried by every trajectory of the batch (its episodes are one
+    // iteration of a schedule), and only on the plain CPU GAE update.
+    let london_keep_offset = batch_london_keep_offset_v1(
+        episodes
+            .iter()
+            .map(|trajectory| trajectory.episode.london_keep_offset),
+    )?;
+    if london_keep_offset.is_some() {
         ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "london_keep_offset trains only on the plain CPU GAE update",
         )?;
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    state.set_london_keep_offset_v1(london_keep_offset);
+    // The priority pass offset (`priority_pass_offset_v1`): one value per
+    // update, on the plain CPU GAE update only. Its per-substep marks are
+    // installed once the learner groups exist, below.
+    let priority_pass_offset =
+        batch_priority_pass_offset_v1(episodes.iter().map(|trajectory| &trajectory.episode))?;
+    if priority_pass_offset.is_some() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "priority_pass_offset trains only on the plain CPU GAE update",
+        )?;
+    }
+    // The terminal pregame advantage (`PregameAdvantageV1`): the plain CPU GAE
+    // update only, on London episodes only.
+    if !loss_selection.pregame_advantage_v1().is_gae() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "the terminal pregame advantage trains only on the plain CPU GAE update",
+        )?;
+        ensure(
+            episodes
+                .iter()
+                .all(|trajectory| trajectory.episode.opening.is_some()),
+            "the terminal pregame advantage requires a London opening on every episode",
+        )?;
+    }
+    // The pregame announcement step scale
+    // (`pregame_announcement_step_v1`): the terminal pregame advantage's
+    // update (so the guard above holds) with the sequential backward, the only
+    // one that routes the second gradient buffer. Set for this update's step
+    // only; None is every existing update.
+    let pregame_announcement_step_scale = loss_selection.pregame_announcement_step_scale_v1();
+    if pregame_announcement_step_scale.is_some() {
+        ensure(
+            !loss_selection.pregame_advantage_v1().is_gae(),
+            "pregame_announcement_step_scale requires pregame_advantage terminal_v1",
+        )?;
+        ensure(
+            backward_execution.is_sequential(),
+            "pregame_announcement_step_scale requires the sequential backward",
+        )?;
+    }
+    state.set_pregame_announcement_step_scale_v1(pregame_announcement_step_scale);
     // Rows the search played are authenticated and masked only by a W5
     // update; every other update refuses them.
     ensure(
@@ -4627,13 +5431,24 @@ fn execute_update_inner_v1(
     // Recompute all actor-visible rows, including opponent decisions,
     // before constructing learner groups. No private state is decoded.
     let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared = ordered_update_preparation::prepare_v1(
+        // Every CPU learner step below derives each learner row's outputs
+        // again with its tape forward and refuses a bit that differs from
+        // the stored row, so those rows may replay through the row cache.
+        // The CUDA steps compare within a tolerance and keep the reference.
+        let row_cache = if update_backend.is_cpu() {
+            ordered_update_preparation::ReplayRowCacheV1::LearnerRows
+        } else {
+            ordered_update_preparation::ReplayRowCacheV1::Off
+        };
+        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
             &episodes,
             &policy,
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
+            ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
             training_math,
+            row_cache,
         )?;
         (prepared.groups, Some(prepared.telemetry))
     } else {
@@ -4722,6 +5537,18 @@ fn execute_update_inner_v1(
             },
         )
         .collect();
+    // The priority pass offset's marks, one per learner substep in the
+    // groups' order (`priority_pass_offset_v1`); validated against a replay
+    // of each trajectory by `validate_trajectory` above.
+    state.set_priority_pass_offset_v1(priority_pass_offset.map(|offset| {
+        priority_pass_offset_v1::PassOffsetMarksV1 {
+            offset,
+            rows: tensor_groups
+                .iter()
+                .flat_map(|(_, _, group)| group.iter().map(|(row, _)| row.pass_offset_action))
+                .collect(),
+        }
+    }));
     // Episode-boundary marker for the new GAE loss path only (section 2):
     // one entry per group, in the same order as `groups`, never read by the
     // unmodified v3 dispatch below. See `LearnerTensorGroupV1`'s doc comment
@@ -4742,8 +5569,19 @@ fn execute_update_inner_v1(
     // stay byte-identical (design section 2/6).
     let gae_targets = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
-        ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, lambda, .. }
-        | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma,
+            lambda,
+            pregame_advantage,
+            ..
+        } => Some(compute_gae_targets_with_pregame_v1(
+            &groups,
+            &episode_ordinals,
+            *gamma,
+            *lambda,
+            *pregame_advantage,
+        )?),
+        ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
             compute_gae_targets_v1(&groups, &episode_ordinals, *gamma, *lambda)?,
         ),
     };
@@ -5369,9 +6207,21 @@ fn execute_update_inner_v1(
         }
         None => None,
     };
+    // The offset lived for this update's step only.
+    state.set_london_keep_offset_v1(None);
+    state.set_priority_pass_offset_v1(None);
+    // So did the pregame announcement step scale; its step left a record.
+    state.set_pregame_announcement_step_scale_v1(None);
+    let pregame_announcement_step = state.take_pregame_announcement_step_record_v1();
+    ensure(
+        pregame_announcement_step.is_some() == pregame_announcement_step_scale.is_some(),
+        "the pregame announcement step scale did not reach the plain GAE step",
+    )?;
     let checkpoint_started = std::time::Instant::now();
-    let snapshot = state.snapshot_v1().map_err(err)?;
-    let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    // The checkpoint records the live state's tensors where the state holds
+    // them, after the snapshot's validation, under the state's own digest.
+    let tensors = state.tensors_v1().map_err(err)?;
+    let after = hex(&state.state_sha256_v1().map_err(err)?);
     fs::create_dir(&output_directory).map_err(err)?;
     let e_packet_pin = e_teacher
         .as_ref()
@@ -5435,22 +6285,25 @@ fn execute_update_inner_v1(
             }
             saved
         }),
-        adam_step: snapshot.adam_step,
-        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-        parameters: snapshot
+        adam_step: tensors.adam_step,
+        scorer_bias_anchor_bits: tensors.scorer_bias_anchor_bits,
+        // Borrowed from the state: both formats write each value's bits
+        // straight from it, the bytes an owned copy (`ParameterBitsV1`) would
+        // write.
+        parameters: tensors
             .parameters
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        first_moments: snapshot
+        first_moments: tensors
             .first_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        second_moments: snapshot
+        second_moments: tensors
             .second_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
         trajectories: trajectories.clone(),
         loss_identity: loss_selection.loss_identity_v1().into(),
@@ -5488,7 +6341,7 @@ fn execute_update_inner_v1(
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
             .as_ref()
-            .map(|context| context.after_update(snapshot.adam_step))
+            .map(|context| context.after_update(tensors.adam_step))
             .transpose()?,
         archive_distillation: None,
         training_math,
@@ -5506,10 +6359,18 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
-    let checkpoint_pin = publish_json_bytes_v1(
+    // A container's metadata view is its JSON document (`metadata_view_v1`,
+    // sealed or not): kept for the next update's metadata probe of this pin.
+    let metadata_document = match record_format {
+        CheckpointRecordFormatV1::V2 => {
+            Some(checkpoint_container_v1::document_v1(&record)?.to_vec())
+        }
+        CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => None,
+    };
+    let checkpoint_pin = publish_json_shared_v1(
         &output_directory,
         "checkpoint.json",
-        &record_envelope.seal_owned_v1(record)?,
+        &Arc::new(record_envelope.seal_owned_v1(record)?),
     )?;
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {
@@ -5522,18 +6383,15 @@ fn execute_update_inner_v1(
             && restored.training_math_v1() == training_math,
         "published checkpoint round trip differs",
     )?;
+    if let Some(document) = metadata_document {
+        checkpoint_metadata_memo_v1::remember_v1(&checkpoint_pin.sha256, &document);
+    }
     if record_format == CheckpointRecordFormatV1::V2 {
         // Design section 3: the restored state equals the published one item
         // for item (Adam step, anchor, every tensor's name, shape and bits),
-        // beyond the state digest.
-        let back = restored.snapshot_v1().map_err(err)?;
-        let same = |got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]| {
-            got.len() == saved.len()
-                && got
-                    .iter()
-                    .zip(saved)
-                    .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
-        };
+        // beyond the state digest. Compared in place, without copies.
+        let back = restored.tensors_v1().map_err(err)?;
+        let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
             back.adam_step == checkpoint.adam_step
                 && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
@@ -5602,6 +6460,21 @@ fn execute_update_inner_v1(
     // receipts gain zero new keys.
     if let Some(gae) = &gae_targets {
         result["advantage_statistics"] = json!(gae.statistics);
+        // Present only under the terminal pregame advantage, so a default
+        // receipt gains no key.
+        if let Some(pregame) = &gae.pregame {
+            result["pregame_advantage"] = json!(pregame);
+        }
+    }
+    // Present only under the pregame announcement step scale, so every other
+    // receipt gains no key.
+    if let Some(record) = pregame_announcement_step {
+        result["pregame_announcement_step"] = json!({
+            "scale": record.scale,
+            "routed_groups": record.routed_groups,
+            "announcement_gradient_l2": record.announcement_gradient_l2,
+            "rest_gradient_l2": record.rest_gradient_l2,
+        });
     }
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
@@ -5702,19 +6575,30 @@ fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+#[cfg(test)]
 fn read_trajectory_batch_v1(
     pins: &[PinnedFileV1],
     workers: usize,
 ) -> Result<Vec<ExpandedTrajectoryV1>, String> {
-    let decoded = ordered_update_preparation::read_trajectories_v1(pins, workers)?;
+    read_trajectory_batch_bounded_v1(pins, workers, MAX_BATCH_BYTES)
+}
+
+/// Reads and parses a trajectory batch within the update's batch bound in bytes
+/// (`max_trajectory_batch_mebibytes`; [`MAX_BATCH_BYTES`] by default).
+fn read_trajectory_batch_bounded_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+    max_batch_bytes: u64,
+) -> Result<Vec<ExpandedTrajectoryV1>, String> {
+    let decoded =
+        ordered_update_preparation::read_trajectories_bounded_v1(pins, workers, max_batch_bytes)?;
     let mut total = 0u64;
     let mut episodes = Vec::with_capacity(decoded.len());
     for (bytes, episode) in decoded {
         total = total.checked_add(bytes).ok_or("batch size overflow")?;
-        ensure(
-            total <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
         episodes.push(episode);
     }
     Ok(episodes)
@@ -5725,14 +6609,25 @@ fn read_trajectory_batch_v1(
 /// typed reader of a checkpoint accepts either format with unchanged
 /// semantics; hot paths use [`read_checkpoint_v1`] instead.
 fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, String> {
-    let bytes = read_pinned_bytes(pin)?;
+    let bytes = read_pinned_shared_v1(pin)?;
     serde_json::from_slice(&checkpoint_container_v1::json_document_v1(&bytes)?).map_err(err)
+}
+
+/// A pinned checkpoint's opened record bytes: shared directly from the
+/// verified-bytes cache when unsealed, or the decompressed record when sealed
+/// (`record_envelope_v1`).
+fn read_checkpoint_record_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String> {
+    let shared = read_pinned_shared_v1(pin)?;
+    match record_envelope_v1::open_v1(&shared, MAX_FILE_BYTES)? {
+        std::borrow::Cow::Borrowed(_) => Ok(shared),
+        std::borrow::Cow::Owned(record) => Ok(Arc::new(record)),
+    }
 }
 
 /// A pinned checkpoint, from either format, decoded directly (design 4.1,
 /// the direct-decode interface).
 fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
-    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_bytes(pin)?)
+    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_shared_v1(pin)?)
 }
 
 /// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
@@ -5740,12 +6635,138 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
-    let bytes = read_pinned_bytes(pin)?;
-    serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
+    // The pinned file's check runs every time; only its view, a pure function
+    // of the checked bytes, may come from the memo.
+    let bytes = read_pinned_shared_v1(pin)?;
+    if let Some(document) = checkpoint_metadata_memo_v1::lookup_v1(&pin.sha256) {
+        return serde_json::from_slice(&document).map_err(err);
+    }
+    let view = checkpoint_container_v1::metadata_view_v1(&bytes)?;
+    checkpoint_metadata_memo_v1::remember_v1(&pin.sha256, &view);
+    serde_json::from_slice(&view).map_err(err)
+}
+
+/// Metadata views (`checkpoint_container_v1::metadata_view_v1`) of checkpoint
+/// files this process checked, by their pinned SHA-256: a view is a pure
+/// function of the file's bytes, so a probe of the same pin (after the same
+/// file check) parses the remembered view instead of opening the envelope and
+/// container again. Only views up to 1 MiB are kept: a container's JSON
+/// document, not a production v1 JSON checkpoint (about 20 MB, whose view is
+/// the whole file). Invocation-local, never persisted.
+mod checkpoint_metadata_memo_v1 {
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    /// The newest checkpoints a run probes: its current one and the one before.
+    const ENTRIES_V1: usize = 4;
+    /// A view larger than this is a v1 JSON checkpoint's whole file.
+    const MAX_VIEW_BYTES_V1: usize = 1 << 20;
+
+    type EntriesV1 = VecDeque<(String, Arc<Vec<u8>>)>;
+
+    #[cfg(not(test))]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        use std::sync::{Mutex, PoisonError};
+        static ENTRIES: Mutex<EntriesV1> = Mutex::new(VecDeque::new());
+        f(&mut ENTRIES.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Unit tests run in parallel threads: each keeps its own entries.
+    #[cfg(test)]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        thread_local! {
+            static ENTRIES: std::cell::RefCell<EntriesV1> = const {
+                std::cell::RefCell::new(VecDeque::new())
+            };
+        }
+        ENTRIES.with(|entries| f(&mut entries.borrow_mut()))
+    }
+
+    pub(super) fn lookup_v1(sha256: &str) -> Option<Arc<Vec<u8>>> {
+        with_entries_v1(|entries| {
+            let index = entries.iter().position(|(key, _)| key == sha256)?;
+            let entry = entries.remove(index)?;
+            let view = Arc::clone(&entry.1);
+            entries.push_back(entry);
+            Some(view)
+        })
+    }
+
+    pub(super) fn remember_v1(sha256: &str, view: &[u8]) {
+        if view.len() > MAX_VIEW_BYTES_V1 {
+            return;
+        }
+        let view = view.to_vec();
+        with_entries_v1(|entries| {
+            entries.retain(|(key, _)| key != sha256);
+            while entries.len() >= ENTRIES_V1 {
+                entries.pop_front();
+            }
+            entries.push_back((sha256.to_owned(), Arc::new(view)));
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_for_test_v1() {
+        with_entries_v1(VecDeque::clear);
+    }
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
     read_pinned_bytes_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_bytes` returning shared bytes: with resident reads on and the
+/// pin's bytes held, the held allocation itself (no copy); otherwise exactly
+/// `read_pinned_bytes`'s bytes.
+fn read_pinned_shared_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String> {
+    read_pinned_shared_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `read_pinned_shared_v1` against the verified-bytes cache `cache`.
+fn read_pinned_shared_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<Arc<Vec<u8>>, String> {
+    if cache.resident_v1() {
+        let metadata = fs::metadata(&pin.path).map_err(err)?;
+        ensure(
+            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+            "input is not a bounded regular file",
+        )?;
+        if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+            return Ok(held);
+        }
+    }
+    read_pinned_bytes_in_v1(cache, pin).map(Arc::new)
+}
+
+/// `read_pinned_bytes` for a caller that only needs the check: with resident
+/// reads on and the pin's bytes held, the metadata checks run and the held
+/// bytes are not copied; otherwise exactly `read_pinned_bytes`.
+fn check_pinned_v1(pin: &PinnedFileV1) -> Result<(), String> {
+    check_pinned_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+/// `check_pinned_v1` against the verified-bytes cache `cache`.
+fn check_pinned_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<(), String> {
+    if cache.resident_v1() {
+        let metadata = fs::metadata(&pin.path).map_err(err)?;
+        ensure(
+            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+            "input is not a bounded regular file",
+        )?;
+        if cache
+            .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
+    read_pinned_bytes_in_v1(cache, pin).map(drop)
 }
 
 /// `read_pinned_bytes` against the verified-bytes cache `cache`.
@@ -5758,6 +6779,11 @@ fn read_pinned_bytes_in_v1(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
         "input is not a bounded regular file",
     )?;
+    // Resident reads: bytes this process verified against this pin, of the
+    // file's exact length (`verified_bytes_cache_v1`).
+    if let Some(held) = cache.resident_bytes_v1(&pin.path, &pin.sha256, metadata.len()) {
+        return Ok(held.as_ref().clone());
+    }
     let bytes = fs::read(&pin.path).map_err(err)?;
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
@@ -5839,16 +6865,20 @@ pub fn convert_checkpoint_v1_to_v2(
     let (_, after) = initialize_any_math_v1(&converted)?;
     let before_snapshot = before.snapshot_v1().map_err(err)?;
     let after_snapshot = after.snapshot_v1().map_err(err)?;
-    let bits = |rows: &[NativeNamedParameterV1]| -> Vec<ParameterBitsV1> {
-        rows.iter().map(ParameterBitsV1::from_native).collect()
-    };
+    let same = checkpoint_container_v1::same_tensors_v1;
     let state_sha256 = hex(&before_snapshot.state_sha256_v1().map_err(err)?);
     ensure(
         before_snapshot.adam_step == after_snapshot.adam_step
             && before_snapshot.scorer_bias_anchor_bits == after_snapshot.scorer_bias_anchor_bits
-            && bits(&before_snapshot.parameters) == bits(&after_snapshot.parameters)
-            && bits(&before_snapshot.first_moments) == bits(&after_snapshot.first_moments)
-            && bits(&before_snapshot.second_moments) == bits(&after_snapshot.second_moments)
+            && same(&before_snapshot.parameters, &after_snapshot.parameters)
+            && same(
+                &before_snapshot.first_moments,
+                &after_snapshot.first_moments,
+            )
+            && same(
+                &before_snapshot.second_moments,
+                &after_snapshot.second_moments,
+            )
             && hex(&after_snapshot.state_sha256_v1().map_err(err)?) == state_sha256
             && before.training_math_v1() == after.training_math_v1(),
         "converted checkpoint restores a different state",
@@ -5870,7 +6900,7 @@ pub fn export_checkpoint_v2_to_v1(v2: &PinnedFileV1, output: &Path) -> Result<Va
         checkpoint_container_v1::is_container_v1(&bytes),
         "the input is not a checkpoint container",
     )?;
-    let saved = checkpoint_container_v1::decode_v1(&bytes)?;
+    let saved = checkpoint_container_v1::decode_borrowed_v1(&bytes)?;
     let v1 = serde_json::to_vec(&saved).map_err(err)?;
     let written = publish_checkpoint_file_v1(output, &v1)?;
     Ok(
@@ -5909,22 +6939,61 @@ fn publish_json_bytes_in_v1(
     name: &str,
     bytes: &[u8],
 ) -> Result<PinnedFileV1, String> {
-    ensure(
-        bytes.len() as u64 <= MAX_FILE_BYTES,
-        "output exceeds file size limit",
-    )?;
-    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    let receipt =
-        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
-    let pin = PinnedFileV1 {
-        path: directory.join(name),
-        sha256: hex(&receipt.sha256()),
-    };
+    let pin = publish_json_unrecorded_v1(cache, directory, name, bytes)?;
     // The receipt's digest was computed from `bytes`, and the publication
     // recaptured the file byte for byte: this process's later reads of the
     // pin compare instead of hashing (`verified_bytes_cache_v1`).
     cache.record_verified_v1(&pin.path, &pin.sha256, bytes);
     Ok(pin)
+}
+
+/// `publish_json_bytes_v1` for bytes the caller shares: the verified-bytes
+/// cache holds the same allocation instead of a copy. Same publication.
+fn publish_json_shared_v1(
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+) -> Result<PinnedFileV1, String> {
+    publish_json_shared_in_v1(verified_bytes_cache_v1::global_v1(), directory, name, bytes)
+}
+
+/// `publish_json_shared_v1` recording into the verified-bytes cache `cache`.
+fn publish_json_shared_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+) -> Result<PinnedFileV1, String> {
+    let pin = publish_json_unrecorded_v1(cache, directory, name, bytes)?;
+    cache.record_verified_shared_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
+    Ok(pin)
+}
+
+/// The publication both `publish_json_*` share; the caller records the bytes.
+fn publish_json_unrecorded_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<PinnedFileV1, String> {
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "output exceeds file size limit",
+    )?;
+    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
+    // Resident reads also skip the two non-bracketing readbacks
+    // (`publish_new_bytes_bracketed_v1`).
+    let stage = format!(".{name}.stage");
+    let receipt = if cache.resident_v1() {
+        crate::durable_publication_v1::publish_new_bytes_bracketed_v1(&parent, stage, name, bytes)
+    } else {
+        publish_new_bytes_v1(&parent, stage, name, bytes)
+    }
+    .map_err(err)?;
+    Ok(PinnedFileV1 {
+        path: directory.join(name),
+        sha256: hex(&receipt.sha256()),
+    })
 }
 
 #[cfg(test)]
@@ -5935,6 +7004,9 @@ mod registry_evolution_dispatch_tests;
 
 #[cfg(test)]
 mod warm_cuda_timing_tests;
+
+#[cfg(test)]
+mod trajectory_batch_bound_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -6254,6 +7326,243 @@ pub(crate) mod tests {
         );
     }
 
+    /// The restore as it was before milestone 3 of #596: the same field
+    /// checks, then the checkpoint's tensors copied into a snapshot under the
+    /// template's names, its digest checked, the state built from the
+    /// snapshot and the policy given the snapshot's parameters.
+    fn restore_with_snapshot_copy_v1(
+        saved: &ExpandedCheckpointV1,
+        policy: &mut FrozenPlayPolicyV1,
+        model: NativePolicyValueNetV1,
+    ) -> Result<NativePolicyValueTrainStateV1, String> {
+        check_checkpoint_fields_v1(saved, policy)?;
+        let snapshot = snapshot_copy_v1(saved, &model)?;
+        ensure(
+            hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
+            "checkpoint state hash differs",
+        )?;
+        let mut state =
+            NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
+        policy.replace_training_parameters_v3(&snapshot.parameters)?;
+        state.set_training_math_v1(saved.training_math);
+        policy.set_training_math_v1(saved.training_math);
+        Ok(state)
+    }
+
+    /// The snapshot the restore copied the checkpoint's tensors into.
+    fn snapshot_copy_v1(
+        saved: &ExpandedCheckpointV1,
+        model: &NativePolicyValueNetV1,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, String> {
+        let template = model.parameter_snapshot_v1();
+        Ok(NativePolicyValueTrainSnapshotV1 {
+            adam_step: saved.adam_step,
+            scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+            parameters: restore_parameters(&saved.parameters, &template)?,
+            first_moments: restore_parameters(&saved.first_moments, &template)?,
+            second_moments: restore_parameters(&saved.second_moments, &template)?,
+        })
+    }
+
+    /// Restores `saved` both ways, from forks of `policy` and clones of
+    /// `model`, and asserts the same outcome: states with the same digest and
+    /// every field the same, or the same refusal, and policies with the same
+    /// parameter bits and math either way. Returns whether it was restored.
+    fn same_restore_v1(
+        policy: &FrozenPlayPolicyV1,
+        model: &NativePolicyValueNetV1,
+        saved: &ExpandedCheckpointV1,
+        what: &str,
+    ) -> bool {
+        let mut restored_policy = policy.fork_for_collection_v3().unwrap();
+        let mut reference_policy = policy.fork_for_collection_v3().unwrap();
+        let restored = restore_checkpoint_fields_v1(saved, &mut restored_policy, model.clone());
+        let reference = restore_with_snapshot_copy_v1(saved, &mut reference_policy, model.clone());
+        let policy_bits = |policy: &FrozenPlayPolicyV1| {
+            policy
+                .training_parameters_v3()
+                .iter()
+                .map(ParameterBitsV1::from_native)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            policy_bits(&restored_policy),
+            policy_bits(&reference_policy),
+            "{what}"
+        );
+        assert_eq!(
+            restored_policy.training_math_v1(),
+            reference_policy.training_math_v1(),
+            "{what}"
+        );
+        match (restored, reference) {
+            (Ok(restored), Ok(reference)) => {
+                assert_eq!(
+                    restored.state_sha256_v1().unwrap(),
+                    reference.state_sha256_v1().unwrap(),
+                    "{what}"
+                );
+                assert_eq!(format!("{restored:?}"), format!("{reference:?}"), "{what}");
+                true
+            }
+            (restored, reference) => {
+                assert_eq!(restored.err(), reference.err(), "{what}");
+                false
+            }
+        }
+    }
+
+    /// `saved` with `change` made to a copy of it.
+    fn changed_v1(
+        saved: &ExpandedCheckpointV1,
+        change: impl FnOnce(&mut ExpandedCheckpointV1),
+    ) -> ExpandedCheckpointV1 {
+        let mut changed = saved.clone();
+        change(&mut changed);
+        changed
+    }
+
+    /// A named change to one section's tensors.
+    type TensorChangeV1 = (&'static str, fn(&mut Vec<ParameterBitsV1>));
+
+    /// A named change to a checkpoint.
+    type CheckpointChangeV1 = (&'static str, fn(&mut ExpandedCheckpointV1));
+
+    /// The checkpoint's parameters (0), first moments (1) or second moments.
+    fn section_v1(saved: &mut ExpandedCheckpointV1, index: usize) -> &mut Vec<ParameterBitsV1> {
+        match index {
+            0 => &mut saved.parameters,
+            1 => &mut saved.first_moments,
+            _ => &mut saved.second_moments,
+        }
+    }
+
+    #[test]
+    fn a_restore_from_borrowed_tensors_restores_and_refuses_as_the_snapshot_copy_did() {
+        let (policy, imported_model, saved) = checkpoint_fixture_v1();
+        let default_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        for model in [&imported_model, &default_model] {
+            assert!(same_restore_v1(
+                &policy,
+                model,
+                &saved,
+                "the checkpoint itself"
+            ));
+        }
+        // With the digest the snapshot copy has, so that a change gets past
+        // the hash check.
+        let rehashed = |mut saved: ExpandedCheckpointV1| {
+            let snapshot = snapshot_copy_v1(&saved, &imported_model).unwrap();
+            saved.state_sha256 = hex(&snapshot.state_sha256_v1().unwrap());
+            saved
+        };
+        let tensor_changes: [TensorChangeV1; 11] = [
+            ("a tensor fewer", |tensors| {
+                tensors.pop();
+            }),
+            ("a tensor more", |tensors| tensors.push(tensors[0].clone())),
+            ("two tensors swapped", |tensors| tensors.swap(1, 2)),
+            ("a tensor renamed", |tensors| {
+                tensors[1].name = "wrong.weight".into()
+            }),
+            ("a tensor reshaped", |tensors| tensors[1].shape[0] += 1),
+            ("a value fewer", |tensors| {
+                tensors[1].values.pop();
+            }),
+            ("a NaN", |tensors| tensors[1].values[0] = f32::NAN.to_bits()),
+            ("an infinity", |tensors| {
+                tensors[1].values[0] = f32::INFINITY.to_bits()
+            }),
+            ("a padding-row -0.0", |tensors| {
+                tensors[0].values[0] = (-0.0f32).to_bits()
+            }),
+            ("a negative value", |tensors| {
+                tensors[1].values[0] = (-f32::EPSILON).to_bits()
+            }),
+            ("one value bit flipped", |tensors| tensors[1].values[0] ^= 1),
+        ];
+        let mut cases = Vec::new();
+        for (index, name) in ["parameters", "first moments", "second moments"]
+            .into_iter()
+            .enumerate()
+        {
+            for (what, change) in tensor_changes {
+                cases.push((
+                    format!("{name}: {what}"),
+                    changed_v1(&saved, |saved| change(section_v1(saved, index))),
+                ));
+            }
+            cases.push((
+                format!("{name}: one value changed and the digest to match"),
+                rehashed(changed_v1(&saved, |saved| {
+                    section_v1(saved, index)[1].values[0] = 0.25f32.to_bits();
+                })),
+            ));
+        }
+        let changes: [CheckpointChangeV1; 7] = [
+            ("the anchor bits changed", |saved| {
+                saved.scorer_bias_anchor_bits ^= 1
+            }),
+            ("an Adam step past i32", |saved| {
+                saved.adam_step = i32::MAX as u64 + 1
+            }),
+            ("an Adam step past i32 and a NaN", |saved| {
+                saved.adam_step = i32::MAX as u64 + 1;
+                saved.parameters[1].values[0] = f32::NAN.to_bits();
+            }),
+            ("another digest", |saved| {
+                saved.state_sha256 = "00".repeat(32)
+            }),
+            ("a parameter reshaped and a first moment fewer", |saved| {
+                saved.parameters[1].shape[0] += 1;
+                saved.first_moments.pop();
+            }),
+            (
+                "a first moment reshaped and a second moment fewer",
+                |saved| {
+                    saved.first_moments[1].shape[0] += 1;
+                    saved.second_moments.pop();
+                },
+            ),
+            ("a NaN parameter and a negative second moment", |saved| {
+                saved.parameters[1].values[0] = f32::NAN.to_bits();
+                saved.second_moments[1].values[0] = (-f32::EPSILON).to_bits();
+            }),
+        ];
+        for (what, change) in changes {
+            cases.push((what.to_owned(), changed_v1(&saved, change)));
+        }
+        // The parameters' anchor moved, with the anchor bits and the digest
+        // to match: only the template's anchor refuses it.
+        cases.push((
+            "the anchor moved off the template's".to_owned(),
+            rehashed(changed_v1(&saved, |saved| {
+                let anchor = saved
+                    .parameters
+                    .iter_mut()
+                    .find(|tensor| tensor.name == "scorer.2.bias")
+                    .unwrap();
+                anchor.values[0] = (f32::from_bits(anchor.values[0]) + 0.25).to_bits();
+                saved.scorer_bias_anchor_bits = anchor.values[0];
+            })),
+        ));
+        let accepted: Vec<&str> = cases
+            .iter()
+            .filter(|(what, changed)| same_restore_v1(&policy, &imported_model, changed, what))
+            .map(|(what, _)| what.as_str())
+            .collect();
+        assert_eq!(
+            accepted,
+            [
+                "parameters: one value changed and the digest to match",
+                "first moments: one value changed and the digest to match",
+                "second moments: one value changed and the digest to match",
+            ]
+        );
+    }
+
     #[test]
     fn wide_trajectory_sampler_receipt_is_required_only_for_wide_decisions() {
         let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
@@ -6477,6 +7786,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         }
     }
 
@@ -6524,6 +7836,7 @@ pub(crate) mod tests {
                 tensor: TensorBitsV1::from_tensor(&tensor.common),
                 sampler_identity: decision_sampler_identity_v1(scores.logits.len())
                     .map(str::to_owned),
+                pass_offset_action: None,
             });
         }
         let configs = episode.configurations().unwrap();
@@ -7011,6 +8324,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -7121,6 +8437,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -7259,6 +8578,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7399,6 +8721,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7536,6 +8861,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7656,6 +8984,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7790,6 +9121,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7935,6 +9269,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8070,6 +9407,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8222,6 +9562,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8376,6 +9719,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8418,6 +9764,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         }
     }
 
@@ -9372,6 +10721,9 @@ pub(crate) mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -9432,6 +10784,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -9475,6 +10830,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -9599,6 +10957,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -9657,6 +11018,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -9701,6 +11065,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -9760,6 +11127,9 @@ pub(crate) mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -9834,6 +11204,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -9870,6 +11243,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -9924,6 +11300,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -9961,6 +11340,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -10108,6 +11490,9 @@ pub(crate) mod tests {
                 opening: opening.then_some(PauperOpeningV1::LondonV1),
                 mulligan_modes: opening
                     .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -10277,6 +11662,8 @@ pub(crate) mod tests {
                 gamma: 1.0,
                 lambda: 0.95,
                 entropy_coefficient: 0.0,
+                pregame_advantage: PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             TrainingMathV1::PlatformLibm,
         )
@@ -10487,6 +11874,9 @@ pub(crate) mod tests {
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
+                    london_keep_offset: None,
+                    priority_windows: None,
+                    priority_pass_offset: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -10836,6 +12226,8 @@ pub(crate) mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         }
     }
 
@@ -10914,6 +12306,9 @@ pub(crate) mod tests {
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
+                    london_keep_offset: None,
+                    priority_windows: None,
+                    priority_pass_offset: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -11062,6 +12457,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -11186,6 +12584,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -11654,6 +13055,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12129,6 +13533,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12278,6 +13685,9 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12401,7 +13811,73 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn borrowed_v2_restore_seeds_verified_state_digest_and_refuses_tampered_digest() {
+        use crate::native_policy_train_step_v1::{
+            compute_owned_train_snapshot_sha256_v1, live_state_hash_compute_count_for_test_v1,
+            reset_live_state_hash_compute_count_for_test_v1,
+        };
+
+        let (policy, imported_model, saved) = checkpoint_fixture_v1();
+        let container = checkpoint_container_v1::encode_v1(&saved).unwrap();
+        let borrowed = checkpoint_container_v1::decode_borrowed_v1(&container).unwrap();
+        if cfg!(target_endian = "little") {
+            assert!(borrowed
+                .parameters
+                .iter()
+                .all(checkpoint_container_v1::BorrowedParameterBitsV1::is_borrowed_v1));
+        }
+
+        reset_live_state_hash_compute_count_for_test_v1();
+        let mut restored_policy = policy.fork_for_collection_v3().unwrap();
+        let mut restored =
+            restore_checkpoint_fields_v1(&borrowed, &mut restored_policy, imported_model.clone())
+                .unwrap();
+        let expected_digest =
+            compute_owned_train_snapshot_sha256_v1(&restored.snapshot_v1().unwrap());
+        assert_eq!(hex(&expected_digest), saved.state_sha256);
+
+        // Verified restore seeds the live state's memoized digest, so repeated
+        // readback queries and clones do not re-hash the tensors.
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        let cloned = restored.clone();
+        assert_eq!(cloned.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(live_state_hash_compute_count_for_test_v1(), 0);
+
+        // Clearing the live cache forces a single cold hash to the same digest.
+        restored.clear_cached_state_sha256_v1();
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(live_state_hash_compute_count_for_test_v1(), 1);
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(live_state_hash_compute_count_for_test_v1(), 1);
+
+        // A container with a tampered document state_sha256 decodes structurally
+        // as a canonical v2 container of that modified document, and restore
+        // refuses it before any state or digest can be returned.
+        let mut tampered = saved.clone();
+        let replacement = if tampered.state_sha256.starts_with('0') {
+            '1'
+        } else {
+            '0'
+        };
+        tampered
+            .state_sha256
+            .replace_range(0..1, &replacement.to_string());
+        let tampered_container = checkpoint_container_v1::encode_v1(&tampered).unwrap();
+        let tampered_borrowed =
+            checkpoint_container_v1::decode_borrowed_v1(&tampered_container).unwrap();
+        let mut rejected_policy = policy.fork_for_collection_v3().unwrap();
+        let err =
+            restore_checkpoint_fields_v1(&tampered_borrowed, &mut rejected_policy, imported_model)
+                .expect_err("tampered state_sha256 must be refused");
+        assert_eq!(err, "checkpoint state hash differs");
+    }
+
     mod pauper_opening_tests;
+    mod pregame_advantage_tests;
+    mod pregame_announcement_step_tests;
+    mod priority_pass_offset_tests;
     mod reset_start_tests;
     mod v8_inclusion_tests;
     mod widening_b512_tests;

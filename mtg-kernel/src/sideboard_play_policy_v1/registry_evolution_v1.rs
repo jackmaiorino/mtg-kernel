@@ -428,7 +428,7 @@ impl FrozenPlayPolicyV1 {
             }),
         };
         Ok(Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),

@@ -30,11 +30,12 @@
 //! ([`InputContractRecordV1`]), absent from every unconverted record.
 
 use super::{
-    ensure, err, hex, identity_valid, initialize_from_source_bytes_v1,
-    load_expanded_inference_any_math_v1, ordinary_checkpoint_schema_v1, publish_json_bytes_v1,
-    read_ordinary_checkpoint_v1, read_pinned, read_pinned_bytes, restore_checkpoint_state_v1, sha,
-    CheckpointInputExpectationV1, DecisionRecordV1, ExpandedCheckpointV1,
-    ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ParameterBitsV1, PinnedFileV1,
+    check_pinned_v1, ensure, err, hex, identity_valid, initialize_from_source_bytes_v1,
+    load_expanded_inference_any_math_v1, ordinary_checkpoint_schema_v1,
+    parse_ordinary_checkpoint_borrowed_v1, publish_json_bytes_v1, read_checkpoint_record_v1,
+    read_pinned, read_pinned_bytes, restore_checkpoint_state_v1, sha, CheckpointInputExpectationV1,
+    CheckpointTensorV1, DecisionRecordV1, ExpandedCheckpointV1, ExpandedInferenceIdentityV1,
+    ExpandedModelSourceV1, ParameterBitsV1, PinnedFileV1,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
@@ -556,7 +557,7 @@ pub(super) fn reverify_converted_v1(
         let descriptor = super::fresh_initialization_source::parse_source_v1(&base_bytes)?;
         super::fresh_initialization_source::reverify_input_files_v1(&descriptor)?;
         if let Some(pin) = &conversion.base_checkpoint {
-            read_pinned_bytes(pin)?;
+            check_pinned_v1(pin)?;
         }
     }
     if source.checkpoint == conversion.base_checkpoint {
@@ -565,7 +566,7 @@ pub(super) fn reverify_converted_v1(
                 .as_ref()
                 .is_some_and(|base| base.artifact_unchanged_v1(pin))
             {
-                read_pinned_bytes(pin)?;
+                check_pinned_v1(pin)?;
             }
         }
     } else {
@@ -621,7 +622,7 @@ pub(super) fn verify_source_pins_v1(
                 .as_ref()
                 .is_some_and(|base| base.artifact_unchanged_v1(pin))
             {
-                read_pinned_bytes(pin)?;
+                check_pinned_v1(pin)?;
             }
         }
     } else if let Some(checkpoint) = checkpoint_bytes {
@@ -937,7 +938,8 @@ fn continue_state_v1(
         .checkpoint
         .as_ref()
         .ok_or("a no-state-digest continuation requires a checkpoint")?;
-    let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    let checkpoint_record = read_checkpoint_record_v1(pin)?;
+    let saved = parse_ordinary_checkpoint_borrowed_v1(&checkpoint_record, policy.identity_v1())?;
     if let Some(inputs) = inputs {
         inputs.validate_v1(
             &saved.trajectories,
@@ -992,7 +994,9 @@ fn continue_state_v1(
 
 /// The stored bits of a checkpoint's W, m and v digest columns are +0.0 and
 /// its state encoder bias has no -0.0.
-fn check_saved_columns_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+fn check_saved_columns_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
+) -> Result<(), String> {
     for (list, what) in [
         (&saved.parameters, "parameter"),
         (&saved.first_moments, "first moment"),
@@ -1000,25 +1004,24 @@ fn check_saved_columns_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
     ] {
         let weight = list
             .iter()
-            .find(|parameter| parameter.name == STATE_ENCODER_WEIGHT)
+            .find(|parameter| parameter.name_v1() == STATE_ENCODER_WEIGHT)
             .ok_or("state encoder weight is missing")?;
-        let values: Vec<f32> = weight
-            .values
-            .iter()
-            .map(|bits| f32::from_bits(*bits))
-            .collect();
         ensure(
-            columns_are_positive_zero_v1(&values, STATE_ENCODER_INPUT_V1, STATE_DIGEST_COLUMNS_V1),
+            columns_are_positive_zero_v1(
+                weight.values_f32_v1(),
+                STATE_ENCODER_INPUT_V1,
+                STATE_DIGEST_COLUMNS_V1,
+            ),
             &format!("no-state-digest contract: a stored state-digest {what} column is not +0.0"),
         )?;
     }
     let bias = saved
         .parameters
         .iter()
-        .find(|parameter| parameter.name == STATE_ENCODER_BIAS)
+        .find(|parameter| parameter.name_v1() == STATE_ENCODER_BIAS)
         .ok_or("state encoder bias is missing")?;
     ensure(
-        bias.values.iter().all(|bits| *bits != 0x8000_0000),
+        bias.values_u32_v1().iter().all(|bits| *bits != 0x8000_0000),
         "a state encoder bias of -0.0 has no exact no-state-digest conversion",
     )
 }
@@ -1355,6 +1358,8 @@ pub fn convert_no_state_digest_v1(
 }
 
 mod base_cache_v1;
+#[cfg(test)]
+pub(super) use base_cache_v1::holds_bytes_in_v1;
 pub(super) use base_cache_v1::holds_bytes_v1;
 
 #[cfg(test)]

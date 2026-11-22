@@ -35,6 +35,9 @@ fn episode(id: &str, seed: u64) -> ExpandedEpisodeV1 {
         reset: None,
         opening: None,
         mulligan_modes: None,
+        london_keep_offset: None,
+        priority_windows: None,
+        priority_pass_offset: None,
     }
 }
 
@@ -101,6 +104,8 @@ fn native_audit_admits_flat_v7_and_v8_trajectories_only_against_their_own_identi
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         },
         training_math: TrainingMathV1::PlatformLibm,
         record_format: CheckpointRecordFormatV1::V1,

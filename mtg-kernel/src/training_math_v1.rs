@@ -8,6 +8,17 @@
 //! use `f64::powi`, which LLVM lowers to compiler-builtins' square-and-
 //! multiply on Linux and to the CRT's `pow` on Windows.
 //!
+//! One exception: on aarch64 Linux with glibc, platform math means the
+//! x86-64 Linux results, so that a build there continues an x86-64 lineage.
+//! Two things are replaced, both measured against glibc 2.36 on the two
+//! architectures (2026-11-17) and valid for that glibc: every `tanhf` of a
+//! value that is not a NaN is computed by `vector_tanh_v1::fdlibm` (the
+//! loaded aarch64 `tanhf` differs from the x86-64 one), and `expf` takes the
+//! x86-64 result on the two inputs where the builds differ. `logf` is equal
+//! on every input. The double-precision `exp` and `log` (the scorer-bias
+//! gauge) go to the loaded library unchanged; they agreed on a sample of
+//! 23.4 million inputs and cannot be compared on every input.
+//!
 //! [`TrainingMathV1::PortableV1`] computes `tanh` with
 //! [`deterministic_math_v1::tanh_f32_v1`] (four elements at a time where
 //! AVX2 is available, with the same bits), `exp` and `ln` with the pinned
@@ -78,7 +89,7 @@ impl TrainingMathV1 {
     #[inline]
     pub(crate) fn exp_f32_v1(self, x: f32) -> f32 {
         match self {
-            Self::PlatformLibm => x.exp(),
+            Self::PlatformLibm => platform_exp_f32_v1(x),
             Self::PortableV1 => libm::expf(x),
         }
     }
@@ -116,6 +127,26 @@ impl TrainingMathV1 {
             Self::PortableV1 => powi_f64_portable_v1(base, exponent),
         }
     }
+}
+
+/// The platform `expf`, which on aarch64 Linux with glibc is made the x86-64
+/// one. glibc 2.36's `expf` there equals the x86-64 build's (the variant CPUs
+/// with FMA select, as the training hosts do) on every input except two,
+/// where the x86-64 result is one unit in the last place higher; those two
+/// take the x86-64 results. Measured over all 2^32 inputs on both
+/// architectures, 2026-11-17: `logf` is equal on every input and needs no
+/// such case.
+#[inline]
+fn platform_exp_f32_v1(x: f32) -> f32 {
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "aarch64"))]
+    match x.to_bits() {
+        // exp(32.564632415771484)
+        0x4202_422f => return f32::from_bits(0x56fc_9f1c),
+        // exp(-63.09946060180664)
+        0xc27c_65d9 => return f32::from_bits(0x11fa_2993),
+        _ => {}
+    }
+    x.exp()
 }
 
 /// compiler-builtins' `__powidf2`, which `f64::powi` calls on Linux:

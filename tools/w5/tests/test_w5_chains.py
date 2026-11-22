@@ -244,6 +244,31 @@ class ChainTests(unittest.TestCase):
             with self.assertRaisesRegex(chains.Stop, 'record_envelope'):
                 chains.make_plan(jwrite(self.node.t / f'bad-{arm_name}.json', bad))
 
+    def test_verified_reads_is_an_optional_c_recipe_arm_key(self):
+        _, plain = self.node.stage0()
+        plain_arm = json.loads(Path(plain['arms']['C']['file']['path']).read_text())
+        self.assertNotIn('verified_reads', plain_arm)  # absent: every existing arm file keeps its bytes
+        self.assertNotIn('verified_reads', chains.arm_config(plain_arm, 'w5/q1', 0, 4, self.node.t / 'p'))
+        self.assertNotIn('verified_reads', chains.recipe_identity(plain_arm))
+        inputs = json.loads(self.node.inputs('0', {'cr1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'}},
+                                             label='res').read_text())
+        inputs['arms']['C']['verified_reads'] = 'resident'
+        _, plan = chains.make_plan(jwrite(self.node.t / 'res.json', inputs))
+        arm = json.loads(Path(plan['arms']['C']['file']['path']).read_text())
+        self.assertEqual(arm['verified_reads'], 'resident')
+        self.assertNotEqual(plan['arms']['C']['file']['sha256'], plain['arms']['C']['file']['sha256'])
+        self.assertEqual(chains.recipe_identity(arm)['verified_reads'], 'resident')
+        self.assertEqual(chains.arm_config(arm, 'w5/q1', 0, 4, self.node.t / 'r')['verified_reads'], 'resident')
+        self.assertIn('verified_reads', chains.PAIR_ONLY_KEYS)  # it changes memory traffic, never a game
+        for arm_name, value in (('C', 'reread'), ('C', 'Resident'), ('X8', 'resident')):
+            bad = json.loads(json.dumps(inputs))
+            bad['label'] = 'bad'
+            bad['arms'][arm_name]['verified_reads'] = value
+            bad['chains'] = {'cb1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'},
+                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'}}
+            with self.assertRaisesRegex(chains.Stop, 'verified_reads'):
+                chains.make_plan(jwrite(self.node.t / f'bad-{arm_name}-{value}.json', bad))
+
     def test_r_nom_is_frozen_in_the_manifests(self):
         self.node.stage0(r_nom_usec=100)
         with self.assertRaisesRegex(chains.Stop, 'R_nom is frozen'):

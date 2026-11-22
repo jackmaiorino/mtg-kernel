@@ -106,6 +106,10 @@ fn collect(
     projection_enabled: bool,
 ) -> Result<Trajectory, String> {
     let configs = episode.configurations()?;
+    ensure(
+        episode.priority_pass_offset.is_none(),
+        "priority_pass_offset is admitted only by the expanded collector",
+    )?;
     // A single immutable selected configuration supplies each actor's context
     // for the entire game, including reset suffixes and postboard games.
     let contexts = [
@@ -215,6 +219,7 @@ fn collect(
                     sampler_identity: sampler_identity
                         .or_else(|| decision_sampler_identity_v1(scores.logits.len()))
                         .map(str::to_owned),
+                    pass_offset_action: None,
                 };
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
                 decisions.push(record);
@@ -410,6 +415,9 @@ mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
+            priority_windows: None,
+            priority_pass_offset: None,
         }
     }
 
