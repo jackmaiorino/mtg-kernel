@@ -144,3 +144,41 @@ fn self_redirection_spends_its_charge_and_leaves_both_sources_for_the_live_desti
         }
     }
 }
+
+#[test]
+fn one_point_spends_each_distinct_self_redirection_once() {
+    use mtg_kernel::event::CommittedEvent;
+
+    for owner in [P0, P1] {
+        let caster = owner.opponent();
+        let mut state = turn_of(caster);
+        let nomads = put(&mut state, owner, "Nomads en-Kor", Zone::Battlefield);
+        state.objects.get_mut(nomads).counters.plus1_plus1 = 1;
+        for _ in 0..2 {
+            give_priority(&mut state, owner);
+            activate(&mut state, nomads, 0, &[Target::Object(nomads)]);
+            settled(&mut state);
+        }
+        assert_eq!(state.eternal_v1.as_ref().unwrap().e9a.redirects.len(), 2);
+        give_priority(&mut state, caster);
+        let dart = put(&mut state, caster, "Lava Dart", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::R], 0);
+        cast(&mut state, dart, &[Target::Object(nomads)]);
+        state = restored(&state);
+        settled(&mut state);
+        assert!(state.eternal_v1.as_ref().unwrap().e9a.redirects.is_empty());
+        assert_eq!(state.objects.get(nomads).damage, 1);
+        let hits = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|event| {
+                matches!(event,
+                    CommittedEvent::Damage { source, target: Target::Object(receiver), amount: 1 }
+                        if *source == dart && *receiver == nomads
+                )
+            })
+            .count();
+        assert_eq!(hits, 1);
+    }
+}

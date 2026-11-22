@@ -38,7 +38,9 @@ pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool
     if damage.historical_facts(state).is_err() {
         return false;
     }
-    if redirects.any(|(_, record)| record != first || damage.amount > 1) {
+    // A self-redirection spends its charge without moving the point. A second
+    // such record still applies to that same damage, even when the records match.
+    if redirects.any(|(_, record)| record != first || damage.amount > 1 || first.from == first.to) {
         return true;
     }
     if first.from != first.to {
