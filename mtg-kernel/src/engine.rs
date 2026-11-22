@@ -350,13 +350,13 @@ pub struct SpellbenchNeutralStateV1 {
     /// Legacy training and replay sessions keep the automatic choices.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub choices: bool,
-    /// These seats resolve revealed hand/graveyard partitions on the ordinary
-    /// trainer path, even while the bridge is presenting neutral choices.
+    /// Use the normal trainer path for these seats at choices with per-seat
+    /// presentation support (currently the revealed hand/graveyard partition).
     #[serde(
         default,
         skip_serializing_if = "SpellbenchNeutralStateV1::no_trainer_seats"
     )]
-    pub trainer_partition_seats: [bool; 2],
+    pub trainer_choice_seats: [bool; 2],
     /// The current publicly revealed, forced hand/graveyard partition.
     /// Reuses the typed library-partition continuation and exact bindings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -368,6 +368,10 @@ pub struct SpellbenchNeutralStateV1 {
 }
 
 impl SpellbenchNeutralStateV1 {
+    pub(crate) fn neutral_choices_for(&self, chooser: PlayerId) -> bool {
+        self.choices && !self.trainer_choice_seats[chooser.index()]
+    }
+
     fn no_trainer_seats(seats: &[bool; 2]) -> bool {
         *seats == [false; 2]
     }
@@ -384,9 +388,9 @@ impl std::hash::Hash for SpellbenchNeutralStateV1 {
             self.choices.hash(h);
             self.revealed_partition.hash(h);
             self.pending_activation.hash(h);
-            if !Self::no_trainer_seats(&self.trainer_partition_seats) {
-                b"trainer-revealed-partition/v1".hash(h);
-                self.trainer_partition_seats.hash(h);
+            if !Self::no_trainer_seats(&self.trainer_choice_seats) {
+                b"trainer-choice-seats/v1".hash(h);
+                self.trainer_choice_seats.hash(h);
             }
         }
     }
@@ -31599,11 +31603,11 @@ mod tests {
         let legacy = serde_json::to_vec(&state).unwrap();
         assert!(!std::str::from_utf8(&legacy)
             .unwrap()
-            .contains("trainer_partition_seats"));
+            .contains("trainer_choice_seats"));
         let restored: GameState = serde_json::from_slice(&legacy).unwrap();
         assert_eq!(restored, state);
         let legacy_hash = state.state_hash();
-        state.engine.spellbench_neutral_v1.trainer_partition_seats = [true, false];
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = [true, false];
         assert_ne!(state.state_hash(), legacy_hash);
         let mut restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();

@@ -419,7 +419,7 @@ pub(crate) struct LondonHumanStartV1 {
     /// Each seat's training priority-window rule (a bot seat's, as trained).
     pub(crate) action_windows: [SeatPriorityWindowsV1; 2],
     /// Preserve the normal trainer's revealed-card move orders for these seats.
-    pub(crate) trainer_partition_seats: [bool; 2],
+    pub(crate) trainer_choice_seats: [bool; 2],
 }
 
 impl LondonHumanStartV1 {
@@ -520,7 +520,7 @@ impl RlEpisodeSessionV1 {
                 modes,
                 engine_window_seats,
                 action_windows,
-                trainer_partition_seats: [false; 2],
+                trainer_choice_seats: [false; 2],
             },
             deck_ids,
             deck_hashes,
@@ -538,7 +538,7 @@ impl RlEpisodeSessionV1 {
     ) -> Result<Self, RlSessionError> {
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        state.engine.spellbench_neutral_v1.trainer_partition_seats = start.trainer_partition_seats;
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = start.trainer_choice_seats;
         let surface = start.surface()?;
         let mut session = RlEpisodeSessionV1 {
             deck_ids,
@@ -693,7 +693,7 @@ impl FastActorSessionV1 {
                 modes,
                 engine_window_seats,
                 action_windows,
-                trainer_partition_seats: [false; 2],
+                trainer_choice_seats: [false; 2],
             },
             deck_ids,
             deck_hashes,
@@ -710,7 +710,7 @@ impl FastActorSessionV1 {
     ) -> Result<Self, RlSessionError> {
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        state.engine.spellbench_neutral_v1.trainer_partition_seats = start.trainer_partition_seats;
+        state.engine.spellbench_neutral_v1.trainer_choice_seats = start.trainer_choice_seats;
         let surface = start.surface()?;
         let mut session = FastActorSessionV1 {
             deck_ids,

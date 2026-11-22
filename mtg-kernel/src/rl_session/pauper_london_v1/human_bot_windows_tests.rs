@@ -117,7 +117,7 @@ fn sessions(
         modes: LEARNED,
         engine_window_seats: engine_windows,
         action_windows: rules,
-        trainer_partition_seats: std::array::from_fn(|seat| {
+        trainer_choice_seats: std::array::from_fn(|seat| {
             seat == bot && matches!(comparison, NeutralComparison::TrainerPartitionForBot)
         }),
     };
@@ -375,6 +375,19 @@ fn play(
                 FastActorResponseV1::Terminal(_) => false,
             };
             if !shared && !neutral_training {
+                if matches!(comparison, NeutralComparison::TrainerPartitionForBot)
+                    && seat_index(decision.acting_player) == bot
+                {
+                    assert!(
+                        raw.game_state()
+                            .engine
+                            .spellbench_neutral_v1
+                            .revealed_partition
+                            .is_none(),
+                        "{}",
+                        context("unexpected neutral partition on the bot", out.shared)
+                    );
+                }
                 // Reproduce the person's training partition order if one is pending.
                 // Every other unmatched menu, including the bot's, must be forced.
                 let rows = copy.row_candidate_ids(decision).unwrap();
