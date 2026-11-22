@@ -509,7 +509,7 @@ fn shield_covers(shield: &HallowShieldV1, source: ObjectLinkV4, zone: Zone) -> b
 
 /// A split may reach Nishoba without the original packet naming it. Reserve its
 /// existing once-per-simultaneous-event counter bookkeeping for both portions.
-fn redirect_may_hit_nishoba(state: &GameState, damage: &DamageProposed) -> bool {
+pub(crate) fn redirect_may_hit_nishoba(state: &GameState, damage: &DamageProposed) -> bool {
     use crate::eternal_legacy_e9a_v1 as e9a;
     let Some(records) = e9a::read_state(state) else {
         return false;
@@ -528,17 +528,14 @@ fn redirect_may_hit_nishoba(state: &GameState, damage: &DamageProposed) -> bool 
         })
 }
 
-pub(crate) fn shielded_redirect_may_hit_nishoba(
-    state: &GameState,
-    damage: &DamageProposed,
-) -> bool {
-    if read_state(state).is_none_or(|pf| pf.hallow_shields.is_empty())
-        || !redirect_may_hit_nishoba(state, damage)
-    {
-        return false;
-    }
-    damage_source_incarnation(state, damage)
-        .is_some_and(|(source, zone)| !hallow_beneficiaries(state, source, zone).is_empty())
+/// An unshielded redirection may split a single proposal into several
+/// simultaneous survivors. Keep Hallow's established single-event checkpoint.
+pub(crate) fn needs_redirect_batch(state: &GameState, damage: &DamageProposed) -> bool {
+    crate::eternal_prevention_order_v1::nomads_v1::needs_frontier(state, damage)
+        && damage_source_incarnation(state, damage).is_some_and(|(source, zone)| {
+            crate::eternal_prevention_order_v1::cannot_prevent(state)
+                || hallow_beneficiaries(state, source, zone).is_empty()
+        })
 }
 
 /// One original damage event or one redirected portion. The interpreter's
@@ -559,9 +556,11 @@ fn covered_packet(
         return None;
     }
     let (source, source_zone) = damage_source_incarnation(state, damage)?;
-    if hallow_beneficiaries(state, source, source_zone).is_empty()
-        && !crate::eternal_prevention_order_v1::eligible(state, damage)
-        && !crate::eternal_prevention_order_v1::residual_order_applies(state, damage)
+    if !crate::eternal_prevention_order_v1::nomads_v1::needs_frontier(state, damage)
+        && (crate::eternal_prevention_order_v1::cannot_prevent(state)
+            || (hallow_beneficiaries(state, source, source_zone).is_empty()
+                && !crate::eternal_prevention_order_v1::eligible(state, damage)
+                && !crate::eternal_prevention_order_v1::residual_order_applies(state, damage)))
     {
         return None;
     }
@@ -612,7 +611,11 @@ fn prevent_packets(
         }
         let chooser =
             packet_chooser(state, damage).ok_or("Hallow packet has no affected player")?;
-        let beneficiaries = hallow_beneficiaries(state, item.source, item.source_zone);
+        let beneficiaries = if crate::eternal_prevention_order_v1::cannot_prevent(state) {
+            Vec::new()
+        } else {
+            hallow_beneficiaries(state, item.source, item.source_zone)
+        };
         let ordinary_only = beneficiaries.is_empty();
         let circle = (!ordinary_only)
             .then(|| circles::circle_shield_position(state, damage))
@@ -695,13 +698,7 @@ fn prevent_packets(
 /// Whether this batch needs Hallow's scoped replacement phase. Its caller
 /// owns the Nishoba cohort across this phase and all remaining ordinary events.
 pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEvent]) -> bool {
-    may_need_hallow_choice(state)
-        && !state.engine.until_end_of_turn.iter().any(|effect| {
-            matches!(
-                effect,
-                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-            )
-        })
+    (may_need_hallow_choice(state) || crate::eternal_prevention_order_v1::may_need_choice(state))
         && events.iter().any(|event| {
             matches!(event,
             ProposedEvent::Damage(damage) if covered_packet(state, damage, 0).is_some())
@@ -719,14 +716,6 @@ pub(crate) fn prevent_hallow_batch(
     use crate::eternal_prevention_order_v1::{
         BatchDamageResultV1 as ResultV1, PreparedDamageBatchV1,
     };
-    if state.engine.until_end_of_turn.iter().any(|effect| {
-        matches!(
-            effect,
-            crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-        )
-    }) {
-        return Ok(ResultV1::Complete(PreparedDamageBatchV1::default()));
-    }
     let mut work = Vec::new();
     let mut covered = vec![false; events.len()];
     for (at, event) in events.iter().enumerate() {

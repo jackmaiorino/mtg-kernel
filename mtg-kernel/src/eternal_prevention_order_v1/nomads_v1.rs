@@ -8,18 +8,36 @@ pub(crate) fn has_active_redirects(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
         && read_state(state).is_some_and(|record| {
             let now = TurnV1::now(state);
-            record.redirects.iter().any(|redirect| redirect.turn == now)
+            record.redirects.iter().any(|redirect| {
+                redirect.turn == now
+                    && [redirect.from, redirect.to].iter().all(|link| {
+                        crate::eternal_legacy_e9a_v1::link_live_in(
+                            state,
+                            *link,
+                            crate::state::Zone::Battlefield,
+                        )
+                    })
+            })
         })
 }
 
 /// A lone redirect with an ordinary recipient keeps its existing event shape.
 /// A competing effect or another redirect on the next recipient needs the entire frontier.
 pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool {
+    if !matches!(damage.target, Target::Object(_))
+        || damage.amount <= 0
+        || read_state(state).is_none_or(|records| records.redirects.is_empty())
+    {
+        return false;
+    }
     let mut redirects = applicable_redirects(state, damage);
     let Some((_, first)) = redirects.next() else {
         return false;
     };
-    if redirects.next().is_some() {
+    if damage.historical_facts(state).is_err() {
+        return false;
+    }
+    if redirects.any(|(_, record)| record != first || damage.amount > 1) {
         return true;
     }
     if first.from != first.to {
@@ -30,7 +48,10 @@ pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool
             return true;
         }
     }
-    damage.historical_facts(state).is_ok() && Packet::new(damage).options(state).len() > 1
+    Packet::new(damage)
+        .options(state)
+        .iter()
+        .any(|effect| !matches!(effect, OrdinaryV1::Redirect { .. }))
 }
 
 pub(super) fn normalize(state: &GameState, packet: &Packet, options: &mut Vec<OrdinaryV1>) {
