@@ -2037,6 +2037,24 @@ fn printed_and_breach_escape_use_nethergoyfs_selected_exile_cost() {
             };
             assert!(candidates.contains(&card));
             act(&mut state, Action::ChooseCostTarget(card));
+            if route == RouteV1::Breach && card == fuel[0] {
+                let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+                let observed = mtg_kernel::rl::observe_policy_v6(&state, &surface, P0, 0, 0, 0, 1)
+                    .unwrap()
+                    .extensions
+                    .pending_cast_object_cost
+                    .unwrap();
+                let history =
+                    mtg_kernel::heartfire_history_v1::observe(&state, &surface, P0, 0, 0, 0, 1)
+                        .unwrap()
+                        .extensions
+                        .pending_cast_object_cost
+                        .unwrap();
+                assert_eq!(observed, history);
+                assert_eq!(observed.required_count, 3);
+                assert_eq!(observed.remaining_count, 2);
+                assert_eq!(observed.selected[0].arena_id, card.0);
+            }
         }
         if route == RouteV1::Escape {
             assert!(matches!(
