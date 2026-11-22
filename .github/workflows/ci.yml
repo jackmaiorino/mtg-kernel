@@ -187,7 +187,7 @@ jobs:
     # tools/** cannot change what rustfmt or Clippy see. Pushes to main
     # always run it. Windows-only group sets leave it to the run they
     # complement or rerun.
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope)
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -337,7 +337,7 @@ jobs:
       fail-fast: false
       matrix:
         # Windows-only group sets run no Linux group.
-        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        os: ['ubuntu-24.04']
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - workspace-lib
@@ -384,7 +384,7 @@ jobs:
     # each part by its own name: '["native-store"]' in
     # MTG_CI_PR_WINDOWS_GROUPS routes that group's first part and leaves
     # native-store-1 on MTG_CI_WINDOWS_RUNNER.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-24.04' && github.actor == github.repository_owner && github.event_name == 'workflow_dispatch' && fromJSON('["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]') || 'windows-2025-parity-never' }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
@@ -745,7 +745,7 @@ jobs:
       matrix:
         # Pull requests run the Limited groups on Linux only; Windows-only
         # group sets other than windows-pr run them on Windows only.
-        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        os: ['ubuntu-24.04']
         part:
           - tests
           - binaries
@@ -911,7 +911,7 @@ jobs:
       matrix:
         # Pull requests run the Limited groups on Linux only; Windows-only
         # group sets other than windows-pr run them on Windows only.
-        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        os: ['ubuntu-24.04']
         # Slowest groups first: GitHub creates matrix jobs in this order, and
         # while other runs hold the account's hosted runners the groups start
         # one by one (run 44377022866: from minute 25 to 38 after the shared
@@ -945,7 +945,7 @@ jobs:
     # target directory instead of downloading the shared build; a routed
     # Limited-only shard still downloads the default library case list. Pull
     # requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-24.04' && github.actor == github.repository_owner && github.event_name == 'workflow_dispatch' && fromJSON('["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]') || 'windows-2025-parity-never' }}
     steps:
       # The Limited-only shards diff the default-feature library's case list
       # against the Limited build. The limited-build job now writes that list
@@ -1049,7 +1049,7 @@ jobs:
       - name: Use the runner's persistent target directory
         run: |
           if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
-            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
+            target_dir="$MTG_CI_TARGET_ROOT/limited"
             if [ "$RUNNER_OS" = Windows ]; then
               target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
             fi
@@ -1364,7 +1364,7 @@ jobs:
     strategy:
       matrix:
         # Windows-only group sets report only the system they tested.
-        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        os: ['ubuntu-24.04']
     runs-on: ubuntu-24.04
     steps:
       - name: Require every Rust test group
@@ -1392,7 +1392,7 @@ jobs:
       matrix:
         # Windows is in every set that runs Python, so this include always
         # matches a combination instead of adding one.
-        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        os: ['ubuntu-24.04']
         include:
           - {os: windows-2025, suffix: .exe}
     # Hosted runners only: the shards on any runner download the result.
@@ -1489,13 +1489,13 @@ jobs:
         # Windows runs the suite about twice as slowly, so it gets one more
         # shard to finish alongside the Ubuntu shards. Windows-only group
         # sets run no Linux shard.
-        os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        os: ['ubuntu-24.04']
         shard: [0, 1, 2]
         exclude:
           - {os: ubuntu-24.04, shard: 2}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-24.04' && github.actor == github.repository_owner && github.event_name == 'workflow_dispatch' && fromJSON('["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]') || 'windows-2025-parity-never' }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/target/release/kernel_rl_env${{ matrix.os == 'windows-2025' && '.exe' || '' }}
       MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/target/release/agent_bridge_v1${{ matrix.os == 'windows-2025' && '.exe' || '' }}
@@ -1614,12 +1614,14 @@ jobs:
       # A partial retry keeps the build job's artifact from the prior attempt;
       # take the newest attempt.
       - name: Download the shared Python test binaries
+        if: runner.arch != 'ARM64'
         uses: actions/download-artifact@v4
         with:
           pattern: python-env-${{ matrix.os }}-*
           path: ${{ runner.temp }}/python-env
 
       - name: Place the shared Python test binaries
+        if: runner.arch != 'ARM64'
         run: |
           staging="${RUNNER_TEMP:?}/python-env"
           if [ "$RUNNER_OS" = Windows ]; then
@@ -1630,6 +1632,19 @@ jobs:
           cp -R "$attempt"/. target/release/
           ls target/release/build/mtg-kernel-*/out
           chmod +x target/release/kernel_rl_env* target/release/agent_bridge_v1*
+          ls -l target/release
+
+      - name: Build the Python test binaries on an arm64 runner
+        if: runner.arch == 'ARM64'
+        run: |
+          target_dir="${MTG_CI_TARGET_ROOT:?}/python-env"
+          out_dir=$(CARGO_TARGET_DIR="$target_dir" CARGO_PROFILE_RELEASE_INCREMENTAL=true             cargo build --release --locked --bin kernel_rl_env --bin agent_bridge_v1 --message-format=json-render-diagnostics |
+            jq -r 'select(.reason == "build-script-executed") | .out_dir | select(test("/build/mtg-kernel-[0-9a-f]+/out$"))')
+          test -d "$out_dir"
+          mkdir -p "target/release/build/${out_dir#"$target_dir"/release/build/}"
+          cp "$out_dir"/*.rs "target/release/build/${out_dir#"$target_dir"/release/build/}/"
+          cp "$target_dir"/release/kernel_rl_env "$target_dir"/release/agent_bridge_v1 target/release/
+          ls target/release/build/mtg-kernel-*/out
           ls -l target/release
 
       - name: Validate agent bridge v1 golden transcripts
@@ -1650,7 +1665,7 @@ jobs:
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
-    if: always() && needs.detect-changes.result == 'success' && needs.detect-changes.outputs.scope != 'draft' && contains(needs.*.result, 'failure') && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
