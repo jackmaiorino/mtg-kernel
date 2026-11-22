@@ -9,12 +9,12 @@ Files:
 - `data/card_semantics_v1/pauper_table_v1.txt`: the human-readable dump (tokens per card, mapping marks, vocabulary with carrier counts, census, pair results).
 - `data/card_semantics_v1/leaf_mapping_v1.json`: the mapping layer.
 
-Regenerate with `cargo run --release -p mtg-kernel --bin card_semantics_table_v1 -- --write`. `--check` (and the bin's unit test) fails unless the committed files equal the generator's output and every check holds.
+Regenerate with `cargo run --release -p mtg-kernel --bin card_semantics_table_v1 -- --write`. Both modes require the default Pauper catalog. A failed census, pair pin, twin check or unrelated-pair ceiling leaves the previous files in place. `--check` also verifies the committed files against the generated output.
 
 ## Encoding
 
 - One integer column per token. A count token says how often a feature occurs on the card; a value token carries the largest amount seen for it (clamped to plus or minus 1000) and always sits beside the count token naming its kind.
-- Tokens come from a typed walk of `CardDef`: types, subtypes, colours, printed stats and keywords, mana costs (pips by colour, generic, X), alternative, additional, flashback, escape, madness and similar costs, target classes, every `EffectOp` leaf and combinator with its typed fields (serde field names and values, never `Debug` text), `EffectCond` conditions, activated, mana and triggered abilities, and permanent data (Equipment, Auras, animation, entry rules). Object and history indices are skipped.
+- Tokens come from a typed walk of `CardDef`: types, subtypes, colours, printed stats and keywords, mana costs (pips by colour, generic, X), alternative, additional, flashback, escape, madness and similar costs, target classes, every `EffectOp` leaf and combinator with its typed fields (serde field names and values, never `Debug` text), `EffectCond` conditions, activated, mana and triggered abilities, and permanent data (Equipment, Auras, animation, entry rules). Fixed target slots may appear in a card definition. The table contains no live object or history IDs.
 - A few enums have no serde (`CostComponent`, `TriggerCondition`, `AltCostCondition`, `AttachmentDef`, the mana ability defs); they contribute only their variant name, from the head of their `Debug` text. The dump lists every such name (39).
 - Integers only, identical on every platform. The table records `KERNEL_CARDDB_HASH`, the pool and mapping hashes and a content hash; a card database change fails `--check` until the table is regenerated.
 - The vocabulary only grows: regeneration keeps the committed column order and appends new tokens.

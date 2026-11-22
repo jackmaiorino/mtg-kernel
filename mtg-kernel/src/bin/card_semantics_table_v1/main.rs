@@ -132,38 +132,97 @@ fn check(repo: &Path) -> Result<(String, Vec<String>), String> {
     Ok((generated.report, failures))
 }
 
-fn main() -> Result<(), String> {
-    let mode = std::env::args().nth(1).unwrap_or_default();
-    let repo = repo_root();
-    match mode.as_str() {
-        "--write" => {
-            let generated = generate(&repo, &committed_prior(&repo))?;
-            std::fs::create_dir_all(repo.join("data/card_semantics_v1"))
-                .map_err(|e| e.to_string())?;
-            std::fs::write(repo.join(table::TABLE_PATH), &generated.table_text)
-                .map_err(|e| e.to_string())?;
-            std::fs::write(repo.join(table::DUMP_PATH), &generated.dump_text)
-                .map_err(|e| e.to_string())?;
-            print!("{}", generated.report);
-            for failure in &generated.failures {
-                println!("CHECK FAILED: {failure}");
+fn require_checks(failures: &[String]) -> Result<(), String> {
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} check(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        ))
+    }
+}
+
+// Publish the canonical JSON last. A failed rename leaves the previous JSON
+// intact; restore its companion dump before releasing the staging directory.
+fn write_outputs(repo: &Path, generated: &Generated) -> Result<(), String> {
+    use std::{fs, io};
+    let table = repo.join(table::TABLE_PATH);
+    let dump = repo.join(table::DUMP_PATH);
+    let stage = table.with_extension("staging");
+    fs::create_dir(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    let next_table = stage.join("table.json");
+    let next_dump = stage.join("dump.txt");
+    let old_dump = stage.join("previous.txt");
+    let mut preserve_stage = false;
+    let result = (|| -> io::Result<()> {
+        fs::write(&next_table, &generated.table_text)?;
+        fs::write(&next_dump, &generated.dump_text)?;
+        let had_dump = match fs::copy(&dump, &old_dump) {
+            Ok(_) => true,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+            Err(e) => return Err(e),
+        };
+        fs::rename(&next_dump, &dump)?;
+        if let Err(e) = fs::rename(&next_table, &table) {
+            let rollback = if had_dump {
+                fs::rename(&old_dump, &dump)
+            } else {
+                fs::remove_file(&dump)
+            };
+            if let Err(rollback_error) = rollback {
+                preserve_stage = true;
+                return Err(io::Error::other(format!(
+                    "{e}; could not restore {}: {rollback_error}; retained {}",
+                    dump.display(),
+                    stage.display()
+                )));
             }
-            Ok(())
+            return Err(e);
+        }
+        Ok(())
+    })();
+    if !preserve_stage {
+        fs::remove_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    }
+    result.map_err(|e| e.to_string())
+}
+
+fn run(repo: &Path, mode: &str) -> Result<(), String> {
+    if cfg!(feature = "limited-fdn-fixtures") {
+        return Err("card semantics table v1 requires the default Pauper catalog".to_string());
+    }
+    match mode {
+        "--write" => {
+            let generated = generate(repo, &committed_prior(repo))?;
+            print!("{}", generated.report);
+            require_checks(&generated.failures)?;
+            write_outputs(repo, &generated)
         }
         "--check" => {
-            let (report, failures) = check(&repo)?;
+            let (report, failures) = check(repo)?;
             print!("{report}");
-            if failures.is_empty() {
-                println!("card semantics table v1: all checks passed");
-                Ok(())
-            } else {
-                for failure in &failures {
-                    println!("CHECK FAILED: {failure}");
-                }
-                Err(format!("{} check(s) failed", failures.len()))
-            }
+            require_checks(&failures)?;
+            println!("card semantics table v1: all checks passed");
+            Ok(())
         }
         _ => Err("usage: card_semantics_table_v1 --write | --check".to_string()),
+    }
+}
+
+fn main() -> Result<(), String> {
+    run(&repo_root(), &std::env::args().nth(1).unwrap_or_default())
+}
+
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+#[test]
+fn extended_catalog_refuses_both_modes_before_reading_the_pool() {
+    for mode in ["--check", "--write"] {
+        assert_eq!(
+            run(Path::new("unused"), mode).unwrap_err(),
+            "card semantics table v1 requires the default Pauper catalog"
+        );
     }
 }
 
@@ -172,6 +231,48 @@ fn main() -> Result<(), String> {
 #[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
 mod tests {
     use super::*;
+
+    fn scratch_repo(label: &str) -> PathBuf {
+        let temp = std::env::temp_dir().join(format!("cardsem-{label}-{}", std::process::id()));
+        std::fs::create_dir(&temp).unwrap();
+        std::fs::create_dir_all(temp.join(table::DUMP_PATH).parent().unwrap()).unwrap();
+        temp
+    }
+
+    #[test]
+    fn write_refuses_a_changed_pair_before_replacing_outputs() {
+        let temp = scratch_repo("changed-pair");
+        let original = repo_root();
+        for path in [table::POOL_PATH, table::TABLE_PATH, table::DUMP_PATH] {
+            std::fs::copy(original.join(path), temp.join(path)).unwrap();
+        }
+        std::fs::write(temp.join(table::MAPPING_PATH), r#"{"schema":"card_semantics_leaf_mapping/v1","rules":[],"entries":[{"source":"leaf:DealDamage","emit":[{"token":"leaf:ReviewFixture"}],"why":"Changed mapping fixture"}]}"#).unwrap();
+        let error = run(&temp, "--write").unwrap_err();
+        assert!(error.contains("differs from pinned"), "{error}");
+        for path in [table::TABLE_PATH, table::DUMP_PATH] {
+            assert_eq!(
+                std::fs::read(original.join(path)).unwrap(),
+                std::fs::read(temp.join(path)).unwrap()
+            );
+        }
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn table_replacement_failure_restores_the_previous_dump() {
+        let temp = scratch_repo("restore");
+        std::fs::create_dir(temp.join(table::TABLE_PATH)).unwrap();
+        std::fs::write(temp.join(table::DUMP_PATH), "original").unwrap();
+        let generated = Generated {
+            table_text: "new table".into(),
+            dump_text: "new dump".into(),
+            report: String::new(),
+            failures: Vec::new(),
+        };
+        assert!(write_outputs(&temp, &generated).is_err());
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "original");
+        std::fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn committed_table_is_current_and_checks_hold() {
