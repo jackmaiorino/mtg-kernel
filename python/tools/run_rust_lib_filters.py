@@ -26,12 +26,28 @@ SKIP_IGNORED_ENV = "MTG_CI_RUST_LIB_SKIP_IGNORED"
 ISOLATED_CASES_ENV = "MTG_CI_RUST_LIB_ISOLATED_CASES"
 LIMITED_ONLY_ENV = "MTG_CI_RUST_LIB_LIMITED_ONLY"
 LIMITED_FEATURE = "limited-fdn-fixtures"
+DEFAULT_FILTER_TIMEOUT_SECONDS = 1800
 # Limited-only cases that fail and are tracked in the named issue; skipped by
 # name until fixed.
 KNOWN_FAILURES_PATH = Path(__file__).with_name("rust_limited_only_known_failures.json")
 # Recorded seconds per isolated case on a hosted Linux runner, used only to
 # balance shards; refresh with update_rust_case_seconds.py.
 CASE_SECONDS_PATH = Path(__file__).with_name("rust_case_seconds.json")
+# Exact isolated cases whose time limit differs from the --filter-timeout-seconds
+# default, in seconds. A case that hangs still fails at its own limit.
+CASE_TIMEOUTS_PATH = Path(__file__).with_name("rust_case_timeout_seconds.json")
+
+
+def case_timeouts() -> dict[str, int]:
+    """The table is part of the repository; a missing or malformed table stops the run instead of silently
+    returning every case to the default."""
+    table = json.loads(CASE_TIMEOUTS_PATH.read_text())
+    if not isinstance(table, dict):
+        raise ValueError(f"{CASE_TIMEOUTS_PATH.name}: expected a JSON object")
+    table = {name: value for name, value in table.items() if not name.startswith("_")}
+    if not all(type(value) is int and value > 0 for value in table.values()):
+        raise ValueError(f"{CASE_TIMEOUTS_PATH.name}: every limit must be a positive whole number of seconds")
+    return table
 
 
 def case_seconds() -> tuple[dict[str, float], float]:
@@ -195,10 +211,13 @@ def case_resources() -> tuple[int, dict]:
     return min(counts), telemetry
 
 
-def run_isolated_cases(executable: str, selected: list[str], timeout: int, ignored: list[str]) -> int:
+def run_isolated_cases(executable: str, selected: list[str], timeout: int | None, ignored: list[str]) -> int:
     workers, telemetry = case_resources()
-    print(json.dumps({"isolated_case_workers": workers, "case_timeout_seconds": timeout,
-                      "resources": telemetry}), flush=True)
+    table = case_timeouts()
+    overrides = {name: limit for name, limit in table.items() if name in selected} if timeout is None else {}
+    default_timeout = DEFAULT_FILTER_TIMEOUT_SECONDS if timeout is None else timeout
+    print(json.dumps({"isolated_case_workers": workers, "case_timeout_seconds": default_timeout,
+                      "case_timeout_overrides": overrides, "resources": telemetry}), flush=True)
     active: dict[str, subprocess.Popen] = {}
     lock, output_lock, stopping = threading.Lock(), threading.Lock(), threading.Event()
 
@@ -228,8 +247,9 @@ def run_isolated_cases(executable: str, selected: list[str], timeout: int, ignor
                 child = subprocess.Popen(command)
                 active[name] = child
             started = time.monotonic()
-            emit("rust_test_case_started", case=name, pid=child.pid, timeout_seconds=timeout)
-            deadline = started + timeout
+            limit = overrides.get(name, default_timeout)
+            emit("rust_test_case_started", case=name, pid=child.pid, timeout_seconds=limit)
+            deadline = started + limit
             while True:
                 if stopping.is_set() or time.monotonic() >= deadline:
                     row["status"] = "interrupted" if stopping.is_set() else "timeout"
@@ -302,7 +322,9 @@ def main() -> int:
             raise ValueError("Cargo runner expects exactly one library test executable")
         limited_only = os.environ.get(LIMITED_ONLY_ENV, "")
         filters = [] if limited_only else valid_filters(json.loads(os.environ[FILTERS_ENV]))
-        filter_timeout = int(os.environ.get(FILTER_TIMEOUT_ENV, "1800"))
+        raw_timeout = os.environ.get(FILTER_TIMEOUT_ENV)
+        explicit_timeout = int(raw_timeout) if raw_timeout is not None else None
+        filter_timeout = DEFAULT_FILTER_TIMEOUT_SECONDS if explicit_timeout is None else explicit_timeout
         if filter_timeout <= 0:
             raise ValueError("Library filter timeout must be positive")
         nocapture = os.environ.get(NOCAPTURE_ENV, "0") == "1"
@@ -360,7 +382,7 @@ def main() -> int:
                 "shard_index": shard[0], "shard_count": shard[1], "selected": selected,
             }), flush=True)
             if isolated_cases:
-                return run_isolated_cases(sys.argv[2], selected, filter_timeout, ignored)
+                return run_isolated_cases(sys.argv[2], selected, explicit_timeout, ignored)
             commands = [(f"{' '.join(filters)} shard {shard[0]}/{shard[1]}",
                          [sys.argv[2], "--exact", *selected])]
         failed_filters = []
@@ -385,7 +407,8 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--features", required=True)
-    parser.add_argument("--filter-timeout-seconds", type=int, default=1800)
+    parser.add_argument("--filter-timeout-seconds", type=int,
+                        help="Seconds per filter or case (default 1800, or the named isolated case limit)")
     parser.add_argument("--shard-index", type=int)
     parser.add_argument("--shard-count", type=int)
     parser.add_argument("--nocapture", action="store_true")
@@ -408,7 +431,7 @@ def main() -> int:
         filters = []
     else:
         filters = valid_filters(args.filters)
-    if args.filter_timeout_seconds <= 0:
+    if args.filter_timeout_seconds is not None and args.filter_timeout_seconds <= 0:
         parser.error("--filter-timeout-seconds must be positive")
     shard = None
     if args.shard_index is not None or args.shard_count is not None:
@@ -422,7 +445,10 @@ def main() -> int:
         parser.error("--isolated-cases requires sharding")
     environment = os.environ.copy()
     environment[FILTERS_ENV] = json.dumps(filters)
-    environment[FILTER_TIMEOUT_ENV] = str(args.filter_timeout_seconds)
+    if args.filter_timeout_seconds is None:
+        environment.pop(FILTER_TIMEOUT_ENV, None)
+    else:
+        environment[FILTER_TIMEOUT_ENV] = str(args.filter_timeout_seconds)
     environment[SHARD_ENV] = json.dumps(shard)
     environment[NOCAPTURE_ENV] = "1" if args.nocapture else "0"
     environment[SKIP_IGNORED_ENV] = "1" if args.skip_ignored else "0"

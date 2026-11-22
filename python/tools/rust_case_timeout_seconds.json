@@ -1,0 +1,5 @@
+{
+  "_comment": "Per-case limits in seconds for isolated Rust cases. The paid-wide case passed on Windows in 2338 s after main adopted this limit in #836. Both cases previously timed out at 1800 s, which remains the default for all other cases.",
+  "current_mixed_policy_v1::liliana::tests::paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_seats": 3000,
+  "human_bo3_v1::next_five_v59::wide_tests::paid_wide_human_and_opponent_original_indices_native_parity_and_stale_restore_both_seats": 3000
+}
