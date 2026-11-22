@@ -82,9 +82,22 @@ class ExecutorConfigTests(AgentCase):
         self.assertEqual(pc._spool_env(config), dict(pc.SPOOL_ENV, MTG_KERNEL_VECTOR_TANH_DIR=str(records)))
         self.assertIsNone(pc._direct_env(pc.load_agent_config(self.config_path)), "absent: inherited as before")
         self.assertNotEqual(pc._execution_binding(config), pc._execution_binding(pc.load_agent_config(self.config_path)))
-        for bad in (str(self.pins / "vt"), "relative", 7):
-            with self.assertRaisesRegex(ValueError, "vector_tanh_dir"):
+        for bad in (str(self.pins / "vt"), "relative", 7, os.path.abspath(os.sep), str(self.root / "missing"),
+                    str(self.root)):  # inside a root, relative, not text, "/", absent, above the roots
+            with self.assertRaisesRegex(ValueError, "vector_tanh_dir", msg=bad):
                 pc.load_agent_config(self.write_config(self.root / "bad-vt.json", vector_tanh_dir=bad))
+        self.assertTrue(pc._overlap(Path(self.pins).anchor, str(self.pins)), "the filesystem root lies above all")
+        if POSIX:
+            os.symlink(records, self.root / "vt-link")
+            with self.assertRaisesRegex(ValueError, "vector_tanh_dir"):
+                pc.load_agent_config(self.write_config(self.root / "bad-vt.json", vector_tanh_dir=str(self.root / "vt-link")))
+
+    def test_hashing_reports_progress_for_the_runners_heartbeat(self):
+        path = self.root / "big.bin"
+        path.write_bytes(b"x" * (3 << 20))
+        calls = []
+        self.assertEqual(pc._hash_nofollow(str(path), lambda: calls.append(1)), pc.sha256_file(path))
+        self.assertEqual(len(calls), 3, "one call per block")
 
     @unittest.skipIf(POSIX, "the refusal applies off POSIX")
     def test_the_spool_executor_needs_a_posix_host(self):
@@ -380,7 +393,7 @@ class SpoolServiceTests(RunnerCase):
             result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-check",
                                      str(self.spool_config), *extra], capture_output=True, text=True, timeout=60)
             return result.returncode, json.loads(result.stdout or "{}")
-        self.assertEqual(check()[0], 1)  # no runner: absent
+        self.assertEqual(check()[0], 3)  # no runner: absent, never a reason to kill
         runner = self.start_runner()
         code, report = check()
         self.assertEqual((code, report["state"], report["pid"]), (0, "fresh", runner.pid))
@@ -395,6 +408,75 @@ class SpoolServiceTests(RunnerCase):
         result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-check", str(bad)],
                                 capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 2)
+
+    def test_runner_watch_tells_root_to_kill_only_a_stale_unfrozen_runner(self):
+        cgroup = self.root / "cgroup"
+        cgroup.mkdir()
+
+        def watch(*extra):
+            result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-watch",
+                                     str(self.spool_config), "--plan", "/p.json", "--chain", "c1", *extra],
+                                    capture_output=True, text=True, timeout=60)
+            return result.returncode, json.loads(result.stdout or "{}")
+        self.assertEqual(watch()[0], 3, "absent: starting or stopped")
+        runner = self.start_runner()
+        self.assertEqual(watch()[0], 0)
+        self.stop_runner(runner)
+        heartbeat = self.spool / "runner.heartbeat"
+        heartbeat.write_text("{}")
+        os.utime(heartbeat, (time.time() - 100, time.time() - 100))
+        code, report = watch()
+        self.assertEqual((code, report["state"]), (1, "stale"))
+        self.assertEqual(report["kill_command"][1:], [str(HERE / "w5box.py"), "kill", "--plan", "/p.json", "--chain", "c1"])
+        (cgroup / "cgroup.freeze").write_text("0\n")
+        (cgroup / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+        self.assertEqual(watch("--cgroup", str(cgroup))[0], 1)
+        (cgroup / "cgroup.events").write_text("populated 1\nfrozen 1\n")
+        code, report = watch("--cgroup", str(cgroup))
+        self.assertEqual((code, report["state"], "kill_command" in report), (4, "stale-frozen", False))
+        (cgroup / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+        (cgroup / "cgroup.freeze").write_text("1\n")
+        self.assertEqual(watch("--cgroup", str(cgroup))[0], 4)
+        self.assertEqual(watch("--max-age", "-5")[0], 2)
+
+    def test_the_heartbeat_exists_before_recovery_runs(self):
+        runner = pc.BoxRunner(pc.load_agent_config(self.spool_config))
+        seen = []
+
+        def recover():
+            seen.append((self.spool / "runner.heartbeat").exists())
+            runner.signalled = True  # leave the loop at once
+        runner.recover = recover
+        self.assertEqual(runner.serve(), "signal")
+        self.assertEqual(seen, [True])
+        self.assertEqual(json.loads((self.spool / "END.json").read_text())["reason"], "signal")
+
+    def test_sweep_survives_a_stubborn_entry_and_keeps_live_agent_copies(self):
+        runner = pc.BoxRunner(pc.load_agent_config(self.spool_config))
+        run = self.scratch / ".run"
+        run.mkdir(mode=0o700)
+        plain = run / f"{TAG}.{'a' * 32}.json"  # an agent's copy (a direct agent sharing the root has no spool state)
+        plain.write_text("{}")
+        snap = run / f"{TAG.replace('-s001', '-s002')}.{'b' * 32}.snap.json"  # a killed runner's snapshot
+        snap.write_text("{}")
+        locked = self.scratch / ".trash-stubborn" / "locked"
+        locked.mkdir(parents=True)
+        (locked / "f").write_text("x")
+        locked.chmod(0o500)
+        try:
+            log = io.StringIO()
+            with mock.patch.object(pc, "SPOOL_STAGE_AGE", -1), mock.patch.object(pc.sys, "stderr", log):
+                runner.sweep()  # the stubborn trash fails to go; the sweep logs it and goes on
+            self.assertFalse(snap.exists())
+            self.assertTrue(plain.exists(), "no spool state for its tag: kept")
+            if os.geteuid() != 0:
+                self.assertTrue((locked / "f").exists())
+                self.assertIn("PermissionError", log.getvalue())
+            (self.spool / f"{TAG}.lock").write_text("")  # its agent's lock, left by a killed agent
+            runner.sweep()
+            self.assertFalse(plain.exists() or (self.spool / f"{TAG}.lock").exists())
+        finally:
+            locked.chmod(0o700)
 
     def test_the_runner_may_write_only_the_scratch_root(self):
         config = pc.load_agent_config(self.spool_config)

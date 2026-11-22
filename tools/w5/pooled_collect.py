@@ -40,8 +40,10 @@ Two more entry points run on collector hosts:
                                                  collector account, it runs the collectors the agent hands
                                                  it through `<scratch>/.spool`, so they use the box's CPUs
     pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS]
-                                                 root's watch: exit 1 when the runner's heartbeat is older
-                                                 (root then kills the runner's w5box chain)
+                                                 the heartbeat's age: exit 0 fresh, 1 stale, 3 absent
+    pooled_collect.py runner-watch AGENT_CONFIG.json --plan P --chain C [--cgroup DIR] [--max-age S]
+                                                 root's timer: exit 1 (and the w5box kill to run) only for a
+                                                 stale runner whose chain is not frozen; acts on nothing
 
 With the agent config's `"executor": {"kind": "spool"}` the agent's run_shard keeps every check it makes and
 hands the run to the runner instead of starting the collector itself (a process started by sshd cannot leave
@@ -54,6 +56,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import math
 import os
@@ -1026,7 +1029,7 @@ def _system_rules(config: dict) -> list:
     rules += [(p, LL_RUN, False) for p in programs] + [(config["collector"], LL_RUN, True)]
     rules += [(p, LL_RUN, True) for p in config["run_paths"]]
     if config.get("vector_tanh_dir"):
-        rules.append((config["vector_tanh_dir"], LL_READ, False))
+        rules.append((config["vector_tanh_dir"], LL_READ, True))
     return rules
 
 
@@ -1119,7 +1122,8 @@ def _strictly_under(path: str, roots) -> bool:
 
 
 def _overlap(a: str, b: str) -> bool:
-    return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
+    """True when one path is the other or lies beneath it ("/" lies above every path)."""
+    return a == b or a.startswith(b.rstrip(os.sep) + os.sep) or b.startswith(a.rstrip(os.sep) + os.sep)
 
 
 def _portable_name(name) -> bool:
@@ -1168,11 +1172,14 @@ def load_agent_config(path: Path) -> dict:
     # A settled vector-tanh proof record directory (`--settle-vector-tanh` beforehand), read only, passed to the
     # collector as MTG_KERNEL_VECTOR_TANH_DIR by both executors: x86-64 collectors under PlatformLibm then use
     # the proved eight-lane tanh. Same bits either way; without it they call scalar tanhf (slower).
-    config["vector_tanh_dir"] = config.get("vector_tanh_dir")
-    if config["vector_tanh_dir"] is not None and not (
-            isinstance(config["vector_tanh_dir"], str) and _canonical(config["vector_tanh_dir"]) == config["vector_tanh_dir"]
-            and not any(_overlap(config["vector_tanh_dir"], root) for root in roots)):
-        raise ValueError("agent vector_tanh_dir must be a canonical absolute path outside every root")
+    records = config["vector_tanh_dir"] = config.get("vector_tanh_dir")
+    if records is not None and not (
+            isinstance(records, str) and _canonical(records) == records and os.path.dirname(records) != records
+            and not any(_overlap(records, root) for root in roots)
+            and not any(_overlap(records, system) for system in ("/etc", "/proc", "/sys", "/dev", "/home", "/root"))
+            and os.path.isdir(records) and not os.path.islink(records)):
+        raise ValueError("agent vector_tanh_dir must be an existing directory (no symlink), not \"/\", outside "
+                         "and above no root")
     config["max_seconds"] = int(config.get("max_seconds", 3600))
     config["request_seconds"] = int(config.get("request_seconds", 900))
     for key, default, least in (("min_free_bytes", AGENT_MIN_FREE_BYTES, 0), ("max_concurrent_runs", 2, 1)):
@@ -1231,9 +1238,10 @@ def _tag_arg(args: dict) -> str:
     return tag
 
 
-def _hash_nofollow(path: str) -> str | None:
+def _hash_nofollow(path: str, progress=None) -> str | None:
     """The sha256 of a regular file opened without following a final symlink; None if absent;
-    '' for anything else (a symlink, a directory, a file the sandbox denies)."""
+    '' for anything else (a symlink, a directory, a file the sandbox denies). `progress`, if given, is called
+    after every block (the box runner keeps its heartbeat while it hashes)."""
     try:
         fd = os.open(path, os.O_RDONLY | NOFOLLOW | BINARY)
     except FileNotFoundError:
@@ -1246,6 +1254,8 @@ def _hash_nofollow(path: str) -> str | None:
         digest = hashlib.sha256()
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
+            if progress is not None:
+                progress()
         return digest.hexdigest()
 
 
@@ -1351,7 +1361,7 @@ def _agent_pins_of(document, what: str) -> set:
         raise AgentRefusal(f"{what}: {error}") from None
 
 
-def _confined_inputs(command: dict, config: dict) -> None:
+def _confined_inputs(command: dict, config: dict, progress=None) -> None:
     """Every file the collector will read for this shard lies inside the pin roots: the command's own
     pins, present with their pinned bytes, and the play-import files named by any pinned JSON it reaches
     (the loader reads them), followed transitively. Pins nested inside pinned records are followed only
@@ -1363,7 +1373,7 @@ def _confined_inputs(command: dict, config: dict) -> None:
     for pin in required:
         _pin_arg({"path": pin[0], "sha256": pin[1]}, config)
     for path, digest in sorted(required):
-        found = _hash_nofollow(path)
+        found = _hash_nofollow(path, progress)
         if found is None:
             raise AgentRefusal(f"pinned input absent: {path[:200]!r}")
         if found != digest:
@@ -1423,7 +1433,7 @@ def _valid_shard_command(data: bytes, tag: str, config: dict) -> dict:
     return command
 
 
-def _valid_private_command(data: bytes, run_dir: str, config: dict) -> dict:
+def _valid_private_command(data: bytes, run_dir: str, config: dict, progress=None) -> dict:
     """The runner's check of an agent's private command copy: what _valid_shard_command requires, with the
     output directory the agent set (`<run_dir>/out`), and every input confined to the pin roots."""
     try:
@@ -1438,7 +1448,7 @@ def _valid_private_command(data: bytes, run_dir: str, config: dict) -> dict:
     if command.get("ex1") is not None or type(workers) is not int or not 1 <= workers <= 1024 \
             or not isinstance(episodes, list) or not 1 <= len(episodes) <= 1024:
         raise ValueError("the job's command needs 1 to 1024 episodes and workers and no EX1 hook")
-    _confined_inputs(command, config)
+    _confined_inputs(command, config, progress)
     return command
 
 
@@ -1680,12 +1690,13 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 # the instance must be closed by w5box, which kills and verifies empty the chain cgroup (collector descendants
 # included); `w5box.py run` and `recover` do that. A hung runner shows as a stale heartbeat: agents refuse at
 # once and learners fail over. Two watchdogs then end its work: each collector's own alarm kills it (the
-# leader; it survives exec) SPOOL_WATCHDOG_GRACE after its deadline, and root runs
-# `pooled_collect.py runner-check CONFIG [MAX_AGE_SECONDS]` periodically (say every minute from a root timer,
-# MAX_AGE a few heartbeat periods) and on exit 1 runs `w5box.py kill --plan P --chain C`, which kills the chain
-# cgroup with every collector descendant. The runner ignores W5_CONTROL_DIR (no pause handshake):
-# `w5box.py pause --now` freezes it, which agents also see as a stale heartbeat; root's check skips a chain it
-# froze on purpose.
+# leader; it survives exec) watchdog_grace_seconds after its deadline, and root's timer runs
+# `pooled_collect.py runner-watch CONFIG --plan P --chain C --cgroup <root>/box<k>/chain` (say every minute)
+# and, on its exit 1 only, the `w5box.py kill` it prints, which kills the chain cgroup with every collector
+# descendant. runner-watch acts on nothing itself; an absent heartbeat (starting, stopped) and a chain frozen on
+# purpose (`w5box.py pause --now`) are never killed. The runner writes its heartbeat before recovering. It
+# ignores W5_CONTROL_DIR (no pause handshake). A spool scratch root is never shared with a direct-executor
+# config.
 
 SPOOL_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
 SPOOL_REQUEST_KEYS = {"schema", "job", "tag", "command_sha256", "seconds", "submitted_unix", "generation",
@@ -2134,6 +2145,15 @@ class BoxRunner:
         self.stop_seen = None
         self.started_utc = _utc()
         self.end_error = None
+        self.beat_every = max(0.2, self.executor["heartbeat_seconds"] / 4)
+        self.next_beat = 0.0
+
+    def beat(self) -> None:
+        """Touches the heartbeat when due (from the loop, between claims and while hashing a job's inputs)."""
+        now = time.monotonic()
+        if now >= self.next_beat and os.path.lexists(self.heartbeat):
+            os.utime(self.heartbeat)
+            self.next_beat = now + self.beat_every
 
     def serve(self) -> str:
         """Runs until the stop file (reason "stop-file") or a signal ("signal"); returns the reason. Only the
@@ -2176,16 +2196,14 @@ class BoxRunner:
         """The loop, run while owning the spool."""
         if os.path.lexists(self.executor["stop_file"]):
             return "stop-file"  # a late start exits at once; the operator removes the stop file
-        self.recover()
         _spool_write(self.heartbeat, dict(self.identity, generation=self.generation, pid=os.getpid(),
-                                          started_utc=_utc()))
-        beat_every = max(0.2, self.executor["heartbeat_seconds"] / 4)
-        next_beat = next_sweep = 0.0
+                                          started_utc=_utc()))  # before recovery: root's check sees a live runner
+        self.next_beat = time.monotonic() + self.beat_every
+        self.recover()
+        next_sweep = 0.0
         while True:
             now = time.monotonic()
-            if now >= next_beat:
-                os.utime(self.heartbeat)
-                next_beat = now + beat_every
+            self.beat()
             self.watch()
             if self.signalled:
                 self.cancel_all("the box runner was stopped by a signal during this run; the shard was not rerun")
@@ -2251,6 +2269,7 @@ class BoxRunner:
                 except FileNotFoundError:
                     continue  # withdrawn
             self.start(tag, files, "the box runner is stopping; the shard was not run" if stopping else None)
+            self.beat()
 
     def start(self, tag: str, files: dict, refuse: str | None) -> None:
         job_id = None
@@ -2263,14 +2282,15 @@ class BoxRunner:
                 if _agent_gone(files["lock"]):  # nobody waits: dropped unrun
                     _unlink_quiet(files["running"])
                     _spool_discard(files)
+                    _remove_private_copies(self.config, tag)
                     return
             if refuse:
                 raise ValueError(refuse)
             data, run_dir, deadline = self.validate(tag, request)
-            snapshot = os.path.join(self.config["scratch"], ".run", f"{tag}.{uuid.uuid4().hex}.json")
+            snapshot = os.path.join(self.config["scratch"], ".run", f"{tag}.{uuid.uuid4().hex}.snap.json")
             _write_new(snapshot, data, AGENT_SHARD_BYTES)
             try:
-                watchdog = math.ceil(deadline - time.monotonic()) + self.executor["watchdog_grace_seconds"]
+                watchdog = max(1, math.ceil(deadline - time.monotonic()) + self.executor["watchdog_grace_seconds"])
                 process = _launch_spooled(self.config, snapshot, run_dir, watchdog)
             except BaseException:
                 os.unlink(snapshot)
@@ -2311,8 +2331,8 @@ class BoxRunner:
         data = _read_single(os.path.join(run, f"{tag}.{request['job']}.json"), AGENT_SHARD_BYTES)
         if data is None or hashlib.sha256(data).hexdigest() != request["command_sha256"]:
             raise ValueError("the job's command copy is absent or not the submitted bytes")
-        _valid_private_command(data, run_dir, self.config)
-        if _hash_nofollow(self.config["collector"]) != self.config["collector_sha256"]:
+        _valid_private_command(data, run_dir, self.config, self.beat)
+        if _hash_nofollow(self.config["collector"], self.beat) != self.config["collector_sha256"]:
             raise ValueError("collector binary differs from its pin")
         return data, run_dir, time.monotonic() + min(remaining, seconds)
 
@@ -2354,8 +2374,9 @@ class BoxRunner:
                                                "generation": self.generation, **fields})
             finally:
                 _unlink_quiet(files["running"])
-            if _agent_gone(files["lock"]):  # nobody will read it
+            if _agent_gone(files["lock"]):  # nobody will read it; the departed agent left its command copy
                 _spool_discard(files)
+                _remove_private_copies(self.config, tag)
 
     def cancel_all(self, error: str) -> None:
         for tag, job in list(self.jobs.items()):
@@ -2372,20 +2393,23 @@ class BoxRunner:
         for directory in (self.spool, run, self.config["scratch"]):
             for name in os.listdir(directory):
                 path = os.path.join(directory, name)
-                if name.startswith(".") and (name.endswith(".tmp") or name.startswith(".trash-")):
-                    try:
+                try:
+                    if name.startswith(".") and (name.endswith(".tmp") or name.startswith(".trash-")):
                         if now - os.lstat(path).st_ctime > SPOOL_STAGE_AGE:  # a rename sets ctime
                             _remove_tree(path)
-                    except FileNotFoundError:
-                        pass
-                    continue
-                if directory == self.spool:
-                    tag, _, kind = name.rpartition(".")
-                    if kind in ("request", "result", "cancel", "lock") and AGENT_TAG.fullmatch(tag):
-                        tags.add(tag)
-                elif directory == run and name.endswith(".json"):
-                    tags.add(name.split(".", 1)[0])
-        for tag in sorted(t for t in tags if AGENT_TAG.fullmatch(t) and t not in self.jobs):
+                    elif directory == self.spool:
+                        tag, _, kind = name.rpartition(".")
+                        if kind in ("request", "result", "cancel", "lock") and AGENT_TAG.fullmatch(tag):
+                            tags.add(tag)
+                    elif directory == run and name.endswith(".snap.json") \
+                            and name.split(".", 1)[0] not in self.jobs:
+                        _unlink_quiet(path)  # only this runner snapshots; one it no longer runs is a leftover
+                except OSError as error:  # one stubborn entry never ends the runner
+                    sys.stderr.write(f"sweep: {name[:80]!r}: {type(error).__name__}: {str(error)[:120]}\n")
+                self.beat()
+        # An agent's own command copy is removed only for a tag with spool state and no live agent: a scratch
+        # root shared with a direct-executor config (never deployed so) keeps that agent's copies.
+        for tag in sorted(t for t in tags if t not in self.jobs):
             files = _spool_files(self.spool, tag)
             with _tag_lock(self.config, tag):
                 if not os.path.lexists(files["running"]) and _agent_gone(files["lock"]):
@@ -2459,8 +2483,8 @@ def runner_check(config_path: str, max_age: float | None, stdout) -> int:
     """`pooled_collect.py runner-check CONFIG [MAX_AGE_SECONDS]`, for root's watch over a box runner: reads
     only the config's scratch and executor fields (root does not own the roots, so no full config check) and
     the heartbeat without following a symlink. Exit 0 while the heartbeat is younger than MAX_AGE_SECONDS
-    (default: the executor's heartbeat_seconds), 1 when it is older or absent (root then kills the runner's
-    chain: `w5box.py kill`, which kills the chain cgroup with every collector), 2 for an unusable config."""
+    (default: the executor's heartbeat_seconds), 1 when it is older (stale), 3 when there is none (a runner
+    starting or stopped), 2 for an unusable config. runner-watch turns this into root's decision."""
     try:
         config = json.loads(Path(config_path).read_text())
         executor = config.get("executor") or {}
@@ -2474,9 +2498,9 @@ def runner_check(config_path: str, max_age: float | None, stdout) -> int:
     path = os.path.join(config["scratch"], SPOOL_DIR, "runner.heartbeat")
     try:
         info = os.lstat(path)
-    except FileNotFoundError:
+    except FileNotFoundError:  # not started yet, or stopped: never a reason to kill
         stdout.write(json.dumps({"state": "absent", "heartbeat": path}) + "\n")
-        return 1
+        return 3
     age = time.time() - info.st_mtime
     fresh = stat.S_ISREG(info.st_mode) and age <= limit
     report = {"state": "fresh" if fresh else "stale", "age_seconds": round(age, 3), "limit_seconds": limit,
@@ -2504,6 +2528,49 @@ def _close_inherited() -> None:
                 os.close(fd)
             except OSError:
                 pass  # the listing's own descriptor, already closed
+
+
+def runner_watch(argv: list[str], stdout) -> int:
+    """`pooled_collect.py runner-watch CONFIG --plan PLAN --chain CHAIN [--cgroup DIR] [--max-age S]`, the
+    one-shot command root's timer runs (say every minute, MAX_AGE a few heartbeat periods). It takes no action
+    itself. Exit 1 only when the runner's heartbeat is stale and its chain cgroup (w5box's `<root>/box<k>/chain`,
+    if given) is not frozen: it then prints the JSON report with `kill_command`, w5box's kill of that chain,
+    which root runs. Exit 0 fresh, 3 absent (starting or stopped), 4 stale but frozen on purpose (a w5box pause),
+    2 unusable. Root's timer, for example:
+        python3 -I pooled_collect.py runner-watch A.json --plan P.json --chain C --cgroup G > watch.json
+        [ $? -eq 1 ] && python3 w5box.py kill --plan P.json --chain C"""
+    import argparse
+    parser = argparse.ArgumentParser(prog="pooled_collect.py runner-watch")
+    parser.add_argument("config")
+    parser.add_argument("--plan", required=True)
+    parser.add_argument("--chain", required=True)
+    parser.add_argument("--cgroup", default=None)
+    parser.add_argument("--max-age", type=float, default=None)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 2
+    if args.max_age is not None and not (math.isfinite(args.max_age) and args.max_age > 0):
+        return 2
+    report = io.StringIO()
+    code = runner_check(args.config, args.max_age, report)
+    try:
+        result = json.loads(report.getvalue())
+    except ValueError:
+        result = {}
+    if code == 1 and args.cgroup:
+        try:
+            frozen = Path(args.cgroup, "cgroup.freeze").read_text().strip() == "1" or any(
+                line.split() == ["frozen", "1"] for line in Path(args.cgroup, "cgroup.events").read_text().splitlines())
+        except OSError:
+            frozen = False  # a missing cgroup is no pause: the stale runner is reported
+        if frozen:
+            result["state"], code = "stale-frozen", 4
+    if code == 1:
+        result["kill_command"] = [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), "w5box.py"),
+                                  "kill", "--plan", args.plan, "--chain", args.chain]
+    stdout.write(json.dumps(result) + "\n")
+    return code
 
 
 def runner_main(config_path: str, stderr) -> int:
@@ -2962,12 +3029,16 @@ def main(argv: list[str]) -> int:
             print("runner-check: MAX_AGE_SECONDS must be a positive number", file=sys.stderr)
             return 2
         return runner_check(argv[2], max_age, sys.stdout)
+    if len(argv) >= 3 and argv[1] == "runner-watch":
+        return runner_watch(argv[2:], sys.stdout)
     if len(argv) != 2:
         print("usage: pooled_collect.py ATTEMPT/collect-command.json (hosts file in MTG_POOLED_COLLECT_CONFIG)"
               " | pooled_collect.py agent AGENT_CONFIG.json (request in SSH_ORIGINAL_COMMAND)"
               " | pooled_collect.py runner AGENT_CONFIG.json (box runner for the executor \"spool\";"
               " stops on its stop file)"
-              " | pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS] (exit 1: heartbeat stale)",
+              " | pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS] (exit 1 stale, 3 absent)"
+              " | pooled_collect.py runner-watch AGENT_CONFIG.json --plan PLAN --chain CHAIN [--cgroup DIR]"
+              " [--max-age S] (exit 1: root kills the chain)",
               file=sys.stderr)
         return 2
     config_path = os.environ.get("MTG_POOLED_COLLECT_CONFIG")
