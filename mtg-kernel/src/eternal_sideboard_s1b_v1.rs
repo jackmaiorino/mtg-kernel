@@ -778,6 +778,7 @@ pub(crate) fn spell_cost_reduction(
         live.owner == player
             && !live.v4.is_token
             && !def.is_token
+            && !crate::eternal_vintage_e7b_v1::is_prepare_copy(state, *object)
             && (def.types.contains(&CardType::Instant)
                 || def.types.contains(&CardType::Sorcery)
                 || def.adventure.is_some())
