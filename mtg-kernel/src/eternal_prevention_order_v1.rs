@@ -1,7 +1,9 @@
 //! Scoped replacement choices without Hallow: Circle/global prevention and
-//! Sphere of Law/Ojer Axonil. Fully replaced residuals return to ordinary commit
+//! Sphere of Law/Ojer Axonil, and protection/Phantom Nishoba. Fully replaced residuals return to ordinary commit
 //! through local receipts; public proposals and state schemas remain unchanged.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+
+mod permanent_v1;
 
 use crate::eternal_pauper_pf1c_v1::ordinary_damage::{OrdinaryV1, Packet};
 use crate::eternal_sideboard_s1d_v1::statics as circles;
@@ -9,13 +11,14 @@ use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
 use crate::ids::PlayerId;
 use crate::state::GameState;
 
-/// Only a current paid Circle or a Sphere/Ojer pair borrows operation replay.
-/// The actual packet predicate below uses source/color/turn matching; an
-/// ordinary packet with just one useful prevention keeps its existing menu.
+/// Only a current paid Circle, protected Nishoba or Sphere/Ojer pair borrows
+/// operation replay. The actual packet predicate retains source/color/turn
+/// matching; a packet with just one useful prevention keeps its existing menu.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
         && !cannot_prevent(state)
         && (circles::has_live_circle_shield(state)
+            || permanent_v1::may_need_choice(state)
             || [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
                 crate::eternal_premodern_p3a_v1::statics::has_sphere_of_law(state, player)
                     && crate::standard_cards_v1::has_active_ojer(state, player.opponent())
@@ -48,6 +51,9 @@ fn cannot_prevent(state: &GameState) -> bool {
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
     if damage.amount <= 0 || cannot_prevent(state) {
         return false;
+    }
+    if permanent_v1::eligible(state, damage) {
+        return true;
     }
     let mut matching = circles::matching_circle_shields(state, damage);
     let Some((_, first)) = matching.next() else {
@@ -115,6 +121,7 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
             options.push(effect);
         }
     }
+    permanent_v1::coalesce_spent_nishoba(state, &mut options);
     options
 }
 

@@ -29,24 +29,28 @@ pub enum OrdinaryV1 {
 
 pub(crate) fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
     crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
-        || damage
-            .historical_facts(state)
-            .expect("validated historical source")
-            .map_or_else(
-                || {
-                    crate::engine::damage_is_prevented_by_protection(
-                        state,
-                        damage.source,
-                        damage.target,
-                    )
-                },
-                |facts| match damage.target {
-                    Target::Object(target) => {
-                        crate::source_power_activation_v1::protected(state, facts, target)
-                    }
-                    _ => false,
-                },
-            )
+        || protection_applies(state, damage)
+}
+
+pub(crate) fn protection_applies(state: &GameState, damage: &DamageProposed) -> bool {
+    damage
+        .historical_facts(state)
+        .expect("validated historical source")
+        .map_or_else(
+            || {
+                crate::engine::damage_is_prevented_by_protection(
+                    state,
+                    damage.source,
+                    damage.target,
+                )
+            },
+            |facts| match damage.target {
+                Target::Object(target) => {
+                    crate::source_power_activation_v1::protected(state, facts, target)
+                }
+                _ => false,
+            },
+        )
 }
 
 /// Applied static abilities follow both portions of a split event (CR 614.5).
