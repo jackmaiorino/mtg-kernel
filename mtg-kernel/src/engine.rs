@@ -31471,9 +31471,14 @@ mod tests {
                 let looting = put_in_hand(&mut state, PlayerId::P0, "Faithless Looting");
                 step(&mut state, Action::CastSpell(looting)).unwrap();
                 let _ = advance_until_decision(&mut state);
+                let _ = resolve_top_of_stack(&mut state);
                 assert_eq!(
-                    resolve_top_of_stack(&mut state),
-                    ResolutionProgress::Suspended
+                    state
+                        .engine
+                        .pending_discard
+                        .as_ref()
+                        .map(|discard| (discard.player, discard.count)),
+                    Some((PlayerId::P0, 2))
                 );
 
                 if !trainer || extra_card {
