@@ -7,9 +7,10 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::event::CommittedEvent;
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -1221,6 +1222,189 @@ fn kozilek_third_draw_and_graveyard_exile_apnap_p0() {
 #[test]
 fn kozilek_third_draw_and_graveyard_exile_apnap_p1() {
     kozilek_third_draw_apnap(P1);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TamiyoFate {
+    ExiledByCommand,
+    RemainsInPlay,
+    ExiledInResponse,
+}
+
+fn kozilek_third_draw_and_creature_exile(player: PlayerId, fate: TamiyoFate) {
+    let mut state = islands();
+    state.active_player = player;
+    state.priority_player = player;
+    let tamiyo = put(
+        &mut state,
+        player,
+        "Tamiyo, Inquisitive Student",
+        Zone::Hand,
+    );
+    pool(&mut state, player, &[ManaColor::U], 0);
+    cast(&mut state, tamiyo, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, tamiyo), Zone::Battlefield);
+    let generation = state.objects.get(tamiyo).zone_change_count;
+
+    let exile_target = if fate == TamiyoFate::ExiledByCommand {
+        tamiyo
+    } else {
+        let delver = put(&mut state, player, "Delver of Secrets", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::U], 0);
+        cast(&mut state, delver, &[]);
+        settled(&mut state);
+        delver
+    };
+    for draw_count in 1..=2 {
+        let cantrip = put(&mut state, player, "Mental Note", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::U], 0);
+        cast(&mut state, cantrip, &[]);
+        settle_first(&mut state);
+        assert_eq!(state.players[player.index()].draws_this_turn, draw_count);
+        assert_eq!(state.objects.get(tamiyo).v4.face_index, 0);
+    }
+
+    let command = put(&mut state, player, "Kozilek's Command", Zone::Hand);
+    let drawn_card = state.players[player.index()].library[0];
+    let history_start = state.engine.event_history.len();
+    assert_eq!(state.objects.get(exile_target).controller, player);
+    assert_eq!(engine::object_mana_value(&state, exile_target), 1);
+    pool(&mut state, player, &[], 3);
+    cast(&mut state, command, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseSpellMode { legal_modes, .. } if legal_modes.contains(&3)
+    ));
+    act(&mut state, Action::ChooseSpellMode(3));
+    choose_target(&mut state, Target::Player(player));
+    choose_target(&mut state, Target::Object(exile_target));
+    let mut decision = next(&mut state);
+    if matches!(decision, Decision::ChooseEffectOption { source, option_count: 1, .. } if source == command)
+    {
+        act(&mut state, Action::ChooseEffectOption(0));
+        decision = next(&mut state);
+    }
+    assert!(
+        matches!(decision, Decision::CastSpellOrPass { .. }),
+        "{decision:?}"
+    );
+    let [spell] = state.stack.as_slice() else {
+        panic!("expected only Command, got {:?}", state.stack);
+    };
+    assert_eq!(spell.source, command);
+    assert_eq!(spell.v4.x_value, 1);
+    assert_eq!(
+        spell.targets,
+        vec![Target::Player(player), Target::Object(exile_target)]
+    );
+
+    pass_until(&mut state, |state| state.engine.pending_effect.is_some());
+    match next(&mut state) {
+        Decision::ChooseEffectTargets {
+            player: chooser,
+            source,
+            max_targets: 1,
+            legal_targets,
+            ..
+        } => {
+            assert_eq!((chooser, source), (player, command));
+            assert_eq!(legal_targets, vec![Target::Object(drawn_card)]);
+        }
+        other => panic!("expected the scry choice, got {other:?}"),
+    }
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(drawn_card)),
+    );
+    pass_until(&mut state, |state| zone(state, command) == Zone::Graveyard);
+    assert_eq!(state.players[player.index()].draws_this_turn, 3);
+    assert!(state.players[player.index()].hand.contains(&drawn_card));
+    assert_eq!(zone(&state, exile_target), Zone::Exile);
+    let history = state.engine.event_history.range_v2(history_start..);
+    let draw = history.iter().position(|event| {
+        matches!(event, CommittedEvent::Draw { player: drawer, object: Some(card) }
+            if *drawer == player && *card == drawn_card)
+    });
+    let exile = history.iter().position(|event| {
+        matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to: Zone::Exile, .. }
+            if *object == exile_target)
+    });
+    assert!(draw.expect("third draw") < exile.expect("creature exile"));
+
+    let [trigger] = state.stack.as_slice() else {
+        panic!("expected one Tamiyo trigger, got {:?}", state.stack);
+    };
+    assert_eq!(trigger.kind, StackItemKind::TriggeredAbility);
+    assert_eq!((trigger.source, trigger.controller), (tamiyo, player));
+    let source = trigger.v4.ability_source_contract.unwrap();
+    assert_eq!(
+        (source.zone, source.zone_change_count),
+        (Zone::Battlefield, generation)
+    );
+    assert_eq!(state.objects.get(tamiyo).v4.face_index, 0);
+
+    if fate == TamiyoFate::ExiledInResponse {
+        let swords = put(&mut state, player, "Swords to Plowshares", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::W], 0);
+        cast(&mut state, swords, &[Target::Object(tamiyo)]);
+        pass_until(&mut state, |state| zone(state, swords) == Zone::Graveyard);
+        assert_eq!(zone(&state, tamiyo), Zone::Exile);
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack[0].source, tamiyo);
+    }
+
+    let before_trigger = state.objects.get(tamiyo).zone_change_count;
+    settled(&mut state);
+    let live = state.objects.get(tamiyo);
+    if fate == TamiyoFate::RemainsInPlay {
+        assert_eq!(
+            (live.zone, live.v4.face_index, live.controller),
+            (Zone::Battlefield, 1, player)
+        );
+        assert!(engine::object_has_type(
+            &state,
+            tamiyo,
+            CardType::Planeswalker
+        ));
+        assert_eq!(
+            mtg_kernel::planeswalker_v1::loyalty(&state, tamiyo),
+            Some(2)
+        );
+    } else {
+        assert_eq!((live.zone, live.v4.face_index), (Zone::Exile, 0));
+        assert_eq!(live.zone_change_count, before_trigger);
+    }
+}
+
+#[test]
+fn kozilek_third_draw_then_exiles_tamiyo_p0() {
+    kozilek_third_draw_and_creature_exile(P0, TamiyoFate::ExiledByCommand);
+}
+
+#[test]
+fn kozilek_third_draw_then_exiles_tamiyo_p1() {
+    kozilek_third_draw_and_creature_exile(P1, TamiyoFate::ExiledByCommand);
+}
+
+#[test]
+fn kozilek_third_draw_transforms_live_tamiyo_p0() {
+    kozilek_third_draw_and_creature_exile(P0, TamiyoFate::RemainsInPlay);
+}
+
+#[test]
+fn kozilek_third_draw_transforms_live_tamiyo_p1() {
+    kozilek_third_draw_and_creature_exile(P1, TamiyoFate::RemainsInPlay);
+}
+
+#[test]
+fn kozilek_third_draw_tamiyo_exiled_in_response_p0() {
+    kozilek_third_draw_and_creature_exile(P0, TamiyoFate::ExiledInResponse);
+}
+
+#[test]
+fn kozilek_third_draw_tamiyo_exiled_in_response_p1() {
+    kozilek_third_draw_and_creature_exile(P1, TamiyoFate::ExiledInResponse);
 }
 
 // ---- Triggered abilities -------------------------------------------------------

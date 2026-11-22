@@ -84,6 +84,19 @@ fn draw(ctx: &ExecCtx, state: &mut GameState, player: PlayerRef, count: u32) {
     crate::effect::execute(&EffectOp::DrawCards { player, count }, ctx, state);
 }
 
+/// Kozilek's Command: the chosen creature, if still legal and at most X.
+pub(super) fn creature_to_exile(
+    ctx: &ExecCtx,
+    state: &GameState,
+    slot: u8,
+    spec: TargetSpec,
+) -> Option<ObjectId> {
+    let object = legal_permanent(ctx, state, usize::from(slot), spec)?;
+    (crate::engine::object_has_type(state, object, CardType::Creature)
+        && crate::engine::object_mana_value(state, object) <= ctx.x_value)
+        .then_some(object)
+}
+
 /// Kozilek's Command: the graveyard targets from `first` on that are still
 /// the chosen incarnations and legal, at most X of them.
 pub(super) fn graveyard_targets(
@@ -215,12 +228,7 @@ pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         E5aOpV1::ExileCreatureManaValueAtMostXV1 { slot, spec } => {
-            let Some(object) = legal_permanent(ctx, state, usize::from(*slot), *spec) else {
-                return;
-            };
-            if crate::engine::object_has_type(state, object, CardType::Creature)
-                && crate::engine::object_mana_value(state, object) <= ctx.x_value
-            {
+            if let Some(object) = creature_to_exile(ctx, state, *slot, *spec) {
                 event::propose_and_commit(state, ProposedEvent::zone_change(object, Zone::Exile));
             }
         }
@@ -379,8 +387,9 @@ pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | E5aOpV1::OathV1 { .. }
         | E5aOpV1::FlashV1
         | E5aOpV1::BeseechV1
-        | E5aOpV1::VampiricV1 => {
-            // Choice leaves run only inside the resumable interpreter.
+        | E5aOpV1::VampiricV1
+        | E5aOpV1::ExileCreatureAfterDrawV1 { .. } => {
+            // These leaves require the resumable interpreter.
             halt(state, ctx.source);
         }
     }
