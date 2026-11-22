@@ -533,12 +533,19 @@ pub enum Subtype {
     /// Vintage Cube wave C6c planeswalker type.
     Narset = 720,
     Garruk = 721,
+    /// Appended for Pauper field wave Pf1c (Boarding Action's Klingon
+    /// Warrior token), stable id 740 from the 740 to 749 range reserved for
+    /// wave W1. A creature type.
+    Klingon = 740,
 }
 
 impl Subtype {
     /// Every creature type represented by the checked-in pool, in stable-id
     /// order. Case-distinct registry spellings remain separate because their
     /// existing ids and subtype queries are intentionally preserved.
+    /// Klingon (Pauper field wave Pf1c) is listed in eternal builds, so
+    /// changelings have it (CR 702.73a); like the Doctor addition, this
+    /// changes changelings' materialized subtype lists in eternal builds.
     pub const CREATURE_TYPES: &'static [Subtype] = &[
         Subtype::Ape,
         Subtype::BirdAllCaps,
@@ -947,6 +954,8 @@ impl Subtype {
         Subtype::Mount,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Doctor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Klingon,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1211,6 +1220,7 @@ impl Subtype {
             710 => Subtype::Doctor,
             720 => Subtype::Narset,
             721 => Subtype::Garruk,
+            740 => Subtype::Klingon,
             _ => return None,
         })
     }
@@ -1454,6 +1464,7 @@ impl Subtype {
             Subtype::Doctor => true,
             Subtype::Narset => false,
             Subtype::Garruk => false,
+            Subtype::Klingon => true,
         }
     }
 
@@ -1577,6 +1588,7 @@ impl Subtype {
                     | Subtype::Horse
                     | Subtype::Mount
                     | Subtype::Doctor
+                    | Subtype::Klingon
             )
         {
             return true;
@@ -2150,6 +2162,9 @@ pub enum PermanentFilterDef {
     /// A permanent with this effective subtype (Wirewood Symbiote's "Return an
     /// Elf you control to its owner's hand"). Appended for Premodern wave P2b.
     WithSubtypeV1(Subtype),
+    /// A land (Deprive's "return a land you control to its owner's hand").
+    /// Appended for Pauper field wave Pf1b.
+    LandV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -4158,7 +4173,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xebfe_d3ef_2973_d7ff;
+        const EXPECTED_ETERNAL: u64 = 0x9d7d_dc19_b390_6513;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

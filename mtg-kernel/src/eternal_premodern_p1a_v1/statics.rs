@@ -316,6 +316,13 @@ fn printed_mine(state: &GameState, land: ObjectId) -> bool {
         && crate::continuous_characteristics_v1::removal_timestamp(state, land).is_none()
 }
 
+/// Whether tapping `land` for its printed mana ability would sacrifice it:
+/// a Gemstone Mine with its last mining counter. A cost that returns it to
+/// hand can't also use it as a mana source (Pauper field wave W1 review).
+pub(crate) fn leaves_when_tapped_for_mana(state: &GameState, land: ObjectId) -> bool {
+    printed_mine(state, land) && mining_counters(state, land) == 1
+}
+
 /// Gemstone Mine's mana ability costs "Remove a mining counter from this
 /// land": without one it can't be activated.
 pub(crate) fn mana_ability_blocked(state: &GameState, source: ObjectId) -> bool {

@@ -262,6 +262,14 @@ impl SelectedSpellManaCostsV1 {
             && original_groups.last().is_some_and(|components| {
                 super::controlled_permanent_sacrifice_in(components).is_some()
                     || super::tap_permanent_filter_in(components).is_some()
+                    // Deprive: "return a land you control to its owner's
+                    // hand" as an additional cost of an ordinary cast.
+                    || components.iter().any(|component| {
+                        matches!(
+                            component,
+                            CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        )
+                    })
                     // Abhorrent Oculus: "exile six cards from your graveyard"
                     // as an additional cost of an ordinary cast.
                     || (cfg!(feature = "eternal-fixtures")
@@ -359,10 +367,67 @@ impl SelectedSpellManaCostsV1 {
             }
         }
         let (increase, reduction) = generic_modifiers;
-        self.payment_plan(x, player, state, increase, reduction, &reserved)
-            .filter(|payment| {
-                super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
-            })
+        let plan = |reserved: &[ObjectId]| {
+            self.payment_plan(x, player, state, increase, reduction, reserved)
+                .filter(|payment| {
+                    super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
+                })
+        };
+        let payment = plan(&reserved)?;
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            // A land returned by Deprive may first produce mana, but must
+            // survive that production. Only LandV1 return costs need this
+            // projection; ordinary spell and activation quotes do not.
+            let returned_lands = self
+                .component_groups
+                .iter()
+                .zip(chosen_by_group)
+                .filter(|(components, _)| {
+                    components.iter().any(|component| {
+                        matches!(
+                            component,
+                            CostComponent::ReturnControlledPermanentToOwnersHand(
+                                card_def::PermanentFilterDef::LandV1
+                            )
+                        )
+                    })
+                })
+                .flat_map(|(_, chosen)| chosen.iter().copied())
+                .collect::<Vec<_>>();
+            if !returned_lands.is_empty() {
+                let survives = |payment: &SpellManaPaymentV1| {
+                    let mut projected = state.clone();
+                    projected.engine.pending_cast = None;
+                    projected.engine.pending_discard = None;
+                    // The real mana commitment owns depletion, ability
+                    // removal, and all other source effects. Do not keep a
+                    // second list of lands that can leave during payment.
+                    payment.commit(&mut projected, player, source);
+                    let candidates = super::return_permanent_cost_candidates(
+                        player,
+                        &projected,
+                        card_def::PermanentFilterDef::LandV1,
+                        &[],
+                    );
+                    projected.engine.halted.is_none()
+                        && returned_lands.iter().all(|object| {
+                            candidates.iter().any(|binding| {
+                                binding.object == *object
+                                    && binding.expected_zone_change_count
+                                        == state.objects.get(*object).zone_change_count
+                            })
+                        })
+                };
+                if !survives(&payment) {
+                    // Keep the selected land out of mana production and
+                    // retry the same planner. Another source may save it.
+                    reserved.extend(returned_lands.iter().copied());
+                    return plan(&reserved).filter(survives);
+                }
+            }
+        }
+        Some(payment)
     }
 
     /// Determine the payment without changing state. Freeze this result before
@@ -981,6 +1046,11 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 ))
                 .saturating_add(crate::eternal_premodern_p3b_v1::statics::gloom_spell_tax(
                     state, definition, method,
+                ))
+                // Kaervek's Torch: spells that target it cost {2} more
+                // (Pauper field wave Pf1c).
+                .saturating_add(crate::eternal_pauper_pf1c_v1::torch_target_tax(
+                    state, targets,
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
@@ -1715,6 +1785,11 @@ impl PreparedSpellPaymentV1 {
     /// Discards have already committed through the shared Madness-aware path.
     pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
         let spent = self.mana.commit(state, player, source);
+        // Fling: the sacrificed creature's power as it last exists on the
+        // battlefield, after mana abilities changed the board and just before
+        // the sacrifice (Pauper field wave Pf1c).
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_pauper_pf1c_v1::note_sacrifice_power(state, source, &self.ordered_objects);
         self.base.apply(state, player, source);
         if let Some(object) = self.chosen_reveal {
             PreparedNonmanaActionV1::RevealHandCard(object).commit(state, player, source);

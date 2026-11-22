@@ -3020,6 +3020,26 @@ fn refuse_unowned_donated_damage(state: &mut GameState, event: &ProposedEvent) -
     true
 }
 
+/// A covered damage packet still passes the same source/custody and roster
+/// checks before Hallow's cohort can remove it from ordinary replacements.
+pub(crate) fn preflight_hallow_damage_v1(state: &mut GameState, event: &ProposedEvent) -> bool {
+    if let Err(source) = validate_exile_if_dies_replacements(state) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return false;
+    }
+    if !preflight_historical_damage_v1(state, event) {
+        return false;
+    }
+    if let Err(source) = crate::progenitus_v1::plan(state, event, None) {
+        halt_zone_pt_v1(state, source);
+        return false;
+    }
+    true
+}
+
 fn apply_replacements_inner(
     state: &mut GameState,
     mut proposed: ProposedEvent,
@@ -3067,6 +3087,13 @@ fn apply_replacements_inner(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        // Only a matching, preventable Hallow packet borrows replacement ordering.
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_pauper_pf1c_v1::hallow_prevents(state, damage)
+        {
+            return None;
+        }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before
         // the increases, the redirection and every shield.
         #[cfg(feature = "eternal-fixtures")]
@@ -3694,6 +3721,9 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
         state,
         crate::full_text_v1::DonorCheckSiteV1::CommitTail,
     );
+    // Hallow's life for the damage this event's shield prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
@@ -6804,6 +6834,9 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         state,
         crate::full_text_v1::DonorCheckSiteV1::BatchTail,
     );
+    // Hallow's life for the damage the batch's shields prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {
@@ -7049,56 +7082,109 @@ fn batch_with_aura_token_hosts_v1(
         ));
         return;
     }
-    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
-    if needs_final_zone_pt_plan_v1(state, &events) {
-        let mut replaced = state.clone();
+    // Hallow-covered and ordinary portions are still one simultaneous damage
+    // batch. Keep Nishoba's once-per-batch receipt across both phases. A closure
+    // makes every early return, including a cloned-world yield/failure, pass
+    // through the matching close on the currently installed world.
+    #[cfg(feature = "eternal-fixtures")]
+    let hallow_nishoba_batch =
+        crate::eternal_pauper_pf1c_v1::batch_has_covered_damage(state, &events)
+            && crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
+    (|| {
         #[cfg(feature = "eternal-fixtures")]
-        let nishoba_batch =
-            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(&mut replaced, &events);
-        let mut survivors = events
-            .into_iter()
-            .filter_map(|event| apply_replacements(&mut replaced, event))
-            .collect::<Vec<_>>();
+        let mut events = events;
         #[cfg(feature = "eternal-fixtures")]
-        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(&mut replaced, nishoba_batch);
-        if let Some((_, source)) = replaced.engine.halted {
-            halt_zone_pt_v1(state, source);
-            return;
-        }
-        match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
-            Ok(true) => {}
-            Ok(false) => {
-                *state = replaced;
-                return;
-            }
+        match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &mut events) {
+            Ok(true) => return,
+            Ok(false) => {}
             Err(_) => {
-                halt_zone_pt_v1(state, ObjectId(0));
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
                 return;
             }
         }
-        // The plan reads the batch's final destinations.
-        pre_apply_batch_zone_replacements_v1(&mut replaced, &mut survivors);
-        let inputs = survivors
-            .iter()
-            .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
-            .collect::<Vec<_>>();
-        let plan = match FinalZonePtPlanV1::capture(
-            &replaced,
-            &survivors,
-            authority_batch
-                .as_ref()
-                .map(|batch| batch.observers.as_slice()),
-            None,
-            &inputs,
-            &attachments,
-        ) {
-            Ok(plan) => plan,
-            Err(source) => {
+        let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+        if needs_final_zone_pt_plan_v1(state, &events) {
+            let mut replaced = state.clone();
+            #[cfg(feature = "eternal-fixtures")]
+            let nishoba_batch = crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(
+                &mut replaced,
+                &events,
+            );
+            let mut survivors = events
+                .into_iter()
+                .filter_map(|event| apply_replacements(&mut replaced, event))
+                .collect::<Vec<_>>();
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_premodern_p2c_v1::statics::end_damage_batch(
+                &mut replaced,
+                nishoba_batch,
+            );
+            if let Some((_, source)) = replaced.engine.halted {
                 halt_zone_pt_v1(state, source);
                 return;
             }
-        };
-        *state = replaced;
+            match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
+                Ok(true) => {}
+                Ok(false) => {
+                    *state = replaced;
+                    return;
+                }
+                Err(_) => {
+                    halt_zone_pt_v1(state, ObjectId(0));
+                    return;
+                }
+            }
+            // The plan reads the batch's final destinations.
+            pre_apply_batch_zone_replacements_v1(&mut replaced, &mut survivors);
+            let inputs = survivors
+                .iter()
+                .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
+                .collect::<Vec<_>>();
+            let plan = match FinalZonePtPlanV1::capture(
+                &replaced,
+                &survivors,
+                authority_batch
+                    .as_ref()
+                    .map(|batch| batch.observers.as_slice()),
+                None,
+                &inputs,
+                &attachments,
+            ) {
+                Ok(plan) => plan,
+                Err(source) => {
+                    halt_zone_pt_v1(state, source);
+                    return;
+                }
+            };
+            *state = replaced;
+            commit_batch_survivors(
+                state,
+                survivors,
+                authority_batch,
+                EntryBatchCommitContextV1 {
+                    garruk_batch,
+                    arahbo_batch,
+                    attachments,
+                    raid_history_start,
+                    token_input,
+                    token_requests,
+                },
+                Some(plan),
+            );
+            return;
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        let nishoba_batch =
+            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
+        let survivors: Vec<ProposedEvent> = events
+            .into_iter()
+            .filter_map(|e| apply_replacements(state, e))
+            .collect();
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
         commit_batch_survivors(
             state,
             survivors,
@@ -7111,33 +7197,11 @@ fn batch_with_aura_token_hosts_v1(
                 token_input,
                 token_requests,
             },
-            Some(plan),
+            None,
         );
-        return;
-    }
+    })();
     #[cfg(feature = "eternal-fixtures")]
-    let nishoba_batch =
-        crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
-    let survivors: Vec<ProposedEvent> = events
-        .into_iter()
-        .filter_map(|e| apply_replacements(state, e))
-        .collect();
-    #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
-    commit_batch_survivors(
-        state,
-        survivors,
-        authority_batch,
-        EntryBatchCommitContextV1 {
-            garruk_batch,
-            arahbo_batch,
-            attachments,
-            raid_history_start,
-            token_input,
-            token_requests,
-        },
-        None,
-    );
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, hallow_nishoba_batch);
 }
 /// The private owning driver has already finished every replacement choice.
 /// It cannot submit a foreign root, owner, source or recipient packet.

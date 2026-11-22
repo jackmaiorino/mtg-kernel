@@ -396,6 +396,9 @@ const ENROOT: &str = "Enroot";
 /// Vintage Cube wave C4b's prepare creature and its spell.
 const POMPOUS_BATTLEMAGE: &str = "Pompous Battlemage";
 const IMPROVISED_ACT: &str = "Improvised Act";
+/// Pauper field wave Pf1b's prepare creature and its spell.
+const ELITE_INTERCEPTOR: &str = "Elite Interceptor";
+const REJOINDER: &str = "Rejoinder";
 const CREEPING_CHILL: &str = "Creeping Chill";
 const DACK_FAYDEN: &str = "Dack Fayden";
 const GOLGARI_GRAVE_TROLL: &str = "Golgari Grave-Troll";
@@ -2569,7 +2572,7 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                 .is_some_and(|live| live.zone == Zone::Battlefield)
                 && matches!(
                     definition_name(state, object),
-                    Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+                    Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE | ELITE_INTERCEPTOR)
                 )
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
             {
@@ -2613,7 +2616,7 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
         // its abilities (Dress Down) does not enter prepared.
         if matches!(
             definition_name(state, object),
-            Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+            Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE | ELITE_INTERCEPTOR)
         ) && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
         {
             prepare(state, object);
@@ -2640,10 +2643,10 @@ fn prepare(state: &mut GameState, creature: ObjectId) {
         return;
     }
     let controller = state.objects.get(creature).controller;
-    let printing = if definition_name(state, creature) == Some(POMPOUS_BATTLEMAGE) {
-        IMPROVISED_ACT
-    } else {
-        ENROOT
+    let printing = match definition_name(state, creature) {
+        Some(POMPOUS_BATTLEMAGE) => IMPROVISED_ACT,
+        Some(ELITE_INTERCEPTOR) => REJOINDER,
+        _ => ENROOT,
     };
     let card_def = token_id(printing);
     let copy = state.objects.push(crate::state::GameObject {
