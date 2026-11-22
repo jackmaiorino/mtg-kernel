@@ -19,7 +19,9 @@
 //!    Neutral choices (on in every human-play game) are run both ways: on
 //!    the trainer's session too (then everything is equal), and off it, the
 //!    production trainer exactly; then the bridge poses some choices training
-//!    resolves itself, each must have exactly one answer, and at every other
+//!    resolves itself. For the person's revealed hand partition, the script
+//!    uses the trainer's actual move order. Other bridge-only choices must
+//!    have exactly one answer, and at every shared
 //!    bot decision the menu, the model input and the new-window marker are
 //!    equal (the game states are not: neutral choices keep a pending
 //!    activation in their own fields and number stack items differently).
@@ -145,10 +147,11 @@ struct Played {
     bot_decisions: u64,
     bot_new_windows: u64,
     person_engine_windows: u64,
-    /// Decisions only the bridge poses (neutral choices), each with one
-    /// answer: all of them, and the bot's.
+    /// Decisions only the bridge poses, and how many of them belong to the bot.
     neutral_only: u64,
     bot_neutral_only: u64,
+    person_hand_orders: u64,
+    bot_after_person_hand_order: u64,
     shared: u64,
     finished: bool,
 }
@@ -192,10 +195,84 @@ fn state_diff(training: &FastActorSessionV1, raw: &RlEpisodeSessionV1) -> Vec<St
     out
 }
 
+/// The person can order the cards a revealed partition moves to hand. Match
+/// the normal trainer's actual hand entries, including their incarnations.
+fn person_hand_order_pick(
+    raw: &RlEpisodeSessionV1,
+    training: &FastActorSessionV1,
+    decision: &RlSessionDecisionV1,
+    rows: &[u32],
+) -> Option<u32> {
+    use crate::effect::{
+        EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest,
+        LibraryPartitionSelectionStage::ChooseMatchingSubset, PendingEffectChoice::SelectTargets,
+    };
+    use crate::rl::TargetRefV1;
+    use crate::state::Target;
+
+    let state = raw.game_state();
+    let SelectTargets {
+        player,
+        selected,
+        legal,
+        min_targets,
+        max_targets,
+        purpose:
+            LookTopSelectByTypeToHandBottomRest {
+                stage: ChooseMatchingSubset,
+                canonical_path,
+                ..
+            },
+        ..
+    } = state.engine.pending_effect.as_ref()?.choice.as_ref()?
+    else {
+        return None;
+    };
+    if state
+        .engine
+        .spellbench_neutral_v1
+        .revealed_partition
+        .as_ref()
+        != Some(canonical_path)
+    {
+        return None;
+    }
+    let count = usize::from(*max_targets);
+    assert_eq!(min_targets, max_targets);
+    assert_eq!(selected.len() + legal.len(), count);
+    let baseline = training.game_state();
+    let hand = &baseline.players[player.index()].hand;
+    let moved = &hand[hand
+        .len()
+        .checked_sub(count)
+        .expect("trainer moved the revealed cards")..];
+    for (picked, id) in selected.iter().zip(moved) {
+        assert_eq!(picked.target, Target::Object(*id));
+    }
+    for id in &moved[selected.len()..] {
+        let binding = legal
+            .iter()
+            .find(|card| card.target == Target::Object(*id))
+            .expect("trainer moved exactly the remaining revealed cards")
+            .expected_object
+            .unwrap();
+        assert_eq!(
+            baseline.objects.get(*id).zone_change_count,
+            binding.expected_zone_change_count + 1
+        );
+    }
+    let next = moved[selected.len()];
+    Some(*rows.iter().find(|&&row| matches!(
+        &decision.legal_actions[row as usize].semantic,
+        ActionSemanticV1::ChooseEffectTarget { target: TargetRefV1::Object { object }, .. }
+            if object.arena_id == next.0
+    )).expect("the next card in the trainer's hand has a bridge row"))
+}
+
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
 /// passed in the bridge sessions alone; so are the decisions only neutral
-/// choices pose (production trainer only), which must have one answer.
+/// choices pose. For the person's revealed hand order, play the training order.
 fn play(
     decks: [&str; 2],
     seed: u64,
@@ -261,30 +338,36 @@ fn play(
                 FastActorResponseV1::Terminal(_) => false,
             };
             if !shared && !neutral_training {
-                // A choice training resolves itself (a forced discard, a
-                // forced number), posed by neutral choices: one answer.
+                // Reproduce the person's training hand order if one is pending.
+                // Every other unmatched menu, including the bot's, must be forced.
                 let rows = copy.row_candidate_ids(decision).unwrap();
-                assert_eq!(
-                    rows.len(),
-                    1,
-                    "{} bridge {:?} training {:?} state differences {:?}",
-                    context(
-                        "a bridge-only decision with more than one answer",
-                        out.shared
-                    ),
-                    copy.fast_session().diagnostic_current_action_semantics(),
-                    training.diagnostic_current_action_semantics(),
-                    state_diff(&training, &raw)
-                );
-                let chosen = &decision.legal_actions[rows[0] as usize];
-                raw.step(
-                    decision.episode_id,
-                    decision.step,
-                    rows[0],
-                    &chosen.stable_id,
-                )
-                .unwrap();
-                copy.mirror_step(&rows, decision.step, rows[0]).unwrap();
+                let hand_order = if seat_index(decision.acting_player) != bot && rows.len() > 1 {
+                    person_hand_order_pick(&raw, &training, decision, &rows)
+                } else {
+                    None
+                };
+                let pick = if let Some(pick) = hand_order {
+                    out.person_hand_orders += 1;
+                    pick
+                } else {
+                    assert_eq!(
+                        rows.len(),
+                        1,
+                        "{} bridge {:?} training {:?} state differences {:?}",
+                        context(
+                            "a bridge-only decision with more than one answer",
+                            out.shared
+                        ),
+                        copy.fast_session().diagnostic_current_action_semantics(),
+                        training.diagnostic_current_action_semantics(),
+                        state_diff(&training, &raw)
+                    );
+                    rows[0]
+                };
+                let chosen = &decision.legal_actions[pick as usize];
+                raw.step(decision.episode_id, decision.step, pick, &chosen.stable_id)
+                    .unwrap();
+                copy.mirror_step(&rows, decision.step, pick).unwrap();
                 out.neutral_only += 1;
                 out.bot_neutral_only += u64::from(seat_index(decision.acting_player) == bot);
                 continue;
@@ -353,6 +436,7 @@ fn play(
         let rows = copy.row_candidate_ids(&ours).unwrap();
         if seat_index(ours.acting_player) == bot {
             out.bot_decisions += 1;
+            out.bot_after_person_hand_order += u64::from(out.person_hand_orders > 0);
             let marker = training.priority_pass_window_v1().unwrap();
             assert_eq!(
                 marker,
@@ -386,6 +470,22 @@ fn play(
             .unwrap();
         out.shared += 1;
     }
+}
+
+#[test]
+fn shared_bot_input_after_persons_winding_way_hand_order() {
+    let played = play(
+        ["Wildfire", "Elves"],
+        7,
+        0xB0_0000 + 114,
+        0,
+        true,
+        false,
+        76,
+    );
+    assert!(played.person_hand_orders > 0, "{played:?}");
+    assert!(played.bot_after_person_hand_order > 0, "{played:?}");
+    println!("Winding Way: {played:?}");
 }
 
 #[test]
@@ -432,6 +532,8 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         total.bot_new_windows += played.bot_new_windows;
                         total.person_engine_windows += played.person_engine_windows;
                         total.neutral_only += played.neutral_only;
+                        total.person_hand_orders += played.person_hand_orders;
+                        total.bot_after_person_hand_order += played.bot_after_person_hand_order;
                         total.bot_neutral_only += played.bot_neutral_only;
                         total.shared += played.shared;
                         games += 1;
