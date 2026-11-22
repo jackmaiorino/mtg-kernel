@@ -1592,14 +1592,7 @@ fn selected_spell_quote_branch_grant_v1(
             }
             // Foil: an Island card first, then any other card.
             CostComponent::DiscardIslandAndAnotherCardV1 => {
-                let mut hand = super::island_discard_cost_candidates(player, source, state, &[]);
-                let first = hand.clone();
-                for &card in &state.players[player.index()].hand {
-                    if card != source && !first.contains(&card) {
-                        hand.push(card);
-                    }
-                }
-                Some((2, hand))
+                Some((2, super::foil_discard_candidates(player, source, state)))
             }
             CostComponent::DiscardCards(count) => {
                 discard_count += usize::from(*count);

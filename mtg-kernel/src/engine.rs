@@ -9322,6 +9322,23 @@ fn island_discard_cost_candidates(
     }
 }
 
+/// Possible Foil payments in enumeration order: Islands first, then the
+/// cards that can occupy the second position. Explicit picks are validated
+/// in their submitted order by `validate_cost_component_choices_v1`.
+fn foil_discard_candidates(player: PlayerId, source: ObjectId, state: &GameState) -> Vec<ObjectId> {
+    let islands = island_discard_cost_candidates(player, source, state, &[]);
+    let Some(&first) = islands.first() else {
+        return islands;
+    };
+    let mut cards = islands.clone();
+    cards.extend(
+        island_discard_cost_candidates(player, source, state, &[first])
+            .into_iter()
+            .filter(|id| !islands.contains(id)),
+    );
+    cards
+}
+
 /// Exiles one more graveyard card for Nethergoyf's escape after its card
 /// types are covered.
 fn choose_escape_extra_exile(state: &mut GameState, target: Target) -> Result<(), String> {

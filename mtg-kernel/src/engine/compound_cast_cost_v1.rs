@@ -89,6 +89,9 @@ impl Costs {
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
                         | CostComponent::ExileCardFromHandWithColorV1(_)
                         | CostComponent::ExileCardsFromHandWithColorV1 { .. }
+                        | CostComponent::SacrificeControlled { .. }
+                        | CostComponent::TapUntappedControlledPermanent(_)
+                        | CostComponent::DiscardIslandAndAnotherCardV1
                 )
             {
                 return None;
@@ -257,6 +260,7 @@ impl Costs {
                         | CostComponent::SacrificeOtherControlledCreatures(_)
                         | CostComponent::ReturnControlledPermanentToOwnersHand(_)
                         | CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. }
+                        | CostComponent::TapUntappedControlledPermanent(_)
                 )
             );
         if prefix.len() > self.count()
@@ -466,7 +470,8 @@ impl Costs {
                 CostComponent::DiscardLandCardsV1(_)
                 | CostComponent::DiscardCards(_)
                 | CostComponent::ExileCardFromHandWithColorV1(_)
-                | CostComponent::ExileCardsFromHandWithColorV1 { .. },
+                | CostComponent::ExileCardsFromHandWithColorV1 { .. }
+                | CostComponent::DiscardIslandAndAnotherCardV1,
             ) => seat.hand.clone(),
             _ => Vec::new(),
         };
@@ -512,7 +517,9 @@ fn count(group: CostComponent) -> u8 {
         | CostComponent::DiscardCards(count)
         | CostComponent::DiscardLandCardsV1(count) => count,
         CostComponent::ReturnControlledPermanentToOwnersHand(_)
-        | CostComponent::ExileCardFromHandWithColorV1(_) => 1,
+        | CostComponent::ExileCardFromHandWithColorV1(_)
+        | CostComponent::TapUntappedControlledPermanent(_) => 1,
+        CostComponent::DiscardIslandAndAnotherCardV1 => 2,
         _ => unreachable!(),
     }
 }
@@ -532,9 +539,10 @@ fn kind(group: CostComponent) -> CostKind {
         CostComponent::ExileOtherCardsFromOwnGraveyard(_) => CostKind::ExileFromGraveyard,
         CostComponent::ExileCardFromHandWithColorV1(_)
         | CostComponent::ExileCardsFromHandWithColorV1 { .. } => CostKind::ExileFromHandV1,
-        CostComponent::DiscardLandCardsV1(_) | CostComponent::DiscardCards(_) => {
-            CostKind::DiscardCards
-        }
+        CostComponent::TapUntappedControlledPermanent(_) => CostKind::TapPermanents,
+        CostComponent::DiscardLandCardsV1(_)
+        | CostComponent::DiscardCards(_)
+        | CostComponent::DiscardIslandAndAnotherCardV1 => CostKind::DiscardCards,
         _ => unreachable!(),
     }
 }
@@ -591,6 +599,12 @@ impl Context<'_> {
             CostComponent::ExileCardFromHandWithColorV1(color)
             | CostComponent::ExileCardsFromHandWithColorV1 { color, .. } => {
                 hand_exile_cost_candidates(player, self.source, color, state)
+            }
+            CostComponent::TapUntappedControlledPermanent(filter) => {
+                tap_permanent_cost_candidates(player, state, filter, &[])
+            }
+            CostComponent::DiscardIslandAndAnotherCardV1 => {
+                foil_discard_candidates(player, self.source, state)
             }
             CostComponent::DiscardCards(_) => state.players[player.index()]
                 .hand
