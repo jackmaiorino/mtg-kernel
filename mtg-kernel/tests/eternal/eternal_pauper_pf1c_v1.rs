@@ -1638,10 +1638,36 @@ fn retrace_return_alternatives_allow_either_payment_order_and_require_distinct_i
                 base.objects.get_mut(island).tapped = true;
                 islands.push(island);
             }
+            let targets: Vec<_> = bolt.into_iter().map(Target::Object).collect();
+            if name == "Daze" {
+                pool(&mut base, player, &[ManaColor::U], 1);
+                let mut normal = base.clone();
+                cast(&mut normal, spell, &targets);
+                assert!(
+                    matches!(next(&mut normal), Decision::ChooseCastMode { options, .. }
+                    if options.contains(&engine::CastMode::Normal) && options.contains(&engine::CastMode::Alternative))
+                );
+                act(
+                    &mut normal,
+                    Action::ChooseCastMode(engine::CastMode::Normal),
+                );
+                payment_pick(&mut normal, CostKind::DiscardCards, land);
+                settle_first(&mut normal);
+                assert_eq!(normal.players[player.index()].mana_pool, [0; 6]);
+                assert_eq!(zone(&normal, islands[0]), Zone::Battlefield);
+                assert_eq!(zone(&normal, land), Zone::Graveyard);
+                assert_eq!(life(&normal, player), 20);
+            }
             for discard_first in [false, true] {
                 let mut state = base.clone();
-                let targets: Vec<_> = bolt.into_iter().map(Target::Object).collect();
                 cast(&mut state, spell, &targets);
+                if name == "Daze" {
+                    assert!(matches!(next(&mut state), Decision::ChooseCastMode { .. }));
+                    act(
+                        &mut state,
+                        Action::ChooseCastMode(engine::CastMode::Alternative),
+                    );
+                }
                 assert!(matches!(
                     next(&mut state),
                     Decision::ChooseEffectOption {
@@ -1671,6 +1697,10 @@ fn retrace_return_alternatives_allow_either_payment_order_and_require_distinct_i
                 for &island in &islands {
                     assert_eq!(zone(&state, island), Zone::Hand);
                 }
+                assert_eq!(
+                    state.players[player.index()].mana_pool,
+                    base.players[player.index()].mana_pool
+                );
                 let hand = state.players[player.index()].hand.len();
                 settle_first(&mut state);
                 assert_eq!(zone(&state, spell), Zone::Graveyard);
