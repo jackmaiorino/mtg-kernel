@@ -6,15 +6,86 @@
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
 };
-use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::engine::{self, Action, Decision, RuntimeRulesV1};
 use mtg_kernel::eternal_premodern_p3b_v1::{read_state, statics};
-use mtg_kernel::event::{self, ProposedEvent};
+use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
+
+fn volrath_monk_realist_and_engineered_plague(player: PlayerId, named_type: Subtype) {
+    let mut state = islands();
+    state.active_player = player;
+    state.priority_player = player;
+    state.engine.runtime_rules = RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1;
+    let option = statics::plague_type_options()
+        .iter()
+        .position(|subtype| subtype.same_subtype_as(named_type))
+        .unwrap();
+
+    let plague = put(&mut state, player, "Engineered Plague", Zone::Hand);
+    pool(&mut state, player, &[ManaColor::B], 2);
+    cast(&mut state, plague, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { player: chooser, source, .. })
+            if chooser == player && source == plague
+    ));
+    act(&mut state, Action::ChooseEffectOption(option as u16));
+    settled(&mut state);
+    assert_eq!(zone(&state, plague), Zone::Battlefield);
+    assert_eq!(
+        statics::plague_chosen_type(&state, plague),
+        Some(statics::plague_type_options()[option])
+    );
+
+    let donor = put(&mut state, player, "Monk Realist", Zone::Graveyard);
+    let source = put(&mut state, player, "Volrath's Shapeshifter", Zone::Hand);
+    pool(&mut state, player, &[ManaColor::U, ManaColor::U], 1);
+    cast(&mut state, source, &[]);
+    let decision = settle(&mut state);
+    assert!(state
+        .engine
+        .event_history
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::FullTextTriggerCapturedV1 { .. })));
+    assert_eq!(zone(&state, donor), Zone::Graveyard);
+    let expected_source_zone = if named_type == Subtype::Human {
+        Zone::Graveyard
+    } else {
+        assert_eq!(power_toughness(&state, source), (1, 1));
+        Zone::Battlefield
+    };
+    assert_eq!(zone(&state, source), expected_source_zone);
+    assert!(
+        matches!(decision, Some(Decision::ChooseTargets { player: chooser, spell, ref legal_targets, .. })
+            if chooser == player && spell == source && legal_targets.contains(&Target::Object(plague))),
+        "{player:?}, Plague naming {named_type:?}, Volrath in {expected_source_zone:?}: {decision:?}"
+    );
+    act(&mut state, Action::ChooseTarget(Target::Object(plague)));
+    settled(&mut state);
+    assert_eq!(zone(&state, plague), Zone::Graveyard);
+}
+
+#[test]
+fn volrath_monk_realist_survives_plague_naming_goblin_both_seats() {
+    for player in [P0, P1] {
+        volrath_monk_realist_and_engineered_plague(player, Subtype::Goblin);
+    }
+}
+
+#[test]
+fn volrath_monk_realist_trigger_survives_sba_in_p0() {
+    volrath_monk_realist_and_engineered_plague(P0, Subtype::Human);
+}
+
+#[test]
+fn volrath_monk_realist_trigger_survives_sba_in_p1() {
+    volrath_monk_realist_and_engineered_plague(P1, Subtype::Human);
+}
 
 const P3B_CARDS: [&str; 10] = [
     "Dystopia",
