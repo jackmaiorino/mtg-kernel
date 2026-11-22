@@ -221,6 +221,106 @@ fn read_shard_file_v1(directory: &Path, pin: &PinnedFileV1, name: &str) -> Resul
     Ok(bytes)
 }
 
+/// Threads the merge reads, checks and publishes trajectories on.
+fn merge_workers_v1(items: usize) -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .clamp(1, 16)
+        .min(items.max(1))
+}
+
+/// `f(0..count)` on `merge_workers_v1(count)` threads, results in index order
+/// (a panicking call yields `panicked`).
+fn ordered_v1<T: Send>(
+    count: usize,
+    panicked: &str,
+    f: impl Fn(usize) -> Result<T, String> + Sync,
+) -> Vec<Result<T, String>> {
+    let workers = merge_workers_v1(count);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    type DoneV1<T> = Vec<(usize, Result<T, String>)>;
+    let joined: Vec<Option<DoneV1<T>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if index >= count {
+                            return done;
+                        }
+                        done.push((index, f(index)));
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().ok())
+            .collect()
+    });
+    if joined.iter().any(Option::is_none) {
+        return (0..count).map(|_| Err(panicked.to_string())).collect();
+    }
+    let mut results: Vec<(usize, Result<T, String>)> =
+        joined.into_iter().flatten().flatten().collect();
+    results.sort_by_key(|entry| entry.0);
+    results.into_iter().map(|entry| entry.1).collect()
+}
+
+/// A shard file read ahead: the pin and name it was read under, and what
+/// `read_shard_file_v1` returned.
+type PrefetchedV1 = (PinnedFileV1, String, Result<Vec<u8>, String>);
+
+/// Reads every shard's trajectory files (as named by its receipt, at the
+/// schedule positions the receipts give, within the schedule) on a few
+/// threads with `read_shard_file_v1`. The merge takes a result only for the
+/// same pin and name it reaches in its serial pass, so the checks, their
+/// order and the first failure reported are the serial pass's; anything not
+/// read ahead is read there as before.
+fn prefetch_shard_files_v1(
+    shard_directories: &[PathBuf],
+    schedule: usize,
+) -> Vec<Vec<Option<PrefetchedV1>>> {
+    let mut items = Vec::new();
+    let mut first_slot = 0usize;
+    for (shard, directory) in shard_directories.iter().enumerate() {
+        let Ok((_, document)) = read_json_file_v1(&directory.join("collection.json")) else {
+            break;
+        };
+        let Ok(pins) =
+            serde_json::from_value::<Vec<PinnedFileV1>>(document["trajectories"].clone())
+        else {
+            break;
+        };
+        if first_slot + pins.len() > schedule {
+            break;
+        }
+        for (offset, pin) in pins.iter().enumerate() {
+            let name = format!("episode-{:04}.json", first_slot + offset);
+            items.push((shard, offset, directory, pin.clone(), name));
+        }
+        first_slot += pins.len();
+    }
+    let read = ordered_v1(items.len(), "shard read worker panicked", |index| {
+        let (_, _, directory, pin, name) = &items[index];
+        Ok(read_shard_file_v1(directory, pin, name))
+    });
+    let mut prefetched: Vec<Vec<Option<PrefetchedV1>>> =
+        shard_directories.iter().map(|_| Vec::new()).collect();
+    for ((shard, offset, _, pin, name), result) in items.into_iter().zip(read) {
+        let Ok(result) = result else {
+            continue;
+        };
+        let slots = &mut prefetched[shard];
+        if slots.len() <= offset {
+            slots.resize_with(offset + 1, || None);
+        }
+        slots[offset] = Some((pin, name, result));
+    }
+    prefetched
+}
+
 /// Merges shard outputs (`shard_directories`, in schedule order) into the
 /// whole command's output directory and returns the published receipt.
 pub fn merge_shards_v1(
@@ -247,7 +347,8 @@ pub fn merge_shards_v1(
     let mut workers_started = 0u64;
     let mut initialization_seconds = 0f64;
     let mut elapsed_seconds = 0f64;
-    for directory in shard_directories {
+    let mut prefetched = prefetch_shard_files_v1(shard_directories, schedule);
+    for (shard_index, directory) in shard_directories.iter().enumerate() {
         let (receipt_bytes, document) = read_json_file_v1(&directory.join("collection.json"))?;
         ensure(
             document["complete"] == true,
@@ -301,7 +402,14 @@ pub fn merge_shards_v1(
         )?;
         for (offset, pin) in pins.iter().enumerate() {
             let name = format!("episode-{:04}.json", first_slot + offset);
-            trajectory_bytes.push(read_shard_file_v1(directory, pin, &name)?);
+            let ahead = prefetched[shard_index]
+                .get_mut(offset)
+                .and_then(Option::take)
+                .filter(|(read_pin, read_name, _)| read_pin == pin && *read_name == name);
+            trajectory_bytes.push(match ahead {
+                Some((_, _, read)) => read?,
+                None => read_shard_file_v1(directory, pin, &name)?,
+            });
         }
         match document.get("non_natural_ledger") {
             None | Some(Value::Null) => ensure(
@@ -387,15 +495,19 @@ pub fn merge_shards_v1(
         None => vec![None; schedule],
     };
     check_trajectories_against_schedule_v1(&trajectory_bytes, &whole, &seed_overrides)?;
-    let mut outputs = Vec::with_capacity(schedule);
-    for (slot, bytes) in trajectory_bytes.into_iter().enumerate() {
-        let name = format!("episode-{slot:04}.json");
-        outputs.push(publish_json_shared_v1(
+    // Each trajectory is its own durable publication; they go out on a few
+    // threads, and the first failure in slot order is reported. The receipt
+    // is published last, as before.
+    let trajectory_bytes: Vec<Arc<Vec<u8>>> = trajectory_bytes.into_iter().map(Arc::new).collect();
+    let outputs = ordered_v1(schedule, "trajectory publication worker panicked", |slot| {
+        publish_json_shared_v1(
             whole.output_directory,
-            &name,
-            &Arc::new(bytes),
-        )?);
-    }
+            &format!("episode-{slot:04}.json"),
+            &trajectory_bytes[slot],
+        )
+    })
+    .into_iter()
+    .collect::<Result<Vec<_>, String>>()?;
     if whole.max_non_natural_episode_fraction > 0.0 {
         ensure(
             failed_fraction <= whole.max_non_natural_episode_fraction,
@@ -435,10 +547,203 @@ pub fn merge_shards_v1(
 /// Every trajectory carries the requested envelope and exactly its scheduled
 /// episode. Opened and parsed on a few threads; the first failing slot in
 /// schedule order is reported.
+///
+/// Each record is read for the three members the check uses
+/// (`ScheduleFieldsV1`): the whole document is parsed exactly as a
+/// `serde_json::Value` parse reads it (every number and string in full, the
+/// same nesting limit, so the same errors), but only those members are kept.
 fn check_trajectories_against_schedule_v1(
     trajectories: &[Vec<u8>],
     whole: &WholeCommandV1<'_>,
     seed_overrides: &[Option<u64>],
+) -> Result<(), String> {
+    check_trajectories_against_schedule_with_v1(trajectories, whole, seed_overrides, true)
+}
+
+/// A JSON value parsed in full, as `serde_json::Value` parses it (through
+/// `deserialize_any`, so every number is read as the number `Value` would
+/// hold, every string and key is checked, and nesting counts against the
+/// parser's limit), and then dropped.
+struct DiscardedV1;
+
+impl<'de> Deserialize<'de> for DiscardedV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(DiscardedVisitorV1)
+    }
+}
+
+struct DiscardedVisitorV1;
+
+impl<'de> serde::de::Visitor<'de> for DiscardedVisitorV1 {
+    type Value = DiscardedV1;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("any valid JSON value")
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<DiscardedV1, E> {
+        Ok(DiscardedV1)
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<DiscardedV1, E> {
+        Ok(DiscardedV1)
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<DiscardedV1, E> {
+        Ok(DiscardedV1)
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<DiscardedV1, E> {
+        Ok(DiscardedV1)
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<DiscardedV1, E> {
+        Ok(DiscardedV1)
+    }
+
+    fn visit_none<E>(self) -> Result<DiscardedV1, E> {
+        Ok(DiscardedV1)
+    }
+
+    fn visit_unit<E>(self) -> Result<DiscardedV1, E> {
+        Ok(DiscardedV1)
+    }
+
+    fn visit_some<D: serde::Deserializer<'de>>(self, value: D) -> Result<DiscardedV1, D::Error> {
+        DiscardedV1::deserialize(value)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<DiscardedV1, A::Error> {
+        while seq.next_element::<DiscardedV1>()?.is_some() {}
+        Ok(DiscardedV1)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<DiscardedV1, A::Error> {
+        while map.next_entry::<DiscardedV1, DiscardedV1>()?.is_some() {}
+        Ok(DiscardedV1)
+    }
+}
+
+/// The members of a trajectory record the schedule check reads, as a
+/// `serde_json::Value` parse of the whole record gives them: `episode` is
+/// `document["episode"]` (null when absent or when the record is no object),
+/// the other two `document.get(..)`; a repeated member keeps its last value,
+/// as a `Value` object does. Every other member is parsed and dropped.
+#[derive(Default)]
+struct ScheduleFieldsV1 {
+    episode: Value,
+    learner_sampler: Option<Value>,
+    training_math: Option<Value>,
+}
+
+impl<'de> Deserialize<'de> for ScheduleFieldsV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ScheduleFieldsVisitorV1)
+    }
+}
+
+struct ScheduleFieldsVisitorV1;
+
+impl<'de> serde::de::Visitor<'de> for ScheduleFieldsVisitorV1 {
+    type Value = ScheduleFieldsV1;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("any valid JSON value")
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<ScheduleFieldsV1, E> {
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<ScheduleFieldsV1, E> {
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<ScheduleFieldsV1, E> {
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<ScheduleFieldsV1, E> {
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<ScheduleFieldsV1, E> {
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_none<E>(self) -> Result<ScheduleFieldsV1, E> {
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_unit<E>(self) -> Result<ScheduleFieldsV1, E> {
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_some<D: serde::Deserializer<'de>>(
+        self,
+        value: D,
+    ) -> Result<ScheduleFieldsV1, D::Error> {
+        DiscardedV1::deserialize(value).map(|_| ScheduleFieldsV1::default())
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> Result<ScheduleFieldsV1, A::Error> {
+        while seq.next_element::<DiscardedV1>()?.is_some() {}
+        Ok(ScheduleFieldsV1::default())
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(
+        self,
+        mut map: A,
+    ) -> Result<ScheduleFieldsV1, A::Error> {
+        let mut fields = ScheduleFieldsV1::default();
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "episode" => fields.episode = map.next_value()?,
+                "learner_sampler" => fields.learner_sampler = Some(map.next_value()?),
+                "training_math" => fields.training_math = Some(map.next_value()?),
+                _ => {
+                    map.next_value::<DiscardedV1>()?;
+                }
+            }
+        }
+        Ok(fields)
+    }
+}
+
+/// The members `check_trajectories_against_schedule_v1` reads: through
+/// `ScheduleFieldsV1` when `fields_only`, else from a whole `Value` parse
+/// (the reference the tests and the merge bench compare with).
+fn schedule_fields_v1(
+    record: &[u8],
+    fields_only: bool,
+) -> Result<(Value, Option<String>, Option<String>), String> {
+    let string = |value: Option<Value>| value.and_then(|v| v.as_str().map(str::to_owned));
+    if fields_only {
+        let fields: ScheduleFieldsV1 = serde_json::from_slice(record).map_err(err)?;
+        return Ok((
+            fields.episode,
+            string(fields.learner_sampler),
+            string(fields.training_math),
+        ));
+    }
+    let document: Value = serde_json::from_slice(record).map_err(err)?;
+    Ok((
+        document["episode"].clone(),
+        string(document.get("learner_sampler").cloned()),
+        string(document.get("training_math").cloned()),
+    ))
+}
+
+/// [`check_trajectories_against_schedule_v1`]; `fields_only` false parses
+/// every record whole (the reference the tests compare with).
+fn check_trajectories_against_schedule_with_v1(
+    trajectories: &[Vec<u8>],
+    whole: &WholeCommandV1<'_>,
+    seed_overrides: &[Option<u64>],
+    fields_only: bool,
 ) -> Result<(), String> {
     let (episodes, envelope) = (whole.episodes, whole.record_envelope);
     ensure(
@@ -452,20 +757,18 @@ fn check_trajectories_against_schedule_v1(
             &format!("shard trajectory {slot} is not in the requested record envelope"),
         )?;
         let record = record_envelope_v1::open_v1(bytes, MAX_FILE_BYTES)?;
-        let document: Value = serde_json::from_slice(&record).map_err(err)?;
+        let (episode, learner_sampler, training_math) = schedule_fields_v1(&record, fields_only)?;
         let mut expected = episodes[slot].clone();
         if let Some(seed) = seed_overrides[slot] {
             expected.seed = seed;
         }
         ensure(
-            document["episode"] == serde_json::to_value(&expected).map_err(err)?,
+            episode == serde_json::to_value(&expected).map_err(err)?,
             &format!("shard trajectory {slot} does not carry its scheduled episode"),
         )?;
         ensure(
-            document.get("learner_sampler").and_then(Value::as_str)
-                == whole.collection_sampler.identity_v1()
-                && document.get("training_math").and_then(Value::as_str)
-                    == whole.training_math.identity_v1(),
+            learner_sampler.as_deref() == whole.collection_sampler.identity_v1()
+                && training_math.as_deref() == whole.training_math.identity_v1(),
             &format!("shard trajectory {slot} differs in sampler or training math"),
         )
     };
@@ -969,5 +1272,205 @@ mod tests {
         let back: ExpandedTrainingCommandV1 = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(serde_json::to_value(back).unwrap(), wire);
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// The members the schedule check reads are those a whole `Value` parse
+    /// gives, and every record that parse refuses is refused with its error:
+    /// absent, repeated or non-string members, records that are no object,
+    /// numbers out of range, bad strings, too deep a nesting, trailing data.
+    #[test]
+    fn the_schedule_fields_are_what_a_whole_parse_gives_errors_included() {
+        let deep = format!("{{\"x\":{}1{}}}", "[".repeat(200), "]".repeat(200));
+        let records: Vec<Vec<u8>> = vec![
+            br#"{"episode":{"id":"a","seed":1},"learner_sampler":"s","training_math":"m","steps":[1,2.5,-3,"x",null,true,{"k":[]}]}"#.to_vec(),
+            br#"{"steps":[1,2,3]}"#.to_vec(),
+            br#"{"episode":1,"episode":{"id":"last"},"learner_sampler":7,"training_math":null}"#.to_vec(),
+            br#"[{"episode":{"id":"a"}}]"#.to_vec(),
+            br#""episode""#.to_vec(),
+            br#"12"#.to_vec(),
+            br#"{"episode":{"london_keep_offset":0.0004882813082076609},"x":1e400}"#.to_vec(),
+            br#"{"episode":{},"x":"\ud800"}"#.to_vec(),
+            b"{\"episode\":{},\"x\":\"\xff\"}".to_vec(),
+            br#"{"episode":{},"x":"tab	here"}"#.to_vec(),
+            br#"{"episode":{}} trailing"#.to_vec(),
+            br#"{"episode":{},"x":[1,2,}"#.to_vec(),
+            deep.into_bytes(),
+            br#"{"episode":{"a":-0.0,"b":18446744073709551615,"c":-9223372036854775808,"d":1.7976931348623157e308}}"#.to_vec(),
+        ];
+        for record in &records {
+            assert_eq!(
+                schedule_fields_v1(record, true),
+                schedule_fields_v1(record, false),
+                "{}",
+                String::from_utf8_lossy(record)
+            );
+        }
+    }
+
+    /// Merge timing at a production size (`MERGE_BENCH_EPISODES`, 480 by
+    /// default, in two shards): one real game's sealed record is replicated
+    /// into every slot with its scheduled episode, then the merge runs, and
+    /// each of its parts runs alone the old way and the new way. Prints one
+    /// JSON line of seconds.
+    #[test]
+    #[ignore = "timing: run by hand with --nocapture"]
+    fn merge_timing_at_production_size() {
+        let count: usize = std::env::var("MERGE_BENCH_EPISODES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(480);
+        let (root, source, episodes) = fixture_v1("merge-timing", 1);
+        let envelope = RecordEnvelopeV1::Zstd1;
+        let template = whole_command_for_test_v1(
+            &source,
+            &episodes,
+            0.0,
+            envelope,
+            root.join("template-whole"),
+        );
+        let spec = ShardSpecV1 {
+            episodes: 1,
+            workers: 2,
+            output_directory: root.join("template"),
+        };
+        let shard = shard_commands_v1(&template, &[spec]).unwrap().remove(0);
+        let shard_receipt = execute_v1(shard).unwrap();
+        let pin = pins_of_v1(&shard_receipt).remove(0);
+        let record = record_envelope_v1::open_v1(&fs::read(&pin.path).unwrap(), MAX_FILE_BYTES)
+            .unwrap()
+            .into_owned();
+        let mut document: Value = serde_json::from_slice(&record).unwrap();
+        let schedule: Vec<ExpandedEpisodeV1> = (0..count)
+            .map(|slot| {
+                let mut episode = episodes[0].clone();
+                episode.id = format!("merge-timing-{slot}");
+                episode.seed += slot as u64;
+                episode
+            })
+            .collect();
+        let whole =
+            whole_command_for_test_v1(&source, &schedule, 0.0, envelope, root.join("collect"));
+        let halves = [count / 2, count - count / 2];
+        let mut directories = Vec::new();
+        let mut first_slot = 0;
+        let mut compressed = 0usize;
+        let mut opened = 0usize;
+        for (index, size) in halves.iter().enumerate() {
+            let directory = root.join(format!("shard-{index}"));
+            fs::create_dir_all(&directory).unwrap();
+            let mut pins = Vec::new();
+            for (slot, episode) in schedule.iter().enumerate().skip(first_slot).take(*size) {
+                document["episode"] = serde_json::to_value(episode).unwrap();
+                let bytes = serde_json::to_vec(&document).unwrap();
+                opened += bytes.len();
+                let sealed = envelope.seal_v1(&bytes).unwrap().into_owned();
+                compressed += sealed.len();
+                let name = format!("episode-{slot:04}.json");
+                fs::write(directory.join(&name), &sealed).unwrap();
+                pins.push(PinnedFileV1 {
+                    path: directory.join(&name),
+                    sha256: sha(&sealed),
+                });
+            }
+            let mut receipt = shard_receipt.clone();
+            receipt["trajectories"] = serde_json::to_value(&pins).unwrap();
+            receipt["shard"] = json!({"first_slot": first_slot, "schedule_episodes": count});
+            fs::write(
+                directory.join("collection.json"),
+                serde_json::to_vec(&receipt).unwrap(),
+            )
+            .unwrap();
+            directories.push(directory);
+            first_slot += size;
+        }
+        let time = |f: &mut dyn FnMut()| {
+            let started = std::time::Instant::now();
+            f();
+            started.elapsed().as_secs_f64()
+        };
+        let merge = time(&mut || {
+            merge_shards_v1(&whole, &directories).unwrap();
+        });
+        let names: Vec<(usize, PathBuf, PinnedFileV1, String)> = directories
+            .iter()
+            .enumerate()
+            .flat_map(|(index, directory)| {
+                let receipt: Value =
+                    serde_json::from_slice(&fs::read(directory.join("collection.json")).unwrap())
+                        .unwrap();
+                pins_of_v1(&receipt)
+                    .into_iter()
+                    .map(move |pin| {
+                        let name = pin.path.file_name().unwrap().to_str().unwrap().to_owned();
+                        (index, directory.clone(), pin, name)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut bytes = Vec::new();
+        let serial_read = time(&mut || {
+            bytes = names
+                .iter()
+                .map(|(_, directory, pin, name)| read_shard_file_v1(directory, pin, name).unwrap())
+                .collect();
+        });
+        let parallel_read = time(&mut || {
+            prefetch_shard_files_v1(&directories, count);
+        });
+        let open_only = time(&mut || {
+            for sealed in &bytes {
+                record_envelope_v1::open_v1(sealed, MAX_FILE_BYTES).unwrap();
+            }
+        });
+        let seeds = vec![None; count];
+        let whole_view = whole_command_v1(&whole).unwrap();
+        let check_value = time(&mut || {
+            check_trajectories_against_schedule_with_v1(&bytes, &whole_view, &seeds, false)
+                .unwrap();
+        });
+        let check_fields = time(&mut || {
+            check_trajectories_against_schedule_with_v1(&bytes, &whole_view, &seeds, true).unwrap();
+        });
+        let shared: Vec<Arc<Vec<u8>>> = bytes.iter().cloned().map(Arc::new).collect();
+        let serial_dir = root.join("publish-serial");
+        let parallel_dir = root.join("publish-parallel");
+        fs::create_dir_all(&serial_dir).unwrap();
+        fs::create_dir_all(&parallel_dir).unwrap();
+        let serial_publish = time(&mut || {
+            for (slot, data) in shared.iter().enumerate() {
+                publish_json_shared_v1(&serial_dir, &format!("episode-{slot:04}.json"), data)
+                    .unwrap();
+            }
+        });
+        let parallel_publish = time(&mut || {
+            for result in ordered_v1(count, "panicked", |slot| {
+                publish_json_shared_v1(
+                    &parallel_dir,
+                    &format!("episode-{slot:04}.json"),
+                    &shared[slot],
+                )
+            }) {
+                result.unwrap();
+            }
+        });
+        println!(
+            "{}",
+            json!({
+                "episodes": count,
+                "compressed_bytes": compressed,
+                "opened_bytes": opened,
+                "workers": merge_workers_v1(count),
+                "merge_seconds": merge,
+                "read_hash_serial_seconds": serial_read,
+                "read_hash_parallel_seconds": parallel_read,
+                "zstd_open_serial_seconds": open_only,
+                "check_whole_value_parse_seconds": check_value,
+                "check_fields_parse_seconds": check_fields,
+                "publish_serial_seconds": serial_publish,
+                "publish_parallel_seconds": parallel_publish,
+                "old_merge_estimate_seconds": serial_read + check_value + serial_publish,
+            })
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }
