@@ -18,11 +18,14 @@
 //!    and answers everything else as the training game is answered.
 //!    Neutral choices (on in every human-play game) are run both ways: on
 //!    the trainer's session too (then everything is equal), and off it, the
-//!    production trainer exactly; then the bridge poses some choices training
-//!    resolves itself (answered with their first row), and at every other
-//!    bot decision the menu, the model input and the new-window marker are
-//!    equal (the game states are not: neutral choices keep a pending
-//!    activation in their own fields and number stack items differently).
+//!    production trainer exactly. Then the bridge poses some choices
+//!    training resolves itself (answered with their first row), the game
+//!    states are not compared (neutral choices keep a pending activation in
+//!    their own fields and number stack items differently), and the menu,
+//!    model input and new-window marker are compared at each bot decision
+//!    until the first difference, which is recorded, not required: some
+//!    games (with Elves, Spy or Wildfire) leave the training game there,
+//!    with or without the person's engine windows alike.
 //! 2. Both rules `harness-v2` is the engine-windows reset exactly.
 //! 3. The bridge takes the rules on its reset request, marks the bot's new
 //!    windows in the private support block, and refuses the field anywhere
