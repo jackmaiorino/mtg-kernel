@@ -5912,6 +5912,7 @@ fn viable_printed_spell_modes(
     source: ObjectId,
     controller: PlayerId,
     state: &GameState,
+    (method, grant): (CastMethodV4, Option<sphinx_lore_cast_v1::CostGrant>),
 ) -> Vec<u8> {
     if def.target_spec == TargetSpec::KickerControlledCreatures {
         let has_target = !legal_targets_for_controller_from_source(
@@ -5922,11 +5923,11 @@ fn viable_printed_spell_modes(
             state,
         )
         .is_empty();
-        let kicked_payable = spell_costs_v1::selected_spell_quote_v1(
+        let kicked_payable = spell_costs_v1::selected_spell_quote_with_grant_v1(
             def,
             source,
             state.objects.get(source).zone,
-            CastMethodV4::Normal,
+            method,
             true,
             0,
             0,
@@ -5935,6 +5936,7 @@ fn viable_printed_spell_modes(
             controller,
             state,
             &[],
+            grant,
         )
         .is_some();
         return if has_target || kicked_payable {
@@ -5997,11 +5999,11 @@ fn viable_printed_spell_modes(
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_keywords_v1::spree_extra_generic(def.name, 0).is_some() {
         modes.retain(|&mode| {
-            spell_costs_v1::selected_spell_quote_v1(
+            spell_costs_v1::selected_spell_quote_with_grant_v1(
                 def,
                 spell,
                 state.objects.get(spell).zone,
-                CastMethodV4::Normal,
+                method,
                 false,
                 mode,
                 0,
@@ -6010,6 +6012,7 @@ fn viable_printed_spell_modes(
                 controller,
                 state,
                 &[],
+                grant,
             )
             .is_some()
         });
@@ -10253,44 +10256,41 @@ fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
     })
 }
 
+fn pending_quote_route(
+    pending: &PendingCast,
+    state: &GameState,
+) -> (CastMethodV4, Option<sphinx_lore_cast_v1::CostGrant>) {
+    let grant = sphinx_lore_cast_v1::CostGrant::selected(state, pending.spell);
+    let method = if pending.sphinx_lore_v1.is_some() || grant.is_some() {
+        pending.source_contract.cast_method
+    } else {
+        CastMethodV4::Normal
+    };
+    (method, grant)
+}
+
 /// A target-dependent reducer must have an actual legal, payable completion.
 /// The ordinary full-cost fast path keeps every older offer unchanged.
-fn normal_cast_target_prefix_is_payable(
+fn cast_target_prefix_is_payable(
     def: &card_def::CardDef,
     spell: ObjectId,
     spec: TargetSpec,
     controller: PlayerId,
     targets: &[Target],
     state: &GameState,
+    (method, grant): (CastMethodV4, Option<sphinx_lore_cast_v1::CostGrant>),
 ) -> bool {
-    if !normal_cast_cost_depends_on_targets(def) {
-        return spell_costs_v1::selected_spell_quote_v1(
-            def,
-            spell,
-            state.objects.get(spell).zone,
-            CastMethodV4::Normal,
-            false,
-            0,
-            0,
-            targets,
-            &[],
-            controller,
-            state,
-            &[],
-        )
-        .is_some();
-    }
     let source = targeting_source_for_object(state, spell);
     if !target_prefix_can_complete_for_controller_and_source(
         spec, targets, controller, source, state,
     ) {
         return false;
     }
-    if spell_costs_v1::selected_spell_quote_v1(
+    if spell_costs_v1::selected_spell_quote_with_grant_v1(
         def,
         spell,
         state.objects.get(spell).zone,
-        CastMethodV4::Normal,
+        method,
         false,
         0,
         0,
@@ -10299,6 +10299,7 @@ fn normal_cast_target_prefix_is_payable(
         controller,
         state,
         &[],
+        grant,
     )
     .is_some()
     {
@@ -10309,7 +10310,15 @@ fn normal_cast_target_prefix_is_payable(
         .any(|target| {
             let mut extended = targets.to_vec();
             extended.push(target);
-            normal_cast_target_prefix_is_payable(def, spell, spec, controller, &extended, state)
+            cast_target_prefix_is_payable(
+                def,
+                spell,
+                spec,
+                controller,
+                &extended,
+                state,
+                (method, grant),
+            )
         })
 }
 
@@ -10562,13 +10571,14 @@ fn ordinary_next_cast_targets(
         .filter(|target| {
             let mut extended = chosen.to_vec();
             extended.push(*target);
-            normal_cast_target_prefix_is_payable(
+            cast_target_prefix_is_payable(
                 def,
                 pending.spell,
                 spec,
                 pending.controller,
                 &extended,
                 state,
+                pending_quote_route(pending, state),
             )
         })
         .collect()
@@ -10612,7 +10622,7 @@ fn torch_first_target_payable_v1(
     state: &GameState,
     grant: Option<sphinx_lore_cast_v1::CostGrant>,
 ) -> bool {
-    let modes = viable_printed_spell_modes(def, id, player, state);
+    let modes = viable_printed_spell_modes(def, id, player, state, (cast_method, grant));
     let zone = state.objects.get(id).zone;
     modes.is_empty()
         || modes.into_iter().any(|mode| {
@@ -11060,7 +11070,13 @@ fn viable_pending_spell_forms(
             vec![]
         };
     }
-    let mut modes = viable_printed_spell_modes(def, pending.spell, pending.controller, state);
+    let mut modes = viable_printed_spell_modes(
+        def,
+        pending.spell,
+        pending.controller,
+        state,
+        pending_quote_route(pending, state),
+    );
     if def.mode2.is_some() || def.mode3.is_some() || !def.additional_modes.is_empty() {
         modes.retain(|&mode| {
             let mut selected = pending.clone();
@@ -11346,16 +11362,17 @@ fn hand_free_cast_quote_ok(
     let mut projected = state.clone();
     crate::eternal_cards_v1::e3::set_free_quote(&mut projected, Some(id));
     if normal_cast_cost_depends_on_targets(def) {
-        return normal_cast_target_prefix_is_payable(
+        return cast_target_prefix_is_payable(
             def,
             id,
             def.target_spec,
             player,
             &[],
             &projected,
+            (CastMethodV4::Normal, None),
         );
     }
-    viable_printed_spell_modes(def, id, player, &projected)
+    viable_printed_spell_modes(def, id, player, &projected, (CastMethodV4::Normal, None))
         .into_iter()
         .any(|mode| {
             spell_costs_v1::selected_spell_quote_v1(
@@ -11745,9 +11762,11 @@ fn is_castable_with_cost_grant(
             .is_some()
         })
     };
+    let viable_modes = || viable_printed_spell_modes(def, id, player, state, (cast_method, grant));
+    let granted_flashback = cast_method == CastMethodV4::Flashback && grant.is_some();
     if cast_method != CastMethodV4::Normal
-        && viable_printed_spell_modes(def, id, player, state).is_empty()
-        && !(cast_method == CastMethodV4::Escape && kicked_ok())
+        && viable_modes().is_empty()
+        && !((cast_method == CastMethodV4::Escape || granted_flashback) && kicked_ok())
     {
         return false;
     }
@@ -11809,10 +11828,11 @@ fn is_castable_with_cost_grant(
         // A card with a choice between two additional costs (#715) is
         // castable while either cost is payable; every other card is
         // quoted in its first mode, as before.
-        let modes = if cast_method == CastMethodV4::Escape
-            && crate::eternal_cube_c1b_v1::additional_discard_count(def, None).is_some()
+        let modes = if granted_flashback
+            || (cast_method == CastMethodV4::Escape
+                && crate::eternal_cube_c1b_v1::additional_discard_count(def, None).is_some())
         {
-            viable_printed_spell_modes(def, id, player, state)
+            viable_modes()
         } else if crate::eternal_cost_choice_v1::applies(def) {
             vec![0, 1]
         } else {
@@ -11826,27 +11846,43 @@ fn is_castable_with_cost_grant(
         .unwrap_or(0);
         modes.into_iter().any(|mode| {
             (0..=limit).any(|x| {
-                spell_costs_v1::selected_spell_quote_with_grant_v1(
-                    def,
-                    id,
-                    state.objects.get(id).zone,
-                    cast_method,
-                    false,
-                    mode,
-                    x,
-                    &[],
-                    &[],
-                    player,
-                    state,
-                    &[],
-                    grant,
-                )
-                .is_some()
+                let payable = |kicked| {
+                    spell_costs_v1::selected_spell_quote_with_grant_v1(
+                        def,
+                        id,
+                        state.objects.get(id).zone,
+                        cast_method,
+                        kicked,
+                        mode,
+                        x,
+                        &[],
+                        &[],
+                        player,
+                        state,
+                        &[],
+                        grant,
+                    )
+                    .is_some()
+                };
+                payable(false) || (granted_flashback && def.kicker_cost.is_some() && payable(true))
             })
         })
     };
     match cast_method {
-        CastMethodV4::Flashback => graveyard_payable(),
+        CastMethodV4::Flashback
+            if granted_flashback && normal_cast_cost_depends_on_targets(def) =>
+        {
+            cast_target_prefix_is_payable(
+                def,
+                id,
+                def.target_spec,
+                player,
+                &[],
+                state,
+                (cast_method, grant),
+            )
+        }
+        CastMethodV4::Flashback => graveyard_payable() || (granted_flashback && kicked_ok()),
         CastMethodV4::Alternative
             if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() =>
         {
@@ -11866,35 +11902,34 @@ fn is_castable_with_cost_grant(
             // timing window never pays for target or mana enumeration.
             let normal_ok = || {
                 if normal_cast_cost_depends_on_targets(def) {
-                    normal_cast_target_prefix_is_payable(
+                    cast_target_prefix_is_payable(
                         def,
                         id,
                         def.target_spec,
                         player,
                         &[],
                         state,
+                        (cast_method, grant),
                     )
                 } else {
-                    viable_printed_spell_modes(def, id, player, state)
-                        .into_iter()
-                        .any(|mode| {
-                            spell_costs_v1::selected_spell_quote_with_grant_v1(
-                                def,
-                                id,
-                                state.objects.get(id).zone,
-                                CastMethodV4::Normal,
-                                false,
-                                mode,
-                                0,
-                                &[],
-                                &[],
-                                player,
-                                state,
-                                &[],
-                                grant,
-                            )
-                            .is_some()
-                        })
+                    viable_modes().into_iter().any(|mode| {
+                        spell_costs_v1::selected_spell_quote_with_grant_v1(
+                            def,
+                            id,
+                            state.objects.get(id).zone,
+                            CastMethodV4::Normal,
+                            false,
+                            mode,
+                            0,
+                            &[],
+                            &[],
+                            player,
+                            state,
+                            &[],
+                            grant,
+                        )
+                        .is_some()
+                    })
                 }
             };
             let alt_ok = || {
@@ -11947,8 +11982,7 @@ fn is_castable_with_cost_grant(
                 || greatwurm_cast_v1::allowed(state, id, player)
                 || muldrotha_v1::allowed(state, id, player))
                 && (main_timing_ok || aluren_timing || sneak_timing)
-                && ((paid_or_free()
-                    && !viable_printed_spell_modes(def, id, player, state).is_empty())
+                && ((paid_or_free() && !viable_modes().is_empty())
                     || (main_timing_ok && kicked_ok()));
             let omen_ok = || {
                 supported_omen(def).is_some_and(|omen| {
@@ -11961,7 +11995,7 @@ fn is_castable_with_cost_grant(
                             targeting_source_for_spell_form(state, id, def, CastMethodV4::Omen),
                             state,
                         )
-                        && spell_costs_v1::selected_spell_quote_v1(
+                        && spell_costs_v1::selected_spell_quote_with_grant_v1(
                             def,
                             id,
                             state.objects.get(id).zone,
@@ -11974,6 +12008,7 @@ fn is_castable_with_cost_grant(
                             player,
                             state,
                             &[],
+                            grant,
                         )
                         .is_some()
                 })
@@ -11997,7 +12032,7 @@ fn is_castable_with_cost_grant(
                             targeting_source_for_spell_form(state, id, def, CastMethodV4::Bestow),
                             state,
                         )
-                        && spell_costs_v1::selected_spell_quote_v1(
+                        && spell_costs_v1::selected_spell_quote_with_grant_v1(
                             def,
                             id,
                             state.objects.get(id).zone,
@@ -12010,6 +12045,7 @@ fn is_castable_with_cost_grant(
                             player,
                             state,
                             &[],
+                            grant,
                         )
                         .is_some()
                 })
@@ -12243,9 +12279,10 @@ fn is_plotted_castable_now(player: PlayerId, id: ObjectId, state: &GameState) ->
         && def.plot_cost.is_some()
         && plotted_turn < state.turn_key_v1()
         && def.is_castable()
-        && !viable_printed_spell_modes(def, id, player, state).is_empty()
+        && !viable_printed_spell_modes(def, id, player, state, (CastMethodV4::Normal, None))
+            .is_empty()
         && sorcery_speed_timing_ok(player, state)
-        && viable_printed_spell_modes(def, id, player, state)
+        && viable_printed_spell_modes(def, id, player, state, (CastMethodV4::Normal, None))
             .into_iter()
             .any(|mode| {
                 spell_costs_v1::selected_spell_quote_v1(
@@ -17437,13 +17474,14 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     );
                     legal_completion
                         && (!normal_cast_cost_depends_on_targets(def)
-                            || normal_cast_target_prefix_is_payable(
+                            || cast_target_prefix_is_payable(
                                 def,
                                 pending.spell,
                                 spec,
                                 pending.controller,
                                 &pending.targets_chosen,
                                 state,
+                                pending_quote_route(&pending, state),
                             ))
                 }),
             None => !viable_pending_spell_forms(def, &pending, state).is_empty(),

@@ -2589,8 +2589,12 @@ fn breach_and_retrace_keep_overload_available_only_with_the_land_discard() {
 #[test]
 fn breach_and_retrace_do_not_borrow_wills_permission_to_overload_without_a_land() {
     use engine::sphinx_lore_cast_v1::RouteV1;
-    for player in [P0, P1] {
-        let mut base = retrace_game_on_turn(player, player);
+    // Will and Breach remain independent with an absent or unpayable retrace grant.
+    for (player, emblem) in [(P0, true), (P1, true), (P0, false), (P1, false)] {
+        let mut base = game_for(&["Plains"; 20], player);
+        if emblem {
+            retrace_emblem(&mut base);
+        }
         let will = put(&mut base, player, "Yawgmoth's Will", Zone::Hand);
         pool(&mut base, player, &[ManaColor::B], 2);
         cast(&mut base, will, &[]);
@@ -2648,6 +2652,124 @@ fn breach_and_retrace_do_not_borrow_wills_permission_to_overload_without_a_land(
                 }
             );
         }
+    }
+}
+
+#[test]
+fn breach_and_retrace_rides_end_quotes_the_land_and_the_selected_targets_cost() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    use mtg_kernel::state::SpellCastRouteV4;
+    for player in [P0, P1] {
+        let mut base = retrace_game_on_turn(player, player);
+        let will = put(&mut base, player, "Yawgmoth's Will", Zone::Hand);
+        pool(&mut base, player, &[ManaColor::B], 2);
+        cast(&mut base, will, &[]);
+        settled(&mut base);
+        for _ in 0..3 {
+            put(&mut base, player, "Island", Zone::Graveyard);
+        }
+        let spell = put(&mut base, player, "Ride's End", Zone::Graveyard);
+        let tapped = put(
+            &mut base,
+            player.opponent(),
+            "Thraben Inspector",
+            Zone::Battlefield,
+        );
+        base.objects.get_mut(tapped).tapped = true;
+        let untapped = put(
+            &mut base,
+            player.opponent(),
+            "Thraben Inspector",
+            Zone::Battlefield,
+        );
+        for (generic, route, breach) in [
+            (1, None, true),
+            (4, None, true),
+            (1, Some(RouteV1::Normal), false),
+            (1, Some(RouteV1::Retrace), false),
+            (1, Some(RouteV1::Retrace), true),
+        ] {
+            let mut state = base.clone();
+            if breach {
+                put(&mut state, player, "Underworld Breach", Zone::Battlefield);
+            }
+            let land = route.map(|_| put(&mut state, player, "Forest", Zone::Hand));
+            pool(&mut state, player, &[ManaColor::W], generic);
+            if let Some(route) = route {
+                choose_graveyard_route(&mut state, spell, route);
+            } else {
+                cast(&mut state, spell, &[]);
+                assert!(state
+                    .engine
+                    .pending_cast
+                    .as_ref()
+                    .unwrap()
+                    .sphinx_lore_v1
+                    .is_none());
+            }
+            let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
+                panic!("missing Ride's End target")
+            };
+            assert!(legal_targets.contains(&Target::Object(tapped)));
+            assert_eq!(
+                legal_targets.contains(&Target::Object(untapped)),
+                generic == 4
+            );
+            let target = if generic == 4 { untapped } else { tapped };
+            act(&mut state, Action::ChooseTarget(Target::Object(target)));
+            let retraced = route == Some(RouteV1::Retrace);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for game in [&mut state, &mut restored] {
+                assert!(matches!(next(game), Decision::CastSpellOrPass { .. }));
+                assert_eq!(
+                    game.objects.get(spell).v4.spell_cast_origin.unwrap().route
+                        == SpellCastRouteV4::RetraceV1,
+                    retraced
+                );
+                if let Some(land) = land {
+                    assert_eq!(
+                        zone(game, land),
+                        if retraced { Zone::Exile } else { Zone::Hand }
+                    );
+                }
+                assert_eq!(game.players[player.index()].mana_pool, [0; 6]);
+                settled(game);
+                assert_eq!(zone(game, target), Zone::Exile);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+}
+
+#[test]
+fn breach_and_retrace_rides_end_granted_flashback_can_pay_for_its_tapped_target() {
+    use mtg_kernel::state::SpellCastRouteV4;
+    for player in [P0, P1] {
+        let mut state = retrace_game_on_turn(player, player);
+        let spell = put(&mut state, player, "Ride's End", Zone::Graveyard);
+        let mage = put(&mut state, player, "Snapcaster Mage", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::U], 1);
+        cast(&mut state, mage, &[]);
+        settle_choosing(&mut state, spell);
+        let victim = put(
+            &mut state,
+            player.opponent(),
+            "Thraben Inspector",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(victim).tapped = true;
+        pool(&mut state, player, &[ManaColor::W], 1);
+        cast(&mut state, spell, &[Target::Object(victim)]);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(
+            state.objects.get(spell).v4.spell_cast_origin.unwrap().route,
+            SpellCastRouteV4::SnapcasterFlashbackV1
+        );
+        assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+        settled(&mut state);
+        assert_eq!(zone(&state, victim), Zone::Exile);
+        assert_eq!(zone(&state, spell), Zone::Exile);
     }
 }
 

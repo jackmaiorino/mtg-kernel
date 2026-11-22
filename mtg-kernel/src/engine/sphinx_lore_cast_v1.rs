@@ -73,10 +73,8 @@ impl CostGrant {
                     && crate::eternal_lurrus_v1::escape_granted(state, id, generation)
             }
             Self::Retrace => {
-                matches!(
-                    method,
-                    CastMethodV4::Normal | CastMethodV4::Alternative | CastMethodV4::Omen
-                ) && crate::eternal_vintage_e7b_v1::retrace_permission(state, id, player)
+                ordinary_payment_method(&card_def::CARD_DEFS[usize::from(o.card_def)], method)
+                    && crate::eternal_vintage_e7b_v1::retrace_permission(state, id, player)
             }
         }
     }
@@ -253,42 +251,8 @@ pub(super) fn granted(p: &PendingCast) -> bool {
     )
 }
 fn route_quote(state: &GameState, id: ObjectId, player: PlayerId, route: RouteV1) -> bool {
-    // The original Sphinx route can have mode- and kicker-dependent targets.
-    if let RouteV1::Granted { installation } = route {
-        let d = &card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)];
-        let m = method(route);
-        if !d.is_castable()
-            || !d.is_executable()
-            || !cast_form_timing_ok(d.types, d.keywords, player, state)
-        {
-            return false;
-        }
-        let modes = viable_printed_spell_modes(d, id, player, state);
-        return modes.into_iter().any(|mode| {
-            [false, true]
-                .into_iter()
-                .filter(|k| !*k || d.kicker_cost.is_some())
-                .any(|kicked| {
-                    spell_costs_v1::selected_spell_quote_with_grant_v1(
-                        d,
-                        id,
-                        Zone::Graveyard,
-                        m,
-                        kicked,
-                        mode,
-                        0,
-                        &[],
-                        &[],
-                        player,
-                        state,
-                        &[],
-                        Some(CostGrant::Sphinx(installation)),
-                    )
-                    .is_some()
-                })
-        });
-    }
     let grant = match route {
+        RouteV1::Granted { installation } => Some(CostGrant::Sphinx(installation)),
         RouteV1::Breach
             if card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)]
                 .escape
@@ -334,8 +298,9 @@ pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<R
         && crate::eternal_lurrus_v1::escape_granted(state, id, o.zone_change_count);
     let retrace = cfg!(feature = "eternal-fixtures")
         && crate::eternal_vintage_e7b_v1::retrace_permission(state, id, player);
-    let competing_grants = breach && retrace;
-    if grants.is_empty() && !snapcaster && !beam && !printed && !competing_grants {
+    // An ordinary permission can compete with either grant. A lone permission
+    // still takes the legacy path after the roster is assembled and quoted.
+    if grants.is_empty() && !snapcaster && !beam && !printed && !breach && !retrace {
         return vec![];
     }
     let mut routes = vec![];
