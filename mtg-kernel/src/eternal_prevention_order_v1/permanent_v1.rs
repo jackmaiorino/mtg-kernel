@@ -1,9 +1,8 @@
-//! Color protection and Phantom Nishoba both prevent the incoming damage.
-//! Only Nishoba's effect can remove a counter from the affected permanent.
-use crate::eternal_legacy_e9a_v1::{active_permanents, live_link, statics::protection_mask};
-use crate::eternal_pauper_pf1c_v1::ordinary_damage::{protection_applies, OrdinaryV1};
+//! Nonconsuming prevention can spare Phantom Nishoba a counter.
+use crate::eternal_legacy_e9a_v1::{active_permanents, live_link};
+use crate::eternal_pauper_pf1c_v1::ordinary_damage::{OrdinaryV1, Packet};
 use crate::eternal_premodern_p2c_v1::{self as p2c, statics::nishoba_applies, PHANTOM_NISHOBA};
-use crate::event::DamageProposed;
+use crate::event::{DamageProposed, ReplacementEffectKind};
 use crate::ids::ObjectId;
 use crate::state::{GameState, Target};
 
@@ -15,8 +14,8 @@ fn counter_can_be_removed(state: &GameState, target: ObjectId) -> bool {
 }
 
 pub(super) fn may_need_choice(state: &GameState) -> bool {
-    active_permanents(state, PHANTOM_NISHOBA, None)
-        .any(|id| counter_can_be_removed(state, id) && protection_mask(state, id) != 0)
+    // The source, combat flag and touched replacements are known only at the packet.
+    active_permanents(state, PHANTOM_NISHOBA, None).any(|id| counter_can_be_removed(state, id))
 }
 
 pub(super) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
@@ -25,8 +24,22 @@ pub(super) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
     };
     nishoba_applies(state, damage)
         && counter_can_be_removed(state, target)
-        && protection_mask(state, target) != 0
-        && protection_applies(state, damage)
+        && Packet::new(damage)
+            .options(state)
+            .iter()
+            .any(free_prevention)
+}
+
+pub(super) fn free_prevention(effect: &OrdinaryV1) -> bool {
+    match effect {
+        OrdinaryV1::PreventAll => true,
+        OrdinaryV1::Registered(replacement) => matches!(
+            replacement.kind,
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                | ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
+        ),
+        _ => false,
+    }
 }
 
 /// Another simultaneous packet can already have removed the cohort's one

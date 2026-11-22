@@ -84,16 +84,10 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
         }
     }
     for effect in packet.options(state) {
-        let effect = match effect {
-            OrdinaryV1::Registered(ref replacement)
-                if matches!(
-                    replacement.kind,
-                    ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
-                ) =>
-            {
-                OrdinaryV1::PreventAll
-            }
-            effect => effect,
+        let effect = if permanent_v1::free_prevention(&effect) {
+            OrdinaryV1::PreventAll
+        } else {
+            effect
         };
         if coalesce_spheres
             && matches!(effect, OrdinaryV1::Sphere(_))
