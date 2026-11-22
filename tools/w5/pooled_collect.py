@@ -115,7 +115,7 @@ def _resident_context() -> dict:
 
 
 def _peer_uid(conn) -> int:
-    """The connected peer's uid (Linux SO_PEERCRED: pid_t, uid_t, gid_t)."""
+    """The connected peer's uid (Linux SO_PEERCRED: pid_t, uid_t, gid_t; resident mode is Linux only)."""
     _, uid, _ = struct.unpack("iII", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII")))
     return uid
 
@@ -123,7 +123,7 @@ def _peer_uid(conn) -> int:
 def _resident_private_dir(path: str) -> bool:
     """A directory (not a symlink) owned by this account with no group or other access."""
     try:
-        info = os.lstat(path)
+        info = os.lstat(path.rstrip("/") or "/")  # a trailing slash would follow a symlink
     except OSError:
         return False
     return (info.st_mode & 0o170000) == 0o040000 and info.st_uid == os.getuid() and not info.st_mode & 0o077
@@ -160,28 +160,28 @@ def resident_client(command: str, socket_dir: str, hosts: str | None, stderr) ->
     takes the request (absent, unreachable, another hosts file or dispatcher source): the caller then collects
     in this process. Once it has sent "go" it never returns None: a lost dispatcher is exit 1 (fail closed),
     because the dispatcher may already have staged or merged into the attempt."""
-    if not hasattr(socket, "AF_UNIX"):
-        stderr.write("resident dispatcher: this platform has no unix sockets\n")
-        return None
-    request = {"schema": RESIDENT_SCHEMA, "command": os.path.abspath(command),
-               "hosts": os.path.abspath(hosts) if hosts else None,
-               "hosts_sha256": _file_sha256(hosts) if hosts and os.path.isfile(hosts) else None,
-               "source_sha256": _file_sha256(os.path.realpath(__file__)), "context": _resident_context()}
-    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    conn = None
     try:
-        try:
+        try:  # anything up to the commit hands back: nothing has started anywhere
+            if not sys.platform.startswith("linux"):
+                raise RuntimeError("resident mode needs a Linux learner (unix sockets with SO_PEERCRED)")
             if not _resident_private_dir(socket_dir):
                 raise RuntimeError(f"{socket_dir} is not a directory of this account with mode 700")
+            request = {"schema": RESIDENT_SCHEMA, "command": os.path.abspath(command),
+                       "hosts": os.path.abspath(hosts) if hosts else None,
+                       "hosts_sha256": _file_sha256(hosts) if hosts and os.path.isfile(hosts) else None,
+                       "source_sha256": _file_sha256(os.path.realpath(__file__)), "context": _resident_context()}
+            conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
             conn.connect(os.path.join(socket_dir, RESIDENT_SOCKET))
-            if hasattr(socket, "SO_PEERCRED") and _peer_uid(conn) != os.getuid():
+            if _peer_uid(conn) != os.getuid():
                 raise RuntimeError("the socket's server runs as another account")
             _send_line(conn, request)
             answer = _read_line(conn)
             if not answer or answer.get("ready") is not True:
                 raise RuntimeError((answer or {}).get("reason", "no answer"))
             _send_line(conn, {"go": True})  # committed: from here on, never collect in this process
-        except (OSError, ValueError, RuntimeError) as error:
+        except Exception as error:  # noqa: BLE001
             stderr.write(f"resident dispatcher unavailable ({error}); collecting in this process\n")
             return None
         try:
@@ -197,7 +197,8 @@ def resident_client(command: str, socket_dir: str, hosts: str | None, stderr) ->
         stderr.write(outcome["stderr"])
         return outcome["code"]
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 if __name__ == "__main__" and len(sys.argv) == 2 and not sys.argv[1].startswith("-") and os.environ.get(RESIDENT_ENV):
@@ -989,7 +990,9 @@ class Dispatcher:
             for host in self.hosts:
                 confirmed = self.known.pop(host.name, set())
                 if host.transport == "agent":
-                    self.earlier[host.name] = self.earlier.get(host.name, set()) | confirmed
+                    earlier = self.earlier.get(host.name, set()) | confirmed
+                    # A run without retention names a new checkpoint every update: bounded, asked again.
+                    self.earlier[host.name] = earlier if len(earlier) <= 4096 else confirmed
                 else:
                     self.earlier.pop(host.name, None)
 
@@ -1099,6 +1102,7 @@ class Dispatcher:
             return f"{self.storage_key(host)}@{self.call(host, 'storage_id', self.transports[host.name].storage_id)}"
         except Exception as error:  # noqa: BLE001
             self.note(event="storage-marker-unreadable", host=host.name, error=str(error)[-200:])
+            self.forget(host)  # the storage behind it may be another one: ask again
             return None
 
     def _prune_locked(self, state_path: Path, current: set) -> None:
@@ -3610,6 +3614,7 @@ RESIDENT_IDLE_SECONDS = 1800.0
 def _prepare_socket_dir(path: str) -> None:
     if not os.path.isabs(path):
         raise ValueError("the resident socket directory must be absolute")
+    path = path.rstrip("/") or "/"  # a trailing slash would follow a symlink
     if not os.path.lexists(path):
         os.makedirs(path, mode=0o700)
     info = os.lstat(path)
@@ -3676,9 +3681,8 @@ class ResidentServer:
         counted = False
         try:
             conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
-            if hasattr(socket, "SO_PEERCRED"):
-                if _peer_uid(conn) != os.getuid():
-                    return
+            if _peer_uid(conn) != os.getuid():
+                return
             request = _read_line(conn)
             reason = self.refusal(request)
             if reason:
@@ -3778,8 +3782,8 @@ def serve_main(socket_dir: str, idle: str | None, stderr) -> int:
     if not config_path:
         stderr.write("MTG_POOLED_COLLECT_CONFIG is not set\n")
         return 2
-    if os.name != "posix":
-        stderr.write("the resident dispatcher needs a POSIX learner (unix sockets)\n")
+    if not sys.platform.startswith("linux"):
+        stderr.write("the resident dispatcher needs a Linux learner (unix sockets with SO_PEERCRED)\n")
         return 2
     try:
         idle_seconds = float(idle) if idle else RESIDENT_IDLE_SECONDS

@@ -1,7 +1,7 @@
 """The resident dispatcher: the per-update program becomes a thin client of one dispatcher that stays up for
 the run. Its answer is the one-shot program's (exit code, stderr, published collection, same bytes); with no
 server the client collects in its own process; after committing it never does (a lost server fails closed).
-POSIX only (unix sockets)."""
+Linux only (unix sockets with SO_PEERCRED)."""
 import io
 import json
 import os
@@ -23,7 +23,7 @@ sys.path.insert(0, str(HERE / "tests"))
 import pooled_collect as pc  # noqa: E402
 from test_pooled_collect import FakeTransport, episode_bytes, fake_merge  # noqa: E402
 
-POSIX = os.name == "posix" and hasattr(socket, "AF_UNIX")
+POSIX = sys.platform.startswith("linux")  # resident mode is Linux only (SO_PEERCRED)
 
 # A collector program for local hosts: writes each slot's bytes as a function of its episode alone.
 COLLECTOR = textwrap.dedent('''
@@ -122,7 +122,7 @@ class ResidentCase(unittest.TestCase):
         return code, stderr.getvalue()
 
 
-@unittest.skipUnless(POSIX, "unix sockets")
+@unittest.skipUnless(POSIX, "Linux: unix sockets with SO_PEERCRED")
 class ResidentServiceTests(ResidentCase):
     def test_the_client_returns_the_one_shot_answer_and_bytes(self):
         server, _ = self.start_server()
@@ -247,7 +247,7 @@ class ResidentServiceTests(ResidentCase):
         path = self.command(1)
         context = pc._resident_context()
         for changed in (dict(context, cwd="/elsewhere"), dict(context, env=dict(context["env"], OMP_NUM_THREADS="3")),
-                        dict(context, cpus=[0])):
+                        dict(context, cpus=[-1])):
             answer = self.request(path, context=changed)
             self.assertFalse(answer["ready"])
             self.assertIn("another context", answer["reason"])
@@ -277,6 +277,27 @@ class ResidentServiceTests(ResidentCase):
         code, text = self.client(self.command(1))
         self.assertEqual((one_shot, code), (1, 1))
         self.assertTrue(text.startswith("pooled collection failed"), text)
+
+    def test_a_symlink_to_the_socket_directory_with_a_trailing_slash_is_refused(self):
+        self.start_server()
+        link = self.root / "link"
+        os.symlink(self.sockets, link)
+        stderr = io.StringIO()
+        self.assertIsNone(pc.resident_client(str(self.command(1)), str(link) + "/", str(self.hosts_path), stderr))
+        self.assertIn("mode 700", stderr.getvalue())
+
+    def test_a_failure_before_the_commit_hands_back(self):
+        self.start_server()
+        path = self.command(1)
+        original = pc._resident_context
+        pc._resident_context = lambda: (_ for _ in ()).throw(OSError("probe failed"))
+        try:
+            code, text = self.client(path)
+        finally:
+            pc._resident_context = original
+        self.assertIsNone(code)
+        self.assertIn("probe failed", text)
+        self.assertFalse((path.parent / "pooled-shards").exists())
 
     def test_the_client_hands_back_for_a_socket_directory_it_does_not_own_privately(self):
         self.start_server()
@@ -407,7 +428,7 @@ class ResidentServiceTests(ResidentCase):
         self.assertEqual(self.request(self.root / "--help")["reason"], "not an iteration's collect command")
 
 
-@unittest.skipUnless(POSIX, "unix sockets")
+@unittest.skipUnless(POSIX, "Linux: unix sockets with SO_PEERCRED")
 class ResidentProgramTests(ResidentCase):
     """The real programs: `serve` in its own process, and the per-update program the trainer starts."""
 
@@ -447,7 +468,7 @@ class ResidentProgramTests(ResidentCase):
 
 
 class ResidentPlatformTests(unittest.TestCase):
-    @unittest.skipIf(POSIX, "a platform without unix sockets")
+    @unittest.skipIf(POSIX, "a platform without resident mode")
     def test_without_unix_sockets_the_client_hands_back(self):
         stderr = io.StringIO()
         self.assertIsNone(pc.resident_client("C:/run/iterations/000001/attempt-000000/collect-command.json",

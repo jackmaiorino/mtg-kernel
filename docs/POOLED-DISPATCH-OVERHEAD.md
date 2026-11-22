@@ -84,7 +84,8 @@ iteration wall minus the in-process wall at the same batch.
 
 ## Resident dispatcher
 
-Start one per run, beside the trainer, with the run's hosts file:
+Linux learners only (the peer check uses SO_PEERCRED; elsewhere the client always collects in its own
+process). Start one per run, beside the trainer, with the run's hosts file:
 
     MTG_POOLED_COLLECT_CONFIG=/srv/work/RUN/hosts.json pooled_collect.py serve /srv/work/RUN/.resident [IDLE_SECONDS]
 

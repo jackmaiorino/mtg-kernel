@@ -312,7 +312,7 @@ class RequestsPerShardTests(OverheadCase):
         self.assertEqual(sum(1 for p in asked if (str(self.opponent), pc.sha256_file(self.opponent)) in p), 2)
 
 
-@unittest.skipUnless(os.name == "posix", "the fake mux ssh probes and kills processes by pid (/proc)")
+@unittest.skipUnless(sys.platform.startswith("linux"), "the fake mux ssh probes processes through /proc")
 class ReusedConnectionTests(OverheadCase):
     def mux_host(self, name, arch="x86"):
         state = self.root / f"mux-{name}"
@@ -453,6 +453,26 @@ class LearnerSideTests(unittest.TestCase):
             self.assertEqual(pc.sha256_file_known(path), pc.sha256_file_known(path))
         path.write_bytes(b"other")  # same size, at once
         self.assertEqual(pc.sha256_file_known(path), pc.sha256_file(path))
+
+    def test_an_unreadable_storage_marker_forgets_the_hosts_pins(self):
+        host = pc.Host(name="a", kind="ssh", collector="/c", collector_sha256="0" * 64, workers=2, weight=1.0,
+                       scratch="/s", arch="x86", ssh=["ssh", "a"], transport="agent", prune_pushed=True)
+        transport = FakeTransport(host, {})
+        transport.storage_id = lambda: (_ for _ in ()).throw(RuntimeError("unreachable"))
+        dispatcher = pc.Dispatcher({"hosts": [host]}, {"a": transport})
+        dispatcher.known["a"], dispatcher.earlier["a"] = {("/p", "1" * 64)}, {("/q", "2" * 64)}
+        self.assertIsNone(dispatcher.storage_key_now(host))
+        self.assertNotIn("a", dispatcher.known)
+        self.assertNotIn("a", dispatcher.earlier)
+
+    def test_earlier_pin_knowledge_is_bounded(self):
+        host = pc.Host(name="a", kind="ssh", collector="/c", collector_sha256="0" * 64, workers=2, weight=1.0,
+                       scratch="/s", arch="x86", ssh=["ssh", "a"], transport="agent")
+        dispatcher = pc.Dispatcher({"hosts": [host]}, {"a": FakeTransport(host, {})})
+        dispatcher.earlier["a"] = {(f"/old-{i}", "0" * 64) for i in range(4096)}
+        dispatcher.known["a"] = {("/new", "1" * 64)}
+        dispatcher.begin()
+        self.assertEqual(dispatcher.earlier["a"], {("/new", "1" * 64)})
 
     def test_a_local_shard_moves_into_staging(self):
         host = pc.Host(name="l", kind="local", collector="/c", collector_sha256="0" * 64, workers=2, weight=1.0,
