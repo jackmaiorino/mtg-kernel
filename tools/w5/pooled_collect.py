@@ -52,6 +52,25 @@ its session scope for a box). Without `executor` (or with {"kind": "direct"}) no
 its argv, working directory, inputs and sandbox are the same either way, so a shard's bytes do not depend on
 the executor. The runner stops on its stop file (default `<scratch>/.spool/STOP`) and writes an end record
 (default `<scratch>/.spool/END.json`); see the box runner section below.
+
+Connection reuse (no code): an ssh host's `ssh` list is passed to every call unchanged, so OpenSSH connection
+multiplexing is configured there, for example
+
+    "ssh": ["ssh", "-o", "BatchMode=yes", "-o", "ControlMaster=auto",
+            "-o", "ControlPath=/srv/work/RUN/.ssh-mux/%C", "-o", "ControlPersist=120", "mtg@node1"]
+
+with the ControlPath directory owned by the learner account, mode 700. Each call is still one session and one
+request (the agent's rule); only the TCP connection and key exchange are shared (measured node2 to node1:
+0.27 s per agent call without, 0.044 s with). The first call starts the master in the background; OpenSSH
+points the master's standard streams at /dev/null unless `-v` is given, so never put `-v` in these arguments
+(a master holding the call's stderr would hold that call open to its deadline). A master that dies fails the
+calls riding on it like any connection failure (the host fails over); the next call starts a new master.
+The collector's sshd allows 10 sessions per connection by default (MaxSessions); the dispatcher has at most
+a few requests in flight per host (a shard, its cleanup, an audit, a failover shard).
+
+Resident mode: `pooled_collect.py serve SOCKET_DIR` keeps one dispatcher up for a run, and the program the
+trainer starts per update hands its command to it (MTG_POOLED_COLLECT_RESIDENT=SOCKET_DIR); see the resident
+section at the end.
 """
 from __future__ import annotations
 
@@ -80,6 +99,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 SCHEMA = "mtg-kernel-pooled-collect-hosts/v1"
 FETCH_SECONDS = 900.0
+LOADED_AT = time.time()  # this module's load, for the receipt's start-up timing
 
 
 @dataclass
@@ -208,7 +228,7 @@ def import_pins(document) -> set[tuple[str, str]]:
     for name in names:
         if not Path(name).is_file():
             raise RuntimeError(f"learner lacks an import file: {name}")
-        found.add((name, sha256_file(Path(name))))
+        found.add((name, sha256_file_known(Path(name))))
     return found
 
 
@@ -225,7 +245,7 @@ def input_closure(command: dict) -> set[tuple[str, str]]:
         if pin in found:
             continue
         path = Path(pin[0])
-        if pin not in top and not (path.is_file() and sha256_file(path) == pin[1]):
+        if pin not in top and not (path.is_file() and sha256_file_known(path) == pin[1]):
             continue
         found.add(pin)
         try:
@@ -426,6 +446,35 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+_HASHED: dict = {}  # path -> (file signature, sha256): learner-side files hashed by this process
+_HASHED_LOCK = threading.Lock()
+
+
+def _signature(path) -> tuple:
+    info = os.stat(path)
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def sha256_file_known(path: Path) -> str:
+    """sha256_file of a file on this machine, rehashed only when its signature (device, inode, size,
+    modification and change times) differs from the last hash this process took. For the learner's
+    own inputs and a local collector: every byte they send is verified again where it lands (the
+    push's staged digest, the agent's checks), so the shortcut never admits other bytes there."""
+    key = os.path.abspath(path)
+    before = _signature(key)
+    with _HASHED_LOCK:
+        known = _HASHED.get(key)
+    if known is not None and known[0] == before:
+        return known[1]
+    digest = sha256_file(Path(key))
+    if _signature(key) == before:  # unchanged while hashed
+        with _HASHED_LOCK:
+            if len(_HASHED) >= 4096:  # a long resident run names a new checkpoint every update
+                _HASHED.clear()
+            _HASHED[key] = (before, digest)
+    return digest
+
+
 class Transport:
     """Runs commands and moves files for one host. Tests replace it."""
 
@@ -451,7 +500,7 @@ class Transport:
         """Each pin's state on the host: "ok", "absent" or "differs" (a file with other bytes)."""
         if self.host.kind == "local":
             return {p: ("absent" if not os.path.lexists(p[0]) else
-                        "ok" if Path(p[0]).is_file() and sha256_file(Path(p[0])) == p[1] else "differs")
+                        "ok" if Path(p[0]).is_file() and sha256_file_known(Path(p[0])) == p[1] else "differs")
                     for p in pins}
         script = ("import hashlib,json,os,sys\n"
                   "out=[]\n"
@@ -522,7 +571,10 @@ class Transport:
         if local.exists():
             shutil.rmtree(local)
         if self.host.kind == "local":
-            shutil.copytree(remote, local)
+            try:  # the same files, moved when scratch and staging share a filesystem
+                os.rename(remote, local)
+            except OSError:
+                shutil.copytree(remote, local)
             return
         local.mkdir(parents=True)
         tar = subprocess.Popen(self._ssh([f"tar -C {shlex.quote(remote)} -cf - ."]),
@@ -556,6 +608,15 @@ class Transport:
         else:
             subprocess.run(self._ssh([f"rm -rf -- {shlex.quote(remote)}"]), capture_output=True, timeout=300)
 
+    def remove_shard(self, out: str, command_path: str) -> None:
+        """A shard's output directory and its command file, in one call."""
+        if self.host.kind == "local":
+            shutil.rmtree(out, ignore_errors=True)
+            Path(command_path).unlink(missing_ok=True)
+        else:
+            subprocess.run(self._ssh([f"rm -rf -- {shlex.quote(out)} {shlex.quote(command_path)}"]),
+                           capture_output=True, timeout=300)
+
 
 def shard_command_for(whole: dict, first: int, count: int, workers: int, output: str) -> dict:
     """The shard command `pooled_collection_v1::shard_commands_v1` makes, built here so
@@ -580,40 +641,85 @@ class Dispatcher:
                                           for h in self.hosts}
         self.timeout = timeout
         self.log: list[dict] = []
-        self.pushed: dict[str, dict] = {}  # host -> {path: sha256} this process uploaded
+        self.pushed: dict[str, dict] = {}  # host -> {path: sha256} this collection uploaded
         self._lock = threading.Lock()
         self._input_locks: dict[tuple[str, str], threading.Lock] = {}
+        # Pins confirmed present with their bytes, per host. Agent hosts keep them across collections (a
+        # resident dispatcher): their agent hashes every input again at put_shard and run_shard, so a stale
+        # entry is a refusal there (answered by a full recheck), never other bytes. Other hosts keep them
+        # for one collection. Any failure of a host forgets its entries; pruning forgets the pruned paths.
+        self.known: dict[str, set] = {}
+        self.calls: dict[str, dict] = {}  # host -> op -> [count, seconds], this collection
+        self._cleanups: list[threading.Thread] = []
+        self.collections = 0
 
     def note(self, **event):
         event["t"] = round(time.time(), 3)
         with self._lock:
             self.log.append(event)
 
-    def distribute(self, host: Host, command: dict) -> int:
-        """Makes every pin of `command` (and the pins nested in its small JSON inputs) present on
-        `host`; returns bytes pushed. A file at a pinned path with other bytes is never replaced:
-        the host fails and its shard moves on. One upload per host and input at a time."""
+    def call(self, host: Host, op: str, function, *args):
+        """One transport call, counted and timed for the receipt."""
+        started = time.monotonic()
+        try:
+            return function(*args)
+        finally:
+            seconds = time.monotonic() - started
+            with self._lock:
+                entry = self.calls.setdefault(host.name, {}).setdefault(op, [0, 0.0])
+                entry[0] += 1
+                entry[1] += seconds
+
+    def confirm(self, host: Host, pin: tuple[str, str]) -> None:
+        with self._lock:
+            self.known.setdefault(host.name, set()).add(pin)
+
+    def forget(self, host: Host, paths=None) -> None:
+        """Forgets every pin known on `host`, or only those at `paths`."""
+        with self._lock:
+            if paths is None:
+                self.known.pop(host.name, None)
+            else:
+                self.known[host.name] = {p for p in self.known.get(host.name, ()) if p[0] not in paths}
+
+    def known_on(self, host: Host) -> set:
+        with self._lock:
+            return set(self.known.get(host.name, ()))
+
+    def distribute(self, host: Host, pins: set, trust_known: bool = True) -> tuple[int, bool]:
+        """Makes every pin in `pins` (a command's input closure) present on `host`; returns the bytes
+        pushed and whether pins known from earlier were trusted without asking. One pin_status for the
+        pins not known, then one push per absent pin. A file at a pinned path with other bytes is never
+        replaced: the host fails and its shard moves on. One upload per host and input at a time; a push
+        racing another process's install of the same bytes is accepted by the push itself."""
         transport = self.transports[host.name]
+        known = self.known_on(host) if trust_known else set()
+        unknown = set(pins) - known
+        relied = bool(set(pins) & known)
         pushed = 0
-        for pin, state in sorted(transport.pin_status(input_closure(command)).items()):
+        if not unknown:
+            return 0, relied
+        for pin, state in sorted(self.call(host, "pin_status", transport.pin_status, unknown).items()):
             if state == "ok":
+                self.confirm(host, pin)
                 continue
             if state == "differs":
                 raise RuntimeError(f"{host.name}: {pin[0]} exists with other bytes; not replaced")
             with self._lock:
                 lock = self._input_locks.setdefault((host.name, pin[0]), threading.Lock())
             with lock:
-                if transport.pin_status({pin})[pin] == "ok":  # another thread uploaded it
+                if pin in self.known_on(host):  # another thread of this dispatcher installed it meanwhile
                     continue
                 local = Path(pin[0])
-                if not local.is_file() or sha256_file(local) != pin[1]:
+                if not local.is_file() or sha256_file_known(local) != pin[1]:
                     raise RuntimeError(f"learner lacks pinned input {pin[0]}")
-                created = transport.push(local, pin[0], pin[1])
+                created = self.call(host, "push", transport.push, local, pin[0], pin[1])
                 pushed += local.stat().st_size
+                self.confirm(host, pin)
                 if created and host.transport == "agent":  # ownership exists only on agent hosts
                     with self._lock:
                         self.pushed.setdefault(host.name, {})[pin[0]] = pin[1]
-        return pushed
+        return pushed, relied
 
     @staticmethod
     def owned_dir(host: Host, path: str) -> str:
@@ -624,38 +730,77 @@ class Dispatcher:
             raise RuntimeError(f"{host.name}: {path} is not a pooled scratch directory")
         return path
 
-    def run_shard(self, host: Host, command: dict, tag: str, staging: Path) -> Path:
+    def cleanup(self, host: Host, out: str, command_path: str, tag: str) -> None:
+        """Removes a shard's output directory and command file on its host (one call where the transport
+        has remove_shard). A failure is noted, never raised: it never reruns or fails a fetched shard."""
+        transport = self.transports[host.name]
+        if hasattr(transport, "remove_shard"):
+            steps = [("remove_shard", transport.remove_shard, (out, command_path))]
+        else:
+            steps = [("remove_dir", transport.remove_dir, (out,)), ("remove_file", transport.remove_file, (command_path,))]
+        for op, function, args in steps:
+            try:
+                self.call(host, op, function, *args)
+            except Exception as error:  # noqa: BLE001
+                self.note(event="scratch-cleanup-failed", host=host.name, tag=tag, error=str(error)[-400:])
+
+    def cleanup_later(self, host: Host, out: str, command_path: str, tag: str) -> None:
+        """cleanup off the shard's critical path; collect waits for it before its receipt."""
+        thread = threading.Thread(target=self.cleanup, args=(host, out, command_path, tag))
+        with self._lock:
+            self._cleanups.append(thread)
+        thread.start()
+
+    def join_cleanups(self) -> None:
+        while True:
+            with self._lock:
+                if not self._cleanups:
+                    return
+                thread = self._cleanups.pop()
+            thread.join()
+
+    def run_shard(self, host: Host, command: dict, tag: str, staging: Path, pins: set | None = None) -> Path:
         transport = self.transports[host.name]
         # The collector is pinned per host and never pushed: a host without its
         # pinned binary fails, and its shard moves on.
         collector = (host.collector, host.collector_sha256)
         # In agent mode the learner's expected collector hash travels with run_shard and the agent
         # refuses a mismatch; its pin_status answers only for the lineage's pin roots.
-        if not isinstance(transport, AgentTransport) and transport.pin_status({collector})[collector] != "ok":
-            raise RuntimeError(f"{host.name}: collector binary missing or not its pin")
+        if not isinstance(transport, AgentTransport) and collector not in self.known_on(host):
+            if self.call(host, "pin_status", transport.pin_status, {collector})[collector] != "ok":
+                raise RuntimeError(f"{host.name}: collector binary missing or not its pin")
+            self.confirm(host, collector)
         out = self.owned_dir(host, command["output_directory"])
-        transport.remove_dir(out)
-        pushed = self.distribute(host, command)
+        # The tag is new to this invocation, so its output directory and command file cannot exist on a
+        # host yet (the agent and the collector refuse existing ones); a failed run removes both below.
+        pushed, relied = self.distribute(host, input_closure(command) if pins is None else pins)
         command_path = str(PurePosixPath(host.scratch) / f"{tag}.json")
+        text = json.dumps(command)
         try:
-            transport.put_text(command_path, json.dumps(command))
+            try:
+                self.call(host, "put_shard", transport.put_text, command_path, text)
+            except Exception:  # noqa: BLE001
+                if not (isinstance(transport, AgentTransport) and relied):
+                    raise
+                # The agent checks every input when it stores the command: an input known here from an
+                # earlier collection is gone (another lineage's retention, a wiped scratch). Ask again.
+                self.forget(host)
+                self.note(event="pins-rechecked", host=host.name, tag=tag)
+                pushed += self.distribute(host, input_closure(command) if pins is None else pins, False)[0]
+                self.call(host, "put_shard", transport.put_text, command_path, text)
             started = time.time()
-            result = transport.run(host.prefix + [host.collector, "--execute-collect-shard", command_path],
-                                   self.timeout)
+            result = self.call(host, "run_shard", transport.run,
+                               host.prefix + [host.collector, "--execute-collect-shard", command_path], self.timeout)
             if result.returncode != 0:
                 raise RuntimeError(f"{host.name}: shard {tag} exit {result.returncode}: {result.stderr[-400:]}")
             played = time.time() - started
             local = staging / tag
-            transport.fetch_dir(out, local)
-            try:
-                transport.remove_dir(out)
-            except Exception as error:  # noqa: BLE001  the shard is fetched: cleanup never reruns it
-                self.note(event="scratch-cleanup-failed", host=host.name, tag=tag, error=str(error)[-400:])
-        finally:
-            try:
-                transport.remove_file(command_path)
-            except Exception as error:  # noqa: BLE001  never replaces the shard's own outcome
-                self.note(event="scratch-cleanup-failed", host=host.name, tag=tag, error=str(error)[-400:])
+            self.call(host, "fetch_shard", transport.fetch_dir, out, local)
+        except BaseException:
+            # Before the shard moves on: a failover host sharing this scratch reuses the tag.
+            self.cleanup(host, out, command_path, tag)
+            raise
+        self.cleanup_later(host, out, command_path, tag)
         self.note(event="shard", host=host.name, tag=tag, first=command["shard"]["first_slot"],
                   episodes=len(command["episodes"]), seconds=round(played, 3), pushed_bytes=pushed,
                   fetched_bytes=sum(p.stat().st_size for p in local.iterdir()))
@@ -665,7 +810,7 @@ class Dispatcher:
                           staging: Path, failed: set) -> tuple[Path, Host]:
         """Runs one shard on host `start`, else the next live host. A rerun gives the same
         bytes, so failover never changes the collection."""
-        errors = []
+        errors, pins = [], None
         for step in range(len(self.hosts)):
             host = self.hosts[(start + step) % len(self.hosts)]
             with self._lock:
@@ -673,17 +818,44 @@ class Dispatcher:
                     continue
             output = str(PurePosixPath(host.scratch) / tag)
             command = shard_command_for(whole, first, count, host.workers, output)
+            if pins is None:  # the inputs do not depend on the host
+                pins = input_closure(command)
             try:
-                return self.run_shard(host, command, tag, staging), host
+                return self.run_shard(host, command, tag, staging, pins), host
             except Exception as error:  # noqa: BLE001  any host failure moves the shard
                 errors.append(f"{host.name}: {error}")
                 self.note(event="host-failed", host=host.name, tag=tag, error=str(error)[-400:])
+                self.forget(host)
                 with self._lock:
                     failed.add(host.name)
         raise RuntimeError(f"shard {tag} failed on every host: {errors}")
 
+    def begin(self) -> None:
+        """A new collection: its own event log, uploads and call counts; non-agent hosts' pins asked again."""
+        self.log, self.pushed, self.calls, self._cleanups = [], {}, {}, []
+        with self._lock:
+            for host in self.hosts:
+                if host.transport != "agent":
+                    self.known.pop(host.name, None)
+
     def collect(self, command_path: Path, run_merge) -> dict:
-        command_path = Path(command_path)
+        self.begin()
+        try:
+            return self._collect(Path(command_path), run_merge)
+        finally:
+            self.join_cleanups()
+            self.collections += 1
+
+    def _collect(self, command_path: Path, run_merge) -> dict:
+        timing = {"since_load": round(time.time() - LOADED_AT, 3)} if self.collections == 0 else {}
+        clock = time.monotonic()
+
+        def lap(name):
+            nonlocal clock
+            now = time.monotonic()
+            timing[name] = round(now - clock, 3)
+            clock = now
+
         whole = json.loads(command_path.read_text())
         preflight(whole)
         attempt = command_path.parent
@@ -713,6 +885,7 @@ class Dispatcher:
                 errors.append(str(error))
 
         threads = [threading.Thread(target=work, args=(job,)) for job in jobs]
+        lap("plan")
         started = time.time()
         for thread in threads:
             thread.start()
@@ -721,18 +894,27 @@ class Dispatcher:
         if errors:
             raise RuntimeError("; ".join(errors))
         collected = time.time() - started
+        lap("shards")
         self.audit(whole, iteration, jobs, results, staging, tag_root, failed)
+        lap("audit")
         directories = [results[index][0] for index, _, _ in jobs]
         merged = run_merge(command_path, directories)
+        lap("merge")
         for directory in directories:  # the merge copied every trajectory into collect/
             shutil.rmtree(directory)
         staging.rmdir()
+        lap("staging_removal")
+        self.join_cleanups()
+        lap("cleanup_wait")
+        self.prune(input_closure(whole))
+        lap("prune")
         receipt = {"schema": "mtg-kernel-pooled-collect-dispatch/v1", "iteration": iteration,
                    "episodes": total, "shards": [[i, f, s, results[i][1].name] for i, f, s in jobs],
                    "collection_seconds": round(collected, 3), "failed_hosts": sorted(failed),
-                   "events": self.log, "merged": merged}
+                   "events": self.log, "merged": merged, "timing": timing,
+                   "calls": {h: {op: [n, round(s, 3)] for op, (n, s) in sorted(ops.items())}
+                             for h, ops in sorted(self.calls.items())}}
         (staging_root / "dispatch.json").write_text(json.dumps(receipt, indent=1))
-        self.prune(input_closure(whole))
         return receipt
 
     def prune(self, current: set) -> None:
@@ -758,7 +940,7 @@ class Dispatcher:
         """storage_key plus the collector storage's generation marker; None when the marker cannot be
         read, in which case nothing is pruned on that host this time."""
         try:
-            return f"{self.storage_key(host)}@{self.transports[host.name].storage_id()}"
+            return f"{self.storage_key(host)}@{self.call(host, 'storage_id', self.transports[host.name].storage_id)}"
         except Exception as error:  # noqa: BLE001
             self.note(event="storage-marker-unreadable", host=host.name, error=str(error)[-200:])
             return None
@@ -766,34 +948,79 @@ class Dispatcher:
     def _prune_locked(self, state_path: Path, current: set) -> None:
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
         keep_paths = {p for p, _ in current}
-        for host in self.hosts:
-            key = self.storage_key_now(host) if host.prune_pushed and host.transport == "agent" else self.storage_key(host)
-            if key is None:
-                continue
+
+        def owned(host):
+            return host.prune_pushed and host.transport == "agent"
+
+        # Hosts in parallel (each one's storage marker, then its owned removals); records in host order.
+        keys, records = {}, {}
+
+        def key_of(host):
+            keys[host.name] = self.storage_key_now(host) if owned(host) else self.storage_key(host)
+
+        def prune_host(host):
+            key = keys[host.name]
             previous = state.get(key, {})
             if not isinstance(previous, dict):
                 previous = {}  # an older state format holds no hashes: forget, never delete
             now = self.pushed.get(host.name, {})
             merged = dict(previous) | now
-            if host.prune_pushed and host.transport == "agent":
+            if owned(host):
                 for path in sorted(set(merged) - set(now) - keep_paths):
                     # Delete only the very file this dispatcher installed (its ownership witness).
                     try:
-                        outcome = self.transports[host.name].remove_owned(path, merged[path])
+                        outcome = self.call(host, "remove_pin", self.transports[host.name].remove_owned,
+                                            path, merged[path])
                     except Exception as error:  # noqa: BLE001  kept for the next collection
                         self.note(event="prune-failed", host=host.name, path=path, error=str(error)[-200:])
                         continue
+                    finally:
+                        self.forget(host, {path})
                     self.note(event="pruned" if outcome == "removed" else "not-owned", host=host.name, path=path)
                     del merged[path]
-            state[key] = dict(sorted(merged.items()))
+            records[host.name] = (key, dict(sorted(merged.items())))
+
+        def parallel(step, hosts):
+            raised = []
+
+            def guarded(host):
+                try:
+                    step(host)
+                except BaseException as error:  # noqa: BLE001  raised below, as one serial pass would
+                    raised.append(error)
+
+            threads = [threading.Thread(target=guarded, args=(host,)) for host in hosts]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            if raised:
+                raise raised[0]
+
+        parallel(key_of, [h for h in self.hosts if owned(h)])
+        for host in self.hosts:
+            if not owned(host):
+                key_of(host)
+        parallel(prune_host, [h for h in self.hosts if owned(h) and keys[h.name] is not None])
+        for host in self.hosts:
+            if keys[host.name] is None:
+                continue  # storage marker unreadable: nothing pruned or recorded on that host this time
+            if host.name not in records:
+                prune_host(host)
+            key, merged = records[host.name]
+            state[key] = merged
         stage = state_path.with_name(f"{state_path.name}.{uuid.uuid4().hex}.stage")
         stage.write_text(json.dumps(state, indent=1))
         os.replace(stage, state_path)
 
     def audit(self, whole, iteration, jobs, results, staging, tag_root, failed):
+        """Replays the audit slots on hosts of another architecture class (chosen as before: the
+        slot's index among the live other-class hosts). Replays on different hosts run concurrently,
+        those on one host one after another; every divergence or failure fails the collection."""
         audit = self.config.get("audit", {})
         slots = audit_slots(iteration, len(whole["episodes"]), int(audit.get("episodes", 0)),
                             int(audit.get("every", 0)))
+        plan: dict[str, tuple[Host, list]] = {}
         for slot in slots:
             index = next(i for i, f, s in jobs if f <= slot < f + s)
             first = next(f for i, f, s in jobs if i == index)
@@ -804,17 +1031,33 @@ class Dispatcher:
                 self.note(event="audit-skipped", slot=slot, reason="no other architecture live")
                 continue
             host = others[slot % len(others)]
-            tag = f"{tag_root}-audit{slot:04d}"
-            command = shard_command_for(whole, slot, 1, host.workers,
-                                        str(PurePosixPath(host.scratch) / tag))
-            replay = self.run_shard(host, command, tag, staging)
-            replayed = trajectory_pins(replay)[0]["sha256"]
-            self.note(event="audit", slot=slot, played_on=played_on.name, replayed_on=host.name,
-                      equal=replayed == original)
-            if replayed != original:
-                raise RuntimeError(f"cross-host divergence at slot {slot}: {played_on.name} ({played_on.arch}) "
-                                   f"{original} against {host.name} ({host.arch}) {replayed}")
-            shutil.rmtree(replay)
+            plan.setdefault(host.name, (host, []))[1].append((slot, played_on, original))
+        divergences, failures = [], []
+
+        def replay_on(host, items):
+            for slot, played_on, original in items:
+                tag = f"{tag_root}-audit{slot:04d}"
+                command = shard_command_for(whole, slot, 1, host.workers, str(PurePosixPath(host.scratch) / tag))
+                try:
+                    replay = self.run_shard(host, command, tag, staging)
+                except Exception as error:  # noqa: BLE001  an audit that cannot run fails the collection
+                    failures.append(f"audit of slot {slot} on {host.name}: {error}")
+                    return
+                replayed = trajectory_pins(replay)[0]["sha256"]
+                self.note(event="audit", slot=slot, played_on=played_on.name, replayed_on=host.name,
+                          equal=replayed == original)
+                if replayed != original:
+                    divergences.append(f"cross-host divergence at slot {slot}: {played_on.name} ({played_on.arch}) "
+                                       f"{original} against {host.name} ({host.arch}) {replayed}")
+                shutil.rmtree(replay)
+
+        threads = [threading.Thread(target=replay_on, args=entry) for entry in plan.values()]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if divergences or failures:
+            raise RuntimeError("; ".join(sorted(divergences) + sorted(failures)))
 
 
 # ---------------------------------------------------------------- collector agent (forced command)
@@ -3137,6 +3380,10 @@ class AgentTransport:
 
     def remove_dir(self, remote: str) -> None:
         self._json("remove_shard", tag=self._tag(remote))
+
+    def remove_shard(self, out: str, command_path: str) -> None:
+        """The agent's remove_shard removes a tag's output directory and command file in one call."""
+        self._json("remove_shard", tag=self._tag(out))
 
     def remove_file(self, remote: str) -> None:
         if AGENT_TAG.fullmatch(self._tag(remote)):
