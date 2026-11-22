@@ -1,0 +1,511 @@
+"""The box runner (`pooled_collect.py runner`, the agent's executor "spool"): the agent keeps every check of
+run_shard and hands the run to a runner inside a W5 box through `<scratch>/.spool`. The runner here is a real
+process; agents run in-process (sandbox "none") or as their own processes, behind the fake sshd for the
+dispatcher. A config without `executor` keeps the original behaviour (test_pooled_agent.py covers it)."""
+import io
+import json
+import os
+import signal
+import subprocess
+import sys
+import tarfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+HERE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE / "tests"))
+import pooled_collect as pc  # noqa: E402
+from test_pooled_agent import FAKE_COLLECTOR, FAKE_SSH, LANDLOCK, TAG, AgentCase, gone, sha  # noqa: E402
+from test_pooled_collect import episode_bytes, fake_merge  # noqa: E402
+
+POSIX = os.name == "posix" and hasattr(os, "waitid")
+LINUX = sys.platform.startswith("linux")
+# The fake collector, plus an episode field "slow" that delays a run that then completes normally.
+SLOW_COLLECTOR = FAKE_COLLECTOR.replace('if first.get("id") == "sleep":',
+                                        'if first.get("slow"):\n    time.sleep(first["slow"])\n'
+                                        'if first.get("id") == "sleep":', 1)
+
+
+def wait_for(predicate, seconds=20.0):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def tar_files(data: bytes) -> dict:
+    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        return {m.name: archive.extractfile(m).read() for m in archive}
+
+
+class ExecutorConfigTests(AgentCase):
+    """The optional `executor` key, on every platform."""
+
+    def test_without_executor_the_agent_runs_the_collector_itself(self):
+        self.assertEqual(pc.load_agent_config(self.config_path)["executor"], {"kind": "direct"})
+        self.put_shard()
+        code, out, err = self.run_shard()
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+        self.assertFalse((self.scratch / ".spool").exists(), "the direct executor never touches a spool")
+        direct = self.write_config(self.root / "direct.json", executor={"kind": "direct"})
+        self.assertEqual(pc.load_agent_config(direct)["executor"], {"kind": "direct"})
+
+    def test_executor_values_are_checked(self):
+        spool = os.path.join(str(self.scratch), ".spool")
+        for bad in ("spool", {"kind": "queue"}, {"kind": "direct", "heartbeat_seconds": 2},
+                    {"kind": "spool", "extra": 1}, {"kind": "spool", "heartbeat_seconds": 0},
+                    {"kind": "spool", "stop_grace_seconds": True},
+                    {"kind": "spool", "stop_file": str(self.root / "STOP")},
+                    {"kind": "spool", "end_file": os.path.join(spool, "runner.lock")},
+                    {"kind": "spool", "stop_file": os.path.join(spool, TAG + ".result")},
+                    {"kind": "spool", "stop_file": os.path.join(spool, "X"), "end_file": os.path.join(spool, "X")}):
+            with self.assertRaises(ValueError, msg=bad):
+                pc.load_agent_config(self.write_config(self.root / "bad.json", executor=bad))
+
+    @unittest.skipIf(POSIX, "the refusal applies off POSIX")
+    def test_the_spool_executor_needs_a_posix_host(self):
+        with self.assertRaisesRegex(ValueError, "POSIX"):
+            pc.load_agent_config(self.write_config(self.root / "spool.json", executor={"kind": "spool"}))
+
+    @unittest.skipUnless(POSIX, "the spool executor is POSIX only")
+    def test_spool_defaults(self):
+        executor = pc.load_agent_config(self.write_config(self.root / "spool.json", executor={"kind": "spool"}))[
+            "executor"]
+        spool = os.path.join(str(self.scratch), ".spool")
+        self.assertEqual(executor, {"kind": "spool", "heartbeat_seconds": 10, "stop_grace_seconds": 300,
+                                    "stop_file": os.path.join(spool, "STOP"),
+                                    "end_file": os.path.join(spool, "END.json")})
+
+
+@unittest.skipUnless(POSIX, "the box runner and the spool executor are POSIX only")
+class RunnerCase(AgentCase):
+    def setUp(self):
+        super().setUp()
+        self.collector.write_text(SLOW_COLLECTOR)
+        self.config_path = self.write_config(self.root / "agent.json")  # the direct executor
+        self.spool = self.scratch / ".spool"
+        self.spool_config = self.spool_config_at(self.root / "spool.json")
+        self.runners = []
+
+    def spool_config_at(self, path, **executor):
+        return self.write_config(path, executor=dict({"kind": "spool", "heartbeat_seconds": 5,
+                                                      "stop_grace_seconds": 5}, **executor))
+
+    def tearDown(self):
+        for process in self.runners:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        super().tearDown()
+
+    def start_runner(self, config=None, wait=True):
+        log = open(self.root / f"runner-{len(self.runners)}.log", "wb")
+        process = subprocess.Popen([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner",
+                                    str(config or self.spool_config)], stdout=subprocess.DEVNULL, stderr=log)
+        log.close()
+        self.runners.append(process)
+        if wait:
+            def serving():
+                try:
+                    return json.loads((self.spool / "runner.heartbeat").read_text())["pid"] == process.pid
+                except (OSError, ValueError, KeyError):
+                    return process.poll() is not None
+            self.assertTrue(wait_for(serving), "the runner never started")
+            self.assertIsNone(process.poll(), self.runner_log(process))
+        return process
+
+    def runner_log(self, process):
+        return (self.root / f"runner-{self.runners.index(process)}.log").read_text(errors="replace")
+
+    def stop_runner(self, process):
+        (self.spool / "STOP").write_text("")
+        process.wait(60)
+        os.unlink(self.spool / "STOP")
+        return process.returncode, json.loads((self.spool / "END.json").read_text())
+
+    def spool_leftovers(self):
+        return sorted(n for n in os.listdir(self.spool) if n not in ("runner.lock", "runner.heartbeat", "END.json"))
+
+    def in_thread(self, **kwargs):
+        """run_shard by an agent in a thread (no request alarm off the main thread)."""
+        box = {}
+        thread = threading.Thread(target=lambda: box.setdefault("result", self.run_shard(**kwargs)), daemon=True)
+        thread.start()
+        return thread, box
+
+    def agent_host(self, name, arch, config_path, scratch=None):
+        fake_ssh = self.root / "fake_ssh.py"
+        fake_ssh.write_text(FAKE_SSH)
+        return pc.Host(name=name, kind="ssh", collector=str(self.collector),
+                       collector_sha256=pc.sha256_file(self.collector), workers=2, weight=1.0,
+                       scratch=str(scratch or self.scratch), arch=arch,
+                       ssh=[sys.executable, str(fake_ssh), str(config_path)], prefix=[sys.executable],
+                       transport="agent")
+
+    def learner_command(self, count=9):
+        pinned = self.pins / "run" / "checkpoint.json"
+        if not pinned.exists():
+            pinned.parent.mkdir()
+            pinned.write_bytes(b"policy")
+        self.episodes = [{"id": f"e{i}", "seed": 100 + i} for i in range(count)]
+        command = {"mode": "collect_parallel", "workers": 2, "episodes": self.episodes,
+                   "source": {"checkpoint": {"path": str(pinned), "sha256": pc.sha256_file(pinned)}},
+                   "output_directory": "unused"}
+        attempt = self.root / "learner-run" / "iterations" / "000003" / "attempt-000000"
+        attempt.mkdir(parents=True, exist_ok=True)
+        path = attempt / "collect-command.json"
+        path.write_text(json.dumps(command))
+        return path
+
+
+class SpoolServiceTests(RunnerCase):
+    def test_a_spooled_shard_has_exactly_the_direct_executors_bytes(self):
+        self.put_shard()
+        code, out, err = self.run_shard()
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+        code, direct, err = self.serve("fetch_shard", tag=TAG)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG)[1]), "removed")
+        runner = self.start_runner()
+        self.put_shard()  # the same tag, scratch and command: the collector sees identical inputs and argv
+        code, out, err = self.run_shard(config=self.spool_config)
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+        code, spooled, err = self.serve("fetch_shard", tag=TAG, config=self.spool_config)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(tar_files(spooled), tar_files(direct))
+        self.assertEqual(sorted(tar_files(spooled)), ["collection.json", "episode-0002.json", "episode-0003.json"])
+        self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG, config=self.spool_config)[1]), "removed")
+        self.assertEqual(self.spool_leftovers(), [], "every request, claim, result and lock removed")
+        self.assertEqual(os.listdir(self.scratch / ".run"), [], "the private command copy is gone")
+        code, end = self.stop_runner(runner)
+        self.assertEqual(code, 0, self.runner_log(runner))
+        self.assertEqual((end["schema"], end["reason"], end["jobs_run"], end["jobs_failed"]),
+                         (pc.RUNNER_END_SCHEMA, "stop-file", 1, 0))
+        self.assertTrue(end["started_utc"] <= end["ended_utc"])
+        self.assertFalse((self.spool / "runner.heartbeat").exists())
+
+    def test_the_dispatcher_collects_through_spooled_agents_with_the_direct_bytes(self):
+        def capture(store):
+            def merge(command_path, directories):
+                for directory in directories:
+                    shard = directory.name.rsplit("-", 1)[1]
+                    for path in sorted(directory.iterdir()):
+                        if path.name == "collection.json":  # its recorded paths name the run's own tag
+                            document = json.loads(path.read_text())
+                            store[shard, path.name] = ([t["sha256"] for t in document["trajectories"]],
+                                                       document["shard"])
+                        else:
+                            store[shard, path.name] = path.read_bytes()
+                return fake_merge(command_path, directories)
+            return merge
+
+        command_path = self.learner_command()
+        stores, receipts = [], []
+        runner = self.start_runner()
+        for config in (self.config_path, self.spool_config):
+            hosts = [self.agent_host("a", "x86", config), self.agent_host("b", "arm64", config)]
+            stores.append({})
+            dispatcher = pc.Dispatcher({"hosts": hosts, "audit": {"every": 1, "episodes": 2}}, timeout=100)
+            receipts.append(dispatcher.collect(command_path, capture(stores[-1])))
+        self.assertEqual(stores[0], stores[1])
+        self.assertEqual(len(stores[1]), 2 + len(self.episodes), stores[1].keys())  # two shards
+        for receipt in receipts:
+            self.assertEqual(receipt["merged"]["slots"], [episode_bytes(e).decode() for e in self.episodes])
+            self.assertEqual(receipt["failed_hosts"], [])
+            audits = [e for e in receipt["events"] if e["event"] == "audit"]
+            self.assertEqual(len(audits), 2)
+            self.assertTrue(all(e["equal"] for e in audits))
+        self.assertEqual([n for n in os.listdir(self.scratch) if not n.startswith(".")], [])
+        self.assertEqual(self.spool_leftovers(), [])
+        code, end = self.stop_runner(runner)
+        self.assertEqual((code, end["jobs_run"], end["jobs_failed"]), (0, 4, 0), self.runner_log(runner))
+
+    def test_without_a_live_runner_run_shard_refuses_at_once_and_the_dispatcher_fails_over(self):
+        boxless_scratch = self.root / "boxless-scratch"
+        boxless_scratch.mkdir()
+        boxless = self.spool_config_at(self.root / "boxless.json")
+        document = json.loads(boxless.read_text())
+        boxless.write_text(json.dumps(dict(document, scratch=str(boxless_scratch), executor=dict(
+            document["executor"], stop_file=str(boxless_scratch / ".spool" / "STOP"),
+            end_file=str(boxless_scratch / ".spool" / "END.json")))))
+        hosts = [self.agent_host("boxless", "x86", boxless, boxless_scratch), self.agent_host("b", "x86", self.config_path)]
+        started = time.monotonic()
+        receipt = pc.Dispatcher({"hosts": hosts}, timeout=100).collect(self.learner_command(4), fake_merge)
+        self.assertLess(time.monotonic() - started, 60)
+        self.assertEqual(receipt["merged"]["slots"], [episode_bytes(e).decode() for e in self.episodes])
+        self.assertEqual(receipt["failed_hosts"], ["boxless"])
+        failure = [e for e in receipt["events"] if e["event"] == "host-failed"]
+        self.assertIn("no box runner", failure[0]["error"])
+        self.assertEqual([n for n in os.listdir(boxless_scratch) if not n.startswith(".")], [], "nothing created")
+        # A stale heartbeat, or a runner that is stopping, refuses the same way, before the run directory exists.
+        command = self.shard_command(output_directory=str(boxless_scratch) + "/" + TAG)
+        self.assertEqual(self.serve("put_shard", json.dumps(command).encode(), tag=TAG, config=boxless)[0], 0)
+        spool = boxless_scratch / ".spool"
+        spool.mkdir(mode=0o700, exist_ok=True)
+        heartbeat = spool / "runner.heartbeat"
+        heartbeat.write_text("{}")
+        os.utime(heartbeat, (time.time() - 100, time.time() - 100))
+        self.assertRefused(self.run_shard(config=boxless), "heartbeat is")
+        os.utime(heartbeat)
+        (spool / "STOP").write_text("")
+        self.assertRefused(self.run_shard(config=boxless), "stopping")
+        self.assertFalse((boxless_scratch / TAG).exists(), "nothing ran")
+
+    def test_one_runner_per_spool_and_a_refused_second_one_writes_no_end_record(self):
+        first = self.start_runner()
+        second = self.start_runner(wait=False)
+        self.assertEqual(second.wait(30), 1)
+        self.assertIn("another box runner", self.runner_log(second))
+        self.assertFalse((self.spool / "END.json").exists())
+        self.assertIsNone(first.poll())
+        self.assertEqual(self.stop_runner(first)[0], 0)
+
+    def test_remove_shard_refuses_a_waiting_job_and_removes_stale_state(self):
+        self.spool.mkdir(mode=0o700)
+        self.put_shard()
+        (self.scratch / TAG).mkdir()
+        stale = self.spool / f"{TAG}.result"
+        stale.write_text("{}")
+        (self.spool / f"{TAG}.cancel").write_text("{}")
+        (self.spool / f"{TAG}.request").write_text("{}")  # submitted by an agent that has gone
+        lock = pc._spool_job_lock(str(self.spool), TAG)  # an agent still waits: nothing of the tag is removed
+        try:
+            self.assertRefused(self.serve("remove_shard", tag=TAG, config=self.spool_config), "is active")
+            self.assertTrue(stale.exists() and (self.scratch / TAG).exists() and (self.scratch / f"{TAG}.json").exists())
+        finally:
+            os.unlink(self.spool / f"{TAG}.lock")
+            lock.close()
+        self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG, config=self.spool_config)[1]), "removed")
+        self.assertEqual(self.spool_leftovers(), [], "the abandoned request and the stale result and cancel")
+        self.assertFalse((self.scratch / TAG).exists())
+
+    def test_a_restarted_runner_refuses_an_earlier_generations_request_and_drops_an_abandoned_one(self):
+        self.spool.mkdir(mode=0o700)
+        tag2, tag3 = TAG.replace("-s001", "-s002"), TAG.replace("-s001", "-s003")
+        config = pc.load_agent_config(self.spool_config)
+        for tag in (tag2, tag3):
+            (self.scratch / tag).mkdir()
+            request = {"schema": pc.SPOOL_REQUEST_SCHEMA, "job": "1" * 32, "tag": tag, "command_sha256": "0" * 64,
+                       "seconds": 60, "submitted_unix": time.time(), "generation": "2" * 32,
+                       "binding": pc._execution_binding(config)}
+            pc._spool_write(str(self.spool / f"{tag}.request"), request)
+        waiting = pc._spool_job_lock(str(self.spool), tag2)  # tag2's agent waits; tag3's has gone
+        try:
+            runner = self.start_runner()
+            self.assertTrue(wait_for(lambda: (self.spool / f"{tag2}.result").exists()))
+            result = pc._spool_take(str(self.spool / f"{tag2}.result"), tag2, "1" * 32)
+            self.assertIn("earlier box runner", result["error"])
+            self.assertTrue(wait_for(lambda: not (self.spool / f"{tag3}.request").exists()), "dropped")
+            self.assertFalse((self.spool / f"{tag3}.result").exists(), "nobody to answer")
+        finally:
+            os.unlink(self.spool / f"{tag2}.lock")
+            waiting.close()
+        code, end = self.stop_runner(runner)
+        self.assertEqual((code, end["jobs_run"], end["jobs_refused"]), (0, 0, 1))
+        self.assertEqual(self.spool_leftovers(), [])
+
+    def test_a_result_for_another_job_or_malformed_is_refused(self):
+        self.spool.mkdir(mode=0o700)
+        path = str(self.spool / f"{TAG}.result")
+        good = {"schema": pc.SPOOL_RESULT_SCHEMA, "job": "1" * 32, "tag": TAG, "generation": "2" * 32, "code": 0,
+                "stderr": "", "seconds": 1.0, "error": None}
+        for change in ({"job": "3" * 32}, {"code": True}, {"code": None}, {"code": 0, "error": "x"},
+                       {"stderr": "x" * (pc.AGENT_STDERR_TAIL + 1)}, {"extra": 1}):
+            pc._spool_write(path, dict(good, **change))
+            with self.assertRaises(pc.AgentRefusal, msg=change):
+                pc._spool_take(path, TAG, "1" * 32)
+            self.assertFalse(os.path.exists(path))
+        Path(path).write_bytes(b"x" * (pc.SPOOL_FILE_BYTES + 1))
+        with self.assertRaisesRegex(pc.AgentRefusal, "malformed"):
+            pc._spool_take(path, TAG, "1" * 32)
+        pc._spool_write(path, good)
+        os.link(path, path + ".second")
+        with self.assertRaisesRegex(pc.AgentRefusal, "singly linked"):
+            pc._spool_take(path, TAG, "1" * 32)
+        os.unlink(path + ".second")
+        pc._spool_write(path, good)
+        self.assertEqual(pc._spool_take(path, TAG, "1" * 32)["code"], 0)
+
+    def test_the_runner_refuses_a_privileged_or_mismatched_launch(self):
+        with mock.patch.object(pc.os, "geteuid", return_value=0):
+            with self.assertRaisesRegex(ValueError, "never as root"):
+                pc._require_unprivileged()
+        other = self.spool_config_at(self.root / "other-prefix.json")
+        other.write_text(json.dumps(dict(json.loads(other.read_text()), prefix=[sys.executable, "-u"])))
+        self.assertNotEqual(pc._execution_binding(pc.load_agent_config(other)),
+                            pc._execution_binding(pc.load_agent_config(self.spool_config)))
+        runner = self.start_runner(other)  # an agent prepared for another prefix: refused, never run
+        self.put_shard()
+        self.assertRefused(self.run_shard(config=self.spool_config), "execution config")
+        self.assertFalse((self.scratch / TAG / "out").exists())
+        self.assertEqual(self.stop_runner(runner)[1]["jobs_refused"], 1)
+
+    def test_a_late_start_with_the_stop_file_exits_at_once(self):
+        self.spool.mkdir(mode=0o700)
+        (self.spool / "STOP").write_text("")
+        runner = self.start_runner(wait=False)
+        self.assertEqual(runner.wait(30), 0, self.runner_log(runner))
+        end = json.loads((self.spool / "END.json").read_text())
+        self.assertEqual((end["reason"], end["jobs_run"]), ("stop-file", 0))
+
+    def test_the_stop_file_lets_a_running_job_finish(self):
+        runner = self.start_runner(self.spool_config_at(self.root / "patient.json", stop_grace_seconds=60))
+        self.put_shard(episodes=[{"id": "e2", "seed": 7, "slow": 2}])
+        thread, box = self.in_thread(config=self.spool_config)
+        self.assertTrue(wait_for(lambda: (self.spool / f"{TAG}.running").exists()))
+        (self.spool / "STOP").write_text("")
+        thread.join(60)
+        code, out, err = box["result"]
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+        self.assertEqual(runner.wait(30), 0)
+        self.assertRefused(self.run_shard(config=self.spool_config), "stopping")
+        end = json.loads((self.spool / "END.json").read_text())
+        self.assertEqual((end["reason"], end["jobs_run"], end["jobs_failed"]), ("stop-file", 1, 0))
+
+
+@unittest.skipUnless(POSIX and LINUX, "process-group termination checked through /proc")
+class SpoolTerminationTests(RunnerCase):
+    def pids(self):
+        path = self.scratch / TAG / "out" / "pids"
+        self.assertTrue(wait_for(lambda: path.exists() and len(path.read_text().split()) == 2), "never started")
+        return list(map(int, path.read_text().split()))
+
+    def test_a_run_past_its_seconds_ends_its_whole_process_group(self):
+        runner = self.start_runner()
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        started = time.monotonic()
+        code, out, err = self.run_shard(seconds=2, config=self.spool_config)
+        self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
+        self.assertLess(time.monotonic() - started, 20)
+        leader, descendant = self.pids()
+        self.assertTrue(gone(leader) and gone(descendant), "collector and its descendant killed")
+        self.assertEqual(self.spool_leftovers(), [])
+        code, end = self.stop_runner(runner)
+        self.assertEqual((end["jobs_run"], end["jobs_failed"]), (1, 1))
+
+    def test_the_request_deadline_cancels_and_the_runner_kills_the_group(self):
+        runner = self.start_runner()
+        agent = self.spool_config_at(self.root / "deadline.json")
+        document = json.loads(agent.read_text())
+        agent.write_text(json.dumps(dict(document, request_seconds=1, max_seconds=3)))
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        # As in the direct executor's test: the request alarm (4 s) fires while the agent waits, before the
+        # run's own deadline (3 s after a claim delayed 2.5 s by the stalled input).
+        from test_pooled_agent import SlowStdin
+        started = time.monotonic()
+        self.assertRefused(self.run_shard(seconds=60, config=agent, stdin=SlowStdin(2.5)), "request deadline")
+        self.assertLess(time.monotonic() - started, 5.4)
+        leader, descendant = self.pids()
+        self.assertTrue(gone(leader) and gone(descendant), "the cancel ended the group")
+        self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 30), self.spool_leftovers())
+        self.assertEqual(self.stop_runner(runner)[0], 0)
+
+    def test_an_agent_that_dies_while_waiting_has_its_run_killed(self):
+        runner = self.start_runner()
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        env = dict(os.environ, SSH_ORIGINAL_COMMAND=pc.encode_request(
+            "run_shard", tag=TAG, seconds=100, collector_sha256=pc.sha256_file(self.collector)))
+        agent = subprocess.Popen([sys.executable, "-I", str(HERE / "pooled_collect.py"), "agent",
+                                  str(self.spool_config)], env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        leader, descendant = self.pids()
+        agent.send_signal(signal.SIGKILL)
+        agent.wait()
+        self.assertTrue(gone(leader) and gone(descendant), "a departed agent's run is killed")
+        self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 30), self.spool_leftovers())
+        self.assertEqual(self.stop_runner(runner)[0], 0)
+
+    def test_a_runner_restart_answers_an_orphaned_run_as_failed_and_never_reruns_it(self):
+        patient = self.spool_config_at(self.root / "patient.json", heartbeat_seconds=60)
+        first = self.start_runner(patient)
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        thread, box = self.in_thread(seconds=100, config=patient)
+        leader, descendant = self.pids()
+        first.send_signal(signal.SIGKILL)  # the collector dies with it (parent-death signal); w5box kills the rest
+        first.wait()
+        self.assertTrue(gone(leader))
+        os.kill(descendant, signal.SIGKILL)
+        second = self.start_runner(patient)
+        thread.join(30)
+        self.assertRefused(box["result"], "restarted during this run; the shard was not rerun")
+        self.assertEqual(self.pids(), [leader, descendant], "not run again")
+        code, end = self.stop_runner(second)
+        self.assertEqual((code, end["orphans_failed"], end["jobs_run"]), (0, 1, 0))
+        self.assertEqual(self.spool_leftovers(), [])
+
+    def test_a_running_job_is_neither_removed_nor_fetched(self):
+        runner = self.start_runner()
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        thread, box = self.in_thread(seconds=3, config=self.spool_config)
+        self.pids()
+        self.assertRefused(self.serve("remove_shard", tag=TAG, config=self.spool_config), "is active")
+        self.assertRefused(self.serve("fetch_shard", tag=TAG, config=self.spool_config), "is active")
+        self.assertTrue((self.scratch / TAG / "out").exists())
+        thread.join(60)
+        code, out, err = box["result"]
+        self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
+        self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG, config=self.spool_config)[1]), "removed")
+        self.assertEqual(self.stop_runner(runner)[0], 0)
+
+    def test_a_hung_runner_is_refused_and_its_job_killed_once_it_resumes(self):
+        runner = self.start_runner(self.spool_config_at(self.root / "quick.json", heartbeat_seconds=1))
+        quick = self.spool_config_at(self.root / "quick.json", heartbeat_seconds=1)
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        thread, box = self.in_thread(seconds=100, config=quick)
+        leader, descendant = self.pids()
+        runner.send_signal(signal.SIGSTOP)  # a hung runner (or a frozen cgroup): its heartbeat stops
+        try:
+            started = time.monotonic()
+            thread.join(30)
+            self.assertRefused(box["result"], "heartbeat is")
+            self.assertLess(time.monotonic() - started, 10)
+        finally:
+            runner.send_signal(signal.SIGCONT)
+        self.assertTrue(gone(leader) and gone(descendant), "the resumed runner honours the cancel")
+        self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 30), self.spool_leftovers())
+        self.assertEqual(self.stop_runner(runner)[0], 0)
+
+    def test_the_stop_file_cancels_a_running_job_at_its_grace(self):
+        runner = self.start_runner(self.spool_config_at(self.root / "brief.json", stop_grace_seconds=1))
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        thread, box = self.in_thread(seconds=100, config=self.spool_config)
+        leader, descendant = self.pids()
+        (self.spool / "STOP").write_text("")
+        thread.join(30)
+        self.assertRefused(box["result"], "stopped (stop file, grace over)")
+        self.assertEqual(runner.wait(30), 0)
+        self.assertTrue(gone(leader) and gone(descendant))
+        end = json.loads((self.spool / "END.json").read_text())
+        self.assertEqual((end["reason"], end["jobs_run"], end["jobs_failed"]), ("stop-file", 1, 1))
+
+
+@unittest.skipUnless(POSIX and LANDLOCK >= 1, "the kernel has no Landlock")
+class SpoolLandlockTests(RunnerCase):
+    def test_a_confined_runner_and_agent_give_the_direct_bytes(self):
+        landlock = self.spool_config_at(self.root / "landlock.json")
+        landlock.write_text(json.dumps(dict(json.loads(landlock.read_text()), sandbox="landlock")))
+        self.put_shard()
+        self.assertEqual(json.loads(self.run_shard()[1])["code"], 0)
+        direct = tar_files(self.serve("fetch_shard", tag=TAG)[1])
+        self.serve("remove_shard", tag=TAG)
+        runner = self.start_runner(landlock)
+        code, out, err = self.agent_process(landlock, "put_shard", json.dumps(self.shard_command()).encode(), tag=TAG)
+        self.assertEqual(code, 0, err)
+        code, out, err = self.agent_process(landlock, "run_shard", tag=TAG, seconds=60,
+                                            collector_sha256=pc.sha256_file(self.collector))
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), (err, out, self.runner_log(runner)))
+        code, out, err = self.agent_process(landlock, "fetch_shard", tag=TAG)
+        self.assertEqual(tar_files(out), direct)
+        code, end = self.stop_runner(runner)
+        self.assertEqual(code, 0)
+        self.assertTrue(end["sandbox"].startswith("landlock-abi"), end)
+
+
+if __name__ == "__main__":
+    unittest.main()
