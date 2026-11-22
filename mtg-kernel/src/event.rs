@@ -4132,6 +4132,13 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if matches!(&event, ProposedEvent::Damage(damage)
+        if crate::eternal_pauper_pf1c_v1::needs_redirect_batch(state, damage))
+    {
+        batch_without_linked_aura_v1(state, vec![event]);
+        return;
+    }
     // Hullbreacher: an opponent's draw (other than the first of their draw
     // step) becomes a Treasure token for its controller (eternal wave S1c).
     #[cfg(feature = "eternal-fixtures")]

@@ -10,11 +10,15 @@ use crate::eternal_sideboard_s1d_v1::statics as circles;
 use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
 use crate::ids::PlayerId;
 use crate::state::GameState;
+pub(crate) mod nomads_v1;
 
 /// Only a current paid Circle, protected Nishoba or Sphere/Ojer pair borrows
 /// operation replay. The actual packet predicate retains source/color/turn
 /// matching; a packet with just one useful prevention keeps its existing menu.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
+    if nomads_v1::has_active_redirects(state) {
+        return true;
+    }
     cfg!(feature = "eternal-fixtures")
         && !cannot_prevent(state)
         && (circles::has_live_circle_shield(state)
@@ -39,7 +43,7 @@ fn full_prevention(state: &GameState, damage: &DamageProposed) -> bool {
     })
 }
 
-fn cannot_prevent(state: &GameState) -> bool {
+pub(crate) fn cannot_prevent(state: &GameState) -> bool {
     state.engine.until_end_of_turn.iter().any(|effect| {
         matches!(
             effect,
@@ -122,6 +126,7 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
         }
     }
     permanent_v1::coalesce_spent_nishoba(state, &mut options);
+    nomads_v1::normalize(state, packet, &mut options);
     options
 }
 

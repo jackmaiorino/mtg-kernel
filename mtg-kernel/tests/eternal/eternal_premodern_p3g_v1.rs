@@ -17,6 +17,8 @@ mod nishoba_protection_order_v1;
 mod prevention_order_no_hallow_v1;
 #[path = "sphere_ojer_order_no_hallow_v1.rs"]
 mod sphere_ojer_order_no_hallow_v1;
+#[path = "nomads_replacement_order_v1.rs"]
+mod nomads_replacement_order_v1;
 
 use mtg_kernel::card_def::{
     card_id_by_name, mana_color_mask, CardCapability, CardDef, CardType, CARD_DEFS,
