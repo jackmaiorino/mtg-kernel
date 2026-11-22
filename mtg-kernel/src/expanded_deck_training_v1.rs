@@ -14757,6 +14757,7 @@ pub(crate) mod tests {
         assert_eq!(err, "checkpoint state hash differs");
     }
 
+    mod field_coverage_probe_v1;
     mod pauper_opening_tests;
     mod reset_start_tests;
     mod v8_inclusion_tests;
