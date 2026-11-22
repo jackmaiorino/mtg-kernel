@@ -190,7 +190,18 @@ fn write_outputs(repo: &Path, generated: &Generated) -> Result<(), String> {
         Ok(())
     })();
     if !preserve_stage {
-        fs::remove_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+        for file in [&next_table, &next_dump, &old_dump] {
+            match fs::remove_file(file) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", file.display())),
+            }
+        }
+        match fs::remove_dir(&stage) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+            Err(e) => return Err(format!("{}: {e}", stage.display())),
+        }
     }
     result.map_err(|e| e.to_string())
 }
@@ -292,6 +303,7 @@ mod tests {
         let stage = table.with_extension("staging");
         std::fs::create_dir(&stage).unwrap();
         std::fs::write(stage.join("table.json"), "interrupted").unwrap();
+        std::fs::write(stage.join("local.txt"), "local work").unwrap();
         let lock = std::fs::File::open(temp.join(table::MAPPING_PATH)).unwrap();
         lock.try_lock().unwrap();
         let generated = Generated {
@@ -311,7 +323,11 @@ mod tests {
         write_outputs(&temp, &generated).unwrap();
         assert_eq!(std::fs::read_to_string(table).unwrap(), "new table");
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
-        assert!(!stage.exists());
+        assert_eq!(
+            std::fs::read_to_string(stage.join("local.txt")).unwrap(),
+            "local work"
+        );
+        assert_eq!(std::fs::read_dir(stage).unwrap().count(), 1);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
