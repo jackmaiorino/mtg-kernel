@@ -257,14 +257,153 @@ class SpoolServiceTests(RunnerCase):
         self.assertRefused(self.run_shard(config=boxless), "stopping")
         self.assertFalse((boxless_scratch / TAG).exists(), "nothing ran")
 
-    def test_one_runner_per_spool_and_a_refused_second_one_writes_no_end_record(self):
+    def test_one_runner_per_spool_and_a_refused_second_one_leaves_the_first_serving(self):
         first = self.start_runner()
         second = self.start_runner(wait=False)
         self.assertEqual(second.wait(30), 1)
         self.assertIn("another box runner", self.runner_log(second))
-        self.assertFalse((self.spool / "END.json").exists())
-        self.assertIsNone(first.poll())
-        self.assertEqual(self.stop_runner(first)[0], 0)
+        self.assertFalse((self.spool / "END.json").exists(), "the end record is the live runner's")
+        time.sleep(3)  # beyond a beat (heartbeat_seconds / 4): the first runner must still own its heartbeat
+        self.assertIsNone(first.poll(), self.runner_log(first))
+        self.assertEqual(json.loads((self.spool / "runner.heartbeat").read_text())["pid"], first.pid)
+        self.put_shard()
+        code, out, err = self.run_shard(config=self.spool_config)
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+        code, end = self.stop_runner(first)
+        self.assertEqual((code, end["reason"], end["jobs_run"]), (0, "stop-file", 1))
+
+    def in_thread_tag(self, tag, config, seconds=60):
+        box = {}
+        thread = threading.Thread(target=lambda: box.setdefault("result", self.serve(
+            "run_shard", tag=tag, seconds=seconds, config=config, collector_sha256=pc.sha256_file(self.collector))),
+            daemon=True)
+        thread.start()
+        return thread, box
+
+    def put_tag(self, tag, **changes):
+        command = self.shard_command(output_directory=str(self.scratch) + "/" + tag, **changes)
+        code, out, err = self.serve("put_shard", json.dumps(command).encode(), tag=tag)
+        self.assertEqual(code, 0, err)
+
+    def test_the_runner_itself_runs_at_most_max_concurrent_runs(self):
+        one = self.spool_config_at(self.root / "one.json")  # the agent's config allows 2; the runner's 1
+        one.write_text(json.dumps(dict(json.loads(one.read_text()), max_concurrent_runs=1)))
+        runner = self.start_runner(one)
+        tag2 = TAG.replace("-s001", "-s002")
+        self.put_tag(TAG, episodes=[{"id": "e2", "seed": 7, "slow": 3}])
+        self.put_tag(tag2)
+        first, first_box = self.in_thread_tag(TAG, self.spool_config)
+        self.assertTrue(wait_for(lambda: (self.spool / f"{TAG}.running").exists()))
+        second, second_box = self.in_thread_tag(tag2, self.spool_config)
+        self.assertTrue(wait_for(lambda: (self.spool / f"{tag2}.request").exists()))
+        time.sleep(1)
+        self.assertTrue((self.spool / f"{TAG}.running").exists())
+        self.assertTrue((self.spool / f"{tag2}.request").exists() and not (self.spool / f"{tag2}.running").exists(),
+                        "queued until the first job's group is reaped")
+        for thread, box in ((first, first_box), (second, second_box)):
+            thread.join(60)
+            code, out, err = box["result"]
+            self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+        self.assertEqual(self.stop_runner(runner)[1]["jobs_run"], 2)
+
+    def test_a_deadline_that_expires_while_queued_is_refused(self):
+        one = self.spool_config_at(self.root / "one.json")
+        one.write_text(json.dumps(dict(json.loads(one.read_text()), max_concurrent_runs=1)))
+        runner = self.start_runner(one)
+        tag2 = TAG.replace("-s001", "-s002")
+        self.put_tag(TAG, episodes=[{"id": "e2", "seed": 7, "slow": 4}])
+        self.put_tag(tag2)
+        first, first_box = self.in_thread_tag(TAG, self.spool_config)
+        self.assertTrue(wait_for(lambda: (self.spool / f"{TAG}.running").exists()))
+        second, second_box = self.in_thread_tag(tag2, self.spool_config, seconds=1)
+        second.join(60)
+        self.assertRefused(second_box["result"], "deadline passed while it was queued")
+        self.assertFalse((self.scratch / tag2 / "out").exists(), "never started")
+        first.join(60)
+        self.assertEqual(json.loads(first_box["result"][1])["code"], 0)
+        code, end = self.stop_runner(runner)
+        self.assertEqual((end["jobs_run"], end["jobs_refused"]), (1, 1))
+
+    def test_a_full_queue_is_refused_at_once(self):
+        narrow = self.spool_config_at(self.root / "narrow.json")
+        narrow.write_text(json.dumps(dict(json.loads(narrow.read_text()), max_concurrent_runs=1)))
+        self.spool.mkdir(mode=0o700)
+        pc._spool_write(str(self.spool / "runner.heartbeat"), {"generation": "a" * 32})  # a fresh runner
+        (self.spool / f"{TAG.replace('-s001', '-s002')}.request").write_text("{}")  # one job already queued
+        self.put_shard()
+        self.assertRefused(self.run_shard(config=narrow), "queue is full")
+        self.assertFalse((self.spool / f"{TAG}.request").exists() or (self.spool / f"{TAG}.lock").exists())
+
+    def test_removal_racing_submission_and_claim_never_strands_a_job(self):
+        runner = self.start_runner()
+        for round_ in range(4):
+            self.serve("remove_shard", tag=TAG, config=self.spool_config)
+            self.put_shard(episodes=[{"id": "e2", "seed": 7, "slow": 0.3}])
+            started = time.monotonic()
+            thread, box = self.in_thread(config=self.spool_config)
+            removals = []
+            while thread.is_alive():
+                removals.append(self.serve("remove_shard", tag=TAG, config=self.spool_config)[0])
+            thread.join()
+            self.assertLess(time.monotonic() - started, 20, "a job is answered or refused, never left waiting")
+            code, out, err = box["result"]
+            self.assertIn(code, (0, 2), err)
+            if code == 0:
+                self.assertEqual(json.loads(out)["code"], 0, round_)
+            self.assertTrue(set(removals) <= {0, 2}, removals)
+            self.assertIsNone(runner.poll(), self.runner_log(runner))
+        self.assertTrue(wait_for(lambda: self.serve("remove_shard", tag=TAG, config=self.spool_config)[0] == 0))
+        self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 15), self.spool_leftovers())
+        self.assertEqual(self.stop_runner(runner)[0], 0)
+
+    def test_runner_check_reports_the_heartbeat_age_for_root(self):
+        def check(*extra):
+            result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-check",
+                                     str(self.spool_config), *extra], capture_output=True, text=True, timeout=60)
+            return result.returncode, json.loads(result.stdout or "{}")
+        self.assertEqual(check()[0], 1)  # no runner: absent
+        runner = self.start_runner()
+        code, report = check()
+        self.assertEqual((code, report["state"], report["pid"]), (0, "fresh", runner.pid))
+        self.stop_runner(runner)
+        self.spool.joinpath("runner.heartbeat").write_text("{}")
+        os.utime(self.spool / "runner.heartbeat", (time.time() - 100, time.time() - 100))
+        self.assertEqual(check()[1]["state"], "stale")
+        self.assertEqual(check("1000")[0], 0)
+        self.assertEqual(check("-1")[0], 2)
+        bad = self.root / "bad.json"
+        bad.write_text("{}")
+        result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "runner-check", str(bad)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+
+    def test_the_runner_may_write_only_the_scratch_root(self):
+        config = pc.load_agent_config(self.spool_config)
+        rules = {path: access for path, access, _ in pc.runner_rules(config)}
+        writable = {path for path, access in rules.items() if access & (pc.LL_WRITE_FILE | pc.LL_MAKE_REG)}
+        self.assertEqual(writable, {str(self.scratch), "/dev/null"})
+        self.assertEqual(rules[str(self.pins)], pc.LL_READ, "pin roots read only")
+        self.assertEqual(rules[str(self.collector)], pc.LL_RUN)
+
+    def test_the_collectors_own_alarm_ends_it_when_the_runner_does_not(self):
+        config = pc.load_agent_config(self.spool_config)
+        run_dir = self.scratch / TAG
+        run_dir.mkdir()
+        (self.scratch / ".run").mkdir()
+        command = self.scratch / ".run" / f"{TAG}.{'0' * 32}.json"
+        command.write_text(json.dumps(self.shard_command(episodes=[{"id": "sleep", "seed": 1}],
+                                                         output_directory=str(run_dir / "out"))))
+        process = pc._launch_spooled(config, str(command), str(run_dir), 2)  # never watched: a hung runner
+        try:
+            self.assertEqual(process.wait(30), -signal.SIGALRM)
+        finally:
+            pids = run_dir / "out" / "pids"
+            if pids.exists() and len(pids.read_text().split()) == 2:
+                try:
+                    os.kill(int(pids.read_text().split()[1]), signal.SIGKILL)  # the descendant: w5box's cgroup kill
+                except ProcessLookupError:
+                    pass
+            process.stderr.close()
 
     def test_remove_shard_refuses_a_waiting_job_and_removes_stale_state(self):
         self.spool.mkdir(mode=0o700)
@@ -453,6 +592,20 @@ class SpoolTerminationTests(RunnerCase):
         self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG, config=self.spool_config)[1]), "removed")
         self.assertEqual(self.stop_runner(runner)[0], 0)
 
+    def test_a_cancel_kills_the_group_while_the_agent_still_waits(self):
+        runner = self.start_runner()
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        thread, box = self.in_thread(seconds=100, config=self.spool_config)
+        leader, descendant = self.pids()
+        job = json.loads((self.spool / f"{TAG}.running").read_text())["job"]
+        pc._spool_write(str(self.spool / f"{TAG}.cancel"), {"job": job})  # the agent keeps its lock meanwhile
+        self.assertTrue(gone(leader) and gone(descendant), "the cancel alone ends the group")
+        thread.join(30)
+        code, out, err = box["result"]
+        self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
+        self.assertEqual(self.spool_leftovers(), [])
+        self.assertEqual(self.stop_runner(runner)[0], 0)
+
     def test_a_hung_runner_is_refused_and_its_job_killed_once_it_resumes(self):
         runner = self.start_runner(self.spool_config_at(self.root / "quick.json", heartbeat_seconds=1))
         quick = self.spool_config_at(self.root / "quick.json", heartbeat_seconds=1)
@@ -505,6 +658,32 @@ class SpoolLandlockTests(RunnerCase):
         code, end = self.stop_runner(runner)
         self.assertEqual(code, 0)
         self.assertTrue(end["sandbox"].startswith("landlock-abi"), end)
+
+    def test_the_confined_runner_cannot_write_the_pin_roots(self):
+        landlock = self.spool_config_at(self.root / "landlock.json")
+        landlock.write_text(json.dumps(dict(json.loads(landlock.read_text()), sandbox="landlock")))
+        (self.pins / "held.bin").write_bytes(b"pinned")
+        probes = [["pin", str(self.pins / "planted.bin"), "wb"], ["scratch", str(self.scratch / "ok.bin"), "wb"],
+                  ["read_pin", str(self.pins / "held.bin"), "rb"]]
+        script = self.root / "probe_runner.py"
+        script.write_text(
+            "import json, sys\n"
+            f"sys.path.insert(0, {str(HERE)!r})\n"
+            "import pooled_collect as pc\n"
+            f"config = pc.load_agent_config(pc.Path({str(landlock)!r}))\n"
+            "pc.agent_sandbox(config, pc.runner_rules(config))\n"
+            "report = {}\n"
+            f"for name, path, mode in {probes!r}:\n"
+            "    try:\n"
+            "        open(path, mode).close()\n"
+            "        report[name] = 'allowed'\n"
+            "    except OSError as error:\n"
+            "        report[name] = error.errno\n"
+            "print(json.dumps(report))\n")
+        result = subprocess.run([sys.executable, "-I", str(script)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"pin": 13, "scratch": "allowed", "read_pin": "allowed"})
+        self.assertFalse((self.pins / "planted.bin").exists())
 
 
 if __name__ == "__main__":

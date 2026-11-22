@@ -39,6 +39,9 @@ Two more entry points run on collector hosts:
     pooled_collect.py runner AGENT_CONFIG.json   the box runner: started by root inside a W5 box as the
                                                  collector account, it runs the collectors the agent hands
                                                  it through `<scratch>/.spool`, so they use the box's CPUs
+    pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS]
+                                                 root's watch: exit 1 when the runner's heartbeat is older
+                                                 (root then kills the runner's w5box chain)
 
 With the agent config's `"executor": {"kind": "spool"}` the agent's run_shard keeps every check it makes and
 hands the run to the runner instead of starting the collector itself (a process started by sshd cannot leave
@@ -52,6 +55,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -908,6 +912,7 @@ SPOOL_RESULT_GRACE = 30  # the agent waits this long past a run's seconds for th
 SPOOL_CANCEL_GRACE = 10  # after a cancel, the agent waits this long for the runner to report the kill
 SPOOL_SWEEP_SECONDS = 5.0
 SPOOL_STAGE_AGE = 60.0  # a stage file older than this was left by a crash
+SPOOL_WATCHDOG_GRACE = 30  # a collector's own alarm fires this long after its deadline (the runner hung)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 BINARY = getattr(os, "O_BINARY", 0)
 
@@ -1597,8 +1602,22 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 # The runner is single threaded (no thread exists when it forks a collector with preexec_fn): one loop polls
 # the collectors' stderr pipes, their exits, cancels, departed agents, deadlines, the stop file and the
 # heartbeat. It confines itself (runner_rules: the pin roots read only, the scratch root read and write) before
-# anything else, after closing inherited descriptors, and each collector further with collector_rules. The
-# collector gets a fixed environment, SPOOL_ENV, not the runner's.
+# anything else, after closing inherited descriptors, and each collector further with collector_rules.
+#
+# What differs for the collector between the executors (none of it is an input to a shard's bytes; an identity
+# run on a node compares real shards from both, and the learner's replay checks every decision anyway):
+#   environment  direct: the agent's (sshd's session: PATH, HOME, USER, SSH_*, /etc/environment, accepted
+#                LANG/LC_*); spool: exactly SPOOL_ENV (PATH, LANG). The collector's environment reads are
+#                diagnostics, checks and caches; without HOME it keeps no vector-tanh proof record, which
+#                changes speed only (and Landlock denies that write under either executor)
+#   signal mask  direct: SIGALRM blocked (it is forked under _alarm_deferred); spool: SIGALRM unblocked with
+#                the watchdog alarm pending (deadline plus SPOOL_WATCHDOG_GRACE); a collector that used
+#                SIGALRM itself would see that (the native trainer does not)
+#   umask, rlimits  direct: the sshd PAM session's; spool: w5box's and setpriv's, recorded in the runner's
+#                heartbeat and end record. Shard files are fetched with fixed modes, so umask never reaches
+#                the learner
+#   CPUs         the box's rather than the off-box set; the command fixes the worker count, and a shard's
+#                bytes do not depend on the host (failover and cross-architecture audits rely on that)
 #
 # Root's step (w5box `run`, one named box, as the collector account; the runner refuses uid, gid or a
 # supplementary group 0 and any effective or permitted capability):
@@ -1612,10 +1631,14 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 # Authoritative end: w5box's close record of the instance. The runner's END.json is written when it can (stop
 # file, signal, error), not after SIGKILL or a cgroup kill. Before a replacement runner starts after a failure,
 # the instance must be closed by w5box, which kills and verifies empty the chain cgroup (collector descendants
-# included); `w5box.py run` and `recover` do that. A hung runner shows as a stale heartbeat (agents refuse at
-# once and learners fail over); its jobs' deadlines are not enforced while it hangs, so root's watch over the
-# heartbeat age (kill the chain past a bound) is the watchdog. The runner ignores W5_CONTROL_DIR (no pause
-# handshake): `w5box.py pause --now` freezes it, which agents also see as a stale heartbeat.
+# included); `w5box.py run` and `recover` do that. A hung runner shows as a stale heartbeat: agents refuse at
+# once and learners fail over. Two watchdogs then end its work: each collector's own alarm kills it (the
+# leader; it survives exec) SPOOL_WATCHDOG_GRACE after its deadline, and root runs
+# `pooled_collect.py runner-check CONFIG [MAX_AGE_SECONDS]` periodically (say every minute from a root timer,
+# MAX_AGE a few heartbeat periods) and on exit 1 runs `w5box.py kill --plan P --chain C`, which kills the chain
+# cgroup with every collector descendant. The runner ignores W5_CONTROL_DIR (no pause handshake):
+# `w5box.py pause --now` freezes it, which agents also see as a stale heartbeat; root's check skips a chain it
+# froze on purpose.
 
 SPOOL_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
 SPOOL_REQUEST_KEYS = {"schema", "job", "tag", "command_sha256", "seconds", "submitted_unix", "generation",
@@ -1702,10 +1725,10 @@ def _agent_gone(lock_path: str) -> bool:
     """True when no agent waits behind `<tag>.lock`: the file is absent or its flock is free."""
     import fcntl
     try:
-        fd = os.open(lock_path, os.O_RDONLY | NOFOLLOW)
+        fd = os.open(lock_path, os.O_RDWR | NOFOLLOW)
     except OSError:
         return True
-    with os.fdopen(fd, "rb") as handle:
+    with os.fdopen(fd, "r+b") as handle:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -1714,8 +1737,11 @@ def _agent_gone(lock_path: str) -> bool:
 
 
 def _tag_lock(config: dict, tag: str):
-    """Serializes submission, claim and removal of one tag across the agent's connections and the runner."""
-    return _lock(config, "spool:" + tag)
+    """Serializes submission, claim and removal of one tag across the agent's connections and the runner.
+    Striped like _lock, in its own files (`spool-*`), so the runner never waits behind a push hashing a pin."""
+    locks = os.path.join(config["scratch"], ".locks")
+    os.makedirs(locks, mode=0o700, exist_ok=True)
+    return state_lock(Path(locks) / f"spool-{hashlib.sha256(tag.encode()).hexdigest()[:2]}")
 
 
 def _spool_job_lock(spool: str, tag: str):
@@ -1845,6 +1871,8 @@ def _spool_run(config: dict, tag: str, job: str, command_sha256: str, seconds: i
                         and (os.path.lexists(files["running"]) or os.path.lexists(files["result"])):
                     time.sleep(SPOOL_POLL_SECONDS)
                     result = _spool_take(files["result"], tag, job)
+                if result is not None and result["error"] is not None:
+                    raise AgentRefusal(f"box runner: {result['error'][:300]}")
                 return "timeout", result["stderr"] if result else ""
             time.sleep(SPOOL_POLL_SECONDS)
         if result["error"] is not None:
@@ -1889,12 +1917,20 @@ def _spool_active(config: dict, tag: str) -> bool:
     return os.path.lexists(files["request"]) or os.path.lexists(files["running"])
 
 
-def _launch_spooled(config: dict, command_file: str, run_dir: str):
+def _launch_spooled(config: dict, command_file: str, run_dir: str, watchdog_seconds: int):
     """Starts the collector as _run_collector does (argv shape, working directory, its own process group,
     parent-death signal, collector_rules under Landlock), with SPOOL_ENV and a non-blocking stderr pipe that
-    the runner's loop drains (no thread)."""
+    the runner's loop drains (no thread). Its last pre-exec step arms the kernel's own watchdog: SIGALRM
+    unblocked and alarm(watchdog_seconds), which survives exec, so the collector ends even if the runner hangs."""
     argv = list(config["prefix"]) + [config["collector"], "--execute-collect-shard", command_file]
-    preexec, ruleset = _collector_preexec(config, command_file, run_dir)
+    confine, ruleset = _collector_preexec(config, command_file, run_dir)
+
+    def preexec():
+        if confine is not None:
+            confine()
+        signal.signal(signal.SIGALRM, signal.SIG_DFL)
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGALRM})
+        signal.alarm(watchdog_seconds)
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, start_new_session=True, preexec_fn=preexec,
@@ -1902,7 +1938,12 @@ def _launch_spooled(config: dict, command_file: str, run_dir: str):
     finally:
         if ruleset is not None:
             os.close(ruleset)
-    os.set_blocking(process.stderr.fileno(), False)
+    try:
+        os.set_blocking(process.stderr.fileno(), False)
+    except BaseException:
+        _kill_group(process)
+        process.wait()
+        raise
     return process
 
 
@@ -1946,10 +1987,11 @@ class BoxRunner:
         lock = os.fdopen(os.open(os.path.join(self.spool, "runner.lock"), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600),
                          "r+b")
         try:
-            try:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise RunnerBusy("another box runner serves this spool") from None
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.close()  # the live runner's state (heartbeat, claims) is not this process's to touch
+            raise RunnerBusy("another box runner serves this spool") from None
+        try:
             if os.path.lexists(self.executor["stop_file"]):
                 return "stop-file"  # a late start exits at once; the operator removes the stop file
             self.recover()
@@ -2041,17 +2083,19 @@ class BoxRunner:
             if request is None:
                 return
             job_id = request.get("job") if isinstance(request.get("job"), str) else None
-            if _agent_gone(files["lock"]):  # nobody waits: dropped unrun
-                _unlink_quiet(files["running"])
-                _spool_discard(files)
-                return
+            with _tag_lock(self.config, tag):
+                if _agent_gone(files["lock"]):  # nobody waits: dropped unrun
+                    _unlink_quiet(files["running"])
+                    _spool_discard(files)
+                    return
             if refuse:
                 raise ValueError(refuse)
             data, run_dir, deadline = self.validate(tag, request)
             snapshot = os.path.join(self.config["scratch"], ".run", f"{tag}.{uuid.uuid4().hex}.json")
             _write_new(snapshot, data, AGENT_SHARD_BYTES)
             try:
-                process = _launch_spooled(self.config, snapshot, run_dir)
+                watchdog = math.ceil(deadline - time.monotonic()) + SPOOL_WATCHDOG_GRACE
+                process = _launch_spooled(self.config, snapshot, run_dir, watchdog)
             except BaseException:
                 os.unlink(snapshot)
                 raise
@@ -2072,7 +2116,8 @@ class BoxRunner:
                 or not isinstance(request["job"], str) or not SPOOL_JOB.fullmatch(request["job"]) \
                 or not isinstance(request["command_sha256"], str) \
                 or type(request["seconds"]) is not int or request["seconds"] < 1 \
-                or type(request["submitted_unix"]) not in (int, float):
+                or type(request["submitted_unix"]) not in (int, float) \
+                or not math.isfinite(request["submitted_unix"]):
             raise ValueError("malformed spool request")
         if request["generation"] != self.generation:
             raise ValueError("submitted to an earlier box runner; the shard was not run")
@@ -2178,6 +2223,20 @@ def _runner_identity() -> dict:
         pass
     if hasattr(os, "sched_getaffinity"):
         identity["cpus"] = format_cpus(sorted(os.sched_getaffinity(0)))
+    identity["umask"] = "%03o" % os.umask(0o022)
+    os.umask(int(identity["umask"], 8))
+    try:
+        import resource
+        identity["rlimits"] = {name: list(resource.getrlimit(getattr(resource, "RLIMIT_" + name)))
+                               for name in ("NOFILE", "NPROC", "STACK", "AS", "DATA", "CPU", "CORE", "MEMLOCK")
+                               if hasattr(resource, "RLIMIT_" + name)}
+    except ImportError:
+        pass
+    try:
+        status = Path("/proc/self/status").read_text()
+        identity["no_new_privs"] = any(line.split() == ["NoNewPrivs:", "1"] for line in status.splitlines())
+    except OSError:
+        pass
     return identity
 
 
@@ -2208,6 +2267,41 @@ def format_cpus(cpus: list[int]) -> str:
     return ",".join(runs)
 
 
+def runner_check(config_path: str, max_age: float | None, stdout) -> int:
+    """`pooled_collect.py runner-check CONFIG [MAX_AGE_SECONDS]`, for root's watch over a box runner: reads
+    only the config's scratch and executor fields (root does not own the roots, so no full config check) and
+    the heartbeat without following a symlink. Exit 0 while the heartbeat is younger than MAX_AGE_SECONDS
+    (default: the executor's heartbeat_seconds), 1 when it is older or absent (root then kills the runner's
+    chain: `w5box.py kill`, which kills the chain cgroup with every collector), 2 for an unusable config."""
+    try:
+        config = json.loads(Path(config_path).read_text())
+        executor = config.get("executor") or {}
+        if config.get("schema") != AGENT_SCHEMA or executor.get("kind") != "spool" \
+                or not isinstance(config.get("scratch"), str) or not os.path.isabs(config["scratch"]):
+            raise ValueError("not an agent config with the spool executor")
+        limit = float(max_age if max_age is not None else executor.get("heartbeat_seconds", 10))
+    except (OSError, ValueError, TypeError) as error:
+        stdout.write(json.dumps({"state": "unusable", "error": str(error)[:200]}) + "\n")
+        return 2
+    path = os.path.join(config["scratch"], SPOOL_DIR, "runner.heartbeat")
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        stdout.write(json.dumps({"state": "absent", "heartbeat": path}) + "\n")
+        return 1
+    age = time.time() - info.st_mtime
+    fresh = stat.S_ISREG(info.st_mode) and age <= limit
+    report = {"state": "fresh" if fresh else "stale", "age_seconds": round(age, 3), "limit_seconds": limit,
+              "heartbeat": path}
+    try:
+        beat = json.loads(_read_single(path, SPOOL_FILE_BYTES) or b"{}")
+        report.update({k: beat.get(k) for k in ("pid", "generation", "w5_chain", "w5_box_slot")})
+    except (OSError, ValueError):
+        pass
+    stdout.write(json.dumps(report) + "\n")
+    return 0 if fresh else 1
+
+
 def runner_main(config_path: str, stderr) -> int:
     """`pooled_collect.py runner CONFIG`, started by root inside a box as the collector account. Exit 0 after
     the stop file or a signal, 1 on failure, 2 for an unusable config or a privileged launch. Writes its end
@@ -2215,14 +2309,15 @@ def runner_main(config_path: str, stderr) -> int:
     started = _utc()
     try:
         import resource
-        os.closerange(3, min(resource.getrlimit(resource.RLIMIT_NOFILE)[0], 1 << 16))  # nothing inherited
+        soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+        os.closerange(3, soft if 0 < soft <= 1 << 20 else 1 << 20)  # nothing inherited
     except (ImportError, ValueError, OSError):
         pass
     try:
+        _require_unprivileged()
         config = load_agent_config(Path(config_path))
         if config["executor"]["kind"] != "spool":
             raise ValueError("the box runner needs the agent config's executor {\"kind\": \"spool\"}")
-        _require_unprivileged()
     except Exception as error:  # noqa: BLE001
         stderr.write(f"refused: {type(error).__name__}: {str(error)[:300]}\n")
         return 2
@@ -2652,11 +2747,22 @@ def main(argv: list[str]) -> int:
         return agent_main(argv[2], os.environ, sys.stdin.buffer, sys.stdout.buffer, sys.stderr)
     if len(argv) == 3 and argv[1] == "runner":
         return runner_main(argv[2], sys.stderr)
+    if len(argv) in (3, 4) and argv[1] == "runner-check":
+        try:
+            max_age = float(argv[3]) if len(argv) == 4 else None
+        except ValueError:
+            max_age = -1.0
+        if max_age is not None and not (math.isfinite(max_age) and max_age > 0):
+            print("runner-check: MAX_AGE_SECONDS must be a positive number", file=sys.stderr)
+            return 2
+        return runner_check(argv[2], max_age, sys.stdout)
     if len(argv) != 2:
         print("usage: pooled_collect.py ATTEMPT/collect-command.json (hosts file in MTG_POOLED_COLLECT_CONFIG)"
               " | pooled_collect.py agent AGENT_CONFIG.json (request in SSH_ORIGINAL_COMMAND)"
               " | pooled_collect.py runner AGENT_CONFIG.json (box runner for the executor \"spool\";"
-              " stops on its stop file)", file=sys.stderr)
+              " stops on its stop file)"
+              " | pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS] (exit 1: heartbeat stale)",
+              file=sys.stderr)
         return 2
     config_path = os.environ.get("MTG_POOLED_COLLECT_CONFIG")
     if not config_path:
