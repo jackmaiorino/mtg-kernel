@@ -2,6 +2,7 @@
 //! a followed process publishes what fresh processes publish, also when it
 //! crashes at any publication of either run.
 
+use super::parse_ahead_tests::{fake_external_collector_v1, FakeCollectorV1};
 use super::*;
 use crate::native_expanded_training_run_v1::follow_v1::{
     check_continuation_v1, done_name_v1, follow_v1, FollowEndV1, FollowErrorV1, FollowNextV1,
@@ -469,6 +470,63 @@ fn a_followed_chain_publishes_the_trees_and_states_of_fresh_processes() {
     );
     fs::remove_dir_all(&chain).unwrap();
     fs::remove_dir_all(&fresh_chain).unwrap();
+}
+
+/// A followed process with an external collector (`--follow` with
+/// `--collect-external`) publishes the trees and states fresh processes that
+/// collect in process publish: the collector, installed once for the
+/// process, collects every iteration of every followed run, each from that
+/// attempt's command.
+#[test]
+fn a_followed_chain_with_an_external_collector_publishes_the_trees_of_fresh_processes() {
+    let (base, chain) = chain_base_v1("follow-external");
+    let fresh_chain = chain.with_file_name("chain-fresh");
+    let staging = chain.with_file_name("fake-collector-staging");
+    for directory in [&chain, &fresh_chain, &staging] {
+        let _ = fs::remove_dir_all(directory);
+    }
+    let first = segment_v1(&base, &chain, 0, None);
+    let fresh_first = fresh_run_v1(&first).unwrap();
+    let second = segment_v1(&base, &chain, 1, Some(checkpoint_pin_v1(&fresh_first)));
+    let fresh_second = fresh_run_v1(&second).unwrap();
+    let fresh_states = [
+        receipt_states_v1(&fresh_first),
+        receipt_states_v1(&fresh_second),
+    ];
+    fs::rename(&chain, &fresh_chain).unwrap();
+
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let fake = FakeCollectorV1::install_v1(fake_external_collector_v1(
+        staging.clone(),
+        std::rc::Rc::clone(&calls),
+        None,
+    ));
+    let spool = chain.join("spool");
+    let followed = followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {});
+    drop(fake);
+    let (ended, results) = followed.unwrap();
+    assert_eq!(ended, FollowEndV1::Stopped);
+    assert_eq!(calls.get(), 4, "two followed runs of two iterations");
+    assert_eq!(results.len(), 2);
+    for ((followed, fresh), states) in results
+        .iter()
+        .zip([&fresh_first, &fresh_second])
+        .zip(&fresh_states)
+    {
+        assert_eq!(followed["actual_identity"], fresh["actual_identity"]);
+        assert_eq!(followed["source"], fresh["source"]);
+        assert_eq!(&receipt_states_v1(followed), states);
+    }
+    fs::remove_dir_all(&spool).unwrap();
+    assert_trees_match_v1(
+        "followed external against fresh in process",
+        &chain,
+        &fresh_chain,
+        true,
+    );
+    for directory in [&chain, &fresh_chain, &staging] {
+        let _ = fs::remove_dir_all(directory);
+    }
 }
 
 /// The followed-run counterpart of

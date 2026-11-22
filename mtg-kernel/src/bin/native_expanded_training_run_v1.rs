@@ -57,7 +57,8 @@ fn run() -> Result<(), String> {
         "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
         "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block] [--collect-external PROGRAM] ",
         "[--parse-ahead-mebibytes N] ",
-        "| CONFIG.json --follow SPOOL [--follow-driver-lock] [--parse-ahead-mebibytes N]"
+        "| CONFIG.json --follow SPOOL [--follow-driver-lock] [--collect-external PROGRAM] ",
+        "[--parse-ahead-mebibytes N]"
     );
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
@@ -123,16 +124,15 @@ fn run() -> Result<(), String> {
         return Err("--follow-driver-lock needs --follow".into());
     }
     // A followed process runs every config in full through the CPU entry
-    // point; it takes no iteration limit, no GPU service and (until the two
-    // are proved together) no external collector.
+    // point; it takes no iteration limit and no GPU service. An external
+    // collector serves every followed run, as it serves a fresh process.
     if follow.is_some()
         && (limit.is_some()
             || gpu_inference.is_some()
             || gpu_learner.is_some()
             || gpu_latency_us.is_some()
             || gpu_kernels.is_some()
-            || gpu_wait.is_some()
-            || collect_external.is_some())
+            || gpu_wait.is_some())
     {
         return Err("--follow takes no other option".into());
     }
@@ -169,6 +169,15 @@ fn run() -> Result<(), String> {
     if let Some(mebibytes) = parse_ahead_mebibytes {
         mtg_kernel::native_expanded_training_run_v1::configure_parse_ahead_mebibytes_v1(mebibytes)?;
     }
+    // Pooled collection changes where games are played, never their bytes:
+    // an execution option outside the run identity, checked by the run like
+    // a local collection. It is installed for the whole process before
+    // follow mode, so a followed run collects through it exactly as a fresh
+    // process does (each collection starts the collector with that attempt's
+    // command).
+    if let Some(program) = collect_external {
+        mtg_kernel::native_expanded_training_run_v1::install_external_collector_v1(program)?;
+    }
     if let Some(spool) = follow {
         return follow_mode(config, &spool, follow_driver_lock);
     }
@@ -199,12 +208,6 @@ fn run() -> Result<(), String> {
         return Err(format!(
             "--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"
         ));
-    }
-    // Pooled collection changes where games are played, never their bytes:
-    // an execution option outside the run identity, checked by the run like
-    // a local collection.
-    if let Some(program) = collect_external {
-        mtg_kernel::native_expanded_training_run_v1::install_external_collector_v1(program)?;
     }
     let result = run_native_expanded_training_v1(&config, limit);
     #[cfg(feature = "gpu-exact-v1")]
