@@ -397,15 +397,15 @@ class SpoolServiceTests(RunnerCase):
         self.assertEqual(self.check(self.spool_config)[0], 3)  # nothing ran
         runner = self.start_runner()
         code, report = self.check(self.spool_config)
-        self.assertEqual((code, report["state"], report["pid"], report["runner_lock_held"]),
-                         (0, "fresh", runner.pid, True))
+        self.assertEqual((code, report["state"], report["pid"], report["runner_lock"], report["lock_pid"]),
+                         (0, "fresh", runner.pid, "held", runner.pid))
         self.stop_runner(runner)
         self.assertEqual(self.check(self.spool_config)[1]["state"], "stopped")
         heartbeat = self.spool / "runner.heartbeat"
         heartbeat.write_text("{}")  # a dead runner's leftover: no runner holds the lock, nothing to kill
         os.utime(heartbeat, (time.time() - 100, time.time() - 100))
         code, report = self.check(self.spool_config)
-        self.assertEqual((code, report["state"], report["runner_lock_held"]), (3, "stopped", False))
+        self.assertEqual((code, report["state"], report["runner_lock"]), (3, "stopped", "free"))
         self.assertEqual(self.check(self.spool_config, "1000")[0], 0)
         self.assertEqual(self.check(self.spool_config, "-1")[0], 2)
         document = json.loads(self.spool_config.read_text())
@@ -417,6 +417,28 @@ class SpoolServiceTests(RunnerCase):
             self.assertEqual(self.check(path)[0], 2, bad)
         (self.root / "deep.json").write_text("[" * 100000 + "]" * 100000)
         self.assertEqual(self.check(self.root / "deep.json")[0], 2)
+        # Missing config or scratch: unusable, never "stopped".
+        self.assertEqual(self.check(self.root / "no-such-config.json")[0], 2)
+        path = self.root / "odd.json"
+        path.write_text(json.dumps(dict(document, scratch=str(self.root / "no-such-scratch"))))
+        self.assertEqual(self.check(path)[0], 2)
+        # A config others can write, or reached through a symlink, is refused.
+        path.write_text(json.dumps(document))
+        path.chmod(0o666)
+        self.assertEqual(self.check(path)[0], 2)
+        path.chmod(0o644)
+        os.symlink(path, self.root / "config-link.json")
+        self.assertEqual(self.check(self.root / "config-link.json")[0], 2)
+        self.assertEqual(self.check(path)[0], 3)
+        # A spool other accounts can reach is refused.
+        self.spool.chmod(0o755)
+        self.assertEqual(self.check(path)[0], 2)
+        self.spool.chmod(0o700)
+        # An ancestor of the scratch root swapped for a symlink is never followed.
+        alias = self.root / "alias"
+        os.symlink(self.root, alias)
+        path.write_text(json.dumps(dict(document, scratch=str(alias / "scratch"))))
+        self.assertEqual(self.check(path)[0], 2)
         # A symlinked spool is never followed (root reads the collector account's tree).
         os.rename(self.spool, self.root / "real-spool")
         os.symlink(self.root / "real-spool", self.spool)
@@ -428,7 +450,7 @@ class SpoolServiceTests(RunnerCase):
         cgroup.mkdir()
         (cgroup / "cgroup.freeze").write_text("0\n")
         (cgroup / "cgroup.events").write_text("populated 1\nfrozen 0\n")
-        args = ("--plan", "/p.json", "--chain", "c1", "--cgroup", str(cgroup), "--confirm-seconds", "0.5")
+        args = ("--plan", "/p.json", "--chain", "c1", "--cgroup", str(cgroup), "--confirm-seconds", "1")
 
         def watch(*extra):
             return self.check(quick, *args, *extra, command="runner-watch")
@@ -436,6 +458,7 @@ class SpoolServiceTests(RunnerCase):
                          "--cgroup is required")
         self.assertEqual(watch()[0], 3, "nothing ran")
         runner = self.start_runner(quick)
+        (cgroup / "cgroup.procs").write_text(f"{runner.pid}\n")  # the runner is the chain's process
         self.assertEqual(watch()[0], 0)
         runner.send_signal(signal.SIGSTOP)  # hung: holds the lock, beats no more
         try:
@@ -443,7 +466,14 @@ class SpoolServiceTests(RunnerCase):
             code, report = watch()
             self.assertEqual((code, report["state"]), (1, "stale"), report)
             self.assertEqual(report["kill_command"][1:],
-                             [str(HERE / "w5box.py"), "kill", "--plan", "/p.json", "--chain", "c1"])
+                             ["-I", str(HERE / "w5box.py"), "kill", "--plan", "/p.json", "--chain", "c1"])
+            (cgroup / "cgroup.procs").write_text("1\n")  # the lock's holder is not in this chain
+            code, report = watch()
+            self.assertEqual((code, report["state"], "kill_command" in report), (6, "stale-chain-foreign", False))
+            (cgroup / "cgroup.procs").write_text(f"{runner.pid}\n")
+            code, report = self.check(quick, *args[:5], str(self.root / "no-such-cgroup"), *args[6:],
+                                      command="runner-watch")
+            self.assertEqual((code, report["state"], "kill_command" in report), (6, "stale-chain-unknown", False))
             (cgroup / "cgroup.events").write_text("populated 1\nfrozen 1\n")
             code, report = watch()
             self.assertEqual((code, report["state"], "kill_command" in report), (4, "stale-frozen", False))
@@ -466,6 +496,31 @@ class SpoolServiceTests(RunnerCase):
         time.sleep(1.5)
         self.assertEqual(watch()[0], 3)
         self.assertEqual(watch("--max-age", "-5")[0], 2)
+        self.assertEqual(self.check(quick, *args[:-1], "0.5", command="runner-watch")[0], 2, "confirm at least 1 s")
+
+    @unittest.skipUnless(LINUX, "/proc/locks")
+    def test_the_lock_holder_is_read_by_device_inode_and_exclusive_mode(self):
+        import fcntl
+        path = self.root / "probe.lock"
+        path.write_text("")
+        holder = open(path, "rb")
+        probe = os.open(path, os.O_RDONLY)
+        try:
+            self.assertEqual(pc._flock_holder(probe), ("free", None))
+            fcntl.flock(holder.fileno(), fcntl.LOCK_SH)
+            self.assertEqual(pc._flock_holder(probe), ("free", None), "a shared lock is no runner's")
+            fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+            self.assertEqual(pc._flock_holder(probe), ("held", os.getpid()))
+            with mock.patch.object(pc.os, "major", return_value=0xfe):  # /proc and fstat disagree on the device
+                self.assertEqual(pc._flock_holder(probe), ("unknown", None))
+            os.link(path, self.root / "probe-link.lock")
+            self.assertEqual(pc._flock_holder(probe), ("unknown", None), "a hard-linked lock is not trusted")
+            os.unlink(self.root / "probe-link.lock")
+            with mock.patch.object(pc.Path, "read_text", side_effect=OSError("no /proc")):
+                self.assertEqual(pc._flock_holder(probe), ("unknown", None))
+        finally:
+            os.close(probe)
+            holder.close()
 
     def test_a_lock_that_cannot_be_opened_is_never_a_departed_agent(self):
         with mock.patch.object(pc.os, "open", side_effect=OSError(24, "Too many open files")):

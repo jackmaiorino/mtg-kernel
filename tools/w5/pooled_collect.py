@@ -41,7 +41,7 @@ Two more entry points run on collector hosts:
                                                  it through `<scratch>/.spool`, so they use the box's CPUs
     pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS]
                                                  a diagnostic: exit 0 fresh, 1 stale with a runner holding the
-                                                 spool, 3 nothing to judge (not for timers: no freezer check)
+                                                 spool, 3 nothing to judge, 6 unknown (not for timers)
     pooled_collect.py runner-watch AGENT_CONFIG.json --plan P --chain C --cgroup DIR [--max-age S]
                                                  root's timer: exit 1 (and the w5box kill to run) only when two
                                                  readings find a held, stale, unfrozen runner; acts on nothing
@@ -1696,8 +1696,9 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 # `pooled_collect.py runner-watch CONFIG --plan P --chain C --cgroup <root>/box<k>/chain` (say every minute)
 # and, on its exit 1 only, the `w5box.py kill` it prints, which kills the chain cgroup with every collector
 # descendant. runner-watch acts on nothing itself and kills nothing that is starting, stopped or dead (no runner
-# holds the spool's lock), frozen (a w5box pause, a node freeze or an outage freeze) or fresh again on its
-# confirming second reading. The runner writes its heartbeat before recovering. It
+# holds the spool's lock), frozen (a w5box pause, a node freeze or an outage freeze), fresh again on its
+# confirming second reading, or unknown (a lock holder outside the chain, unreadable cgroup files, a filesystem
+# where /proc/locks and fstat disagree on the device). The runner writes its heartbeat before recovering. It
 # ignores W5_CONTROL_DIR (no pause handshake). A spool scratch root is never shared with a direct-executor
 # config.
 
@@ -2490,31 +2491,71 @@ def format_cpus(cpus: list[int]) -> str:
     return ",".join(runs)
 
 
-def _flock_held(path_fd: int) -> bool:
-    """Whether any process holds a flock on the open file `path_fd`, read from /proc/locks (never by trying one:
-    a probe could make a starting runner's own lock fail). True where /proc/locks cannot be read."""
+def _flock_holder(path_fd: int):
+    """Who holds an exclusive flock on the open file `path_fd`, from /proc/locks (never by trying one: a probe
+    could make a starting runner's own lock fail): ("held", pid), ("free", None), or ("unknown", None) when it
+    cannot be told (no /proc/locks, a file that is not a singly linked regular file, or only an inode-number
+    match whose device differs, as on btrfs subvolumes or FUSE, where /proc and fstat disagree)."""
     info = os.fstat(path_fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        return "unknown", None
+    want = "%02x:%02x:%d" % (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
     try:
         lines = Path("/proc/locks").read_text().splitlines()
     except OSError:
-        return True
+        return "unknown", None
+    inode_only = False
     for line in lines:
-        fields = line.split()
-        if "FLOCK" in fields and len(fields) >= 6 and fields[-3].rsplit(":", 1)[-1] == str(info.st_ino):
-            return True
-    return False
+        fields = line.split()  # "1: FLOCK ADVISORY WRITE <pid> <maj:min:ino> 0 EOF"; waiters carry "->"
+        if len(fields) != 8 or fields[1:4] != ["FLOCK", "ADVISORY", "WRITE"] or not fields[4].isdigit():
+            continue
+        if fields[5] == want:
+            return "held", int(fields[4])
+        if fields[5].rsplit(":", 1)[-1] == str(info.st_ino):
+            inode_only = True
+    return ("unknown", None) if inode_only else ("free", None)
+
+
+def _open_under_root(path: str) -> int:
+    """A directory descriptor for the canonical absolute `path`, opened one component at a time from "/" without
+    following any symlink, so no ancestor can be swapped for a link between check and use."""
+    flags = os.O_RDONLY | NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
+    fd = os.open("/", flags)
+    try:
+        for part in [p for p in path.split("/") if p]:
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def runner_check(config_path: str, max_age: float | None, stdout) -> int:
     """`pooled_collect.py runner-check CONFIG [MAX_AGE_SECONDS]`: a diagnostic of a box runner's heartbeat. It
     does not read the chain's freezer, so root's timer uses runner-watch, which does. Safe as root on a scratch
-    root the collector account owns: it reads only the config's scratch and executor fields, requires a canonical
-    scratch path, opens the scratch root and the spool one level at a time without following a symlink and reads
-    the heartbeat relative to them. Exit 0 fresh, 1 stale while a runner holds the spool's runner lock (hung or
-    frozen), 3 none to judge (no heartbeat yet, or no runner holds the lock: starting, stopped or dead, which
-    w5box handles), 2 unusable."""
+    root the collector account owns:
+      the config is opened without following a symlink, bounded, a regular file nobody else can write, owned
+      by root or by the scratch root's owner (by this account when not root); only its scratch and executor
+      fields are read and type checked;
+      the scratch root (canonical, opened component by component from "/" without following symlinks) and its
+      spool must belong to one account, the spool with mode 700; the heartbeat is read relative to them;
+      whether a runner holds the spool's lock is read from /proc/locks by device and inode, exclusive locks
+      only, never by taking one.
+    Exit 0 fresh; 1 stale while a runner (lock_pid) holds the lock: hung or frozen; 3 nothing to judge (no
+    spool or heartbeat yet, or no runner holds the lock: starting, stopped or dead, which w5box handles); 6 the
+    lock's holder cannot be told (unknown: never a kill); 2 unusable (a missing config or scratch included)."""
     try:
-        config = json.loads(Path(config_path).read_text())
+        fd = os.open(config_path, os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022:
+                raise ValueError("the config must be a regular file that no group or other account can write")
+            config_uid, data = info.st_uid, handle.read((1 << 20) + 1)
+        if len(data) > 1 << 20:
+            raise ValueError("the config exceeds 1 MiB")
+        config = json.loads(data)
         if not isinstance(config, dict) or config.get("schema") != AGENT_SCHEMA:
             raise ValueError("not an agent config")
         executor, scratch = config.get("executor"), config.get("scratch")
@@ -2528,34 +2569,45 @@ def runner_check(config_path: str, max_age: float | None, stdout) -> int:
         limit = float(max_age if max_age is not None else beat)
         if not (math.isfinite(limit) and limit > 0):
             raise ValueError("the age limit must be a positive number")
-        flags = os.O_RDONLY | NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
-        scratch_fd = os.open(scratch, flags)
+        scratch_fd = _open_under_root(scratch)
         try:
-            spool_fd = os.open(SPOOL_DIR, flags, dir_fd=scratch_fd)
+            account = os.fstat(scratch_fd).st_uid
+            me = os.geteuid()
+            if (me == 0 and config_uid not in (0, account)) or (me != 0 and not config_uid == account == me):
+                raise ValueError("the config's owner is neither root nor the scratch root's owner")
+            try:
+                spool_fd = os.open(SPOOL_DIR, os.O_RDONLY | NOFOLLOW | getattr(os, "O_DIRECTORY", 0), dir_fd=scratch_fd)
+            except FileNotFoundError:
+                stdout.write(json.dumps({"state": "stopped", "reason": "no spool yet"}) + "\n")
+                return 3
         finally:
             os.close(scratch_fd)
         try:
+            spool_info = os.fstat(spool_fd)
+            if spool_info.st_uid != account or spool_info.st_mode & 0o077:
+                raise ValueError("the spool must belong to the scratch root's owner with mode 700")
             report = {"heartbeat": os.path.join(scratch, SPOOL_DIR, "runner.heartbeat"), "limit_seconds": limit}
             try:
                 lock_fd = os.open("runner.lock", os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
                                   dir_fd=spool_fd)
             except FileNotFoundError:
-                held = False
+                holder, lock_pid = "free", None
             else:
                 try:
-                    held = _flock_held(lock_fd)
+                    holder, lock_pid = _flock_holder(lock_fd)
                 finally:
                     os.close(lock_fd)
-            report["runner_lock_held"] = held
+            report.update(runner_lock=holder, lock_pid=lock_pid)
             try:
                 info = os.stat("runner.heartbeat", dir_fd=spool_fd, follow_symlinks=False)
             except FileNotFoundError:
-                report["state"] = "starting" if held else "stopped"
+                report["state"] = {"held": "starting", "free": "stopped"}.get(holder, "unknown")
                 stdout.write(json.dumps(report) + "\n")
-                return 3
+                return 6 if holder == "unknown" else 3
             age = time.time() - info.st_mtime
-            fresh = stat.S_ISREG(info.st_mode) and age <= limit
-            report.update(age_seconds=round(age, 3), state="fresh" if fresh else "stale" if held else "stopped")
+            fresh = stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and age <= limit
+            state = "fresh" if fresh else {"held": "stale", "free": "stopped"}.get(holder, "unknown")
+            report.update(age_seconds=round(age, 3), state=state)
             try:
                 fd = os.open("runner.heartbeat", os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
                              dir_fd=spool_fd)
@@ -2563,19 +2615,17 @@ def runner_check(config_path: str, max_age: float | None, stdout) -> int:
                     content = json.loads(handle.read(SPOOL_FILE_BYTES)) if stat.S_ISREG(
                         os.fstat(handle.fileno()).st_mode) else {}
                 if isinstance(content, dict):
-                    report.update({k: content.get(k) for k in ("pid", "generation", "w5_chain", "w5_box_slot")})
+                    report.update({k: content[k] for k in ("pid", "generation", "w5_chain", "w5_box_slot")
+                                   if isinstance(content.get(k), (str, int)) and not isinstance(content.get(k), bool)})
             except (OSError, ValueError, RecursionError):
                 pass
         finally:
             os.close(spool_fd)
-    except FileNotFoundError as error:  # no spool yet: nothing ran
-        stdout.write(json.dumps({"state": "stopped", "error": str(error)[:200]}) + "\n")
-        return 3
     except (OSError, ValueError, TypeError, RecursionError) as error:
         stdout.write(json.dumps({"state": "unusable", "error": f"{type(error).__name__}: {str(error)[:200]}"}) + "\n")
         return 2
     stdout.write(json.dumps(report) + "\n")
-    return 0 if fresh else 1 if held else 3
+    return {"fresh": 0, "stale": 1, "stopped": 3}.get(state, 6)
 
 
 def _close_inherited() -> None:
@@ -2594,26 +2644,34 @@ def _close_inherited() -> None:
                 pass  # the listing's own descriptor, already closed
 
 
-def _chain_frozen(cgroup: str) -> bool:
-    """Whether the chain cgroup is frozen or freezing (`cgroup.freeze` 1, or `frozen 1` in `cgroup.events`)."""
+def _chain_state(cgroup: str, lock_pid) -> str:
+    """The runner's chain cgroup as root's watch needs it: "frozen" (`cgroup.freeze` 1 or `frozen 1` in
+    `cgroup.events`), "foreign" (the spool's lock holder is not one of its processes: never killed through this
+    chain), "running", or "unknown" when its files cannot be read (a wrong path included: never a kill)."""
     try:
-        return Path(cgroup, "cgroup.freeze").read_text().strip() == "1" or any(
-            line.split() == ["frozen", "1"] for line in Path(cgroup, "cgroup.events").read_text().splitlines())
-    except OSError:
-        return False  # no such cgroup is no pause
+        freeze = Path(cgroup, "cgroup.freeze").read_text().strip()
+        events = Path(cgroup, "cgroup.events").read_text().splitlines()
+        procs = {int(x) for x in Path(cgroup, "cgroup.procs").read_text().split()}
+    except (OSError, ValueError):
+        return "unknown"
+    if freeze == "1" or any(line.split() == ["frozen", "1"] for line in events):
+        return "frozen"
+    return "running" if lock_pid in procs else "foreign"
 
 
 def runner_watch(argv: list[str], stdout) -> int:
     """`pooled_collect.py runner-watch CONFIG --plan PLAN --chain CHAIN --cgroup DIR [--max-age S]
     [--confirm-seconds S]`: the one-shot, stateless command root's timer runs (say every minute, MAX_AGE a few
     heartbeat periods), with DIR the runner's w5box chain cgroup (`<cgroup_root>/box<k>/chain`). It acts on
-    nothing itself. Exit 1 only when two readings CONFIRM seconds apart (default 5) both find the heartbeat stale
-    while a runner holds the spool's lock and the chain is not frozen; it then prints the JSON report with
-    `kill_command`, w5box's kill of that chain, which root runs. Exit 0 fresh, 3 nothing to judge (starting,
-    stopped, dead), 4 stale but frozen (a w5box pause or a node freeze), 5 stale once but not on the
-    confirming reading (a thaw), 2 unusable. Root's timer, for example:
+    nothing itself. Exit 1 only when two readings CONFIRM seconds apart (at least 1, default 5) both find the
+    heartbeat stale while a process of that chain holds the spool's runner lock and the chain is not frozen; it
+    then prints the JSON report with `kill_command`, w5box's kill of that chain, which root runs. Otherwise:
+    0 fresh, 3 nothing to judge (starting, stopped, dead), 4 stale but frozen (a w5box pause, a node or outage
+    freeze), 5 stale once but not on the confirming reading (a thaw), 6 unknown (the lock's holder, its chain
+    or the freezer cannot be read, or the holder is not in the chain), 2 unusable. Root's timer, for example:
         python3 -I pooled_collect.py runner-watch A.json --plan P.json --chain C --cgroup G > watch.json
-        [ $? -eq 1 ] && python3 w5box.py kill --plan P.json --chain C"""
+        [ $? -eq 1 ] && python3 -I w5box.py kill --plan P.json --chain C
+    Root runs root-owned copies of this script, w5box.py and the plan."""
     import argparse
     parser = argparse.ArgumentParser(prog="pooled_collect.py runner-watch")
     parser.add_argument("config")
@@ -2627,7 +2685,7 @@ def runner_watch(argv: list[str], stdout) -> int:
     except SystemExit:
         return 2
     if (args.max_age is not None and not (math.isfinite(args.max_age) and args.max_age > 0)) \
-            or not (math.isfinite(args.confirm_seconds) and 0 < args.confirm_seconds <= 600):
+            or not (math.isfinite(args.confirm_seconds) and 1 <= args.confirm_seconds <= 600):
         return 2
 
     def reading():
@@ -2637,8 +2695,13 @@ def runner_watch(argv: list[str], stdout) -> int:
             result = json.loads(report.getvalue())
         except ValueError:
             result = {}
-        if code == 1 and _chain_frozen(args.cgroup):
-            result["state"], code = "stale-frozen", 4
+        if code == 1:
+            chain = _chain_state(args.cgroup, result.get("lock_pid"))
+            result["chain"] = chain
+            if chain == "frozen":
+                result["state"], code = "stale-frozen", 4
+            elif chain != "running":
+                result["state"], code = f"stale-chain-{chain}", 6
         return code, result
 
     code, result = reading()
@@ -2646,10 +2709,11 @@ def runner_watch(argv: list[str], stdout) -> int:
         time.sleep(args.confirm_seconds)
         code, result = reading()
         if code != 1:
-            result["first_reading"], code = "stale", (code if code in (2, 4) else 5)
+            result["first_reading"], code = "stale", (code if code in (2, 4, 6) else 5)
     if code == 1:
-        result["kill_command"] = [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), "w5box.py"),
-                                  "kill", "--plan", args.plan, "--chain", args.chain]
+        here = os.path.dirname(os.path.realpath(__file__))
+        result["kill_command"] = [sys.executable, "-I", os.path.join(here, "w5box.py"), "kill",
+                                  "--plan", args.plan, "--chain", args.chain]
     stdout.write(json.dumps(result) + "\n")
     return code
 
