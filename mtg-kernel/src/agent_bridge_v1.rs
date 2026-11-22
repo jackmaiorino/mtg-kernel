@@ -215,6 +215,11 @@ enum SpellbenchRequestV1 {
         /// `"harness-v2"`.
         #[serde(default)]
         priority_windows: Option<[SeatPriorityWindowsV1; 2]>,
+        /// Private human London reset only: name the bot's native seat
+        /// ("p0" or "p1") to use ordinary trainer choice presentation at
+        /// supported choices. Omitted or empty retains the neutral surface.
+        #[serde(default)]
+        trainer_choice_seats: Vec<String>,
     },
     Step {
         #[serde(rename = "protocol")]
@@ -289,6 +294,7 @@ struct SpellbenchResetFieldsV1<'a> {
     engine_window_seats: &'a [String],
     auto_graveyard_order: bool,
     priority_windows: Option<[SeatPriorityWindowsV1; 2]>,
+    trainer_choice_seats: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -601,6 +607,7 @@ impl SpellbenchBridgeServerV1 {
                 engine_window_seats,
                 auto_graveyard_order,
                 priority_windows,
+                trainer_choice_seats,
                 ..
             } => self.handle_reset(
                 request_id,
@@ -614,6 +621,7 @@ impl SpellbenchBridgeServerV1 {
                     engine_window_seats,
                     auto_graveyard_order: *auto_graveyard_order,
                     priority_windows: *priority_windows,
+                    trainer_choice_seats,
                 },
             ),
             SpellbenchRequestV1::Step {
@@ -1018,6 +1026,7 @@ impl SpellbenchBridgeServerV1 {
             engine_window_seats,
             auto_graveyard_order,
             priority_windows,
+            trainer_choice_seats,
         } = reset;
         if auto_graveyard_order && !self.london_human {
             return error_response_value_v1(
@@ -1069,6 +1078,32 @@ impl SpellbenchBridgeServerV1 {
                 );
             }
         }
+        let trainer_seats = match trainer_choice_seats {
+            [] => [false; 2],
+            [seat] if self.london_human && self.options.private_v2_support => {
+                let index = match seat.as_str() {
+                    "p0" if !window_seats[0] => 0,
+                    "p1" if !window_seats[1] => 1,
+                    _ => {
+                        return error_response_value_v1(
+                            Some(request_id),
+                            "malformed_request",
+                            "trainer_choice_seats must name p0 or p1 without engine windows",
+                        );
+                    }
+                };
+                let mut seats = [false; 2];
+                seats[index] = true;
+                seats
+            }
+            _ => {
+                return error_response_value_v1(
+                    Some(request_id),
+                    "malformed_request",
+                    "trainer_choice_seats requires the private human-play London server and one bot seat",
+                );
+            }
+        };
         // Spec Section 2: at most one active game per process, and game ids
         // are unique per process; a finished game frees the process.
         if self.game.as_ref().is_some_and(|game| !game.terminal_sent) {
@@ -1130,15 +1165,21 @@ impl SpellbenchBridgeServerV1 {
             }
         }
         let episode_id = spellbench_episode_id_v1(game_id);
+        use crate::rl_session::pauper_london_v1::{LondonHumanStartV1, PauperMulliganModeV1};
+        let london_start = LondonHumanStartV1 {
+            episode_id,
+            max_physical_decisions: max_decisions,
+            max_policy_steps: max_steps,
+            modes: [PauperMulliganModeV1::Learned; 2],
+            engine_window_seats: window_seats,
+            action_windows,
+            trainer_choice_seats: trainer_seats,
+        };
         let lockstep = if self.london_human {
-            Some(FlatV4LockstepV1::reset_london_human(
-                episode_id,
+            Some(FlatV4LockstepV1::reset_london_human_start_v1(
+                london_start,
                 game_seed,
-                max_decisions,
-                max_steps,
                 deck_ids.clone(),
-                window_seats,
-                action_windows,
             ))
         } else if self.options.x_kernel_flat_v4 {
             Some(FlatV4LockstepV1::reset(
@@ -1152,16 +1193,7 @@ impl SpellbenchBridgeServerV1 {
             None
         };
         let session = if self.london_human {
-            RlEpisodeSessionV1::reset_pauper_london_human_seat_windows_v1(
-                episode_id,
-                game_seed,
-                max_decisions,
-                max_steps,
-                deck_ids,
-                [crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned; 2],
-                window_seats,
-                action_windows,
-            )
+            RlEpisodeSessionV1::reset_london_human_start_v1(london_start, game_seed, deck_ids)
         } else {
             RlEpisodeSessionV1::reset_with_decks_and_limits(
                 episode_id,
@@ -3305,6 +3337,163 @@ mod tests {
 
     fn parse_line(line: &str) -> Value {
         serde_json::from_str(line).expect("response line is valid JSON")
+    }
+
+    #[test]
+    fn trainer_choice_reset_rejects_invalid_or_overlapping_seats() {
+        for (trainer, engine_seats) in [
+            (json!("p0"), json!([])),
+            (json!(["p2"]), json!([])),
+            (json!(["p0", "p0"]), json!([])),
+            (json!(["p0", "p1"]), json!([])),
+            (json!(["p1"]), json!(["p1"])),
+        ] {
+            let mut server = SpellbenchBridgeServerV1::with_pauper_london_human_v1(
+                SpellbenchEngineIdentityV1::with_source_revision(None),
+            );
+            let mut request = parse_line(&reset_line("reset", "g-trainer", 7));
+            request["trainer_choice_seats"] = trainer;
+            request["engine_window_seats"] = engine_seats;
+            let reply = parse_line(&server.handle_line(&request.to_string()));
+            assert_eq!(reply["error"]["code"], "malformed_request", "{reply}");
+            assert!(server.game.is_none());
+        }
+
+        let mut ordinary = test_server();
+        let mut request = parse_line(&reset_line("reset", "g-trainer", 7));
+        request["trainer_choice_seats"] = json!(["p0"]);
+        let reply = parse_line(&ordinary.handle_line(&request.to_string()));
+        assert_eq!(reply["error"]["code"], "malformed_request", "{reply}");
+        assert!(ordinary.game.is_none());
+    }
+
+    #[test]
+    fn trainer_choice_reset_omission_and_empty_keep_the_same_neutral_bot_surface() {
+        let mut omitted = SpellbenchBridgeServerV1::with_pauper_london_human_v1(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+        );
+        let mut empty = SpellbenchBridgeServerV1::with_pauper_london_human_v1(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+        );
+        let mut reset = parse_line(&reset_line("reset", "g-neutral", 7));
+        reset["priority_windows"] = json!(["harness-v2", "action-windows-v1"]);
+        reset["engine_window_seats"] = json!(["p0"]);
+        let mut line = omitted.handle_line(&reset.to_string());
+        reset["trainer_choice_seats"] = json!([]);
+        assert_eq!(line, empty.handle_line(&reset.to_string()));
+
+        for server in [&omitted, &empty] {
+            let game = server.game.as_ref().unwrap();
+            for state in [
+                game.session.game_state(),
+                game.flat_v4.as_ref().unwrap().fast_session().game_state(),
+            ] {
+                for seat in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
+                    assert!(state.engine.spellbench_neutral_v1.neutral_choices_for(seat));
+                }
+            }
+        }
+        for step in 0..12 {
+            let decision = parse_line(&line);
+            assert_eq!(decision["response_type"], "decision", "{line}");
+            let pick = decision["extensions"]["x_kernel_flat_v7"]["row_candidate_ids"][0]
+                .as_u64()
+                .unwrap() as usize;
+            let request = step_line_for(&format!("step-{step}"), &decision, pick);
+            line = omitted.handle_line(&request);
+            assert_eq!(line, empty.handle_line(&request));
+        }
+    }
+
+    #[test]
+    fn trainer_choice_reset_keeps_the_other_seat_neutral_with_harness_windows() {
+        use crate::engine::{advance_until_decision, step, Action, Decision};
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::state::{GameState, Step, Zone};
+
+        let mut server = SpellbenchBridgeServerV1::with_pauper_london_human_v1(
+            SpellbenchEngineIdentityV1::with_source_revision(None),
+        );
+        let mut reset = parse_line(&reset_line("reset", "g-trainer", 7));
+        reset["trainer_choice_seats"] = json!(["p1"]);
+        let reply = parse_line(&server.handle_line(&reset.to_string()));
+        assert_eq!(reply["response_type"], "decision", "{reply}");
+        assert!(reply["extensions"]["x_kernel_flat_v7"].is_object());
+
+        let game = server.game.as_ref().unwrap();
+        let raw = &game.session.game_state().engine.spellbench_neutral_v1;
+        let copy = &game
+            .flat_v4
+            .as_ref()
+            .unwrap()
+            .fast_session()
+            .game_state()
+            .engine
+            .spellbench_neutral_v1;
+        assert_eq!(raw, copy);
+        assert_eq!(raw.trainer_choice_seats, [false, true]);
+        let definitions = [
+            "Winding Way",
+            "Elvish Mystic",
+            "Elvish Mystic",
+            "Elvish Mystic",
+            "Elvish Mystic",
+        ]
+        .map(|name| crate::card_def::card_id_by_name(name).unwrap());
+
+        for (seat, profile) in [(PlayerId::P0, raw), (PlayerId::P1, copy)] {
+            // Use the decoded profile on a fixed four-creature reveal so the
+            // behavior check does not depend on random draws or play policy.
+            let mut state = GameState::new_from_libraries(
+                &definitions,
+                &definitions,
+                |id| crate::card_def::CARD_DEFS[id as usize].name.to_string(),
+                7,
+            );
+            state.engine.spellbench_neutral_v1 = profile.clone();
+            state.active_player = seat;
+            state.priority_player = seat;
+            state.step = Step::Main1;
+            let spell = state.players[seat.index()].library[0];
+            propose_and_commit(&mut state, ProposedEvent::zone_change(spell, Zone::Hand));
+            state.players[seat.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+            step(&mut state, Action::CastSpell(spell)).unwrap();
+            for _ in 0..2 {
+                assert!(matches!(
+                    advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                step(&mut state, Action::Pass).unwrap();
+            }
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::ChooseEffectOption {
+                    option_count: 2,
+                    ..
+                }
+            ));
+            step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+            let next = advance_until_decision(&mut state);
+            if seat == PlayerId::P0 {
+                assert!(
+                    matches!(
+                        next,
+                        Decision::ChooseEffectTargets {
+                            min_targets: 4,
+                            max_targets: 4,
+                            ..
+                        }
+                    ),
+                    "{next:?}"
+                );
+                assert!(state.players[seat.index()].hand.is_empty());
+            } else {
+                assert!(matches!(next, Decision::CastSpellOrPass { .. }), "{next:?}");
+                assert_eq!(state.players[seat.index()].hand.len(), 4);
+            }
+        }
     }
 
     #[test]

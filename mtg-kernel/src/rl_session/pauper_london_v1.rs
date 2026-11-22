@@ -418,7 +418,7 @@ pub(crate) struct LondonHumanStartV1 {
     pub(crate) engine_window_seats: [bool; 2],
     /// Each seat's training priority-window rule (a bot seat's, as trained).
     pub(crate) action_windows: [SeatPriorityWindowsV1; 2],
-    /// Preserve the normal trainer's revealed-card move orders for these seats.
+    /// Use ordinary trainer presentation for these seats at supported choices.
     pub(crate) trainer_choice_seats: [bool; 2],
 }
 
@@ -507,12 +507,7 @@ impl RlEpisodeSessionV1 {
         engine_window_seats: [bool; 2],
         action_windows: [SeatPriorityWindowsV1; 2],
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, state) = build_session_deck_pair_state(
-            &deck_ids,
-            ResetRandomization::Legacy { env_seed },
-            None,
-        )?;
-        Self::london_human_from_state_v1(
+        Self::reset_london_human_start_v1(
             LondonHumanStartV1 {
                 episode_id,
                 max_physical_decisions,
@@ -522,10 +517,22 @@ impl RlEpisodeSessionV1 {
                 action_windows,
                 trainer_choice_seats: [false; 2],
             },
+            env_seed,
             deck_ids,
-            deck_hashes,
-            state,
         )
+    }
+
+    pub(crate) fn reset_london_human_start_v1(
+        start: LondonHumanStartV1,
+        env_seed: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(
+            &deck_ids,
+            ResetRandomization::Legacy { env_seed },
+            None,
+        )?;
+        Self::london_human_from_state_v1(start, deck_ids, deck_hashes, state)
     }
 
     /// The human-play London session on a dealt state (before London is
@@ -680,12 +687,7 @@ impl FastActorSessionV1 {
         engine_window_seats: [bool; 2],
         action_windows: [SeatPriorityWindowsV1; 2],
     ) -> Result<Self, RlSessionError> {
-        let (deck_hashes, state) = build_session_deck_pair_state(
-            &deck_ids,
-            ResetRandomization::Legacy { env_seed },
-            None,
-        )?;
-        Self::london_human_from_state_v1(
+        Self::reset_london_human_start_v1(
             LondonHumanStartV1 {
                 episode_id,
                 max_physical_decisions,
@@ -695,10 +697,22 @@ impl FastActorSessionV1 {
                 action_windows,
                 trainer_choice_seats: [false; 2],
             },
+            env_seed,
             deck_ids,
-            deck_hashes,
-            state,
         )
+    }
+
+    pub(crate) fn reset_london_human_start_v1(
+        start: LondonHumanStartV1,
+        env_seed: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, state) = build_session_deck_pair_state(
+            &deck_ids,
+            ResetRandomization::Legacy { env_seed },
+            None,
+        )?;
+        Self::london_human_from_state_v1(start, deck_ids, deck_hashes, state)
     }
 
     /// The lockstep twin of `RlEpisodeSessionV1::london_human_from_state_v1`.
