@@ -120,10 +120,16 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                 || !d.is_executable()
                 || !(d.has_type(CardType::Instant)
                     || d.has_type(CardType::Sorcery)
-                    || (d.escape.is_some()
-                        && options.routes.contains(&RouteV1::Breach)
+                    || (options.routes.contains(&RouteV1::Breach)
+                        && (d.escape.is_some() || options.routes.contains(&RouteV1::Retrace))
                         && options.routes.iter().all(|r| {
-                            matches!(r, RouteV1::Breach | RouteV1::Escape | RouteV1::Normal)
+                            matches!(
+                                r,
+                                RouteV1::Breach
+                                    | RouteV1::Escape
+                                    | RouteV1::Retrace
+                                    | RouteV1::Normal
+                            )
                         })))
                 || options.routes.is_empty()
                 || options.routes.len() > usize::from(u16::MAX)
@@ -205,6 +211,13 @@ fn method(route: RouteV1) -> CastMethodV4 {
         _ => CastMethodV4::Flashback,
     }
 }
+/// A permission that charges the ordinary cost can also allow a printed alternative.
+pub(crate) fn ordinary_payment_method(def: &card_def::CardDef, method: CastMethodV4) -> bool {
+    matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+        || (method == CastMethodV4::Omen
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
+}
+
 pub(super) fn selected_origin(
     route: RouteV1,
     player: PlayerId,
@@ -297,7 +310,8 @@ pub(super) fn has_printed_graveyard_method(d: &card_def::CardDef) -> bool {
 }
 
 fn has_competing_grant(d: &card_def::CardDef, routes: &[RouteV1]) -> bool {
-    (d.escape.is_some() && routes.contains(&RouteV1::Breach))
+    (routes.contains(&RouteV1::Breach)
+        && (d.escape.is_some() || routes.contains(&RouteV1::Retrace)))
         || has_printed_graveyard_method(d)
             && routes
                 .iter()
@@ -316,11 +330,11 @@ pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<R
     let beam = crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some();
     let printed = has_printed_graveyard_method(d)
         || (cfg!(feature = "eternal-fixtures") && d.escape.is_some());
-    if grants.is_empty() && !snapcaster && !beam && !printed {
-        return vec![];
-    }
     let breach = cfg!(feature = "eternal-fixtures")
         && crate::eternal_lurrus_v1::escape_granted(state, id, o.zone_change_count);
+    if grants.is_empty() && !snapcaster && !beam && !printed && !breach {
+        return vec![];
+    }
     let mut routes = vec![];
     if beam {
         routes.push(RouteV1::BeamMeUp);
@@ -610,7 +624,10 @@ pub(super) fn validate_finalized(
         || record.card_def != source.card_def
         || (method(route) != source.cast_method
             && !(matches!(route, RouteV1::Normal | RouteV1::Retrace)
-                && source.cast_method == CastMethodV4::Alternative))
+                && ordinary_payment_method(
+                    &card_def::CARD_DEFS[usize::from(record.card_def)],
+                    source.cast_method,
+                )))
         || source.spell_cast_origin.is_none_or(|o| {
             o.origin_zone_change_count != record.graveyard_generation
                 || o.route

@@ -2456,19 +2456,21 @@ fn validate_physical_spell_cast_origin(
                                         .any(|prior| prior.object == card.object)
                             })
                     }
-                    (CastMethodV4::Normal, SpellCastRouteV4::GraveyardPermissionV1 { .. }) => {
-                        match route {
-                            [] => true,
-                            [land] => {
-                                land.owner == caster
-                                    && land.power_lki.is_none()
-                                    && card_def::CARD_DEFS
-                                        .get(usize::from(land.card_def))
-                                        .is_some_and(|def| def.has_type(CardType::Land))
-                            }
-                            _ => false,
+                    (
+                        CastMethodV4::Normal,
+                        SpellCastRouteV4::GraveyardPermissionV1 { .. }
+                        | SpellCastRouteV4::RetraceV1,
+                    ) => match route {
+                        [] => origin.route != SpellCastRouteV4::RetraceV1,
+                        [land] => {
+                            land.owner == caster
+                                && land.power_lki.is_none()
+                                && card_def::CARD_DEFS
+                                    .get(usize::from(land.card_def))
+                                    .is_some_and(|def| def.has_type(CardType::Land))
                         }
-                    }
+                        _ => false,
+                    },
                     _ => route.is_empty(),
                 };
                 if *last != chosen || !legal_route {
@@ -2618,10 +2620,7 @@ fn validate_physical_spell_cast_origin(
         SpellCastRouteV4::RetraceV1 => {
             origin.origin_zone == Zone::Graveyard
                 && source.owner == caster
-                && matches!(
-                    cast_method,
-                    CastMethodV4::Normal | CastMethodV4::Alternative
-                )
+                && sphinx_lore_cast_v1::ordinary_payment_method(def, cast_method)
                 && crate::eternal_vintage_e7b_v1::retrace_permission(state, item.source, caster)
         }
         SpellCastRouteV4::GraveyardFlashback => {
@@ -2678,11 +2677,7 @@ fn validate_physical_spell_cast_origin(
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (cast_method != CastMethodV4::Alternative
                     || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none())
-                && (matches!(
-                    cast_method,
-                    CastMethodV4::Normal | CastMethodV4::Alternative
-                ) || (cast_method == CastMethodV4::Omen
-                    && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)))
+                && sphinx_lore_cast_v1::ordinary_payment_method(def, cast_method)
                 && crate::standard_cards_v1::graveyard_cast_granted(
                     state,
                     item.source,
@@ -10985,7 +10980,7 @@ fn viable_pending_spell_forms(
         (pending.origin_zone == Zone::Hand
             || free
             || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
-                && (pending_has_ordinary_graveyard_permission(pending, state)
+                && (pending_has_graveyard_overload_permission(pending, state)
                     || (pending.origin_zone == Zone::Library
                         && crate::eternal_e5a_v1::permissions::library_overload_allowed(
                             state, pending.controller, pending.spell,
@@ -11575,11 +11570,24 @@ fn pending_has_graveyard_creature_permission(pending: &PendingCast, state: &Game
             })
 }
 
-fn pending_has_ordinary_graveyard_permission(pending: &PendingCast, state: &GameState) -> bool {
-    pending.source_contract.spell_cast_origin.is_some_and(|origin| {
-        matches!(origin.route, SpellCastRouteV4::GraveyardPermissionV1 { holder, permission_zone_change_count }
-            if holder == pending.controller && permission_zone_change_count == origin.origin_zone_change_count)
-    }) && pending_has_graveyard_creature_permission(pending, state)
+fn pending_has_graveyard_overload_permission(pending: &PendingCast, state: &GameState) -> bool {
+    pending
+        .source_contract
+        .spell_cast_origin
+        .is_some_and(|origin| match origin.route {
+            SpellCastRouteV4::GraveyardPermissionV1 {
+                holder,
+                permission_zone_change_count,
+            } => {
+                holder == pending.controller
+                    && permission_zone_change_count == origin.origin_zone_change_count
+            }
+            SpellCastRouteV4::RetraceV1 => {
+                crate::eternal_vintage_e7b_v1::pending_retrace(state, pending)
+            }
+            _ => false,
+        })
+        && pending_has_graveyard_creature_permission(pending, state)
 }
 
 fn unambiguous_graveyard_cast_method(def: &card_def::CardDef) -> Option<CastMethodV4> {
@@ -16754,7 +16762,7 @@ pub(crate) fn validate_pending_cast(
                 || (cfg!(feature = "eternal-fixtures")
                     && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell))
                 || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
-                    && pending_has_ordinary_graveyard_permission(pending, state)))
+                    && pending_has_graveyard_overload_permission(pending, state)))
         {
             return Err("graveyard creature permission cannot cast the Adventure form".to_string());
         }

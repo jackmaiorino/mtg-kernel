@@ -278,7 +278,9 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                             && !(matches!(
                                 option.route,
                                 public::RouteV1::Normal | public::RouteV1::Retrace
-                            ) && method == crate::state::CastMethodV4::Alternative)
+                            ) && crate::engine::sphinx_lore_cast_v1::ordinary_payment_method(
+                                def, method,
+                            ))
                     })
             {
                 return Err("Sphinx route changed its printed cost or finalized method".into());
