@@ -1642,6 +1642,7 @@ fn retrace_return_alternatives_allow_either_payment_order_and_require_distinct_i
             if name == "Daze" {
                 pool(&mut base, player, &[ManaColor::U], 1);
                 let mut normal = base.clone();
+                let spare = put(&mut normal, player, "Plains", Zone::Hand);
                 cast(&mut normal, spell, &targets);
                 assert!(
                     matches!(next(&mut normal), Decision::ChooseCastMode { options, .. }
@@ -1656,6 +1657,7 @@ fn retrace_return_alternatives_allow_either_payment_order_and_require_distinct_i
                 assert_eq!(normal.players[player.index()].mana_pool, [0; 6]);
                 assert_eq!(zone(&normal, islands[0]), Zone::Battlefield);
                 assert_eq!(zone(&normal, land), Zone::Graveyard);
+                assert_eq!(zone(&normal, spare), Zone::Hand);
                 assert_eq!(life(&normal, player), 20);
             }
             for discard_first in [false, true] {
