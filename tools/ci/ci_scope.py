@@ -7,7 +7,8 @@ still runs on every merge (main, tags, release lines) as a monitor, so a scope o
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
-                              LABELS (JSON list), CHANGED_FILES (newline list); writes checks=<name> to GITHUB_OUTPUT
+                              LABELS (JSON list), and NUL-delimited paths on stdin for pull requests;
+                              writes checks=<name> to GITHUB_OUTPUT
                               and a summary (with the bit-identity rows for trainer) to GITHUB_STEP_SUMMARY.
   ci_scope.py commands SCOPE  print the shell commands a scope's local run executes, one per line.
   ci_scope.py trainer-filters [--shard N]  print the trainer scope's library test filters (or shard N's).
@@ -381,9 +382,12 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")
-        files = [line for line in (os.environ.get("CHANGED_FILES") or "").splitlines() if line.strip()]
-        checks = choose(os.environ.get("EVENT", ""), os.environ.get("SCOPE", ""), os.environ.get("INPUT_SCOPE", ""),
-                        labels, files)
+        event = os.environ.get("EVENT", "")
+        files = []
+        if event == "pull_request":
+            paths = sys.stdin.buffer.read().split(b"\0")
+            files = [path.decode("utf-8", errors="surrogateescape") for path in paths if path]
+        checks = choose(event, os.environ.get("SCOPE", ""), os.environ.get("INPUT_SCOPE", ""), labels, files)
         lines = [f"checks: {checks}" + ("" if checks == "all" else f" ({SCOPES[checks]['summary']})")]
         if checks == "trainer":
             lines.append(trainer_record())

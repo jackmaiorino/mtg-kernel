@@ -1,8 +1,10 @@
 """A draft pull request runs only the light set; marking it ready runs the full pull request set."""
+import os
 import re
-import shlex
 import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -21,29 +23,66 @@ def condition(body):
 
 
 class DraftLightTests(unittest.TestCase):
-    def test_changed_path_gates_keep_both_names_of_a_rename(self):
-        commands = re.findall(r"^ +(?:files|CHANGED_FILES)=\$\((git diff [^)]+)\)$",
-                              jobs()["detect-changes"], re.MULTILINE)
-        self.assertEqual(len(commands), 2)
-        before, after = "before.txt", "after.txt"
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = Path(scratch)
+    def test_changed_path_gates_preserve_git_paths(self):
+        detect = jobs()["detect-changes"]
 
-            def git(*args):
-                git_options = ["-c", "user.name=CI fixture", "-c", "user.email=fixture@example.invalid",
-                               "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={repo / 'no-hooks'}",
-                               "-c", "diff.renames=true"]
-                return subprocess.check_output(["git", *git_options, *args], cwd=repo, text=True)
+        def script(step):
+            block = detect.split(f"      - name: {step}\n", 1)[1]
+            run = re.search(r"^        run: \|\n((?:          .*\n|\n)+)", block, re.MULTILINE)
+            return textwrap.dedent(run[1])
 
-            git("init", "--quiet")
-            (repo / before).write_text("example\n", encoding="utf-8")
-            git("add", before)
-            git("commit", "--quiet", "-m", "Add example")
-            git("mv", before, after)
-            git("commit", "--quiet", "-m", "Rename example")
-            for command in commands:
-                with self.subTest(command=command):
-                    self.assertCountEqual(git(*shlex.split(command)[1:]).splitlines(), [before, after])
+        classify = script("Classify changed paths").replace("${{ github.event_name }}", "pull_request")
+        checks = script("Choose the checks").replace(
+            "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
+        )
+        bash = "C:/Program Files/Git/bin/bash.exe" if sys.platform == "win32" else "bash"
+        cases = [
+            ("tools/café.py", "docs/moved.txt", "true", "false", "python"),
+            ("docs/before.txt", "tools/file with spaces.py", "true", "false", "python"),
+            ("python/tests/café.py", None, "true", "false", "python"),
+            ("docs/café.md", "docs/updated.md", "false", "false", "docs"),
+            ("docs/before.txt", "mtg-kernel/src/bin/kernel_limited_café.rs", "false", "true", "rules-limited"),
+            ("tools/café.py", "mtg-kernel/src/bin/kernel_limited_café.rs", "true", "true", "all"),
+        ]
+        if sys.platform != "win32":
+            cases.append(('tools/"quoted"\nname.py', None, "true", "false", "python"))
+
+        for before, after, python, rust, scope in cases:
+            with self.subTest(before=before, after=after), tempfile.TemporaryDirectory() as scratch:
+                repo = Path(scratch)
+                env = os.environ.copy()
+                env.pop("GIT_CONFIG_COUNT", None)
+
+                def git(*args):
+                    git_options = ["-c", "user.name=CI fixture", "-c", "user.email=fixture@example.invalid",
+                                   "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={repo / 'no-hooks'}"]
+                    subprocess.run(["git", *git_options, *args], cwd=repo, env=env, check=True)
+
+                git("init", "--quiet")
+                git("config", "core.quotePath", "true")
+                git("config", "diff.renames", "true")
+                (repo / before).parent.mkdir(parents=True, exist_ok=True)
+                (repo / before).write_text("example\n", encoding="utf-8")
+                git("add", "--", before)
+                git("commit", "--quiet", "-m", "Add example")
+                if after is None:
+                    git("rm", "--quiet", "--", before)
+                else:
+                    (repo / after).parent.mkdir(parents=True, exist_ok=True)
+                    git("mv", "--", before, after)
+                git("commit", "--quiet", "-m", "Change example")
+
+                output = repo / "outputs"
+                env.update(RUNNER_TEMP=repo.as_posix(), GITHUB_OUTPUT=output.as_posix(),
+                           GITHUB_STEP_SUMMARY=(repo / "summary").as_posix(), INPUT_SCOPE="", EVENT="pull_request",
+                           SCOPE="pr", LABELS="[]", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
+                           CI_TEST_SCOPE=(WORKFLOW.parents[2] / "tools/ci/ci_scope.py").as_posix())
+                for rendered in (classify, checks):
+                    subprocess.run([bash, "-eo", "pipefail", "-c", rendered], cwd=repo, env=env, check=True,
+                                   capture_output=True)
+
+                self.assertEqual(output.read_text(encoding="utf-8").splitlines(),
+                                 [f"python_relevant={python}", f"rust_relevant={rust}", f"checks={scope}"])
 
     def test_marking_a_draft_ready_starts_a_run(self):
         text = WORKFLOW.read_text(encoding="utf-8")
