@@ -13,8 +13,10 @@ optional GITHUB_SERVER_URL, GITHUB_API_URL, GITHUB_STEP_SUMMARY. Exit 0 unless t
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 import shlex
 import sys
 import urllib.request
@@ -52,9 +54,15 @@ def failed_jobs(get: Get, repo: str, run_id) -> list[str]:
 def ran(get: Get, repo: str, run: dict, before: str = "") -> bool:
     """Whether a run actually ran its checks (a run replaced while waiting started no job), judged only by jobs
     of any attempt that started before `before` (an ISO time), so a later rerun never changes an old report."""
-    jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100&filter=all")["jobs"]
-    return any(job.get("conclusion") in ("success", "failure", "timed_out")
-               and (not before or (job.get("started_at") or "9") < before) for job in jobs)
+    page = 1
+    while True:
+        jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100&filter=all&page={page}")["jobs"]
+        if any(job.get("conclusion") in ("success", "failure", "timed_out")
+               and (not before or (job.get("started_at") or "9") < before) for job in jobs):
+            return True
+        if len(jobs) < 100:
+            return False
+        page += 1
 
 
 def first_attempt_start(get: Get, repo: str, run: dict) -> str:
@@ -69,11 +77,8 @@ def first_attempt_start(get: Get, repo: str, run: dict) -> str:
 MAX_HISTORY_PAGES = 5
 
 
-def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> tuple[str | None, bool]:
-    """(head of the newest push run on the branch created before this run that ran its checks, found).
-    (None, False) whenever there is no such run in the examined history (none at all, history deleted, only runs
-    replaced while waiting, or the pages ran out): the range cannot be bounded, so it is reported incomplete."""
-    this = get(f"/repos/{repo}/actions/runs/{run_id}")
+def last_monitored_commit(get: Get, repo: str, branch: str, this: dict) -> tuple[str | None, bool]:
+    """Return the latest checked predecessor and whether the monitored history search was exhausted."""
     before = first_attempt_start(get, repo, this)
     for page in range(1, MAX_HISTORY_PAGES + 1):
         # Run ids increase with creation, so an earlier run created in the same second still counts.
@@ -81,24 +86,80 @@ def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> tuple[str
         # started before this run's first attempt.
         runs = get(f"/repos/{repo}/actions/workflows/ci.yml/runs?event=push&branch={branch}"
                    f"&created=%3C%3D{this['created_at']}&per_page=50&page={page}")["workflow_runs"]
-        earlier = [run for run in runs if run["id"] < int(run_id) and run["head_sha"] != this["head_sha"]]
+        earlier = [run for run in runs if run["id"] < int(this["id"]) and run["head_sha"] != this["head_sha"]]
         for run in earlier:
             if ran(get, repo, run, before):
                 return run["head_sha"], True
         if len(runs) < 50:
-            return None, False
+            return None, True
     return None, False
+
+
+def release_push_enabled(get: Get, repo: str, sha: str) -> bool | None:
+    """Recognize the release workflow's push filters before and after monitor activation."""
+    source = get(f"/repos/{repo}/contents/.github/workflows/ci.yml?ref={sha}")
+    if source.get("encoding") != "base64":
+        return None
+    workflow = base64.b64decode(source["content"]).decode("utf-8")
+    layout = "\n".join(line.rstrip() for line in workflow.splitlines()
+                       if line.strip() and not line.lstrip().startswith("#")) + "\n"
+    events = re.search(r"""(?m)^(?:on|'on'|"on"):\n((?: +.*\n)*)""", layout)
+    push = re.search(r"(?m)^  push:\n((?: {4,}.*\n)*)", events[1]) if events else None
+    if not push:
+        return None
+    filters = re.fullmatch(r"    branches:\n      - main\n(      - 'release/\*\*'\n)?    tags:\n      - '\*'\n", push[1])
+    return bool(filters[1]) if filters else None
+
+
+def first_release_push_boundary(get: Get, repo: str, branch: str, run: dict, head: str,
+                                current_event: dict | None) -> str | None:
+    """Follow contiguous same-ref push events to a revision that had no release monitor."""
+    if not branch.startswith("release/") or release_push_enabled(get, repo, head) is not True:
+        return None
+    before_by_head: dict[str, set[str]] = {}
+    ref = f"refs/heads/{branch}"
+
+    def add(payload: dict):
+        after, before = payload.get("head") or payload.get("after"), payload.get("before")
+        if (payload.get("ref") == ref and after and before
+                and re.fullmatch(r"[0-9a-f]{40}", after) and re.fullmatch(r"[0-9a-f]{40}", before)
+                and before != "0" * 40 and before != after):
+            before_by_head.setdefault(after, set()).add(before)
+
+    if current_event:
+        add(current_event)
+    for page in range(1, 4):
+        events = get(f"/repos/{repo}/events?per_page=100&page={page}")
+        for event in events:
+            if event["type"] == "PushEvent" and event["created_at"] <= run["created_at"]:
+                add(event["payload"])
+        if len(events) < 100:
+            break
+    seen = set()
+    while head not in seen and len(before_by_head.get(head, ())) == 1:
+        seen.add(head)
+        before, = before_by_head[head]
+        enabled = release_push_enabled(get, repo, before)
+        if enabled is False:
+            return before
+        if enabled is None:
+            return None
+        head = before
+    return None
 
 
 # The most first-parent commits a report walks back; a longer range is reported as incomplete, never silently.
 MAX_COVERED = 100
 
 
-def covered_merges(get: Get, repo: str, branch: str, run_id, head: str) -> tuple[list[dict], bool]:
-    """First-parent commits after the last monitored commit up to head, oldest first ({sha, pull, author}), and
-    whether the walk reached that commit (always true when there is no earlier monitored run)."""
-    base, found = last_monitored_commit(get, repo, branch, run_id)
-    shas, sha, complete = [], head, found
+def covered_merges(get: Get, repo: str, branch: str, run_id, head: str,
+                   current_event: dict | None = None) -> tuple[list[dict], bool]:
+    """First-parent commits up to head, oldest first, and whether the walk reached a verified boundary."""
+    run = get(f"/repos/{repo}/actions/runs/{run_id}")
+    base, history_examined = last_monitored_commit(get, repo, branch, run)
+    if not base and history_examined:
+        base = first_release_push_boundary(get, repo, branch, run, head, current_event)
+    shas, sha, complete = [], head, base is not None
     if base:
         while sha != base:
             if len(shas) == MAX_COVERED:
@@ -195,10 +256,10 @@ def append_command(line: str) -> str:
     return f"printf '%s\\n' {shlex.quote(line)} >> {HANDOFF_LOG}"
 
 
-def report(get: Get, repo: str, run: dict) -> tuple[str, str, list[dict]]:
+def report(get: Get, repo: str, run: dict, current_event: dict | None = None) -> tuple[str, str, list[dict]]:
     """Comment body, handoff line and covered merges of a red run (run: id, head_sha, head_branch, event, url)."""
     failed = failed_jobs(get, repo, run["id"]) or ["(no failed job identified; see the run)"]
-    merges, complete = covered_merges(get, repo, run["head_branch"], run["id"], run["head_sha"])
+    merges, complete = covered_merges(get, repo, run["head_branch"], run["id"], run["head_sha"], current_event)
     body, line = compose(run["html_url"], run["head_branch"], run["event"], failed, merges, complete)
     return body, line, merges
 
@@ -210,7 +271,11 @@ def main() -> int:
     run.update(head_sha=os.environ.get("GITHUB_SHA", run["head_sha"]),
                head_branch=os.environ.get("GITHUB_REF_NAME", run["head_branch"]),
                event=os.environ.get("GITHUB_EVENT_NAME", run["event"]))
-    body, line, merges = report(get, repo, run)
+    current_event = None
+    if run["event"] == "push" and (event_path := os.environ.get("GITHUB_EVENT_PATH")):
+        with open(event_path, encoding="utf-8") as stream:
+            current_event = json.load(stream)
+    body, line, merges = report(get, repo, run, current_event)
     command = append_command(line)
     # The handoff line and its command come first, so a failed comment never hides them.
     print(body)

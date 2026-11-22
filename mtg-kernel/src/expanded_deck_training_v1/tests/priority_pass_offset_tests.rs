@@ -256,7 +256,9 @@ fn the_field_is_refused_without_an_action_window_seat_or_with_a_bad_value() {
 fn public_collector_refuses_priority_pass_offset() {
     let mut episode = windows_episode(6.5);
     assert_eq!(
-        episode.configurations_for_public_collector_v1().unwrap_err(),
+        episode
+            .configurations_for_public_collector_v1()
+            .unwrap_err(),
         "priority_pass_offset is admitted only by the expanded collector"
     );
     episode.priority_pass_offset = None;

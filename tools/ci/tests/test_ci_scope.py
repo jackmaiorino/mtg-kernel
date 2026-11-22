@@ -1,4 +1,5 @@
 """The release line's scope table, workflow and docs/CI-SCOPES.md agree; changes map as the lead ruled."""
+import base64
 import os
 import re
 import subprocess
@@ -7,6 +8,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools" / "ci"))
@@ -210,6 +212,28 @@ class TableTests(unittest.TestCase):
 
 
 class CfgPredictorTests(unittest.TestCase):
+    def test_cuda_row_runs_the_public_collector_refusal(self):
+        import rust_test_cfg
+        name = ("expanded_deck_training_v1::tests::priority_pass_offset_tests::"
+                "public_collector_refuses_priority_pass_offset")
+        features = "experimental-burn-net8-packed-cuda-v1,gpu-exact-v1"
+        self.assertIn(name, rust_test_cfg.row_tests(features))
+        self.assertNotIn(name, rust_test_cfg.predict(""))
+        self.assertNotIn(name, rust_test_cfg.predict("", "windows"))
+
+    def test_unsupported_host_is_rejected_before_building(self):
+        import run_trainer_row
+        for system, machine in (("linux", "aarch64"), ("win32", "ARM64"), ("darwin", "x86_64")):
+            with (self.subTest(system=system, machine=machine),
+                  patch.object(sys, "argv", ["run_trainer_row.py", "--features", ""]),
+                  patch.object(sys, "platform", system),
+                  patch.object(run_trainer_row.platform, "machine", return_value=machine),
+                  patch.object(run_trainer_row, "build") as build,
+                  patch("builtins.print") as diagnostic):
+                self.assertEqual(run_trainer_row.main(), 2)
+                build.assert_not_called()
+                self.assertIn(f"unsupported host {system}/{machine}", diagnostic.call_args.args[0])
+
     def predicted(self, files, features, target="linux"):
         import tempfile
         import rust_test_cfg
@@ -529,11 +553,66 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c3", 837)])
         self.assertIn("first responder the author of #837", line)
 
+    def test_later_jobs_page_is_judged_at_the_first_attempt_cutoff(self):
+        import post_merge_report as report
+        cutoff = "2026-11-21T12:30:00Z"
+        path = "/repos/o/r/actions/runs/8/jobs?per_page=100&filter=all&page="
+        for started, expected in (("2026-11-21T11:00:00Z", True), (cutoff, False)):
+            pages = {
+                path + "1": {"jobs": [{"conclusion": "cancelled"}] * 100},
+                path + "2": {"jobs": [{"conclusion": "success", "started_at": started}]},
+            }
+            with self.subTest(started=started):
+                self.assertEqual(report.ran(pages.__getitem__, "o/r", {"id": 8}, cutoff), expected)
+
     def test_no_earlier_monitored_run_is_an_unbounded_range(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
         body, line, merges = self.run_report(get)
         self.assertEqual([m["sha"] for m in merges], ["c3"])
         self.assertIn("(incomplete, newest only)", line)
+
+    def test_first_release_monitor_covers_replaced_pushes_from_rollout(self):
+        import post_merge_report as report
+        base, early, a, b, c = (digit * 40 for digit in "12345")
+        branch = "release/demo"
+        ref = f"refs/heads/{branch}"
+        chain = [base, early, a, b, c]
+        pushes = [(8, b, "cancelled", "2026-11-21T11:30:00Z"),
+                  (7, a, "cancelled", "2026-11-21T11:00:00Z")]
+        get_run = self.fake_api(chain, pushes, {sha: (200 + i, "owner") for i, sha in enumerate(chain)})
+        enabled = WORKFLOW.read_text(encoding="utf-8")
+        disabled = enabled.replace("      - 'release/**'\n", "", 1)
+        push_b = {"type": "PushEvent", "created_at": "2026-11-21T11:30:00Z",
+                  "payload": {"ref": ref, "head": b, "before": a}}
+        push_a = {"type": "PushEvent", "created_at": "2026-11-21T11:00:00Z",
+                  "payload": {"ref": ref, "head": a, "before": base}}
+        events = [push_b, push_a]
+        current = {"ref": ref, "after": c, "before": b}
+
+        def get(path):
+            if path.startswith("/repos/o/r/events?"):
+                return events
+            if "/contents/" in path:
+                sha = path.split("?ref=")[1]
+                source = disabled if sha == base else enabled
+                return {"encoding": "base64", "content": base64.b64encode(source.encode()).decode()}
+            result = get_run(path)
+            if "/pulls?" in path:
+                for pull in result:
+                    pull["base"]["ref"] = branch
+            return result
+
+        run = {"id": 9, "head_sha": c, "head_branch": branch, "event": "push", "html_url": "u"}
+        body, _, merges = report.report(get, "o/r", run, current)
+        self.assertEqual([(m["sha"], m["pull"]) for m in merges], [(early, 201), (a, 202), (b, 203), (c, 204)])
+        self.assertIn("First responder: the author of #201", body)
+
+        # A later push to the same revision cannot supply the missing historical boundary.
+        events[1] = {**push_a, "created_at": "2026-11-21T12:01:00Z"}
+        body, line, merges = report.report(get, "o/r", run, current)
+        self.assertEqual([m["sha"] for m in merges], [c])
+        self.assertIn("(incomplete, newest only)", line)
+        self.assertNotIn("First responder: the author of #204", body)
 
     def test_the_comment_mentions_no_one(self):
         import post_merge_report as report
@@ -560,6 +639,22 @@ class MonitorTests(unittest.TestCase):
             red.listing = saved
         self.assertGreater(len(calls), 1)
         self.assertEqual(len(runs), len(calls) - sum(1 for s_, e_ in calls if (e_ - s_).total_seconds() > 86400))
+
+    def test_straddling_release_failure_survives_scan_cutoff(self):
+        import red_push_runs as red
+        from datetime import datetime, timezone
+        cutoff = "2026-11-21T12:00:00Z"
+        branch = "release/demo"
+        created = "2026-11-21T10:00:00Z"
+        run = {"id": 1, "event": "push", "head_branch": branch, "created_at": created,
+               "updated_at": "2026-11-21T12:01:00Z", "conclusion": "failure"}
+        earlier = {**run, "id": 2, "updated_at": "2026-11-21T11:59:59Z"}
+        with patch.object(red, "listing", return_value=(2, [run, earlier])) as listing:
+            runs = red.runs_since("o/r", cutoff, lookback_days=1)
+        self.assertLess(listing.call_args.args[1], datetime.fromisoformat(created.replace("Z", "+00:00")))
+        self.assertEqual(listing.call_args.args[1].tzinfo, timezone.utc)
+        job = {"name": "Report a red post-merge run", "conclusion": "success", "started_at": cutoff}
+        self.assertEqual(red.red_runs(runs, ["release/"], lambda path: {"jobs": [job]}, "o/r"), [run])
 
     def test_the_append_command_and_append_are_exact(self):
         import post_merge_report as report
