@@ -88,6 +88,38 @@ RESIDENT_SCHEMA = "pooled-collect-resident/v1"
 RESIDENT_SOCKET = "dispatcher.sock"
 RESIDENT_HANDSHAKE_SECONDS = 10.0
 RESIDENT_LINE_BYTES = 1 << 20
+# The process context a collection depends on beyond the hosts file: the server serves a client only when they
+# agree (the merge and local collectors run as the server's children, with its directory, variables and CPUs).
+RESIDENT_CONTEXT_NAMES = {"PATH", "LD_LIBRARY_PATH", "LD_PRELOAD", "PYTHONPATH", "PYTHONHOME", "HOME", "USER",
+                          "TMPDIR", "TZ", "LANG", "SSH_AUTH_SOCK"}
+RESIDENT_CONTEXT_PREFIXES = ("LC_", "OMP_", "RAYON_", "MKL_", "OPENBLAS_", "MTG_")
+
+
+def _resident_context() -> dict:
+    """This process's working directory, the variables above (not the resident switches themselves), its CPU
+    set, cgroup and niceness, as far as the platform reports them."""
+    env = {k: v for k, v in os.environ.items() if (k in RESIDENT_CONTEXT_NAMES or k.startswith(
+        RESIDENT_CONTEXT_PREFIXES)) and not k.startswith("MTG_POOLED_COLLECT_RESIDENT")}
+    context = {"cwd": os.getcwd(), "env": dict(sorted(env.items()))}
+    if hasattr(os, "sched_getaffinity"):
+        context["cpus"] = sorted(os.sched_getaffinity(0))
+    if hasattr(os, "nice"):
+        context["nice"] = os.nice(0)
+    try:
+        with open("/proc/self/cgroup") as handle:
+            context["cgroup"] = handle.read()
+    except OSError:
+        pass
+    return context
+
+
+def _private_dir(path: str) -> bool:
+    """A directory (not a symlink) owned by this account with no group or other access."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return (info.st_mode & 0o170000) == 0o040000 and info.st_uid == os.getuid() and not info.st_mode & 0o077
 
 
 def _file_sha256(path: str) -> str:
@@ -127,10 +159,12 @@ def resident_client(command: str, socket_dir: str, hosts: str | None, stderr) ->
     request = {"schema": RESIDENT_SCHEMA, "command": os.path.abspath(command),
                "hosts": os.path.abspath(hosts) if hosts else None,
                "hosts_sha256": _file_sha256(hosts) if hosts and os.path.isfile(hosts) else None,
-               "source_sha256": _file_sha256(os.path.realpath(__file__))}
+               "source_sha256": _file_sha256(os.path.realpath(__file__)), "context": _resident_context()}
     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         try:
+            if not _private_dir(socket_dir):
+                raise RuntimeError(f"{socket_dir} is not a directory of this account with mode 700")
             conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
             conn.connect(os.path.join(socket_dir, RESIDENT_SOCKET))
             _send_line(conn, request)
@@ -555,7 +589,9 @@ def sha256_file_known(path: Path) -> str:
     """sha256_file of a file on this machine, rehashed only when its signature (device, inode, size,
     modification and change times) differs from the last hash this process took. For the learner's
     own inputs and a local collector: every byte they send is verified again where it lands (the
-    push's staged digest, the agent's checks), so the shortcut never admits other bytes there."""
+    push's staged digest, the agent's checks), so the shortcut never admits other bytes there. File
+    times come from a coarse clock, so a same-size rewrite within one tick of a hash can keep the
+    signature; the checks where bytes land then refuse the push or report the input missing."""
     key = os.path.abspath(path)
     before = _signature(key)
     with _HASHED_LOCK:
@@ -740,17 +776,18 @@ class Dispatcher:
         self.pushed: dict[str, dict] = {}  # host -> {path: sha256} this collection uploaded
         self._lock = threading.Lock()
         self._input_locks: dict[tuple[str, str], threading.Lock] = {}
-        # Pins confirmed present with their bytes, per host. Agent hosts keep them across collections (a
-        # resident dispatcher): their agent hashes every input again at put_shard and run_shard, so a stale
-        # entry is a refusal there (answered by a full recheck), never other bytes. Other hosts keep them
-        # for one collection. Any failure of a host forgets its entries; pruning forgets the pruned paths.
+        # Pins confirmed present with their bytes, per host, in this collection (`known`) and, on agent hosts,
+        # in earlier ones (`earlier`, a resident dispatcher). An earlier pin is trusted only where it is one of
+        # the command's own pins: the agent refuses to store a command whose own pins are absent or differ (a
+        # refusal answered by a full recheck), but it lets a missing import or nested file through to the
+        # loader, so those are asked every collection. Any failure of a host forgets both; pruning forgets the
+        # pruned paths.
         self.known: dict[str, set] = {}
+        self.earlier: dict[str, set] = {}
         self.calls: dict[str, dict] = {}  # host -> op -> [count, seconds], this collection
         self._cleanups: list[threading.Thread] = []
         self.collections = 0
-        self.resident = False  # set by the resident server: no start-up timing, retention after the answer
-        self.pending_prune: set | None = None
-        self.carried: list[dict] = []  # deferred retention's events, for the next receipt
+        self.resident = False  # set by the resident server: no start-up timing in the receipt
 
     def note(self, **event):
         event["t"] = round(time.time(), 3)
@@ -776,23 +813,27 @@ class Dispatcher:
     def forget(self, host: Host, paths=None) -> None:
         """Forgets every pin known on `host`, or only those at `paths`."""
         with self._lock:
-            if paths is None:
-                self.known.pop(host.name, None)
-            else:
-                self.known[host.name] = {p for p in self.known.get(host.name, ()) if p[0] not in paths}
+            for table in (self.known, self.earlier):
+                if paths is None:
+                    table.pop(host.name, None)
+                else:
+                    table[host.name] = {p for p in table.get(host.name, ()) if p[0] not in paths}
 
     def known_on(self, host: Host) -> set:
         with self._lock:
             return set(self.known.get(host.name, ()))
 
-    def distribute(self, host: Host, pins: set, trust_known: bool = True) -> tuple[int, bool]:
+    def distribute(self, host: Host, pins: set, trust_known: bool = True, strict=frozenset()) -> tuple[int, bool]:
         """Makes every pin in `pins` (a command's input closure) present on `host`; returns the bytes
-        pushed and whether pins known from earlier were trusted without asking. One pin_status for the
-        pins not known, then one push per absent pin. A file at a pinned path with other bytes is never
+        pushed and whether known pins were trusted without asking (pins confirmed this collection, and
+        pins confirmed earlier that are in `strict`, the command's own pins). One pin_status for the
+        others, then one push per absent pin. A file at a pinned path with other bytes is never
         replaced: the host fails and its shard moves on. One upload per host and input at a time; a push
         racing another process's install of the same bytes is accepted by the push itself."""
         transport = self.transports[host.name]
-        known = self.known_on(host) if trust_known else set()
+        with self._lock:
+            known = (self.known.get(host.name, set()) | (self.earlier.get(host.name, set()) & set(strict))
+                     if trust_known else set())
         unknown = set(pins) - known
         relied = bool(set(pins) & known)
         pushed = 0
@@ -872,7 +913,8 @@ class Dispatcher:
         out = self.owned_dir(host, command["output_directory"])
         # The tag is new to this invocation, so its output directory and command file cannot exist on a
         # host yet (the agent and the collector refuse existing ones); a failed run removes both below.
-        pushed, relied = self.distribute(host, input_closure(command) if pins is None else pins)
+        strict = pins_of(command)
+        pushed, relied = self.distribute(host, input_closure(command) if pins is None else pins, strict=strict)
         command_path = str(PurePosixPath(host.scratch) / f"{tag}.json")
         text = json.dumps(command)
         try:
@@ -885,7 +927,7 @@ class Dispatcher:
                 # earlier collection is gone (another lineage's retention, a wiped scratch). Ask again.
                 self.forget(host)
                 self.note(event="pins-rechecked", host=host.name, tag=tag)
-                pushed += self.distribute(host, input_closure(command) if pins is None else pins, False)[0]
+                pushed += self.distribute(host, input_closure(command) if pins is None else pins, False, strict)[0]
                 self.call(host, "put_shard", transport.put_text, command_path, text)
             started = time.time()
             result = self.call(host, "run_shard", transport.run,
@@ -930,37 +972,26 @@ class Dispatcher:
         raise RuntimeError(f"shard {tag} failed on every host: {errors}")
 
     def begin(self) -> None:
-        """A new collection: its own event log, uploads and call counts; non-agent hosts' pins asked again."""
-        self.log, self.carried = self.carried, []
-        self.pushed, self.calls, self._cleanups = {}, {}, []
+        """A new collection: its own event log, uploads and call counts; agent hosts' pins become earlier
+        knowledge, other hosts' pins are asked again."""
+        self.log, self.pushed, self.calls, self._cleanups = [], {}, {}, []
         with self._lock:
             for host in self.hosts:
-                if host.transport != "agent":
-                    self.known.pop(host.name, None)
+                confirmed = self.known.pop(host.name, set())
+                if host.transport == "agent":
+                    self.earlier[host.name] = self.earlier.get(host.name, set()) | confirmed
+                else:
+                    self.earlier.pop(host.name, None)
 
-    def collect(self, command_path: Path, run_merge, defer_prune: bool = False) -> dict:
-        """One collection. With `defer_prune` (the resident server) retention waits for prune_pending,
-        which the server runs after answering, before it takes the next request."""
+    def collect(self, command_path: Path, run_merge) -> dict:
         self.begin()
         try:
-            return self._collect(Path(command_path), run_merge, defer_prune)
+            return self._collect(Path(command_path), run_merge)
         finally:
             self.join_cleanups()
             self.collections += 1
 
-    def prune_pending(self) -> None:
-        """Retention deferred by collect(defer_prune=True); its events go into the next receipt."""
-        current, self.pending_prune = self.pending_prune, None
-        if current is None:
-            return
-        start = len(self.log)
-        try:
-            self.prune(current)
-        except Exception as error:  # noqa: BLE001  retention never fails a collection that has merged
-            self.note(event="prune-failed", error=str(error)[-200:])
-        self.carried = self.log[start:]
-
-    def _collect(self, command_path: Path, run_merge, defer_prune: bool = False) -> dict:
+    def _collect(self, command_path: Path, run_merge) -> dict:
         first = self.collections == 0 and not self.resident
         timing = {"since_load": round(time.time() - LOADED_AT, 3)} if first else {}
         clock = time.monotonic()
@@ -1021,10 +1052,7 @@ class Dispatcher:
         lap("staging_removal")
         self.join_cleanups()
         lap("cleanup_wait")
-        if defer_prune:
-            self.pending_prune = input_closure(whole)
-        else:
-            self.prune(input_closure(whole))
+        self.prune(input_closure(whole))
         lap("prune")
         receipt = {"schema": "mtg-kernel-pooled-collect-dispatch/v1", "iteration": iteration,
                    "episodes": total, "shards": [[i, f, s, results[i][1].name] for i, f, s in jobs],
@@ -1150,30 +1178,38 @@ class Dispatcher:
                 continue
             host = others[slot % len(others)]
             plan.setdefault(host.name, (host, []))[1].append((slot, played_on, original))
-        divergences, failures = [], []
+        divergences, failures, compared = [], [], set()
 
         def replay_on(host, items):
             for slot, played_on, original in items:
                 tag = f"{tag_root}-audit{slot:04d}"
-                command = shard_command_for(whole, slot, 1, host.workers, str(PurePosixPath(host.scratch) / tag))
-                try:
+                try:  # anything that keeps a slot from being compared fails the collection
+                    command = shard_command_for(whole, slot, 1, host.workers, str(PurePosixPath(host.scratch) / tag))
                     replay = self.run_shard(host, command, tag, staging)
-                except Exception as error:  # noqa: BLE001  an audit that cannot run fails the collection
-                    failures.append(f"audit of slot {slot} on {host.name}: {error}")
+                    replayed = trajectory_pins(replay)[0]["sha256"]
+                    if not isinstance(replayed, str):
+                        raise ValueError("the replay's collection names no trajectory hash")
+                    self.note(event="audit", slot=slot, played_on=played_on.name, replayed_on=host.name,
+                              equal=replayed == original)
+                    with self._lock:
+                        compared.add(slot)
+                    if replayed != original:
+                        divergences.append(f"cross-host divergence at slot {slot}: {played_on.name} "
+                                           f"({played_on.arch}) {original} against {host.name} ({host.arch}) {replayed}")
+                    shutil.rmtree(replay)
+                except BaseException as error:  # noqa: BLE001
+                    failures.append(f"audit of slot {slot} on {host.name}: {type(error).__name__}: {error}")
+                    self.forget(host)
                     return
-                replayed = trajectory_pins(replay)[0]["sha256"]
-                self.note(event="audit", slot=slot, played_on=played_on.name, replayed_on=host.name,
-                          equal=replayed == original)
-                if replayed != original:
-                    divergences.append(f"cross-host divergence at slot {slot}: {played_on.name} ({played_on.arch}) "
-                                       f"{original} against {host.name} ({host.arch}) {replayed}")
-                shutil.rmtree(replay)
 
         threads = [threading.Thread(target=replay_on, args=entry) for entry in plan.values()]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
+        planned = {slot for _, items in plan.values() for slot, _, _ in items}
+        if not failures and compared != planned:  # completeness, whatever happened in a worker
+            failures.append(f"audit slots never compared: {sorted(planned - compared)}")
         if divergences or failures:
             raise RuntimeError("; ".join(sorted(divergences) + sorted(failures)))
 
@@ -3533,12 +3569,15 @@ def merge_with_binary(binary: str):
 # ---------------------------------------------------------------- resident dispatcher
 #
 # `pooled_collect.py serve SOCKET_DIR [IDLE_SECONDS]` (POSIX, hosts file in MTG_POOLED_COLLECT_CONFIG) keeps one
-# Dispatcher for a run: no interpreter start or module load per update, pin knowledge across updates, and
-# retention after the answer instead of before it. The program the trainer starts per update is this file with
-# MTG_POOLED_COLLECT_RESIDENT=SOCKET_DIR: the client at the top of the file. It connects to
-# SOCKET_DIR/dispatcher.sock and sends the command; the server answers ready only for a request it will serve
-# exactly as the one-shot program would (the same hosts file bytes, the same dispatcher source); the client then
-# commits with "go"; the server runs the same collect and returns the one-shot program's exit code and stderr.
+# Dispatcher for a run: no interpreter start or module load per update, and pin knowledge across updates. The
+# program the trainer starts per update is this file with MTG_POOLED_COLLECT_RESIDENT=SOCKET_DIR: the client at
+# the top of the file. It connects to SOCKET_DIR/dispatcher.sock and sends the command; the server answers ready
+# only for a request it will serve exactly as the one-shot program would: the same hosts file bytes, the same
+# dispatcher source, and the same process context (working directory, the variables in RESIDENT_CONTEXT_*, CPU
+# set, cgroup, niceness), because the merge and local collectors run as the server's children. So start the
+# server inside the trainer's own claim or box, as a child of the learner's launch with its environment, not
+# elsewhere. The client then commits with "go"; the server runs the same collect, retention included, and returns
+# the one-shot program's exit code and stderr.
 #
 # Fallback, chosen over failing closed: until the client sends "go" nothing has started anywhere, so when no
 # server takes the request the client collects in its own process, today's path, with the same bytes (a
@@ -3547,10 +3586,12 @@ def merge_with_binary(binary: str):
 # client never falls back: a lost server is exit 1 and the trainer's attempt fails closed, since the server may
 # already have staged or merged into the attempt (and the merge refuses an existing collect/ anyway).
 #
-# The socket directory belongs to the learner account with mode 700 (created so, refused otherwise); on Linux the
-# server also requires the peer's uid to be its own. One server per directory (a lock file). Requests are served
-# one at a time in arrival order. The server stops on SIGTERM or SIGINT, on SOCKET_DIR/STOP, or after
-# IDLE_SECONDS (default 1800) without a request; a client killed after "go" leaves its collect to finish.
+# The socket directory belongs to the learner account with mode 700 (created so, refused otherwise, and checked by
+# the client too); on Linux the server also requires the peer's uid to be its own. One server per directory (a
+# lock file). Requests are served one at a time in arrival order. The server stops on SIGTERM or SIGINT, on
+# SOCKET_DIR/STOP, or after IDLE_SECONDS (default 1800) without a request, and answers every request it accepted
+# first; a client killed after "go" leaves its collect to finish. The hosts file's merge_binary and state_path
+# must be absolute.
 
 RESIDENT_IDLE_SECONDS = 1800.0
 
@@ -3574,11 +3615,16 @@ class ResidentServer:
         self.idle_seconds, self.stderr = idle_seconds, stderr or sys.stderr
         self.hosts_sha256 = _file_sha256(self.hosts_path)
         config = load_hosts(Path(self.hosts_path))
+        for key in ("merge_binary", "state_path"):  # resolved by the server, so never relative to its directory
+            if config.get(key) is not None and not _absolute(str(config[key])):
+                raise ValueError(f"the resident dispatcher needs an absolute {key} in the hosts file")
         self.dispatcher = dispatcher or Dispatcher(config)
         self.dispatcher.resident = True
         self.merge = merge or merge_with_binary(config["merge_binary"])
         self.source_sha256 = _file_sha256(os.path.realpath(__file__))
         self.serving = threading.Lock()
+        self.committed = 0  # requests past "go": the server does not exit before they are answered
+        self.committed_change = threading.Condition()
         self.stopping = threading.Event()
         self.last = time.monotonic()
         self.listener = None
@@ -3593,18 +3639,26 @@ class ResidentServer:
             return "this resident dispatcher serves another hosts file (or other bytes of it)"
         if request.get("source_sha256") != self.source_sha256:
             return "this resident dispatcher runs another dispatcher source"
+        mine, theirs = _resident_context(), request.get("context")
+        if not isinstance(theirs, dict) or theirs != mine:
+            theirs = theirs if isinstance(theirs, dict) else {}
+            parts = sorted(k for k in set(mine) | set(theirs) if k != "env" and mine.get(k) != theirs.get(k))
+            env, other = mine.get("env", {}), theirs.get("env") if isinstance(theirs.get("env"), dict) else {}
+            parts += sorted(f"${k}" for k in set(env) | set(other) if env.get(k) != other.get(k))
+            return f"this resident dispatcher runs in another context than the trainer ({', '.join(parts)[:400]})"
         return None
 
     def collect(self, command: str) -> tuple[int, str]:
         """Exactly the one-shot program's collect: (exit code, stderr text)."""
         try:
-            receipt = self.dispatcher.collect(Path(command), self.merge, defer_prune=True)
+            receipt = self.dispatcher.collect(Path(command), self.merge)
         except Exception as error:  # noqa: BLE001  the trainer's attempt fails closed
             return 1, f"pooled collection failed: {error}\n"
         return 0, json.dumps({k: receipt[k] for k in ("iteration", "episodes", "collection_seconds",
                                                        "failed_hosts")}) + "\n"
 
     def handle(self, conn) -> None:
+        counted = False
         try:
             conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
             if hasattr(socket, "SO_PEERCRED"):
@@ -3617,6 +3671,12 @@ class ResidentServer:
             if reason:
                 _send_line(conn, {"ready": False, "reason": reason})
                 return
+            with self.committed_change:  # counted before "ready": the server outlives every request it accepts
+                if self.stopping.is_set():
+                    _send_line(conn, {"ready": False, "reason": "the resident dispatcher is stopping"})
+                    return
+                self.committed += 1
+                counted = True
             _send_line(conn, {"ready": True})
             go = _read_line(conn)
             if not go or go.get("go") is not True:
@@ -3624,21 +3684,25 @@ class ResidentServer:
             with self.serving:
                 self.last = time.monotonic()
                 code, text = self.collect(request["command"])
-                self.stderr.write(text)
-                self.stderr.flush()
                 try:
                     conn.settimeout(None)
                     _send_line(conn, {"code": code, "stderr": text})
                 except OSError:
                     pass  # the client is gone; the collection is complete either way
-                finally:
-                    conn.close()
-                self.dispatcher.prune_pending()  # retention, off the update's critical path
                 self.last = time.monotonic()
+            try:
+                self.stderr.write(text)
+                self.stderr.flush()
+            except (OSError, ValueError):
+                pass
         except (OSError, ValueError):
             pass
         finally:
             conn.close()
+            if counted:
+                with self.committed_change:
+                    self.committed -= 1
+                    self.committed_change.notify_all()
 
     def serve(self) -> int:
         _prepare_socket_dir(self.socket_dir)
@@ -3665,7 +3729,9 @@ class ResidentServer:
             while not self.stopping.is_set():
                 if os.path.exists(stop_file):
                     break
-                if not self.serving.locked() and time.monotonic() - self.last > self.idle_seconds:
+                with self.committed_change:
+                    idle = self.committed == 0 and time.monotonic() - self.last > self.idle_seconds
+                if idle:
                     break
                 try:
                     conn, _ = self.listener.accept()
@@ -3673,8 +3739,10 @@ class ResidentServer:
                     continue
                 self.last = time.monotonic()
                 threading.Thread(target=self.handle, args=(conn,), daemon=True).start()
-            with self.serving:  # a collection in progress finishes before the server exits
-                pass
+            with self.committed_change:  # every accepted request is answered before the server exits
+                self.stopping.set()
+                while self.committed:
+                    self.committed_change.wait()
             return 0
         finally:
             if self.listener is not None:

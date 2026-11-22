@@ -236,6 +236,64 @@ class ResidentServiceTests(ResidentCase):
         thread.join(10)
         self.assertFalse(thread.is_alive())
 
+    def request(self, path, **changes):
+        request = {"schema": pc.RESIDENT_SCHEMA, "command": str(path), "hosts": str(self.hosts_path),
+                   "hosts_sha256": pc._file_sha256(str(self.hosts_path)),
+                   "source_sha256": pc._file_sha256(os.path.realpath(pc.__file__)), "context": pc._resident_context()}
+        request.update(changes)
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.connect(str(self.sockets / pc.RESIDENT_SOCKET))
+        pc._send_line(conn, request)
+        answer = pc._read_line(conn)
+        conn.close()
+        return answer
+
+    def test_another_process_context_is_refused_before_anything_starts(self):
+        self.start_server()
+        path = self.command(1)
+        context = pc._resident_context()
+        for changed in (dict(context, cwd="/elsewhere"), dict(context, env=dict(context["env"], OMP_NUM_THREADS="3")),
+                        dict(context, cpus=[0])):
+            answer = self.request(path, context=changed)
+            self.assertFalse(answer["ready"])
+            self.assertIn("another context", answer["reason"])
+        self.assertIn("$OMP_NUM_THREADS", self.request(path, context=dict(
+            context, env=dict(context["env"], OMP_NUM_THREADS="3")))["reason"])
+        self.assertTrue(self.request(path)["ready"])  # never committed: nothing starts
+        self.assertFalse((path.parent / "pooled-shards").exists())
+
+    def test_relative_merge_or_state_paths_are_refused_by_the_server(self):
+        document = json.loads(self.hosts_path.read_text())
+        for key, value in (("merge_binary", "merge.py"), ("state_path", "pushed.json")):
+            self.hosts_path.write_text(json.dumps(dict(document, **{key: value})))
+            with self.assertRaisesRegex(ValueError, f"absolute {key}"):
+                pc.ResidentServer(str(self.sockets), str(self.hosts_path), stderr=io.StringIO())
+
+    def test_a_retention_failure_is_exit_1_as_one_shot(self):
+        state = self.root / "state-is-a-directory"
+        state.mkdir()
+        document = json.loads(self.hosts_path.read_text())
+        self.hosts_path.write_text(json.dumps(dict(document, state_path=str(state))))
+        os.environ["MTG_POOLED_COLLECT_CONFIG"] = str(self.hosts_path)
+        try:
+            one_shot = pc.main(["pooled_collect.py", str(self.command(1, run="oneshot"))])
+        finally:
+            del os.environ["MTG_POOLED_COLLECT_CONFIG"]
+        self.start_server()
+        code, text = self.client(self.command(1))
+        self.assertEqual((one_shot, code), (1, 1))
+        self.assertTrue(text.startswith("pooled collection failed"), text)
+
+    def test_the_client_hands_back_for_a_socket_directory_it_does_not_own_privately(self):
+        self.start_server()
+        os.chmod(self.sockets, 0o755)
+        try:
+            code, text = self.client(self.command(1))
+        finally:
+            os.chmod(self.sockets, 0o700)
+        self.assertIsNone(code)
+        self.assertIn("mode 700", text)
+
     def test_pin_knowledge_and_retention_carry_across_updates(self):
         hosts = [pc.Host(name="a", kind="ssh", collector="/bin/a", collector_sha256="c" * 64, workers=2, weight=1.0,
                          scratch=str(self.root / "scratch-fake"), arch="x86", ssh=["ssh", "a"], transport="agent",

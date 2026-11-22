@@ -47,13 +47,16 @@ retention, and the trainer's own handling.
   there (the background master would keep the call's stderr open). A dead master fails its calls like any
   connection failure and the host fails over; the next call starts a new master (tested with a fake mux ssh).
 - Requests per steady update on an agent host: 9 to 6 (`pin_status` of the new checkpoint only, `push`,
-  `put_shard`, `run_shard`, `fetch_shard`, one `remove_shard` off the critical path). Pins confirmed on an agent
-  host are not asked again (the agent still hashes every input at `put_shard` and `run_shard`); if one vanished,
-  the agent refuses the store, the dispatcher asks again, pushes and stores once more (no failover). Shell and
-  local hosts are asked once per collection. A failed host's knowledge is dropped; pruned paths are forgotten.
+  `put_shard`, `run_shard`, `fetch_shard`, one `remove_shard` off the critical path). A command's own pins
+  confirmed on an agent host in an earlier collection are not asked again: the agent hashes them at `put_shard`
+  and `run_shard` and refuses the store if one vanished, and then the dispatcher asks again, pushes and stores
+  once more (no failover). Import and nested files are asked every collection (the agent lets a missing one
+  through to the loader). Shell and local hosts are asked once per collection. A host that fails a shard or an
+  audit replay loses its knowledge; pruned paths are forgotten.
 - No pre-run removal; a failed run removes its output and command file before the shard moves on.
 - Cleanup of a fetched shard runs in the background and overlaps the next steps; the receipt waits for it.
-- Audit replays on different hosts run concurrently (same host choice; one host's replays stay serial).
+- Audit replays on different hosts run concurrently (same host choice; one host's replays stay serial). Any
+  error in a replay fails the collection before the merge, and every planned slot must end in a comparison.
 - Learner side: input hashes are kept per file signature (device, inode, size, modification and change times),
   so the closure and the local host's pin checks rehash only changed files. A local shard is renamed into staging.
 - Retention: storage markers and owned removals run per host in parallel; its events now reach the receipt.
@@ -86,15 +89,21 @@ Start one per run, beside the trainer, with the run's hosts file:
     MTG_POOLED_COLLECT_CONFIG=/srv/work/RUN/hosts.json pooled_collect.py serve /srv/work/RUN/.resident [IDLE_SECONDS]
 
 and give the trainer `MTG_POOLED_COLLECT_RESIDENT=/srv/work/RUN/.resident` (the `--collect-external` program
-stays `pooled_collect.py`). The socket directory is the account's, mode 700 (created so, refused otherwise); one
-server per directory; it stops on SIGTERM, on `<dir>/STOP`, or after IDLE_SECONDS (default 1800) idle.
+stays `pooled_collect.py`). Start the server inside the trainer's own claim or box, as a child of the learner's
+launch with its environment: the merge and local collectors run as the server's children. The server serves a
+request only when the client's working directory, CPU set, cgroup, niceness and the variables listed in
+`RESIDENT_CONTEXT_*` (PATH, library and thread settings, `MTG_*`, ...) equal its own, and it needs absolute
+`merge_binary` and `state_path`. The socket directory is the account's, mode 700 (created so, refused otherwise,
+checked by the client too); one server per directory; it stops on SIGTERM, on `<dir>/STOP`, or after
+IDLE_SECONDS (default 1800) idle, answering every request it accepted first.
 
 The per-update program then runs only a small client at the top of the file (no other imports): it sends the
-command with the hash of its hosts file and of the dispatcher source; the server answers ready only when both
-match its own, the client commits, and the server runs the same collect and returns the one-shot exit code and
-stderr. What the server keeps: no interpreter start or module load per update, pin knowledge on agent hosts
-across updates (only the new checkpoint is asked for), the learner's input hashes, and retention run after the
-answer (its events go into the next receipt).
+command with the hash of its hosts file, of the dispatcher source and its process context; the server answers
+ready only when all match its own, the client commits, and the server runs the same collect (retention included,
+so a retention error is exit 1 as one-shot) and returns the one-shot exit code and stderr. What the server keeps:
+no interpreter start or module load per update, pin knowledge on agent hosts across updates (only the new
+checkpoint and import files are asked for), and the learner's input hashes. Python still compiles the whole file
+on each start of the per-update program (about 8 ms on x86); a separate client module would remove that.
 
 Fallback, not fail closed, when no server takes the request: until the client commits nothing has started, and a
 one-shot collection gives the same bytes, so a missing server costs time instead of the attempt.
@@ -105,5 +114,4 @@ to finish; the next request waits for it.
 
 Measured (WSL, two local hosts, 9 games, start-up dominated): the per-update program took 0.196 s one-shot and
 0.113 s handing off to the server (median of 9 updates each), so about 0.08 s per update from process start and
-module load alone; on agent hosts the server also skips the retention requests (one storage marker and one owned
-removal per retaining host) on the update's path.
+module load alone.

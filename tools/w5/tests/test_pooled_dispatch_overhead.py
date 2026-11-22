@@ -224,6 +224,34 @@ class RequestsPerShardTests(OverheadCase):
         self.assertEqual(self.counts["a"], ["pin_status", "push", "put_shard", "pin_status", "push", "put_shard",
                                             "run_shard", "fetch_shard", "remove_shard"])
 
+    def test_a_nested_input_known_from_an_earlier_collection_is_asked_again(self):
+        # The agent refuses a command whose own pins are missing, but lets a missing nested or import file
+        # through to the loader: only the command's own pins are trusted across collections.
+        hosts = [self.host("a")]
+        dispatcher = self.dispatcher(hosts)
+        fake = AgentLikeFake(hosts[0], self.counts)
+        dispatcher.transports["a"] = fake
+        leaf = self.pins / "run" / "parameters.f32le"
+        leaf.write_bytes(b"parameters")
+        record = self.pins / "run" / "import.json"
+        record.write_text(json.dumps({"parameters": {"path": str(leaf), "sha256": pc.sha256_file(leaf)}}))
+
+        def with_import(path):
+            command = json.loads(path.read_text())
+            command["play_import"] = {"path": str(record), "sha256": pc.sha256_file(record)}
+            path.write_text(json.dumps(command))
+            return path
+
+        receipt = dispatcher.collect(with_import(self.iteration(1)), fake_merge)
+        self.assertEqual(receipt["merged"]["slots"], self.expected())
+        del fake.files[str(leaf)]  # removed on the collector by another lineage's retention
+        self.counts.clear()
+        receipt = dispatcher.collect(with_import(self.iteration(2)), fake_merge)
+        self.assertEqual(receipt["merged"]["slots"], self.expected())
+        self.assertEqual(self.counts["a"][:2], ["pin_status", "push"])
+        self.assertIn(str(leaf), fake.files)
+        self.assertNotIn("pins-rechecked", [e["event"] for e in receipt["events"]], "asked, not refused")
+
     def test_shell_and_local_hosts_ask_again_every_collection(self):
         config = {"hosts": [pc.Host(name="l", kind="local", collector="/bin/l", collector_sha256="c" * 64,
                                     workers=2, weight=1.0, scratch=str(self.root / "scratch-l"), arch="x86")]}
@@ -323,7 +351,7 @@ class ConcurrentAuditTests(unittest.TestCase):
 
         class AuditMeets(FakeTransport):
             def run(self, argv, timeout):
-                if "-audit" in argv[-1]:
+                if "-audit" in Path(argv[-1]).name:
                     together.wait()  # both replays must be running at once
                 return super().run(argv, timeout)
 
@@ -334,6 +362,29 @@ class ConcurrentAuditTests(unittest.TestCase):
         audits = sorted((e["slot"], e["played_on"], e["replayed_on"], e["equal"]) for e in receipt["events"]
                         if e["event"] == "audit")
         self.assertEqual(audits, [(8, "x", "m", True), (20, "m", "x", True)])
+
+
+    def test_a_malformed_replay_fails_the_collection_before_the_merge(self):
+        hosts = [pc.Host(name=n, kind="local", collector=f"/bin/{n}", collector_sha256="c" * 64, workers=4,
+                         weight=1.0, scratch=str(self.root / "scratch" / n), arch=a) for n, a in (("x", "x86"),
+                                                                                                 ("m", "arm64"))]
+
+        class EmptyReplay(FakeTransport):
+            def run(self, argv, timeout):
+                result = super().run(argv, timeout)
+                if "-audit" in Path(argv[-1]).name:  # a collector that exits 0 and names no trajectory
+                    out = Path(json.loads(self.files[argv[-1]])["output_directory"])
+                    (out / "collection.json").write_text(json.dumps({"trajectories": []}))
+                return result
+
+        transports = {h.name: EmptyReplay(h, {h.collector: h.collector_sha256}) for h in hosts}
+        merged = []
+        dispatcher = pc.Dispatcher({"hosts": hosts, "audit": {"every": 16, "episodes": 2}}, transports)
+        with self.assertRaisesRegex(RuntimeError, "audit of slot 8 on m: IndexError"):
+            dispatcher.collect(self.command_path, lambda *a: merged.append(a))
+        self.assertEqual(merged, [], "no merge after an audit that compared nothing")
+        self.assertFalse((self.command_path.parent / "collect").exists())
+        self.assertEqual(dispatcher.known, {}, "a host whose replay failed keeps no pin knowledge")
 
 
 class LearnerSideTests(unittest.TestCase):
