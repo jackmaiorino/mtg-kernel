@@ -48,6 +48,8 @@ def completion(root: Path) -> dict:
 
 def pinned_json(iteration: Path, pin: dict, relative_pattern: str) -> dict:
     """Relocate a receipt only within its expected iteration and native output layout."""
+    if not isinstance(pin, dict) or not isinstance(pin.get("path"), str) or not is_sha256(pin.get("sha256")):
+        raise ValueError(f"{iteration}: expected a native receipt pin with a path and SHA-256")
     _, marker, relative = pin["path"].replace("\\", "/").rpartition(f"/iterations/{iteration.name}/")
     if not marker or not re.fullmatch(relative_pattern, relative):
         raise ValueError(f"{pin['path']}: unexpected receipt path for iteration {iteration.name}")
@@ -55,7 +57,10 @@ def pinned_json(iteration: Path, pin: dict, relative_pattern: str) -> dict:
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != pin["sha256"]:
         raise ValueError(f"{path}: differs from the iteration receipt's pin")
-    return json.loads(data)
+    document = json.loads(data)
+    if not isinstance(document, dict):
+        raise ValueError(f"{path}: expected a native receipt object")
+    return document
 
 
 def is_sha256(value) -> bool:

@@ -3,6 +3,7 @@ import hashlib
 import importlib
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -161,6 +162,22 @@ class PooledProofTests(unittest.TestCase):
                 completion.write_text(json.dumps(done))
                 with self.assertRaises(ValueError):
                     pp.compare(ref, pool, same_root=True)
+
+    def test_malformed_completion_pin_is_reported_as_bad_input(self):
+        reference = self.root / "ref"
+        pooled = self.root / "pool"
+        write_ref(reference, "/r", ["s0"], [["a"]])
+        write_run(pooled, "/r", ["s0"], [["a"]])
+        path = pooled / "completion.json"
+        done = json.loads(path.read_bytes())
+        done["iterations"][0] = None
+        path.write_text(json.dumps(done), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, pp.__file__, "compare", str(reference), str(pooled)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("expected a native receipt pin", result.stderr)
 
     def test_an_unfinished_run_fails(self):
         write_ref(self.root / "ref", "/r", ["s0"], [["a"]])
