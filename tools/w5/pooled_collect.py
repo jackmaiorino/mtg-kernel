@@ -74,6 +74,101 @@ section at the end.
 """
 from __future__ import annotations
 
+# ---- resident client: first, so the per-update program loads nothing else when a resident dispatcher
+# takes its request (see the resident section at the end of this file).
+import hashlib
+import json
+import os
+import socket
+import sys
+
+RESIDENT_ENV = "MTG_POOLED_COLLECT_RESIDENT"  # the resident dispatcher's socket directory
+RESIDENT_ONLY_ENV = "MTG_POOLED_COLLECT_RESIDENT_ONLY"  # "1": fail instead of collecting in this process
+RESIDENT_SCHEMA = "pooled-collect-resident/v1"
+RESIDENT_SOCKET = "dispatcher.sock"
+RESIDENT_HANDSHAKE_SECONDS = 10.0
+RESIDENT_LINE_BYTES = 1 << 20
+
+
+def _file_sha256(path: str) -> str:
+    with open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+def _read_line(conn, cap: int = RESIDENT_LINE_BYTES) -> dict | None:
+    """One newline-terminated JSON object from `conn`; None at end of input."""
+    data = bytearray()
+    while not data.endswith(b"\n"):
+        block = conn.recv(65536)
+        if not block:
+            return None
+        data.extend(block)
+        if len(data) > cap:
+            raise ValueError("message exceeds its bound")
+    value = json.loads(bytes(data))
+    if not isinstance(value, dict):
+        raise ValueError("message is not an object")
+    return value
+
+
+def _send_line(conn, value: dict) -> None:
+    conn.sendall((json.dumps(value) + "\n").encode())
+
+
+def resident_client(command: str, socket_dir: str, hosts: str | None, stderr) -> int | None:
+    """The thin client: hands `command` to the resident dispatcher at `socket_dir` and returns its exit code,
+    having written its stderr text. Returns None, with nothing started anywhere, when no resident dispatcher
+    takes the request (absent, unreachable, another hosts file or dispatcher source): the caller then collects
+    in this process. Once it has sent "go" it never returns None: a lost dispatcher is exit 1 (fail closed),
+    because the dispatcher may already have staged or merged into the attempt."""
+    if not hasattr(socket, "AF_UNIX"):
+        stderr.write("resident dispatcher: this platform has no unix sockets\n")
+        return None
+    request = {"schema": RESIDENT_SCHEMA, "command": os.path.abspath(command),
+               "hosts": os.path.abspath(hosts) if hosts else None,
+               "hosts_sha256": _file_sha256(hosts) if hosts and os.path.isfile(hosts) else None,
+               "source_sha256": _file_sha256(os.path.realpath(__file__))}
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        try:
+            conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
+            conn.connect(os.path.join(socket_dir, RESIDENT_SOCKET))
+            _send_line(conn, request)
+            answer = _read_line(conn)
+            if not answer or answer.get("ready") is not True:
+                raise RuntimeError((answer or {}).get("reason", "no answer"))
+            _send_line(conn, {"go": True})  # committed: from here on, never collect in this process
+        except (OSError, ValueError, RuntimeError) as error:
+            stderr.write(f"resident dispatcher unavailable ({error}); collecting in this process\n")
+            return None
+        try:
+            conn.settimeout(None)
+            outcome = _read_line(conn)
+        except (OSError, ValueError) as error:
+            outcome, reason = None, str(error)
+        else:
+            reason = "the resident dispatcher closed the connection"
+        if not outcome or not isinstance(outcome.get("code"), int) or not isinstance(outcome.get("stderr"), str):
+            stderr.write(f"pooled collection failed: {reason} before answering\n")
+            return 1
+        stderr.write(outcome["stderr"])
+        return outcome["code"]
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__" and len(sys.argv) == 2 and os.environ.get(RESIDENT_ENV):
+    # The program the trainer starts per update, in resident mode: only the client above runs (no further
+    # imports or definitions), unless no resident dispatcher takes the request.
+    _code = resident_client(sys.argv[1], os.environ[RESIDENT_ENV], os.environ.get("MTG_POOLED_COLLECT_CONFIG"),
+                            sys.stderr)
+    if _code is not None:
+        sys.exit(_code)
+    if os.environ.get(RESIDENT_ONLY_ENV) == "1":
+        sys.stderr.write(f"pooled collection failed: no resident dispatcher and {RESIDENT_ONLY_ENV}=1\n")
+        sys.exit(1)
+
+
 import base64
 import hashlib
 import io
@@ -84,6 +179,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import stat
 import struct
 import subprocess
@@ -652,6 +748,9 @@ class Dispatcher:
         self.calls: dict[str, dict] = {}  # host -> op -> [count, seconds], this collection
         self._cleanups: list[threading.Thread] = []
         self.collections = 0
+        self.resident = False  # set by the resident server: no start-up timing, retention after the answer
+        self.pending_prune: set | None = None
+        self.carried: list[dict] = []  # deferred retention's events, for the next receipt
 
     def note(self, **event):
         event["t"] = round(time.time(), 3)
@@ -832,22 +931,38 @@ class Dispatcher:
 
     def begin(self) -> None:
         """A new collection: its own event log, uploads and call counts; non-agent hosts' pins asked again."""
-        self.log, self.pushed, self.calls, self._cleanups = [], {}, {}, []
+        self.log, self.carried = self.carried, []
+        self.pushed, self.calls, self._cleanups = {}, {}, []
         with self._lock:
             for host in self.hosts:
                 if host.transport != "agent":
                     self.known.pop(host.name, None)
 
-    def collect(self, command_path: Path, run_merge) -> dict:
+    def collect(self, command_path: Path, run_merge, defer_prune: bool = False) -> dict:
+        """One collection. With `defer_prune` (the resident server) retention waits for prune_pending,
+        which the server runs after answering, before it takes the next request."""
         self.begin()
         try:
-            return self._collect(Path(command_path), run_merge)
+            return self._collect(Path(command_path), run_merge, defer_prune)
         finally:
             self.join_cleanups()
             self.collections += 1
 
-    def _collect(self, command_path: Path, run_merge) -> dict:
-        timing = {"since_load": round(time.time() - LOADED_AT, 3)} if self.collections == 0 else {}
+    def prune_pending(self) -> None:
+        """Retention deferred by collect(defer_prune=True); its events go into the next receipt."""
+        current, self.pending_prune = self.pending_prune, None
+        if current is None:
+            return
+        start = len(self.log)
+        try:
+            self.prune(current)
+        except Exception as error:  # noqa: BLE001  retention never fails a collection that has merged
+            self.note(event="prune-failed", error=str(error)[-200:])
+        self.carried = self.log[start:]
+
+    def _collect(self, command_path: Path, run_merge, defer_prune: bool = False) -> dict:
+        first = self.collections == 0 and not self.resident
+        timing = {"since_load": round(time.time() - LOADED_AT, 3)} if first else {}
         clock = time.monotonic()
 
         def lap(name):
@@ -906,7 +1021,10 @@ class Dispatcher:
         lap("staging_removal")
         self.join_cleanups()
         lap("cleanup_wait")
-        self.prune(input_closure(whole))
+        if defer_prune:
+            self.pending_prune = input_closure(whole)
+        else:
+            self.prune(input_closure(whole))
         lap("prune")
         receipt = {"schema": "mtg-kernel-pooled-collect-dispatch/v1", "iteration": iteration,
                    "episodes": total, "shards": [[i, f, s, results[i][1].name] for i, f, s in jobs],
@@ -3412,6 +3530,186 @@ def merge_with_binary(binary: str):
     return run_merge
 
 
+# ---------------------------------------------------------------- resident dispatcher
+#
+# `pooled_collect.py serve SOCKET_DIR [IDLE_SECONDS]` (POSIX, hosts file in MTG_POOLED_COLLECT_CONFIG) keeps one
+# Dispatcher for a run: no interpreter start or module load per update, pin knowledge across updates, and
+# retention after the answer instead of before it. The program the trainer starts per update is this file with
+# MTG_POOLED_COLLECT_RESIDENT=SOCKET_DIR: the client at the top of the file. It connects to
+# SOCKET_DIR/dispatcher.sock and sends the command; the server answers ready only for a request it will serve
+# exactly as the one-shot program would (the same hosts file bytes, the same dispatcher source); the client then
+# commits with "go"; the server runs the same collect and returns the one-shot program's exit code and stderr.
+#
+# Fallback, chosen over failing closed: until the client sends "go" nothing has started anywhere, so when no
+# server takes the request the client collects in its own process, today's path, with the same bytes (a
+# collection never depends on which process dispatches); a missing server costs time, not the attempt.
+# MTG_POOLED_COLLECT_RESIDENT_ONLY=1 fails instead (for measurements that must use the server). After "go" the
+# client never falls back: a lost server is exit 1 and the trainer's attempt fails closed, since the server may
+# already have staged or merged into the attempt (and the merge refuses an existing collect/ anyway).
+#
+# The socket directory belongs to the learner account with mode 700 (created so, refused otherwise); on Linux the
+# server also requires the peer's uid to be its own. One server per directory (a lock file). Requests are served
+# one at a time in arrival order. The server stops on SIGTERM or SIGINT, on SOCKET_DIR/STOP, or after
+# IDLE_SECONDS (default 1800) without a request; a client killed after "go" leaves its collect to finish.
+
+RESIDENT_IDLE_SECONDS = 1800.0
+
+
+def _prepare_socket_dir(path: str) -> None:
+    if not os.path.isabs(path):
+        raise ValueError("the resident socket directory must be absolute")
+    if not os.path.lexists(path):
+        os.makedirs(path, mode=0o700)
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError(f"{path} must be a directory owned by this account with mode 700")
+
+
+class ResidentServer:
+    """One dispatcher for a run, behind a unix socket (see the section above)."""
+
+    def __init__(self, socket_dir: str, hosts_path: str, idle_seconds: float = RESIDENT_IDLE_SECONDS,
+                 dispatcher: Dispatcher | None = None, merge=None, stderr=None):
+        self.socket_dir, self.hosts_path = socket_dir, os.path.abspath(hosts_path)
+        self.idle_seconds, self.stderr = idle_seconds, stderr or sys.stderr
+        self.hosts_sha256 = _file_sha256(self.hosts_path)
+        config = load_hosts(Path(self.hosts_path))
+        self.dispatcher = dispatcher or Dispatcher(config)
+        self.dispatcher.resident = True
+        self.merge = merge or merge_with_binary(config["merge_binary"])
+        self.source_sha256 = _file_sha256(os.path.realpath(__file__))
+        self.serving = threading.Lock()
+        self.stopping = threading.Event()
+        self.last = time.monotonic()
+        self.listener = None
+
+    def refusal(self, request) -> str | None:
+        if not isinstance(request, dict) or request.get("schema") != RESIDENT_SCHEMA:
+            return "not a pooled-collect-resident/v1 request"
+        command = request.get("command")
+        if not isinstance(command, str) or not os.path.isabs(command):
+            return "the command path must be absolute"
+        if request.get("hosts") != self.hosts_path or request.get("hosts_sha256") != self.hosts_sha256:
+            return "this resident dispatcher serves another hosts file (or other bytes of it)"
+        if request.get("source_sha256") != self.source_sha256:
+            return "this resident dispatcher runs another dispatcher source"
+        return None
+
+    def collect(self, command: str) -> tuple[int, str]:
+        """Exactly the one-shot program's collect: (exit code, stderr text)."""
+        try:
+            receipt = self.dispatcher.collect(Path(command), self.merge, defer_prune=True)
+        except Exception as error:  # noqa: BLE001  the trainer's attempt fails closed
+            return 1, f"pooled collection failed: {error}\n"
+        return 0, json.dumps({k: receipt[k] for k in ("iteration", "episodes", "collection_seconds",
+                                                       "failed_hosts")}) + "\n"
+
+    def handle(self, conn) -> None:
+        try:
+            conn.settimeout(RESIDENT_HANDSHAKE_SECONDS)
+            if hasattr(socket, "SO_PEERCRED"):
+                _, uid, _ = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                                struct.calcsize("3i")))
+                if uid != os.getuid():
+                    return
+            request = _read_line(conn)
+            reason = self.refusal(request)
+            if reason:
+                _send_line(conn, {"ready": False, "reason": reason})
+                return
+            _send_line(conn, {"ready": True})
+            go = _read_line(conn)
+            if not go or go.get("go") is not True:
+                return  # the client did not commit: nothing was started
+            with self.serving:
+                self.last = time.monotonic()
+                code, text = self.collect(request["command"])
+                self.stderr.write(text)
+                self.stderr.flush()
+                try:
+                    conn.settimeout(None)
+                    _send_line(conn, {"code": code, "stderr": text})
+                except OSError:
+                    pass  # the client is gone; the collection is complete either way
+                finally:
+                    conn.close()
+                self.dispatcher.prune_pending()  # retention, off the update's critical path
+                self.last = time.monotonic()
+        except (OSError, ValueError):
+            pass
+        finally:
+            conn.close()
+
+    def serve(self) -> int:
+        _prepare_socket_dir(self.socket_dir)
+        import fcntl
+        lock = open(os.path.join(self.socket_dir, "server.lock"), "a+b")
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock.close()
+            self.stderr.write(f"another resident dispatcher serves {self.socket_dir}\n")
+            return 2
+        path = os.path.join(self.socket_dir, RESIDENT_SOCKET)
+        stop_file = os.path.join(self.socket_dir, "STOP")
+        try:
+            if os.path.lexists(path):
+                os.unlink(path)  # a stale socket: this process holds the directory's lock
+            self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.listener.bind(path)
+            os.chmod(path, 0o600)
+            self.listener.listen(16)
+            self.listener.settimeout(0.5)
+            self.stderr.write(f"resident dispatcher serving {path}\n")
+            self.stderr.flush()
+            while not self.stopping.is_set():
+                if os.path.exists(stop_file):
+                    break
+                if not self.serving.locked() and time.monotonic() - self.last > self.idle_seconds:
+                    break
+                try:
+                    conn, _ = self.listener.accept()
+                except socket.timeout:
+                    continue
+                self.last = time.monotonic()
+                threading.Thread(target=self.handle, args=(conn,), daemon=True).start()
+            with self.serving:  # a collection in progress finishes before the server exits
+                pass
+            return 0
+        finally:
+            if self.listener is not None:
+                self.listener.close()
+            if os.path.lexists(path):
+                os.unlink(path)
+            lock.close()
+
+    def stop(self, *_):
+        self.stopping.set()
+
+
+def serve_main(socket_dir: str, idle: str | None, stderr) -> int:
+    config_path = os.environ.get("MTG_POOLED_COLLECT_CONFIG")
+    if not config_path:
+        stderr.write("MTG_POOLED_COLLECT_CONFIG is not set\n")
+        return 2
+    if os.name != "posix":
+        stderr.write("the resident dispatcher needs a POSIX learner (unix sockets)\n")
+        return 2
+    try:
+        server = ResidentServer(socket_dir, config_path, float(idle) if idle else RESIDENT_IDLE_SECONDS,
+                                stderr=stderr)
+    except (OSError, ValueError) as error:
+        stderr.write(f"resident dispatcher: {error}\n")
+        return 2
+    signal.signal(signal.SIGTERM, server.stop)
+    signal.signal(signal.SIGINT, server.stop)
+    try:
+        return server.serve()
+    except (OSError, ValueError) as error:
+        stderr.write(f"resident dispatcher: {error}\n")
+        return 2
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[1] == "agent":
         return agent_main(argv[2], os.environ, sys.stdin.buffer, sys.stdout.buffer, sys.stderr)
@@ -3428,6 +3726,8 @@ def main(argv: list[str]) -> int:
         return runner_check(argv[2], max_age, sys.stdout)
     if len(argv) >= 3 and argv[1] == "runner-watch":
         return runner_watch(argv[2:], sys.stdout)
+    if len(argv) in (3, 4) and argv[1] == "serve":
+        return serve_main(argv[2], argv[3] if len(argv) == 4 else None, sys.stderr)
     if len(argv) != 2:
         print("usage: pooled_collect.py ATTEMPT/collect-command.json (hosts file in MTG_POOLED_COLLECT_CONFIG)"
               " | pooled_collect.py agent AGENT_CONFIG.json (request in SSH_ORIGINAL_COMMAND)"
@@ -3435,7 +3735,9 @@ def main(argv: list[str]) -> int:
               " stops on its stop file)"
               " | pooled_collect.py runner-check AGENT_CONFIG.json [MAX_AGE_SECONDS] (exit 1 stale, 3 absent)"
               " | pooled_collect.py runner-watch AGENT_CONFIG.json --plan PLAN --chain CHAIN --cgroup DIR"
-              " [--max-age S] [--confirm-seconds S] (exit 1: root kills the chain)",
+              " [--max-age S] [--confirm-seconds S] (exit 1: root kills the chain)"
+              " | pooled_collect.py serve SOCKET_DIR [IDLE_SECONDS] (resident dispatcher; the per-update program"
+              " hands off to it with MTG_POOLED_COLLECT_RESIDENT=SOCKET_DIR)",
               file=sys.stderr)
         return 2
     config_path = os.environ.get("MTG_POOLED_COLLECT_CONFIG")

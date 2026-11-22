@@ -78,3 +78,32 @@ so nothing is pushed (a real update adds one push per host, before and after ali
 
 How to measure a real run: each `dispatch.json` has `timing` and `calls`; fixed overhead is the trainer's
 iteration wall minus the in-process wall at the same batch.
+
+## Resident dispatcher
+
+Start one per run, beside the trainer, with the run's hosts file:
+
+    MTG_POOLED_COLLECT_CONFIG=/srv/work/RUN/hosts.json pooled_collect.py serve /srv/work/RUN/.resident [IDLE_SECONDS]
+
+and give the trainer `MTG_POOLED_COLLECT_RESIDENT=/srv/work/RUN/.resident` (the `--collect-external` program
+stays `pooled_collect.py`). The socket directory is the account's, mode 700 (created so, refused otherwise); one
+server per directory; it stops on SIGTERM, on `<dir>/STOP`, or after IDLE_SECONDS (default 1800) idle.
+
+The per-update program then runs only a small client at the top of the file (no other imports): it sends the
+command with the hash of its hosts file and of the dispatcher source; the server answers ready only when both
+match its own, the client commits, and the server runs the same collect and returns the one-shot exit code and
+stderr. What the server keeps: no interpreter start or module load per update, pin knowledge on agent hosts
+across updates (only the new checkpoint is asked for), the learner's input hashes, and retention run after the
+answer (its events go into the next receipt).
+
+Fallback, not fail closed, when no server takes the request: until the client commits nothing has started, and a
+one-shot collection gives the same bytes, so a missing server costs time instead of the attempt.
+`MTG_POOLED_COLLECT_RESIDENT_ONLY=1` fails instead, for measurements that must use the server. After the commit
+the client never falls back: a lost server is exit 1 and the attempt fails closed (the server may have staged or
+merged; the merge refuses an existing `collect/` anyway). A client killed after its commit leaves the collection
+to finish; the next request waits for it.
+
+Measured (WSL, two local hosts, 9 games, start-up dominated): the per-update program took 0.196 s one-shot and
+0.113 s handing off to the server (median of 9 updates each), so about 0.08 s per update from process start and
+module load alone; on agent hosts the server also skips the retention requests (one storage marker and one owned
+removal per retaining host) on the update's path.
