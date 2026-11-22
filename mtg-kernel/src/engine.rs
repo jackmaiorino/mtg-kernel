@@ -15068,7 +15068,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             abort_cast(state, pending, cast_method);
             return None;
         }
-        if viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+        if viable_modes.len() == 1
+            && !state
+                .engine
+                .spellbench_neutral_v1
+                .neutral_choices_for(pending.controller)
+        {
             state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(viable_modes[0]);
             return drain_pending_cast_or_decide(state);
         }
@@ -15862,7 +15867,12 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     source: pending.source,
                 });
             }
-            if candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices {
+            if candidates.len() == 1
+                && !state
+                    .engine
+                    .spellbench_neutral_v1
+                    .neutral_choices_for(pending.controller)
+            {
                 state
                     .engine
                     .pending_activation
@@ -24619,7 +24629,7 @@ pub(crate) fn step_without_linked_aura_v1(
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
             let viable_modes = viable_pending_spell_forms(def, pending, state);
-            if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
+            if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.neutral_choices_for(pending.controller))
                 || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));
             }
@@ -31920,6 +31930,69 @@ mod tests {
                 .spellbench_neutral_v1
                 .revealed_partition
                 .is_none());
+        }
+    }
+
+    #[test]
+    fn trainer_choices_preserve_the_choice_between_forests_and_auto_return_a_sole_forest() {
+        for trainer in [false, true] {
+            for forest_count in [1, 2] {
+                let mut state = empty_game();
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+                state.step = Step::Main1;
+                let p = PlayerId::P0;
+                let ranger = put_on_battlefield(&mut state, p, "Quirion Ranger");
+                let forests: Vec<_> = (0..forest_count)
+                    .map(|_| put_on_battlefield(&mut state, p, "Forest"))
+                    .collect();
+                begin_activation(&mut state, p, ranger, 0);
+                step(&mut state, Action::ChooseTarget(Target::Object(ranger))).unwrap();
+                let choice = drain_pending_activation_or_decide(&mut state);
+                let returned = *forests.last().unwrap();
+                if trainer && forest_count == 1 {
+                    assert!(choice.is_none());
+                } else {
+                    assert!(
+                        matches!(choice, Some(Decision::ChooseCostTargets { candidates, .. }) if candidates == forests)
+                    );
+                    step(&mut state, Action::ChooseCostTarget(returned)).unwrap();
+                    assert!(drain_pending_activation_or_decide(&mut state).is_none());
+                }
+                assert_eq!(state.objects.get(returned).zone, Zone::Hand);
+                assert_eq!(state.stack.last().unwrap().source, ranger);
+            }
+        }
+    }
+
+    #[test]
+    fn trainer_choices_preserve_both_spell_forms_and_auto_choose_a_sole_omen() {
+        for trainer in [false, true] {
+            for green in [1, 5] {
+                let mut state = empty_game();
+                state.engine.spellbench_neutral_v1.choices = true;
+                state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+                state.step = Step::Main1;
+                let p = PlayerId::P0;
+                state.players[p.index()].mana_pool[ManaColor::G.pool_index()] = green;
+                let spell = put_in_hand(&mut state, p, "Sagu Wildling");
+                begin_cast(&mut state, p, spell);
+                if trainer && green == 1 {
+                    let before = state.clone();
+                    assert!(step(&mut state, Action::ChooseSpellMode(1)).is_err());
+                    assert_eq!(state, before);
+                    assert!(drain_pending_cast_or_decide(&mut state).is_none());
+                } else {
+                    let expected = if green == 1 { vec![1] } else { vec![0, 1] };
+                    assert!(matches!(drain_pending_cast_or_decide(&mut state),
+                        Some(Decision::ChooseSpellMode { legal_modes, .. }) if legal_modes == expected));
+                    step(&mut state, Action::ChooseSpellMode(1)).unwrap();
+                    assert!(drain_pending_cast_or_decide(&mut state).is_none());
+                }
+                let paid = state.stack.last().unwrap();
+                assert_eq!(paid.source, spell);
+                assert_eq!(paid.mode_chosen, 1);
+            }
         }
     }
 
