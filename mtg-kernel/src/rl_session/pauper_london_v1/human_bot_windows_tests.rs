@@ -556,6 +556,7 @@ fn shared_bot_input_after_persons_winding_way_graveyard_order() {
 
 #[test]
 fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
+    let mut extra_bot_decisions = [0; 2];
     for (bot, last_shared) in [(0, 277), (1, 65)] {
         let played = play(
             ["Spy", "Spy"],
@@ -570,8 +571,14 @@ fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
         if bot == 0 {
             assert!(played.person_revealed_order_picks >= 3, "{played:?}");
         }
+        extra_bot_decisions[bot] = played.bot_neutral_only;
         println!("Spy seat {bot}: {played:?}");
     }
+    assert_eq!(
+        extra_bot_decisions,
+        [0, 0],
+        "the production trainer has no corresponding decisions"
+    );
 }
 
 #[test]
