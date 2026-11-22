@@ -226,7 +226,9 @@ jobs:
           # tests compile out), the Limited-only shards (the shared case list
           # is pinned to the x86-64 build) and limited-protocols (a cold
           # self-hosted build exceeds its 15-minute step limits).
-          MAC_ELIGIBLE: '["eternal-integration", "workspace-targets", "native-store", "standard", "limited-store", "limited", "limited-model", "limited-model-1", "limited-model-2", "limited-model-3", "limited-model-4", "limited-model-5", "limited-model-6", "limited-model-7", "limited-model-8", "limited-model-9", "limited-v5", "python-shard-0", "python-shard-1"]'
+          # limited-model-4 and -7 also stay hosted pending arm64 parity.
+          # Their compilers were killed in measurement run 44986774810.
+          MAC_ELIGIBLE: '["eternal-integration", "workspace-targets", "native-store", "standard", "limited-store", "limited", "limited-model", "limited-model-1", "limited-model-2", "limited-model-3", "limited-model-5", "limited-model-6", "limited-model-8", "limited-model-9", "limited-v5", "python-shard-0", "python-shard-1"]'
           SCOPE: ${{ steps.scope.outputs.scope }}
           PYTHON_RELEVANT: ${{ steps.classify.outputs.python_relevant }}
           RUST_RELEVANT: ${{ steps.classify.outputs.rust_relevant }}
