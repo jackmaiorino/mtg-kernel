@@ -159,6 +159,8 @@ struct Played {
     neutral_only_several: u64,
     person_revealed_order_picks: u64,
     bot_after_person_revealed_order: u64,
+    /// Against the production trainer: the first difference, if any.
+    diverged: Option<String>,
     shared: u64,
     finished: bool,
 }
@@ -288,6 +290,20 @@ fn play(
     let context = |what: &str, at: u64| {
         format!("{decks:?} seed {seed} bot p{bot} person windows {person_windows} choice profile {comparison:?}: {what} at shared decision {at}")
     };
+    // Keep the first mismatch for each normal-training game so the matrix
+    // can report all affected deals before enforcing equality.
+    macro_rules! require_eq {
+        ($left:expr, $right:expr, $what:expr) => {{
+            let (left, right) = (&$left, &$right);
+            if left != right {
+                if neutral_training {
+                    panic!("{}: {:?} vs {:?}", context($what, out.shared), left, right);
+                }
+                out.diverged = Some(format!("{} at shared decision {}", $what, out.shared));
+                return out;
+            }
+        }};
+    }
     loop {
         let response = raw.current_response();
         copy.verify(&raw, &response).unwrap_or_else(|error| {
@@ -334,14 +350,17 @@ fn play(
             };
             if !shared && !neutral_training {
                 let rows = copy.row_candidate_ids(decision).unwrap();
-                assert!(
-                    !matches!(comparison, NeutralComparison::TrainerChoicesForBot)
-                        || seat_index(decision.acting_player) != bot,
-                    "{} bridge {:?} training {:?}",
-                    context("unmatched trained bot decision", out.shared),
-                    copy.fast_session().diagnostic_current_action_semantics(),
-                    training.diagnostic_current_action_semantics()
-                );
+                if matches!(comparison, NeutralComparison::TrainerChoicesForBot)
+                    && seat_index(decision.acting_player) == bot
+                {
+                    out.diverged = Some(format!(
+                        "{} bridge {:?} training {:?}",
+                        context("unmatched trained bot decision", out.shared),
+                        copy.fast_session().diagnostic_current_action_semantics(),
+                        training.diagnostic_current_action_semantics()
+                    ));
+                    return out;
+                }
                 out.neutral_only_several += u64::from(rows.len() > 1);
                 let person_order = if seat_index(decision.acting_player) != bot && rows.len() > 1 {
                     person_revealed_order_pick(&raw, &training, decision, &rows)
@@ -375,12 +394,7 @@ fn play(
             }
         }
         if neutral_training {
-            assert_eq!(
-                training.game_state(),
-                raw.game_state(),
-                "{}",
-                context("game state", out.shared)
-            );
+            require_eq!(training.game_state(), raw.game_state(), "game state");
         }
         let ahead = out.person_engine_windows + out.neutral_only;
         let (theirs, ours) = match (training.current_response(), response) {
@@ -388,76 +402,70 @@ fn play(
                 (theirs, ours)
             }
             (FastActorResponseV1::Terminal(theirs), RlSessionResponseV1::Terminal(ours)) => {
-                assert_eq!(
+                require_eq!(
                     (
                         theirs.terminal_outcome,
                         theirs.winner,
                         &theirs.terminal_reason
                     ),
                     (ours.terminal_outcome, ours.winner, &ours.terminal_reason),
-                    "{}",
-                    context("terminal", out.shared)
+                    "terminal"
                 );
                 out.finished = true;
                 return out;
             }
-            _ => panic!(
-                "{}",
-                context("one game ended and the other did not", out.shared)
-            ),
+            _ => {
+                if neutral_training {
+                    panic!(
+                        "{}",
+                        context("one game ended and the other did not", out.shared)
+                    );
+                }
+                out.diverged = Some(format!("one game ended at shared decision {}", out.shared));
+                return out;
+            }
         };
         if out.shared >= max_shared {
             return out;
         }
-        assert_eq!(
-            theirs.acting_player,
-            ours.acting_player,
-            "{}",
-            context("acting seat", out.shared)
-        );
-        assert_eq!(
+        require_eq!(theirs.acting_player, ours.acting_player, "acting seat");
+        require_eq!(
             (theirs.substep_index, theirs.substep_count),
             (ours.substep_index, ours.substep_count),
-            "{}",
-            context("substep", out.shared)
+            "substep"
         );
-        assert_eq!(
+        require_eq!(
             training.diagnostic_current_action_semantics(),
             copy.fast_session().diagnostic_current_action_semantics(),
-            "{}",
-            context("menu", out.shared)
+            "menu"
         );
         // The session counters differ by exactly the bridge-only decisions.
-        assert_eq!(
+        require_eq!(
             (training.policy_step_count() + ahead, theirs.step + ahead),
             (raw.policy_step_count(), ours.step),
-            "{}",
-            context("counters", out.shared)
+            "counters"
         );
         let rows = copy.row_candidate_ids(&ours).unwrap();
         if seat_index(ours.acting_player) == bot {
             out.bot_decisions += 1;
             out.bot_after_person_revealed_order += u64::from(out.person_revealed_order_picks > 0);
             let marker = training.priority_pass_window_v1().unwrap();
-            assert_eq!(
+            require_eq!(
                 marker,
                 copy.fast_session().priority_pass_window_v1().unwrap(),
-                "{}",
-                context("new-window marker", out.shared)
+                "new-window marker"
             );
             // The bridge marks exactly the trainer's new windows.
-            assert_eq!(
+            require_eq!(
                 marker.is_some(),
                 raw.engine_window_v1().is_some(),
-                "{}",
-                context("support mark", out.shared)
+                "support mark"
             );
             out.bot_new_windows += u64::from(marker.is_some());
-            assert_eq!(
+            require_eq!(
                 tensor(&training, &rows, &mut scratch),
                 tensor(copy.fast_session(), &rows, &mut scratch),
-                "{}",
-                context("model input", out.shared)
+                "model input"
             );
         }
         let row = (rng.next_u64() % rows.len() as u64) as usize;
@@ -533,9 +541,25 @@ fn trainer_partition_preserves_shared_spy_bot_decisions_in_both_seats() {
 }
 
 #[test]
+fn rally_against_spy_matches_the_normal_trainer_through_terminal() {
+    let played = play(
+        ["Rally", "Spy"],
+        7,
+        0xB0_0000 + 1114,
+        0,
+        true,
+        NeutralComparison::TrainerChoicesForBot,
+        8_000,
+    );
+    assert!(played.finished && played.diverged.is_none(), "{played:?}");
+    assert!(played.bot_decisions > 10, "{played:?}");
+}
+
+#[test]
 fn the_bot_on_action_windows_plays_the_training_session() {
     let mut total = Played::default();
     let mut games = 0;
+    let mut diverged = Vec::new();
     for (index, deck) in DECKS.iter().enumerate() {
         let other = DECKS[(index + 3) % DECKS.len()];
         for (pairing, decks) in [[*deck, *deck], [*deck, other]].into_iter().enumerate() {
@@ -565,14 +589,20 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         if neutral_training {
                             assert_eq!(played.neutral_only, 0);
                         }
-                        assert!(
-                            played.finished,
-                            "{decks:?} seed {seed} bot p{bot}: not finished ({played:?})"
-                        );
-                        assert!(
-                            played.bot_decisions > 10,
-                            "{decks:?} seed {seed}: {played:?}"
-                        );
+                        if neutral_training || played.diverged.is_none() {
+                            assert!(
+                                played.finished,
+                                "{decks:?} seed {seed} bot p{bot}: not finished ({played:?})"
+                            );
+                        } else {
+                            diverged.push(format!("{decks:?} seed {seed} bot p{bot}: {played:?}"));
+                        }
+                        if played.diverged.is_none() {
+                            assert!(
+                                played.bot_decisions > 10,
+                                "{decks:?} seed {seed}: {played:?}"
+                            );
+                        }
                         if !person_windows {
                             assert_eq!(played.person_engine_windows, 0);
                         }
@@ -593,6 +623,18 @@ fn the_bot_on_action_windows_plays_the_training_session() {
         }
     }
     println!("human bot windows proof: {games} games, {total:?}");
+    println!(
+        "against the production trainer, {} of {} games diverged:",
+        diverged.len(),
+        games / 2
+    );
+    for line in &diverged {
+        println!("  {line}");
+    }
+    assert!(
+        diverged.is_empty(),
+        "production comparison failed: {diverged:#?}"
+    );
     // The proof is not vacuous: the bot meets new windows and the person
     // meets engine windows the training game does not have.
     assert!(total.bot_new_windows > 100, "{total:?}");
