@@ -5228,6 +5228,18 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
     }
 }
 
+fn target_selection_neutral_order(
+    profile: &SpellbenchNeutralStateV1,
+    purpose: &EffectTargetSelectionPurpose,
+) -> bool {
+    match purpose {
+        EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { player, .. } => {
+            profile.neutral_choices_for(*player)
+        }
+        _ => profile.choices,
+    }
+}
+
 /// Records one target in an effect-owned selection. Exact-count selections
 /// auto-append every forced remaining target, so an N-card ordering exposes
 /// only N-1 picks. Validation precedes mutation, making stale, duplicate, or
@@ -5317,6 +5329,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     };
     let exact_five = matches!(purpose, EffectTargetSelectionPurpose::SelectObjectsV1 { rule, .. } if rule.action == ObjectSelectionActionV1::TapFiveThenTransformSource);
     let choice_profile = &state.engine.spellbench_neutral_v1;
+    let neutral_order = target_selection_neutral_order(choice_profile, purpose);
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
         selected,
@@ -5345,7 +5358,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         selected.append(legal);
     }
     if selected.len() == usize::from(*max_targets) {
-        complete_resumable_target_selection(continuation, fiend_artisan, choice_profile)?;
+        complete_resumable_target_selection(continuation, fiend_artisan, neutral_order)?;
     }
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
@@ -5379,6 +5392,7 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
     let PendingEffectChoice::SelectTargets {
         selected,
         min_targets,
+        purpose,
         ..
     } = choice
     else {
@@ -5428,10 +5442,12 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
+    let neutral_order =
+        target_selection_neutral_order(&state.engine.spellbench_neutral_v1, purpose);
     complete_resumable_target_selection(
         state.engine.pending_effect.as_mut().unwrap(),
         fiend_artisan,
-        &state.engine.spellbench_neutral_v1,
+        neutral_order,
     )?;
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
@@ -5999,7 +6015,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
 fn complete_resumable_target_selection(
     continuation: &mut EffectContinuation,
     fiend_artisan: bool,
-    choice_profile: &SpellbenchNeutralStateV1,
+    neutral_choices: bool,
 ) -> Result<(), String> {
     let choice = continuation
         .choice
@@ -6785,7 +6801,7 @@ fn complete_resumable_target_selection(
             },
             path,
             objects,
-            choice_profile.neutral_choices_for(player),
+            neutral_choices,
         )?,
         EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
             player,
@@ -6810,7 +6826,7 @@ fn complete_resumable_target_selection(
             },
             path,
             objects,
-            choice_profile.choices,
+            neutral_choices,
         )?,
         EffectTargetSelectionPurpose::DiscardBasicLandInstead {
             player,
