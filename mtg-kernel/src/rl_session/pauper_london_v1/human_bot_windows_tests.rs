@@ -239,11 +239,32 @@ fn play(
                         && training.diagnostic_current_action_semantics()
                             == copy.fast_session().diagnostic_current_action_semantics()
                 }
-                FastActorResponseV1::Terminal(_) => false,
+                FastActorResponseV1::Terminal(_) => {
+                    // The training game is over and the bridge's is not.
+                    if !neutral_training {
+                        out.diverged = Some(format!(
+                            "the training game ended first at shared decision {}",
+                            out.shared
+                        ));
+                        return out;
+                    }
+                    false
+                }
             };
             if !shared && !neutral_training {
-                // A choice training resolves itself (a forced discard, a
-                // forced number), posed by neutral choices: one answer.
+                // Only a choice can be bridge-only: a priority window (a menu
+                // with Pass) that differs is a divergence.
+                let priority = copy
+                    .fast_session()
+                    .diagnostic_current_action_semantics()
+                    .is_some_and(|menu| {
+                        menu.iter()
+                            .any(|action| matches!(action, ActionSemanticV1::Pass { .. }))
+                    });
+                if priority {
+                    out.diverged = Some(format!("menu at shared decision {}", out.shared));
+                    return out;
+                }
                 // Neutral choices pose choices training resolves itself (a
                 // forced discard, a forced number, all of a forced target
                 // set, one substep at a time). Answered with the first row:
