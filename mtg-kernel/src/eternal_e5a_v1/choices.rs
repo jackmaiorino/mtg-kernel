@@ -128,6 +128,10 @@ pub(crate) fn drive(
             );
             Ok(false)
         }
+        E5aOpV1::ExileGraveyardTargetsAfterDrawV1 { first, spec } => {
+            exile_after_draw(state, continuation, *first, *spec);
+            Ok(false)
+        }
         E5aOpV1::ScryTargetXV1 { slot } => {
             let Some(&Target::Player(scrier)) = continuation.ctx.targets.get(usize::from(*slot))
             else {
@@ -301,6 +305,7 @@ fn kozilek(
             });
         }
     }
+    let mut draws = false;
     if let Some(slot) = scry.filter(|&slot| legal_player(slot)) {
         if x > 0 {
             ops.push(e5a(E5aOpV1::ScryTargetXV1 { slot }));
@@ -309,16 +314,54 @@ fn kozilek(
             player: PlayerRef::Target(slot),
             count: 1,
         });
+        draws = true;
     }
     if let Some(slot) = creature {
         ops.push(e5a(E5aOpV1::ExileCreatureManaValueAtMostXV1 { slot, spec }));
     }
     if let Some(first) = cards {
-        ops.push(e5a(E5aOpV1::ExileGraveyardTargetsV1 { first, spec }));
+        ops.push(e5a(if draws {
+            E5aOpV1::ExileGraveyardTargetsAfterDrawV1 { first, spec }
+        } else {
+            E5aOpV1::ExileGraveyardTargetsV1 { first, spec }
+        }));
     }
     for op in ops.into_iter().rev() {
         push(continuation, op, path);
     }
+}
+
+/// Kozilek's Command's graveyard exile after its draw. The draw's triggers
+/// are matched as the draw happens (CR 603.2): Sneaky Snacker drawn into its
+/// third card triggers from the graveyard even though this same resolution
+/// then exiles it. Just before a nonempty exile batch commits, the earlier
+/// events are captured with the resolving spell at its stack position and
+/// held for the resolution's checkpoint, which orders them with the exile's
+/// own triggers under APNAP (CR 603.3b).
+fn exile_after_draw(
+    state: &mut GameState,
+    continuation: &EffectContinuation,
+    first: u8,
+    spec: TargetSpec,
+) {
+    let exiled = super::execute::graveyard_targets(&continuation.ctx, state, first, spec);
+    if exiled.is_empty() {
+        return;
+    }
+    if !state.engine.event_log.is_empty() {
+        let captures = crate::trigger::capture_triggers_without_sba_owning(
+            state,
+            &continuation.resolving_item,
+        );
+        if state.engine.halted.is_some() {
+            return;
+        }
+        if !captures.is_empty() || crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state)
+        {
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, captures);
+        }
+    }
+    super::execute::exile_graveyard_targets(state, exiled);
 }
 
 /// Kozilek's Command: "Exile target creature with mana value X or less"

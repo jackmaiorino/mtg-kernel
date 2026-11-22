@@ -264,6 +264,11 @@ pub enum E5aOpV1 {
     CouncilCopyV1,
     /// The Endstone's land-play trigger: draw a card.
     EndstoneDrawV1,
+    /// Kozilek's Command's graveyard exile after its draw mode in the same
+    /// resolution: `ExileGraveyardTargetsV1`, whose nonempty exile batch first
+    /// captures the triggers of the earlier draw while their sources are
+    /// still in the graveyard (CR 603.2).
+    ExileGraveyardTargetsAfterDrawV1 { first: u8, spec: TargetSpec },
 }
 
 fn e5a(op: E5aOpV1) -> EffectOp {

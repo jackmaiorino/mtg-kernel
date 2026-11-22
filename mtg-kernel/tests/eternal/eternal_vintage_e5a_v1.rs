@@ -1048,6 +1048,181 @@ fn kozilek_command_makes_spawn_and_scries_or_exiles_a_creature_and_cards() {
     assert_eq!(zone(&state, second), Zone::Exile);
 }
 
+fn kozilek_draw_and_exile(
+    state: &mut GameState,
+    active: PlayerId,
+    draw_player: PlayerId,
+    targets: &[ObjectId],
+) {
+    let command = put(state, active, "Kozilek's Command", Zone::Hand);
+    pool(
+        state,
+        active,
+        &[ManaColor::C; 2],
+        u8::try_from(targets.len()).unwrap(),
+    );
+    act(state, Action::CastSpell(command));
+    assert!(
+        matches!(next(state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes.contains(&4))
+    );
+    act(state, Action::ChooseSpellMode(4));
+    choose_target(state, Target::Player(draw_player));
+    for &target in targets {
+        choose_target(state, Target::Object(target));
+    }
+    let mut decision = next(state);
+    if matches!(
+        decision,
+        Decision::ChooseTargets {
+            can_finish: true,
+            ..
+        }
+    ) {
+        act(state, Action::FinishEffectSelection);
+        decision = next(state);
+    }
+    if matches!(
+        decision,
+        Decision::ChooseEffectOption {
+            option_count: 1,
+            ..
+        }
+    ) {
+        act(state, Action::ChooseEffectOption(0));
+        decision = next(state);
+    }
+    assert!(
+        matches!(decision, Decision::CastSpellOrPass { .. }),
+        "{decision:?}"
+    );
+    assert_eq!(
+        usize::from(state.stack.last().unwrap().v4.x_value),
+        targets.len()
+    );
+    for _ in 0..24 {
+        let decision = next(state);
+        if zone(state, command) == Zone::Graveyard {
+            break;
+        }
+        let action = match decision {
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            other => first_answer(other),
+        };
+        act(state, action);
+    }
+    assert_eq!(zone(state, command), Zone::Graveyard);
+}
+
+#[test]
+fn kozilek_command_draws_the_third_card_before_exiling_sneaky_snacker() {
+    for player in [P0, P1] {
+        let mut state = islands();
+        state.active_player = player;
+        state.priority_player = player;
+        state.players[player.index()].draws_this_turn = 2;
+        let snacker = put(&mut state, player, "Sneaky Snacker", Zone::Graveyard);
+        let graveyard_generation = state.objects.get(snacker).zone_change_count;
+        kozilek_draw_and_exile(&mut state, player, player, &[snacker]);
+        assert_eq!(state.players[player.index()].draws_this_turn, 3);
+        assert_eq!(zone(&state, snacker), Zone::Exile);
+        let [trigger] = state.stack.as_slice() else {
+            panic!(
+                "expected one Snacker trigger after Command, got {:?}",
+                state.stack
+            );
+        };
+        assert_eq!(trigger.source, snacker);
+        let source = trigger.v4.ability_source_contract.unwrap();
+        assert_eq!(
+            (source.zone, source.zone_change_count),
+            (Zone::Graveyard, graveyard_generation)
+        );
+        settle_first(&mut state);
+        assert_eq!(zone(&state, snacker), Zone::Exile);
+    }
+}
+
+fn kozilek_third_draw_apnap(active: PlayerId) {
+    let draw_player = active.opponent();
+    let mut state = islands();
+    state.active_player = active;
+    state.priority_player = active;
+    let skimmer = put(&mut state, active, "Kishla Skimmer", Zone::Hand);
+    pool(&mut state, active, &[ManaColor::G, ManaColor::U], 0);
+    cast(&mut state, skimmer, &[]);
+    settled(&mut state);
+    let snacker = put(&mut state, draw_player, "Sneaky Snacker", Zone::Graveyard);
+    let graveyard_generation = state.objects.get(snacker).zone_change_count;
+    let active_graveyard_card = put(&mut state, active, "Island", Zone::Graveyard);
+    for draw_number in 1..=2 {
+        let cantrip = put(&mut state, draw_player, "Mental Note", Zone::Hand);
+        pool(&mut state, draw_player, &[ManaColor::U], 0);
+        pass_until(&mut state, |s| s.priority_player == draw_player);
+        cast(&mut state, cantrip, &[]);
+        settle_first(&mut state);
+        assert_eq!(
+            state.players[draw_player.index()].draws_this_turn,
+            draw_number
+        );
+    }
+    assert_eq!(state.active_player, active);
+    let active_draws_before = state.players[active.index()].draws_this_turn;
+    kozilek_draw_and_exile(
+        &mut state,
+        active,
+        draw_player,
+        &[snacker, active_graveyard_card],
+    );
+    assert_eq!(zone(&state, active_graveyard_card), Zone::Exile);
+    assert_eq!(zone(&state, snacker), Zone::Exile);
+    assert_eq!(state.players[draw_player.index()].draws_this_turn, 3);
+    let actual: Vec<_> = state
+        .stack
+        .iter()
+        .map(|row| (row.source, row.controller))
+        .collect();
+    let snackers: Vec<_> = state
+        .stack
+        .iter()
+        .filter(|row| row.source == snacker)
+        .collect();
+    let [snacker_trigger] = snackers.as_slice() else {
+        panic!("expected one historical Snacker in stack (bottom to top) {actual:?} for active {active:?}; Skimmer {skimmer:?}, Snacker {snacker:?}");
+    };
+    let origin = snacker_trigger.v4.ability_source_contract.unwrap();
+    assert_eq!(
+        (origin.zone, origin.zone_change_count),
+        (Zone::Graveyard, graveyard_generation)
+    );
+    assert_eq!(
+        actual,
+        vec![(skimmer, active), (snacker, draw_player)],
+        "active {active:?}: order of the draw and graveyard-exile triggers",
+    );
+    pass_until(&mut state, |s| s.stack.len() == 1);
+    assert_eq!(state.stack[0].source, skimmer);
+    assert_eq!(zone(&state, snacker), Zone::Exile);
+    assert_eq!(
+        state.players[active.index()].draws_this_turn,
+        active_draws_before
+    );
+    settle_first(&mut state);
+    assert_eq!(
+        state.players[active.index()].draws_this_turn,
+        active_draws_before + 1
+    );
+    assert_eq!(zone(&state, snacker), Zone::Exile);
+}
+
+#[test]
+fn kozilek_third_draw_and_graveyard_exile_apnap_p0() {
+    kozilek_third_draw_apnap(P0);
+}
+#[test]
+fn kozilek_third_draw_and_graveyard_exile_apnap_p1() {
+    kozilek_third_draw_apnap(P1);
+}
+
 // ---- Triggered abilities -------------------------------------------------------
 
 #[test]
