@@ -31,6 +31,21 @@ Paths are one namespace across hosts: a trajectory records the absolute paths
 of its sources, so every collector must see the recipe's inputs at the paths
 the learner uses (a common root such as /srv/work/pooled-20261120 on every
 Linux host, WSL guest and the Mac's Linux VM).
+
+Two more entry points run on collector hosts:
+
+    pooled_collect.py agent AGENT_CONFIG.json    the forced command of the learner's restricted key: serves
+                                                 one confined request (seven operations) per connection
+    pooled_collect.py runner AGENT_CONFIG.json   the box runner: started by root inside a W5 box as the
+                                                 collector account, it runs the collectors the agent hands
+                                                 it through `<scratch>/.spool`, so they use the box's CPUs
+
+With the agent config's `"executor": {"kind": "spool"}` the agent's run_shard keeps every check it makes and
+hands the run to the runner instead of starting the collector itself (a process started by sshd cannot leave
+its session scope for a box). Without `executor` (or with {"kind": "direct"}) nothing changes. The collector,
+its argv, working directory, inputs and sandbox are the same either way, so a shard's bytes do not depend on
+the executor. The runner stops on its stop file (default `<scratch>/.spool/STOP`) and writes an end record
+(default `<scratch>/.spool/END.json`); see the box runner section below.
 """
 from __future__ import annotations
 
@@ -50,6 +65,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import types
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -842,7 +858,14 @@ class Dispatcher:
 # a filesystem quota or a size-limited volume is the hard bound. And at most max_concurrent_runs
 # collectors (default 2), each holding a non-blocking slot lock under `<scratch>/.locks` that the
 # kernel releases when its agent dies. A busy or full collector refuses (exit 2); the dispatcher then
-# treats that host as failed for the collection and moves the shard on.
+# treats that host as failed for the collection and moves the shard on. With the spool executor the agent
+# holds its slot while it waits, and the box runner also runs at most max_concurrent_runs at once.
+#
+# Spool executor: the box runner confines itself right after loading its config with runner_rules (the agent's
+# minus writes to the pin roots) and confines every collector with collector_rules, so the kernel enforcement
+# above holds for the collector unchanged. The spool
+# lies in the scratch root, which the agent's own operations reach only through tag-shaped names; a request
+# cannot name, write or remove a spool file, and remove_shard removes only a stale result or cancel of its tag.
 #
 # The userspace checks stay because they refuse precisely and early: no-follow opens, singly linked
 # outputs, exact output and tag paths, printable ASCII paths, inputs within the pin roots with their
@@ -872,6 +895,19 @@ AGENT_ARGS = {"pin_status": {"pins"}, "push": {"path", "sha256"}, "put_shard": {
               "run_shard": {"tag", "collector_sha256", "seconds"}, "fetch_shard": {"tag"},
               "remove_shard": {"tag"}, "remove_pin": {"path", "sha256"}}
 AGENT_SANDBOXES = ("landlock", "none")
+EXECUTORS = ("direct", "spool")
+SPOOL_EXECUTOR_KEYS = {"kind", "heartbeat_seconds", "stop_grace_seconds", "stop_file", "end_file"}
+SPOOL_DIR = ".spool"  # under the scratch root, mode 700: the agent's and the box runner's queue
+SPOOL_RESERVED = {"runner.lock", "runner.heartbeat"}
+SPOOL_REQUEST_SCHEMA = "pooled-collect-spool-request/v1"
+SPOOL_RESULT_SCHEMA = "pooled-collect-spool-result/v1"
+RUNNER_END_SCHEMA = "pooled-collect-runner-end/v1"
+SPOOL_FILE_BYTES = 64 * 1024  # one request or result file
+SPOOL_POLL_SECONDS = 0.1
+SPOOL_RESULT_GRACE = 30  # the agent waits this long past a run's seconds for the runner's own timeout result
+SPOOL_CANCEL_GRACE = 10  # after a cancel, the agent waits this long for the runner to report the kill
+SPOOL_SWEEP_SECONDS = 5.0
+SPOOL_STAGE_AGE = 60.0  # a stage file older than this was left by a crash
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 BINARY = getattr(os, "O_BINARY", 0)
 
@@ -996,9 +1032,9 @@ def collector_rules(config: dict, command_file: str, run_dir: str) -> list:
             + [(command_file, LL_READ_FILE, True), (run_dir, LL_READ | LL_WRITE, True)])
 
 
-def agent_sandbox(config: dict) -> str:
-    """Applies the configured sandbox to this process; returns the effective one ("none" or
-    "landlock-abiN"). Refuses when Landlock is configured and the kernel has none."""
+def agent_sandbox(config: dict, rules: list | None = None) -> str:
+    """Applies the configured sandbox to this process (agent_rules, or the given `rules`); returns the
+    effective one ("none" or "landlock-abiN"). Refuses when Landlock is configured and the kernel has none."""
     if config["sandbox"] == "none":
         config["landlock_abi"] = 0
         return "none"
@@ -1009,7 +1045,7 @@ def agent_sandbox(config: dict) -> str:
     hashlib.sha256(b"").hexdigest()  # OpenSSL reads its configuration now, before /etc closes
     if os.name == "posix":
         import fcntl  # noqa: F401  the per-path locks need it later
-    ruleset = landlock_ruleset(agent_rules(config), abi)
+    ruleset = landlock_ruleset(agent_rules(config) if rules is None else rules, abi)
     try:
         landlock_restrict(ruleset)
     finally:
@@ -1119,7 +1155,39 @@ def load_agent_config(path: Path) -> dict:
         config[key] = config.get(key, default)
         if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < least:
             raise ValueError(f"agent {key} must be an integer of at least {least}")
+    config["executor"] = _load_executor(config)
     return config
+
+
+def _load_executor(config: dict) -> dict:
+    """The optional `executor`: absent or {"kind": "direct"} runs the collector as the agent's own child (the
+    original behaviour); {"kind": "spool", ...} hands each run to the box runner (see BoxRunner)."""
+    executor = config.get("executor")
+    if executor is None:
+        return {"kind": "direct"}
+    if not isinstance(executor, dict) or executor.get("kind") not in EXECUTORS or not set(executor) <= (
+            {"kind"} if executor.get("kind") == "direct" else SPOOL_EXECUTOR_KEYS):
+        raise ValueError(f"agent executor must be {{\"kind\": \"direct\"}} or {{\"kind\": \"spool\"}} with "
+                         f"optional {sorted(SPOOL_EXECUTOR_KEYS - {'kind'})}")
+    executor = dict(executor)
+    if executor["kind"] == "direct":
+        return executor
+    if os.name != "posix" or not hasattr(os, "waitid"):
+        raise ValueError("the spool executor needs a POSIX collector host")
+    for key, default, least in (("heartbeat_seconds", 10, 1), ("stop_grace_seconds", 300, 0)):
+        executor[key] = executor.get(key, default)
+        if not isinstance(executor[key], int) or isinstance(executor[key], bool) or executor[key] < least:
+            raise ValueError(f"agent executor {key} must be an integer of at least {least}")
+    spool = os.path.join(config["scratch"], SPOOL_DIR)
+    for key, default in (("stop_file", "STOP"), ("end_file", "END.json")):
+        executor[key] = path = executor.get(key, os.path.join(spool, default))
+        name = os.path.basename(path) if isinstance(path, str) else None
+        if name is None or os.path.dirname(path) != spool or not _portable_name(name) \
+                or name.startswith("pooled-") or name in SPOOL_RESERVED:
+            raise ValueError(f"agent executor {key} must be a plain file directly in {spool}")
+    if executor["stop_file"] == executor["end_file"]:
+        raise ValueError("agent executor stop_file and end_file must differ")
+    return executor
 
 
 def _pin_arg(args: dict, config: dict) -> tuple[str, str]:
@@ -1491,6 +1559,707 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
     return (process.returncode if exited else "timeout"), bytes(tail).decode(errors="replace")
 
 
+# ---------------------------------------------------------------- box runner (executor "spool")
+#
+# Why: on a W5 node the CPUs that do the work are the boxes (exclusive cgroup v2 partitions that only root
+# creates). sshd starts the agent in the user's session scope, on the off-box CPUs, and an unprivileged
+# process cannot move itself into a box. So root starts `pooled_collect.py runner CONFIG` inside a box as the
+# collector account (as a w5box chain command), and the agent hands each run to it through a queue directory,
+# `<scratch>/.spool` (mode 700, owned by the account; no request operation can name or reach it). The collector
+# is the same binary with the same argv shape, working directory, inputs and Landlock rules, so a shard's bytes
+# do not depend on the executor; only the CPUs it runs on do.
+#
+# A job is one run_shard: its id is the 32 hex digits of the agent's private command copy
+# `<scratch>/.run/<tag>.<job>.json`. Spool files, all for one tag unless named otherwise, all written privately
+# and renamed into place within this one directory (Landlock ABI 1 allows that), so each is a singly linked
+# regular file and never partial:
+#   <tag>.lock     the waiting agent's liveness: an exclusive flock the agent holds from before it submits until
+#                  it leaves (the file appears already locked); the kernel frees it when the agent dies, so a free
+#                  lock means nobody waits for the job: it is not started, or it is killed
+#   <tag>.request  the submission: job, tag, the command copy's sha256, seconds, submission time, the runner
+#                  generation it was submitted to, and the binding of the agent's execution config. No path: the
+#                  runner derives every path from the tag and the job
+#   <tag>.running  the runner's claim (the request renamed)
+#   <tag>.result   the answer for that job, published only after the collector's process group is killed and the
+#                  collector reaped: exit code or "timeout", last 4 KB of stderr, wall seconds, or an error
+#   <tag>.cancel   the agent gave up on that job: the runner kills its process group
+#   runner.lock    held by the one runner serving this spool, for its lifetime
+#   runner.heartbeat  the runner's generation and identity; touched every heartbeat_seconds / 4 by its loop
+#   STOP, END.json the configured stop file (no new job; running jobs finish or are cancelled once
+#                  stop_grace_seconds pass; exit 0) and the runner's own end record
+# Submission, claim and removal of a tag are serialized by the tag's lock under `<scratch>/.locks`. The runner
+# enforces each job's deadline from its submission time (queue time included), at most max_concurrent_runs
+# running jobs (a job keeps its place until its group is killed and reaped), and drops a request whose agent has
+# gone. It never reruns anything: a job claimed when it starts (its predecessor died) and a request submitted to
+# an earlier generation are answered as failed. remove_shard refuses while a job of its tag is submitted or
+# running; fetch_shard refuses while one is.
+#
+# The runner is single threaded (no thread exists when it forks a collector with preexec_fn): one loop polls
+# the collectors' stderr pipes, their exits, cancels, departed agents, deadlines, the stop file and the
+# heartbeat. It confines itself (runner_rules: the pin roots read only, the scratch root read and write) before
+# anything else, after closing inherited descriptors, and each collector further with collector_rules. The
+# collector gets a fixed environment, SPOOL_ENV, not the runner's.
+#
+# Root's step (w5box `run`, one named box, as the collector account; the runner refuses uid, gid or a
+# supplementary group 0 and any effective or permitted capability):
+#   binary  /usr/bin/setpriv (pinned by sha256; w5box spawns as root and requires argv[0] to be the binary)
+#   argv    ["/usr/bin/setpriv", "--reuid=mtg", "--regid=mtg", "--init-groups", "--inh-caps=-all",
+#            "--bounding-set=-all", "--no-new-privs", "--", "/usr/bin/python3", "-I",
+#            "<tools>/pooled_collect.py", "runner", "<agent.json>"]
+#   config  the agent config (w5box requires the pinned config to appear in argv); w5box pins neither the
+#           script nor the collector: keep both immutable, at versioned paths, for the runner's lifetime
+#   no "handoff"; memory_max_bytes sized for max_concurrent_runs collectors.
+# Authoritative end: w5box's close record of the instance. The runner's END.json is written when it can (stop
+# file, signal, error), not after SIGKILL or a cgroup kill. Before a replacement runner starts after a failure,
+# the instance must be closed by w5box, which kills and verifies empty the chain cgroup (collector descendants
+# included); `w5box.py run` and `recover` do that. A hung runner shows as a stale heartbeat (agents refuse at
+# once and learners fail over); its jobs' deadlines are not enforced while it hangs, so root's watch over the
+# heartbeat age (kill the chain past a bound) is the watchdog. The runner ignores W5_CONTROL_DIR (no pause
+# handshake): `w5box.py pause --now` freezes it, which agents also see as a stale heartbeat.
+
+SPOOL_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+SPOOL_REQUEST_KEYS = {"schema", "job", "tag", "command_sha256", "seconds", "submitted_unix", "generation",
+                      "binding"}
+SPOOL_JOB = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _execution_binding(config: dict) -> str:
+    """What makes a collector run: an agent submits only to a runner whose config binds the same."""
+    keys = ("collector", "collector_sha256", "prefix", "run_paths", "pin_roots", "scratch", "sandbox")
+    return hashlib.sha256(json.dumps({k: config[k] for k in keys}, sort_keys=True).encode()).hexdigest()
+
+
+def runner_rules(config: dict) -> list:
+    """The runner's own confinement: system reads and programs, the pin roots read only (its collectors read
+    them), the scratch root read and write (spool, command snapshots, run directories)."""
+    return (_system_rules(config) + [(root, LL_READ, True) for root in config["pin_roots"]]
+            + [(config["scratch"], LL_READ | LL_WRITE, True)])
+
+
+def _spool_dir(config: dict) -> str:
+    """`<scratch>/.spool`, created mode 700; refused unless it is a directory of this account that no other
+    account can reach."""
+    path = os.path.join(config["scratch"], SPOOL_DIR)
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise AgentRefusal("the spool must be a directory of this account with mode 700")
+    return path
+
+
+def _spool_files(spool: str, tag: str) -> dict:
+    return {kind: os.path.join(spool, f"{tag}.{kind}") for kind in ("lock", "request", "running", "result", "cancel")}
+
+
+def _unlink_quiet(path: str) -> bool:
+    try:
+        os.unlink(path)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _spool_write(path: str, value: dict) -> None:
+    """Publishes a complete JSON file at `path`, written privately and renamed into place."""
+    stage = os.path.join(os.path.dirname(path), f".{os.path.basename(path)}.{uuid.uuid4().hex}.tmp")
+    _write_new(stage, json.dumps(value).encode(), SPOOL_FILE_BYTES)
+    try:
+        os.replace(stage, path)
+    finally:
+        _unlink_quiet(stage)
+
+
+def _read_single(path: str, cap: int) -> bytes | None:
+    """A singly linked regular file's bytes, opened without following a symlink, within `cap`; None if absent."""
+    try:
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError(f"{os.path.basename(path)!r} is not a singly linked regular file")
+        data = handle.read(cap + 1)
+    if len(data) > cap:
+        raise ValueError(f"{os.path.basename(path)!r} exceeds its bound")
+    return data
+
+
+def _spool_read(path: str) -> dict | None:
+    data = _read_single(path, SPOOL_FILE_BYTES)
+    if data is None:
+        return None
+    value = json.loads(data)
+    if not isinstance(value, dict):
+        raise ValueError(f"spool entry {os.path.basename(path)!r} is not a JSON object")
+    return value
+
+
+def _agent_gone(lock_path: str) -> bool:
+    """True when no agent waits behind `<tag>.lock`: the file is absent or its flock is free."""
+    import fcntl
+    try:
+        fd = os.open(lock_path, os.O_RDONLY | NOFOLLOW)
+    except OSError:
+        return True
+    with os.fdopen(fd, "rb") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True  # closing releases it
+
+
+def _tag_lock(config: dict, tag: str):
+    """Serializes submission, claim and removal of one tag across the agent's connections and the runner."""
+    return _lock(config, "spool:" + tag)
+
+
+def _spool_job_lock(spool: str, tag: str):
+    """The agent's `<tag>.lock`, created already flocked (a private file locked, then linked into place), so
+    the runner never sees it unlocked while the agent lives. A second job of the tag is refused."""
+    import fcntl
+    stage = os.path.join(spool, f".{tag}.lock.{uuid.uuid4().hex}.tmp")
+    handle = os.fdopen(os.open(stage, os.O_RDWR | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600), "r+b")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            os.link(stage, os.path.join(spool, f"{tag}.lock"))
+        except FileExistsError:
+            raise AgentRefusal("another job of this tag holds the spool") from None
+    except BaseException:
+        handle.close()
+        raise
+    finally:
+        _unlink_quiet(stage)
+    return handle
+
+
+def _runner_problem(config: dict, starting: bool) -> str | None:
+    """Why no box runner can take (`starting`) or keep serving a job, or None: its stop file exists (starting
+    only: a stopping runner still finishes what it holds), or its heartbeat is missing or stale."""
+    executor = config["executor"]
+    if starting and os.path.lexists(executor["stop_file"]):
+        return "the box runner is stopping (its stop file exists)"
+    try:
+        info = os.lstat(os.path.join(config["scratch"], SPOOL_DIR, "runner.heartbeat"))
+    except FileNotFoundError:
+        return "no box runner serves this collector's spool"
+    if not stat.S_ISREG(info.st_mode):
+        return "the box runner's heartbeat is not a regular file"
+    age = time.time() - info.st_mtime
+    if age > executor["heartbeat_seconds"]:
+        return f"the box runner's heartbeat is {age:.0f} s old (limit {executor['heartbeat_seconds']} s)"
+    return None
+
+
+def _spool_take(path: str, tag: str, job: str) -> dict | None:
+    """Reads and removes the runner's result for this job; None while there is none. A malformed, oversized
+    or mismatched result refuses."""
+    try:
+        result = _spool_read(path)
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
+        _unlink_quiet(path)
+        raise AgentRefusal(f"malformed box runner result: {str(error)[:200]}") from None
+    if result is None:
+        return None
+    _unlink_quiet(path)
+    code, tail, error = result.get("code"), result.get("stderr"), result.get("error")
+    if set(result) != {"schema", "job", "tag", "generation", "code", "stderr", "seconds", "error"} \
+            or result["schema"] != SPOOL_RESULT_SCHEMA or result["tag"] != tag or result["job"] != job \
+            or not isinstance(tail, str) or len(tail) > AGENT_STDERR_TAIL \
+            or not (error is None or isinstance(error, str)) \
+            or not (code in ("timeout", None) or (type(code) is int)) or (error is None) == (code is None):
+        raise AgentRefusal("malformed or mismatched box runner result")
+    return result
+
+
+def _spool_cancel(config: dict, tag: str, files: dict, job: str) -> None:
+    """Withdraws this job's unclaimed request, or asks the runner to kill it once claimed."""
+    with _tag_lock(config, tag):
+        try:
+            pending = _spool_read(files["request"])
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            pending = None
+        if pending is not None and pending.get("job") == job:
+            _unlink_quiet(files["request"])
+        elif os.path.lexists(files["running"]):
+            _spool_write(files["cancel"], {"job": job})
+
+
+def _spool_run(config: dict, tag: str, job: str, command_sha256: str, seconds: int):
+    """The agent's side of a spooled job: submits it, waits for its result and returns what _run_collector
+    returns, (exit code or "timeout", stderr tail). A result reporting an error (an orphan after a runner
+    restart, a stop, a refusal) or a runner whose heartbeat stops refuses, so the learner fails the host over.
+    The agent stops waiting at its own deadline (seconds plus SPOOL_RESULT_GRACE, then SPOOL_CANCEL_GRACE for
+    the kill to be reported) whether or not its cancel lands; every exit without a result cancels, and its
+    death frees its lock, which the runner treats as a cancel."""
+    spool = _spool_dir(config)
+    files = _spool_files(spool, tag)
+    with _tag_lock(config, tag):
+        lock = _spool_job_lock(spool, tag)
+        try:
+            if any(os.path.lexists(files[kind]) for kind in ("request", "running", "result", "cancel")):
+                raise AgentRefusal("the spool already holds this tag (remove_shard first)")
+            problem = _runner_problem(config, starting=True)
+            if problem:
+                raise AgentRefusal(problem)
+            try:
+                heartbeat = _spool_read(os.path.join(spool, "runner.heartbeat")) or {}
+            except (ValueError, UnicodeDecodeError, RecursionError):
+                heartbeat = {}
+            generation = heartbeat.get("generation")
+            if not isinstance(generation, str) or not SPOOL_JOB.fullmatch(generation):
+                raise AgentRefusal("the box runner's heartbeat names no generation")
+            if sum(name.endswith(".request") for name in os.listdir(spool)) >= config["max_concurrent_runs"]:
+                raise AgentRefusal("collector busy: the box runner's queue is full")
+            submitted = time.time()
+            _spool_write(files["request"], {"schema": SPOOL_REQUEST_SCHEMA, "job": job, "tag": tag,
+                                            "command_sha256": command_sha256, "seconds": seconds,
+                                            "submitted_unix": submitted, "generation": generation,
+                                            "binding": _execution_binding(config)})
+        except BaseException:
+            _unlink_quiet(files["lock"])
+            lock.close()
+            raise
+    result = None
+    try:
+        give_up = time.monotonic() + seconds + SPOOL_RESULT_GRACE
+        while result is None:
+            result = _spool_take(files["result"], tag, job)
+            if result is not None:
+                break
+            problem = _runner_problem(config, starting=False)
+            if problem:
+                raise AgentRefusal(f"{problem} during the run; the shard was not rerun")
+            if time.monotonic() >= give_up:
+                try:
+                    _spool_cancel(config, tag, files, job)
+                except OSError:
+                    pass  # the agent stops waiting either way; its departure frees the lock
+                confirm = time.monotonic() + SPOOL_CANCEL_GRACE
+                while result is None and time.monotonic() < confirm \
+                        and (os.path.lexists(files["running"]) or os.path.lexists(files["result"])):
+                    time.sleep(SPOOL_POLL_SECONDS)
+                    result = _spool_take(files["result"], tag, job)
+                return "timeout", result["stderr"] if result else ""
+            time.sleep(SPOOL_POLL_SECONDS)
+        if result["error"] is not None:
+            raise AgentRefusal(f"box runner: {result['error'][:300]}")
+        return result["code"], result["stderr"]
+    finally:
+        with _alarm_deferred():  # the request alarm never interrupts the cancel
+            try:
+                if result is None:
+                    _spool_cancel(config, tag, files, job)
+                else:
+                    _unlink_quiet(files["cancel"])
+            except OSError:
+                pass
+            finally:
+                _unlink_quiet(files["lock"])
+                lock.close()
+
+
+def _spool_discard(files: dict) -> None:
+    for kind in ("result", "cancel", "lock"):
+        _unlink_quiet(files[kind])
+
+
+def _spool_forget(config: dict, tag: str) -> None:
+    """remove_shard's part, before anything of the tag is deleted: refuses while a job of the tag is submitted
+    by a waiting agent or running; removes an abandoned request and a stale result or cancel."""
+    spool = os.path.join(config["scratch"], SPOOL_DIR)
+    if not os.path.isdir(spool) or os.path.islink(spool):
+        return
+    files = _spool_files(spool, tag)
+    with _tag_lock(config, tag):
+        if os.path.lexists(files["running"]) or not _agent_gone(files["lock"]):
+            raise AgentRefusal("a job of this tag is active: it ends with its run_shard")
+        _unlink_quiet(files["request"])
+        _spool_discard(files)
+
+
+def _spool_active(config: dict, tag: str) -> bool:
+    spool = os.path.join(config["scratch"], SPOOL_DIR)
+    files = _spool_files(spool, tag)
+    return os.path.lexists(files["request"]) or os.path.lexists(files["running"])
+
+
+def _launch_spooled(config: dict, command_file: str, run_dir: str):
+    """Starts the collector as _run_collector does (argv shape, working directory, its own process group,
+    parent-death signal, collector_rules under Landlock), with SPOOL_ENV and a non-blocking stderr pipe that
+    the runner's loop drains (no thread)."""
+    argv = list(config["prefix"]) + [config["collector"], "--execute-collect-shard", command_file]
+    preexec, ruleset = _collector_preexec(config, command_file, run_dir)
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE, start_new_session=True, preexec_fn=preexec,
+                                   cwd=run_dir, env=dict(SPOOL_ENV))
+    finally:
+        if ruleset is not None:
+            os.close(ruleset)
+    os.set_blocking(process.stderr.fileno(), False)
+    return process
+
+
+def _drain_nonblocking(job) -> bool:
+    """Moves what the collector's stderr pipe holds now into the job's tail; True at end of stream."""
+    while True:
+        try:
+            block = os.read(job.process.stderr.fileno(), 1 << 16)
+        except BlockingIOError:
+            return False
+        if not block:
+            return True
+        job.tail.extend(block)
+        del job.tail[:-AGENT_STDERR_TAIL]
+
+
+def _utc() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+class BoxRunner:
+    """Serves one spool from one thread: claims requests, runs each collector in its own process group (at
+    most max_concurrent_runs at once), answers each job once, and honours cancels, deadlines, departed agents
+    and the stop file. Takes work only from the spool; opens no network connection."""
+
+    def __init__(self, config: dict, identity: dict | None = None):
+        self.config, self.executor = config, config["executor"]
+        self.spool = _spool_dir(config)
+        self.heartbeat = os.path.join(self.spool, "runner.heartbeat")
+        self.generation = uuid.uuid4().hex
+        self.binding = _execution_binding(config)
+        self.identity = identity or {}
+        self.jobs: dict[str, types.SimpleNamespace] = {}
+        self.counts = {"jobs_run": 0, "jobs_failed": 0, "jobs_refused": 0, "orphans_failed": 0}
+        self.signalled = False
+        self.stop_seen = None
+
+    def serve(self) -> str:
+        """Runs until the stop file (reason "stop-file") or a signal ("signal"); returns the reason."""
+        import fcntl
+        lock = os.fdopen(os.open(os.path.join(self.spool, "runner.lock"), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600),
+                         "r+b")
+        try:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RunnerBusy("another box runner serves this spool") from None
+            if os.path.lexists(self.executor["stop_file"]):
+                return "stop-file"  # a late start exits at once; the operator removes the stop file
+            self.recover()
+            _spool_write(self.heartbeat, dict(self.identity, generation=self.generation, pid=os.getpid(),
+                                              started_utc=_utc()))
+            beat_every = max(0.2, self.executor["heartbeat_seconds"] / 4)
+            next_beat = next_sweep = 0.0
+            while True:
+                now = time.monotonic()
+                if now >= next_beat:
+                    os.utime(self.heartbeat)
+                    next_beat = now + beat_every
+                self.watch()
+                if self.signalled:
+                    self.cancel_all("the box runner was stopped by a signal during this run; the shard was not rerun")
+                    return "signal"
+                stopping = os.path.lexists(self.executor["stop_file"])
+                if stopping and self.stop_seen is None:
+                    self.stop_seen = now
+                self.claim(stopping)
+                if stopping:
+                    if not self.jobs:
+                        return "stop-file"
+                    if now - self.stop_seen >= self.executor["stop_grace_seconds"]:
+                        self.cancel_all("the box runner stopped (stop file, grace over) during this run; "
+                                        "the shard was not rerun")
+                        return "stop-file"
+                if now >= next_sweep:
+                    self.sweep()
+                    next_sweep = now + SPOOL_SWEEP_SECONDS
+                self.wait_streams(SPOOL_POLL_SECONDS)
+        finally:
+            try:
+                self.cancel_all("the box runner ended during this run; the shard was not rerun")
+            finally:
+                _unlink_quiet(self.heartbeat)
+                lock.close()
+
+    def wait_streams(self, seconds: float) -> None:
+        """Sleeps up to `seconds`, waking to drain any collector's stderr as it arrives."""
+        import select
+        streams = {job.process.stderr.fileno(): job for job in self.jobs.values() if not job.eof}
+        if not streams:
+            time.sleep(seconds)
+            return
+        ready, _, _ = select.select(list(streams), [], [], seconds)
+        for fd in ready:
+            streams[fd].eof = _drain_nonblocking(streams[fd])
+
+    def answer(self, tag: str, files: dict, job: str | None, error: str) -> None:
+        self.finish(tag, files, {"job": job, "code": None, "stderr": "", "seconds": 0.0, "error": error})
+
+    def recover(self) -> None:
+        """A job claimed by a runner that died is answered as failed, never run again; requests are handled by
+        claim (an earlier generation's are refused, abandoned ones dropped)."""
+        for name in sorted(os.listdir(self.spool)):
+            tag, _, kind = name.rpartition(".")
+            if kind == "running" and AGENT_TAG.fullmatch(tag):
+                files = _spool_files(self.spool, tag)  # only a runner writes or removes a claim
+                try:
+                    job = (_spool_read(files["running"]) or {}).get("job")
+                except (ValueError, UnicodeDecodeError, RecursionError):
+                    job = None
+                self.counts["orphans_failed"] += 1
+                self.answer(tag, files, job if isinstance(job, str) else None,  # finish takes the tag's lock
+                            "the box runner restarted during this run; the shard was not rerun")
+
+    def claim(self, stopping: bool) -> None:
+        for name in sorted(os.listdir(self.spool)):
+            tag, _, kind = name.rpartition(".")
+            if kind != "request" or not AGENT_TAG.fullmatch(tag) or tag in self.jobs:
+                continue
+            if not stopping and len(self.jobs) >= self.config["max_concurrent_runs"]:
+                return
+            files = _spool_files(self.spool, tag)
+            with _tag_lock(self.config, tag):
+                if os.path.lexists(files["running"]) or os.path.lexists(files["result"]):
+                    continue  # never replaces another job's state
+                try:
+                    os.rename(files["request"], files["running"])
+                except FileNotFoundError:
+                    continue  # withdrawn
+            self.start(tag, files, "the box runner is stopping; the shard was not run" if stopping else None)
+
+    def start(self, tag: str, files: dict, refuse: str | None) -> None:
+        job_id = None
+        try:
+            request = _spool_read(files["running"])
+            if request is None:
+                return
+            job_id = request.get("job") if isinstance(request.get("job"), str) else None
+            if _agent_gone(files["lock"]):  # nobody waits: dropped unrun
+                _unlink_quiet(files["running"])
+                _spool_discard(files)
+                return
+            if refuse:
+                raise ValueError(refuse)
+            data, run_dir, deadline = self.validate(tag, request)
+            snapshot = os.path.join(self.config["scratch"], ".run", f"{tag}.{uuid.uuid4().hex}.json")
+            _write_new(snapshot, data, AGENT_SHARD_BYTES)
+            try:
+                process = _launch_spooled(self.config, snapshot, run_dir)
+            except BaseException:
+                os.unlink(snapshot)
+                raise
+        except Exception as error:  # noqa: BLE001  answered as refused, the runner keeps serving
+            self.counts["jobs_refused"] += 1
+            self.answer(tag, files, job_id, f"{type(error).__name__}: {str(error)[:300]}")
+            return
+        self.counts["jobs_run"] += 1
+        self.jobs[tag] = types.SimpleNamespace(files=files, job=job_id, process=process, tail=bytearray(), eof=False,
+                                               snapshot=snapshot, started=time.monotonic(), deadline=deadline)
+
+    def validate(self, tag: str, request: dict) -> tuple[bytes, str, float]:
+        """A claimed request's exact schema, its submission to this generation under the same execution config,
+        a deadline from its submission time (queue time included, capped by max_seconds) not yet passed, and the
+        command copy derived from tag and job: singly linked, with the submitted sha256, writing exactly to its
+        run directory. Returns (the command bytes to snapshot, run directory, monotonic deadline)."""
+        if set(request) != SPOOL_REQUEST_KEYS or request["schema"] != SPOOL_REQUEST_SCHEMA or request["tag"] != tag \
+                or not isinstance(request["job"], str) or not SPOOL_JOB.fullmatch(request["job"]) \
+                or not isinstance(request["command_sha256"], str) \
+                or type(request["seconds"]) is not int or request["seconds"] < 1 \
+                or type(request["submitted_unix"]) not in (int, float):
+            raise ValueError("malformed spool request")
+        if request["generation"] != self.generation:
+            raise ValueError("submitted to an earlier box runner; the shard was not run")
+        if request["binding"] != self.binding:
+            raise ValueError("the agent's execution config (collector, prefix, roots) differs from this runner's")
+        seconds = min(request["seconds"], self.config["max_seconds"])
+        remaining = request["submitted_unix"] + seconds - time.time()
+        if remaining <= 0:
+            raise ValueError("the job's deadline passed while it was queued")
+        scratch = self.config["scratch"]
+        run_dir = os.path.join(scratch, tag)
+        if not stat.S_ISDIR(os.lstat(run_dir).st_mode):
+            raise ValueError("the job's run directory is not a directory")
+        data = _read_single(os.path.join(scratch, ".run", f"{tag}.{request['job']}.json"), AGENT_SHARD_BYTES)
+        if data is None or hashlib.sha256(data).hexdigest() != request["command_sha256"]:
+            raise ValueError("the job's command copy is absent or not the submitted bytes")
+        command = json.loads(data)
+        if not isinstance(command, dict) or command.get("output_directory") != os.path.join(run_dir, "out"):
+            raise ValueError("the job's command does not write exactly to its run directory")
+        if _hash_nofollow(self.config["collector"]) != self.config["collector_sha256"]:
+            raise ValueError("collector binary differs from its pin")
+        return data, run_dir, time.monotonic() + min(remaining, seconds)
+
+    def watch(self) -> None:
+        for tag, job in list(self.jobs.items()):
+            exited = _wait_exit(job.process, 0)
+            if exited or self.cancelled(job) or _agent_gone(job.files["lock"]) or time.monotonic() >= job.deadline:
+                self.end(tag, exited, None)
+
+    @staticmethod
+    def cancelled(job) -> bool:
+        try:
+            return (_spool_read(job.files["cancel"]) or {}).get("job") == job.job
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            return True  # an unreadable cancel still cancels
+
+    def end(self, tag: str, exited: bool, error: str | None) -> None:
+        """Kills the job's whole process group and reaps the collector, then answers (as _run_collector ends);
+        the job holds its place until then."""
+        job = self.jobs[tag]
+        _kill_group(job.process)
+        job.process.wait()
+        if not job.eof:
+            job.eof = _drain_nonblocking(job)  # what is left; a descendant that escaped could hold the pipe open
+        job.process.stderr.close()
+        _unlink_quiet(job.snapshot)
+        code = job.process.returncode if exited else "timeout"
+        if error is not None or code != 0:
+            self.counts["jobs_failed"] += 1
+        del self.jobs[tag]
+        self.finish(tag, job.files, {"job": job.job, "code": None if error else code,
+                                     "stderr": bytes(job.tail).decode(errors="replace")[-AGENT_STDERR_TAIL:],
+                                     "seconds": round(time.monotonic() - job.started, 3), "error": error})
+
+    def finish(self, tag: str, files: dict, fields: dict) -> None:
+        with _tag_lock(self.config, tag):
+            try:
+                _spool_write(files["result"], {"schema": SPOOL_RESULT_SCHEMA, "tag": tag,
+                                               "generation": self.generation, **fields})
+            finally:
+                _unlink_quiet(files["running"])
+            if _agent_gone(files["lock"]):  # nobody will read it
+                _spool_discard(files)
+
+    def cancel_all(self, error: str) -> None:
+        for tag, job in list(self.jobs.items()):
+            exited = _wait_exit(job.process, 0)
+            self.end(tag, exited, None if exited else error)
+
+    def sweep(self) -> None:
+        """Removes crash leftovers: old stage files, requests whose agent has gone, and results, cancels and
+        locks no agent waits on."""
+        now = time.time()
+        for name in os.listdir(self.spool):
+            path = os.path.join(self.spool, name)
+            if name.startswith(".") and name.endswith(".tmp"):
+                try:
+                    if now - os.lstat(path).st_mtime > SPOOL_STAGE_AGE:
+                        os.unlink(path)
+                except FileNotFoundError:
+                    pass
+                continue
+            tag, _, kind = name.rpartition(".")
+            if kind in ("request", "result", "cancel", "lock") and AGENT_TAG.fullmatch(tag) and tag not in self.jobs:
+                files = _spool_files(self.spool, tag)
+                with _tag_lock(self.config, tag):
+                    if not os.path.lexists(files["running"]) and _agent_gone(files["lock"]):
+                        _unlink_quiet(files["request"])
+                        _spool_discard(files)
+
+
+class RunnerBusy(RuntimeError):
+    """Another runner holds the spool: this one exits without an end record (the record is the live runner's)."""
+
+
+def _runner_identity() -> dict:
+    """Where the runner runs, read before the sandbox closes /proc: its cgroup, CPUs and W5 box variables."""
+    identity = {key.lower(): os.environ[key] for key in ("W5_CHAIN", "W5_BOX_SLOT", "W5_BOX_CPUS")
+                if key in os.environ}
+    try:
+        identity["cgroup"] = Path("/proc/self/cgroup").read_text()[:400].strip()
+    except OSError:
+        pass
+    if hasattr(os, "sched_getaffinity"):
+        identity["cpus"] = format_cpus(sorted(os.sched_getaffinity(0)))
+    return identity
+
+
+def _require_unprivileged() -> None:
+    """The runner runs as the collector account only: no uid, gid or supplementary group 0, and (Linux) no
+    effective or permitted capability."""
+    if 0 in (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) or 0 in os.getgroups():
+        raise ValueError("the box runner runs as the collector account, never as root or group root")
+    try:
+        status = Path("/proc/self/status").read_text()
+    except OSError:
+        return  # not Linux
+    for line in status.splitlines():
+        key, _, value = line.partition(":")
+        if key in ("CapEff", "CapPrm") and int(value.strip(), 16):
+            raise ValueError(f"the box runner holds capabilities ({key} {value.strip()}): drop them at launch")
+
+
+def format_cpus(cpus: list[int]) -> str:
+    """1,2,3,7 -> "1-3,7"."""
+    runs, start = [], None
+    for i, cpu in enumerate(cpus):
+        if start is None:
+            start = cpu
+        if i + 1 == len(cpus) or cpus[i + 1] != cpu + 1:
+            runs.append(str(start) if start == cpu else f"{start}-{cpu}")
+            start = None
+    return ",".join(runs)
+
+
+def runner_main(config_path: str, stderr) -> int:
+    """`pooled_collect.py runner CONFIG`, started by root inside a box as the collector account. Exit 0 after
+    the stop file or a signal, 1 on failure, 2 for an unusable config or a privileged launch. Writes its end
+    record at every exit after the config loaded, except when another runner holds the spool."""
+    started = _utc()
+    try:
+        import resource
+        os.closerange(3, min(resource.getrlimit(resource.RLIMIT_NOFILE)[0], 1 << 16))  # nothing inherited
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        config = load_agent_config(Path(config_path))
+        if config["executor"]["kind"] != "spool":
+            raise ValueError("the box runner needs the agent config's executor {\"kind\": \"spool\"}")
+        _require_unprivileged()
+    except Exception as error:  # noqa: BLE001
+        stderr.write(f"refused: {type(error).__name__}: {str(error)[:300]}\n")
+        return 2
+    identity, runner, code, previous = _runner_identity(), None, 1, {}
+    try:
+        import select  # noqa: F401  loaded before the sandbox closes everything but its rules
+        config["sandbox_effective"] = agent_sandbox(config, runner_rules(config))  # before any thread or child
+        runner = BoxRunner(config, dict(identity, sandbox=config["sandbox_effective"]))
+
+        def stop(*_):
+            runner.signalled = True
+        for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+            number = getattr(signal, name)
+            previous[number] = signal.signal(number, stop)
+        reason, code = runner.serve(), 0
+    except RunnerBusy as error:
+        stderr.write(f"refused: {error}\n")
+        return 1
+    except Exception as error:  # noqa: BLE001  recorded, never a traceback
+        reason = f"error: {type(error).__name__}: {str(error)[:300]}"
+        stderr.write(f"failed: {reason}\n")
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+    counts = runner.counts if runner else {"jobs_run": 0, "jobs_failed": 0, "jobs_refused": 0, "orphans_failed": 0}
+    try:
+        _spool_dir(config)
+        _spool_write(config["executor"]["end_file"], dict(
+            counts, schema=RUNNER_END_SCHEMA, reason=reason, started_utc=started, ended_utc=_utc(),
+            pid=os.getpid(), generation=runner.generation if runner else None,
+            sandbox=config.get("sandbox_effective", "not applied"), **identity))
+    except Exception as error:  # noqa: BLE001
+        stderr.write(f"failed: end record not written: {type(error).__name__}: {str(error)[:200]}\n")
+        code = code or 1
+    return code
+
+
 def agent_serve(config: dict, encoded, stdin, stdout) -> None:
     """Serves one request; raises AgentRefusal for anything outside the seven operations and their
     confinement. Results go to `stdout` (JSON, or a tar for fetch_shard)."""
@@ -1579,6 +2348,11 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         command = _valid_shard_command(data, tag, config)  # again, just before use
         if _hash_nofollow(config["collector"]) != config["collector_sha256"]:
             raise AgentRefusal("collector binary differs from its pin")
+        spool = config.get("executor", {}).get("kind") == "spool"
+        if spool:  # no live box runner: refused before anything is created, so the learner fails over at once
+            problem = _runner_problem(config, starting=True)
+            if problem:
+                raise AgentRefusal(problem)
         _require_floor(config, [scratch, *config["pin_roots"]])
         with _run_slot(config):  # held until the collector is reaped; no free slot refuses
             # `<scratch>/<tag>` is the collector's run directory, the only place it may write. It exists
@@ -1594,14 +2368,18 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
             # Run a private copy of the validated command, so the file the collector reads is the one checked.
             private_dir = os.path.join(scratch, ".run")
             os.makedirs(private_dir, mode=0o700, exist_ok=True)
-            private = os.path.join(private_dir, f"{tag}.{uuid.uuid4().hex}.json")
+            job = uuid.uuid4().hex  # the spool executor's job id
+            private = os.path.join(private_dir, f"{tag}.{job}.json")
             body = json.dumps(command).encode()
             if len(body) > AGENT_SHARD_BYTES:
                 raise AgentRefusal("shard command exceeds its bound once serialized")
             _require_floor(config, [private_dir])
-            _write_new(private, body, AGENT_SHARD_BYTES)
+            body_sha256 = _write_new(private, body, AGENT_SHARD_BYTES)
             try:
-                code, tail = _run_collector(config, private, run_dir, seconds)
+                if spool:  # the same command, run by the box runner on the box's CPUs
+                    code, tail = _spool_run(config, tag, job, body_sha256, seconds)
+                else:
+                    code, tail = _run_collector(config, private, run_dir, seconds)
                 reply({"code": code, "stderr": tail})
             finally:
                 os.unlink(private)
@@ -1609,6 +2387,8 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         tag = _tag_arg(args)
         _no_more_input(stdin)
         directory = os.path.join(scratch, tag, "out")
+        if config.get("executor", {}).get("kind") == "spool" and _spool_active(config, tag):
+            raise AgentRefusal("a job of this tag is active: its output is not complete")
         for level in (os.path.dirname(directory), directory):
             try:
                 info = os.lstat(level)
@@ -1635,6 +2415,8 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
     elif op == "remove_shard":
         tag = _tag_arg(args)
         _no_more_input(stdin)
+        if config.get("executor", {}).get("kind") == "spool":
+            _spool_forget(config, tag)  # refuses while a job of the tag is active, before anything is deleted
         directory = os.path.join(scratch, tag)
         if os.path.lexists(directory):
             if os.path.islink(directory) or not os.path.isdir(directory):
@@ -1868,9 +2650,13 @@ def merge_with_binary(binary: str):
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[1] == "agent":
         return agent_main(argv[2], os.environ, sys.stdin.buffer, sys.stdout.buffer, sys.stderr)
+    if len(argv) == 3 and argv[1] == "runner":
+        return runner_main(argv[2], sys.stderr)
     if len(argv) != 2:
         print("usage: pooled_collect.py ATTEMPT/collect-command.json (hosts file in MTG_POOLED_COLLECT_CONFIG)"
-              " | pooled_collect.py agent AGENT_CONFIG.json (request in SSH_ORIGINAL_COMMAND)", file=sys.stderr)
+              " | pooled_collect.py agent AGENT_CONFIG.json (request in SSH_ORIGINAL_COMMAND)"
+              " | pooled_collect.py runner AGENT_CONFIG.json (box runner for the executor \"spool\";"
+              " stops on its stop file)", file=sys.stderr)
         return 2
     config_path = os.environ.get("MTG_POOLED_COLLECT_CONFIG")
     if not config_path:
