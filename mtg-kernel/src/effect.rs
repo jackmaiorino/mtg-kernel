@@ -939,6 +939,7 @@ use crate::card_def::{
     self, CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, PermanentFilter,
     PermanentFilterDef, Subtype,
 };
+use crate::engine::SpellbenchNeutralStateV1;
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
@@ -5315,7 +5316,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         None
     };
     let exact_five = matches!(purpose, EffectTargetSelectionPurpose::SelectObjectsV1 { rule, .. } if rule.action == ObjectSelectionActionV1::TapFiveThenTransformSource);
-    let neutral_choices = state.engine.spellbench_neutral_v1.choices;
+    let choice_profile = &state.engine.spellbench_neutral_v1;
     let continuation = state.engine.pending_effect.as_mut().unwrap();
     let PendingEffectChoice::SelectTargets {
         selected,
@@ -5339,12 +5340,12 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     let required = usize::from(*min_targets).saturating_sub(selected.len());
     if ward_minimum.is_none()
         && ((*ordered && required == 1 && legal.len() == 1)
-            || (!*ordered && required > 0 && required == legal.len() && !neutral_choices))
+            || (!*ordered && required > 0 && required == legal.len() && !choice_profile.choices))
     {
         selected.append(legal);
     }
     if selected.len() == usize::from(*max_targets) {
-        complete_resumable_target_selection(continuation, fiend_artisan, neutral_choices)?;
+        complete_resumable_target_selection(continuation, fiend_artisan, choice_profile)?;
     }
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
@@ -5427,11 +5428,10 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             .map_err(|error| error.to_string())?;
         drop(token);
     }
-    let neutral_choices = state.engine.spellbench_neutral_v1.choices;
     complete_resumable_target_selection(
         state.engine.pending_effect.as_mut().unwrap(),
         fiend_artisan,
-        neutral_choices,
+        &state.engine.spellbench_neutral_v1,
     )?;
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
@@ -5999,7 +5999,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
 fn complete_resumable_target_selection(
     continuation: &mut EffectContinuation,
     fiend_artisan: bool,
-    neutral_choices: bool,
+    choice_profile: &SpellbenchNeutralStateV1,
 ) -> Result<(), String> {
     let choice = continuation
         .choice
@@ -6785,7 +6785,7 @@ fn complete_resumable_target_selection(
             },
             path,
             objects,
-            neutral_choices,
+            choice_profile.neutral_choices_for(player),
         )?,
         EffectTargetSelectionPurpose::LookTopPickToHandBottomRest {
             player,
@@ -6810,7 +6810,7 @@ fn complete_resumable_target_selection(
             },
             path,
             objects,
-            neutral_choices,
+            choice_profile.choices,
         )?,
         EffectTargetSelectionPurpose::DiscardBasicLandInstead {
             player,
@@ -17387,7 +17387,7 @@ fn stage_library_partition_choice(
             (matching, min, max, false)
         }
         LibraryPartitionSelectionStage::OrderRest { selected } => {
-            validate_library_partition_selected(state, filter, &original_prefix, selected)?;
+            validate_library_partition_selected(state, filter, player, &original_prefix, selected)?;
             if !filter.orders_rest() {
                 return Err("library-partition rule keeps its rest in looked-at order".to_string());
             }
@@ -17720,14 +17720,16 @@ fn begin_library_partition(
 fn validate_library_partition_selected(
     state: &GameState,
     filter: LibraryPartitionFilter,
+    player: PlayerId,
     original_prefix: &[EffectObjectBinding],
     selected: &[EffectObjectBinding],
 ) -> Result<(), String> {
-    validate_library_partition_subset(
-        state.engine.spellbench_neutral_v1.choices,
-        original_prefix,
-        selected,
-    )?;
+    let choice_profile = &state.engine.spellbench_neutral_v1;
+    let neutral_order = match filter {
+        LibraryPartitionFilter::ByType(_) => choice_profile.neutral_choices_for(player),
+        LibraryPartitionFilter::Pick(_) => choice_profile.choices,
+    };
+    validate_library_partition_subset(neutral_order, original_prefix, selected)?;
     let matching = library_partition_matching_prefix(state, filter, original_prefix)?;
     if selected.iter().any(|binding| !matching.contains(binding)) {
         return Err("library-partition selected card does not match the typed filter".to_string());
@@ -17881,7 +17883,13 @@ fn validate_library_partition_prompt(
             )?;
         }
         LibraryPartitionSelectionStage::OrderRest { selected: chosen } => {
-            validate_library_partition_selected(state, filter, original_prefix, chosen)?;
+            validate_library_partition_selected(
+                state,
+                filter,
+                library_player,
+                original_prefix,
+                chosen,
+            )?;
             if !filter.orders_rest() {
                 return Err("library-partition rule keeps its rest in looked-at order".to_string());
             }
@@ -17942,7 +17950,13 @@ fn resume_library_partition_frame(
     )?;
     match progress {
         LibraryPartitionProgress::MatchingSubsetChosen { selected } => {
-            validate_library_partition_selected(state, filter, &original_prefix, &selected)?;
+            validate_library_partition_selected(
+                state,
+                filter,
+                player,
+                &original_prefix,
+                &selected,
+            )?;
             let rest = binding_partition_rest(&original_prefix, &selected)?;
             if filter.orders_rest() && rest.len() >= 2 {
                 stage_library_partition_choice(
@@ -17981,7 +17995,13 @@ fn resume_library_partition_frame(
             selected,
             ordered_rest,
         } => {
-            validate_library_partition_selected(state, filter, &original_prefix, &selected)?;
+            validate_library_partition_selected(
+                state,
+                filter,
+                player,
+                &original_prefix,
+                &selected,
+            )?;
             let rest = binding_partition_rest(&original_prefix, &selected)?;
             if !filter.orders_rest() && ordered_rest != rest {
                 return Err("library-partition rest left its looked-at order".to_string());
