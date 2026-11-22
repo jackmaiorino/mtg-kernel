@@ -1,7 +1,8 @@
 """The workflow's runs-on expressions send only trusted events to self-hosted runners.
 
 The expressions are evaluated here with a small evaluator for the part of GitHub's expression language
-they use (&&, ||, ==, !=, parentheses, string literals, context lookups, fromJSON and contains).
+they use (&&, ||, ==, !=, parentheses, string literals, context lookups, fromJSON, contains, startsWith, endsWith
+and format).
 """
 import json
 import re
@@ -10,7 +11,8 @@ from pathlib import Path
 
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "ci.yml"
 TOKEN = re.compile(r"\s*(&&|\|\||==|!=|[(),]|'(?:[^']|'')*'|[A-Za-z_][\w.\-]*)")
-REPOSITORY, OWNER = "owner/project", "owner"
+REPOSITORY, OWNER = "owner/project", "maintainer"
+ALLOWED = json.dumps([OWNER, "helper"])
 WINDOWS_POOL, PR_POOL, LINUX_POOL = ["self-hosted", "windows-pool"], ["self-hosted", "pr-pool"], ["self-hosted", "linux-pool"]
 
 
@@ -85,12 +87,25 @@ class Evaluator:
                 arguments.append(self.either(resolve))
             self.take(")")
             # Parse skipped branches without evaluating any functions in them.
-            if token == "fromJSON":
-                return json.loads(arguments[0]) if resolve else None
-            if token == "contains":
-                return arguments[1] in arguments[0] if resolve else None
-            raise ValueError(f"unsupported function {token}")
+            if token not in ("fromJSON", "format", "contains", "startsWith", "endsWith"):
+                raise ValueError(f"unsupported function {token}")
+            return call(token, arguments) if resolve else None
         return self.context.get(token, "")
+
+
+def call(name, arguments):
+    if name == "fromJSON":
+        return json.loads(arguments[0])
+    if name == "format":
+        return re.sub(r"\{(\d+)\}", lambda match: str(arguments[1 + int(match.group(1))]), arguments[0])
+    if isinstance(arguments[0], str):
+        # GitHub compares strings case-insensitively; a missing value is ''.
+        search, item = arguments[0].lower(), str(arguments[1]).lower()
+        return {"contains": item in search, "startsWith": search.startswith(item), "endsWith": search.endswith(item)}[name]
+    if name == "contains" and isinstance(arguments[0], list):
+        # Array membership uses the == comparison (case-insensitive for strings); an object never equals a name.
+        return any(equal(element, arguments[1]) for element in arguments[0])
+    raise ValueError(f"{name} of a {type(arguments[0]).__name__}")
 
 
 def evaluate(expression, **context):
@@ -113,9 +128,10 @@ def runs_on_expressions():
     return found
 
 
-def event(name="pull_request", head=REPOSITORY, actor=OWNER, **more):
-    context = {"github.event_name": name, "github.repository": REPOSITORY, "github.repository_owner": OWNER,
-               "github.actor": actor}
+def event(name="pull_request", head=REPOSITORY, actor=OWNER, triggering=None, **more):
+    # Trusted by default: the actor and the triggering actor are both in the self-hosted allow-list.
+    context = {"github.event_name": name, "github.repository": REPOSITORY, "github.actor": actor,
+               "github.triggering_actor": triggering or actor, "vars.MTG_CI_SELF_HOSTED_ACTORS": ALLOWED}
     if name == "pull_request":
         context["github.event.pull_request.head.repo.full_name"] = head
     return {**context, **more}
@@ -126,6 +142,14 @@ EVERY_POOL = {"vars.MTG_CI_WINDOWS_RUNNER": json.dumps(WINDOWS_POOL), "vars.MTG_
               "needs.detect-changes.outputs.pr_windows_groups": '["workspace-targets", "eternal"]',
               "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL), "vars.MTG_CI_LINUX_GROUPS": '["eternal", "workspace-targets"]'}
 
+
+# Trusted except for the actor list: an unlisted actor, triggering actor or bot, and a missing, empty or malformed list.
+UNLISTED = [event(actor="someone"), event("push", actor="someone"), event("workflow_dispatch", actor="github-actions[bot]"),
+            event(actor="maintaine"), event(actor="maintainer2"), event(triggering="someone"),
+            event("push", actor="someone", triggering=OWNER)]
+BAD_LISTS = [event(**{"vars.MTG_CI_SELF_HOSTED_ACTORS": value})
+             for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
+                           f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]')]
 
 class EvaluatorTests(unittest.TestCase):
     def test_operators_follow_github_semantics(self):
@@ -166,15 +190,45 @@ class RoutingTests(unittest.TestCase):
                         self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": group, **fork}),
                                          system)
 
-    def test_only_the_repository_owner_runs_on_self_hosted_runners(self):
-        # A same-repository branch pushed by any other account (a collaborator, a bot) stays hosted too.
-        for untrusted in (event(actor="someone"), event("push", actor="someone"),
-                          event("workflow_dispatch", actor="github-actions[bot]")):
+    def test_every_listed_actor_runs_on_self_hosted_runners(self):
+        for actor in (OWNER, "helper", OWNER.upper()):
+            with self.subTest(actor=actor):
+                self.assertEqual(self.route("ubuntu-24.04", "eternal", **event(actor=actor), **EVERY_POOL), LINUX_POOL)
+                self.assertEqual(self.route("windows-2025", "workspace-lib", **event("push", actor=actor), **EVERY_POOL),
+                                 WINDOWS_POOL)
+
+    def test_only_listed_actors_run_on_self_hosted_runners(self):
+        # A same-repository branch pushed by any account outside MTG_CI_SELF_HOSTED_ACTORS (a collaborator, a
+        # bot), a re-run by one, and a missing, empty or malformed list all stay hosted. No owner comparison:
+        # in an organization github.repository_owner is the organization.
+        for expression in self.expressions.values():
+            self.assertNotIn("repository_owner", expression)
+        for untrusted in UNLISTED + BAD_LISTS:
             for name, expression in self.expressions.items():
                 for system in ("ubuntu-24.04", "windows-2025"):
                     with self.subTest(job=name, system=system, event=untrusted["github.event_name"]):
                         self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": "eternal",
                                                                  **untrusted, **EVERY_POOL}), system)
+
+    def test_a_bracketed_invalid_list_fails_closed(self):
+        # GitHub fails the job when fromJSON cannot parse, before any runner takes it. A fork pull request
+        # never parses the list, so it stays hosted.
+        for value in (f"[{OWNER}]", f'["{OWNER}" garbage]'):
+            with self.subTest(value=value):
+                bad = {"vars.MTG_CI_SELF_HOSTED_ACTORS": value}
+                with self.assertRaises(ValueError):
+                    self.route("ubuntu-24.04", "eternal", **{**event(), **EVERY_POOL, **bad})
+                self.assertEqual(self.route("ubuntu-24.04", "eternal", **{**event(head="someone/fork"), **EVERY_POOL, **bad}),
+                                 "ubuntu-24.04")
+
+    def test_a_manual_heartbeat_needs_a_listed_actor(self):
+        text = (WORKFLOW.parent / "mac-heartbeat.yml").read_text(encoding="utf-8")
+        condition, = re.findall(r"^    if: (.+)$", text, re.MULTILINE)
+        self.assertTrue(evaluate(condition, **{"github.event_name": "schedule"}))
+        self.assertTrue(evaluate(condition, **event("workflow_dispatch")))
+        for untrusted in (event("workflow_dispatch", actor="someone"),
+                          event("workflow_dispatch", **{"vars.MTG_CI_SELF_HOSTED_ACTORS": ""})):
+            self.assertFalse(evaluate(condition, **untrusted))
 
     def test_pull_request_windows_groups_follow_the_budget_output(self):
         # The variable names the candidates; only the groups detect-changes chose within the budget route.
@@ -401,7 +455,7 @@ class MacRoutingTests(unittest.TestCase):
     def route(self, job, system, group, **context):
         return evaluate(self.expressions[job], **{"matrix.os": system, "matrix.group": group, **context})
 
-    def test_chosen_linux_groups_go_to_the_mac_for_owner_events_only(self):
+    def test_chosen_linux_groups_go_to_the_mac_for_listed_actors_only(self):
         chosen = {"needs.detect-changes.outputs.mac_groups": '["limited-only", "standard", "python-shard-0"]',
                   "vars.MTG_CI_MAC_GROUPS": '["limited-only", "standard", "python-shard-0"]'}
         for job, group in (("rust-test-groups", "standard"), ("rust-limited-groups", "limited-only"),
@@ -409,8 +463,7 @@ class MacRoutingTests(unittest.TestCase):
             with self.subTest(job=job):
                 for trusted in (event(), event("push"), event("workflow_dispatch")):
                     self.assertEqual(self.route(job, "ubuntu-24.04", group, **trusted, **chosen), MAC_POOL)
-                for untrusted in (event(head="someone/fork"), event(actor="someone"), event("push", actor="someone"),
-                                  event("workflow_dispatch", actor="github-actions[bot]")):
+                for untrusted in [event(head="someone/fork")] + UNLISTED + BAD_LISTS:
                     self.assertEqual(self.route(job, "ubuntu-24.04", group, **untrusted, **chosen), "ubuntu-24.04")
                 # A group detect-changes did not choose, or no choice at all, stays hosted.
                 self.assertEqual(self.route(job, "ubuntu-24.04", group + "-x", **event(), **chosen), "ubuntu-24.04")
@@ -436,16 +489,21 @@ class MacRoutingTests(unittest.TestCase):
             with self.subTest(job=job):
                 self.assertEqual(self.route(job, "ubuntu-24.04", group, **event(), **settings), "ubuntu-24.04")
 
-    def test_the_mac_step_runs_for_owner_events_from_this_repository_only(self):
+    def test_the_mac_step_runs_for_listed_actors_from_this_repository_only(self):
         block = job_block("detect-changes", "rust-quality")
         index = block.index("      - name: Choose the Mac groups")
         self.assertLess(block.index("      - name: Choose the checks"), index)
         self.assertLess(block.index("      - name: Choose the self-hosted pull request groups"), index)
         self.assertEqual(block.count("      - name: Check out merge ref with parents"), 1)
         step = block[index:]
-        self.assertIn("if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == "
-                      "github.repository) && github.actor == github.repository_owner && vars.MTG_CI_MAC_GROUPS != ''\n",
-                      step)
+        condition, = re.findall(r"^        if: (.+)$", step.split("\n      - name: ", 1)[0], re.MULTILINE)
+        settings = {"vars.MTG_CI_MAC_GROUPS": '["standard"]'}
+        self.assertTrue(evaluate(condition, **event(), **settings))
+        self.assertTrue(evaluate(condition, **event("push"), **settings))
+        self.assertFalse(evaluate(condition, **event()))
+        for untrusted in [event(head="someone/fork")] + UNLISTED + BAD_LISTS:
+            with self.subTest(event=untrusted):
+                self.assertFalse(evaluate(condition, **untrusted, **settings))
         self.assertIn("timeout-minutes: 2\n        continue-on-error: true\n", step)
         self.assertIn("run: python3 tools/ci/mac_route.py", step)
         self.assertIn("CHECKS: ${{ steps.checks.outputs.checks || 'all' }}", step)
