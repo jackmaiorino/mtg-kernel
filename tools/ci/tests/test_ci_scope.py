@@ -572,14 +572,17 @@ class MonitorTests(unittest.TestCase):
     def test_a_preceding_monitor_is_counted_while_the_red_push_waits(self):
         import post_merge_report as report
         get_run = self.fake_api(
-            ["c1", "c2", "c3"],
-            [(8, "c2", "success", "2026-11-21T11:30:00Z"), (6, "c1", "success", "2026-11-21T11:00:00Z")],
-            {"c2": (836, "a"), "c3": (837, "b")},
+            ["c1", "c2", "c3", "c4"],
+            [(8, "c3", "rerun-later", "2026-11-21T11:45:00Z"), (7, "c2", "success", "2026-11-21T11:30:00Z"),
+             (6, "c1", "success", "2026-11-21T11:00:00Z")],
+            {"c2": (835, "a"), "c3": (836, "b"), "c4": (837, "c")},
         )
         queued_at = "2026-11-21T12:00:00Z"
 
         def get(path):
-            if path == "/repos/o/r/actions/runs/8/jobs?per_page=100&filter=all&page=1":
+            if path == "/repos/o/r/actions/runs/9/attempts/1":
+                return {**get_run("/repos/o/r/actions/runs/9"), "run_started_at": queued_at}
+            if path == "/repos/o/r/actions/runs/7/jobs?per_page=100&filter=all&page=1":
                 return {"jobs": [{"name": "Detect changed paths", "started_at": "2026-11-21T12:15:00Z",
                                   "conclusion": "success"}]}
             return get_run(path)
@@ -590,7 +593,7 @@ class MonitorTests(unittest.TestCase):
                        "run_started_at": queued_at if attempt == 1 else "2026-11-21T14:30:00Z"}
                 merges, complete = report.covered_merges(get, "o/r", run)
                 self.assertTrue(complete)
-                self.assertEqual([merge["pull"] for merge in merges], [837])
+                self.assertEqual([merge["pull"] for merge in merges], [836, 837])
 
     def test_unverified_first_attempt_entry_leaves_monitor_coverage_incomplete(self):
         import post_merge_report as report
