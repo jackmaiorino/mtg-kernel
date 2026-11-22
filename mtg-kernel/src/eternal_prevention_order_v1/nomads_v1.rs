@@ -47,7 +47,11 @@ pub(crate) fn needs_frontier(state: &GameState, damage: &DamageProposed) -> bool
         let mut next = damage.clone();
         next.amount = 1;
         next.target = Target::Object(first.to.object);
-        if applicable_redirects(state, &next).next().is_some() {
+        if applicable_redirects(state, &next).next().is_some()
+            || super::packet_options(state, &Packet::new(&next)).len() > 1
+        {
+            // A forced redirect can expose the next affected controller's
+            // independent cost choice (for example protection vs Nishoba).
             return true;
         }
     }
