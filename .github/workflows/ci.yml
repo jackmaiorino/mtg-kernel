@@ -236,7 +236,7 @@ jobs:
         id: budget
         timeout-minutes: 2
         continue-on-error: true
-        if: steps.scope.outputs.scope == 'pr' && steps.classify.outputs.rust_relevant == 'true' && steps.checks.outputs.checks == 'all' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.actor)) && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.triggering_actor))
+        if: steps.scope.outputs.scope == 'pr' && steps.classify.outputs.rust_relevant == 'true' && steps.checks.outputs.checks == 'all' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor)
         env:
           GH_TOKEN: ${{ github.token }}
           PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
@@ -434,10 +434,11 @@ jobs:
     # research claims. The repository variable routes them elsewhere, for
     # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Only
     # events from this repository whose actor and triggering actor are both
-    # quoted in MTG_CI_SELF_HOSTED_ACTORS (a JSON list of account names; a
-    # value that does not start with [ and end with ] admits nobody) run on
-    # self-hosted runners: never a pull request from a fork or an unlisted
-    # account's push or re-run.
+    # members of MTG_CI_SELF_HOSTED_ACTORS (a JSON list of account names) run
+    # on self-hosted runners: never a pull request from a fork or an unlisted
+    # account's push or re-run. A value that does not start with [ and end
+    # with ] admits nobody; one that does but is not valid JSON fails the job
+    # (closed: never self-hosted) until it is fixed or cleared.
     # On pull requests, the groups named in MTG_CI_PR_WINDOWS_GROUPS (a JSON
     # list, for example '["workspace-targets", "workspace-lib"]') run on
     # MTG_CI_PR_WINDOWS_RUNNER instead, up to the free slots of
@@ -457,7 +458,7 @@ jobs:
     # each part by its own name: '["native-store"]' in
     # MTG_CI_PR_WINDOWS_GROUPS routes that group's first part and leaves
     # native-store-1 on MTG_CI_WINDOWS_RUNNER.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.actor)) && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.triggering_actor)) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(needs.detect-changes.outputs.pr_windows_groups || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.actor)) && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.triggering_actor)) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(needs.detect-changes.outputs.pr_windows_groups || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
@@ -1018,7 +1019,7 @@ jobs:
     # target directory instead of downloading the shared build; a routed
     # Limited-only shard still downloads the default library case list. Pull
     # requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.actor)) && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.triggering_actor)) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.actor)) && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.triggering_actor)) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # The Limited-only shards diff the default-feature library's case list
       # against the Limited build. The limited-build job now writes that list
@@ -1568,7 +1569,7 @@ jobs:
           - {os: ubuntu-24.04, shard: 2}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.actor)) && contains(vars.MTG_CI_SELF_HOSTED_ACTORS, format('"{0}"', github.triggering_actor)) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/target/release/kernel_rl_env${{ matrix.os == 'windows-2025' && '.exe' || '' }}
       MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/target/release/agent_bridge_v1${{ matrix.os == 'windows-2025' && '.exe' || '' }}

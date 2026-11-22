@@ -95,9 +95,10 @@ def call(name, arguments):
         # GitHub compares strings case-insensitively; a missing value is ''.
         search, item = arguments[0].lower(), str(arguments[1]).lower()
         return {"contains": item in search, "startsWith": search.startswith(item), "endsWith": search.endswith(item)}[name]
-    if name == "contains":
-        return arguments[1] in arguments[0]
-    raise ValueError(f"{name} of a non-string")
+    if name == "contains" and isinstance(arguments[0], list):
+        # Array membership uses the == comparison (case-insensitive for strings); an object never equals a name.
+        return any(equal(element, arguments[1]) for element in arguments[0])
+    raise ValueError(f"{name} of a {type(arguments[0]).__name__}")
 
 
 def evaluate(expression, **context):
@@ -183,7 +184,8 @@ class RoutingTests(unittest.TestCase):
                     event("workflow_dispatch", actor="github-actions[bot]"), event(actor="maintaine"),
                     event(actor="maintainer2"), event(triggering="someone"), event("push", actor="someone", triggering=OWNER)]
         bad_lists = [event(**{"vars.MTG_CI_SELF_HOSTED_ACTORS": value})
-                     for value in ("", "[]", "null", f'"{OWNER}"', f"[{OWNER}]", f'["{OWNER}"', f' ["{OWNER}"]', OWNER)]
+                     for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
+                                   f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]')]
         for expression in self.expressions.values():
             self.assertNotIn("repository_owner", expression)
         for untrusted in unlisted + bad_lists:
@@ -192,6 +194,17 @@ class RoutingTests(unittest.TestCase):
                     with self.subTest(job=name, system=system, event=untrusted["github.event_name"]):
                         self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": "eternal",
                                                                  **untrusted, **EVERY_POOL}), system)
+
+    def test_a_bracketed_invalid_list_fails_closed(self):
+        # GitHub fails the job when fromJSON cannot parse, before any runner takes it. A fork pull request
+        # never parses the list, so it stays hosted.
+        for value in (f"[{OWNER}]", f'["{OWNER}" garbage]'):
+            with self.subTest(value=value):
+                bad = {"vars.MTG_CI_SELF_HOSTED_ACTORS": value}
+                with self.assertRaises(ValueError):
+                    self.route("ubuntu-24.04", "eternal", **{**event(), **EVERY_POOL, **bad})
+                self.assertEqual(self.route("ubuntu-24.04", "eternal", **{**event(head="someone/fork"), **EVERY_POOL, **bad}),
+                                 "ubuntu-24.04")
 
     def test_pull_request_windows_groups_follow_the_budget_output(self):
         # The variable names the candidates; only the groups detect-changes chose within the budget route.
