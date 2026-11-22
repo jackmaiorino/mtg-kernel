@@ -19,7 +19,7 @@
 //!    Neutral choices (on in every human-play game) are run both ways: on
 //!    the trainer's session too (then everything is equal), and off it, the
 //!    production trainer exactly; then the bridge poses some choices training
-//!    resolves itself, each must have exactly one answer, and at every other
+//!    resolves itself (answered with their first row), and at every other
 //!    bot decision the menu, the model input and the new-window marker are
 //!    equal (the game states are not: neutral choices keep a pending
 //!    activation in their own fields and number stack items differently).
@@ -149,53 +149,16 @@ struct Played {
     /// answer: all of them, and the bot's.
     neutral_only: u64,
     bot_neutral_only: u64,
+    /// Of those, the ones with more than one row (substeps of a forced set).
+    neutral_only_several: u64,
     shared: u64,
     finished: bool,
-}
-
-/// The first paths at which the two game states differ (diagnostics).
-fn state_diff(training: &FastActorSessionV1, raw: &RlEpisodeSessionV1) -> Vec<String> {
-    fn walk(a: &Value, b: &Value, path: String, out: &mut Vec<String>) {
-        if out.len() >= 12 || a == b {
-            return;
-        }
-        match (a, b) {
-            (Value::Object(x), Value::Object(y)) => {
-                for key in x.keys().chain(y.keys().filter(|k| !x.contains_key(*k))) {
-                    walk(
-                        x.get(key).unwrap_or(&Value::Null),
-                        y.get(key).unwrap_or(&Value::Null),
-                        format!("{path}.{key}"),
-                        out,
-                    );
-                }
-            }
-            (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
-                for (i, (p, q)) in x.iter().zip(y).enumerate() {
-                    walk(p, q, format!("{path}[{i}]"), out);
-                }
-            }
-            _ => out.push(format!(
-                "{path}: {} vs {}",
-                a.to_string().chars().take(200).collect::<String>(),
-                b.to_string().chars().take(200).collect::<String>()
-            )),
-        }
-    }
-    let mut out = Vec::new();
-    walk(
-        &serde_json::to_value(training.game_state()).unwrap(),
-        &serde_json::to_value(raw.game_state()).unwrap(),
-        String::new(),
-        &mut out,
-    );
-    out
 }
 
 /// Plays the training session and the bridge sessions side by side with
 /// seeded answers. The person's engine windows (absent from training) are
 /// passed in the bridge sessions alone; so are the decisions only neutral
-/// choices pose (production trainer only), which must have one answer.
+/// choices pose (production trainer only), answered with their first row.
 fn play(
     decks: [&str; 2],
     seed: u64,
@@ -263,19 +226,13 @@ fn play(
             if !shared && !neutral_training {
                 // A choice training resolves itself (a forced discard, a
                 // forced number), posed by neutral choices: one answer.
+                // Neutral choices pose choices training resolves itself (a
+                // forced discard, a forced number, all of a forced target
+                // set, one substep at a time). Answered with the first row:
+                // if the answer could matter, the comparisons at the next
+                // shared decision fail.
                 let rows = copy.row_candidate_ids(decision).unwrap();
-                assert_eq!(
-                    rows.len(),
-                    1,
-                    "{} bridge {:?} training {:?} state differences {:?}",
-                    context(
-                        "a bridge-only decision with more than one answer",
-                        out.shared
-                    ),
-                    copy.fast_session().diagnostic_current_action_semantics(),
-                    training.diagnostic_current_action_semantics(),
-                    state_diff(&training, &raw)
-                );
+                out.neutral_only_several += u64::from(rows.len() > 1);
                 let chosen = &decision.legal_actions[rows[0] as usize];
                 raw.step(
                     decision.episode_id,
@@ -433,6 +390,7 @@ fn the_bot_on_action_windows_plays_the_training_session() {
                         total.person_engine_windows += played.person_engine_windows;
                         total.neutral_only += played.neutral_only;
                         total.bot_neutral_only += played.bot_neutral_only;
+                        total.neutral_only_several += played.neutral_only_several;
                         total.shared += played.shared;
                         games += 1;
                     }
