@@ -9,7 +9,7 @@ use mtg_kernel::card_def::{
     CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
-use mtg_kernel::event::{propose_and_commit, ProposedEvent};
+use mtg_kernel::event::{propose_and_commit, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::{ManaColor, Pip};
@@ -1136,7 +1136,7 @@ fn improvised_act_draw_dredged(player: PlayerId) {
     let library = state.players[player.index()].library.len();
     cast(&mut state, act, &[]);
     let mut offered = Vec::new();
-    settle_with(&mut state, |_, decision| match decision {
+    settle_with(&mut state, |state, decision| match decision {
         Decision::ChooseEffectTargets { legal_targets, .. }
             if legal_targets.contains(&Target::Object(fodder)) =>
         {
@@ -1148,6 +1148,13 @@ fn improvised_act_draw_dredged(player: PlayerId) {
             ..
         } => {
             offered.push((player, legal_targets));
+            assert!(state
+                .eternal_v1
+                .as_ref()
+                .unwrap()
+                .e7b
+                .prepare_copies
+                .contains(&act));
             Action::ChooseEffectTarget(Target::Object(thug))
         }
         other => first_answer(other),
@@ -1160,10 +1167,20 @@ fn improvised_act_draw_dredged(player: PlayerId) {
     assert_eq!(zone(&state, fodder), Zone::Graveyard, "discarded");
     assert_eq!(zone(&state, thug), Zone::Hand, "dredged instead of drawing");
     assert_eq!(state.players[player.index()].library.len(), library - 4);
-    assert!(
-        exile_copies(&state, "Improvised Act").is_empty(),
-        "the cast copy left exile and the stack"
-    );
+    assert!(!state.exile.contains(&act));
+    assert!(!state.players[player.index()].graveyard.contains(&act));
+    assert!(!state.stack.iter().any(|item| item.source == act));
+    assert!(!state
+        .eternal_v1
+        .as_ref()
+        .unwrap()
+        .e7b
+        .prepare_copies
+        .contains(&act));
+    assert!(!state.engine.event_history.iter().any(|event| matches!(
+        event,
+        CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == act
+    )));
     assert_eq!(
         power_toughness(&state, battlemage),
         (2, 2),
