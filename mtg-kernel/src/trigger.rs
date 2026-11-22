@@ -5059,7 +5059,7 @@ fn sba_fixed_point_with_protected_triggers(
                 &dying,
                 protected_triggers,
             );
-            crate::event::commit_sba_death_batch_v1(state, dying);
+            crate::event::commit_sba_death_batch_v1(state, dying, protected_triggers);
             if (cfg!(feature = "eternal-fixtures") || crate::graveyard_order_v1::enabled(state))
                 && state.engine.halted.is_some()
             {

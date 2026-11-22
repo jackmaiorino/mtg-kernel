@@ -4238,6 +4238,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             std::slice::from_ref(&input),
             &[],
+            &[],
         ) {
             Ok(plan) => plan,
             Err(source) => {
@@ -4787,6 +4788,7 @@ fn commit_with_entry_batch_and_source_color(
                 .map(|batch| batch.observers.as_slice()),
             entry_context.0,
             std::slice::from_ref(&counter_input),
+            &[],
             &[],
         ) {
             Ok(plan) => Some(plan),
@@ -5652,7 +5654,7 @@ impl NativeMaterializationV1<'_> {
                     })
                     .copied()
             }
-            Self::Commit(None) => crate::full_text_v1::departure(state, id),
+            Self::Commit(None) => crate::full_text_v1::departure(state, id, &[]),
         }
     }
 
@@ -5733,10 +5735,15 @@ fn needs_final_zone_pt_plan_v1(state: &GameState, events: &[ProposedEvent]) -> b
         })
 }
 impl FinalZonePtPlanV1 {
-    fn eternal_departures_only(state: &GameState, events: &[ProposedEvent]) -> Option<Self> {
+    fn eternal_departures_only(
+        state: &GameState,
+        events: &[ProposedEvent],
+        checkpoint_triggers: &[crate::trigger::PendingTrigger],
+    ) -> Option<Self> {
         let curie_departures = crate::eternal_legacy_e7a_v1::curie::capture_batch(state, events);
         let minsc_departures = crate::eternal_vintage_e7b_v1::minsc::capture_batch(state, events);
-        let full_text_departures = crate::full_text_v1::capture_batch(state, events);
+        let full_text_departures =
+            crate::full_text_v1::capture_batch(state, events, checkpoint_triggers);
         (!curie_departures.is_empty()
             || !minsc_departures.is_empty()
             || !full_text_departures.is_empty())
@@ -5758,6 +5765,7 @@ impl FinalZonePtPlanV1 {
             crate::effect::EffectObjectBinding,
             crate::effect::EffectObjectBinding,
         )],
+        checkpoint_triggers: &[crate::trigger::PendingTrigger],
     ) -> Result<Self, ObjectId> {
         if events.len() != counter_inputs.len() {
             return Err(ObjectId(0));
@@ -5768,7 +5776,11 @@ impl FinalZonePtPlanV1 {
             departures: Vec::new(),
             curie_departures: crate::eternal_legacy_e7a_v1::curie::capture_batch(original, events),
             minsc_departures: crate::eternal_vintage_e7b_v1::minsc::capture_batch(original, events),
-            full_text_departures: crate::full_text_v1::capture_batch(original, events),
+            full_text_departures: crate::full_text_v1::capture_batch(
+                original,
+                events,
+                checkpoint_triggers,
+            ),
         };
         for event in events {
             if let ProposedEvent::ZoneChange(z) = event {
@@ -5982,17 +5994,31 @@ fn direct_zone_scene_events_v1(state: &GameState, events: &[ProposedEvent]) -> V
 fn direct_zone_pt_plan_v1(
     state: &GameState,
     events: &[ProposedEvent],
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
 ) -> Result<Option<FinalZonePtPlanV1>, ObjectId> {
     crate::progenitus_v1::preview(state, events)?;
     if !needs_final_zone_pt_plan_v1(state, events) {
-        return Ok(FinalZonePtPlanV1::eternal_departures_only(state, events));
+        return Ok(FinalZonePtPlanV1::eternal_departures_only(
+            state,
+            events,
+            checkpoint_triggers,
+        ));
     }
     let final_events = direct_zone_scene_events_v1(state, events);
     let inputs = final_events
         .iter()
         .map(|event| crate::doubling_season_v48::entry_input(state, event))
         .collect::<Vec<_>>();
-    FinalZonePtPlanV1::capture(state, &final_events, None, None, &inputs, &[]).map(Some)
+    FinalZonePtPlanV1::capture(
+        state,
+        &final_events,
+        None,
+        None,
+        &inputs,
+        &[],
+        checkpoint_triggers,
+    )
+    .map(Some)
 }
 
 fn halt_zone_pt_v1(state: &mut GameState, source: ObjectId) {
@@ -7198,6 +7224,7 @@ fn batch_with_aura_token_hosts_v1(
             None,
             &inputs,
             &attachments,
+            &[],
         ) {
             Ok(plan) => plan,
             Err(source) => {
@@ -7434,6 +7461,7 @@ fn commit_batch_survivors_native(
             None,
             &planned_counter_inputs,
             &context.attachments,
+            &[],
         ) {
             Ok(plan) => Some(plan),
             Err(source) => {
@@ -7442,7 +7470,7 @@ fn commit_batch_survivors_native(
             }
         }
     } else {
-        FinalZonePtPlanV1::eternal_departures_only(state, &survivors)
+        FinalZonePtPlanV1::eternal_departures_only(state, &survivors, &[])
     };
     let conqueror_batch = crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state);
     let EntryBatchCommitContextV1 {
@@ -7759,7 +7787,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         .copied()
         .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
         .collect::<Vec<_>>();
-    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events, &[]) {
         Ok(plan) => plan,
         Err(source) => {
             halt_zone_pt_v1(state, source);
@@ -7898,7 +7926,11 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
 }
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
-pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+pub(crate) fn commit_sba_death_batch_v1(
+    state: &mut GameState,
+    dying: Vec<ObjectId>,
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
+) {
     let planned_events = dying
         .iter()
         .copied()
@@ -7912,7 +7944,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         .map(|event| batch_graveyard_replacement_v1(state, event))
         .collect::<Vec<_>>()
         .into_iter();
-    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events, checkpoint_triggers) {
         Ok(plan) => plan,
         Err(source) => {
             halt_zone_pt_v1(state, source);

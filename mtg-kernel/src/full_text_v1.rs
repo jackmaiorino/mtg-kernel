@@ -1235,7 +1235,11 @@ fn tracks_host_departure(kind: DonatedTriggerKindV1) -> bool {
     )
 }
 
-pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<DepartureV1> {
+pub(crate) fn departure(
+    state: &GameState,
+    object: ObjectId,
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
+) -> Option<DepartureV1> {
     if !cfg!(feature = "eternal-fixtures") {
         return None;
     }
@@ -1273,11 +1277,12 @@ pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<Departure
             .queued_triggers
             .iter()
             .any(|queued| waiting_capture(&queued.effect))
-    }) || state
-        .engine
-        .pending_triggers
+    }) || checkpoint_triggers
         .iter()
         .any(|pending| waiting_capture(&pending.effect))
+        || crate::optional_trigger_public_v1::held(state)
+            .into_iter()
+            .any(|pending| waiting_capture(&pending.effect))
         || state
             .stack
             .iter()
@@ -1301,6 +1306,7 @@ pub(crate) fn departure(state: &GameState, object: ObjectId) -> Option<Departure
 pub(crate) fn capture_batch(
     state: &GameState,
     events: &[crate::event::ProposedEvent],
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
 ) -> Vec<DepartureV1> {
     if !cfg!(feature = "eternal-fixtures") {
         return Vec::new();
@@ -1311,7 +1317,7 @@ pub(crate) fn capture_batch(
         if let crate::event::ProposedEvent::ZoneChange(change) = event {
             if change.to_zone != Zone::Battlefield && !seen.contains(&change.object) {
                 seen.push(change.object);
-                if let Some(dep) = departure(state, change.object) {
+                if let Some(dep) = departure(state, change.object, checkpoint_triggers) {
                     out.push(dep);
                 }
             }
