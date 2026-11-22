@@ -140,7 +140,90 @@ struct Tally {
     attacks: u64,
     blocks: u64,
     substeps: u64,
-    multi: u64,
+    multi_attacks: u64,
+    multi_blocks: u64,
+}
+
+fn reference_step(
+    stepper: &mut SpellbenchBridgeServerV1,
+    game: &str,
+    reference: &Value,
+    row: usize,
+) -> Value {
+    let id = format!("ref-{}", reference["step"]);
+    let next = parse(&step(stepper, game, &id, reference, row));
+    assert!(
+        next["response_type"] == "decision"
+            || (next["response_type"] == "terminal" && next["classification"] == "natural"),
+        "{game}: reference {id} row {row} failed: {next}"
+    );
+    next
+}
+
+/// Compare the exit to the bridge reference. The planner advances through
+/// ordinary opponent passes before it shows the person's next choice.
+fn check_exit(
+    stepper: &mut SpellbenchBridgeServerV1,
+    game: &str,
+    root: &Value,
+    mut reference: Value,
+    line: &Value,
+) {
+    while reference["response_type"] == "decision" && reference["acting_seat"] == "p1" {
+        let Some(pass) = reference["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|candidate| candidate["semantic"]["kind"] == "pass")
+        else {
+            break;
+        };
+        reference = reference_step(stepper, game, &reference, pass);
+    }
+    if line["response_type"] == "private_line" {
+        assert_eq!(
+            reference["response_type"], "decision",
+            "{game}: {reference}"
+        );
+        assert_eq!(reference["acting_seat"], PERSON, "{game}: {reference}");
+        assert_eq!(posed(&line["view"]), posed(&reference), "{game}: exit view");
+        return;
+    }
+    assert_eq!(line["response_type"], "private_line_stop", "{game}: {line}");
+    let expected_result = match line["reason"].as_str() {
+        Some("opponent_decision") => {
+            assert_eq!(reference["acting_seat"], "p1", "{game}: {reference}");
+            Value::Null
+        }
+        Some("turn_ends") => {
+            let turn = |response: &Value| {
+                let summary = &response["state_summary"];
+                (
+                    summary["turn"].as_u64().unwrap(),
+                    summary["active_seat"].as_str().unwrap().to_owned(),
+                )
+            };
+            assert_ne!(turn(root), turn(&reference), "{game}: {line}");
+            Value::Null
+        }
+        Some("game_end" | "game_end_later_turn") => {
+            assert_eq!(
+                reference["response_type"], "terminal",
+                "{game}: {reference}"
+            );
+            match reference["winner"].as_str() {
+                None => json!("draw"),
+                Some(PERSON) => json!("win"),
+                Some("p1") => json!("loss"),
+                other => panic!("unexpected winner {other:?}"),
+            }
+        }
+        // The wire deliberately conceals the cause of a hidden/random stop.
+        // The independent response already establishes that the declaration ended.
+        Some("unseen") => Value::Null,
+        other => panic!("{game}: unexpected declaration exit {other:?}: {line}"),
+    };
+    assert_eq!(line["result"], expected_result, "{game}: {line}");
 }
 
 /// The line from the first question of a declaration, through all of it,
@@ -154,23 +237,19 @@ fn through(
 ) {
     let mut stepper = lined.clone_game_for_test();
     let (mut ids, mut view, mut k) = (Vec::new(), root.clone(), 0_usize);
+    let mut reference = root.clone();
     loop {
         let row = answer(&view, k);
         ids.push(row);
         let line = private_line(lined, game, root, &ids);
-        let stepped = parse(&step(&mut stepper, game, &format!("ref-{k}"), &view, row));
+        reference = reference_step(&mut stepper, game, &reference, row);
         tally.substeps += 1;
-        if declaration(&stepped) != Some(kind) {
-            // The declaration is complete; what follows is the ordinary line.
-            assert!(
-                matches!(
-                    line["response_type"].as_str(),
-                    Some("private_line" | "private_line_stop")
-                ),
-                "{line}"
-            );
-            if k > 0 {
-                tally.multi += 1;
+        if declaration(&reference) != Some(kind) {
+            check_exit(&mut stepper, game, root, reference, &line);
+            if k > 0 && kind == ATTACK {
+                tally.multi_attacks += 1;
+            } else if k > 0 {
+                tally.multi_blocks += 1;
             }
             return;
         }
@@ -180,7 +259,7 @@ fn through(
         );
         assert_eq!(
             posed(&line["view"]),
-            posed(&stepped),
+            posed(&reference),
             "{game}: question {k}"
         );
         view = line["view"].clone();
@@ -245,7 +324,11 @@ fn a_planned_line_plays_every_question_of_a_declaration_on_the_clone() {
     }
     eprintln!("declarations through the line: {tally:?}");
     assert!(
-        tally.attacks > 20 && tally.blocks > 10 && tally.multi > 10,
+        tally.attacks > 20
+            && tally.blocks > 10
+            && tally.multi_attacks > 0
+            && tally.multi_blocks > 0
+            && tally.multi_attacks + tally.multi_blocks > 10,
         "{tally:?}"
     );
 }
