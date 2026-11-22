@@ -9,7 +9,9 @@ use crate::eternal_pauper_pf1c_v1::ordinary_damage::{OrdinaryV1, Packet};
 use crate::eternal_sideboard_s1d_v1::statics as circles;
 use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
 use crate::ids::PlayerId;
-use crate::linked_aura_operation_v1::{legacy_damage_order_v1, legacy_sphere_order_v1};
+use crate::linked_aura_operation_v1::{
+    legacy_damage_order_v1, legacy_hallow_only_v1, legacy_sphere_order_v1,
+};
 use crate::state::GameState;
 pub(crate) mod nomads_v1;
 
@@ -18,17 +20,12 @@ pub(crate) mod nomads_v1;
 /// matching; a packet with just one useful prevention keeps its existing menu.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
     if legacy_damage_order_v1() {
-        let color_fog = || {
-            state.engine.active_replacements.iter().any(|replacement| {
-            matches!(&replacement.kind,
-                ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { turn, active_player, .. }
-                    if *turn == state.turn_key_v1() && *active_player == state.active_player)
-        })
-        };
-        return cfg!(feature = "eternal-fixtures")
+        return !legacy_hallow_only_v1()
+            && cfg!(feature = "eternal-fixtures")
             && !cannot_prevent(state)
             && ((circles::has_live_circle_shield(state)
-                && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state) || color_fog()))
+                && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
+                    || has_current_color_fog(state)))
                 || (legacy_sphere_order_v1() && has_sphere_ojer(state)));
     }
     if nomads_v1::has_active_redirects(state) {
@@ -39,6 +36,16 @@ pub(crate) fn may_need_choice(state: &GameState) -> bool {
         && (circles::has_live_circle_shield(state)
             || permanent_v1::may_need_choice(state)
             || has_sphere_ojer(state))
+}
+
+fn has_current_color_fog(state: &GameState) -> bool {
+    state.engine.active_replacements.iter().any(|replacement| {
+        matches!(
+            replacement.kind,
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { turn, active_player, .. }
+                if turn == state.turn_key_v1() && active_player == state.active_player
+        )
+    })
 }
 
 fn has_sphere_ojer(state: &GameState) -> bool {
@@ -76,7 +83,8 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
         return false;
     }
     if legacy_damage_order_v1() {
-        return circles::circle_shield_position(state, damage).is_some()
+        return !legacy_hallow_only_v1()
+            && circles::circle_shield_position(state, damage).is_some()
             && full_prevention(state, damage);
     }
     if permanent_v1::eligible(state, damage) {

@@ -6,9 +6,9 @@ use std::cell::Cell;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Order {
-    Original,
+    HallowOnly,
+    CircleGlobal,
     SphereOjer,
-    UnmarkedExpanded,
     Expanded,
 }
 
@@ -17,7 +17,11 @@ thread_local! {
 }
 
 pub(crate) fn legacy_damage_order_v1() -> bool {
-    ORDER.with(|mode| matches!(mode.get(), Order::Original | Order::SphereOjer))
+    ORDER.with(|mode| mode.get() != Order::Expanded)
+}
+
+pub(crate) fn legacy_hallow_only_v1() -> bool {
+    ORDER.with(|mode| mode.get() == Order::HallowOnly)
 }
 
 pub(crate) fn legacy_sphere_order_v1() -> bool {
@@ -68,7 +72,7 @@ pub(super) fn recorded_order(
     if pending.expanded_damage_order {
         return check(Order::Expanded);
     }
-    check(Order::Original)
+    check(Order::HallowOnly)
+        .or_else(|_| check(Order::CircleGlobal))
         .or_else(|_| check(Order::SphereOjer))
-        .or_else(|_| check(Order::UnmarkedExpanded))
 }
