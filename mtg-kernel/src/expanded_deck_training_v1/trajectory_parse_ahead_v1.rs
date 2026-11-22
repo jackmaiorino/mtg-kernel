@@ -19,16 +19,73 @@
 //! A collection worker that serialized the trajectory itself hands both
 //! results over with the bytes instead (`offer_serialized_v1`), since parsing
 //! those bytes returns the same values; nothing is left for helpers to parse.
+//!
+//! The bytes held at once are bounded by an execution setting of the process
+//! (`configure_retained_mebibytes_v1`, 512 MiB by default, 0 holds nothing).
+//! An entry is charged its record length or its buffer's capacity, whichever
+//! is larger, so a batch that fits the update's record-byte bound need not
+//! fit a retention of the same size: older entries are then dropped and
+//! their readers parse as before. Every entry remembers the file it was
+//! published as, and a run drops the entries under an iteration's directory
+//! when that iteration ends, failed or not (`release_under_v1`).
 
 use super::*;
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 
-/// Published bytes held for parsing and comparison at once: one full update
-/// batch. Older entries are dropped first; their readers parse as before.
-const PARSE_AHEAD_RETAINED_BYTES_V1: usize = MAX_BATCH_BYTES as usize;
+/// The default bound on the bytes held for parsing and comparison at once:
+/// one default update batch.
+pub(crate) const DEFAULT_RETAINED_MEBIBYTES_V1: usize = 512;
+/// The largest admitted bound.
+pub(crate) const MAX_RETAINED_MEBIBYTES_V1: usize = 16 * 1024;
+const _: () = assert!((DEFAULT_RETAINED_MEBIBYTES_V1 as u64) << 20 == MAX_BATCH_BYTES);
+
+/// The bound in force, in bytes. Older entries are dropped first; their
+/// readers parse as before.
+static RETAINED_BYTES_V1: AtomicUsize = AtomicUsize::new(DEFAULT_RETAINED_MEBIBYTES_V1 << 20);
+
+/// The bound the process was configured with, if any.
+static CONFIGURED_MEBIBYTES_V1: OnceLock<usize> = OnceLock::new();
+
+fn retained_limit_v1() -> usize {
+    RETAINED_BYTES_V1.load(Ordering::Relaxed)
+}
+
+/// Sets the process's retention bound (in 0..=16384 MiB) once, before any
+/// run. It changes only which reads find a result parsed ahead, never what
+/// a read returns, so it is an execution setting outside every run
+/// identity. Setting the same value again is accepted.
+pub(crate) fn configure_retained_mebibytes_v1(mebibytes: usize) -> Result<(), String> {
+    ensure(
+        mebibytes <= MAX_RETAINED_MEBIBYTES_V1,
+        "parse-ahead retention must be in 0..=16384 MiB",
+    )?;
+    let configured = *CONFIGURED_MEBIBYTES_V1.get_or_init(|| mebibytes);
+    ensure(
+        configured == mebibytes,
+        "parse-ahead retention is already configured",
+    )?;
+    set_retained_bytes_v1(mebibytes << 20);
+    Ok(())
+}
+
+/// Whether anything can be held (a retention bound above zero).
+pub(crate) fn retains_v1() -> bool {
+    retained_limit_v1() > 0
+}
+
+/// Puts `bytes` in force and drops the oldest entries above it.
+fn set_retained_bytes_v1(bytes: usize) {
+    RETAINED_BYTES_V1.store(bytes, Ordering::Relaxed);
+    let shared = shared_v1();
+    let mut state = lock_v1(shared);
+    evict_to_v1(&mut state, bytes);
+    drop(state);
+    shared.changed.notify_all();
+}
 
 /// Helper threads alive at once, across collections.
 const PARSE_AHEAD_HELPERS_V1: usize = 64;
@@ -123,6 +180,8 @@ enum SlotV1 {
 
 struct EntryV1 {
     bytes: Arc<Vec<u8>>,
+    /// The file the bytes were published as, for `release_under_v1`.
+    path: PathBuf,
     /// What the entry counts against the retained-bytes bound: its record
     /// length, which for a sealed file (`record_envelope_v1`) is the opened
     /// length, so held parses stay bounded as before.
@@ -207,9 +266,10 @@ fn lock_v1(shared: &ParseAheadV1) -> MutexGuard<'_, StateV1> {
     shared.state.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Queues the bytes of a trajectory file just published under `sha256`.
-pub(super) fn offer_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>) {
-    insert_v1(sha256, bytes, [SlotV1::Queued, SlotV1::Queued]);
+/// Queues the bytes of a trajectory file just published as `path` under
+/// `sha256`.
+pub(crate) fn offer_v1(sha256: &str, path: &Path, bytes: impl Into<Arc<Vec<u8>>>) {
+    insert_v1(sha256, path, bytes, [SlotV1::Queued, SlotV1::Queued]);
 }
 
 /// Whether a collection worker hands over the trajectory it serialized
@@ -238,12 +298,13 @@ fn seed_check_enabled_v1() -> bool {
 /// still compare their own bytes with these in full before taking a result.
 pub(super) fn offer_serialized_v1(
     sha256: &str,
+    path: &Path,
     bytes: impl Into<Arc<Vec<u8>>>,
     trajectory: ExpandedTrajectoryV1,
 ) -> Result<(), String> {
     let bytes: Arc<Vec<u8>> = bytes.into();
     if !seeding_enabled_v1() {
-        offer_v1(sha256, bytes);
+        offer_v1(sha256, path, bytes);
         return Ok(());
     }
     let fields = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory)?;
@@ -267,6 +328,7 @@ pub(super) fn offer_serialized_v1(
     }
     insert_v1(
         sha256,
+        path,
         bytes,
         [
             SlotV1::Ready(ParsedV1::CollectionFields(fields)),
@@ -282,7 +344,7 @@ fn retained_charge_v1(record_length: usize, capacity: usize) -> usize {
     record_length.max(capacity)
 }
 
-fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
+fn insert_v1(sha256: &str, path: &Path, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
     let bytes: Arc<Vec<u8>> = bytes.into();
     // A plain file is charged its length, as before; a sealed one its record
     // length, and one whose header is unreadable is never held. The entry
@@ -293,28 +355,17 @@ fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
         return;
     };
     let shared = shared_v1();
-    if insert_locked_v1(&mut lock_v1(shared), sha256, bytes, charge as usize, slots) {
+    let limit = retained_limit_v1();
+    let entry = (path.to_path_buf(), bytes, charge as usize);
+    if insert_locked_v1(&mut lock_v1(shared), sha256, entry, slots, limit) {
         // A reader waiting on a dropped entry parses its bytes itself.
         shared.changed.notify_all();
     }
 }
 
-/// Inserts an entry for a record of `record_length` bytes into the locked
-/// store, charged what it keeps alive (`retained_charge_v1`), dropping the
-/// oldest entries to make room. False when it is not held (too large, or
-/// already there).
-fn insert_locked_v1(
-    state: &mut StateV1,
-    sha256: &str,
-    bytes: Arc<Vec<u8>>,
-    record_length: usize,
-    slots: [SlotV1; 2],
-) -> bool {
-    let charge = retained_charge_v1(record_length, bytes.capacity());
-    if charge > PARSE_AHEAD_RETAINED_BYTES_V1 || state.entries.contains_key(sha256) {
-        return false;
-    }
-    while state.retained_bytes + charge > PARSE_AHEAD_RETAINED_BYTES_V1 {
+/// Drops the oldest entries until at most `limit` bytes are held.
+fn evict_to_v1(state: &mut StateV1, limit: usize) {
+    while state.retained_bytes > limit {
         let Some(oldest) = state.order.pop_front() else {
             break;
         };
@@ -322,6 +373,25 @@ fn insert_locked_v1(
             state.retained_bytes -= entry.charge;
         }
     }
+}
+
+/// Inserts an entry for the bytes published as a file, with that file's
+/// record length (`(path, bytes, record_length)`), into the locked store,
+/// charged what it keeps alive (`retained_charge_v1`), dropping the oldest
+/// entries to keep at most `limit` bytes. False when it is not held (larger
+/// than `limit`, or already there).
+fn insert_locked_v1(
+    state: &mut StateV1,
+    sha256: &str,
+    (path, bytes, record_length): (PathBuf, Arc<Vec<u8>>, usize),
+    slots: [SlotV1; 2],
+    limit: usize,
+) -> bool {
+    let charge = retained_charge_v1(record_length, bytes.capacity());
+    if charge > limit || state.entries.contains_key(sha256) {
+        return false;
+    }
+    evict_to_v1(state, limit - charge);
     state.retained_bytes += charge;
     state.order.push_back(sha256.to_owned());
     for (queue, slot) in state.queues.iter_mut().zip(&slots) {
@@ -333,6 +403,7 @@ fn insert_locked_v1(
         sha256.to_owned(),
         EntryV1 {
             bytes,
+            path,
             charge,
             slots,
         },
@@ -340,15 +411,65 @@ fn insert_locked_v1(
     true
 }
 
+/// Drops every entry whose file lies under `directory`, queued and running
+/// parses included: their readers parse as before, a reader waiting on a
+/// running parse parses itself, and a parse finishing later finds no entry
+/// to fill (a later entry for the same bytes is another allocation).
+pub(crate) fn release_under_v1(directory: &Path) {
+    let shared = shared_v1();
+    let mut state = lock_v1(shared);
+    let released: Vec<String> = state
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.path.starts_with(directory))
+        .map(|(key, _)| key.clone())
+        .collect();
+    if released.is_empty() {
+        return;
+    }
+    for key in &released {
+        state.remove_v1(key);
+    }
+    let StateV1 {
+        entries, queues, ..
+    } = &mut *state;
+    for queue in queues.iter_mut() {
+        queue.retain(|key| entries.contains_key(key));
+    }
+    drop(state);
+    shared.changed.notify_all();
+}
+
 /// Starts a helper thread for the queued parses, unless none are queued or
 /// enough helpers run. A collection worker with no game left calls this, so
 /// helpers take the cores the collection leaves idle.
 pub(super) fn start_helper_v1() {
+    start_helper_below_v1(PARSE_AHEAD_HELPERS_V1);
+}
+
+/// Starts helpers for the queued parses until `limit` helpers (at most the
+/// process-wide 64) are alive or every queued parse has one.
+pub(crate) fn start_helpers_up_to_v1(limit: usize) {
+    let limit = limit.min(PARSE_AHEAD_HELPERS_V1);
+    loop {
+        let wanted = {
+            let state = lock_v1(shared_v1());
+            let queued: usize = state.queues.iter().map(VecDeque::len).sum();
+            queued > state.helpers && state.helpers < limit
+        };
+        if !wanted || !start_helper_below_v1(limit) {
+            return;
+        }
+    }
+}
+
+/// [`start_helper_v1`] with at most `limit` helpers alive; whether one started.
+fn start_helper_below_v1(limit: usize) -> bool {
     let shared = shared_v1();
     {
         let mut state = lock_v1(shared);
-        if state.queues.iter().all(VecDeque::is_empty) || state.helpers >= PARSE_AHEAD_HELPERS_V1 {
-            return;
+        if state.queues.iter().all(VecDeque::is_empty) || state.helpers >= limit {
+            return false;
         }
         state.helpers += 1;
     }
@@ -358,7 +479,9 @@ pub(super) fn start_helper_v1() {
         .spawn(move || helper_v1(shared));
     if spawned.is_err() {
         lock_v1(shared).helpers -= 1;
+        return false;
     }
+    true
 }
 
 /// Releases a claimed parse even if the helper unwinds, so no reader waits
@@ -492,10 +615,72 @@ pub(super) fn wait_until_parsed_for_test_v1(sha256: &str) {
 /// Whether a reader received a parse-ahead result for `sha256`: collection
 /// fields, then the trajectory.
 #[cfg(test)]
-pub(super) fn served_for_test_v1(sha256: &str) -> [bool; 2] {
+pub(crate) fn served_for_test_v1(sha256: &str) -> [bool; 2] {
     let state = lock_v1(shared_v1());
     [KindV1::CollectionFields, KindV1::Trajectory]
         .map(|kind| state.served.contains(&(sha256.to_owned(), kind as u8)))
+}
+
+/// The entries held for files under `directory`.
+#[cfg(test)]
+pub(crate) fn held_under_for_test_v1(directory: &Path) -> usize {
+    lock_v1(shared_v1())
+        .entries
+        .values()
+        .filter(|entry| entry.path.starts_with(directory))
+        .count()
+}
+
+/// Forgets that results for `sha256` were served, for a test that runs the
+/// same bytes again.
+#[cfg(test)]
+pub(crate) fn forget_served_for_test_v1(sha256: &str) {
+    let mut state = lock_v1(shared_v1());
+    for kind in [KindV1::CollectionFields, KindV1::Trajectory] {
+        state.served.remove(&(sha256.to_owned(), kind as u8));
+    }
+}
+
+/// Tests that expect results parsed ahead hold this lock shared, and a test
+/// that changes the retention holds it exclusively.
+#[cfg(test)]
+static RETENTION_TEST_LOCK_V1: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// Held by a test that expects results parsed ahead: no test changes the
+/// retention meanwhile.
+#[cfg(test)]
+pub(crate) fn default_retention_for_test_v1() -> std::sync::RwLockReadGuard<'static, ()> {
+    RETENTION_TEST_LOCK_V1
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A test's exclusive hold on the retention; the default is back in force
+/// when it is dropped.
+#[cfg(test)]
+pub(crate) struct RetentionForTestV1(#[allow(dead_code)] std::sync::RwLockWriteGuard<'static, ()>);
+
+#[cfg(test)]
+impl RetentionForTestV1 {
+    pub(crate) fn set_v1(&self, bytes: usize) {
+        set_retained_bytes_v1(bytes);
+    }
+}
+
+#[cfg(test)]
+impl Drop for RetentionForTestV1 {
+    fn drop(&mut self) {
+        set_retained_bytes_v1(DEFAULT_RETAINED_MEBIBYTES_V1 << 20);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn retention_for_test_v1() -> RetentionForTestV1 {
+    RetentionForTestV1(
+        RETENTION_TEST_LOCK_V1
+            .write()
+            .unwrap_or_else(PoisonError::into_inner),
+    )
 }
 
 #[cfg(test)]

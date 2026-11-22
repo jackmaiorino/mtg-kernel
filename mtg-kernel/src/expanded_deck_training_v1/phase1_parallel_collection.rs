@@ -321,7 +321,12 @@ pub(super) fn collect_parallel_v1(
                 record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?,
             );
             let pin = publish_json_shared_v1(&output_directory, &name, &bytes)?;
-            trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
+            trajectory_parse_ahead_v1::offer_serialized_v1(
+                &pin.sha256,
+                &pin.path,
+                bytes,
+                trajectory,
+            )?;
             let ex1_pin = ex1_record
                 .map(|record| {
                     publish_json(&output_directory, &format!("ex1-{index:04}.json"), &record)
@@ -604,6 +609,7 @@ mod tests {
     /// parse of the file.
     #[test]
     fn parallel_collection_parses_its_trajectories_ahead_for_both_readers() {
+        let _retention = trajectory_parse_ahead_v1::default_retention_for_test_v1();
         let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead");
         for pin in &pins {
             trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);
@@ -637,6 +643,7 @@ mod tests {
     /// published bytes are back, it is served to them.
     #[test]
     fn a_trajectory_changed_after_its_parse_ahead_fails_its_readers_as_before() {
+        let _retention = trajectory_parse_ahead_v1::default_retention_for_test_v1();
         let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead-changed");
         for pin in &pins {
             trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);

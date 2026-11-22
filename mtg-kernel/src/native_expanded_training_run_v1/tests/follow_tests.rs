@@ -144,7 +144,7 @@ fn without_telemetry_v1(value: &Value) -> Value {
 /// Every file present in both trees has the same bytes, except timed
 /// documents, which are equal without their telemetry; and (with
 /// `same_files`) the same files exist, apart from staging debris.
-fn assert_trees_match_v1(case: &str, got: &Path, want: &Path, same_files: bool) {
+pub(super) fn assert_trees_match_v1(case: &str, got: &Path, want: &Path, same_files: bool) {
     let wanted = files_under_v1(want);
     let found = files_under_v1(got);
     for (path, bytes) in &found {
@@ -184,7 +184,7 @@ fn assert_trees_match_v1(case: &str, got: &Path, want: &Path, same_files: bool) 
 }
 
 /// The states and schedule bindings of every iteration receipt of a run.
-fn receipt_states_v1(result: &Value) -> Vec<(Value, Value, Value)> {
+pub(super) fn receipt_states_v1(result: &Value) -> Vec<(Value, Value, Value)> {
     (0..result["iterations"].as_array().unwrap().len())
         .map(|index| {
             let receipt = iteration_receipt_v1(result, index);

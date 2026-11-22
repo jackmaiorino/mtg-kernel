@@ -56,7 +56,8 @@ fn run() -> Result<(), String> {
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
         "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
         "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block] [--collect-external PROGRAM] ",
-        "| CONFIG.json --follow SPOOL [--follow-driver-lock]"
+        "[--parse-ahead-mebibytes N] ",
+        "| CONFIG.json --follow SPOOL [--follow-driver-lock] [--parse-ahead-mebibytes N]"
     );
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
@@ -67,6 +68,7 @@ fn run() -> Result<(), String> {
     let mut gpu_kernels: Option<String> = None;
     let mut gpu_wait: Option<String> = None;
     let mut collect_external: Option<PathBuf> = None;
+    let mut parse_ahead_mebibytes: Option<usize> = None;
     let mut follow: Option<PathBuf> = None;
     let mut follow_driver_lock = false;
     let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
@@ -105,6 +107,10 @@ fn run() -> Result<(), String> {
             }
             Some("--collect-external") if collect_external.is_none() => {
                 collect_external = Some(PathBuf::from(text(args.next(), "collector program")?));
+            }
+            Some("--parse-ahead-mebibytes") if parse_ahead_mebibytes.is_none() => {
+                parse_ahead_mebibytes =
+                    Some(number(args.next(), "parse-ahead retention")? as usize);
             }
             Some("--follow") if follow.is_none() => {
                 follow = Some(PathBuf::from(text(args.next(), "spool directory")?));
@@ -157,6 +163,12 @@ fn run() -> Result<(), String> {
     }
     let config: NativeExpandedTrainingRunV1 =
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    // The parse-ahead retention changes only which reads find a parse made
+    // ahead, never what a read returns: an execution option of the process,
+    // outside the run identity, for followed runs too.
+    if let Some(mebibytes) = parse_ahead_mebibytes {
+        mtg_kernel::native_expanded_training_run_v1::configure_parse_ahead_mebibytes_v1(mebibytes)?;
+    }
     if let Some(spool) = follow {
         return follow_mode(config, &spool, follow_driver_lock);
     }

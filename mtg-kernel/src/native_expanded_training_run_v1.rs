@@ -1847,21 +1847,84 @@ pub fn install_external_collector_v1(program: PathBuf) -> Result<(), String> {
         .map_err(|_| "external collector already installed".to_string())
 }
 
+/// Sets this process's parse-ahead retention (`trajectory_parse_ahead_v1`),
+/// in 0..=16384 MiB, once and before any run; 512 MiB when never set, 0
+/// holds nothing. Execution only, like the external collector: it changes
+/// which reads find a parse made ahead, never what a read returns, so it
+/// sits outside the run identity. An entry is charged its record length or
+/// its buffer's capacity, whichever is larger, so holding a whole batch can
+/// need more than the batch's record-byte bound.
+pub fn configure_parse_ahead_mebibytes_v1(mebibytes: usize) -> Result<(), String> {
+    crate::expanded_deck_training_v1::configure_parse_ahead_mebibytes_v1(mebibytes)
+}
+
+/// Drops the parse-ahead entries of files under an iteration's directory
+/// when the iteration ends, completed or failed (a failed or abandoned
+/// collection leaves entries no reader will take).
+struct ParseAheadReleaseV1<'a>(&'a Path);
+
+impl Drop for ParseAheadReleaseV1<'_> {
+    fn drop(&mut self) {
+        crate::expanded_deck_training_v1::release_parse_ahead_under_v1(self.0);
+    }
+}
+
+#[cfg(test)]
+type FakeExternalCollectorV1 = std::rc::Rc<dyn Fn(&Path) -> bool>;
+
+#[cfg(test)]
+thread_local! {
+    /// A test's stand-in for the external collector program on this thread:
+    /// called with the attempt's command path, true when it succeeded.
+    static FAKE_EXTERNAL_COLLECTOR_V1: std::cell::RefCell<Option<FakeExternalCollectorV1>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Runs an iteration's collection: in this process, or through the installed
 /// external collector, which gets the attempt's published command path.
 fn execute_collection_v1(command: ExpandedTrainingCommandV1, attempt: &Path) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(fake) = FAKE_EXTERNAL_COLLECTOR_V1.with(|fake| fake.borrow().clone()) {
+        return execute_external_collection_v1(command, attempt, |path| Ok(fake(path)));
+    }
     let Some(program) = EXTERNAL_COLLECTOR_V1.get() else {
         return execute_v1(command).map(|_| ());
     };
-    check(
-        matches!(command, ExpandedTrainingCommandV1::CollectParallel { .. }),
-        "an external collector needs collection_workers above 1",
+    execute_external_collection_v1(command, attempt, |path| {
+        std::process::Command::new(program)
+            .arg(path)
+            .status()
+            .map(|status| status.success())
+            .map_err(|error| format!("external collector: {error}"))
+    })
+}
+
+/// The external half of `execute_collection_v1`: `collector` runs the
+/// collector on the command path and says whether it succeeded, while the
+/// trajectories it publishes are fed to parse-ahead (`external_feed_v1`).
+fn execute_external_collection_v1(
+    command: ExpandedTrainingCommandV1,
+    attempt: &Path,
+    collector: impl FnOnce(&Path) -> Result<bool, String>,
+) -> Result<(), String> {
+    let ExpandedTrainingCommandV1::CollectParallel {
+        episodes,
+        workers,
+        output_directory,
+        ..
+    } = &command
+    else {
+        return Err("an external collector needs collection_workers above 1".into());
+    };
+    let command_path = attempt.join("collect-command.json");
+    let succeeded = external_feed_v1::collect_fed_v1(
+        output_directory,
+        episodes.len(),
+        *workers,
+        || collector(&command_path),
+        |result| matches!(result, Ok(true)),
     )?;
-    let status = std::process::Command::new(program)
-        .arg(attempt.join("collect-command.json"))
-        .status()
-        .map_err(|error| format!("external collector: {error}"))?;
-    check(status.success(), "external collector failed")?;
+    check(succeeded, "external collector failed")?;
     check(
         attempt.join("collect/collection.json").is_file(),
         "external collector published no collection",
@@ -1997,6 +2060,7 @@ pub fn run_native_expanded_training_v1(
     )?;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
+        let _parse_ahead = ParseAheadReleaseV1(&directory);
         let complete_path = directory.join("complete.json");
         if let Some(options) = &config.search_targets {
             check(
@@ -2392,6 +2456,7 @@ pub fn run_native_expanded_training_v1(
     Ok(result)
 }
 
+mod external_feed_v1;
 pub mod follow_v1;
 
 #[cfg(test)]
@@ -2402,6 +2467,7 @@ mod tests {
     use super::*;
 
     mod follow_tests;
+    mod parse_ahead_tests;
     /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
     /// the same on every system. Native236 and CI39598628050 observe this CPU
     /// regression state after the CR 117.3c/117.5 caster-priority correction.
