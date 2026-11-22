@@ -8200,6 +8200,7 @@ fn leaf_staged_draw(
 ) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
     use crate::eternal_cards_v1::EternalOpV1 as E;
     use crate::eternal_cube_c1a_v1::C1aOpV1;
+    use crate::eternal_pauper_pf1a_v1::Pf1aOpV1;
     use crate::eternal_vintage_e7b_v1::E7bOpV1;
     use crate::standard_cards_v1::StandardOpV1;
     let EffectOp::StandardV1(StandardOpV1::EternalV1(leaf)) = leaf else {
@@ -8221,6 +8222,8 @@ fn leaf_staged_draw(
         E::E7bV1(E7bOpV1::MayDiscardThenDrawV1 { draws }) => {
             Some((PlayerRef::Controller, u32::from(*draws), Vec::new()))
         }
+        // K'un-Lun Warrior stages one draw at the leaf after payment.
+        E::Pf1aV1(Pf1aOpV1::KunLunV1) => Some((PlayerRef::Controller, 1, Vec::new())),
         _ => None,
     }
 }

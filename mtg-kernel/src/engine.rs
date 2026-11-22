@@ -7072,6 +7072,7 @@ fn permanent_matches_return_filter(
         }
         PermanentFilterDef::Artifact => object_has_type(state, object_id, CardType::Artifact),
         PermanentFilterDef::CreatureV1 => object_has_type(state, object_id, CardType::Creature),
+        PermanentFilterDef::LandV1 => object_has_type(state, object_id, CardType::Land),
         PermanentFilterDef::WithSubtypeV1(subtype) => {
             has_effective_subtype(state, object_id, subtype)
         }
@@ -7853,6 +7854,15 @@ fn validate_cost_component_choices_v1(
         || crew_requirement(components).is_some()
     {
         reserved.extend(object_cost_chosen.iter().copied());
+    }
+    // A permanent returned to hand as a cost can't also pay mana with an
+    // ability that sacrifices it (a Gemstone Mine's last counter), so the
+    // payment doesn't use it (Pauper field wave W1 review).
+    #[cfg(feature = "eternal-fixtures")]
+    if return_filter.is_some() || returns_permanents.is_some() {
+        reserved.extend(object_cost_chosen.iter().copied().filter(|&object| {
+            crate::eternal_premodern_p1a_v1::statics::leaves_when_tapped_for_mana(state, object)
+        }));
     }
     Some(reserved)
 }
@@ -9291,43 +9301,96 @@ fn cast_single_object_cost_needed(
     }
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = state;
+    // "As an additional cost to cast this spell, return a land you control
+    // to its owner's hand" (Deprive). A mandatory additional cost is paid
+    // whatever the base cost, including a flashback an effect grants, so it
+    // is staged when the base cost stages no object of its own.
+    let additional = || {
+        def.additional_cost?
+            .iter()
+            .find_map(|component| match component {
+                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                    Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
+                }
+                _ => None,
+            })
+    };
     if pending.is_flashback {
         return def
             .flashback
-            .as_ref()?
-            .cost
-            .iter()
-            .find_map(|component| match component {
-                CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
-                    Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
-                }
-                _ => None,
-            });
+            .as_ref()
+            .and_then(|flashback| {
+                flashback.cost.iter().find_map(|component| match component {
+                    CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                        Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
+                    }
+                    // Boarding Action's "Beam me up": return a creature
+                    // you control to its owner's hand (wave Pf1c).
+                    CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                        Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
+                    }
+                    _ => None,
+                })
+            })
+            .or_else(additional);
     }
     if pending.cast_mode != Some(CastMode::Alternative) {
-        return None;
+        return additional();
     }
-    def.alt_cost?
-        .components
-        .iter()
-        .find_map(|component| match component {
-            CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
-                Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
-            }
-            CostComponent::ExileCardFromHandWithColorV1(color) => {
-                Some(CastSingleObjectCostV1::ExileHandCard(*color))
-            }
-            CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
-                Some(CastSingleObjectCostV1::ExileHandCards(*color, *count))
-            }
-            CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
-                Some(CastSingleObjectCostV1::ReturnPermanents(*filter, *count))
-            }
-            CostComponent::DiscardIslandAndAnotherCardV1 => {
-                Some(CastSingleObjectCostV1::DiscardIslandAndAnother)
-            }
-            _ => None,
+    def.alt_cost
+        .and_then(|alt| {
+            alt.components.iter().find_map(|component| match component {
+                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                    Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
+                }
+                CostComponent::ExileCardFromHandWithColorV1(color) => {
+                    Some(CastSingleObjectCostV1::ExileHandCard(*color))
+                }
+                CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
+                    Some(CastSingleObjectCostV1::ExileHandCards(*color, *count))
+                }
+                CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
+                    Some(CastSingleObjectCostV1::ReturnPermanents(*filter, *count))
+                }
+                CostComponent::DiscardIslandAndAnotherCardV1 => {
+                    Some(CastSingleObjectCostV1::DiscardIslandAndAnother)
+                }
+                _ => None,
+            })
         })
+        .or_else(additional)
+}
+
+/// Whether returning `object` as part of `pending`'s cost keeps the cast
+/// payable. A LandV1 return uses the shared quote's exact post-mana survival
+/// check; other return filters retain the Gemstone Mine reservation check.
+fn return_choice_keeps_cast_payable(
+    pending: &PendingCast,
+    object: ObjectId,
+    filter: PermanentFilterDef,
+    state: &GameState,
+) -> bool {
+    if !cfg!(feature = "eternal-fixtures")
+        || (filter != PermanentFilterDef::LandV1
+            && !crate::eternal_premodern_p1a_v1::statics::leaves_when_tapped_for_mana(
+                state, object,
+            ))
+    {
+        return true;
+    }
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let mut projected = pending.clone();
+    projected.sacrifice_chosen.push(object);
+    let method = finalized_cast_method(&projected, pending.source_contract.cast_method, def);
+    pending_cast_quote_v1(
+        def,
+        &projected,
+        method,
+        pending.kicked == Some(true),
+        pending.selected_x_v59().unwrap_or(0),
+        state,
+    )
+    .is_some()
 }
 
 fn cast_single_object_cost_candidates(
@@ -9340,6 +9403,7 @@ fn cast_single_object_cost_candidates(
             return_permanent_cost_candidates(pending.controller, state, filter, &[])
                 .into_iter()
                 .map(|binding| binding.object)
+                .filter(|&object| return_choice_keeps_cast_payable(pending, object, filter, state))
                 .collect()
         }
         CastSingleObjectCostV1::ExileHandCard(color) => {
@@ -9362,6 +9426,7 @@ fn cast_single_object_cost_candidates(
                 .into_iter()
                 .map(|binding| binding.object)
                 .filter(|object| !pending.sacrifice_chosen.contains(object))
+                .filter(|&object| return_choice_keeps_cast_payable(pending, object, filter, state))
                 .collect()
         }
         CastSingleObjectCostV1::TapPermanents(filter, _) => tap_permanent_cost_candidates(
@@ -10253,6 +10318,21 @@ fn ordinary_next_cast_targets(
     } else {
         candidates
     };
+    // Kaervek's Torch (Pauper field wave Pf1c): a spell that targets it
+    // costs {2} more, so a Torch is offered only while that cast stays
+    // payable.
+    #[cfg(feature = "eternal-fixtures")]
+    let candidates = if crate::eternal_pauper_pf1c_v1::torch_on_stack(state) {
+        candidates
+            .into_iter()
+            .filter(|&target| {
+                !crate::eternal_pauper_pf1c_v1::is_torch_target(state, target)
+                    || torch_target_payable_v1(def, pending, chosen, target, state)
+            })
+            .collect()
+    } else {
+        candidates
+    };
     if !normal_cast_cost_depends_on_targets(def) {
         return candidates;
     }
@@ -10271,6 +10351,129 @@ fn ordinary_next_cast_targets(
             )
         })
         .collect()
+}
+
+/// Kaervek's Torch (Pauper field wave Pf1c): whether `pending` stays payable
+/// by its cast method (or, before that is chosen, by either the mana cost or
+/// the alternative cost) with `target` added after `chosen`. The Torch's tax
+/// is part of the quote through the chosen targets.
+#[cfg(feature = "eternal-fixtures")]
+fn torch_target_payable_v1(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    chosen: &[Target],
+    target: Target,
+    state: &GameState,
+) -> bool {
+    let mut projected = pending.clone();
+    projected.targets_chosen = chosen.to_vec();
+    projected.targets_chosen.push(target);
+    let kicked = pending.kicked == Some(true);
+    let x = pending.selected_x_v59().unwrap_or(0);
+    let method = finalized_cast_method(&projected, pending.source_contract.cast_method, def);
+    pending_cast_quote_v1(def, &projected, method, kicked, x, state).is_some()
+        || (method == CastMethodV4::Normal
+            && pending.cast_mode.is_none()
+            && pending_cast_quote_v1(def, &projected, CastMethodV4::Alternative, kicked, x, state)
+                .is_some())
+}
+
+/// Kaervek's Torch (Pauper field wave Pf1c): false when no viable mode of
+/// `def`'s spell remains castable, a mode being lost only when every legal
+/// first target of it is a Torch on the stack that this cast can't pay the
+/// {2} tax to target. A mode without targets is never lost here.
+#[cfg(feature = "eternal-fixtures")]
+fn torch_first_target_payable_v1(
+    def: &card_def::CardDef,
+    id: ObjectId,
+    cast_method: CastMethodV4,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    let modes = viable_printed_spell_modes(def, id, player, state);
+    let zone = state.objects.get(id).zone;
+    modes.is_empty()
+        || modes
+            .into_iter()
+            .any(|mode| torch_mode_payable_v1(def, id, zone, cast_method, mode, player, state))
+}
+
+/// Kaervek's Torch (Pauper field wave Pf1c): whether spell form `mode` of
+/// `def`, cast from `zone` by `cast_method` (a normal cast may still choose
+/// its alternative cost, or a hand cast without paying its mana cost under
+/// Omniscience, which still pays the {2}), has a legal first target that
+/// isn't an unpayable Torch. A form without targets always qualifies.
+#[cfg(feature = "eternal-fixtures")]
+fn torch_mode_payable_v1(
+    def: &card_def::CardDef,
+    id: ObjectId,
+    zone: Zone,
+    cast_method: CastMethodV4,
+    mode: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    let Some(spec) = selected_spell_target_spec(def, mode, false) else {
+        return true;
+    };
+    if target_min_count(spec) == 0 {
+        return true;
+    }
+    let first = completable_next_targets_for_controller_and_source(
+        spec,
+        &[],
+        player,
+        targeting_source_for_object(state, id),
+        state,
+    );
+    if first.is_empty()
+        || first
+            .iter()
+            .any(|&target| !crate::eternal_pauper_pf1c_v1::is_torch_target(state, target))
+    {
+        return true;
+    }
+    let methods: &[CastMethodV4] = if cast_method == CastMethodV4::Normal {
+        &[CastMethodV4::Normal, CastMethodV4::Alternative]
+    } else {
+        std::slice::from_ref(&cast_method)
+    };
+    let quote = |quote_state: &GameState, method: CastMethodV4, target: Target| {
+        spell_costs_v1::selected_spell_quote_v1(
+            def,
+            id,
+            zone,
+            method,
+            false,
+            mode,
+            0,
+            &[target],
+            &[],
+            player,
+            quote_state,
+            &[],
+        )
+        .is_some()
+    };
+    if first
+        .iter()
+        .any(|&target| methods.iter().any(|&method| quote(state, method, target)))
+    {
+        return true;
+    }
+    // A hand cast without paying its mana cost (Omniscience) still pays the
+    // tax, quoted as `hand_free_cast_quote_ok` quotes the free cast.
+    if cast_method != CastMethodV4::Normal
+        || zone != Zone::Hand
+        || !crate::eternal_cards_v1::e3::hand_free_permission_any_form(state, id, player)
+    {
+        return false;
+    }
+    let mut projected = state.clone();
+    crate::eternal_cards_v1::e3::set_free_quote(&mut projected, Some(id));
+    first
+        .iter()
+        .any(|&target| quote(&projected, CastMethodV4::Normal, target))
 }
 
 /// Returns the supported Omen definition for the current cast pipeline.
@@ -10649,6 +10852,33 @@ fn viable_pending_spell_forms(
         });
     }
     modes.retain(|_| resolution_cast_v1::form_allowed(state, pending.spell, CastMethodV4::Normal));
+    modes
+}
+
+/// Both the mode menu and the submitted mode action use the same payable choices.
+fn payable_pending_spell_modes(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Vec<u8> {
+    let modes = viable_pending_spell_forms(def, pending, state);
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_pf1c_v1::torch_on_stack(state) {
+        return modes
+            .into_iter()
+            .filter(|&mode| {
+                torch_mode_payable_v1(
+                    def,
+                    pending.spell,
+                    pending.origin_zone,
+                    pending.source_contract.cast_method,
+                    mode,
+                    pending.controller,
+                    state,
+                )
+            })
+            .collect();
+    }
     modes
 }
 
@@ -11229,6 +11459,14 @@ fn is_castable_now(
         )
         .into_iter()
         .any(|target| crate::standard_cards_v1::cast_target_allowed(def, id, player, target, state))
+    {
+        return false;
+    }
+    // Kaervek's Torch (Pauper field wave Pf1c): a spell whose only legal
+    // targets are Torches it can't pay to target isn't offered.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_pf1c_v1::torch_on_stack(state)
+        && !torch_first_target_payable_v1(def, id, cast_method, player, state)
     {
         return false;
     }
@@ -16836,7 +17074,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // index (including index 1) silently; if both are viable, expose the
     // existing two-action schema-v4 decision unchanged.
     if has_spell_form_choice(def) && pending.mode_chosen.is_none() {
-        let viable_modes = viable_pending_spell_forms(def, &pending, state);
+        let viable_modes = payable_pending_spell_modes(def, &pending, state);
         if viable_modes.is_empty() {
             // Defensive against a state mutation between the general gate
             // above and this mode stage (none exists in today's pipeline).
@@ -16884,6 +17122,19 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         let need = maximum.expect("unfinished unbounded selection handled above");
         let (legal_targets, can_finish) =
             cast_target_choices(def, &pending, active_target_spec, state);
+        // Kaervek's Torch's tax can leave a later pick with no payable
+        // target (Pauper field wave Pf1c): revert the cast instead of
+        // exposing an empty targeting decision.
+        #[cfg(feature = "eternal-fixtures")]
+        if legal_targets.is_empty()
+            && !can_finish
+            && crate::eternal_pauper_pf1c_v1::torch_on_stack(state)
+        {
+            let cast_method = finalized_cast_method(&pending, staged_method, def);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, cast_method);
+            return None;
+        }
         return Some(Decision::ChooseTargets {
             player: pending.controller,
             spell: pending.spell,
@@ -20769,7 +21020,11 @@ fn plan_spell_departure(
     if item.kind != StackItemKind::Spell {
         return Err("only a spell stack item has a spell departure".to_string());
     }
-    Ok(if item.is_copy {
+    // A prepare copy was cast from exile, so it has a real cast contract.
+    // Like a copy created on the stack, it leaves no card behind.
+    let is_copy =
+        item.is_copy || crate::eternal_vintage_e7b_v1::is_prepare_copy(state, item.source);
+    Ok(if is_copy {
         SpellDeparture::Cease {
             source: item.source,
         }
@@ -20846,6 +21101,7 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
             } {
                 return Err("the virtual spell copy could not cease to exist".to_string());
             }
+            crate::eternal_vintage_e7b_v1::forget_prepare_copy(state, source);
         }
     }
     crate::faebloom_trick_v43::record_departure(
@@ -26985,7 +27241,7 @@ pub(crate) fn step_without_linked_aura_v1(
                 return Err("this cast's mode has already been chosen".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-            let viable_modes = viable_pending_spell_forms(def, pending, state);
+            let viable_modes = payable_pending_spell_modes(def, pending, state);
             if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
                 || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));

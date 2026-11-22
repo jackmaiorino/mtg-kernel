@@ -39,6 +39,7 @@ pub(crate) const TENDRILS_OF_AGONY: &str = "Tendrils of Agony";
 pub(crate) const GALVANIC_RELAY: &str = "Galvanic Relay";
 pub(crate) const GRAPESHOT: &str = "Grapeshot";
 pub(crate) const EMPTY_THE_WARRENS: &str = "Empty the Warrens";
+pub(crate) const SCATTERSHOT: &str = "Scattershot";
 
 /// Per-game state of the E3 cards, inside `EternalStateV1::e3`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -328,6 +329,10 @@ pub enum E3ChoiceKindV1 {
     C6aGutSacrificeV1,
     /// Vintage Cube wave C6b's private hand discard.
     C6bV1(crate::eternal_cube_c6b_v1::C6bChoiceV1),
+    /// A Pauper field wave Pf1a choice (`eternal_pauper_pf1a_v1`).
+    Pf1aV1(crate::eternal_pauper_pf1a_v1::Pf1aChoiceV1),
+    /// A Pauper field wave Pf1b choice (`eternal_pauper_pf1b_v1`).
+    Pf1bV1(crate::eternal_pauper_pf1b_v1::Pf1bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -432,6 +437,12 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C6bV1(_) = &self.kind {
             return true;
         }
+        if let E3ChoiceKindV1::Pf1aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::Pf1bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -518,6 +529,8 @@ impl E3ChoiceV1 {
                 crate::rl::TargetSelectionPurposeV4::PermanentSelection
             }
             E3ChoiceKindV1::C6bV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
+            E3ChoiceKindV1::Pf1aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::Pf1bV1(kind) => kind.public_purpose(),
         }
     }
 
@@ -561,6 +574,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::Pf1bV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -967,6 +981,20 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::C6bV1(kind) => {
             crate::eternal_cube_c6b_v1::finish_selection(state, continuation, kind, bindings)
         }
+        E3ChoiceKindV1::Pf1aV1(kind) => crate::eternal_pauper_pf1a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::Pf1bV1(kind) => crate::eternal_pauper_pf1b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
     }
 }
 
@@ -1354,6 +1382,15 @@ pub(crate) fn drive(
         EternalOpV1::C6aV1(op) => crate::eternal_cube_c6a_v1::drive(state, continuation, op, path),
         EternalOpV1::C6bV1(op) => crate::eternal_cube_c6b_v1::drive(state, continuation, op, path),
         EternalOpV1::C6cV1(op) => crate::eternal_cube_c6c_v1::drive(state, continuation, op, path),
+        EternalOpV1::Pf1aV1(op) => {
+            crate::eternal_pauper_pf1a_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::Pf1bV1(op) => {
+            crate::eternal_pauper_pf1b_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::Pf1cV1(op) => {
+            crate::eternal_pauper_pf1c_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
@@ -2279,7 +2316,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         THE_ONE_RING => &THE_ONE_RING_TRIGGERS,
         CHROME_MOX => &CHROME_MOX_TRIGGERS,
         FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
-        | EMPTY_THE_WARRENS => &FLUSTERSTORM_TRIGGERS,
+        | EMPTY_THE_WARRENS | SCATTERSHOT => &FLUSTERSTORM_TRIGGERS,
         THASSAS_ORACLE => &THASSAS_ORACLE_TRIGGERS,
         EMRAKUL => &EMRAKUL_TRIGGERS,
         ATRAXA => &ATRAXA_TRIGGERS,
@@ -2294,7 +2331,7 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
         dungeons::ACERERAK => Some(dungeons::trigger_target_spec(effect)),
         THE_ONE_RING | CHROME_MOX | CITY_OF_TRAITORS | FLUSTERSTORM | BRAIN_FREEZE
         | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT | EMPTY_THE_WARRENS | THASSAS_ORACLE
-        | EMRAKUL | ATRAXA | RAPH_AND_MIKEY => Some(TargetSpec::None),
+        | EMRAKUL | ATRAXA | RAPH_AND_MIKEY | SCATTERSHOT => Some(TargetSpec::None),
         _ => None,
     }
 }
@@ -2665,6 +2702,7 @@ pub(crate) fn has_storm(name: &str) -> bool {
         || name == GALVANIC_RELAY
         || name == GRAPESHOT
         || name == EMPTY_THE_WARRENS
+        || name == SCATTERSHOT
 }
 
 /// Whether a Storm trigger copies a targeted spell, whose copies may choose
@@ -2851,7 +2889,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     match name {
         CITY_OF_TRAITORS => *effect == sacrifice_source(),
         FLUSTERSTORM | BRAIN_FREEZE | TENDRILS_OF_AGONY | GALVANIC_RELAY | GRAPESHOT
-        | EMPTY_THE_WARRENS => {
+        | EMPTY_THE_WARRENS | SCATTERSHOT => {
             matches!(effect, EffectOp::CreateStormCopies { .. })
         }
         dungeons::ACERERAK => dungeons::delayed_effect_matches(effect),
