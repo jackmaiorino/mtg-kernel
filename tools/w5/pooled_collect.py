@@ -900,7 +900,8 @@ AGENT_ARGS = {"pin_status": {"pins"}, "push": {"path", "sha256"}, "put_shard": {
               "remove_shard": {"tag"}, "remove_pin": {"path", "sha256"}}
 AGENT_SANDBOXES = ("landlock", "none")
 EXECUTORS = ("direct", "spool")
-SPOOL_EXECUTOR_KEYS = {"kind", "heartbeat_seconds", "stop_grace_seconds", "stop_file", "end_file"}
+SPOOL_EXECUTOR_KEYS = {"kind", "heartbeat_seconds", "stop_grace_seconds", "watchdog_grace_seconds", "stop_file",
+                       "end_file"}
 SPOOL_DIR = ".spool"  # under the scratch root, mode 700: the agent's and the box runner's queue
 SPOOL_RESERVED = {"runner.lock", "runner.heartbeat"}
 SPOOL_REQUEST_SCHEMA = "pooled-collect-spool-request/v1"
@@ -912,7 +913,7 @@ SPOOL_RESULT_GRACE = 30  # the agent waits this long past a run's seconds for th
 SPOOL_CANCEL_GRACE = 10  # after a cancel, the agent waits this long for the runner to report the kill
 SPOOL_SWEEP_SECONDS = 5.0
 SPOOL_STAGE_AGE = 60.0  # a stage file older than this was left by a crash
-SPOOL_WATCHDOG_GRACE = 30  # a collector's own alarm fires this long after its deadline (the runner hung)
+SPOOL_WATCHDOG_GRACE = 30  # default: a collector's own alarm fires this long after its deadline (a hung runner)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 BINARY = getattr(os, "O_BINARY", 0)
 
@@ -1024,7 +1025,17 @@ def _system_rules(config: dict) -> list:
     programs = [p for p in config["prefix"] if os.path.isabs(p) and os.path.isfile(p)]
     rules += [(p, LL_RUN, False) for p in programs] + [(config["collector"], LL_RUN, True)]
     rules += [(p, LL_RUN, True) for p in config["run_paths"]]
+    if config.get("vector_tanh_dir"):
+        rules.append((config["vector_tanh_dir"], LL_READ, False))
     return rules
+
+
+def _direct_env(config: dict):
+    """The direct executor's collector environment: the agent's own (inherited, None) unless a vector-tanh
+    record directory is configured, which is then added."""
+    if not config.get("vector_tanh_dir"):
+        return None
+    return dict(os.environ, MTG_KERNEL_VECTOR_TANH_DIR=config["vector_tanh_dir"])
 
 
 def agent_rules(config: dict) -> list:
@@ -1154,6 +1165,14 @@ def load_agent_config(path: Path) -> dict:
             isinstance(p, str) and _canonical(p) == p and not any(_overlap(p, root) for root in roots)
             for p in config["run_paths"]):
         raise ValueError("agent run_paths must be canonical absolute paths outside every root")
+    # A settled vector-tanh proof record directory (`--settle-vector-tanh` beforehand), read only, passed to the
+    # collector as MTG_KERNEL_VECTOR_TANH_DIR by both executors: x86-64 collectors under PlatformLibm then use
+    # the proved eight-lane tanh. Same bits either way; without it they call scalar tanhf (slower).
+    config["vector_tanh_dir"] = config.get("vector_tanh_dir")
+    if config["vector_tanh_dir"] is not None and not (
+            isinstance(config["vector_tanh_dir"], str) and _canonical(config["vector_tanh_dir"]) == config["vector_tanh_dir"]
+            and not any(_overlap(config["vector_tanh_dir"], root) for root in roots)):
+        raise ValueError("agent vector_tanh_dir must be a canonical absolute path outside every root")
     config["max_seconds"] = int(config.get("max_seconds", 3600))
     config["request_seconds"] = int(config.get("request_seconds", 900))
     for key, default, least in (("min_free_bytes", AGENT_MIN_FREE_BYTES, 0), ("max_concurrent_runs", 2, 1)):
@@ -1179,7 +1198,8 @@ def _load_executor(config: dict) -> dict:
         return executor
     if os.name != "posix" or not hasattr(os, "waitid"):
         raise ValueError("the spool executor needs a POSIX collector host")
-    for key, default, least in (("heartbeat_seconds", 10, 1), ("stop_grace_seconds", 300, 0)):
+    for key, default, least in (("heartbeat_seconds", 10, 1), ("stop_grace_seconds", 300, 0),
+                                ("watchdog_grace_seconds", SPOOL_WATCHDOG_GRACE, 1)):
         executor[key] = executor.get(key, default)
         if not isinstance(executor[key], int) or isinstance(executor[key], bool) or executor[key] < least:
             raise ValueError(f"agent executor {key} must be an integer of at least {least}")
@@ -1403,6 +1423,25 @@ def _valid_shard_command(data: bytes, tag: str, config: dict) -> dict:
     return command
 
 
+def _valid_private_command(data: bytes, run_dir: str, config: dict) -> dict:
+    """The runner's check of an agent's private command copy: what _valid_shard_command requires, with the
+    output directory the agent set (`<run_dir>/out`), and every input confined to the pin roots."""
+    try:
+        command = json.loads(data)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        raise ValueError("the job's command is not JSON") from None
+    if not isinstance(command, dict) or command.get("mode") != "collect_parallel" \
+            or not isinstance(command.get("shard"), dict) \
+            or command.get("output_directory") != os.path.join(run_dir, "out"):
+        raise ValueError("the job's command is not a collect_parallel shard writing exactly to its run directory")
+    workers, episodes = command.get("workers"), command.get("episodes")
+    if command.get("ex1") is not None or type(workers) is not int or not 1 <= workers <= 1024 \
+            or not isinstance(episodes, list) or not 1 <= len(episodes) <= 1024:
+        raise ValueError("the job's command needs 1 to 1024 episodes and workers and no EX1 hook")
+    _confined_inputs(command, config)
+    return command
+
+
 def _read_nofollow(path: str, cap: int) -> bytes:
     try:
         fd = os.open(path, os.O_RDONLY | NOFOLLOW | BINARY)
@@ -1539,7 +1578,8 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, start_new_session=(os.name == "posix"),
-                                   preexec_fn=preexec, cwd=run_dir)  # relative names resolve in its run dir
+                                   preexec_fn=preexec, cwd=run_dir,  # relative names resolve in its run dir
+                                   env=_direct_env(config))
     except BaseException:
         launch.__exit__()
         raise
@@ -1578,9 +1618,10 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 # `<scratch>/.run/<tag>.<job>.json`. Spool files, all for one tag unless named otherwise, all written privately
 # and renamed into place within this one directory (Landlock ABI 1 allows that), so each is a singly linked
 # regular file and never partial:
-#   <tag>.lock     the waiting agent's liveness: an exclusive flock the agent holds from before it submits until
-#                  it leaves (the file appears already locked); the kernel frees it when the agent dies, so a free
-#                  lock means nobody waits for the job: it is not started, or it is killed
+#   <tag>.lock     the waiting agent's liveness: an exclusive flock the agent holds from before it creates the
+#                  run directory until it leaves (the file appears already locked); the kernel frees it when the
+#                  agent dies, so a free lock (probed with a shared flock) means nobody waits for the job: it is
+#                  not started, or it is killed
 #   <tag>.request  the submission: job, tag, the command copy's sha256, seconds, submission time, the runner
 #                  generation it was submitted to, and the binding of the agent's execution config. No path: the
 #                  runner derives every path from the tag and the job
@@ -1592,12 +1633,16 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 #   runner.heartbeat  the runner's generation and identity; touched every heartbeat_seconds / 4 by its loop
 #   STOP, END.json the configured stop file (no new job; running jobs finish or are cancelled once
 #                  stop_grace_seconds pass; exit 0) and the runner's own end record
-# Submission, claim and removal of a tag are serialized by the tag's lock under `<scratch>/.locks`. The runner
-# enforces each job's deadline from its submission time (queue time included), at most max_concurrent_runs
-# running jobs (a job keeps its place until its group is killed and reaped), and drops a request whose agent has
-# gone. It never reruns anything: a job claimed when it starts (its predecessor died) and a request submitted to
-# an earlier generation are answered as failed. remove_shard refuses while a job of its tag is submitted or
-# running; fetch_shard refuses while one is.
+# Admission, submission, claim, abandonment and removal of a tag are serialized by the tag's lock (its own
+# stripes `<scratch>/.locks/spool-*`, held for metadata operations only). The runner enforces each job's
+# deadline from its submission time (queue time included), at most max_concurrent_runs running jobs (a job
+# keeps its place until its group is killed and reaped), and drops a request whose agent has gone. It never
+# reruns anything: a job claimed when it starts (its predecessor died) and a request submitted to an earlier
+# generation are answered as failed. remove_shard refuses while a job of its tag is claimed or its agent holds
+# the job lock, and otherwise moves the run directory to a private `.trash-*` name under the lock; fetch_shard
+# opens the output directory first and then refuses if a job of its tag is submitted, claimed or waited on.
+# Command copies and snapshots a killed agent or runner leaves in `<scratch>/.run` are removed by remove_shard
+# and by the runner's sweep once their tag is inactive.
 #
 # The runner is single threaded (no thread exists when it forks a collector with preexec_fn): one loop polls
 # the collectors' stderr pipes, their exits, cancels, departed agents, deadlines, the stop file and the
@@ -1607,9 +1652,11 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
 # What differs for the collector between the executors (none of it is an input to a shard's bytes; an identity
 # run on a node compares real shards from both, and the learner's replay checks every decision anyway):
 #   environment  direct: the agent's (sshd's session: PATH, HOME, USER, SSH_*, /etc/environment, accepted
-#                LANG/LC_*); spool: exactly SPOOL_ENV (PATH, LANG). The collector's environment reads are
-#                diagnostics, checks and caches; without HOME it keeps no vector-tanh proof record, which
-#                changes speed only (and Landlock denies that write under either executor)
+#                LANG/LC_*); spool: exactly SPOOL_ENV (PATH, LANG). With the config's vector_tanh_dir both add
+#                MTG_KERNEL_VECTOR_TANH_DIR (read only to the collector), so x86-64 collectors under
+#                PlatformLibm use the settled eight-lane tanh; without it they call scalar tanhf under either
+#                executor (Landlock denies the proof record's usual home). Same bits either way. The collector's
+#                other environment reads are diagnostics, checks and caches
 #   signal mask  direct: SIGALRM blocked (it is forked under _alarm_deferred); spool: SIGALRM unblocked with
 #                the watchdog alarm pending (deadline plus SPOOL_WATCHDOG_GRACE); a collector that used
 #                SIGALRM itself would see that (the native trainer does not)
@@ -1648,8 +1695,17 @@ SPOOL_JOB = re.compile(r"^[0-9a-f]{32}$")
 
 def _execution_binding(config: dict) -> str:
     """What makes a collector run: an agent submits only to a runner whose config binds the same."""
-    keys = ("collector", "collector_sha256", "prefix", "run_paths", "pin_roots", "scratch", "sandbox")
-    return hashlib.sha256(json.dumps({k: config[k] for k in keys}, sort_keys=True).encode()).hexdigest()
+    keys = ("collector", "collector_sha256", "prefix", "run_paths", "pin_roots", "scratch", "sandbox",
+            "vector_tanh_dir")
+    return hashlib.sha256(json.dumps({k: config.get(k) for k in keys}, sort_keys=True).encode()).hexdigest()
+
+
+def _spool_env(config: dict) -> dict:
+    """The spool executor's collector environment: SPOOL_ENV, plus the vector-tanh record directory if set."""
+    env = dict(SPOOL_ENV)
+    if config.get("vector_tanh_dir"):
+        env["MTG_KERNEL_VECTOR_TANH_DIR"] = config["vector_tanh_dir"]
+    return env
 
 
 def runner_rules(config: dict) -> list:
@@ -1659,18 +1715,22 @@ def runner_rules(config: dict) -> list:
             + [(config["scratch"], LL_READ | LL_WRITE, True)])
 
 
-def _spool_dir(config: dict) -> str:
-    """`<scratch>/.spool`, created mode 700; refused unless it is a directory of this account that no other
-    account can reach."""
-    path = os.path.join(config["scratch"], SPOOL_DIR)
+def _private_dir(config: dict, name: str) -> str:
+    """`<scratch>/<name>`, created mode 700; refused unless it is a directory (not a symlink) of this account
+    that no other account can reach."""
+    path = os.path.join(config["scratch"], name)
     try:
         os.mkdir(path, 0o700)
     except FileExistsError:
         pass
     info = os.lstat(path)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
-        raise AgentRefusal("the spool must be a directory of this account with mode 700")
+        raise AgentRefusal(f"{name} must be a directory of this account with mode 700")
     return path
+
+
+def _spool_dir(config: dict) -> str:
+    return _private_dir(config, SPOOL_DIR)
 
 
 def _spool_files(spool: str, tag: str) -> dict:
@@ -1698,14 +1758,19 @@ def _spool_write(path: str, value: dict) -> None:
 def _read_single(path: str, cap: int) -> bytes | None:
     """A singly linked regular file's bytes, opened without following a symlink, within `cap`; None if absent."""
     try:
-        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0))  # a FIFO never blocks the open
     except FileNotFoundError:
         return None
-    with os.fdopen(fd, "rb") as handle:
-        info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ValueError(f"{os.path.basename(path)!r} is not a singly linked regular file")
-        data = handle.read(cap + 1)
+    except OSError as error:
+        raise ValueError(f"{os.path.basename(path)!r} cannot be opened: {error.strerror}") from None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError(f"{os.path.basename(path)!r} is not a singly linked regular file")
+            data = handle.read(cap + 1)
+    except OSError as error:
+        raise ValueError(f"{os.path.basename(path)!r} cannot be read: {error.strerror}") from None
     if len(data) > cap:
         raise ValueError(f"{os.path.basename(path)!r} exceeds its bound")
     return data
@@ -1722,15 +1787,16 @@ def _spool_read(path: str) -> dict | None:
 
 
 def _agent_gone(lock_path: str) -> bool:
-    """True when no agent waits behind `<tag>.lock`: the file is absent or its flock is free."""
+    """True when no agent waits behind `<tag>.lock`: the file is absent or a shared flock is granted (the
+    agent holds an exclusive one; probers share, so two probers never take each other for the agent)."""
     import fcntl
     try:
-        fd = os.open(lock_path, os.O_RDWR | NOFOLLOW)
+        fd = os.open(lock_path, os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
     except OSError:
         return True
-    with os.fdopen(fd, "r+b") as handle:
+    with os.fdopen(fd, "rb") as handle:
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
         except BlockingIOError:
             return False
         return True  # closing releases it
@@ -1782,7 +1848,7 @@ def _runner_problem(config: dict, starting: bool) -> str | None:
     return None
 
 
-def _spool_take(path: str, tag: str, job: str) -> dict | None:
+def _spool_take(path: str, tag: str, job: str, generation: str) -> dict | None:
     """Reads and removes the runner's result for this job; None while there is none. A malformed, oversized
     or mismatched result refuses."""
     try:
@@ -1798,7 +1864,11 @@ def _spool_take(path: str, tag: str, job: str) -> dict | None:
             or result["schema"] != SPOOL_RESULT_SCHEMA or result["tag"] != tag or result["job"] != job \
             or not isinstance(tail, str) or len(tail) > AGENT_STDERR_TAIL \
             or not (error is None or isinstance(error, str)) \
-            or not (code in ("timeout", None) or (type(code) is int)) or (error is None) == (code is None):
+            or not (code in ("timeout", None) or (type(code) is int)) or (error is None) == (code is None) \
+            or not isinstance(result["generation"], str) or not SPOOL_JOB.fullmatch(result["generation"]) \
+            or (error is None and result["generation"] != generation) \
+            or type(result["seconds"]) not in (int, float) or not math.isfinite(result["seconds"]) \
+            or result["seconds"] < 0:
         raise AgentRefusal("malformed or mismatched box runner result")
     return result
 
@@ -1816,46 +1886,64 @@ def _spool_cancel(config: dict, tag: str, files: dict, job: str) -> None:
             _spool_write(files["cancel"], {"job": job})
 
 
-def _spool_run(config: dict, tag: str, job: str, command_sha256: str, seconds: int):
-    """The agent's side of a spooled job: submits it, waits for its result and returns what _run_collector
-    returns, (exit code or "timeout", stderr tail). A result reporting an error (an orphan after a runner
-    restart, a stop, a refusal) or a runner whose heartbeat stops refuses, so the learner fails the host over.
-    The agent stops waiting at its own deadline (seconds plus SPOOL_RESULT_GRACE, then SPOOL_CANCEL_GRACE for
-    the kill to be reported) whether or not its cancel lands; every exit without a result cancels, and its
-    death frees its lock, which the runner treats as a cancel."""
+def _spool_admit(config: dict, tag: str):
+    """A spooled run_shard's first step, before its run directory or command copy exists: under the tag's lock,
+    the agent's job lock (from then on remove_shard refuses the tag and the runner sees a waiting agent) and the
+    fast refusals. The caller releases it with _spool_release after everything else."""
     spool = _spool_dir(config)
     files = _spool_files(spool, tag)
     with _tag_lock(config, tag):
         lock = _spool_job_lock(spool, tag)
+        admitted = types.SimpleNamespace(tag=tag, files=files, lock=lock, spool=spool)
         try:
             if any(os.path.lexists(files[kind]) for kind in ("request", "running", "result", "cancel")):
                 raise AgentRefusal("the spool already holds this tag (remove_shard first)")
             problem = _runner_problem(config, starting=True)
             if problem:
                 raise AgentRefusal(problem)
-            try:
-                heartbeat = _spool_read(os.path.join(spool, "runner.heartbeat")) or {}
-            except (ValueError, UnicodeDecodeError, RecursionError):
-                heartbeat = {}
-            generation = heartbeat.get("generation")
-            if not isinstance(generation, str) or not SPOOL_JOB.fullmatch(generation):
-                raise AgentRefusal("the box runner's heartbeat names no generation")
-            if sum(name.endswith(".request") for name in os.listdir(spool)) >= config["max_concurrent_runs"]:
-                raise AgentRefusal("collector busy: the box runner's queue is full")
-            submitted = time.time()
-            _spool_write(files["request"], {"schema": SPOOL_REQUEST_SCHEMA, "job": job, "tag": tag,
-                                            "command_sha256": command_sha256, "seconds": seconds,
-                                            "submitted_unix": submitted, "generation": generation,
-                                            "binding": _execution_binding(config)})
         except BaseException:
-            _unlink_quiet(files["lock"])
-            lock.close()
+            _spool_release(admitted)
             raise
+    return admitted
+
+
+def _spool_release(admitted) -> None:
+    _unlink_quiet(admitted.files["lock"])
+    admitted.lock.close()
+
+
+def _spool_run(config: dict, admitted, job: str, command_sha256: str, seconds: int):
+    """The agent's side of a spooled job: submits it, waits for its result and returns what _run_collector
+    returns, (exit code or "timeout", stderr tail). A result reporting an error (an orphan after a runner
+    restart, a stop, a refusal) or a runner whose heartbeat stops refuses, so the learner fails the host over.
+    The agent stops waiting at its own deadline (seconds plus SPOOL_RESULT_GRACE, then SPOOL_CANCEL_GRACE for
+    the kill to be reported) whether or not its cancel lands; every exit without a result cancels, and its
+    death frees its lock, which the runner treats as a cancel."""
+    tag, files, spool = admitted.tag, admitted.files, admitted.spool
+    with _tag_lock(config, tag):
+        if any(os.path.lexists(files[kind]) for kind in ("request", "running", "result", "cancel")):
+            raise AgentRefusal("the spool already holds this tag (remove_shard first)")
+        problem = _runner_problem(config, starting=True)
+        if problem:
+            raise AgentRefusal(problem)
+        try:
+            heartbeat = _spool_read(os.path.join(spool, "runner.heartbeat")) or {}
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            heartbeat = {}
+        generation = heartbeat.get("generation")
+        if not isinstance(generation, str) or not SPOOL_JOB.fullmatch(generation):
+            raise AgentRefusal("the box runner's heartbeat names no generation")
+        if sum(name.endswith(".request") for name in os.listdir(spool)) >= config["max_concurrent_runs"]:
+            raise AgentRefusal("collector busy: the box runner's queue is full")
+        _spool_write(files["request"], {"schema": SPOOL_REQUEST_SCHEMA, "job": job, "tag": tag,
+                                        "command_sha256": command_sha256, "seconds": seconds,
+                                        "submitted_unix": time.time(), "generation": generation,
+                                        "binding": _execution_binding(config)})
     result = None
     try:
         give_up = time.monotonic() + seconds + SPOOL_RESULT_GRACE
         while result is None:
-            result = _spool_take(files["result"], tag, job)
+            result = _spool_take(files["result"], tag, job, generation)
             if result is not None:
                 break
             problem = _runner_problem(config, starting=False)
@@ -1864,13 +1952,13 @@ def _spool_run(config: dict, tag: str, job: str, command_sha256: str, seconds: i
             if time.monotonic() >= give_up:
                 try:
                     _spool_cancel(config, tag, files, job)
-                except OSError:
+                except (OSError, ValueError):
                     pass  # the agent stops waiting either way; its departure frees the lock
                 confirm = time.monotonic() + SPOOL_CANCEL_GRACE
                 while result is None and time.monotonic() < confirm \
                         and (os.path.lexists(files["running"]) or os.path.lexists(files["result"])):
                     time.sleep(SPOOL_POLL_SECONDS)
-                    result = _spool_take(files["result"], tag, job)
+                    result = _spool_take(files["result"], tag, job, generation)
                 if result is not None and result["error"] is not None:
                     raise AgentRefusal(f"box runner: {result['error'][:300]}")
                 return "timeout", result["stderr"] if result else ""
@@ -1885,11 +1973,8 @@ def _spool_run(config: dict, tag: str, job: str, command_sha256: str, seconds: i
                     _spool_cancel(config, tag, files, job)
                 else:
                     _unlink_quiet(files["cancel"])
-            except OSError:
+            except (OSError, ValueError):
                 pass
-            finally:
-                _unlink_quiet(files["lock"])
-                lock.close()
 
 
 def _spool_discard(files: dict) -> None:
@@ -1897,24 +1982,91 @@ def _spool_discard(files: dict) -> None:
         _unlink_quiet(files[kind])
 
 
-def _spool_forget(config: dict, tag: str) -> None:
-    """remove_shard's part, before anything of the tag is deleted: refuses while a job of the tag is submitted
-    by a waiting agent or running; removes an abandoned request and a stale result or cancel."""
-    spool = os.path.join(config["scratch"], SPOOL_DIR)
-    if not os.path.isdir(spool) or os.path.islink(spool):
-        return
+def _remove_private_copies(config: dict, tag: str) -> None:
+    """Unlinks `<scratch>/.run/<tag>.*.json` (command copies and snapshots a killed agent or runner left).
+    Only while the tag is inactive, under its lock."""
+    run = _private_dir(config, ".run")
+    for name in os.listdir(run):
+        if name.startswith(tag + ".") and name.endswith(".json"):
+            _unlink_quiet(os.path.join(run, name))
+
+
+def _spool_remove(config: dict, tag: str) -> None:
+    """remove_shard with the spool executor. Under the tag's lock: refuses while a job of the tag is claimed
+    or an agent holds its job lock (from before its run directory exists until it leaves); otherwise removes
+    an abandoned request, a stale result or cancel, the tag's leftover command copies and its stored command,
+    and renames its run directory to a private `.trash-*` name. The tree is deleted after the lock is released
+    (the lock covers metadata operations only)."""
+    spool = _spool_dir(config)
     files = _spool_files(spool, tag)
+    scratch = config["scratch"]
+    trash = None
     with _tag_lock(config, tag):
         if os.path.lexists(files["running"]) or not _agent_gone(files["lock"]):
             raise AgentRefusal("a job of this tag is active: it ends with its run_shard")
         _unlink_quiet(files["request"])
         _spool_discard(files)
+        _remove_private_copies(config, tag)
+        _unlink_quiet(os.path.join(scratch, f"{tag}.json"))
+        if os.path.lexists(os.path.join(scratch, tag)):
+            trash = os.path.join(scratch, f".trash-{uuid.uuid4().hex}")
+            os.rename(os.path.join(scratch, tag), trash)
+    if trash is not None:
+        _remove_tree(trash)
+
+
+def _remove_tree(path: str) -> None:
+    if os.path.islink(path) or not os.path.isdir(path):
+        os.unlink(path)
+    else:
+        shutil.rmtree(path)
 
 
 def _spool_active(config: dict, tag: str) -> bool:
-    spool = os.path.join(config["scratch"], SPOOL_DIR)
-    files = _spool_files(spool, tag)
-    return os.path.lexists(files["request"]) or os.path.lexists(files["running"])
+    files = _spool_files(_spool_dir(config), tag)
+    return os.path.lexists(files["request"]) or os.path.lexists(files["running"]) or not _agent_gone(files["lock"])
+
+
+def _spool_fetch(config: dict, tag: str, stdout) -> None:
+    """fetch_shard with the spool executor: opens `<tag>/out` first (no symlink at either level) and only then
+    checks that no job of the tag is submitted, claimed or waited on, so the directory it tars is one no
+    collector writes any more; members are opened relative to it."""
+    flags = os.O_RDONLY | NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
+    try:
+        run_fd = os.open(os.path.join(config["scratch"], tag), flags)
+    except FileNotFoundError:
+        raise AgentRefusal("no shard output for this tag") from None
+    except OSError:
+        raise AgentRefusal("shard output is not a directory") from None
+    try:
+        try:
+            out_fd = os.open("out", flags, dir_fd=run_fd)
+        except FileNotFoundError:
+            raise AgentRefusal("no shard output for this tag") from None
+        except OSError:
+            raise AgentRefusal("shard output is not a directory") from None
+    finally:
+        os.close(run_fd)
+    try:
+        if _spool_active(config, tag):
+            raise AgentRefusal("a job of this tag is active: its output is not complete")
+        with tarfile.open(fileobj=stdout, mode="w|") as archive:
+            for name in sorted(os.listdir(out_fd)):
+                if not _portable_name(name):
+                    raise AgentRefusal(f"unexpected name in shard output: {name[:80]!r}")
+                try:
+                    fd = os.open(name, os.O_RDONLY | NOFOLLOW | getattr(os, "O_NONBLOCK", 0), dir_fd=out_fd)
+                except OSError:  # ELOOP: a symlink in the shard output
+                    raise AgentRefusal(f"shard output {name!r} is not a singly linked regular file") from None
+                with os.fdopen(fd, "rb") as handle:
+                    info = os.fstat(handle.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise AgentRefusal(f"shard output {name!r} is not a singly linked regular file")
+                    entry = tarfile.TarInfo(name)
+                    entry.size, entry.mode, entry.mtime = info.st_size, 0o644, 0
+                    archive.addfile(entry, handle)
+    finally:
+        os.close(out_fd)
 
 
 def _launch_spooled(config: dict, command_file: str, run_dir: str, watchdog_seconds: int):
@@ -1934,7 +2086,7 @@ def _launch_spooled(config: dict, command_file: str, run_dir: str, watchdog_seco
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, start_new_session=True, preexec_fn=preexec,
-                                   cwd=run_dir, env=dict(SPOOL_ENV))
+                                   cwd=run_dir, env=_spool_env(config))
     finally:
         if ruleset is not None:
             os.close(ruleset)
@@ -1980,55 +2132,79 @@ class BoxRunner:
         self.counts = {"jobs_run": 0, "jobs_failed": 0, "jobs_refused": 0, "orphans_failed": 0}
         self.signalled = False
         self.stop_seen = None
+        self.started_utc = _utc()
+        self.end_error = None
 
     def serve(self) -> str:
-        """Runs until the stop file (reason "stop-file") or a signal ("signal"); returns the reason."""
+        """Runs until the stop file (reason "stop-file") or a signal ("signal"); returns the reason. Only the
+        owner of `runner.lock` touches the heartbeat, claims or the end record, which it writes before it
+        releases the lock (also after an error)."""
         import fcntl
         lock = os.fdopen(os.open(os.path.join(self.spool, "runner.lock"), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600),
                          "r+b")
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            lock.close()  # the live runner's state (heartbeat, claims) is not this process's to touch
+            lock.close()  # the live runner's state (heartbeat, claims, end record) is not this process's to touch
             raise RunnerBusy("another box runner serves this spool") from None
+        reason = "error: interrupted"
         try:
-            if os.path.lexists(self.executor["stop_file"]):
-                return "stop-file"  # a late start exits at once; the operator removes the stop file
-            self.recover()
-            _spool_write(self.heartbeat, dict(self.identity, generation=self.generation, pid=os.getpid(),
-                                              started_utc=_utc()))
-            beat_every = max(0.2, self.executor["heartbeat_seconds"] / 4)
-            next_beat = next_sweep = 0.0
-            while True:
-                now = time.monotonic()
-                if now >= next_beat:
-                    os.utime(self.heartbeat)
-                    next_beat = now + beat_every
-                self.watch()
-                if self.signalled:
-                    self.cancel_all("the box runner was stopped by a signal during this run; the shard was not rerun")
-                    return "signal"
-                stopping = os.path.lexists(self.executor["stop_file"])
-                if stopping and self.stop_seen is None:
-                    self.stop_seen = now
-                self.claim(stopping)
-                if stopping:
-                    if not self.jobs:
-                        return "stop-file"
-                    if now - self.stop_seen >= self.executor["stop_grace_seconds"]:
-                        self.cancel_all("the box runner stopped (stop file, grace over) during this run; "
-                                        "the shard was not rerun")
-                        return "stop-file"
-                if now >= next_sweep:
-                    self.sweep()
-                    next_sweep = now + SPOOL_SWEEP_SECONDS
-                self.wait_streams(SPOOL_POLL_SECONDS)
+            reason = self.serve_owned()
+            return reason
+        except Exception as error:
+            reason = f"error: {type(error).__name__}: {str(error)[:300]}"
+            raise
         finally:
             try:
                 self.cancel_all("the box runner ended during this run; the shard was not rerun")
             finally:
                 _unlink_quiet(self.heartbeat)
-                lock.close()
+                try:
+                    self.write_end(reason)
+                finally:
+                    lock.close()
+
+    def write_end(self, reason: str) -> None:
+        try:
+            _spool_write(self.executor["end_file"], dict(
+                self.counts, schema=RUNNER_END_SCHEMA, reason=reason, started_utc=self.started_utc,
+                ended_utc=_utc(), pid=os.getpid(), generation=self.generation, **self.identity))
+        except Exception as error:  # noqa: BLE001  reported by runner_main; w5box's record is authoritative
+            self.end_error = error
+
+    def serve_owned(self) -> str:
+        """The loop, run while owning the spool."""
+        if os.path.lexists(self.executor["stop_file"]):
+            return "stop-file"  # a late start exits at once; the operator removes the stop file
+        self.recover()
+        _spool_write(self.heartbeat, dict(self.identity, generation=self.generation, pid=os.getpid(),
+                                          started_utc=_utc()))
+        beat_every = max(0.2, self.executor["heartbeat_seconds"] / 4)
+        next_beat = next_sweep = 0.0
+        while True:
+            now = time.monotonic()
+            if now >= next_beat:
+                os.utime(self.heartbeat)
+                next_beat = now + beat_every
+            self.watch()
+            if self.signalled:
+                self.cancel_all("the box runner was stopped by a signal during this run; the shard was not rerun")
+                return "signal"
+            stopping = os.path.lexists(self.executor["stop_file"])
+            if stopping and self.stop_seen is None:
+                self.stop_seen = now
+            self.claim(stopping)
+            if stopping:
+                if not self.jobs:
+                    return "stop-file"
+                if now - self.stop_seen >= self.executor["stop_grace_seconds"]:
+                    self.cancel_all("the box runner stopped (stop file, grace over) during this run; "
+                                    "the shard was not rerun")
+                    return "stop-file"
+            if now >= next_sweep:
+                self.sweep()
+                next_sweep = now + SPOOL_SWEEP_SECONDS
+            self.wait_streams(SPOOL_POLL_SECONDS)
 
     def wait_streams(self, seconds: float) -> None:
         """Sleeps up to `seconds`, waking to drain any collector's stderr as it arrives."""
@@ -2053,7 +2229,7 @@ class BoxRunner:
                 files = _spool_files(self.spool, tag)  # only a runner writes or removes a claim
                 try:
                     job = (_spool_read(files["running"]) or {}).get("job")
-                except (ValueError, UnicodeDecodeError, RecursionError):
+                except (ValueError, UnicodeDecodeError, RecursionError):  # OSError arrives as ValueError
                     job = None
                 self.counts["orphans_failed"] += 1
                 self.answer(tag, files, job if isinstance(job, str) else None,  # finish takes the tag's lock
@@ -2094,7 +2270,7 @@ class BoxRunner:
             snapshot = os.path.join(self.config["scratch"], ".run", f"{tag}.{uuid.uuid4().hex}.json")
             _write_new(snapshot, data, AGENT_SHARD_BYTES)
             try:
-                watchdog = math.ceil(deadline - time.monotonic()) + SPOOL_WATCHDOG_GRACE
+                watchdog = math.ceil(deadline - time.monotonic()) + self.executor["watchdog_grace_seconds"]
                 process = _launch_spooled(self.config, snapshot, run_dir, watchdog)
             except BaseException:
                 os.unlink(snapshot)
@@ -2131,12 +2307,11 @@ class BoxRunner:
         run_dir = os.path.join(scratch, tag)
         if not stat.S_ISDIR(os.lstat(run_dir).st_mode):
             raise ValueError("the job's run directory is not a directory")
-        data = _read_single(os.path.join(scratch, ".run", f"{tag}.{request['job']}.json"), AGENT_SHARD_BYTES)
+        run = _private_dir(self.config, ".run")
+        data = _read_single(os.path.join(run, f"{tag}.{request['job']}.json"), AGENT_SHARD_BYTES)
         if data is None or hashlib.sha256(data).hexdigest() != request["command_sha256"]:
             raise ValueError("the job's command copy is absent or not the submitted bytes")
-        command = json.loads(data)
-        if not isinstance(command, dict) or command.get("output_directory") != os.path.join(run_dir, "out"):
-            raise ValueError("the job's command does not write exactly to its run directory")
+        _valid_private_command(data, run_dir, self.config)
         if _hash_nofollow(self.config["collector"]) != self.config["collector_sha256"]:
             raise ValueError("collector binary differs from its pin")
         return data, run_dir, time.monotonic() + min(remaining, seconds)
@@ -2188,25 +2363,35 @@ class BoxRunner:
             self.end(tag, exited, None if exited else error)
 
     def sweep(self) -> None:
-        """Removes crash leftovers: old stage files, requests whose agent has gone, and results, cancels and
-        locks no agent waits on."""
+        """Removes crash leftovers: old stage files and trash, requests whose agent has gone, results, cancels
+        and locks no agent waits on, and command copies or snapshots of inactive tags (a killed agent or runner
+        leaves them in `.run`)."""
         now = time.time()
-        for name in os.listdir(self.spool):
-            path = os.path.join(self.spool, name)
-            if name.startswith(".") and name.endswith(".tmp"):
-                try:
-                    if now - os.lstat(path).st_mtime > SPOOL_STAGE_AGE:
-                        os.unlink(path)
-                except FileNotFoundError:
-                    pass
-                continue
-            tag, _, kind = name.rpartition(".")
-            if kind in ("request", "result", "cancel", "lock") and AGENT_TAG.fullmatch(tag) and tag not in self.jobs:
-                files = _spool_files(self.spool, tag)
-                with _tag_lock(self.config, tag):
-                    if not os.path.lexists(files["running"]) and _agent_gone(files["lock"]):
-                        _unlink_quiet(files["request"])
-                        _spool_discard(files)
+        run = _private_dir(self.config, ".run")
+        tags = set()
+        for directory in (self.spool, run, self.config["scratch"]):
+            for name in os.listdir(directory):
+                path = os.path.join(directory, name)
+                if name.startswith(".") and (name.endswith(".tmp") or name.startswith(".trash-")):
+                    try:
+                        if now - os.lstat(path).st_ctime > SPOOL_STAGE_AGE:  # a rename sets ctime
+                            _remove_tree(path)
+                    except FileNotFoundError:
+                        pass
+                    continue
+                if directory == self.spool:
+                    tag, _, kind = name.rpartition(".")
+                    if kind in ("request", "result", "cancel", "lock") and AGENT_TAG.fullmatch(tag):
+                        tags.add(tag)
+                elif directory == run and name.endswith(".json"):
+                    tags.add(name.split(".", 1)[0])
+        for tag in sorted(t for t in tags if AGENT_TAG.fullmatch(t) and t not in self.jobs):
+            files = _spool_files(self.spool, tag)
+            with _tag_lock(self.config, tag):
+                if not os.path.lexists(files["running"]) and _agent_gone(files["lock"]):
+                    _unlink_quiet(files["request"])
+                    _spool_discard(files)
+                    _remove_private_copies(self.config, tag)
 
 
 class RunnerBusy(RuntimeError):
@@ -2241,9 +2426,12 @@ def _runner_identity() -> dict:
 
 
 def _require_unprivileged() -> None:
-    """The runner runs as the collector account only: no uid, gid or supplementary group 0, and (Linux) no
-    effective or permitted capability."""
-    if 0 in (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) or 0 in os.getgroups():
+    """The runner runs as the collector account only: no real, effective or saved uid or gid 0, no
+    supplementary group 0, and (Linux) no capability in any set."""
+    ids = [os.getuid(), os.geteuid(), os.getgid(), os.getegid()]
+    if hasattr(os, "getresuid"):
+        ids += list(os.getresuid()) + list(os.getresgid())
+    if 0 in ids or 0 in os.getgroups():
         raise ValueError("the box runner runs as the collector account, never as root or group root")
     try:
         status = Path("/proc/self/status").read_text()
@@ -2251,7 +2439,7 @@ def _require_unprivileged() -> None:
         return  # not Linux
     for line in status.splitlines():
         key, _, value = line.partition(":")
-        if key in ("CapEff", "CapPrm") and int(value.strip(), 16):
+        if key in ("CapEff", "CapPrm", "CapInh", "CapAmb") and int(value.strip(), 16):
             raise ValueError(f"the box runner holds capabilities ({key} {value.strip()}): drop them at launch")
 
 
@@ -2302,17 +2490,28 @@ def runner_check(config_path: str, max_age: float | None, stdout) -> int:
     return 0 if fresh else 1
 
 
-def runner_main(config_path: str, stderr) -> int:
-    """`pooled_collect.py runner CONFIG`, started by root inside a box as the collector account. Exit 0 after
-    the stop file or a signal, 1 on failure, 2 for an unusable config or a privileged launch. Writes its end
-    record at every exit after the config loaded, except when another runner holds the spool."""
-    started = _utc()
+def _close_inherited() -> None:
+    """Closes every descriptor above stderr (listed from /proc/self/fd, else up to the descriptor limit)."""
     try:
+        fds = [int(name) for name in os.listdir("/proc/self/fd")]
+    except OSError:
         import resource
         soft = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
-        os.closerange(3, soft if 0 < soft <= 1 << 20 else 1 << 20)  # nothing inherited
-    except (ImportError, ValueError, OSError):
-        pass
+        fds = range(3, soft if soft > 0 and soft != resource.RLIM_INFINITY else 1 << 20)
+    for fd in fds:
+        if fd > 2:
+            try:
+                os.close(fd)
+            except OSError:
+                pass  # the listing's own descriptor, already closed
+
+
+def runner_main(config_path: str, stderr) -> int:
+    """`pooled_collect.py runner CONFIG`, started by root inside a box as the collector account. Exit 0 after
+    the stop file or a signal, 1 on failure, 2 for an unusable config or a privileged launch. The end record is
+    written by the owner of the spool's runner lock only, before it releases it; a runner that fails before
+    owning it (sandbox, another runner) reports on stderr and through its exit code."""
+    _close_inherited()
     try:
         _require_unprivileged()
         config = load_agent_config(Path(config_path))
@@ -2332,25 +2531,19 @@ def runner_main(config_path: str, stderr) -> int:
         for name in ("SIGTERM", "SIGINT", "SIGHUP"):
             number = getattr(signal, name)
             previous[number] = signal.signal(number, stop)
-        reason, code = runner.serve(), 0
+        runner.serve()
+        code = 0
     except RunnerBusy as error:
         stderr.write(f"refused: {error}\n")
         return 1
-    except Exception as error:  # noqa: BLE001  recorded, never a traceback
-        reason = f"error: {type(error).__name__}: {str(error)[:300]}"
-        stderr.write(f"failed: {reason}\n")
+    except Exception as error:  # noqa: BLE001  never a traceback
+        stderr.write(f"failed: {type(error).__name__}: {str(error)[:300]}\n")
     finally:
         for number, handler in previous.items():
             signal.signal(number, handler)
-    counts = runner.counts if runner else {"jobs_run": 0, "jobs_failed": 0, "jobs_refused": 0, "orphans_failed": 0}
-    try:
-        _spool_dir(config)
-        _spool_write(config["executor"]["end_file"], dict(
-            counts, schema=RUNNER_END_SCHEMA, reason=reason, started_utc=started, ended_utc=_utc(),
-            pid=os.getpid(), generation=runner.generation if runner else None,
-            sandbox=config.get("sandbox_effective", "not applied"), **identity))
-    except Exception as error:  # noqa: BLE001
-        stderr.write(f"failed: end record not written: {type(error).__name__}: {str(error)[:200]}\n")
+    if runner is not None and runner.end_error is not None:
+        stderr.write(f"failed: end record not written: {type(runner.end_error).__name__}: "
+                     f"{str(runner.end_error)[:200]}\n")
         code = code or 1
     return code
 
@@ -2450,40 +2643,51 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                 raise AgentRefusal(problem)
         _require_floor(config, [scratch, *config["pin_roots"]])
         with _run_slot(config):  # held until the collector is reaped; no free slot refuses
-            # `<scratch>/<tag>` is the collector's run directory, the only place it may write. It exists
-            # before the collector is confined (a Landlock rule needs an existing directory) and the
-            # collector refuses an existing output directory, so it publishes into `<tag>/out`, which it
-            # creates. Its recorded paths are its own: the merge binds only names and hashes.
-            run_dir = os.path.join(scratch, tag)
+            # With the spool executor the job lock is taken first: from before the run directory exists until
+            # this agent leaves, remove_shard refuses the tag and the runner sees a waiting agent.
+            admitted = _spool_admit(config, tag) if spool else None
             try:
-                os.mkdir(run_dir, 0o700)
-            except FileExistsError:
-                raise AgentRefusal("this tag's shard output already exists (remove_shard first)") from None
-            command["output_directory"] = os.path.join(run_dir, "out")
-            # Run a private copy of the validated command, so the file the collector reads is the one checked.
-            private_dir = os.path.join(scratch, ".run")
-            os.makedirs(private_dir, mode=0o700, exist_ok=True)
-            job = uuid.uuid4().hex  # the spool executor's job id
-            private = os.path.join(private_dir, f"{tag}.{job}.json")
-            body = json.dumps(command).encode()
-            if len(body) > AGENT_SHARD_BYTES:
-                raise AgentRefusal("shard command exceeds its bound once serialized")
-            _require_floor(config, [private_dir])
-            body_sha256 = _write_new(private, body, AGENT_SHARD_BYTES)
-            try:
-                if spool:  # the same command, run by the box runner on the box's CPUs
-                    code, tail = _spool_run(config, tag, job, body_sha256, seconds)
+                # `<scratch>/<tag>` is the collector's run directory, the only place it may write. It exists
+                # before the collector is confined (a Landlock rule needs an existing directory) and the
+                # collector refuses an existing output directory, so it publishes into `<tag>/out`, which it
+                # creates. Its recorded paths are its own: the merge binds only names and hashes.
+                run_dir = os.path.join(scratch, tag)
+                try:
+                    os.mkdir(run_dir, 0o700)
+                except FileExistsError:
+                    raise AgentRefusal("this tag's shard output already exists (remove_shard first)") from None
+                command["output_directory"] = os.path.join(run_dir, "out")
+                # Run a private copy of the validated command, so the file the collector reads is the one checked.
+                if spool:
+                    private_dir = _private_dir(config, ".run")
                 else:
-                    code, tail = _run_collector(config, private, run_dir, seconds)
-                reply({"code": code, "stderr": tail})
+                    private_dir = os.path.join(scratch, ".run")
+                    os.makedirs(private_dir, mode=0o700, exist_ok=True)
+                job = uuid.uuid4().hex  # the spool executor's job id
+                private = os.path.join(private_dir, f"{tag}.{job}.json")
+                body = json.dumps(command).encode()
+                if len(body) > AGENT_SHARD_BYTES:
+                    raise AgentRefusal("shard command exceeds its bound once serialized")
+                _require_floor(config, [private_dir])
+                body_sha256 = _write_new(private, body, AGENT_SHARD_BYTES)
+                try:
+                    if spool:  # the same command, run by the box runner on the box's CPUs
+                        code, tail = _spool_run(config, admitted, job, body_sha256, seconds)
+                    else:
+                        code, tail = _run_collector(config, private, run_dir, seconds)
+                    reply({"code": code, "stderr": tail})
+                finally:
+                    os.unlink(private)
             finally:
-                os.unlink(private)
+                if admitted is not None:
+                    _spool_release(admitted)
     elif op == "fetch_shard":
         tag = _tag_arg(args)
         _no_more_input(stdin)
+        if config.get("executor", {}).get("kind") == "spool":
+            _spool_fetch(config, tag, stdout)
+            return
         directory = os.path.join(scratch, tag, "out")
-        if config.get("executor", {}).get("kind") == "spool" and _spool_active(config, tag):
-            raise AgentRefusal("a job of this tag is active: its output is not complete")
         for level in (os.path.dirname(directory), directory):
             try:
                 info = os.lstat(level)
@@ -2511,7 +2715,9 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         tag = _tag_arg(args)
         _no_more_input(stdin)
         if config.get("executor", {}).get("kind") == "spool":
-            _spool_forget(config, tag)  # refuses while a job of the tag is active, before anything is deleted
+            _spool_remove(config, tag)  # refuses while a job of the tag is active
+            reply("removed")
+            return
         directory = os.path.join(scratch, tag)
         if os.path.lexists(directory):
             if os.path.islink(directory) or not os.path.isdir(directory):

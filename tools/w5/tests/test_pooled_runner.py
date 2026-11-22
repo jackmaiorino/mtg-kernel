@@ -19,15 +19,19 @@ HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "tests"))
 import pooled_collect as pc  # noqa: E402
-from test_pooled_agent import FAKE_COLLECTOR, FAKE_SSH, LANDLOCK, TAG, AgentCase, gone, sha  # noqa: E402
+from test_pooled_agent import FAKE_COLLECTOR, FAKE_SSH, LANDLOCK, TAG, AgentCase, gone  # noqa: E402
 from test_pooled_collect import episode_bytes, fake_merge  # noqa: E402
 
 POSIX = os.name == "posix" and hasattr(os, "waitid")
 LINUX = sys.platform.startswith("linux")
-# The fake collector, plus an episode field "slow" that delays a run that then completes normally.
-SLOW_COLLECTOR = FAKE_COLLECTOR.replace('if first.get("id") == "sleep":',
-                                        'if first.get("slow"):\n    time.sleep(first["slow"])\n'
-                                        'if first.get("id") == "sleep":', 1)
+# The fake collector, plus episode fields "slow" (a delay, then a normal run) and "context" (records its working
+# directory and environment in `context.json` there, outside the fetched output).
+SLOW_COLLECTOR = FAKE_COLLECTOR.replace(
+    'if first.get("id") == "sleep":',
+    'if first.get("context"):\n'
+    '    json.dump({"cwd": os.getcwd(), "env": dict(os.environ)}, open("context.json", "w"))\n'
+    'if first.get("slow"):\n    time.sleep(first["slow"])\n'
+    'if first.get("id") == "sleep":', 1)
 
 
 def wait_for(predicate, seconds=20.0):
@@ -68,6 +72,20 @@ class ExecutorConfigTests(AgentCase):
             with self.assertRaises(ValueError, msg=bad):
                 pc.load_agent_config(self.write_config(self.root / "bad.json", executor=bad))
 
+    def test_a_vector_tanh_directory_is_read_only_and_outside_the_roots(self):
+        records = self.root / "vector-tanh"
+        records.mkdir()
+        config = pc.load_agent_config(self.write_config(self.root / "vt.json", vector_tanh_dir=str(records)))
+        rules = {path: access for path, access, _ in pc.collector_rules(config, "/c", "/r")}
+        self.assertEqual(rules[str(records)], pc.LL_READ)
+        self.assertEqual(pc._direct_env(config)["MTG_KERNEL_VECTOR_TANH_DIR"], str(records))
+        self.assertEqual(pc._spool_env(config), dict(pc.SPOOL_ENV, MTG_KERNEL_VECTOR_TANH_DIR=str(records)))
+        self.assertIsNone(pc._direct_env(pc.load_agent_config(self.config_path)), "absent: inherited as before")
+        self.assertNotEqual(pc._execution_binding(config), pc._execution_binding(pc.load_agent_config(self.config_path)))
+        for bad in (str(self.pins / "vt"), "relative", 7):
+            with self.assertRaisesRegex(ValueError, "vector_tanh_dir"):
+                pc.load_agent_config(self.write_config(self.root / "bad-vt.json", vector_tanh_dir=bad))
+
     @unittest.skipIf(POSIX, "the refusal applies off POSIX")
     def test_the_spool_executor_needs_a_posix_host(self):
         with self.assertRaisesRegex(ValueError, "POSIX"):
@@ -79,7 +97,7 @@ class ExecutorConfigTests(AgentCase):
             "executor"]
         spool = os.path.join(str(self.scratch), ".spool")
         self.assertEqual(executor, {"kind": "spool", "heartbeat_seconds": 10, "stop_grace_seconds": 300,
-                                    "stop_file": os.path.join(spool, "STOP"),
+                                    "watchdog_grace_seconds": 30, "stop_file": os.path.join(spool, "STOP"),
                                     "end_file": os.path.join(spool, "END.json")})
 
 
@@ -341,8 +359,9 @@ class SpoolServiceTests(RunnerCase):
             self.put_shard(episodes=[{"id": "e2", "seed": 7, "slow": 0.3}])
             started = time.monotonic()
             thread, box = self.in_thread(config=self.spool_config)
-            removals = []
+            removals, fetches = [], []
             while thread.is_alive():
+                fetches.append(self.serve("fetch_shard", tag=TAG, config=self.spool_config)[0])
                 removals.append(self.serve("remove_shard", tag=TAG, config=self.spool_config)[0])
             thread.join()
             self.assertLess(time.monotonic() - started, 20, "a job is answered or refused, never left waiting")
@@ -350,7 +369,7 @@ class SpoolServiceTests(RunnerCase):
             self.assertIn(code, (0, 2), err)
             if code == 0:
                 self.assertEqual(json.loads(out)["code"], 0, round_)
-            self.assertTrue(set(removals) <= {0, 2}, removals)
+            self.assertTrue(set(removals) <= {0, 2} and set(fetches) <= {0, 2}, (removals, fetches))
             self.assertIsNone(runner.poll(), self.runner_log(runner))
         self.assertTrue(wait_for(lambda: self.serve("remove_shard", tag=TAG, config=self.spool_config)[0] == 0))
         self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 15), self.spool_leftovers())
@@ -438,7 +457,7 @@ class SpoolServiceTests(RunnerCase):
         try:
             runner = self.start_runner()
             self.assertTrue(wait_for(lambda: (self.spool / f"{tag2}.result").exists()))
-            result = pc._spool_take(str(self.spool / f"{tag2}.result"), tag2, "1" * 32)
+            result = pc._spool_take(str(self.spool / f"{tag2}.result"), tag2, "1" * 32, "2" * 32)
             self.assertIn("earlier box runner", result["error"])
             self.assertTrue(wait_for(lambda: not (self.spool / f"{tag3}.request").exists()), "dropped")
             self.assertFalse((self.spool / f"{tag3}.result").exists(), "nobody to answer")
@@ -455,21 +474,93 @@ class SpoolServiceTests(RunnerCase):
         good = {"schema": pc.SPOOL_RESULT_SCHEMA, "job": "1" * 32, "tag": TAG, "generation": "2" * 32, "code": 0,
                 "stderr": "", "seconds": 1.0, "error": None}
         for change in ({"job": "3" * 32}, {"code": True}, {"code": None}, {"code": 0, "error": "x"},
-                       {"stderr": "x" * (pc.AGENT_STDERR_TAIL + 1)}, {"extra": 1}):
+                       {"stderr": "x" * (pc.AGENT_STDERR_TAIL + 1)}, {"extra": 1}, {"generation": "3" * 32},
+                       {"generation": "x"}, {"seconds": float("nan")}, {"seconds": True}, {"seconds": -1}):
             pc._spool_write(path, dict(good, **change))
             with self.assertRaises(pc.AgentRefusal, msg=change):
-                pc._spool_take(path, TAG, "1" * 32)
+                pc._spool_take(path, TAG, "1" * 32, "2" * 32)
             self.assertFalse(os.path.exists(path))
         Path(path).write_bytes(b"x" * (pc.SPOOL_FILE_BYTES + 1))
         with self.assertRaisesRegex(pc.AgentRefusal, "malformed"):
-            pc._spool_take(path, TAG, "1" * 32)
+            pc._spool_take(path, TAG, "1" * 32, "2" * 32)
         pc._spool_write(path, good)
         os.link(path, path + ".second")
         with self.assertRaisesRegex(pc.AgentRefusal, "singly linked"):
-            pc._spool_take(path, TAG, "1" * 32)
+            pc._spool_take(path, TAG, "1" * 32, "2" * 32)
         os.unlink(path + ".second")
         pc._spool_write(path, good)
-        self.assertEqual(pc._spool_take(path, TAG, "1" * 32)["code"], 0)
+        self.assertEqual(pc._spool_take(path, TAG, "1" * 32, "2" * 32)["code"], 0)
+
+    def test_runner_main_refuses_a_privileged_launch_before_reading_its_config(self):
+        for patch in ({"geteuid": 0}, {"getresuid": (1000, 1000, 0)}):
+            stderr = io.StringIO()
+            with mock.patch.multiple(pc.os, **{k: mock.Mock(return_value=v) for k, v in patch.items()}), \
+                    mock.patch.object(pc, "_close_inherited"):
+                self.assertEqual(pc.runner_main(str(self.root / "never-read.json"), stderr), 2)
+            self.assertIn("never as root", stderr.getvalue())
+
+    def test_remove_shard_moves_the_run_directory_and_leftover_copies_away(self):
+        self.spool.mkdir(mode=0o700)
+        (self.scratch / ".run").mkdir(mode=0o700)
+        self.put_shard()
+        (self.scratch / TAG / "out").mkdir(parents=True)
+        (self.scratch / TAG / "out" / "x.json").write_text("x")
+        for name in (f"{TAG}.{'a' * 32}.json", f"{TAG}.{'b' * 32}.json"):  # a killed agent's and runner's copies
+            (self.scratch / ".run" / name).write_text("{}")
+        other = self.scratch / ".run" / f"{TAG.replace('-s001', '-s002')}.{'c' * 32}.json"
+        other.write_text("{}")
+        self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG, config=self.spool_config)[1]), "removed")
+        self.assertEqual(sorted(os.listdir(self.scratch / ".run")), [other.name], "only this tag's copies")
+        self.assertEqual([n for n in os.listdir(self.scratch) if not n.startswith(".")], [])
+        self.assertEqual([n for n in os.listdir(self.scratch) if n.startswith(".trash-")], [])
+
+    def test_the_collector_runs_in_its_run_directory_with_the_declared_environment(self):
+        records = self.root / "vector-tanh"
+        records.mkdir()
+        for config, executor in ((self.spool_config, "spool"), (self.config_path, "direct")):
+            for tanh in (None, str(records)):
+                document = json.loads(Path(config).read_text())
+                if tanh:
+                    document["vector_tanh_dir"] = tanh
+                variant = self.root / f"context-{executor}-{bool(tanh)}.json"
+                variant.write_text(json.dumps(document))
+                runner = self.start_runner(variant) if executor == "spool" else None
+                self.put_shard(episodes=[{"id": "e2", "seed": 7, "context": True}])
+                code, out, err = self.run_shard(config=variant)
+                self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+                context = json.loads((self.scratch / TAG / "context.json").read_text())
+                self.assertEqual(context["cwd"], str(self.scratch / TAG))
+                if executor == "spool":
+                    self.assertEqual(context["env"], pc._spool_env(pc.load_agent_config(variant)))
+                    self.stop_runner(runner)
+                elif tanh:
+                    self.assertEqual(context["env"]["MTG_KERNEL_VECTOR_TANH_DIR"], tanh)
+                else:
+                    self.assertNotIn("MTG_KERNEL_VECTOR_TANH_DIR", context["env"])
+                self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG, config=variant)[1]), "removed")
+
+    def test_an_agent_stops_waiting_at_its_own_deadline_when_nobody_answers(self):
+        self.spool.mkdir(mode=0o700)
+        heartbeat = self.spool / "runner.heartbeat"
+        pc._spool_write(str(heartbeat), {"generation": "a" * 32})  # a runner that beats but never claims
+        beating = threading.Event()
+
+        def beat():
+            while not beating.is_set():
+                os.utime(heartbeat)
+                time.sleep(0.2)
+        threading.Thread(target=beat, daemon=True).start()
+        try:
+            self.put_shard()
+            started = time.monotonic()
+            with mock.patch.object(pc, "SPOOL_RESULT_GRACE", 0):
+                code, out, err = self.run_shard(seconds=1, config=self.spool_config)
+            self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
+            self.assertLess(time.monotonic() - started, 10)
+        finally:
+            beating.set()
+        self.assertEqual([n for n in os.listdir(self.spool) if n.startswith(TAG)], [], "request withdrawn, lock gone")
+        self.assertEqual(os.listdir(self.scratch / ".run"), [])
 
     def test_the_runner_refuses_a_privileged_or_mismatched_launch(self):
         with mock.patch.object(pc.os, "geteuid", return_value=0):
@@ -558,6 +649,7 @@ class SpoolTerminationTests(RunnerCase):
         agent.wait()
         self.assertTrue(gone(leader) and gone(descendant), "a departed agent's run is killed")
         self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 30), self.spool_leftovers())
+        self.assertTrue(wait_for(lambda: os.listdir(self.scratch / ".run") == [], 30), "the killed agent's copy swept")
         self.assertEqual(self.stop_runner(runner)[0], 0)
 
     def test_a_runner_restart_answers_an_orphaned_run_as_failed_and_never_reruns_it(self):
@@ -574,6 +666,7 @@ class SpoolTerminationTests(RunnerCase):
         thread.join(30)
         self.assertRefused(box["result"], "restarted during this run; the shard was not rerun")
         self.assertEqual(self.pids(), [leader, descendant], "not run again")
+        self.assertTrue(wait_for(lambda: os.listdir(self.scratch / ".run") == [], 30), "the killed runner's snapshot")
         code, end = self.stop_runner(second)
         self.assertEqual((code, end["orphans_failed"], end["jobs_run"]), (0, 1, 0))
         self.assertEqual(self.spool_leftovers(), [])
@@ -624,6 +717,23 @@ class SpoolTerminationTests(RunnerCase):
         self.assertTrue(wait_for(lambda: self.spool_leftovers() == [], 30), self.spool_leftovers())
         self.assertEqual(self.stop_runner(runner)[0], 0)
 
+    def test_a_hung_runner_that_never_resumes_still_has_its_collector_end(self):
+        quick = self.spool_config_at(self.root / "watchdog.json", heartbeat_seconds=1, watchdog_grace_seconds=1)
+        runner = self.start_runner(quick)
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        thread, box = self.in_thread(seconds=3, config=quick)
+        leader, descendant = self.pids()
+        runner.send_signal(signal.SIGSTOP)  # never continued: killed in tearDown
+        try:
+            self.assertTrue(gone(leader, 15), "the collector's own alarm (deadline plus grace) ended it")
+            thread.join(30)
+            self.assertRefused(box["result"], "heartbeat is")
+        finally:
+            try:
+                os.kill(descendant, signal.SIGKILL)  # w5box's cgroup kill ends descendants
+            except ProcessLookupError:
+                pass
+
     def test_the_stop_file_cancels_a_running_job_at_its_grace(self):
         runner = self.start_runner(self.spool_config_at(self.root / "brief.json", stop_grace_seconds=1))
         self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
@@ -658,6 +768,31 @@ class SpoolLandlockTests(RunnerCase):
         code, end = self.stop_runner(runner)
         self.assertEqual(code, 0)
         self.assertTrue(end["sandbox"].startswith("landlock-abi"), end)
+
+    def test_the_spooled_collector_reaches_nothing_of_the_spool_or_other_tags(self):
+        landlock = self.spool_config_at(self.root / "landlock.json")
+        landlock.write_text(json.dumps(dict(json.loads(landlock.read_text()), sandbox="landlock")))
+        runner = self.start_runner(landlock)
+        other = self.scratch / ("pooled-000003-" + "b" * 32 + "-s002")
+        other.mkdir()
+        (other / "x.json").write_text("another shard")
+        (self.scratch / ".run").mkdir(mode=0o700, exist_ok=True)
+        stray = self.scratch / ".run" / f"{other.name}.{'d' * 32}.json"
+        stray.write_text("{}")
+        probes = [["read", str(self.spool / "runner.heartbeat")], ["write", str(self.spool / "planted")],
+                  ["read", str(stray)], ["write", str(self.scratch / ".run" / "planted.json")],
+                  ["read", str(other / "x.json")], ["write", str(other / "planted.json")],
+                  ["write", str(self.pins / "planted.bin")], ["write", str(self.scratch / TAG / "out" / "mine.json")]]
+        command = self.shard_command(episodes=[{"id": "probe", "seed": 1, "probes": probes}])
+        self.assertEqual(self.agent_process(landlock, "put_shard", json.dumps(command).encode(), tag=TAG)[0], 0)
+        code, out, err = self.agent_process(landlock, "run_shard", tag=TAG, seconds=60,
+                                            collector_sha256=pc.sha256_file(self.collector))
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), (err, out, self.runner_log(runner)))
+        report = json.loads((self.scratch / TAG / "out" / "probe.json").read_text())
+        self.assertEqual({k for k, v in report.items() if v == "allowed"},
+                         {"write:" + str(self.scratch / TAG / "out" / "mine.json")}, report)
+        self.assertTrue(all(v in ("allowed", 13) for v in report.values()), report)
+        self.assertEqual(self.stop_runner(runner)[0], 0)
 
     def test_the_confined_runner_cannot_write_the_pin_roots(self):
         landlock = self.spool_config_at(self.root / "landlock.json")
