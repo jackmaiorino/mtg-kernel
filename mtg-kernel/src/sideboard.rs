@@ -166,12 +166,27 @@ impl DeckConfigurationV1 {
         configuration_zone_sha256_v1(b"sideboard", &self.sideboard)
     }
 
+    /// The registered multiset as `CardCountV1` rows, the 60/15 contract's
+    /// row form (receipts, sideboard inputs, BO3). A configuration admitted
+    /// without a deck format holds at most 75 cards, so its rows are always
+    /// exact.
+    ///
+    /// # Panics
+    ///
+    /// When one card has more than 255 copies, which only a deck-format
+    /// configuration can hold. Use `combined_card_count_map_v1` there.
     pub fn combined_card_counts_v1(&self) -> Vec<CardCountV1> {
+        counts_to_rows_v1(&self.combined_card_count_map_v1())
+    }
+
+    /// The registered multiset, exact for every admissible configuration:
+    /// each card's copies across mainboard and sideboard, at full width.
+    pub fn combined_card_count_map_v1(&self) -> BTreeMap<u16, u32> {
         let mut counts = counts_from_cards_v1(&self.mainboard);
         for card_id in &self.sideboard {
             *counts.entry(*card_id).or_insert(0) += 1;
         }
-        counts_to_rows_v1(&counts)
+        counts
     }
 }
 
@@ -258,16 +273,13 @@ impl RegisteredDeckV1 {
             self.configuration.sideboard(),
             SideboardZoneV1::RegisteredSideboard,
         )?;
-        for row in self.configuration.combined_card_counts_v1() {
-            if row.count > 4
-                && !crate::card_def::CARD_DEFS[usize::from(row.card_id)]
+        for (card_id, count) in self.configuration.combined_card_count_map_v1() {
+            if count > 4
+                && !crate::card_def::CARD_DEFS[usize::from(card_id)]
                     .supertypes
                     .contains(&crate::card_def::Supertype::Basic)
             {
-                return Err(SideboardErrorV1::NonbasicCopyLimitExceeded {
-                    card_id: row.card_id,
-                    count: row.count,
-                });
+                return Err(SideboardErrorV1::NonbasicCopyLimitExceeded { card_id, count });
             }
         }
         Ok(())
@@ -329,7 +341,9 @@ impl RegisteredDeckV1 {
             expand_counts_v1(&sideboard_counts),
             self.configuration.format,
         )?;
-        if configuration.combined_card_counts_v1() != self.configuration.combined_card_counts_v1() {
+        if configuration.combined_card_count_map_v1()
+            != self.configuration.combined_card_count_map_v1()
+        {
             return Err(SideboardErrorV1::RegisteredMultisetChanged);
         }
 
@@ -859,7 +873,9 @@ pub enum SideboardErrorV1 {
         zone: SideboardZoneV1,
         card_id: u16,
         requested: u8,
-        available: u8,
+        /// Copies in the zone: full width, since a deck-format zone may hold
+        /// more than 255 of one card.
+        available: u32,
     },
     PlanDeckMismatch {
         registered: String,
@@ -882,7 +898,8 @@ pub enum SideboardErrorV1 {
     },
     NonbasicCopyLimitExceeded {
         card_id: u16,
-        count: u8,
+        /// Full width, so 256 or more copies are reported, never wrapped.
+        count: u32,
     },
     PoolJson(String),
     PoolSchemaMismatch {
@@ -1290,7 +1307,10 @@ fn count_total_v1(rows: &[CardCountV1]) -> usize {
     rows.iter().map(|row| usize::from(row.count)).sum()
 }
 
-fn counts_from_cards_v1(cards: &[u16]) -> BTreeMap<u16, u8> {
+/// Per-card copies at full width: an admitted zone holds at most
+/// `LIMITED40_MAX_MAINBOARD_SIZE_V1` plus a sideboard, far below `u32::MAX`,
+/// so no count can overflow (a `u8` wrapped at 256 copies).
+fn counts_from_cards_v1(cards: &[u16]) -> BTreeMap<u16, u32> {
     let mut counts = BTreeMap::new();
     for card_id in cards {
         *counts.entry(*card_id).or_insert(0) += 1;
@@ -1298,31 +1318,37 @@ fn counts_from_cards_v1(cards: &[u16]) -> BTreeMap<u16, u8> {
     counts
 }
 
-fn counts_to_rows_v1(counts: &BTreeMap<u16, u8>) -> Vec<CardCountV1> {
+fn counts_to_rows_v1(counts: &BTreeMap<u16, u32>) -> Vec<CardCountV1> {
     counts
         .iter()
         .map(|(card_id, count)| CardCountV1 {
             card_id: *card_id,
-            count: *count,
+            count: u8::try_from(*count).unwrap_or_else(|_| {
+                panic!(
+                    "card {card_id} has {count} copies, more than a CardCountV1 row holds; use combined_card_count_map_v1"
+                )
+            }),
         })
         .collect()
 }
 
-fn expand_counts_v1(counts: &BTreeMap<u16, u8>) -> Vec<u16> {
+fn expand_counts_v1(counts: &BTreeMap<u16, u32>) -> Vec<u16> {
     let mut cards = Vec::new();
     for (card_id, count) in counts {
-        cards.extend(std::iter::repeat_n(*card_id, usize::from(*count)));
+        let count = usize::try_from(*count).expect("a card count fits in usize");
+        cards.extend(std::iter::repeat_n(*card_id, count));
     }
     cards
 }
 
 fn remove_count_v1(
-    counts: &mut BTreeMap<u16, u8>,
+    counts: &mut BTreeMap<u16, u32>,
     row: CardCountV1,
     zone: SideboardZoneV1,
 ) -> Result<(), SideboardErrorV1> {
+    let requested = u32::from(row.count);
     let available = counts.get(&row.card_id).copied().unwrap_or(0);
-    if available < row.count {
+    if available < requested {
         return Err(SideboardErrorV1::CardUnavailable {
             zone,
             card_id: row.card_id,
@@ -1330,16 +1356,16 @@ fn remove_count_v1(
             available,
         });
     }
-    if available == row.count {
+    if available == requested {
         counts.remove(&row.card_id);
     } else {
-        counts.insert(row.card_id, available - row.count);
+        counts.insert(row.card_id, available - requested);
     }
     Ok(())
 }
 
-fn add_count_v1(counts: &mut BTreeMap<u16, u8>, row: CardCountV1) {
-    *counts.entry(row.card_id).or_insert(0) += row.count;
+fn add_count_v1(counts: &mut BTreeMap<u16, u32>, row: CardCountV1) {
+    *counts.entry(row.card_id).or_insert(0) += u32::from(row.count);
 }
 
 /// Hashes a bare mainboard `card_id` slice with the exact same domain tag
@@ -1636,5 +1662,224 @@ mod deck_format_tests {
         ] {
             assert!(serde_json::from_value::<DeckFormatV1>(serde_json::json!(bad)).is_err());
         }
+    }
+
+    fn card(name: &str) -> u16 {
+        crate::card_def::card_id_by_name(name).unwrap_or_else(|| panic!("{name}"))
+    }
+
+    /// Review finding 1: per-card counts are full width. A `u8` count
+    /// wrapped at 256 copies, so 256 copies of a nonbasic counted as zero
+    /// and passed the four-copy limit in release builds (and panicked in
+    /// checked builds). Each case here was admitted or panicked before.
+    #[test]
+    fn deck_format_limited40_copy_limit_counts_past_255_copies() {
+        let bolt = card("Lightning Bolt");
+        let mountain = card("Mountain");
+        assert!(!is_basic(bolt) && is_basic(mountain));
+        for copies in [255_u32, 256, 260, 511, 512, 1_000] {
+            let mut mainboard = vec![bolt; copies as usize];
+            mainboard.extend([mountain; 40]);
+            assert_eq!(
+                RegisteredDeckV1::new_executable_for_format_v1(
+                    "bolts",
+                    mainboard,
+                    Vec::new(),
+                    LIMITED
+                )
+                .unwrap_err(),
+                SideboardErrorV1::NonbasicCopyLimitExceeded {
+                    card_id: bolt,
+                    count: copies
+                },
+                "{copies} copies"
+            );
+        }
+        // Split across the zones, the limit still sees the whole multiset.
+        let mut mainboard = vec![bolt; 250];
+        mainboard.extend([mountain; 40]);
+        let error = RegisteredDeckV1::new_executable_for_format_v1(
+            "bolts",
+            mainboard,
+            vec![bolt; 6],
+            LIMITED,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            SideboardErrorV1::NonbasicCopyLimitExceeded {
+                card_id: bolt,
+                count: 256
+            }
+        );
+        assert!(error.to_string().contains("256"), "{error}");
+        // Basic lands remain the exception at any count.
+        let deck = RegisteredDeckV1::new_executable_for_format_v1(
+            "mountains",
+            vec![mountain; 256],
+            vec![mountain; 15],
+            LIMITED,
+        )
+        .unwrap();
+        assert_eq!(
+            deck.registered_configuration()
+                .combined_card_count_map_v1()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![(mountain, 271)]
+        );
+    }
+
+    /// Review finding 1: the registered-multiset comparison is exact. With
+    /// `u8` counts, 40 Forests and 296 Forests (296 = 40 + 256) compared as
+    /// the same multiset.
+    #[test]
+    fn deck_format_limited40_multiset_counts_are_exact() {
+        let forest = card("Forest");
+        let configuration = |count: usize| {
+            DeckConfigurationV1::new_for_format_v1(vec![forest; count], Vec::new(), LIMITED)
+                .unwrap()
+        };
+        let forty = configuration(40);
+        for other in [296, 552, 41] {
+            assert_ne!(
+                configuration(other).combined_card_count_map_v1(),
+                forty.combined_card_count_map_v1(),
+                "{other} Forests"
+            );
+        }
+        assert_eq!(
+            configuration(296).combined_card_count_map_v1()[&forest],
+            296
+        );
+        // Within 255 copies the row form is the exact map, as before.
+        assert_eq!(
+            forty.combined_card_counts_v1(),
+            vec![CardCountV1 {
+                card_id: forest,
+                count: 40
+            }]
+        );
+    }
+
+    /// The row form cannot hold 256 copies: it refuses loudly rather than
+    /// wrapping. Only a deck-format configuration can hold that many, and the
+    /// trainer's checks on those read `combined_card_count_map_v1`.
+    #[test]
+    #[should_panic(expected = "more than a CardCountV1 row holds")]
+    fn deck_format_limited40_row_counts_refuse_to_wrap() {
+        DeckConfigurationV1::new_for_format_v1(vec![card("Forest"); 256], Vec::new(), LIMITED)
+            .unwrap()
+            .combined_card_counts_v1();
+    }
+
+    /// Review finding 1: the format's upper bound, 10,000 mainboard cards,
+    /// with a full sideboard; one more card is refused. A plan applied to the
+    /// largest registration conserves its multiset (with `u8` counts, the
+    /// 10,000 Mountains counted as 16).
+    #[test]
+    fn deck_format_limited40_admits_exactly_the_10000_card_boundary() {
+        assert_eq!(LIMITED40_MAX_MAINBOARD_SIZE_V1, 10_000);
+        let mountain = card("Mountain");
+        let forest = card("Forest");
+        let deck = RegisteredDeckV1::new_executable_for_format_v1(
+            "boundary",
+            vec![mountain; 10_000],
+            vec![forest; 15],
+            LIMITED,
+        )
+        .unwrap();
+        let configuration = deck.registered_configuration();
+        assert_eq!(configuration.mainboard().len(), 10_000);
+        assert_eq!(configuration.sideboard().len(), 15);
+        assert_eq!(
+            configuration.combined_card_count_map_v1(),
+            BTreeMap::from([(mountain, 10_000), (forest, 15)])
+        );
+        assert_eq!(
+            RegisteredDeckV1::new_executable_for_format_v1(
+                "boundary",
+                vec![mountain; 10_001],
+                Vec::new(),
+                LIMITED,
+            )
+            .unwrap_err(),
+            SideboardErrorV1::FormatMainboardSize {
+                format: DeckFormatV1::Limited40V1,
+                actual: 10_001
+            }
+        );
+
+        let plan = SideboardPlanV1::new_v1(
+            "boundary",
+            "other",
+            2,
+            vec![CardCountV1 {
+                card_id: forest,
+                count: 3,
+            }],
+            vec![CardCountV1 {
+                card_id: mountain,
+                count: 3,
+            }],
+        )
+        .unwrap();
+        let (after, _) = deck.apply_plan_v1(&plan, "policy", [0; 32]).unwrap();
+        assert_eq!(after.mainboard().len(), 10_000);
+        assert_eq!(after.sideboard().len(), 15);
+        assert_eq!(
+            after
+                .mainboard()
+                .iter()
+                .filter(|&&id| id == mountain)
+                .count(),
+            9_997
+        );
+        assert_eq!(
+            after.combined_card_count_map_v1(),
+            configuration.combined_card_count_map_v1()
+        );
+
+        // Exactly 256 copies: a `u8` count read zero available here, so the
+        // plan was refused as `CardUnavailable`.
+        let wrapped = RegisteredDeckV1::new_executable_for_format_v1(
+            "boundary",
+            vec![mountain; 256],
+            vec![forest; 15],
+            LIMITED,
+        )
+        .unwrap();
+        let (after, _) = wrapped.apply_plan_v1(&plan, "policy", [0; 32]).unwrap();
+        assert_eq!(after.mainboard().len(), 256);
+        assert_eq!(
+            after.combined_card_count_map_v1(),
+            BTreeMap::from([(mountain, 256), (forest, 15)])
+        );
+        // A removal beyond what the zone holds is still refused.
+        let missing = SideboardPlanV1::new_v1(
+            "boundary",
+            "other",
+            2,
+            vec![CardCountV1 {
+                card_id: mountain,
+                count: 1,
+            }],
+            vec![CardCountV1 {
+                card_id: forest,
+                count: 1,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            wrapped
+                .apply_plan_v1(&missing, "policy", [0; 32])
+                .unwrap_err(),
+            SideboardErrorV1::CardUnavailable {
+                zone: SideboardZoneV1::RegisteredMainboard,
+                card_id: forest,
+                requested: 1,
+                available: 0,
+            }
+        );
     }
 }
