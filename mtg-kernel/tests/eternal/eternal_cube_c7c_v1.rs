@@ -1010,7 +1010,7 @@ fn tidehollow_sculler_leaving_before_etb_resolves_exiles_permanently() {
     assert_eq!(zone(&state, opp_land), Zone::Hand);
     assert_eq!(zone(&state, opp_bolt), Zone::Hand);
     assert!(
-        state.linked_exile_records.is_empty(),
+        state.engine.linked_exile_records.is_empty(),
         "no live link remains after LTB already resolved"
     );
 }
@@ -1486,7 +1486,7 @@ fn guardian_scalelord_backup_self_vs_another_creature_and_end_of_turn_expiry() {
     let mut triggers = 0usize;
     attack_with(&mut state, vec![scalelord], |_, decision| match decision {
         Decision::ChooseTargets { legal_targets, .. } => {
-            assert_eq!(legal_targets, vec![Target::Object(baloth_gy)]);
+            assert_eq!(*legal_targets, vec![Target::Object(baloth_gy)]);
             triggers += 1;
             Some(Action::ChooseTarget(Target::Object(baloth_gy)))
         }

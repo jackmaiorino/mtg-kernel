@@ -491,9 +491,9 @@ fn c7b_cards_are_full() {
     assert_eq!(beast.supertypes, &[Supertype::Legendary]);
     assert_eq!(beast.subtypes, &[Subtype::Beast]);
     assert_eq!((beast.power, beast.toughness), (Some(4), Some(4)));
-    assert!(beast.keywords.contains(Keywords::VIGILANCE));
-    assert!(beast.keywords.contains(Keywords::DEATHTOUCH));
-    assert!(beast.keywords.contains(Keywords::HASTE));
+    assert!(beast.keywords.has(Keywords::VIGILANCE));
+    assert!(beast.keywords.has(Keywords::DEATHTOUCH));
+    assert!(beast.keywords.has(Keywords::HASTE));
 
     let jailer = def("Palace Jailer");
     assert_eq!(jailer.cost.generic, 2);
@@ -875,7 +875,7 @@ fn vivi_mana_ability_offers_every_ur_split_and_enforces_own_turn_and_once_per_tu
     assert!(engine::step(&mut opp_turn, Action::ActivateManaAbility(vivi)).is_err());
 }
 
-fn state_add_counters(state: &mut GameState, object: ObjectId, count: i16) {
+fn state_add_counters(state: &mut GameState, object: ObjectId, count: i32) {
     state.objects.get_mut(object).counters.plus1_plus1 += count;
 }
 
@@ -966,7 +966,7 @@ fn black_widow_combat_hit_exiles_until_nonland_and_offers_counter_or_any_mana_ca
     pool(&mut cast_state, P0, &[ManaColor::B], 1);
     assert!(
         castable(&mut cast_state, mongrel),
-        "colored pip {G} can be paid with {B} or {C}"
+        "colored pip {{G}} can be paid with {{B}} or {{C}}"
     );
     cast(&mut cast_state, mongrel, &[]);
     settled(&mut cast_state);
@@ -1002,7 +1002,7 @@ fn black_widow_combat_hit_exiles_until_nonland_and_offers_counter_or_any_mana_ca
     );
     assert!(
         castable(&mut eldrazi_state, seer),
-        "{C} pip can be paid with colored mana"
+        "{{C}} pip can be paid with colored mana"
     );
     cast(&mut eldrazi_state, seer, &[]);
     settle_first(&mut eldrazi_state);
