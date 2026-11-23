@@ -66,6 +66,50 @@ fn ojer_and_sphere_may_each_precede_the_other_on_a_shielded_bolt() {
 }
 
 #[test]
+fn mask_of_law_and_grace_competes_with_hallow_for_each_creatures_controller() {
+    for caster in [P0, P1] {
+        let controller = caster.opponent();
+        let mut state = turn_of(caster);
+        let creature = put(&mut state, controller, "Elvish Mystic", Zone::Battlefield);
+        let mask = put(&mut state, caster, "Mask of Law and Grace", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::W], 0);
+        cast(&mut state, mask, &[Target::Object(creature)]);
+        settled(&mut state);
+        assert_eq!(
+            state.objects.get(mask).v4.attached_to.unwrap().object,
+            creature
+        );
+
+        let pyro = put(&mut state, caster, "Pyroclasm", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::R], 1);
+        cast(&mut state, pyro, &[]);
+        give_priority(&mut state, caster);
+        let hallow = put(&mut state, caster, "Hallow", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::W], 0);
+        cast(&mut state, hallow, &[Target::Object(pyro)]);
+
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, source, option_count: 2 })
+                if player == controller && source == pyro
+        ));
+        // Hallow gains two life for its caster. Protection prevents the same
+        // damage without a gain.
+        for (option, caster_life) in [(0, 22), (1, 20)] {
+            let mut branch = restored(&state);
+            assert_eq!(branch.state_hash(), state.state_hash());
+            act(&mut branch, Action::ChooseEffectOption(option));
+            settled(&mut branch);
+            assert_eq!(life(&branch, caster), caster_life);
+            assert_eq!(life(&branch, controller), 20);
+            let object = branch.objects.get(creature);
+            assert_eq!((object.zone, object.damage), (Zone::Battlefield, 0));
+            assert_eq!(branch.objects.get(pyro).zone, Zone::Graveyard);
+        }
+    }
+}
+
+#[test]
 fn impractical_joke_prohibits_hallow_and_nishoba_still_loses_its_counter() {
     let mut state = turn_of(P1);
     let phantom = put(&mut state, P0, "Phantom Nishoba", Zone::Battlefield);
