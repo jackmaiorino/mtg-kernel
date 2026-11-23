@@ -1854,16 +1854,34 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if live.zone != Zone::Battlefield
                 || live.zone_change_count != contract.zone_change_count
                 || live.v4.face_index != 0
-                || CARD_DEFS[live.card_def as usize].transform_face.is_none()
+                || CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_none_or(|def| def.transform_face.is_none())
             {
                 return;
             }
             let owner = live.owner;
+            let Some(exile_generation) = live.zone_change_count.checked_add(1) else {
+                return;
+            };
             event::propose_and_commit(
                 state,
                 ProposedEvent::zone_change(contract.source, Zone::Exile),
             );
-            if state.objects.get(contract.source).zone == Zone::Exile {
+            // Leaving the battlefield may clear a copied definition. Only this
+            // exile incarnation, with a permanent back face, can return (712.11a).
+            if state.engine.halted.is_none()
+                && state
+                    .objects
+                    .try_get(contract.source)
+                    .is_some_and(|exiled| {
+                        exiled.zone == Zone::Exile
+                            && exiled.zone_change_count == exile_generation
+                            && exiled.owner == owner
+                            && !exiled.v4.is_token
+                            && event::battlefield_back_face_v1(exiled.card_def).is_some()
+                    })
+            {
                 event::propose_and_commit(
                     state,
                     ProposedEvent::transformed_battlefield_return(contract.source, 1, owner),
