@@ -42,6 +42,7 @@ const GAE_V1: ExpandedLossSelectionV1 = ExpandedLossSelectionV1::GaeAdvantageVal
     gamma: 1.0,
     lambda: 0.9,
     entropy_coefficient: 0.0,
+    pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::Gae,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,6 +162,8 @@ fn iterations_v1(
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        priority_windows: None,
+                        london_keep_offset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 })
@@ -176,6 +179,7 @@ fn config_v1(
     output_directory: PathBuf,
 ) -> NativeExpandedTrainingRunV1 {
     NativeExpandedTrainingRunV1 {
+        card_semantics: None,
         schema: SCHEMA.into(),
         initial_source,
         opponents: vec![],
@@ -191,6 +195,7 @@ fn config_v1(
         preparation_workers: options.preparation_workers,
         max_non_natural_episode_fraction: 0.0,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
         line_b: None,

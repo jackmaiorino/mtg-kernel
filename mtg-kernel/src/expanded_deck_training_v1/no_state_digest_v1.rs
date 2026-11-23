@@ -450,7 +450,12 @@ pub(super) fn load_v1(
         let (policy, state, load) = initialize_v1(source, bytes, None)?;
         let identity = super::inference_identity_v1(source, &policy, &state)?;
         super::loaded_source_cache_v1::remember_converted_policy_v1(
-            source, bytes, &policy, &identity, &load,
+            source,
+            bytes,
+            &policy,
+            &identity,
+            &load,
+            state.loaded_card_semantics.as_ref(),
         );
         return Ok((policy, identity));
     }
@@ -537,7 +542,12 @@ pub(super) fn initialize_training_uncached_v1(
         }
         CacheRememberV1::PolicyOnly => {
             super::loaded_source_cache_v1::remember_converted_policy_v1(
-                source, bytes, &policy, &identity, &load,
+                source,
+                bytes,
+                &policy,
+                &identity,
+                &load,
+                state.loaded_card_semantics.as_ref(),
             );
         }
     }
@@ -907,6 +917,8 @@ fn convert_state_v1(
     let mut converted =
         NativePolicyValueTrainStateV1::from_snapshot_v1(base_state.model_v1().clone(), &candidate)
             .map_err(err)?;
+    // Preserve admission metadata when rebuilding the converted optimizer.
+    converted.loaded_card_semantics = base_state.loaded_card_semantics.clone();
     converted.set_training_math_v1(base_state.training_math_v1());
     ensure(
         converted.model_v1().parameter_manifest_sha256_v1()

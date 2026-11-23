@@ -62,6 +62,7 @@ fn update(
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: source.clone(),
         trajectories,
         learning_rate: 1.0e-3,
@@ -225,6 +226,84 @@ fn wide_learner_end_to_end_v1() {
     assert_eq!(behaviors[0].identity, identity);
     assert_eq!(behaviors[1].source, net8);
 
+    // The London keep offset and the terminal pregame advantage are the
+    // net-8 update's, and the wide learner refuses both.
+    {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        use crate::rl_session::pauper_london_v1::{
+            PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningSeatRecordV1, PauperOpeningV1,
+        };
+        // Serial collection refuses offset episodes before anything loads.
+        let mut london = episode("w-london-offset", 2_026_111_314, None);
+        london.opening = Some(PauperOpeningV1::LondonV1);
+        london.mulligan_modes = Some([PauperMulliganModeV1::Learned; 2]);
+        london.london_keep_offset = Some(LondonKeepOffsetV1::Scalar(6.5));
+        let error =
+            collect(&wide, vec![london], root.join("w-refused-offset-collect")).unwrap_err();
+        assert!(
+            error.contains("a wide learner collection refuses the London keep offset"),
+            "{error}"
+        );
+        // The update refuses an offset-carrying trajectory. The wide learner
+        // plays no London game, so a collected trajectory is relabelled as
+        // one (its rows are all in-game, so it still validates); nothing
+        // else in it changes.
+        let mut relabelled: super::super::ExpandedTrajectoryV1 =
+            read_pinned(&trajectories[0]).unwrap();
+        relabelled.episode.opening = Some(PauperOpeningV1::LondonV1);
+        relabelled.episode.mulligan_modes = Some([PauperMulliganModeV1::Learned; 2]);
+        relabelled.episode.london_keep_offset = Some(LondonKeepOffsetV1::Scalar(6.5));
+        let seat = PauperOpeningSeatRecordV1 {
+            mode: PauperMulliganModeV1::Learned,
+            mulligans_taken: 0,
+            kept_hand_size: 7,
+            exposed_pregame_decisions: 1,
+            forced_zero_card_keep: false,
+        };
+        relabelled.opening_record = Some(PauperOpeningRecordV1 {
+            opening: PauperOpeningV1::LondonV1,
+            seats: [seat.clone(), seat],
+        });
+        let bytes = serde_json::to_vec(&relabelled).unwrap();
+        let path = root.join("w-relabelled-london-offset.json");
+        fs::write(&path, &bytes).unwrap();
+        let pin = PinnedFileV1 {
+            path,
+            sha256: crate::expanded_deck_training_v1::sha(&bytes),
+        };
+        let error = update(&wide, vec![pin], root.join("w-refused-offset-update")).unwrap_err();
+        assert!(
+            error.contains("a wide learner update refuses the London keep offset"),
+            "{error}"
+        );
+        // The update refuses the terminal mode before it reads anything.
+        let error = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
+            source: wide.clone(),
+            trajectories: trajectories.clone(),
+            learning_rate: 1.0e-3,
+            value_coefficient: 0.5,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            loss_selection: ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+                pregame_advantage: PregameAdvantageV1::TerminalV1,
+            },
+            line_b: None,
+            training_math: TrainingMathV1::PlatformLibm,
+            record_format: CheckpointRecordFormatV1::V1,
+            output_directory: root.join("w-refused-terminal-update"),
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("a wide learner refuses the terminal pregame advantage"),
+            "{error}"
+        );
+    }
+
     // The update and its record.
     let updated = update(&wide, trajectories.clone(), root.join("w-update")).unwrap();
     assert_eq!(updated["adam_step"], parent_identity.adam_step + 1);
@@ -309,9 +388,20 @@ fn wide_learner_end_to_end_v1() {
             gamma: 0.99,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         }
     )
     .is_err());
+    // The terminal pregame advantage is a net-8 London mode: refused here.
+    let terminal = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::TerminalV1,
+    };
+    assert!(validate_update_loss_v1(&next, &terminal)
+        .unwrap_err()
+        .contains("terminal pregame advantage"));
 
     // Determinism: the same update again.
     let again = update(&wide, trajectories.clone(), root.join("w-update-again")).unwrap();

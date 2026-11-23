@@ -99,6 +99,7 @@ fn checkpoint_of(
         rows.iter().map(ParameterBitsV1::from_native).collect()
     };
     ExpandedCheckpointV1 {
+        card_semantics: None,
         schema: ordinary_checkpoint_schema_v1(policy.identity_v1()).into(),
         feature_contract_digest: match &input_contract {
             Some(_) => converted_contract_digest_v1(identity.feature_contract_digest),
@@ -1523,6 +1524,8 @@ fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> Expa
         reset: None,
         opening: None,
         mulligan_modes: None,
+        priority_windows: None,
+        london_keep_offset: None,
     }
 }
 
@@ -1531,6 +1534,7 @@ fn gae() -> ExpandedLossSelectionV1 {
         gamma: 1.0,
         lambda: 0.9,
         entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
     }
 }
 
@@ -1548,6 +1552,7 @@ fn run_config(
         opponent,
     };
     NativeExpandedTrainingRunV1 {
+        card_semantics: None,
         schema: "mtg-kernel-native-expanded-training-run/v1".into(),
         initial_source: initial_source.clone(),
         opponents: vec![],
@@ -1571,6 +1576,8 @@ fn run_config(
         preparation_workers: workers,
         max_non_natural_episode_fraction: 0.0,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes:
+            crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
         line_b: None,
@@ -1621,6 +1628,7 @@ fn converted_run_end_to_end_v1() {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(collection["trajectories"].clone()).unwrap();
     let update = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: base.clone(),
         trajectories: trajectories.clone(),
         learning_rate: 0.0003,
@@ -1816,6 +1824,7 @@ fn converted_run_end_to_end_v1() {
 
     // Only the ordinary CPU update: an auxiliary (line (b)) update is refused.
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: converted.clone(),
         trajectories: vec![PinnedFileV1 {
             path: root.join("unused.json"),
@@ -1839,5 +1848,93 @@ fn converted_run_end_to_end_v1() {
         error,
         "the no-state-digest contract admits only the ordinary CPU update"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn projection_refuses_converted_update_run_and_fork_before_publication() {
+    on_large_stack(projection_refuses_converted_paths_v1);
+}
+
+fn projection_refuses_converted_paths_v1() {
+    use crate::expanded_deck_training_v1::card_semantics_e1::{
+        fixture_table_v1, fixture_update_v1, load_run_initial_v1, tool_json_v1,
+    };
+    let root = temp_root("projection-refusals");
+    let initial = fresh_source(&root);
+    let parent = with_trained_checkpoint(&root, &initial);
+    let (_, converted) = convert(&root, &parent, "conversion");
+    let semantics = fixture_table_v1(&root);
+    let (policy, state) = initialize_any_math_v1(&converted).unwrap();
+    assert!(policy.input_contract_v1().is_some());
+    assert!(state.loaded_card_semantics.is_none());
+    let output = root.join("update");
+    assert_eq!(
+        execute_v1(fixture_update_v1(&converted, &semantics, output.clone())).unwrap_err(),
+        "card semantics requires an ordinary 33-tensor learner"
+    );
+    assert!(!output.exists());
+    assert_eq!(
+        load_run_initial_v1(
+            &converted,
+            TrainingMathV1::PlatformLibm,
+            &mut Some(semantics.load_v1().unwrap())
+        )
+        .unwrap_err(),
+        "card semantics requires an ordinary 33-tensor learner"
+    );
+
+    let mut config = run_config(&converted, 1, root.join("run"));
+    config.card_semantics = Some(semantics.clone());
+    assert_eq!(
+        run_native_expanded_training_v1(&config, Some(1)).unwrap_err(),
+        "card semantics requires an ordinary input contract"
+    );
+    assert!(!config.output_directory.exists());
+
+    // The run-start source points at the ordinary base checkpoint, whose
+    // metadata contains neither a transfer nor an input-contract section.
+    let output = root.join("fork");
+    assert_eq!(
+        tool_json_v1(
+            &serde_json::json!({"mode":"fork-import",
+        "source":converted, "initial_source":initial, "tokens":[1],
+        "card_semantics":semantics, "output_directory":output})
+            .to_string()
+        )
+        .unwrap_err(),
+        "fork-import requires an ordinary input contract without registry transfer"
+    );
+    assert!(!output.exists());
+
+    // A correctly hashed converted continuation can carry a section that
+    // inference ignores. Flag-off run admission must reject it before iter 0.
+    // Main's converted run start is the ordinary source's training load
+    // (`load_initial_for_run_v1`), so the refusal is that admission's.
+    let snapshot = state.snapshot_v1().unwrap();
+    let mut saved = checkpoint_of(
+        &policy,
+        &snapshot,
+        policy_contract_record_v1(&policy).unwrap(),
+    );
+    saved.card_semantics = Some(semantics.load_v1().unwrap().section_v1());
+    saved.state_sha256 =
+        crate::native_policy_train_step_v1::card_projection_e1::checkpoint_hash_v1(
+            &snapshot.state_sha256_v1().unwrap(),
+            saved.card_semantics.as_ref(),
+        )
+        .unwrap();
+    let enabled = ExpandedModelSourceV1 {
+        checkpoint: Some(publish_json(&root, "enabled-converted.json", &saved).unwrap()),
+        ..converted
+    };
+    initialize_any_math_v1(&enabled).unwrap();
+    let config = run_config(&enabled, 1, root.join("off-run"));
+    assert_eq!(
+        run_native_expanded_training_v1(&config, Some(1)).unwrap_err(),
+        "card semantics checkpoint requires card_semantics config (export for flag-off training)"
+    );
+    assert!(!config.output_directory.join("run.json").exists());
+    assert!(!config.output_directory.join("iterations").exists());
     fs::remove_dir_all(root).unwrap();
 }

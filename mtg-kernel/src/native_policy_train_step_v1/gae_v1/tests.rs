@@ -1950,3 +1950,819 @@ fn w5_policy_mask_zeroes_masked_substeps_and_renormalizes_the_policy_term() {
         assert!(step(bad).0.is_err());
     }
 }
+
+// London keep offset (`expanded_deck_training_v1::london_keep_offset_v1`).
+
+use crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1;
+
+fn gae_inputs(groups: &[NativePolicyPhysicalDecisionV1<'_>]) -> (Vec<f32>, Vec<f32>) {
+    let value_targets: Vec<f32> = groups
+        .iter()
+        .map(|g| f32::from(g.terminal_return))
+        .collect();
+    let advantages = groups
+        .iter()
+        .zip(&value_targets)
+        .map(|(g, t)| t - f32::from_bits(g.substeps[0].expected_value_bits))
+        .collect();
+    (value_targets, advantages)
+}
+
+/// The fixture with its first tensor made a London announcement: pregame
+/// stage set, every action row of kind `london_opening`, row 0 the mulligan
+/// row (VALUE flag), the rest keep-like rows. The acting seat has taken no
+/// mulligan.
+fn announcement_fixture(model: &NativePolicyValueNetV1) -> Fixture {
+    announcement_fixture_counts(model, 0, 0)
+}
+
+/// [`announcement_fixture`] for an acting seat that has taken `own`
+/// mulligans against a seat that has taken `other` (action columns 63 and 66,
+/// as the tensorizer writes them).
+fn announcement_fixture_counts(model: &NativePolicyValueNetV1, own: u8, other: u8) -> Fixture {
+    use crate::expanded_deck_training_v1::london_keep_offset_v1::{
+        LONDON_OPENING_ACTION_COLUMN_V1, MULLIGAN_FLAG_ACTION_COLUMN_V1,
+        OWN_MULLIGANS_ACTION_COLUMN_V1, PREGAME_STATE_COLUMN_V1,
+    };
+    let mut fixture = Fixture::capture(model);
+    let tensor = &mut fixture.tensors[0].common;
+    tensor.state[PREGAME_STATE_COLUMN_V1] = 1.0;
+    let rows = fixture.logits[0].len();
+    let width = tensor.action_features.len() / rows;
+    for row in 0..rows {
+        tensor.action_features[row * width + LONDON_OPENING_ACTION_COLUMN_V1] = 1.0;
+        tensor.action_features[row * width + MULLIGAN_FLAG_ACTION_COLUMN_V1] =
+            if row == 0 { 1.0 } else { 0.0 };
+        tensor.action_features[row * width + OWN_MULLIGANS_ACTION_COLUMN_V1] =
+            (f64::from(own) / 16.0) as f32;
+        tensor.action_features[row * width + 66] = (f64::from(other) / 16.0) as f32;
+    }
+    refresh_first_group_outputs(model, &mut fixture);
+    fixture
+}
+
+/// Recomputes the first group's recorded logits and value from its (edited)
+/// tensor, as a collection would have recorded them.
+fn refresh_first_group_outputs(model: &NativePolicyValueNetV1, fixture: &mut Fixture) {
+    let output = model
+        .forward_feature_transfer_v3_mode(
+            encoded_decision_view_v3(&fixture.tensors[0]),
+            ForwardActivationModeV1::LibmTanh,
+        )
+        .unwrap();
+    fixture.logits[0] = output.logits.iter().map(|v| v.to_bits()).collect();
+    fixture.values[0] = output.value.to_bits();
+}
+
+#[test]
+fn london_keep_offset_without_pregame_rows_changes_no_bit() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut plain = base.clone();
+    let mut offset = base.clone();
+    offset.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(5.0)));
+    let a = plain
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    let b = offset
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(a.selected_outputs, b.selected_outputs);
+    assert_eq!(a.gradients, b.gradients);
+    assert_eq!(a.loss.to_bits(), b.loss.to_bits());
+    offset.set_london_keep_offset_v1(None);
+    assert_eq!(state_bits(&plain), state_bits(&offset));
+    assert_eq!(
+        plain.state_sha256_v1().unwrap(),
+        offset.state_sha256_v1().unwrap()
+    );
+}
+
+#[test]
+fn london_keep_offset_trains_on_the_sampled_distribution() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let offset = 2.5f32;
+    let mut plain = base.clone();
+    let mut shifted = base.clone();
+    shifted.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(offset)));
+    let a = plain
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    let b = shifted
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    // The announcement substep (group 0, substep 0, selected row 0 = the
+    // mulligan row) uses log-softmax over the offset logits.
+    let raw: Vec<f32> = fixture.logits[0]
+        .iter()
+        .map(|b| f32::from_bits(*b))
+        .collect();
+    let mut adjusted = raw.clone();
+    adjusted[0] -= offset;
+    let (expected, _) =
+        selected_log_softmax_math_v1(&adjusted, 0, TrainingMathV1::PlatformLibm).unwrap();
+    let announce = |r: &NativePolicyTrainStepResultV1| {
+        r.selected_outputs
+            .iter()
+            .find(|o| o.group_index == 0 && o.substep_index == 0)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        announce(&b).selected_log_probability.to_bits(),
+        expected.to_bits()
+    );
+    assert_ne!(
+        announce(&a).selected_log_probability.to_bits(),
+        announce(&b).selected_log_probability.to_bits()
+    );
+    // Raw outputs stay raw: the selected logit and value are the scorer's.
+    assert_eq!(
+        announce(&a).selected_logit.to_bits(),
+        announce(&b).selected_logit.to_bits()
+    );
+    assert_ne!(a.gradients, b.gradients);
+    // Rows other than the announcement train exactly as without the offset.
+    for (x, y) in a.selected_outputs.iter().zip(&b.selected_outputs) {
+        if (x.group_index, x.substep_index) != (0, 0) {
+            assert_eq!(x, y);
+        }
+    }
+}
+
+#[test]
+fn london_keep_offset_vector_trains_on_the_entry_for_the_own_count() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let entries = [9.0f32, 7.5, 0.0, 5.25, 4.0, 3.0, 2.0];
+    for (own, other) in [(0u8, 3u8), (1, 0), (2, 5), (3, 3), (6, 1)] {
+        let fixture = announcement_fixture_counts(base.model_v1(), own, other);
+        let steps = fixture.substeps();
+        let groups = groups(&steps);
+        let (targets, advantages) = gae_inputs(&groups);
+        let mut shifted = base.clone();
+        shifted.set_london_keep_offset_v1(Some(OffsetVectorV1::per_count(entries)));
+        let result = shifted
+            .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+            .unwrap();
+        let raw: Vec<f32> = fixture.logits[0]
+            .iter()
+            .map(|b| f32::from_bits(*b))
+            .collect();
+        let mut adjusted = raw.clone();
+        adjusted[0] -= entries[usize::from(own)];
+        let (expected, _) =
+            selected_log_softmax_math_v1(&adjusted, 0, TrainingMathV1::PlatformLibm).unwrap();
+        let announce = result
+            .selected_outputs
+            .iter()
+            .find(|o| o.group_index == 0 && o.substep_index == 0)
+            .unwrap();
+        assert_eq!(
+            announce.selected_log_probability.to_bits(),
+            expected.to_bits(),
+            "own {own} other {other}"
+        );
+        // The same step with a scalar equal to that entry is bit for bit the
+        // same update (for a zero entry, the same as no offset at all).
+        if entries[usize::from(own)] > 0.0 {
+            let mut scalar = base.clone();
+            scalar
+                .set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(entries[usize::from(own)])));
+            scalar
+                .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+                .unwrap();
+            assert_eq!(state_bits(&scalar), state_bits(&shifted), "own {own}");
+        } else {
+            let mut plain = base.clone();
+            plain
+                .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+                .unwrap();
+            assert_eq!(state_bits(&plain), state_bits(&shifted), "own {own}");
+        }
+    }
+}
+
+#[test]
+fn london_keep_offset_refuses_an_announcement_with_a_malformed_own_count() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let mut fixture = announcement_fixture_counts(base.model_v1(), 1, 1);
+    // Rows disagree on the own count.
+    let width = fixture.tensors[0].common.action_features.len() / fixture.logits[0].len();
+    fixture.tensors[0].common.action_features[width + 63] = 3.0 / 16.0;
+    refresh_first_group_outputs(base.model_v1(), &mut fixture);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut shifted = base.clone();
+    shifted.set_london_keep_offset_v1(Some(OffsetVectorV1::per_count([
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0,
+    ])));
+    assert_eq!(
+        shifted
+            .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+            .unwrap_err(),
+        NativePolicyTrainErrorV1::LondonKeepOffset {
+            code: "london-keep-offset-malformed-decision"
+        }
+    );
+    assert_eq!(shifted.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&shifted), state_bits(&base));
+}
+
+#[test]
+fn london_keep_offset_is_refused_outside_the_plain_gae_loss() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let mut legacy = base.clone();
+    legacy.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+    let error = legacy
+        .train_step_feature_transfer_v3(&groups, VC, LR)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        NativePolicyTrainErrorV1::LondonKeepOffset {
+            code: "london-keep-offset-requires-plain-gae"
+        }
+    );
+    // The refusal also clears the setting, and the state is unchanged.
+    assert_eq!(legacy.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&legacy), state_bits(&base));
+}
+
+#[test]
+fn london_keep_offset_never_outlives_the_step_that_took_it() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    // Ok: the plain GAE step consumes it.
+    let mut ok = base.clone();
+    ok.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(2.5)));
+    ok.train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(ok.london_keep_offset_v1(), None);
+    // Err on the first early return (a bad learning rate): consumed as well,
+    // and the state is untouched.
+    let mut early = base.clone();
+    early.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(2.5)));
+    assert!(early
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, f32::NAN)
+        .is_err());
+    assert_eq!(early.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&early), state_bits(&base));
+    // Err with mismatched inputs: same.
+    let mut mismatched = base.clone();
+    mismatched.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(2.5)));
+    assert!(mismatched
+        .train_step_gae_feature_transfer_v3(&groups, &targets[..0], &advantages, VC, LR)
+        .is_err());
+    assert_eq!(mismatched.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&mismatched), state_bits(&base));
+}
+
+#[test]
+fn london_keep_offset_is_refused_by_the_other_update_entry_points() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let expected = NativePolicyTrainErrorV1::LondonKeepOffset {
+        code: "london-keep-offset-requires-plain-gae",
+    };
+    // The weighted loss.
+    let mut weighted = base.clone();
+    weighted.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+    let weights = vec![0.5f32; groups.len()];
+    assert_eq!(
+        weighted
+            .train_step_weighted_feature_transfer_v3(&groups, &weights, VC, LR)
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(weighted.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&weighted), state_bits(&base));
+    // The shared helper, as the CUDA, E-supported, soft-target, archive
+    // distillation and retention entry points call it.
+    let mut helper = base.clone();
+    assert_eq!(helper.require_no_london_keep_offset_v1(), Ok(()));
+    helper.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+    assert_eq!(helper.require_no_london_keep_offset_v1(), Err(expected));
+    assert_eq!(helper.london_keep_offset_v1(), None);
+}
+
+/// Every other form of the GAE step refuses a set offset from inside the
+/// shared GAE core: line (b), off-batch rows (TP1 Stage B, EX1 and W5), the
+/// recovery loss and the imitation seam. Each refusal clears the setting and
+/// leaves the state unchanged.
+#[test]
+fn london_keep_offset_is_refused_by_every_other_form_of_the_gae_step() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let expected = NativePolicyTrainErrorV1::LondonKeepOffset {
+        code: "london-keep-offset-requires-plain-gae",
+    };
+    let armed = || {
+        let mut state = base.clone();
+        state.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+        state
+    };
+    let refused =
+        |state: &NativePolicyValueTrainStateV1, error: NativePolicyTrainErrorV1, form: &str| {
+            assert_eq!(error, expected, "{form}");
+            assert_eq!(state.london_keep_offset_v1(), None, "{form}");
+            assert_eq!(state_bits(state), state_bits(&base), "{form}");
+        };
+    // Line (b), with roots in the batch.
+    let target = line_b_target(&fixture);
+    let line_b = line_b_input(
+        LineBDivergenceV1::Forward,
+        0.7,
+        [Some(target.clone()), Some(target.clone())],
+    );
+    let mut state = armed();
+    let config = state.model.feature_transfer_config_v3();
+    let error = state
+        .train_step_gae_line_b_v1(
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            config,
+            &line_b,
+        )
+        .unwrap_err();
+    refused(&state, error, "line (b)");
+    // Off-batch rows.
+    let external = archive_distillation_v1::ExternalAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 0.7,
+        denominator: 2,
+        cap: None,
+        step_telemetry: false,
+        policy_mask: Vec::new(),
+        rows: (0..2)
+            .map(|_| archive_distillation_v1::ExternalAuxiliaryRowV1 {
+                encoded: encoded_decision_view_v3(&fixture.tensors[1]),
+                target: &target,
+            })
+            .collect(),
+    };
+    let mut state = armed();
+    let error = state
+        .train_step_gae_external_auxiliary_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &external,
+        )
+        .unwrap_err();
+    refused(&state, error, "off-batch rows");
+    // The recovery loss.
+    let mut state = armed();
+    let error = state
+        .train_step_gae_recovery_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            0.01,
+            1,
+            false,
+        )
+        .unwrap_err();
+    refused(&state, error, "recovery");
+    // The imitation seam.
+    let mut state = armed();
+    let error = state
+        .train_step_terminal_winner_imitation_v4(&groups, LR, 1)
+        .unwrap_err();
+    refused(&state, error, "imitation");
+}
+
+/// Each CPU entry point that calls the shared helper refuses a set offset
+/// before it reads its inputs, clears the setting and leaves the state
+/// unchanged: the E-supported and soft-target (SQ1) steps, the
+/// archive-distillation auxiliary-only step and retained imitation.
+#[test]
+fn london_keep_offset_is_refused_by_each_cpu_entry_that_calls_the_shared_helper() {
+    use crate::native_policy_train_step_v1::{ESupportedPolicyInputV1, SoftTargetPolicyInputV1};
+    use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let expected = NativePolicyTrainErrorV1::LondonKeepOffset {
+        code: "london-keep-offset-requires-plain-gae",
+    };
+    let armed = || {
+        let mut state = base.clone();
+        state.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+        state
+    };
+    let untouched = |state: &NativePolicyValueTrainStateV1, entry: &str| {
+        assert_eq!(state.london_keep_offset_v1(), None, "{entry}");
+        assert_eq!(state_bits(state), state_bits(&base), "{entry}");
+    };
+    // E-supported.
+    let mut state = armed();
+    let error = state
+        .train_step_gae_e_supported_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &ESupportedPolicyInputV1 {
+                scheduled: 0,
+                rows: vec![],
+                treatment: true,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error, expected, "E-supported");
+    untouched(&state, "E-supported");
+    // Soft targets (SQ1).
+    let mut state = armed();
+    let error = state
+        .train_step_gae_soft_targets_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &SoftTargetPolicyInputV1 {
+                scheduled: 1,
+                rows: vec![],
+                coefficient: 0.5,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error, expected, "soft targets");
+    untouched(&state, "soft targets");
+    // Archive distillation's auxiliary-only step.
+    let mut state = armed();
+    let error = state
+        .train_step_auxiliary_only_v1(FreshLineageGenerationV1::V3, LR, &[])
+        .unwrap_err();
+    assert_eq!(error, expected, "archive distillation");
+    untouched(&state, "archive distillation");
+    // Retained imitation reports its refusals as text. A positive beta keeps
+    // the call off the imitation seam, whose core would refuse the offset
+    // with the same code: without this entry's own refusal the error is the
+    // empty retention set's.
+    let mut state = armed();
+    let error = state
+        .train_step_retained_imitation_v4(&groups, &[], 0.5, LR, 1)
+        .unwrap_err();
+    assert!(
+        error.contains("london-keep-offset-requires-plain-gae"),
+        "{error}"
+    );
+    untouched(&state, "retained imitation");
+}
+
+mod card_semantics_e1_tests {
+    use super::*;
+    use crate::expanded_deck_training_v1::card_semantics_e1::{
+        checkpoint_test_bytes_v1, restore_test_bytes_v1,
+    };
+    use crate::native_policy_train_step_v1::card_projection_e1::CardSemanticsV1;
+
+    fn step(
+        state: &mut NativePolicyValueTrainStateV1,
+        semantics: Option<&mut CardSemanticsV1>,
+    ) -> NativePolicyTrainStepResultV1 {
+        let fixture = Fixture::capture(state.model_v1());
+        let steps = fixture.substeps();
+        state
+            .train_step_gae_card_projection_e1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups(&steps),
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                1.0e-4,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                semantics,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn absent_matches_legacy_update_and_checkpoint_bytes() {
+        let mut legacy = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+        let mut absent = legacy.clone();
+        let fixture = Fixture::capture(legacy.model_v1());
+        let steps = fixture.substeps();
+        legacy
+            .train_step_gae_feature_transfer_profiled_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups(&steps),
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                1.0e-4,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            )
+            .unwrap();
+        step(&mut absent, None);
+        assert_eq!(state_bits(&legacy), state_bits(&absent));
+        let bytes = checkpoint_test_bytes_v1(&absent, None);
+        assert_eq!(bytes, checkpoint_test_bytes_v1(&legacy, None));
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(document.get("card_semantics").is_none());
+        assert_eq!(
+            document["state_sha256"],
+            legacy
+                .state_sha256_v1()
+                .unwrap()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn first_projection_step_only_changes_folded_table_and_preserves_signed_zero() {
+        let mut base = model();
+        let mut parameters = base.parameter_snapshot_v1();
+        let unused = (CARD_VOCAB_SIZE_V1 - 1) * CARD_EMBEDDING_DIM_V1;
+        parameters[CARD_EMBEDDING].values[unused] = -0.0;
+        base.replace_parameter_snapshot_v1(&parameters).unwrap();
+        let mut off = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+        let mut on = off.clone();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        let reference = step(&mut off, None);
+        let cached_before = on.state_sha256_v1().unwrap();
+        let result = step(&mut on, Some(&mut semantics));
+        assert_ne!(cached_before, on.state_sha256_v1().unwrap());
+        assert_eq!(result, reference);
+        let mut expected = off.snapshot_v1().unwrap();
+        let actual = on.snapshot_v1().unwrap();
+        assert!(semantics
+            .section_v1()
+            .weight
+            .iter()
+            .any(|&b| f32::from_bits(b) != 0.0));
+        let mut changed = false;
+        for token in 1..=semantics.pathway.cards_v1() {
+            for (column, delta) in semantics.pathway.delta_v1(token).into_iter().enumerate() {
+                if delta != 0.0 {
+                    expected.parameters[CARD_EMBEDDING].values
+                        [token * CARD_EMBEDDING_DIM_V1 + column] += delta;
+                    changed = true;
+                }
+            }
+        }
+        assert!(changed);
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual.state_sha256_v1().unwrap(),
+            expected.state_sha256_v1().unwrap()
+        );
+        assert_eq!(
+            on.model_v1().parameter_snapshot_v1()[CARD_EMBEDDING].values[unused].to_bits(),
+            (-0.0f32).to_bits()
+        );
+        assert_eq!(
+            on.state_sha256_v1().unwrap(),
+            actual.state_sha256_v1().unwrap()
+        );
+        assert_eq!(semantics.section_v1().p_step, 1);
+    }
+
+    #[test]
+    fn two_updates_equal_checkpoint_resume_bit_for_bit() {
+        let mut uninterrupted = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        // Network and projection ages deliberately differ.
+        step(&mut uninterrupted, None);
+        step(&mut uninterrupted, Some(&mut semantics));
+        let bytes = checkpoint_test_bytes_v1(&uninterrupted, Some(&semantics));
+        let (mut resumed, mut resumed_semantics) =
+            restore_test_bytes_v1(&bytes, Some(CardSemanticsV1::fixture_v1())).unwrap();
+        step(&mut uninterrupted, Some(&mut semantics));
+        step(&mut resumed, resumed_semantics.as_mut());
+        assert_eq!(state_bits(&uninterrupted), state_bits(&resumed));
+        assert_eq!(
+            semantics.section_v1(),
+            resumed_semantics.as_ref().unwrap().section_v1()
+        );
+        assert_eq!(
+            checkpoint_test_bytes_v1(&uninterrupted, Some(&semantics)),
+            checkpoint_test_bytes_v1(&resumed, resumed_semantics.as_ref())
+        );
+        assert_eq!(semantics.section_v1().p_step, 2);
+        assert_eq!(uninterrupted.adam_step_v1(), 3);
+    }
+
+    #[test]
+    fn projection_gradient_matches_central_differences_of_gae_loss() {
+        let base = model();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(base.clone()).unwrap();
+        let semantics = CardSemanticsV1::fixture_v1();
+        let mut trained = semantics.clone();
+        let result = step(&mut state, Some(&mut trained));
+        let expected = semantics
+            .next_v1(
+                &result.gradients[CARD_EMBEDDING].values,
+                1.0e-4,
+                TrainingMathV1::PlatformLibm,
+            )
+            .unwrap();
+        assert_eq!(trained.section_v1(), expected.section_v1());
+        assert_ne!(trained.section_v1(), semantics.section_v1());
+        let gradient = semantics
+            .pathway
+            .weight_gradient_v1(&result.gradients[CARD_EMBEDDING].values)
+            .unwrap();
+        let mut indices: Vec<usize> = (0..gradient.len()).collect();
+        indices.sort_by(|&a, &b| gradient[b].abs().total_cmp(&gradient[a].abs()));
+        assert!(gradient[indices[0]].abs() > 1.0e-5);
+        let epsilon = 2.0e-3f32;
+        for &index in indices.iter().take(4) {
+            let loss = |offset: f32| {
+                let mut perturbed = semantics.clone();
+                let mut weight = perturbed.pathway.weight_v1().to_vec();
+                weight[index] += offset;
+                perturbed.pathway.set_weight_v1(weight);
+                let mut parameters = base.parameter_snapshot_v1();
+                semantics
+                    .fold_difference_v1(&perturbed, &mut parameters[CARD_EMBEDDING].values)
+                    .unwrap();
+                let mut candidate = base.clone();
+                candidate
+                    .replace_parameter_snapshot_v1(&parameters)
+                    .unwrap();
+                let mut state = NativePolicyValueTrainStateV1::new_v1(candidate).unwrap();
+                step(&mut state, Some(&mut perturbed)).loss
+            };
+            let numerical = (loss(epsilon) - loss(-epsilon)) / (2.0 * epsilon);
+            let analytic = gradient[index];
+            let tolerance = 8.0e-3 + 6.0e-2 * analytic.abs();
+            assert!(
+                (numerical - analytic).abs() <= tolerance,
+                "P[{index}]: {numerical} vs {analytic}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_projection_step_leaves_network_and_projection_unchanged() {
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        semantics.fail_fold_for_test = true;
+        let saved = semantics.section_v1();
+        let keep = Some(
+            crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1::scalar(2.5),
+        );
+        state.set_london_keep_offset_v1(keep);
+        let digest = state.state_sha256_v1().unwrap();
+        let before = state_bits(&state);
+        let fixture = Fixture::capture(state.model_v1());
+        let steps = fixture.substeps();
+        let error = state
+            .train_step_gae_card_projection_e1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups(&steps),
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                1.0e-4,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                Some(&mut semantics),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            NativePolicyTrainErrorV1::LineBAuxiliary {
+                code: "injected-post-adam-fold-failure"
+            }
+        );
+        assert_eq!(before, state_bits(&state));
+        assert_eq!(digest, state.state_sha256_v1().unwrap());
+        assert_eq!(state.london_keep_offset, keep);
+        assert_eq!(saved, semantics.section_v1());
+    }
+    #[test]
+    fn projection_core_refuses_imitation_line_b_and_exploration() {
+        for case in 0..3 {
+            let mut state = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+            let fixture = Fixture::capture(state.model_v1());
+            let steps = fixture.substeps();
+            let mut semantics = CardSemanticsV1::fixture_v1();
+            let auxiliary = line_b_input(
+                crate::line_b_teacher_target_v1::LineBDivergenceV1::Forward,
+                0.1,
+                [None, None],
+            );
+            let config = state.model_v1().feature_transfer_config_v3();
+            let error = state
+                .train_step_gae_core_profiled_dims_v1(
+                    &groups(&steps),
+                    &[0.3, -0.2],
+                    &[0.15, -0.4],
+                    VC,
+                    LR,
+                    BackwardExecutionV1::Sequential,
+                    config,
+                    case == 0,
+                    (case == 1).then_some(AuxiliaryTermsSourceV1::InBatch(&auxiliary)),
+                    (case == 2).then_some((0.01, 1, false)),
+                    1,
+                    &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                    Some(&mut semantics),
+                )
+                .unwrap_err();
+            assert_eq!(error, card_projection_e1::unsupported_v1(), "case {case}");
+        }
+    }
+
+    #[test]
+    fn projection_core_refuses_flat_v8() {
+        let model = NativePolicyValueNetV1::v8_inclusion_template_v1().unwrap();
+        assert_eq!(model.parameter_snapshot_v1().len(), 37);
+        let config = model.feature_transfer_config_v8();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        let error = state
+            .train_step_gae_core_profiled_dims_v1(
+                &[],
+                &[],
+                &[],
+                VC,
+                LR,
+                BackwardExecutionV1::Sequential,
+                config,
+                false,
+                None,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                Some(&mut semantics),
+            )
+            .unwrap_err();
+        assert_eq!(error, card_projection_e1::unsupported_v1());
+    }
+
+    #[test]
+    fn projection_core_refuses_wide_network() {
+        let model =
+            crate::native_policy_value_net_v1::NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+                NativePolicyValueModelConfigV1::contract_wide_v1(),
+            )
+            .unwrap();
+        let mut state = NativePolicyValueTrainStateWideV1::new_wide_v1(model).unwrap();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        let error = state
+            .train_step_gae_core_profiled_dims_v1(
+                &[],
+                &[],
+                &[],
+                VC,
+                LR,
+                BackwardExecutionV1::Sequential,
+                NativePolicyValueModelConfigV1::contract_wide_v1(),
+                false,
+                None,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                Some(&mut semantics),
+            )
+            .unwrap_err();
+        assert_eq!(error, card_projection_e1::unsupported_v1());
+    }
+}

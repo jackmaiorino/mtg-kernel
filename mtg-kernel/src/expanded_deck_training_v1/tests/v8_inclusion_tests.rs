@@ -64,6 +64,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         gamma: 1.0,
         lambda: 0.95,
         entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
     };
     let list = |id: &str| {
         let registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
@@ -90,6 +91,8 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         reset: None,
         opening: None,
         mulligan_modes: None,
+        priority_windows: None,
+        london_keep_offset: None,
     };
     let iterate = |source: &ExpandedModelSourceV1, label: &str, seed: u64| -> PinnedFileV1 {
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
@@ -105,6 +108,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         let trajectories: Vec<PinnedFileV1> =
             serde_json::from_value(collected["trajectories"].clone()).unwrap();
         let updated = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             line_b: None,
             source: source.clone(),
             trajectories,

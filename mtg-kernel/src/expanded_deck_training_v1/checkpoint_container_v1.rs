@@ -161,7 +161,8 @@ pub(crate) fn admit_writer_v1<T>(saved: &ExpandedCheckpointV1<T>) -> Result<(), 
     .contains(&digests);
     let loss = saved.loss_identity == "terminal_reinforce_value/v3"
         || saved.loss_identity == super::GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1;
-    let plain = saved.e_supported.is_none()
+    let plain = saved.card_semantics.is_none()
+        && saved.e_supported.is_none()
         && saved.soft_q.is_none()
         && saved.search_targets.is_none()
         && saved.ex1.is_none()
@@ -472,6 +473,7 @@ pub(crate) fn with_tensors_v1<T, U>(
         card_db_hash,
         source_import,
         state_sha256,
+        card_semantics,
         e_supported,
         soft_q,
         search_targets,
@@ -501,6 +503,7 @@ pub(crate) fn with_tensors_v1<T, U>(
         card_db_hash: card_db_hash.clone(),
         source_import: source_import.clone(),
         state_sha256: state_sha256.clone(),
+        card_semantics: card_semantics.clone(),
         e_supported: e_supported.clone(),
         soft_q: soft_q.clone(),
         search_targets: search_targets.clone(),
