@@ -35,7 +35,7 @@ pub use fresh::{
 const CURRENT_REGISTRY: &[u8] = include_bytes!("../../../data/cards_v1.json");
 const MAX_INPUT_BYTES: usize = 512 * 1024 * 1024;
 const TRANSFER_SCHEMA: &str = "mtg-kernel-expanded-registry-transfer/v1";
-const INITIALIZER: &str = "sha256-card-name-seed-signed24-div2pow28/v1";
+pub(crate) const INITIALIZER: &str = "sha256-card-name-seed-signed24-div2pow28/v1";
 const LOSS: &str = "terminal_reinforce_value/v3";
 
 fn require(ok: bool, message: &str) -> Result<(), String> {
@@ -275,7 +275,7 @@ impl VerifiedRegistryTransferV1 {
     }
 }
 
-fn registry_cards(bytes: &[u8]) -> Result<Vec<Value>, String> {
+pub(crate) fn registry_cards(bytes: &[u8]) -> Result<Vec<Value>, String> {
     require(
         bytes.len() <= MAX_INPUT_BYTES,
         "registry input exceeds size bound",
@@ -331,7 +331,7 @@ fn mapping(source: &[Value], destination: &[Value]) -> Result<Vec<RegistryCardMa
 /// Stable per-card initializer, independent of registry length and placement.
 /// Exactly representable signed 24-bit integer divided by 2^28, in [-1/32,1/32).
 /// Uses no host RNG, transcendental function, or default model initializer.
-fn initial_card_row(name: &str, seed: u64) -> [f32; CARD_EMBEDDING_DIM_V1] {
+pub(crate) fn initial_card_row(name: &str, seed: u64) -> [f32; CARD_EMBEDDING_DIM_V1] {
     std::array::from_fn(|column| {
         let mut digest = Sha256::new();
         digest.update(INITIALIZER.as_bytes());

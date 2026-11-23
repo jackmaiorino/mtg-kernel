@@ -5,6 +5,7 @@
 pub mod archive_distillation_v1;
 pub mod b_width_prescreen_v1;
 pub(crate) mod cache_diagnostics_v1;
+pub mod card_wave_transfer_v1;
 pub mod e_supported_teacher_v1;
 pub mod ex1_collect_v1;
 pub mod ex1_update_v1;
