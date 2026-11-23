@@ -1184,6 +1184,101 @@ fn skeletal_scrying_exiles_x_cards_to_draw_x_and_lose_x() {
 }
 
 #[test]
+fn skeletal_scrying_restores_both_draw_replacements_before_losing_x_life() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let spell = put(&mut state, actor, "Skeletal Scrying", Zone::Hand);
+        let fuel = [
+            put(&mut state, actor, "Swamp", Zone::Graveyard),
+            put(&mut state, actor, "Swamp", Zone::Graveyard),
+        ];
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, spell, &[]);
+        for card in fuel {
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(card))
+            ));
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(card)));
+        }
+        if matches!(
+            next(&mut state),
+            Decision::ChooseEffectTargets {
+                selected_count: 2,
+                can_finish: true,
+                ..
+            }
+        ) {
+            act(&mut state, Action::FinishEffectSelection);
+        }
+
+        let history_start = state.engine.event_history.len();
+        let life_before = state.players[actor.index()].life;
+        let library_before = state.players[actor.index()].library.len();
+        let is_replacement_choice = |decision: &Decision| {
+            matches!(
+                decision,
+                Decision::ChooseEffectTargets { player, source, legal_targets, can_finish: true, .. }
+                    if *player == actor && *source == spell && legal_targets.as_slice() == [Target::Object(thug)]
+            )
+        };
+        let first = settle(&mut state).expect("Skeletal Scrying's first draw replacement");
+        assert!(
+            is_replacement_choice(&first),
+            "unexpected first choice: {first:?}"
+        );
+        assert!(fuel.iter().all(|&card| zone(&state, card) == Zone::Exile));
+        assert!(controls(&state, opponent, "Treasure Token").is_empty());
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), first);
+
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::FinishEffectSelection);
+            assert_eq!(controls(branch, opponent, "Treasure Token").len(), 1);
+            assert_eq!(branch.players[actor.index()].life, life_before);
+        }
+        let second = settle(&mut state).expect("Skeletal Scrying's second draw replacement");
+        assert!(
+            is_replacement_choice(&second),
+            "unexpected second choice: {second:?}"
+        );
+        assert_eq!(settle(&mut restored), Some(second));
+
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            settled(branch);
+            assert_eq!(zone(branch, spell), Zone::Graveyard);
+            assert_eq!(branch.players[actor.index()].hand, [thug]);
+            assert_eq!(
+                branch.players[actor.index()].library.len(),
+                library_before - 4
+            );
+            assert_eq!(branch.players[actor.index()].draws_this_turn, 0);
+            assert_eq!(controls(branch, opponent, "Treasure Token").len(), 1);
+            assert_eq!(branch.players[actor.index()].life, life_before - 2);
+            let losses: Vec<_> = branch.engine.event_history[history_start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::LifeLoss { player, amount } if *player == actor => {
+                        Some(*amount)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(losses, [2]);
+        }
+        assert_eq!(restored.state_hash(), state.state_hash());
+    }
+}
+
+#[test]
 fn skeletal_scrying_escape_pays_x_plus_three_and_draws_only_x() {
     for order in [0, 1] {
         let mut state = islands();
@@ -1520,6 +1615,75 @@ fn sylvan_library_draws_two_and_charges_four_life_or_puts_back() {
     assert_eq!(state.players[0].life, 16);
 }
 
+#[test]
+fn sylvan_library_restores_draw_replacements_and_returns_only_the_drawn_card() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        let sylvan = put(&mut state, actor, "Sylvan Library", Zone::Battlefield);
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Draw && !state.stack.is_empty()
+        });
+        let player = &state.players[actor.index()];
+        assert_eq!(player.hand.len(), 1);
+        assert_eq!(player.draws_this_turn, 1);
+        let drawn = player.hand[0];
+        let library_before = player.library.len();
+        let life_before = player.life;
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        let treasures_before = controls(&state, opponent, "Treasure Token").len();
+
+        let option = settle(&mut state).expect("Sylvan Library offers two extra draws");
+        assert!(matches!(option, Decision::ChooseEffectOption { player, .. } if player == actor));
+        act(&mut state, Action::ChooseEffectOption(0));
+        let replacement = settle(&mut state).expect("Dredge competes for the first extra draw");
+        assert!(matches!(
+            &replacement,
+            Decision::ChooseEffectTargets {
+                player, source, legal_targets, can_finish: true, ..
+            } if *player == actor && *source == sylvan && legal_targets.as_slice() == [Target::Object(thug)]
+        ));
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), replacement);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            let selection = settle(branch).expect("Sylvan Library offers the one card drawn");
+            assert!(matches!(
+                selection,
+                Decision::ChooseEffectTargets {
+                    player, legal_targets, can_finish: false, ..
+                } if player == actor && legal_targets == [Target::Object(drawn)]
+            ));
+            act(branch, Action::ChooseEffectTarget(Target::Object(drawn)));
+            settle_with(branch, |_, choice| {
+                assert!(matches!(
+                    choice,
+                    Decision::ChooseEffectTargets {
+                        can_finish: true,
+                        ..
+                    }
+                ));
+                Action::FinishEffectSelection
+            });
+            let player = &branch.players[actor.index()];
+            assert_eq!(player.hand, [thug]);
+            assert_eq!(player.library.len(), library_before - 3);
+            assert_eq!(player.library[0], drawn);
+            assert_eq!(player.draws_this_turn, 1);
+            assert_eq!(player.life, life_before);
+            assert_eq!(
+                controls(branch, opponent, "Treasure Token").len(),
+                treasures_before + 1
+            );
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
 // ---- Creatures ---------------------------------------------------------------------
 
 #[test]
@@ -1804,6 +1968,66 @@ fn graveborn_muse_draws_and_drains_per_zombie() {
     settled(&mut state);
     assert_eq!(state.players[0].hand.len(), 2);
     assert_eq!(state.players[0].life, 18);
+}
+
+#[test]
+fn graveborn_muse_restores_competing_draw_replacements_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let muse = put(&mut state, actor, "Graveborn Muse", Zone::Battlefield);
+        put(&mut state, actor, "Withered Wretch", Zone::Battlefield);
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Upkeep && !state.stack.is_empty()
+        });
+        let history_start = state.engine.event_history.len();
+        let life_before = state.players[actor.index()].life;
+        let library_before = state.players[actor.index()].library.len();
+        let prompt = settle(&mut state).expect("Dredge competes for Muse's first draw");
+        assert!(
+            matches!(
+                &prompt,
+                Decision::ChooseEffectTargets {
+                    player, source, legal_targets, can_finish: true, ..
+                } if *player == actor && *source == muse && legal_targets.as_slice() == [Target::Object(thug)]
+            ),
+            "unexpected Muse replacement prompt: {prompt:?}"
+        );
+        assert_eq!(state.players[actor.index()].life, life_before);
+        assert!(controls(&state, opponent, "Treasure Token").is_empty());
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), prompt);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            settled(branch);
+            assert_eq!(zone(branch, thug), Zone::Hand);
+            assert_eq!(
+                branch.players[actor.index()].library.len(),
+                library_before - 4
+            );
+            assert_eq!(branch.players[actor.index()].draws_this_turn, 0);
+            assert_eq!(controls(branch, opponent, "Treasure Token").len(), 1);
+            assert_eq!(branch.players[actor.index()].life, life_before - 2);
+            let life_losses: Vec<_> = branch.engine.event_history[history_start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::LifeLoss { player, amount } if *player == actor => {
+                        Some(*amount)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(life_losses, [2]);
+        }
+        assert_eq!(restored.state_hash(), state.state_hash());
+    }
 }
 
 #[test]
