@@ -1,14 +1,25 @@
-//! Update tail overlap (`update_tail_overlap_v1`): the key's wire form, and
-//! that a run with it publishes the bytes, makes the commits, fails and stops
-//! as the same run without it does.
+//! Update tail overlap (`update_tail_overlap_v1`): the key's wire form and
+//! admission, and that a run with it publishes the bytes, reads its
+//! boundaries, commits, fails and stops as the same run without it does,
+//! leaving no trace of a collection, on disk or in its log, before the
+//! update before it is committed.
 //!
 //! Every run of a comparison uses the same output directory (the reference
 //! tree is moved aside), so documents that name it compare equal.
 
-use super::follow_tests::{fresh_run_v1, without_telemetry_v1, TIMED};
+use super::follow_tests::{
+    chain_base_v1, checkpoint_pin_v1, followed_v1, fresh_run_v1, segment_v1, without_telemetry_v1,
+    TIMED,
+};
 use super::*;
 use crate::durable_publication_v1::crash_points_for_test_v1::{with_crash_point_v1, CrashPointV1};
-use crate::native_expanded_training_run_v1::update_tail_overlap_v1::collected_for_test_v1;
+use crate::held_output_v1::HeldEventV1;
+use crate::native_expanded_training_run_v1::follow_v1::FollowEndV1;
+use crate::native_expanded_training_run_v1::update_tail_overlap_v1::{
+    collected_for_test_v1, hold_at_gate_for_test_v1, record_held_output_for_test_v1,
+    LEDGER_STOP_REFUSAL_V1, VALIDATION_REFUSAL_V1,
+};
+use std::sync::{Arc, Mutex};
 
 /// `parallel_two_iteration_config_v1` (two games an iteration, collected and
 /// prepared on two workers, every opponent the current model) with `updates`
@@ -37,8 +48,9 @@ fn overlapped_v1(config: &NativeExpandedTrainingRunV1) -> NativeExpandedTraining
 }
 
 /// Runs `config` on a new thread, which starts with empty thread-local caches
-/// as a new process does, after `before` on that thread. The result, and how
-/// many of the run's collections its driver took from a prefetch.
+/// and test hooks as a new process does, after `before` on that thread. The
+/// result, and how many of the run's collections its driver took from a
+/// prefetch.
 fn run_counted_v1(
     config: &NativeExpandedTrainingRunV1,
     limit: Option<usize>,
@@ -126,6 +138,31 @@ fn after_states_v1(result: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// What a run's iterations hold apart from the paths they name: each
+/// update's states, step and loss, and each game's decisions (by digest)
+/// and terminal. Read through the result's pins.
+fn run_content_v1(result: &Value) -> Vec<Value> {
+    (0..result["iterations"].as_array().unwrap().len())
+        .map(|index| {
+            let receipt = iteration_receipt_v1(result, index);
+            let update = read_pin(&parse_pin(&receipt, "update").unwrap()).unwrap();
+            let collection = read_pin(&parse_pin(&receipt, "collection").unwrap()).unwrap();
+            let trajectories: Vec<PinnedFileV1> =
+                serde_json::from_value(collection["trajectories"].clone()).unwrap();
+            let games: Vec<Value> = trajectories
+                .iter()
+                .map(|pin| {
+                    let game = read_pin_bounded(pin, ARTIFACT_CAP).unwrap();
+                    json!({"decisions": digest(&serde_json::to_vec(&game["decisions"]).unwrap()),
+                        "terminal": game["terminal"]})
+                })
+                .collect();
+            json!({"before": update["before_state_sha256"], "after": update["after_state_sha256"],
+                "adam_step": update["adam_step"], "loss": update["loss"], "games": games})
+        })
+        .collect()
+}
+
 /// How many iterations of the run in `directory` are committed.
 fn committed_v1(directory: &Path) -> usize {
     let iterations = directory.join("iterations");
@@ -160,6 +197,11 @@ fn update_published_v1(directory: &Path, index: usize) -> bool {
         })
 }
 
+/// Iteration `index`'s directory in the run in `directory`.
+fn iteration_directory_v1(directory: &Path, index: usize) -> PathBuf {
+    directory.join("iterations").join(format!("{index:06}"))
+}
+
 /// The root publications of the run in `directory` are counted under: its
 /// canonical path, which exists before the run only up to its parent.
 fn publication_root_v1(directory: &Path) -> PathBuf {
@@ -171,12 +213,142 @@ fn publication_root_v1(directory: &Path) -> PathBuf {
         .join(directory.file_name().unwrap())
 }
 
+/// What the held output of a run's collections did (`held_output_v1`).
+#[derive(Debug, Default)]
+struct HeldLogV1 {
+    /// Every line written, with whether the update before the line's
+    /// iteration was committed (its `complete.json` existed) when it was.
+    written: Vec<(String, bool)>,
+    /// The lines each collection held when its output was released.
+    released: Vec<usize>,
+    /// The lines each collection held when its output was dropped.
+    discarded: Vec<usize>,
+}
+
+/// The iteration a collection's progress line belongs to: the line ends
+/// with the episode's id, and every id here holds `-iter-{index}`.
+fn line_iteration_v1(line: &str) -> usize {
+    let start = line.find("-iter-").unwrap_or_else(|| panic!("{line}")) + "-iter-".len();
+    line[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .unwrap()
+}
+
+/// The progress lines of iteration `index`'s collection.
+fn progress_lines_v1(config: &NativeExpandedTrainingRunV1, index: usize) -> Vec<String> {
+    let episodes = &config.iterations[index].episodes;
+    episodes
+        .iter()
+        .enumerate()
+        .map(|(slot, scheduled)| {
+            format!(
+                "collect parallel episode {}/{} {}",
+                slot + 1,
+                episodes.len(),
+                scheduled.episode.id
+            )
+        })
+        .collect()
+}
+
+/// A `before` for `run_counted_v1` that records the held output of every
+/// collection the run starts, checked against the run in `directory`, and
+/// with `hold` also holds every update at its handoff until the collection it
+/// started waits at its gate with a played game (`hold_at_gate_for_test_v1`).
+fn held_log_v1(
+    directory: &Path,
+    hold: bool,
+) -> (impl FnOnce() + Send + 'static, Arc<Mutex<HeldLogV1>>) {
+    let log = Arc::new(Mutex::new(HeldLogV1::default()));
+    let sink = Arc::clone(&log);
+    let directory = directory.to_path_buf();
+    let arm = move || {
+        record_held_output_for_test_v1(Arc::new(move |event: HeldEventV1| {
+            let mut log = sink.lock().unwrap();
+            match event {
+                HeldEventV1::Written(line) => {
+                    let iteration = line_iteration_v1(&line);
+                    let committed = iteration > 0
+                        && iteration_directory_v1(&directory, iteration - 1)
+                            .join("complete.json")
+                            .exists();
+                    log.written.push((line, committed));
+                }
+                HeldEventV1::Released { held } => log.released.push(held),
+                HeldEventV1::Discarded { held } => log.discarded.push(held),
+            }
+        }));
+        if hold {
+            hold_at_gate_for_test_v1();
+        }
+    };
+    (arm, log)
+}
+
+/// A failed run's held output: an overlapped run's collection had played a
+/// game and waited at its gate (the hold), and its output was dropped
+/// without a line written; a serial run has none.
+fn assert_dropped_unwritten_v1(case: &str, log: &Mutex<HeldLogV1>, overlapped: bool) {
+    let log = log.lock().unwrap();
+    assert!(
+        log.written.is_empty() && log.released.is_empty(),
+        "{case}: {log:?}"
+    );
+    if overlapped {
+        assert!(
+            matches!(log.discarded.as_slice(), [held] if *held >= 1),
+            "{case}: the collection held no played game: {log:?}"
+        );
+    } else {
+        assert!(log.discarded.is_empty(), "{case}: {log:?}");
+    }
+}
+
+/// An overlapped config that validation admits, for the refusal tests:
+/// `schedule` with parallel collection and preparation.
+fn admitted_overlap_v1() -> NativeExpandedTrainingRunV1 {
+    let mut config = schedule();
+    config.collection_workers = 2;
+    config.preparation_workers = 2;
+    config.update_tail_overlap_v1 = true;
+    config.validate_v1().unwrap();
+    config
+}
+
+/// Validation refuses the key with its own message once `change` is made to
+/// an admitted overlapped config (and admits that config with the key off,
+/// so the refusal is the key's).
+fn assert_refused_v1(change: impl FnOnce(&mut NativeExpandedTrainingRunV1)) {
+    let mut config = admitted_overlap_v1();
+    change(&mut config);
+    assert_eq!(config.validate_v1().unwrap_err(), VALIDATION_REFUSAL_V1);
+}
+
+fn write_cpu_stat_v1(stat: &Path, usage_usec: u64) {
+    fs::write(
+        stat,
+        format!("usage_usec {usage_usec}\nuser_usec {usage_usec}\nsystem_usec 0\n"),
+    )
+    .unwrap();
+}
+
+fn write_ledger_source_v1(source: &Path, stat: &Path, stop_at_usec: Option<u64>) {
+    let mut document = json!({"schema":CHAIN_LEDGER_SOURCE_SCHEMA_V1,
+        "chain":"overlap/chain","closed_usec":5_000,"cpu_stat":stat,"instance":2});
+    if let Some(stop) = stop_at_usec {
+        document["stop_at_usec"] = json!(stop);
+    }
+    fs::write(source, serde_json::to_vec(&document).unwrap()).unwrap();
+}
+
 /// Invariant: with the key absent the config has its bytes and identity (the
 /// key is never serialized, also when written as false); true is serialized;
-/// no command carries it; and only a run with parallel collection and a
-/// prepared CPU update takes it.
+/// and no command carries it.
 #[test]
-fn update_tail_overlap_default_preserves_the_config_wire_and_validates() {
+fn update_tail_overlap_default_preserves_the_config_wire() {
     let default = schedule();
     assert!(!default.update_tail_overlap_v1);
     let default_value = value(&default).unwrap();
@@ -211,7 +383,7 @@ fn update_tail_overlap_default_preserves_the_config_wire_and_validates() {
     not_a_flag["update_tail_overlap_v1"] = json!("on");
     assert!(serde_json::from_value::<NativeExpandedTrainingRunV1>(not_a_flag).is_err());
     // The key is the run's alone: its commands are the commands without it.
-    let mut parallel = parallel_two_iteration_config_v1("overlap-validation");
+    let parallel = parallel_two_iteration_config_v1("overlap-validation");
     let overlapped = overlapped_v1(&parallel);
     let episodes = resolve_episodes(&parallel, 0, &parallel.initial_source, &[]).unwrap();
     let output = parallel.output_directory.join("command");
@@ -251,40 +423,129 @@ fn update_tail_overlap_default_preserves_the_config_wire_and_validates() {
         ))
         .unwrap()
     );
-    // Serial collection, a serial update or another kind of update keeps
-    // its serial order: the key is refused there.
-    let refused = |config: &NativeExpandedTrainingRunV1| {
-        let error = config.validate_v1().unwrap_err();
-        assert!(
-            error.contains("update_tail_overlap_v1 requires parallel collection"),
-            "{error}"
-        );
-    };
-    for (collection, preparation) in [(1, 2), (2, 1)] {
-        let mut serial = overlapped.clone();
-        serial.collection_workers = collection;
-        serial.preparation_workers = preparation;
-        refused(&serial);
-    }
-    let mut masked = overlapped.clone();
-    masked.line_b = Some(crate::expanded_deck_training_v1::LineBUpdateOptionsV1 {
-        optimizer_mask: crate::expanded_deck_training_v1::OptimizerMaskV1::LineBHeadOnlyV1,
-        teacher: None,
-    });
-    refused(&masked);
-    // The same configs without the key are accepted.
-    parallel.collection_workers = 1;
-    parallel.preparation_workers = 1;
-    parallel.validate_v1().unwrap();
 }
 
-/// Invariant 1 (bytes): a three-update run with the key publishes the files
-/// of the same run without it, with the same bytes: every command,
-/// trajectory and checkpoint byte for byte, every receipt apart from its
-/// timing telemetry, and the plan apart from the key. Every update but the
-/// last hands its successor's collection over (so the comparison is of an
-/// overlapped run), every iteration stays in its first attempt, and the
-/// finished run revalidates as complete.
+/// Validation exclusion: serial collection keeps its serial order.
+#[test]
+fn update_tail_overlap_is_refused_with_serial_collection() {
+    assert_refused_v1(|config| config.collection_workers = 1);
+}
+
+/// Validation exclusion: a serial (unprepared) update keeps its serial order.
+#[test]
+fn update_tail_overlap_is_refused_with_a_serial_update() {
+    assert_refused_v1(|config| config.preparation_workers = 1);
+}
+
+/// Validation exclusion: the CUDA update backend.
+#[test]
+fn update_tail_overlap_is_refused_with_the_cuda_update_backend() {
+    assert_refused_v1(|config| {
+        config.update_backend = ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 }
+    });
+}
+
+/// Validation exclusion: line (b).
+#[test]
+fn update_tail_overlap_is_refused_with_line_b() {
+    assert_refused_v1(|config| {
+        config.line_b = Some(crate::expanded_deck_training_v1::LineBUpdateOptionsV1 {
+            optimizer_mask: crate::expanded_deck_training_v1::OptimizerMaskV1::LineBHeadOnlyV1,
+            teacher: None,
+        })
+    });
+}
+
+/// Validation exclusion: E supported-choice supervision.
+#[test]
+fn update_tail_overlap_is_refused_with_e_supported() {
+    assert_refused_v1(|config| {
+        config.e_supported = Some(ESupportedRunOptionsV1 {
+            teacher: config.initial_source.clone(),
+            treatment: true,
+            prior_deck_indices: vec![0],
+            selection_transition_cap: 1,
+            slots: vec![Vec::new()],
+        })
+    });
+}
+
+/// Validation exclusion: SQ1 soft rollout-Q teaching.
+#[test]
+fn update_tail_overlap_is_refused_with_soft_q() {
+    assert_refused_v1(|config| {
+        config.soft_q = Some(SoftQRunOptionsV1 {
+            arm: SoftQArmV1::Treatment,
+            case_namespace: "overlap".into(),
+            prior_deck_indices: vec![0],
+            teacher_workers: 1,
+            engineering_zero_treatment: false,
+        })
+    });
+}
+
+/// Validation exclusion: TP1 Stage B searched-game targets.
+#[test]
+fn update_tail_overlap_is_refused_with_search_targets() {
+    assert_refused_v1(|config| {
+        config.search_targets = Some(SearchTargetsRunOptionsV1 {
+            packets_directory: std::env::temp_dir().join("overlap-packets"),
+            bank_spec: config.initial_source.play_import.clone(),
+            opponents: Vec::new(),
+            coefficient: 1.0,
+            denominator: 1,
+            run: "overlap".into(),
+            arm: "overlap".into(),
+            seed: 1,
+            update_offset: 0,
+            wait_seconds: 1,
+            allocation: json!({}),
+            target: Default::default(),
+            cap: Default::default(),
+        })
+    });
+}
+
+/// Validation exclusion: EX1 (and W5's search in the loop).
+#[test]
+fn update_tail_overlap_is_refused_with_ex1() {
+    assert_refused_v1(|config| {
+        config.ex1 = Some(Ex1RunOptionsV1 {
+            run: "overlap".into(),
+            update_offset: 0,
+            coefficient: 1.0,
+            cap: Default::default(),
+            w5: None,
+        })
+    });
+}
+
+/// Validation exclusion: W5's native S learner.
+#[test]
+fn update_tail_overlap_is_refused_with_an_s_learner() {
+    assert_refused_v1(|config| {
+        config.initial_source.s_learner = Some(Box::new(
+            crate::expanded_deck_training_v1::s_learner_v1::SLearnerSourceV1 {
+                schema: "overlap".into(),
+                initial: PinnedFileV1 {
+                    path: std::env::temp_dir().join("overlap-s-initial.json"),
+                    sha256: "b".repeat(64),
+                },
+            },
+        ))
+    });
+}
+
+/// Invariant 1 (bytes) and invariant 2 (no trace before the commit): a
+/// three-update run with the key publishes the files of the same run without
+/// it, with the same bytes: every command, trajectory and checkpoint byte for
+/// byte, every receipt apart from its timing telemetry, and the plan apart
+/// from the key. Every update but the last hands its successor's collection
+/// over, held at its handoff until that collection has a played game waiting
+/// at its gate. Each collection's held progress lines are written only once
+/// the update before it is committed, every one exactly once, and none is
+/// dropped. Every iteration stays in its first attempt, and the finished run
+/// revalidates as complete.
 #[test]
 fn update_tail_overlap_run_publishes_the_serial_runs_bytes() {
     let serial = overlap_config_v1("overlap-bytes", 3);
@@ -300,7 +561,8 @@ fn update_tail_overlap_run_publishes_the_serial_runs_bytes() {
     // Read through the receipts' pins, so before the tree moves.
     let serial_states = after_states_v1(&serial_result);
     fs::rename(&directory, &reference).unwrap();
-    let (result, prefetched) = run_counted_v1(&overlapped, None, || {});
+    let (arm, log) = held_log_v1(&directory, true);
+    let (result, prefetched) = run_counted_v1(&overlapped, None, arm);
     let result = result.unwrap();
     assert_eq!(result["complete"], true);
     assert_eq!(prefetched, 2, "updates 0 and 1 hand their successor over");
@@ -310,13 +572,32 @@ fn update_tail_overlap_run_publishes_the_serial_runs_bytes() {
     assert_same_tree_v1("overlapped against serial", &directory, &reference, true);
     assert!(!directory.join("restarts.log").exists());
     for index in 0..3 {
-        let iteration = directory.join("iterations").join(format!("{index:06}"));
-        let mut names: Vec<String> = fs::read_dir(iteration)
+        let mut names: Vec<String> = fs::read_dir(iteration_directory_v1(&directory, index))
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
         assert_eq!(names, vec!["attempt-000000", "complete.json"]);
+    }
+    {
+        let log = log.lock().unwrap();
+        assert!(log.discarded.is_empty(), "{log:?}");
+        assert_eq!(log.released.len(), 2, "{log:?}");
+        assert!(
+            log.released.iter().all(|&held| held >= 1),
+            "a collection held no played game's line: {log:?}"
+        );
+        assert!(
+            log.written.iter().all(|(_, committed)| *committed),
+            "a line was written before the update before its collection was committed: {log:?}"
+        );
+        let mut written: Vec<String> = log.written.iter().map(|(line, _)| line.clone()).collect();
+        written.sort();
+        let mut expected: Vec<String> = (1..3)
+            .flat_map(|index| progress_lines_v1(&serial, index))
+            .collect();
+        expected.sort();
+        assert_eq!(written, expected);
     }
     // A completed overlapped run only verifies: the same result, no prefetch.
     let (again, prefetched) = run_counted_v1(&overlapped, None, || {});
@@ -440,6 +721,97 @@ fn update_tail_overlap_flat_v7_and_v8_runs_publish_the_serial_runs_bytes() {
     fs::remove_file(&v8_start).unwrap();
 }
 
+/// The environment variable that runs
+/// `update_tail_overlap_sealed_resident_child_v1` in its child process.
+const SEALED_RESIDENT_CHILD_ENV_V1: &str =
+    "MTG_KERNEL_UPDATE_TAIL_OVERLAP_SEALED_RESIDENT_CHILD_V1";
+
+/// Invariant 1 (bytes) in the modes the C-recipe chains run: a three-update
+/// run with sealed records (`record_envelope: zstd1`) and resident reads
+/// (`verified_reads: resident`) publishes with the key the bytes it publishes
+/// without it. Resident reads are a one-way process switch, so the
+/// comparison runs in a child process
+/// (`update_tail_overlap_sealed_resident_child_v1`).
+#[test]
+fn update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "native_expanded_training_run_v1::tests::update_tail_overlap_tests::update_tail_overlap_sealed_resident_child_v1",
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(SEALED_RESIDENT_CHILD_ENV_V1, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "child failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The child of
+/// `update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads`.
+/// Skipped unless the parent set its environment variable.
+#[test]
+#[ignore = "run by update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads in a child process"]
+fn update_tail_overlap_sealed_resident_child_v1() {
+    use crate::expanded_deck_training_v1::record_envelope_v1::is_sealed_v1;
+    if std::env::var(SEALED_RESIDENT_CHILD_ENV_V1).as_deref() != Ok("1") {
+        return;
+    }
+    let mut serial = overlap_config_v1("overlap-sealed-resident", 3);
+    serial.record_envelope = crate::expanded_deck_training_v1::RecordEnvelopeV1::Zstd1;
+    serial.verified_reads = VerifiedReadsV1::Resident;
+    assert_overlapped_run_matches_v1("sealed and resident", &serial, |serial_result| {
+        // The records are sealed and the process reads resident.
+        assert!(verified_bytes_cache_v1::global_v1().resident_v1());
+        let checkpoint = iteration_checkpoint_v1(serial_result, 0);
+        assert!(is_sealed_v1(&fs::read(checkpoint.path).unwrap()));
+    });
+}
+
+/// A followed process (`follow_v1`) over two segments with the key publishes
+/// the trees two fresh processes without it publish, with one collection
+/// handed over in each segment.
+#[test]
+fn update_tail_overlap_followed_chain_publishes_the_serial_chains_trees() {
+    let (serial_base, chain) = chain_base_v1("overlap-follow");
+    let overlapped_base = overlapped_v1(&serial_base);
+    let serial_chain = chain.with_file_name("chain-serial");
+    let _ = fs::remove_dir_all(&chain);
+    let _ = fs::remove_dir_all(&serial_chain);
+    let first = segment_v1(&serial_base, &chain, 0, None);
+    let first_result = fresh_run_v1(&first).unwrap();
+    let second = segment_v1(
+        &serial_base,
+        &chain,
+        1,
+        Some(checkpoint_pin_v1(&first_result)),
+    );
+    fresh_run_v1(&second).unwrap();
+    fs::rename(&chain, &serial_chain).unwrap();
+    let spool = chain.join("spool");
+    let before = collected_for_test_v1();
+    let (ended, results) =
+        followed_v1(&overlapped_base, &chain, 0, 2, &spool, &mut |_| {}).unwrap();
+    assert_eq!(ended, FollowEndV1::Stopped);
+    assert_eq!(results.len(), 2);
+    assert_eq!(collected_for_test_v1() - before, 2, "one per segment");
+    fs::remove_dir_all(&spool).unwrap();
+    assert_same_tree_v1(
+        "followed overlapped against fresh serial",
+        &chain,
+        &serial_chain,
+        true,
+    );
+    fs::remove_dir_all(&chain).unwrap();
+    fs::remove_dir_all(&serial_chain).unwrap();
+}
+
 /// Invariant 4 (the invocation limit): a limited overlapped run stops at the
 /// update the serial run stops at, hands over only up to that update, starts
 /// no collection past it, and resumes to the serial run's tree.
@@ -453,7 +825,7 @@ fn update_tail_overlap_stops_at_the_invocation_limit_like_the_serial_run() {
     let _ = fs::remove_dir_all(&reference);
     let serial_result = fresh_run_v1(&serial).unwrap();
     fs::rename(&directory, &reference).unwrap();
-    let third = directory.join("iterations").join("000002");
+    let third = iteration_directory_v1(&directory, 2);
     // Two updates: the first hands the second's collection over, the second
     // hands nothing over.
     let (limited, prefetched) = run_counted_v1(&overlapped, Some(2), || {});
@@ -475,28 +847,31 @@ fn update_tail_overlap_stops_at_the_invocation_limit_like_the_serial_run() {
     fs::remove_dir_all(&reference).unwrap();
 }
 
-/// Invariant 4 (the chain ledger's stop rule): an overlapped run whose
-/// ledger reaches its stop value at a boundary stops at that update, as the
-/// serial run does, with no collection started past it, does no new work
-/// when relaunched, and once the stop is lifted resumes to the serial run's
-/// tree. Its receipts record the ledger and the process CPU read at each
-/// handoff.
+/// Invariant 4 (the chain ledger) and the boundary readings. A test hook
+/// advances the ledger's live counter inside every update's write-out (after
+/// its `update.json`, before the driver checks it): update `k` takes it to
+/// `1,000 (k + 1)`, so a reading taken at the handoff, before the write-out,
+/// would be 1,000 lower than the serial one.
+///
+/// - Without a stop value, the serial and the overlapped runs commit the
+///   same updates and record the same reading at every boundary, the
+///   post-write-out value `5,000 + 1,000 (k + 1)`, the last boundary (with
+///   no collection beside it) included; their trees are the same (the
+///   readings are compared, not stripped as telemetry). So the stop rule,
+///   applied to the overlapped run's readings, stops it at the update where
+///   the serial run with that stop value stops.
+/// - The overlapped run with a stop value in the ledger source is refused
+///   before any work, with the key's message.
+/// - A stop value put into the source during an overlapped run (in update
+///   0's write-out) is refused at that boundary, before its receipt; the
+///   collection it had started, with a played game at its gate, is abandoned
+///   and leaves nothing, on disk or in the log.
 #[test]
-fn update_tail_overlap_stops_at_the_chain_ledger_like_the_serial_run() {
+fn update_tail_overlap_reads_the_ledger_where_the_serial_run_does_and_refuses_its_stop() {
     let mut serial = overlap_config_v1("overlap-ledger", 3);
     let root = serial.output_directory.parent().unwrap().to_path_buf();
     let stat = root.join("cpu.stat");
-    fs::write(&stat, "usage_usec 1000\nuser_usec 600\nsystem_usec 400\n").unwrap();
     let source = root.join("ledger-source.json");
-    let write_source = |stop: Option<u64>| {
-        let mut document = json!({"schema":CHAIN_LEDGER_SOURCE_SCHEMA_V1,
-            "chain":"overlap/chain","closed_usec":5_000,"cpu_stat":stat,"instance":2});
-        if let Some(stop) = stop {
-            document["stop_at_usec"] = json!(stop);
-        }
-        fs::write(&source, serde_json::to_vec(&document).unwrap()).unwrap();
-    };
-    write_source(None);
     serial.chain_ledger = Some(ChainLedgerOptionsV1 {
         source: source.clone(),
     });
@@ -507,50 +882,108 @@ fn update_tail_overlap_stops_at_the_chain_ledger_like_the_serial_run() {
     let reference = directory.with_file_name("run-serial");
     let _ = fs::remove_dir_all(&directory);
     let _ = fs::remove_dir_all(&reference);
-    let serial_result = fresh_run_v1(&serial).unwrap();
+    // The counter advances in every update's write-out; with `stop`, the
+    // source gains that stop value in update 0's write-out.
+    let advancing = |stop_in_write_out: Option<u64>| {
+        let (stat, source) = (stat.clone(), source.clone());
+        move || {
+            after_update_for_test_v1(move |index| {
+                write_cpu_stat_v1(&stat, 1_000 * (index as u64 + 1));
+                if index == 0 && stop_in_write_out.is_some() {
+                    write_ledger_source_v1(&source, &stat, stop_in_write_out);
+                }
+            })
+        }
+    };
+    let readings = |result: &Value| -> Vec<u64> {
+        (0..result["iterations"].as_array().unwrap().len())
+            .map(|index| {
+                iteration_receipt_v1(result, index)["chain_ledger"]["usec"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .collect()
+    };
+    let expected: Vec<u64> = (0..3).map(|k| 5_000 + 1_000 * (k + 1)).collect();
+    // Without a stop value: the same readings and trees.
+    write_cpu_stat_v1(&stat, 0);
+    write_ledger_source_v1(&source, &stat, None);
+    let (serial_result, _) = run_counted_v1(&serial, None, advancing(None));
+    let serial_result = serial_result.unwrap();
     assert_eq!(serial_result["complete"], true);
+    assert_eq!(readings(&serial_result), expected, "serial readings");
     fs::rename(&directory, &reference).unwrap();
-    let second = directory.join("iterations").join("000001");
-    // Every boundary reads 5,000 + 1,000: a stop value of 6,000 stops the run
-    // at its first boundary.
-    write_source(Some(6_000));
-    let (stopped, prefetched) = run_counted_v1(&overlapped, None, || {});
-    let stopped = stopped.unwrap();
-    assert_eq!(stopped["completed_iterations"], 1);
-    assert_eq!(stopped["complete"], false);
-    assert_eq!(prefetched, 0);
-    assert_eq!(committed_v1(&directory), 1);
-    assert!(
-        !second.exists(),
-        "a collection started past the ledger's stop"
-    );
-    assert_same_tree_v1("stopped at the ledger", &directory, &reference, false);
-    // A relaunch with the same stop value does no new work.
-    let (again, prefetched) = run_counted_v1(&overlapped, None, || {});
-    assert_eq!(again.unwrap()["completed_iterations"], 1);
-    assert_eq!(prefetched, 0);
-    assert!(!second.exists());
-    write_source(None);
-    let (resumed, prefetched) = run_counted_v1(&overlapped, None, || {});
-    let resumed = resumed.unwrap();
-    assert_eq!(resumed["complete"], true);
-    assert_eq!(prefetched, 1, "update 1 hands update 2's collection over");
-    assert_eq!(resumed["actual_identity"], serial_result["actual_identity"]);
-    assert_same_tree_v1("resumed past the stop", &directory, &reference, true);
+    write_cpu_stat_v1(&stat, 0);
+    let (arm_held, log) = held_log_v1(&directory, true);
+    let arm_advancing = advancing(None);
+    let (result, prefetched) = run_counted_v1(&overlapped, None, move || {
+        arm_held();
+        arm_advancing();
+    });
+    let result = result.unwrap();
+    assert_eq!(result["complete"], true);
+    assert_eq!(prefetched, 2);
+    let overlapped_readings = readings(&result);
+    assert_eq!(overlapped_readings, expected, "overlapped readings");
     for index in 0..3 {
-        let receipt = iteration_receipt_v1(&resumed, index);
-        assert_eq!(receipt["chain_ledger"]["usec"], 6_000);
+        let receipt = iteration_receipt_v1(&result, index);
         assert!(receipt["driver_process_cpu_seconds"].as_f64().unwrap() > 0.0);
     }
+    assert_same_tree_v1("ledger without a stop", &directory, &reference, true);
+    assert!(log.lock().unwrap().discarded.is_empty());
     fs::remove_dir_all(&directory).unwrap();
     fs::remove_dir_all(&reference).unwrap();
+    // A stop value reached at boundary 1 (5,000 + 2,000): the stop rule on
+    // the overlapped run's readings stops it after update 1, and so does the
+    // serial run with that stop value.
+    let stop = 7_000;
+    let rule_stop = overlapped_readings
+        .iter()
+        .position(|&usec| usec >= stop)
+        .unwrap();
+    assert_eq!(rule_stop, 1);
+    write_cpu_stat_v1(&stat, 0);
+    write_ledger_source_v1(&source, &stat, Some(stop));
+    let (stopped, _) = run_counted_v1(&serial, None, advancing(None));
+    let stopped = stopped.unwrap();
+    assert_eq!(stopped["complete"], false);
+    assert_eq!(stopped["completed_iterations"], rule_stop + 1);
+    assert_eq!(committed_v1(&directory), rule_stop + 1);
+    fs::remove_dir_all(&directory).unwrap();
+    // The overlapped run with that stop value is refused before any work.
+    write_cpu_stat_v1(&stat, 0);
+    let (refused, prefetched) = run_counted_v1(&overlapped, None, advancing(None));
+    assert_eq!(refused.unwrap_err(), LEDGER_STOP_REFUSAL_V1);
+    assert_eq!(prefetched, 0);
+    assert!(!directory.exists(), "a refused run did work");
+    // A stop value put into the source during the overlapped run is refused
+    // at the boundary that reads it, before its receipt.
+    write_cpu_stat_v1(&stat, 0);
+    write_ledger_source_v1(&source, &stat, None);
+    let (arm_held, log) = held_log_v1(&directory, true);
+    let arm_advancing = advancing(Some(stop));
+    let (refused, prefetched) = run_counted_v1(&overlapped, None, move || {
+        arm_held();
+        arm_advancing();
+    });
+    assert_eq!(refused.unwrap_err(), LEDGER_STOP_REFUSAL_V1);
+    assert_eq!(prefetched, 0);
+    assert_eq!(committed_v1(&directory), 0);
+    assert!(update_published_v1(&directory, 0));
+    assert!(
+        !iteration_directory_v1(&directory, 1).exists(),
+        "the abandoned collection left a trace"
+    );
+    assert_dropped_unwritten_v1("stop put in during the run", &log, true);
+    fs::remove_dir_all(&directory).unwrap();
 }
 
 /// Invariant 3 (failures of the deferred write): a failed publication of the
 /// first update's checkpoint, and of its `update.json`, fails the overlapped
 /// run with the serial run's error. Nothing is committed, and nothing of the
-/// next iteration exists: its collection had started (the handoff comes
-/// before the checkpoint's first write) and wrote nothing. A resume of the
+/// next iteration exists, not even its directory, though its collection had
+/// started (the handoff comes before the checkpoint's first write) and held a
+/// played game at its gate: its output was dropped unwritten. A resume of the
 /// run whose `update.json` failed reaches the serial run's states.
 #[test]
 fn update_tail_overlap_failed_checkpoint_writes_fail_like_the_serial_run() {
@@ -562,12 +995,10 @@ fn update_tail_overlap_failed_checkpoint_writes_fail_like_the_serial_run() {
     let reference = fresh_run_v1(&serial).unwrap();
     let reference_states = after_states_v1(&reference);
     fs::remove_dir_all(&directory).unwrap();
-    let update = directory
-        .join("iterations")
-        .join("000000")
+    let update = iteration_directory_v1(&directory, 0)
         .join("attempt-000000")
         .join("update");
-    let second = directory.join("iterations").join("000001");
+    let second = iteration_directory_v1(&directory, 1);
     // Iteration 0's publications in the order they start, with or without the
     // key: the plan (0), the collection's command (1), two trajectories (2
     // and 3), the collection (4), the update's input (5) and command (6),
@@ -576,16 +1007,26 @@ fn update_tail_overlap_failed_checkpoint_writes_fail_like_the_serial_run() {
         [(7usize, "checkpoint.json", false), (8, "update.json", true)]
     {
         let mut errors = Vec::new();
-        for (config, key) in [(&serial, "serial"), (&overlapped, "overlapped")] {
-            let case = format!("{name} {key}");
-            let ((failed, _), _, crashed) = with_crash_point_v1(
+        for config in [&serial, &overlapped] {
+            let overlapped_run = config.update_tail_overlap_v1;
+            let case = format!(
+                "{name} {}",
+                if overlapped_run {
+                    "overlapped"
+                } else {
+                    "serial"
+                }
+            );
+            let (arm, log) = held_log_v1(&directory, true);
+            let ((failed, prefetched), _, crashed) = with_crash_point_v1(
                 &root,
                 Some((publication, CrashPointV1::BeforeFinal)),
-                || run_counted_v1(config, None, || {}),
+                || run_counted_v1(config, None, arm),
             );
             assert!(crashed, "{case}: never reached");
             let error = failed.unwrap_err();
             assert!(error.contains("injected crash"), "{case}: {error}");
+            assert_eq!(prefetched, 0, "{case}");
             // The failed publication is the one named: its staging file is
             // left and its final name is absent.
             assert!(
@@ -601,18 +1042,14 @@ fn update_tail_overlap_failed_checkpoint_writes_fail_like_the_serial_run() {
             assert!(!directory.join("completion.json").exists(), "{case}");
             assert!(
                 !second.exists(),
-                "{case}: the next iteration wrote before the update was durable"
+                "{case}: the next iteration left a trace before the update was committed"
             );
-            if checkpoint_published && config.update_tail_overlap_v1 {
+            assert_dropped_unwritten_v1(&case, &log, overlapped_run);
+            if checkpoint_published && overlapped_run {
                 let (resumed, _) = run_counted_v1(config, None, || {});
                 let resumed = resumed.unwrap_or_else(|error| panic!("{case}: resume: {error}"));
                 assert_eq!(resumed["complete"], true, "{case}");
                 assert_eq!(after_states_v1(&resumed), reference_states, "{case}");
-                assert_eq!(
-                    resumed["actual_identity"]["state_sha256"],
-                    reference["actual_identity"]["state_sha256"],
-                    "{case}"
-                );
             }
             errors.push(error);
             fs::remove_dir_all(&directory).unwrap();
@@ -624,105 +1061,128 @@ fn update_tail_overlap_failed_checkpoint_writes_fail_like_the_serial_run() {
     }
 }
 
-/// Invariant 3 (failures after the checkpoint) and invariant 2 (no later
-/// commit, and a resume to the same states): the update's own crash point
-/// (the checkpoint is published and read back, `update.json` is not) and a
-/// failed `complete.json` each fail the overlapped run with the serial run's
-/// error and commit nothing. Before `update.json` nothing of the next
-/// iteration exists. After it, the next iteration may hold what an
-/// interrupted collection holds, never an update or a receipt, and a resume
-/// commits the published update without running it again and reaches the
-/// serial run's states.
+/// Invariants 2 and 3 for every deferred step after the checkpoint's write:
+/// the update's own crash point (its checkpoint is published and read back,
+/// `update.json` is not), a revalidation that refuses a trajectory changed
+/// after the update, and a failed `complete.json`. Each fails the overlapped
+/// run with the serial run's error and commits nothing. Nothing of the next
+/// iteration exists, not even its directory, though its collection held a
+/// played game at its gate the whole time; its output was dropped unwritten.
+/// A resume reaches the serial run's states; after the failed `complete.json`
+/// it commits the published update as it is, without running it again.
 #[test]
-fn update_tail_overlap_failed_receipts_fail_like_the_serial_run_and_commit_nothing_later() {
-    let serial = overlap_config_v1("overlap-receipt-failures", 2);
+fn update_tail_overlap_failed_deferred_steps_fail_like_the_serial_run_and_leave_nothing_later() {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum FailureV1 {
+        UpdateCrashPoint,
+        Revalidation,
+        Receipt,
+    }
+    let serial = overlap_config_v1("overlap-deferred-failures", 2);
     let overlapped = overlapped_v1(&serial);
     let directory = serial.output_directory.clone();
     let _ = fs::remove_dir_all(&directory);
     let reference = fresh_run_v1(&serial).unwrap();
     let reference_states = after_states_v1(&reference);
     fs::remove_dir_all(&directory).unwrap();
-    let first = directory.join("iterations").join("000000");
-    let second = directory.join("iterations").join("000001");
-    // The update's crash point.
-    let mut errors = Vec::new();
-    for (config, key) in [(&serial, "serial"), (&overlapped, "overlapped")] {
-        let (failed, prefetched) = run_counted_v1(
-            config,
-            None,
-            crate::expanded_deck_training_v1::arm_crash_point_for_test_v1,
-        );
-        let error = failed.unwrap_err();
-        assert!(error.contains("crash point"), "{key}: {error}");
-        assert_eq!(prefetched, 0, "{key}");
-        assert_eq!(committed_v1(&directory), 0, "{key}");
-        assert!(first.join("attempt-000000/update/checkpoint.json").exists());
-        assert!(!update_published_v1(&directory, 0), "{key}");
-        assert!(
-            !second.exists(),
-            "{key}: the next iteration wrote before the update was durable"
-        );
-        errors.push(error);
-        fs::remove_dir_all(&directory).unwrap();
-    }
-    assert_eq!(errors[0], errors[1]);
-    // A failed receipt: `complete.json` of the first iteration.
-    let mut errors = Vec::new();
-    for (config, key) in [(&serial, "serial"), (&overlapped, "overlapped")] {
-        let (failed, _) = run_counted_v1(config, None, || {
-            fail_next_publish_for_test_v1("complete.json")
-        });
-        let error = failed.unwrap_err();
-        assert!(error.contains("injected failure"), "{key}: {error}");
-        assert_eq!(
-            committed_v1(&directory),
-            0,
-            "{key}: an update was committed"
-        );
-        assert!(!directory.join("completion.json").exists(), "{key}");
-        assert!(update_published_v1(&directory, 0), "{key}");
-        if second.exists() {
-            // Only the overlapped run's next collection can have written,
-            // and only what an interrupted collection writes.
-            assert!(config.update_tail_overlap_v1, "{key}");
-            for (path, _) in files_under_v1(&second) {
-                if staging_debris_v1(&path) {
-                    continue;
+    let first = iteration_directory_v1(&directory, 0);
+    let second = iteration_directory_v1(&directory, 1);
+    let trajectory = first
+        .join("attempt-000000")
+        .join("collect")
+        .join("episode-0000.json");
+    for failure in [
+        FailureV1::UpdateCrashPoint,
+        FailureV1::Revalidation,
+        FailureV1::Receipt,
+    ] {
+        let mut errors = Vec::new();
+        for config in [&serial, &overlapped] {
+            let overlapped_run = config.update_tail_overlap_v1;
+            let case = format!(
+                "{failure:?} {}",
+                if overlapped_run {
+                    "overlapped"
+                } else {
+                    "serial"
                 }
-                let name = path.to_string_lossy().replace('\\', "/");
-                assert!(
-                    name == "attempt-000000/collect-command.json"
-                        || name.starts_with("attempt-000000/collect/"),
-                    "{key}: {name} was written for an iteration whose input is not committed"
-                );
+            );
+            let (arm, log) = held_log_v1(&directory, true);
+            let changed = trajectory.clone();
+            let (failed, prefetched) = run_counted_v1(config, None, move || {
+                arm();
+                match failure {
+                    FailureV1::UpdateCrashPoint => {
+                        crate::expanded_deck_training_v1::arm_crash_point_for_test_v1()
+                    }
+                    FailureV1::Revalidation => after_update_for_test_v1(move |_| {
+                        let mut bytes = fs::read(&changed).unwrap();
+                        let middle = bytes.len() / 2;
+                        bytes[middle] ^= 1;
+                        fs::write(&changed, bytes).unwrap();
+                    }),
+                    FailureV1::Receipt => fail_next_publish_for_test_v1("complete.json"),
+                }
+            });
+            let error = failed.unwrap_err();
+            let expected = match failure {
+                FailureV1::UpdateCrashPoint => "crash point",
+                FailureV1::Revalidation => "hash differs",
+                FailureV1::Receipt => "injected failure",
+            };
+            assert!(error.contains(expected), "{case}: {error}");
+            assert_eq!(prefetched, 0, "{case}");
+            assert_eq!(
+                committed_v1(&directory),
+                0,
+                "{case}: an update was committed"
+            );
+            assert!(!directory.join("completion.json").exists(), "{case}");
+            assert_eq!(
+                update_published_v1(&directory, 0),
+                failure != FailureV1::UpdateCrashPoint,
+                "{case}"
+            );
+            assert!(
+                !second.exists(),
+                "{case}: the next iteration left a trace before the update was committed"
+            );
+            assert_dropped_unwritten_v1(&case, &log, overlapped_run);
+            if failure != FailureV1::Revalidation {
+                let before = files_under_v1(&first);
+                let (resumed, _) = run_counted_v1(config, None, || {});
+                let resumed = resumed.unwrap_or_else(|error| panic!("{case}: resume: {error}"));
+                assert_eq!(resumed["complete"], true, "{case}");
+                assert_eq!(after_states_v1(&resumed), reference_states, "{case}");
+                if failure == FailureV1::Receipt {
+                    // The published update was committed as it was: no
+                    // second attempt, and every file it had is unchanged.
+                    let after = files_under_v1(&first);
+                    for (path, bytes) in &before {
+                        assert!(after.get(path) == Some(bytes), "{case}: {}", path.display());
+                    }
+                    assert!(!first.join("attempt-000001").exists(), "{case}");
+                }
             }
+            errors.push(error);
+            fs::remove_dir_all(&directory).unwrap();
         }
-        let before = files_under_v1(&first);
-        let (resumed, _) = run_counted_v1(config, None, || {});
-        let resumed = resumed.unwrap_or_else(|error| panic!("{key}: resume: {error}"));
-        assert_eq!(resumed["complete"], true, "{key}");
-        assert_eq!(after_states_v1(&resumed), reference_states, "{key}");
-        // The published update was committed as it was: no second attempt,
-        // and every file it had is unchanged.
-        let after = files_under_v1(&first);
-        for (path, bytes) in &before {
-            assert!(after.get(path) == Some(bytes), "{key}: {}", path.display());
-        }
-        assert!(!first.join("attempt-000001").exists(), "{key}");
-        assert!(first.join("complete.json").exists(), "{key}");
-        errors.push(error);
-        fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(errors[0], errors[1], "{failure:?}");
     }
-    assert_eq!(errors[0], errors[1]);
 }
 
-/// Invariant 2 (crash safety), every crash point: a crash just before or just
-/// after any publication of a three-update overlapped run leaves only files
+/// Invariant 2 (crash safety), every crash point. The overlapped run starts
+/// the same publications as the serial run (counted the same way), and its
+/// threads never publish at the same time (a collection writes only after
+/// the update before it is committed, and the driver waits for it). A crash
+/// just before or just after any of them, with every collection held at its
+/// gate with a played game until its update is committed, leaves only files
 /// the uninterrupted serial run publishes, with the same bytes apart from
 /// timing telemetry and the key in the plan, plus staging debris; nothing of
-/// an iteration exists unless the update before it is published, and the
-/// committed iterations are a prefix; and resuming reaches the serial run's
-/// state at every iteration.
+/// an iteration exists, not even its directory, unless the iteration before
+/// it is committed; and the committed iterations are a prefix. Resuming
+/// reaches the serial run's state, step, loss and games at every iteration,
+/// and its very tree when the resume made no new attempt.
 #[test]
 #[ignore = "slow: one crashed run and its resume per crash point; run before shipping a change to the update tail overlap"]
 fn update_tail_overlap_crash_at_any_publication_resumes_to_the_serial_result() {
@@ -733,25 +1193,34 @@ fn update_tail_overlap_crash_at_any_publication_resumes_to_the_serial_result() {
     let root = publication_root_v1(&directory);
     let _ = fs::remove_dir_all(&directory);
     let _ = fs::remove_dir_all(&reference);
-    let serial_result = fresh_run_v1(&serial).unwrap();
+    let ((serial_result, _), serial_publications, crashed) =
+        with_crash_point_v1(&root, None, || run_counted_v1(&serial, None, || {}));
+    assert!(!crashed);
+    let serial_result = serial_result.unwrap();
     assert_eq!(serial_result["complete"], true);
+    // Read through the receipts' pins, so before the tree moves.
     let reference_states = after_states_v1(&serial_result);
+    let reference_content = run_content_v1(&serial_result);
     fs::rename(&directory, &reference).unwrap();
-    let ((counted, _), publications, crashed) =
-        with_crash_point_v1(&root, None, || run_counted_v1(&overlapped, None, || {}));
+    let ((counted, prefetched), publications, crashed) = with_crash_point_v1(&root, None, || {
+        run_counted_v1(&overlapped, None, hold_at_gate_for_test_v1)
+    });
     assert!(!crashed);
     assert_eq!(counted.unwrap()["complete"], true);
+    assert_eq!(prefetched, 2);
+    assert_same_tree_v1("uninterrupted", &directory, &reference, true);
     fs::remove_dir_all(&directory).unwrap();
     // Each iteration publishes its two commands, two trajectories, the
     // collection, the update input, the checkpoint, the update and its
     // receipt; the run adds its plan and completion.
+    assert_eq!(publications, serial_publications);
     assert_eq!(publications, 3 * 9 + 2, "{publications} publications");
     for index in 0..publications {
         for point in [CrashPointV1::BeforeFinal, CrashPointV1::AfterFinal] {
             let case = format!("publication {index} {point:?}");
             let ((crashed_run, _), _, crashed) =
                 with_crash_point_v1(&root, Some((index, point)), || {
-                    run_counted_v1(&overlapped, None, || {})
+                    run_counted_v1(&overlapped, None, hold_at_gate_for_test_v1)
                 });
             assert!(crashed, "{case}: never reached");
             let error = crashed_run.unwrap_err();
@@ -759,12 +1228,14 @@ fn update_tail_overlap_crash_at_any_publication_resumes_to_the_serial_result() {
             assert_same_tree_v1(&case, &directory, &reference, false);
             let committed = committed_v1(&directory);
             for iteration in 0..3 {
-                let path = directory.join("iterations").join(format!("{iteration:06}"));
-                let has_files = path.exists() && !files_under_v1(&path).is_empty();
-                if iteration > 0 && has_files {
+                let path = iteration_directory_v1(&directory, iteration);
+                if iteration > 0 {
                     assert!(
-                        update_published_v1(&directory, iteration - 1),
-                        "{case}: iteration {iteration} wrote before update {} was durable",
+                        !path.exists()
+                            || iteration_directory_v1(&directory, iteration - 1)
+                                .join("complete.json")
+                                .exists(),
+                        "{case}: iteration {iteration} exists before iteration {} is committed",
                         iteration - 1
                     );
                 }
@@ -774,15 +1245,25 @@ fn update_tail_overlap_crash_at_any_publication_resumes_to_the_serial_result() {
                     "{case}: the committed iterations are not a prefix"
                 );
             }
-            let (resumed, _) = run_counted_v1(&overlapped, None, || {});
+            let (resumed, _) = run_counted_v1(&overlapped, None, hold_at_gate_for_test_v1);
             let resumed = resumed.unwrap_or_else(|error| panic!("{case}: resume failed: {error}"));
             assert_eq!(resumed["complete"], true, "{case}");
             assert_eq!(after_states_v1(&resumed), reference_states, "{case}");
+            assert_eq!(run_content_v1(&resumed), reference_content, "{case}");
             for field in ["state_sha256", "adam_step"] {
                 assert_eq!(
                     resumed["actual_identity"][field], serial_result["actual_identity"][field],
                     "{case}: {field}"
                 );
+            }
+            // A resume that made no new attempt publishes the very tree.
+            let new_attempt = (0..3).any(|iteration| {
+                iteration_directory_v1(&directory, iteration)
+                    .join("attempt-000001")
+                    .exists()
+            });
+            if !new_attempt {
+                assert_same_tree_v1(&format!("{case} resumed"), &directory, &reference, true);
             }
             fs::remove_dir_all(&directory).unwrap();
         }

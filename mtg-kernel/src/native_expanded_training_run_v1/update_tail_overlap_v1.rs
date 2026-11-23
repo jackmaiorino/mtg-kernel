@@ -1,6 +1,6 @@
 //! Update tail overlap (`update_tail_overlap_v1`, an opt-in run setting): the
-//! next iteration's collection starts while the finished update is written
-//! out.
+//! next iteration's collection plays its games while the finished update is
+//! written out and committed.
 //!
 //! Without the setting, an update's learner step is followed in series by its
 //! checkpoint publication and readback, `update.json`, the driver's
@@ -19,58 +19,92 @@
 //!   the checkpoint's pin from the bytes being published, never from the file,
 //!   while that publication is in flight (`verified_bytes_cache_v1`, pending
 //!   publications). Nothing it computes depends on how far the write has got.
-//! - The order of commits. The collection thread writes nothing until the
-//!   finished update's `update.json` is durable, so until then a crash leaves
-//!   the tree it leaves without the setting. From then on the thread may
-//!   write what an interrupted collection writes (the iteration's directory,
-//!   its first attempt, the attempt's command and trajectories), which a
-//!   resume takes as an interrupted attempt of an iteration whose input
-//!   checkpoint is published. The driver joins the thread only after the
-//!   finished update's `complete.json` is published, and only then validates
-//!   the collection and runs the next update: an update never starts before
-//!   the one before it is committed, and at most one update's write is in
-//!   flight.
-//! - Failures. An update or a receipt that fails returns its own error, as
-//!   before. The collection thread is then told, stops at its next write and
-//!   is joined before the error leaves the driver; if the failure came before
-//!   `update.json` was durable, it has written nothing. Its result is dropped
-//!   and no receipt names it.
-//! - Output. The collection's stderr lines and panic messages are held in
-//!   memory (`held_output_v1`) until its gate opens, then written in their
-//!   order; when it is abandoned they are dropped, unwritten.
-//! - Stops. The handoff decides whether a next iteration runs by the rule
-//!   the loop applies after the commit (the invocation limit and the chain
-//!   ledger's stop value), from the ledger reading the receipt then records
-//!   ([`BoundaryV1`]). No collection starts for an iteration the run does not
-//!   run.
+//! - Traces. The collection's gate opens only once the finished update is
+//!   committed: its `complete.json` is durable and its stdout line printed.
+//!   Until then the collection plays its games in memory and leaves no trace:
+//!   it creates no directory and writes no file (the write gate of
+//!   `phase1_parallel_collection`), and its stderr lines and panic messages
+//!   are held in memory (`held_output_v1`), to be written in their order when
+//!   the gate opens. So nothing of an iteration exists before the iteration
+//!   before it is committed, and every state a crash or a failure leaves is
+//!   one a run without the setting can leave.
+//! - The order of commits. The driver joins the collection's thread at the
+//!   top of the next iteration, after the commit, and only then validates the
+//!   collection and runs the next update: an update never starts before the
+//!   one before it is committed, and at most one update's write is in flight.
+//! - Failures. An update, a revalidation or a receipt that fails returns its
+//!   own error, as before. The collection is abandoned before the error leaves
+//!   the driver: its thread stops at its next write and is joined, and its
+//!   held output is dropped. It wrote nothing, and no receipt names it.
+//! - Boundary readings. The driver reads the process CPU and the chain ledger
+//!   for a receipt where it reads them without the setting, after the update
+//!   is checked. The next collection's threads may be running by then, so a
+//!   reading that is cumulative (the process CPU, the ledger's counter) can
+//!   include the work they have done so far.
+//! - Stops. The handoff starts a collection only for an iteration the loop
+//!   will run (the next index is in the schedule and the invocation limit is
+//!   not reached), decided before any boundary reading, so the last update of
+//!   a run has no collection beside it and reads exactly as without the
+//!   setting. A chain ledger stop is decided on the readings, so a run whose
+//!   ledger carries a stop value is refused ([`LEDGER_STOP_REFUSAL_V1`]): at
+//!   admission, before any work, and at every boundary, before its receipt.
+//!   A ledger-stopped run stays serial.
 //!
 //! The one difference a failure can show: when an update fails after its
-//! handoff, games of the next collection may already have been played. They
-//! are discarded with their thread, as above.
+//! handoff, games of the next collection may already have been played. Their
+//! results are dropped with their thread; nothing of them is written or
+//! printed.
 
-use super::{
-    err, publish, ChainLedgerOptionsV1, ChainLedgerReadingV1, NativeExpandedTrainingRunV1,
-};
+use super::{check, err, publish, NativeExpandedTrainingRunV1};
 use crate::expanded_deck_training_v1::{execute_collection_gated_v1, ExpandedTrainingCommandV1};
 use crate::held_output_v1::{self, HeldOutputV1};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
 /// The name of a new iteration's first attempt, as the driver numbers it.
 pub(super) const FIRST_ATTEMPT_V1: &str = "attempt-000000";
 
+/// The refusal of the setting, at config validation, outside the runs it
+/// serves: parallel collection and a prepared CPU update of an ordinary run.
+pub(super) const VALIDATION_REFUSAL_V1: &str =
+    "update_tail_overlap_v1 requires parallel collection and a prepared CPU update, \
+     without line (b), E, SQ1, search targets, EX1 or an S learner";
+
+/// The refusal of the setting for a run whose chain ledger carries a stop
+/// value.
+pub(super) const LEDGER_STOP_REFUSAL_V1: &str =
+    "update_tail_overlap_v1 is refused when the chain ledger carries a stop value \
+     (stop_at_usec): a ledger-stopped run stays serial";
+
 /// The collection's model load and dispatch run on this thread (its games
 /// run on the collection's own workers), where without the setting they run
 /// on the driver's thread: at least that thread's stack on every system.
 const PREFETCH_STACK_BYTES_V1: usize = 16 * 1024 * 1024;
 
+/// Refuses the setting, before any work, for a run whose chain ledger source
+/// carries a stop value: the stop value lives in that file, not in the
+/// config, so this is the first check that can see it.
+pub(super) fn refuse_ledger_stop_v1(config: &NativeExpandedTrainingRunV1) -> Result<(), String> {
+    match (&config.chain_ledger, config.update_tail_overlap_v1) {
+        (Some(ledger), true) => check(ledger.stop_at_usec_v1()?.is_none(), LEDGER_STOP_REFUSAL_V1),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     /// Test-only: collections this thread's drivers took from a prefetch.
     static COLLECTED_FOR_TEST_V1: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test-only: whether this thread's drivers hold each update at its
+    /// handoff until the collection it started waits at its gate.
+    static HOLD_AT_GATE_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test-only: where the held output of the collections this thread's
+    /// drivers start goes, instead of stderr.
+    static RECORDER_FOR_TEST_V1: std::cell::RefCell<Option<held_output_v1::RecorderV1>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Test-only: how many collections the drivers run on this thread took from
@@ -80,93 +114,116 @@ pub(super) fn collected_for_test_v1() -> usize {
     COLLECTED_FOR_TEST_V1.with(std::cell::Cell::get)
 }
 
-/// An update's boundary telemetry (the driver's process CPU and the chain
-/// ledger), as its receipt records it. With the setting it is read at the
-/// handoff, after the learner step and before the next collection may start,
-/// so it never counts the next iteration's games, and the reading that
-/// decides whether the run stops is the one the receipt records.
-pub(super) struct BoundaryV1 {
-    /// `Some` exactly when the run records its process CPU.
-    pub(super) process_cpu: Result<Option<f64>, String>,
-    /// `Some` exactly when the run has a chain ledger.
-    pub(super) ledger: Result<Option<ChainLedgerReadingV1>, String>,
+/// Test-only: every update a driver on this thread runs from now on waits at
+/// its handoff, before its checkpoint's first write, until the collection it
+/// started has played a game and asked to write it (or has ended). So every
+/// later step of the update and of its commit meets a collection that holds
+/// played games at its closed gate.
+#[cfg(test)]
+pub(super) fn hold_at_gate_for_test_v1() {
+    HOLD_AT_GATE_FOR_TEST_V1.with(|hold| hold.set(true));
 }
 
-impl BoundaryV1 {
-    /// The receipt's readings, in the receipt's order.
-    pub(super) fn read_v1(config: &NativeExpandedTrainingRunV1) -> Self {
-        let process_cpu = if config.record_process_cpu {
-            crate::regret_census_v1::stage4a::process_cpu::seconds().map(Some)
-        } else {
-            Ok(None)
-        };
-        // As in the receipt: a failed process CPU reading ends the iteration
-        // before the ledger is read.
-        let ledger = match &process_cpu {
-            Ok(_) => config
-                .chain_ledger
-                .as_ref()
-                .map(ChainLedgerOptionsV1::read_v1)
-                .transpose(),
-            Err(_) => Ok(None),
-        };
-        Self {
-            process_cpu,
-            ledger,
+/// Test-only: the held output of every collection a driver on this thread
+/// starts from now on goes to `recorder` instead of stderr.
+#[cfg(test)]
+pub(super) fn record_held_output_for_test_v1(recorder: held_output_v1::RecorderV1) {
+    RECORDER_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(recorder));
+}
+
+/// Test-only: the driver's hold ([`hold_at_gate_for_test_v1`]), when armed.
+#[cfg(test)]
+pub(super) fn held_at_gate_for_test_v1(prefetch: &PrefetchV1) {
+    if HOLD_AT_GATE_FOR_TEST_V1.with(std::cell::Cell::get) {
+        let mut state = prefetch.shared.lock_v1();
+        while state.asked == 0 && !state.ended {
+            state = prefetch
+                .shared
+                .changed
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
         }
     }
-
-    /// Whether the run goes on after this boundary: both readings succeeded
-    /// (a failed one ends the run at the receipt) and the ledger has not
-    /// reached its stop value (the loop's own rule).
-    pub(super) fn continues_v1(&self) -> bool {
-        self.process_cpu.is_ok()
-            && match &self.ledger {
-                Ok(None) => true,
-                Ok(Some(reading)) => {
-                    // The loop's own test after the commit.
-                    let stops = reading
-                        .stop_at_usec
-                        .is_some_and(|stop| reading.usec >= stop);
-                    !stops
-                }
-                Err(_) => false,
-            }
-    }
 }
 
-/// Where the finished update's write stands, as the collection thread sees it.
+/// A new collection's held output: recorded in a test that asked for it.
+fn new_held_output_v1() -> Arc<HeldOutputV1> {
+    #[cfg(test)]
+    if let Some(recorder) = RECORDER_FOR_TEST_V1.with(|slot| slot.borrow().clone()) {
+        return HeldOutputV1::recorded_v1(recorder);
+    }
+    HeldOutputV1::new_v1()
+}
+
+/// Where the collection's gate stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TailV1 {
-    /// The checkpoint or `update.json` is still being written.
-    Writing,
-    /// `update.json` is durable.
-    Durable,
-    /// The update or a receipt failed, or the driver is leaving.
+enum GateV1 {
+    /// The finished update is not committed yet: every write waits.
+    Closed,
+    /// The finished update is committed: writes go ahead.
+    Open,
+    /// The update, a revalidation or a receipt failed, or the driver is
+    /// leaving: every write is refused.
     Abandoned,
 }
 
-struct TailSignalV1 {
-    state: Mutex<TailV1>,
-    changed: Condvar,
+struct GateStateV1 {
+    gate: GateV1,
+    /// Test-only: writes asked for so far (the test hold waits for the first).
+    #[cfg(test)]
+    asked: usize,
+    /// Test-only: whether the collection's thread has ended.
+    #[cfg(test)]
+    ended: bool,
 }
 
-impl TailSignalV1 {
-    fn set_v1(&self, state: TailV1) {
-        *self.state.lock().unwrap_or_else(PoisonError::into_inner) = state;
+/// What the driver and the collection's thread share.
+struct SharedV1 {
+    state: Mutex<GateStateV1>,
+    changed: Condvar,
+    /// The collection's stderr lines and panic messages until its commit.
+    held: Arc<HeldOutputV1>,
+}
+
+impl SharedV1 {
+    fn lock_v1(&self) -> MutexGuard<'_, GateStateV1> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set_v1(&self, gate: GateV1) {
+        self.lock_v1().gate = gate;
         self.changed.notify_all();
     }
 
-    /// Waits while the write is in flight; then whether it is durable.
-    fn durable_v1(&self) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        while *state == TailV1::Writing {
+    /// Asked before every write: waits while the gate is closed; then whether
+    /// it is open.
+    fn admit_v1(&self) -> bool {
+        let mut state = self.lock_v1();
+        #[cfg(test)]
+        {
+            state.asked += 1;
+            self.changed.notify_all();
+        }
+        while state.gate == GateV1::Closed {
             state = self
                 .changed
                 .wait(state)
                 .unwrap_or_else(PoisonError::into_inner);
         }
-        *state == TailV1::Durable
+        state.gate == GateV1::Open
+    }
+}
+
+/// Test-only: marks the collection's thread as ended when it drops, also on
+/// a panic, for the test hold.
+#[cfg(test)]
+struct EndedV1(Arc<SharedV1>);
+
+#[cfg(test)]
+impl Drop for EndedV1 {
+    fn drop(&mut self) {
+        self.0.lock_v1().ended = true;
+        self.0.changed.notify_all();
     }
 }
 
@@ -195,40 +252,44 @@ enum PrefetchedV1 {
 /// error, a panic) no collection outlives the run, writes or prints after it.
 pub(super) struct PrefetchV1 {
     index: usize,
-    signal: Arc<TailSignalV1>,
-    /// The collection's stderr lines and panic messages until its gate opens.
-    held: Arc<HeldOutputV1>,
+    shared: Arc<SharedV1>,
     thread: Option<JoinHandle<Result<Option<PrefetchedV1>, String>>>,
 }
 
 impl PrefetchV1 {
     /// Starts the collection `command` of iteration `index`, whose directory
-    /// `directory` must not exist yet. `None` when its thread cannot start:
-    /// the driver then runs the iteration itself.
+    /// `directory` must not exist yet, behind a closed gate. `None` when its
+    /// thread cannot start: the driver then runs the iteration itself.
     pub(super) fn start_v1(
         index: usize,
         directory: PathBuf,
         command: ExpandedTrainingCommandV1,
     ) -> Option<Self> {
-        let signal = Arc::new(TailSignalV1 {
-            state: Mutex::new(TailV1::Writing),
+        let shared = Arc::new(SharedV1 {
+            state: Mutex::new(GateStateV1 {
+                gate: GateV1::Closed,
+                #[cfg(test)]
+                asked: 0,
+                #[cfg(test)]
+                ended: false,
+            }),
             changed: Condvar::new(),
+            held: new_held_output_v1(),
         });
-        let thread_signal = Arc::clone(&signal);
-        let held = HeldOutputV1::new_v1();
-        let thread_held = Arc::clone(&held);
+        let thread_shared = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name(format!("expanded-prefetch-{index}"))
             .stack_size(PREFETCH_STACK_BYTES_V1)
             .spawn(move || {
-                let _held = held_output_v1::install_v1(&thread_held);
-                collect_v1(&thread_signal, directory, command)
+                #[cfg(test)]
+                let _ended = EndedV1(Arc::clone(&thread_shared));
+                let _held = held_output_v1::install_v1(&thread_shared.held);
+                collect_v1(&thread_shared, directory, command)
             })
             .ok()?;
         Some(Self {
             index,
-            signal,
-            held,
+            shared,
             thread: Some(thread),
         })
     }
@@ -238,11 +299,11 @@ impl PrefetchV1 {
         self.index
     }
 
-    /// The finished update's `update.json` is durable: the collection's held
-    /// output is written, in its order, and then the collection may write.
-    pub(super) fn durable_v1(&self) {
-        self.held.release_v1();
-        self.signal.set_v1(TailV1::Durable);
+    /// The finished update is committed: the collection's held output is
+    /// written, in its order, and then the collection may write.
+    pub(super) fn committed_v1(&self) {
+        self.shared.held.release_v1();
+        self.shared.set_v1(GateV1::Open);
     }
 
     /// Waits for the collection, once the finished update is committed. The
@@ -264,7 +325,8 @@ impl PrefetchV1 {
             // dropping this handle abandons one.
             Ok(Ok(None)) => Err("the collection prefetch was abandoned".into()),
             Ok(Err(error)) => Err(error),
-            // As a panic of the collection on the driver's own thread.
+            // As a panic of the collection on the driver's own thread (its
+            // message went through the held output).
             Err(panic) => std::panic::resume_unwind(panic),
         }
     }
@@ -273,8 +335,8 @@ impl PrefetchV1 {
 impl Drop for PrefetchV1 {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
-            self.held.discard_v1();
-            self.signal.set_v1(TailV1::Abandoned);
+            self.shared.held.discard_v1();
+            self.shared.set_v1(GateV1::Abandoned);
             let _ = thread.join();
         }
     }
@@ -282,9 +344,9 @@ impl Drop for PrefetchV1 {
 
 /// The collection thread: the driver's steps before a collection (the
 /// iteration's directory, its first attempt, the published command) and the
-/// collection itself, with every filesystem write behind the tail's signal.
+/// collection itself, with every filesystem write behind the gate.
 fn collect_v1(
-    signal: &TailSignalV1,
+    shared: &SharedV1,
     directory: PathBuf,
     command: ExpandedTrainingCommandV1,
 ) -> Result<Option<PrefetchedV1>, String> {
@@ -308,7 +370,7 @@ fn collect_v1(
     // makes the driver's steps, once, and an abandoned collection writes no
     // more.
     let gate = || {
-        if !signal.durable_v1() {
+        if !shared.admit_v1() {
             return Err("the collection prefetch was abandoned".to_owned());
         }
         match opened.get_or_init(&open) {

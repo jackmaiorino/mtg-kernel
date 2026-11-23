@@ -20,7 +20,7 @@ pub(super) const TIMED: [&str; 5] = [
 /// A chain of two segments of two iterations each under `chain`: segment 0
 /// from the fresh source, segment 1 the continuation from segment 0's last
 /// checkpoint (`checkpoint`, None until segment 0 has run).
-fn segment_v1(
+pub(super) fn segment_v1(
     base: &NativeExpandedTrainingRunV1,
     chain: &Path,
     segment: usize,
@@ -40,11 +40,11 @@ fn segment_v1(
     config
 }
 
-fn checkpoint_pin_v1(result: &Value) -> PinnedFileV1 {
+pub(super) fn checkpoint_pin_v1(result: &Value) -> PinnedFileV1 {
     serde_json::from_value(result["source"]["checkpoint"].clone()).unwrap()
 }
 
-fn chain_base_v1(label: &str) -> (NativeExpandedTrainingRunV1, PathBuf) {
+pub(super) fn chain_base_v1(label: &str) -> (NativeExpandedTrainingRunV1, PathBuf) {
     let base = parallel_two_iteration_config_v1(label);
     base.validate_v1().unwrap();
     let chain = base.output_directory.with_file_name("chain");
@@ -64,7 +64,7 @@ pub(super) fn fresh_run_v1(config: &NativeExpandedTrainingRunV1) -> Result<Value
 /// later segment built from the previous run's last checkpoint as the driver
 /// builds it (`from > 0` starts from segment `from - 1`'s completion), with its
 /// done records in `spool`.
-fn followed_v1(
+pub(super) fn followed_v1(
     base: &NativeExpandedTrainingRunV1,
     chain: &Path,
     from: usize,

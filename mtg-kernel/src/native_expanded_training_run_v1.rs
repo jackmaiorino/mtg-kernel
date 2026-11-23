@@ -434,13 +434,16 @@ pub struct NativeExpandedTrainingRunV1 {
     /// Config-driven; absent means false, which is never serialized, so every
     /// existing config keeps its wire bytes and its run identity. `true`
     /// starts each next iteration's collection as soon as the finished
-    /// update's checkpoint bytes exist in memory, while that update's
-    /// checkpoint, receipts and revalidation are still being written and
-    /// checked (`update_tail_overlap_v1`). Every state and every published
-    /// byte is the same, and so are the order of commits and every stop; it
-    /// only takes that writing off the path to the next games. Parallel
-    /// collection and prepared CPU updates of ordinary runs only; it has no
-    /// effect with an external collector (`--collect-external`).
+    /// update's checkpoint bytes exist in memory: its games are played while
+    /// that update's checkpoint, receipts and revalidation are written and
+    /// checked, and it writes and prints nothing until that update is
+    /// committed (`update_tail_overlap_v1`). Every state and every published
+    /// byte is the same, and so are the order of commits and the invocation
+    /// limit's stop; it only takes that writing off the path to the next
+    /// games. Parallel collection and prepared CPU updates of ordinary runs
+    /// only, and never with a chain ledger that carries a stop value (refused
+    /// when the run starts and at every boundary); it has no effect with an
+    /// external collector (`--collect-external`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_tail_overlap_v1: bool,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
@@ -684,8 +687,7 @@ impl NativeExpandedTrainingRunV1 {
                     && self.search_targets.is_none()
                     && self.ex1.is_none()
                     && self.initial_source.s_learner.is_none()),
-            "update_tail_overlap_v1 requires parallel collection and a prepared CPU update, \
-             without line (b), E, SQ1, search targets, EX1 or an S learner",
+            update_tail_overlap_v1::VALIDATION_REFUSAL_V1,
         )?;
         if !self.training_math.is_platform_libm() {
             check(
@@ -1128,6 +1130,26 @@ thread_local! {
 #[cfg(test)]
 fn fail_next_publish_for_test_v1(name: &'static str) {
     FAIL_PUBLISH_FOR_TEST_V1.with(|armed| armed.set(Some(name)));
+}
+
+/// Test-only: an iteration's index, given once its update has returned on
+/// this thread (its `update.json` is durable) and before the driver checks
+/// the update and reads the boundary: a point inside the update's write-out.
+#[cfg(test)]
+type AfterUpdateForTestV1 = Box<dyn FnMut(usize)>;
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_UPDATE_FOR_TEST_V1: std::cell::RefCell<Option<AfterUpdateForTestV1>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only: every driver on this thread calls `hook` with an iteration's
+/// index once that iteration's update has returned (`AfterUpdateForTestV1`),
+/// with or without `update_tail_overlap_v1`.
+#[cfg(test)]
+fn after_update_for_test_v1(hook: impl FnMut(usize) + 'static) {
+    AFTER_UPDATE_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
 }
 
 fn publish(
@@ -1925,6 +1947,9 @@ pub fn run_native_expanded_training_v1(
 ) -> Result<Value, String> {
     config.validate_v1()?;
     config.update_backend.require_compiled_v1()?;
+    // `update_tail_overlap_v1`: a run whose chain ledger carries a stop value
+    // stays serial; the key is refused here, before any work.
+    update_tail_overlap_v1::refuse_ledger_stop_v1(config)?;
     // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
     // run is admitted before its first pinned read: a run without resident
     // reads is refused in a process that has them on instead of silently
@@ -2255,9 +2280,6 @@ pub fn run_native_expanded_training_v1(
                 break;
             }
         }
-        // `update_tail_overlap_v1`: this update's boundary readings, when its
-        // handoff took them.
-        let mut boundary: Option<update_tail_overlap_v1::BoundaryV1> = None;
         if update_pin.is_none() {
             let attempt = if let Some((attempt, seconds)) = prefetched {
                 // `update_tail_overlap_v1`: the collection ran in this
@@ -2343,19 +2365,19 @@ pub fn run_native_expanded_training_v1(
                 // Called by the update once its new checkpoint's bytes exist
                 // in memory, before their first byte is written.
                 let mut handoff = |checkpoint: &PinnedFileV1| {
-                    // This boundary's readings, before any game of the next
-                    // iteration is played. The run goes on to that iteration
-                    // by the loop's own rule, from these readings.
-                    let sampled = update_tail_overlap_v1::BoundaryV1::read_v1(config);
+                    // Whether the run goes on to the next iteration, by the
+                    // tests the loop makes at its top, where this update
+                    // counts as completed: the schedule and the invocation
+                    // limit. Decided here, before any boundary reading (the
+                    // process CPU and the chain ledger are read where they
+                    // are without the setting, after this update is checked),
+                    // so the last update of a run has no collection beside
+                    // it. A ledger stop value is refused with the setting, so
+                    // the ledger never stops a run that overlaps.
                     let next_index = index + 1;
-                    // The loop's own test at the next iteration, where this
-                    // update counts as completed.
                     let at_limit =
                         max_new_iterations.is_some_and(|limit| newly_completed + 1 >= limit);
-                    let goes_on =
-                        next_index < config.iterations.len() && !at_limit && sampled.continues_v1();
-                    boundary = Some(sampled);
-                    if !goes_on {
+                    if next_index >= config.iterations.len() || at_limit {
                         return;
                     }
                     // The source and the history the loop holds once this
@@ -2388,18 +2410,24 @@ pub fn run_native_expanded_training_v1(
                         next_directory,
                         next_command,
                     );
+                    #[cfg(test)]
+                    if let Some(started) = &prefetch {
+                        update_tail_overlap_v1::held_at_gate_for_test_v1(started);
+                    }
                 };
                 crate::expanded_deck_training_v1::execute_with_handoff_v1(
                     update_command,
                     Some(&mut handoff),
                 )?;
-                // `update.json` is durable: the next collection may write.
-                if let Some(next) = &prefetch {
-                    next.durable_v1();
-                }
             } else {
                 execute_v1(update_command)?;
             }
+            #[cfg(test)]
+            AFTER_UPDATE_FOR_TEST_V1.with(|hook| {
+                if let Some(hook) = hook.borrow_mut().as_mut() {
+                    hook(index);
+                }
+            });
             update_execution_seconds += started.elapsed().as_secs_f64();
             update_pin = Some(pin(&attempt.join("update/update.json"))?);
         }
@@ -2451,27 +2479,28 @@ pub fn run_native_expanded_training_v1(
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
             "output_identity":after});
-        let ledger = match boundary {
-            // `update_tail_overlap_v1`: read at this update's handoff, in the
-            // same order and with the same errors as below.
-            Some(sampled) => {
-                if let Some(seconds) = sampled.process_cpu? {
-                    receipt["driver_process_cpu_seconds"] = json!(seconds);
-                }
-                sampled.ledger?
-            }
-            None => {
-                if config.record_process_cpu {
-                    receipt["driver_process_cpu_seconds"] =
-                        json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
-                }
-                config
-                    .chain_ledger
+        if config.record_process_cpu {
+            receipt["driver_process_cpu_seconds"] =
+                json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
+        }
+        let ledger = config
+            .chain_ledger
+            .as_ref()
+            .map(ChainLedgerOptionsV1::read_v1)
+            .transpose()?;
+        // `update_tail_overlap_v1`: a stop value put in the ledger source
+        // during the run is refused here, before this boundary's receipt. The
+        // readings may include work of the next collection, so no stop is
+        // decided on them; that collection, if one runs, is abandoned with
+        // the error and has left no trace.
+        if config.update_tail_overlap_v1 {
+            check(
+                ledger
                     .as_ref()
-                    .map(ChainLedgerOptionsV1::read_v1)
-                    .transpose()?
-            }
-        };
+                    .is_none_or(|reading| reading.stop_at_usec.is_none()),
+                update_tail_overlap_v1::LEDGER_STOP_REFUSAL_V1,
+            )?;
+        }
         if let Some(reading) = &ledger {
             receipt["chain_ledger"] = reading.record.clone();
         }
@@ -2515,10 +2544,19 @@ pub fn run_native_expanded_training_v1(
                 "update_validation_seconds":update_validation_seconds,
                 "cpu_utilization_claim":false}})
         );
+        // `update_tail_overlap_v1`: this update is committed (its
+        // `complete.json` is durable and its line printed), so the next
+        // iteration's collection, if this update started one, writes its
+        // held output and may write files from here on. A ledger stop is
+        // refused with the setting, so the loop goes on to that iteration.
+        if let Some(next) = prefetch.as_ref().filter(|_| !stopped_at_ledger) {
+            next.committed_v1();
+        }
     }
     // No collection is started for an iteration the loop does not run, so
-    // none is left here; one that were is abandoned and joined before the
-    // completion below and before the lock is released.
+    // none is left here; one that were is abandoned (nothing of it written or
+    // printed) and joined before the completion below and before the lock is
+    // released.
     drop(prefetch);
     let complete = receipts.len() == config.iterations.len();
     let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
