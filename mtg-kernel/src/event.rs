@@ -3098,7 +3098,12 @@ fn apply_replacements_inner(
             match crate::eternal_pauper_pf1c_v1::replace_damage(state, damage) {
                 DamageResultV1::Uncovered => {}
                 DamageResultV1::Prevented => return None,
-                DamageResultV1::Residual(damage) => return Some(ProposedEvent::Damage(damage)),
+                DamageResultV1::Residual(damage) => {
+                    if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, &damage) {
+                        return None;
+                    }
+                    return Some(ProposedEvent::Damage(damage));
+                }
             }
         }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before

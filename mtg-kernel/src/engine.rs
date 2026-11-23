@@ -3337,6 +3337,24 @@ fn storm_source_contract_is_structurally_valid(
                 && contract.owner == contract.controller
                 && contract.cast_method == CastMethodV4::Escape
         }
+        SpellCastRouteV4::SnapcasterFlashbackV1 if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Flashback
+        }
+        SpellCastRouteV4::RetraceV1 if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && (contract.cast_method == CastMethodV4::Normal
+                    || (contract.cast_method == CastMethodV4::Alternative
+                        && definition.alt_cost.is_some()))
+        }
+        SpellCastRouteV4::BreachEscapeV1 if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Escape
+                && definition.escape.is_some()
+        }
         SpellCastRouteV4::SphinxLoreFlashbackV1 {
             holder,
             graveyard_generation,

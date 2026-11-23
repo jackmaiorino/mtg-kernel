@@ -278,6 +278,10 @@ impl PreparedDamageBatchV1 {
             ));
             return None;
         }
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage) {
+            return None;
+        }
         Some(event)
     }
 }
