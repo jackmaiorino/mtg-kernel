@@ -579,7 +579,12 @@ fn pyrogoyf_self_and_other_lhurgoyf_entries_deal_entering_creatures_damage() {
     put(&mut state, P0, "Plains", Zone::Graveyard);
     put(&mut state, P1, "Lightning Bolt", Zone::Graveyard);
 
-    let opp_jace = put(&mut state, P1, "Jace, the Mind Sculptor", Zone::Battlefield);
+    let opp_jace = put(&mut state, P1, "Jace, the Mind Sculptor", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(opp_jace, Zone::Battlefield),
+    );
+    settled(&mut state);
     assert_eq!(loyalty(&state, opp_jace), Some(3));
 
     // 1. Pyrogoyf entering triggers itself and deals 2 damage to Jace.
@@ -1454,7 +1459,7 @@ fn zirda_reduces_nonmana_activated_abilities_across_zones_and_skips_mana_abiliti
         "Unearth {{3}}{{R}}{{R}} reduced to {{1}}{{R}}{{R}}"
     );
     activate(&mut state, engine_card, 0, &[]);
-    settled(&mut state);
+    settle_first(&mut state);
     assert_eq!(zone(&state, engine_card), Zone::Battlefield);
 
     // 5. X-cost activated ability: Lazotep Quarry ({X}{2}, {T}, Sacrifice a Desert)
@@ -1512,7 +1517,7 @@ fn zirda_reduces_nonmana_activated_abilities_across_zones_and_skips_mana_abiliti
 fn zirda_activated_ability_prevents_blocking_this_turn_only() {
     let mut state = plains();
     let zirda = put(&mut state, P0, "Zirda, the Dawnwaker", Zone::Battlefield);
-    let attacker = put(&mut state, P0, "Elvish Mystic", Zone::Battlefield);
+    let attacker = put(&mut state, P0, "Monastery Swiftspear", Zone::Battlefield);
     let opp_blocker = put(&mut state, P1, "Skyclave Apparition", Zone::Battlefield);
 
     // Slot 1 is "{1}, {T}: Target creature can't block this turn."
@@ -1575,12 +1580,12 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
                 && s.engine.pending_triggers.is_empty()
         },
         |_, decision| match decision {
-            Decision::ChooseEffectTargets {
+            Decision::ChooseTargets {
                 legal_targets,
                 can_finish,
                 ..
             } => {
-                assert!(can_finish, "up to one target allows declining");
+                assert!(*can_finish, "up to one target allows declining");
                 assert!(legal_targets.contains(&Target::Object(opal)));
                 assert!(
                     !legal_targets.contains(&Target::Object(opp_rancor)),
@@ -1591,7 +1596,7 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
                     "plain creatures are illegal targets"
                 );
                 saw_targets = true;
-                Some(Action::ChooseEffectTarget(Target::Object(opal)))
+                Some(Action::ChooseTarget(Target::Object(opal)))
             }
             _ => None,
         },
@@ -1649,7 +1654,7 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
                 && s.engine.pending_triggers.is_empty()
         },
         |_, decision| match decision {
-            Decision::ChooseEffectTargets {
+            Decision::ChooseTargets {
                 can_finish: true, ..
             } => {
                 triggered_again = true;
@@ -1683,10 +1688,10 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
                 && s.engine.pending_triggers.is_empty()
         },
         |_, decision| match decision {
-            Decision::ChooseEffectTargets { legal_targets, .. }
+            Decision::ChooseTargets { legal_targets, .. }
                 if legal_targets.contains(&Target::Object(bombard)) =>
             {
-                Some(Action::ChooseEffectTarget(Target::Object(bombard)))
+                Some(Action::ChooseTarget(Target::Object(bombard)))
             }
             _ => None,
         },
@@ -1726,10 +1731,10 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
                 && s.engine.pending_triggers.is_empty()
         },
         |_, decision| match decision {
-            Decision::ChooseEffectTargets { legal_targets, .. }
+            Decision::ChooseTargets { legal_targets, .. }
                 if legal_targets.contains(&Target::Object(volc)) =>
             {
-                Some(Action::ChooseEffectTarget(Target::Object(volc)))
+                Some(Action::ChooseTarget(Target::Object(volc)))
             }
             _ => None,
         },
@@ -1872,10 +1877,12 @@ fn zirda_companion_public_session_both_seats() {
         [opponent_deck, zirda_deck],
     ] {
         for seed in 0x4338_6390_u64..0x4338_6392 {
-            let played = play_observed(pair.clone(), None, seed, Policy::Ranked, &mut |_, _| {});
-            let replay = play_observed(pair.clone(), None, seed, Policy::Ranked, &mut |_, _| {});
-            assert_eq!(played.transcript_sha256, replay.transcript_sha256);
-            companion_uses += played.companion_actions;
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let played = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(played.transcript_sha256, replay.transcript_sha256);
+                companion_uses += played.companion_actions;
+            }
         }
     }
     assert!(
