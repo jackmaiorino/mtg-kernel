@@ -783,6 +783,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::C2cV1(_)
         | S::C4aV1(_)
         | S::C8cV1(_)
+        | S::C9aV1(_)
         | S::C9cV1(_)
         | S::S1oV1(_) => ObjF::AnyCard,
         S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
@@ -903,6 +904,7 @@ pub(super) fn standard_target_origin(
         | S::C2cV1(_)
         | S::C4aV1(_)
         | S::C8cV1(_)
+        | S::C9aV1(_)
         | S::C9cV1(_)
         | S::S1oV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
@@ -1014,6 +1016,7 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         | S::C2cV1(_)
         | S::C4aV1(_)
         | S::C8cV1(_)
+        | S::C9aV1(_)
         | S::C9cV1(_)
         | S::S1oV1(_) => {
             // Wave S1d's filters (a power bound, flying, a land you control,

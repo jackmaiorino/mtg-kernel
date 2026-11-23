@@ -1526,6 +1526,7 @@ pub(crate) fn activation_allowed(
         && crate::eternal_sideboard_s1q_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_cube_c5c_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_cube_c7c_v1::activation_allowed(state, source, name)
+        && crate::eternal_cube_c9a_v1::activation_allowed(state, source, name, ability_index)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed

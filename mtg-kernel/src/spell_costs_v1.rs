@@ -187,6 +187,9 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) no_mana: bool,
     /// The spell's own card, which never pays for itself by delve.
     pub(super) no_mana_source: Option<ObjectId>,
+    /// Emerge from artifact (Crabomination, wave C9a): reduces generic mana by
+    /// the sacrificed artifact's mana value.
+    pub(super) emerge_artifact: bool,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -410,6 +413,25 @@ impl SelectedSpellManaCostsV1 {
             }
         }
         let (increase, reduction) = generic_modifiers;
+        let reduction = if cfg!(feature = "eternal-fixtures") && self.emerge_artifact {
+            if let Some(artifact) = self.component_groups.iter().zip(chosen_by_group).find_map(
+                |(components, chosen)| {
+                    components
+                        .iter()
+                        .any(|component| {
+                            matches!(component, CostComponent::SacrificeControlled { .. })
+                        })
+                        .then(|| chosen.first().copied())
+                        .flatten()
+                },
+            ) {
+                reduction.saturating_add(u32::from(super::object_mana_value(state, artifact)))
+            } else {
+                reduction
+            }
+        } else {
+            reduction
+        };
         let plan = |reserved: &[ObjectId]| {
             self.payment_plan(x, player, state, increase, reduction, reserved)
                 .filter(|payment| {
@@ -826,6 +848,9 @@ fn selected_spell_mana_costs_with_escape(
         no_mana: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e8a_v1::statics::no_mana_spell(definition.name),
         no_mana_source: None,
+        emerge_artifact: cfg!(feature = "eternal-fixtures")
+            && method == CastMethodV4::Alternative
+            && crate::eternal_cube_c9a_v1::is_emerge_artifact(definition.name),
     };
     match method {
         CastMethodV4::Normal => {
@@ -1205,6 +1230,33 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         // Citadel: "pay life equal to its mana value rather than pay its
         // mana cost", paid as the cast completes.
         selected.costs.remove(0);
+    } else if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, source, player)
+    {
+        // Airbend (Aang, Swift Savior, wave C9a): "While it is exiled, its
+        // owner may cast it for {2} rather than its mana cost." An alternative
+        // cost replaces the mana cost and cannot combine with another
+        // alternative cost (118.9a).
+        if matches!(
+            method,
+            CastMethodV4::Alternative
+                | CastMethodV4::Bestow
+                | CastMethodV4::Flashback
+                | CastMethodV4::Escape
+                | CastMethodV4::Madness
+                | CastMethodV4::Plotted
+        ) || (method == CastMethodV4::Omen
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name))
+        {
+            return None;
+        }
+        if let Some(first) = selected.costs.first_mut() {
+            *first = crate::eternal_cube_c9a_v1::AIRBEND_CAST_COST;
+        } else {
+            selected
+                .costs
+                .insert(0, crate::eternal_cube_c9a_v1::AIRBEND_CAST_COST);
+        }
     }
     if crate::eternal_premodern_p2b_v1::is_thornscape(definition)
         && state.engine.pending_cast.as_ref().is_some_and(|pending| {
@@ -1469,6 +1521,8 @@ fn selected_spell_quote_branch_grant_v1(
             && kicked
             && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0))
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, source, player))
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal
                 && (crate::eternal_cards_v1::e3::free_hand_cast_selected(

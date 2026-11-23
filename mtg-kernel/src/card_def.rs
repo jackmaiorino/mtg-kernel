@@ -2154,6 +2154,10 @@ impl Keywords {
     pub const SHROUD: Keywords = Keywords(1 << 18);
     /// Protection from every object (702.16j), not a color-quality shortcut.
     pub const PROTECTION_FROM_EVERYTHING: Keywords = Keywords(1 << 19);
+    /// Infect (702.90): deals damage to creatures as -1/-1 counters and to
+    /// players as poison counters. Appended for Vintage Cube wave C9a
+    /// (Blightsteel Colossus).
+    pub const INFECT: Keywords = Keywords(1 << 20);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0

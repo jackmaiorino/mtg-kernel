@@ -1438,6 +1438,7 @@ fn stack_target_contract_shape(
                 ) || filter.slot_kind(target_index) == Some(None)
                     || crate::eternal_cube_c1c_v1::targets::slot_takes_player(filter, target_index)
                     || crate::eternal_cube_c1b_v1::targets::slot_takes_player(filter, target_index)
+                    || crate::eternal_cube_c9a_v1::targets::slot_takes_player(filter, target_index)
             }
         };
         if !matches_kind {

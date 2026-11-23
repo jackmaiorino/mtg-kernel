@@ -38470,7 +38470,7 @@
   },
   {
    "name": "Aang, Swift Savior",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}{U}",
    "mana_value": 3,
    "colors": [
@@ -38497,12 +38497,22 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flash",
+    "flying",
+    "etb_trigger",
+    "airbend",
+    "waterbend",
+    "transform",
+    "double_faced_card",
+    "attack_trigger",
+    "plus_one_counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/a/AangSwiftSavior.java"
   },
   {
    "name": "Badgermole Cub",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [
@@ -38525,12 +38535,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "earthbend",
+    "animate_land",
+    "plus_one_counters",
+    "delayed_trigger",
+    "triggered_mana_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BadgermoleCub.java"
   },
   {
    "name": "Batroc the Leaper",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -38555,11 +38572,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "multikicker",
+    "enters_with_counters",
+    "etb_trigger",
+    "damage"
+   ]
   },
   {
    "name": "Blightsteel Colossus",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{12}",
    "mana_value": 12,
    "colors": [],
@@ -38581,12 +38603,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "trample",
+    "infect",
+    "indestructible",
+    "replacement_effect",
+    "shuffle_into_library"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BlightsteelColossus.java"
   },
   {
    "name": "Crabomination",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{4}{B}{B}",
    "mana_value": 6,
    "colors": [
@@ -38609,12 +38637,20 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "emerge",
+    "alternative_cost",
+    "sacrifice",
+    "etb_trigger",
+    "exile",
+    "random",
+    "cast_without_mana_cost"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/Crabomination.java"
   },
   {
    "name": "Fear of Missing Out",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -38637,7 +38673,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "discard",
+    "draw",
+    "delirium",
+    "attack_trigger",
+    "untap",
+    "extra_combat_phase"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FearOfMissingOut.java"
   },
   {

@@ -1708,6 +1708,8 @@ pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
     crate::eternal_e9b_v1::after_tapped_for_mana(state, land);
     // Eumidian Hatchery gets a hatchling counter (wave E9a).
     crate::eternal_legacy_e9a_v1::statics::after_tapped_for_mana(state, land);
+    // Badgermole Cub adds {G} when its controller taps a creature for mana (wave C9a).
+    crate::eternal_cube_c9a_v1::after_tapped_for_mana(state, land);
     // Nissa, Who Shakes the World adds an additional {G} for Forests (wave C9c).
     crate::eternal_cube_c9c_v1::after_tapped_for_mana(state, land);
     if state.objects.get(land).zone != Zone::Battlefield {

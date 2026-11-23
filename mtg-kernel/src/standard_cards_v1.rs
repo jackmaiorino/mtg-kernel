@@ -496,6 +496,8 @@ pub enum StandardTargetV1 {
     ControlledArtifactThenAnotherControlledArtifactOrCreatureV1,
     /// A filter of eternal wave C8c (`eternal_cube_c8c_v1::targets`).
     C8cV1(crate::eternal_cube_c8c_v1::targets::C8cTargetV1),
+    /// A filter of eternal wave C9a (`eternal_cube_c9a_v1::targets`).
+    C9aV1(crate::eternal_cube_c9a_v1::targets::C9aTargetV1),
     /// A filter of eternal wave C9c (`eternal_cube_c9c_v1::targets`).
     C9cV1(crate::eternal_cube_c9c_v1::targets::C9cTargetV1),
 }
@@ -573,6 +575,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_cube_c8c_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c9a_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_cube_c9c_v1::targets::counts(self) {
@@ -781,6 +786,7 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || crate::eternal_cube_c4c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c4a_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c8c_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c9a_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c9c_v1::targets::zone_allows(target, zone)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
         || (matches!(
@@ -1141,6 +1147,11 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) = crate::eternal_cube_c9a_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if let Some(targets) =
         crate::eternal_cube_c9c_v1::targets::legal_targets(target, controller, prefix, state)
     {
@@ -1493,6 +1504,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_cube_c9a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_cube_c9c_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1763,6 +1779,7 @@ pub(crate) fn target_matches(
         | StandardTargetV1::CardInOwnGraveyardV1
         | StandardTargetV1::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1
         | StandardTargetV1::C8cV1(_)
+        | StandardTargetV1::C9aV1(_)
         | StandardTargetV1::C9cV1(_) => false,
     }
 }

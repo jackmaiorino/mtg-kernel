@@ -6733,10 +6733,12 @@ fn activation_total_mana_cost_with_x(
     );
     #[cfg(not(feature = "eternal-fixtures"))]
     let tax = 0_u8;
-    // Invasion Submersible's four waterbend payments all cost the printed
-    // "Waterbend {3}" (wave S1q).
+    // Invasion Submersible's four waterbend payments (wave S1q) and Aang,
+    // Swift Savior's nine waterbend payments (wave C9a) all start from their
+    // printed waterbend cost.
     #[cfg(feature = "eternal-fixtures")]
-    let waterbend = crate::eternal_sideboard_s1q_v1::waterbend_printed(state, source, components);
+    let waterbend = crate::eternal_sideboard_s1q_v1::waterbend_printed(state, source, components)
+        .or_else(|| crate::eternal_cube_c9a_v1::waterbend_printed(state, source, components));
     #[cfg(feature = "eternal-fixtures")]
     let printed = waterbend.as_ref().or(printed);
     let mut total = match printed {
@@ -6756,11 +6758,13 @@ fn activation_total_mana_cost_with_x(
         crate::eternal_cube_c8c_v1::reduce_nonmana_activation(state, player, total, x_value);
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = x_value;
-    // Invasion Submersible's waterbend taps pay part of that total; the rest
-    // is this ability's mana (wave S1q).
+    // Invasion Submersible's (wave S1q) and Aang, Swift Savior's (wave C9a)
+    // waterbend taps pay part of that total; the rest is this ability's mana.
     #[cfg(feature = "eternal-fixtures")]
     let total =
         crate::eternal_sideboard_s1q_v1::waterbend_taps_paid(state, source, components, total);
+    #[cfg(feature = "eternal-fixtures")]
+    let total = crate::eternal_cube_c9a_v1::waterbend_taps_paid(state, source, components, total);
     Some(crate::standard_cards_v1::spend_as_any_color(
         state, player, source, total,
     ))
@@ -9337,11 +9341,17 @@ fn activation_controlled_cost_candidates(
             }
         })
         .collect::<Vec<_>>();
-    // Invasion Submersible's waterbend taps leave its mana part payable
-    // (wave S1q).
+    // Invasion Submersible's (wave S1q) and Aang, Swift Savior's (wave C9a)
+    // waterbend taps leave their mana part payable.
     #[cfg(feature = "eternal-fixtures")]
     if tap {
         crate::eternal_sideboard_s1q_v1::retain_payable_waterbend_taps(
+            state,
+            source,
+            already_chosen,
+            &mut candidates,
+        );
+        crate::eternal_cube_c9a_v1::retain_payable_waterbend_taps(
             state,
             source,
             already_chosen,
@@ -11505,6 +11515,12 @@ fn pending_cast_selected_mana_cost(
 ) -> Option<Cost> {
     if resolution_cast_v1::free_cast(state, pending.spell) {
         return pending.mode_chosen.map(|_| Cost::zero());
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, pending.spell, pending.controller) {
+        return pending
+            .mode_chosen
+            .map(|_| crate::eternal_cube_c9a_v1::AIRBEND_CAST_COST);
     }
     match pending.mode_chosen {
         Some(1) if supported_bestow(def).is_some() => supported_bestow(def).map(|b| {
@@ -17699,9 +17715,17 @@ pub(crate) fn validate_pending_cast(
     let replicate = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
         || announces_additional_cost_count(def);
     let kicker_x_active = kicker_has_x(def) && pending.kicked != Some(false);
+    let airbent_cast = cfg!(feature = "eternal-fixtures")
+        && pending.origin_zone == Zone::Exile
+        && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(
+            state,
+            pending.spell,
+            pending.controller,
+        );
     let expected_seed_x: Option<u8> = if !replicate
         && !kicker_x_active
         && (resolution_cast_v1::free_cast(state, pending.spell)
+            || airbent_cast
             || (def.cost.x_count == 0
                 && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
     {
@@ -17844,6 +17868,7 @@ pub(crate) fn validate_pending_cast(
     let has_cast_mode_choice = def.alt_cost.is_some()
         && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none()
         && !citadel_cast
+        && !airbent_cast
         && (!resolution_cast_v1::free_cast(state, pending.spell)
             || crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative)
                 .is_some());
@@ -18609,6 +18634,34 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 state,
                 &pending.sacrifice_chosen,
             );
+            #[cfg(feature = "eternal-fixtures")]
+            let candidates = if crate::eternal_cube_c9a_v1::is_emerge_artifact(def.name)
+                && pending.cast_mode == Some(CastMode::Alternative)
+                && pending.sacrifice_chosen.is_empty()
+            {
+                candidates
+                    .into_iter()
+                    .filter(|&candidate| {
+                        spell_costs_v1::selected_spell_quote_v1(
+                            def,
+                            pending.spell,
+                            pending.origin_zone,
+                            CastMethodV4::Alternative,
+                            pending.kicked == Some(true),
+                            pending.mode_chosen.unwrap_or(0),
+                            0,
+                            &pending.targets_chosen,
+                            &[candidate],
+                            pending.controller,
+                            state,
+                            &[],
+                        )
+                        .is_some()
+                    })
+                    .collect()
+            } else {
+                candidates
+            };
             let remaining = needed - pending.sacrifice_chosen.len() as u8;
             if candidates.len() < usize::from(remaining) {
                 let cast_method = finalized_cast_method(&pending, staged_method, def);
@@ -24562,6 +24615,12 @@ fn advance_step(state: &mut GameState) {
     // blockers survived into the second main phase and the next turn.
     if state.step == Step::EndCombat {
         state.engine.combat.reset_preserving_rules();
+        // Fear of Missing Out (Vintage Cube wave C9a): after this phase, there
+        // is an additional combat phase.
+        #[cfg(feature = "eternal-fixtures")]
+        if next == Step::Main2 && crate::eternal_cube_c9a_v1::take_extra_combat_phase(state) {
+            next = Step::BeginCombat;
+        }
     }
     // Stonehorn Dignitary: "target opponent skips their next combat phase."
     #[cfg(feature = "eternal-fixtures")]
@@ -24993,6 +25052,7 @@ fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
     {
         crate::eternal_cube_c5c_v1::begin_cleanup(state);
         crate::eternal_cube_c8b_v1::begin_cleanup(state);
+        crate::eternal_cube_c9a_v1::clear_extra_combat_phases(state);
         crate::eternal_cube_c9b_v1::begin_cleanup(state);
     }
     for player in &mut state.players {
@@ -25457,7 +25517,12 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
                     .is_some_and(|other| other > timestamp))
             // A Mycosynth Lattice with a later timestamp (wave S1f).
             || (card_type == CardType::Artifact
-                && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id));
+                && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id))
+            // A Badgermole Cub earthbend animation with a later timestamp (wave C9a).
+            || (cfg!(feature = "eternal-fixtures")
+                && card_type == CardType::Creature
+                && crate::eternal_cube_c9a_v1::earthbent_timestamp(state, id)
+                    .is_some_and(|other| other > timestamp));
     }
     // Mycosynth Lattice: "All permanents are artifacts in addition to their
     // other types", face-down permanents included, unless a later
@@ -25508,6 +25573,11 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if card_type == CardType::Creature
         && crate::eternal_premodern_p2c_v1::statics::is_life_land(state, id)
     {
+        return true;
+    }
+    // Badgermole Cub's earthbent lands (Vintage Cube wave C9a).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Creature && crate::eternal_cube_c9a_v1::is_earthbent(state, id) {
         return true;
     }
     // Nissa, Who Shakes the World's animated lands (Vintage Cube wave C9c).
@@ -26367,6 +26437,11 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if crate::eternal_sideboard_s1m_v1::granted_keywords(state, id).has(kw) {
         return true;
     }
+    // Badgermole Cub's earthbend haste (Vintage Cube wave C9a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cube_c9a_v1::granted_keywords(state, id).has(kw) {
+        return true;
+    }
     // Figure of Destiny flying/first strike and Hexdrinker LEVEL 8+
     // protection from everything (Vintage Cube wave C9b).
     #[cfg(feature = "eternal-fixtures")]
@@ -26673,6 +26748,7 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id)
             | crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id)
             | crate::eternal_sideboard_s1m_v1::granted_keywords(state, id)
+            | crate::eternal_cube_c9a_v1::granted_keywords(state, id)
             | crate::eternal_cube_c9b_v1::granted_keywords(state, id)
             | crate::eternal_cube_c9c_v1::granted_keywords(state, id);
         // Carnage Interpreter's menace and Keen-Eyed Curator's trample
@@ -29365,6 +29441,34 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                     state,
                     &pending.sacrifice_chosen,
                 );
+                #[cfg(feature = "eternal-fixtures")]
+                let candidates = if crate::eternal_cube_c9a_v1::is_emerge_artifact(def.name)
+                    && pending.cast_mode == Some(CastMode::Alternative)
+                    && pending.sacrifice_chosen.is_empty()
+                {
+                    candidates
+                        .into_iter()
+                        .filter(|&candidate| {
+                            spell_costs_v1::selected_spell_quote_v1(
+                                def,
+                                pending.spell,
+                                pending.origin_zone,
+                                CastMethodV4::Alternative,
+                                pending.kicked == Some(true),
+                                pending.mode_chosen.unwrap_or(0),
+                                0,
+                                &pending.targets_chosen,
+                                &[candidate],
+                                pending.controller,
+                                state,
+                                &[],
+                            )
+                            .is_some()
+                        })
+                        .collect()
+                } else {
+                    candidates
+                };
                 let remaining = needed - pending.sacrifice_chosen.len() as u8;
                 if candidates.len() < usize::from(remaining) {
                     return Err(
@@ -31143,7 +31247,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                 // Guardian Scalelord's Backup 1 grants an attack trigger.
                 || crate::eternal_cube_c7c_v1::observes_attacks(state)
                 // Emeritus of Abundance's intervening-if 8-land attack trigger.
-                || crate::eternal_cube_c8a_v1::observes_attacks(state)));
+                || crate::eternal_cube_c8a_v1::observes_attacks(state)
+                // Fear of Missing Out's first-attack-each-turn tracker.
+                || crate::eternal_cube_c9a_v1::observes_attacks(state)));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if cfg!(all(
@@ -31963,6 +32069,9 @@ fn materialize_begin_cast_with_quote_v1(
         && origin_zone == Zone::Library
         && crate::eternal_e5a_v1::permissions::library_top_cast(state, player, spell_id)
             == Some(true);
+    let airbent_cast = cfg!(feature = "eternal-fixtures")
+        && origin_zone == Zone::Exile
+        && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, spell_id, player);
     #[cfg(feature = "eternal-fixtures")]
     if origin_zone == Zone::Library {
         crate::eternal_e5a_v1::permissions::note_library_cast(state, player, spell_id);
@@ -32002,6 +32111,7 @@ fn materialize_begin_cast_with_quote_v1(
             None
         } else if (without_mana_cost && !free_room_door_choice)
             || citadel_cast
+            || airbent_cast
             || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
             || cast_method != CastMethodV4::Normal
             || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
@@ -32135,6 +32245,7 @@ fn materialize_begin_cast_with_quote_v1(
             && !kicker_has_x(def)
             && (without_mana_cost
                 || citadel_cast
+                || airbent_cast
                 || (def.cost.x_count == 0
                     && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
         {
