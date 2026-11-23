@@ -874,6 +874,10 @@ pub(crate) fn resolution_cast_card(
         E3ChoiceKindV1::C7aV1(_) => {
             return crate::eternal_cube_c7a_v1::resolution_cast_card(choice, selected);
         }
+        // Crabomination's free exile cast (Vintage Cube wave C9a).
+        E3ChoiceKindV1::C9aV1(_) => {
+            return crate::eternal_cube_c9a_v1::resolution_cast_card(choice, selected);
+        }
         _ => return None,
     }
     selected
@@ -901,6 +905,11 @@ pub(crate) fn validate_resolution_cast(
     }
     if let E3ChoiceKindV1::C7aV1(_) = choice.kind {
         return crate::eternal_cube_c7a_v1::validate_resolution_cast(
+            suspended, choice, selected, permission,
+        );
+    }
+    if let E3ChoiceKindV1::C9aV1(_) = choice.kind {
+        return crate::eternal_cube_c9a_v1::validate_resolution_cast(
             suspended, choice, selected, permission,
         );
     }

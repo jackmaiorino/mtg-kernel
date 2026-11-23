@@ -414,6 +414,15 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c8c_v1::C8cStateV1::is_empty"
     )]
     pub c8c: crate::eternal_cube_c8c_v1::C8cStateV1,
+    /// Vintage Cube wave C9a's state: Aang airbent exile permissions,
+    /// Badgermole Cub earthbend animations and delayed returns, Batroc
+    /// multikicker/LKI records, and Fear of Missing Out attack/extra-combat
+    /// state (`eternal_cube_c9a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c9a_v1::C9aStateV1::is_empty"
+    )]
+    pub c9a: crate::eternal_cube_c9a_v1::C9aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -2313,6 +2322,8 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_cube_c5a_v1::apply_entry(state, object, input);
     // Woodfall Primus's Persist -1/-1 entry counter (Vintage Cube wave C7c).
     crate::eternal_cube_c7c_v1::apply_entry_counters(state, object, input);
+    // Batroc the Leaper's multikicker +1/+1 entry counters (Vintage Cube wave C9a).
+    crate::eternal_cube_c9a_v1::apply_entry_counters(state, object, input);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -2580,6 +2591,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c7c_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c8a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c8c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c9a_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2749,6 +2761,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_cube_c7c_v1::begin_turn(state, player);
     crate::eternal_cube_c8a_v1::begin_turn(state, player);
     crate::eternal_cube_c8c_v1::begin_turn(state, player);
+    crate::eternal_cube_c9a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

@@ -27,7 +27,7 @@ use serde_json::Value;
 use super::mapping::{Emit, Mapping};
 
 /// Every keyword bit `card_def::Keywords` defines, in bit order.
-pub const KEYWORDS: [(&str, Keywords); 20] = [
+pub const KEYWORDS: [(&str, Keywords); 21] = [
     ("FLYING", Keywords::FLYING),
     ("REACH", Keywords::REACH),
     ("HASTE", Keywords::HASTE),
@@ -54,6 +54,7 @@ pub const KEYWORDS: [(&str, Keywords); 20] = [
         "PROTECTION_FROM_EVERYTHING",
         Keywords::PROTECTION_FROM_EVERYTHING,
     ),
+    ("INFECT", Keywords::INFECT),
 ];
 
 /// Leaf fields that hold object, player or history identities rather than

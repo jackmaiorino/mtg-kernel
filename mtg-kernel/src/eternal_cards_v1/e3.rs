@@ -339,6 +339,8 @@ pub enum E3ChoiceKindV1 {
     C8aV1(crate::eternal_cube_c8a_v1::C8aChoiceV1),
     /// A Vintage Cube wave C8c choice (`eternal_cube_c8c_v1`).
     C8cV1(crate::eternal_cube_c8c_v1::C8cChoiceV1),
+    /// A Vintage Cube wave C9a choice (`eternal_cube_c9a_v1`).
+    C9aV1(crate::eternal_cube_c9a_v1::C9aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -458,6 +460,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C8cV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C9aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -549,6 +554,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C7aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C8cV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C9aV1(kind) => kind.public_purpose(),
         }
     }
 
@@ -596,6 +602,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C7aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C8cV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C9aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -1031,6 +1038,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::C8cV1(kind) => crate::eternal_cube_c8c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C9aV1(kind) => crate::eternal_cube_c9a_v1::finish_selection(
             state,
             continuation,
             choice,
