@@ -8,7 +8,7 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
     CARD_DEFS,
 };
-use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
 use mtg_kernel::eternal_cards_v1::EternalStateV1;
 use mtg_kernel::eternal_cube_c8c_v1::C8cStateV1;
 use mtg_kernel::eternal_lurrus_v1::{add_companions, companion_condition_met};
@@ -1367,6 +1367,7 @@ fn zirda_companion_validation_and_special_action() {
         "Urza's Saga",
         "Sanctum Lurker",
         "Avatar of Burgeoning Echoes",
+        "Unholy Annex // Ritual Chamber",
         "Witch Enchanter",
         "Boggart Trawler",
         "Tamiyo, Inquisitive Student",
@@ -1542,6 +1543,30 @@ fn zirda_reduces_nonmana_activated_abilities_across_zones_and_skips_mana_abiliti
     assert!(activatable(&mut state, fireball, 0));
     act(&mut state, Action::ActivateAbility(fireball, 0));
     assert_eq!(zone(&state, fireball), Zone::Exile);
+
+    // 8. Room door-unlocking special actions (CR 709.5e / 116.2k) are NOT
+    //    activated abilities and must NOT be reduced by Zirda.
+    let mut state = plains();
+    put(&mut state, P0, "Zirda, the Dawnwaker", Zone::Battlefield);
+    let room = put(&mut state, P0, "Unholy Annex // Ritual Chamber", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    act(&mut state, Action::CastSpell(room));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Normal),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, room), Zone::Battlefield);
+    // Unlocking Ritual Chamber costs {3}{B}{B}, never reduced to {1}{B}{B}.
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 1);
+    assert!(
+        !activatable(&mut state, room, 1),
+        "Zirda must NOT reduce Room door-unlocking special actions"
+    );
+    pool(&mut state, P0, &[], 2);
+    assert!(activatable(&mut state, room, 1));
+    act(&mut state, Action::ActivateAbility(room, 1));
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+    assert_eq!(mana(&state, P0, ManaColor::B), 0);
 }
 
 #[test]
@@ -1806,6 +1831,49 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
     )
     .expect("Absorbing Man copying Volcanic Island taps for {U}");
     assert_eq!(mana(&state, P0, ManaColor::U), 1);
+
+    // 4. Stacked Absorbing Man -> Thespian's Stage -> Volcanic Island unwinds
+    //    e7a before c8c on departure so the physical card arrives as Absorbing Man.
+    let mut state = plains();
+    let ab_man = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    let stage = put(&mut state, P0, "Thespian's Stage", Zone::Battlefield);
+    let volc = put(&mut state, P0, "Volcanic Island", Zone::Battlefield);
+    let turn_start = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > turn_start
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(stage)) =>
+            {
+                Some(Action::ChooseTarget(Target::Object(stage)))
+            }
+            _ => None,
+        },
+    );
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, ab_man, 0, &[Target::Object(volc)]);
+    settled(&mut state);
+    assert_eq!(
+        CARD_DEFS[usize::from(state.objects.get(ab_man).card_def)].name,
+        "Volcanic Island"
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(ab_man, Zone::Graveyard),
+    );
+    assert_eq!(zone(&state, ab_man), Zone::Graveyard);
+    assert_eq!(
+        CARD_DEFS[usize::from(state.objects.get(ab_man).card_def)].name,
+        "Absorbing Man",
+        "stacked e7a copy on top of Absorbing Man must unwind to physical Absorbing Man"
+    );
 }
 
 // ---- Public Sessions -----------------------------------------------------------

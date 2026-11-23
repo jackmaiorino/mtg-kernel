@@ -322,8 +322,52 @@ pub(super) fn permissions(
     }
     out
 }
-pub(crate) fn allowed(state: &GameState, card: ObjectId, player: PlayerId) -> bool {
+pub(super) fn allowed(state: &GameState, card: ObjectId, player: PlayerId) -> bool {
     !permissions(state, card, player).is_empty()
+}
+/// Whether Muldrotha currently authorizes casting `card` via `method` (either
+/// while quoting in the graveyard or while finalizing a Muldrotha-routed spell
+/// already on the stack).
+pub(crate) fn allows_cast_method(
+    state: &GameState,
+    card: ObjectId,
+    player: PlayerId,
+    method: CastMethodV4,
+) -> bool {
+    let Some(live) = state.objects.try_get(card) else {
+        return false;
+    };
+    match live.zone {
+        Zone::Graveyard => permissions(state, card, player)
+            .into_iter()
+            .any(|permission| {
+                card_def::CARD_DEFS
+                    .get(live.card_def as usize)
+                    .is_some_and(|def| form_matches(def, permission, method))
+            }),
+        Zone::Stack => {
+            state.engine.pending_cast.as_ref().is_some_and(|pending| {
+                pending.spell == card
+                    && pending.controller == player
+                    && route_index(pending.source_contract).is_some()
+                    && validate_contract(state, pending.source_contract).is_ok()
+                    && form_allowed(state, pending, method)
+            }) || state.stack.iter().any(|item| {
+                item.source == card
+                    && item.controller == player
+                    && item.v4.source_contract.is_some_and(|contract| {
+                        route_index(contract).is_some()
+                            && validate_contract(state, contract).is_ok()
+                            && selected_permission(state, contract).is_ok_and(|permission| {
+                                card_def::CARD_DEFS
+                                    .get(contract.card_def as usize)
+                                    .is_some_and(|def| form_matches(def, permission, method))
+                            })
+                    })
+            })
+        }
+        _ => false,
+    }
 }
 fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
     let Some(CommittedEvent::MuldrothaOptionsV1 { options }) = usize::try_from(index)

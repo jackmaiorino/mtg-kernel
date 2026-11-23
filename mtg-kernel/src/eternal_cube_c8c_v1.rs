@@ -829,13 +829,21 @@ fn permanent_has_activated_ability(card: &CardDef) -> bool {
         return false;
     }
     // Outside the battlefield, a double-faced card has only its front face's
-    // characteristics (CR 712.8a). Companion and Foretell special-action slots
-    // use `EffectOp::Sequence(Vec::new())` and are not activated abilities.
-    if card.activated_abilities.iter().any(|ability| {
-        ability.face.is_none_or(|face| face == 0)
-            && ability.activation_zone != Zone::Exile
-            && (ability.effect)() != EffectOp::Sequence(Vec::new())
-    }) {
+    // characteristics (CR 712.8a). Companion, Foretell, and Room unlock
+    // special-action slots are not activated abilities.
+    if card
+        .activated_abilities
+        .iter()
+        .enumerate()
+        .any(|(idx, ability)| {
+            let is_room_unlock = u8::try_from(idx)
+                .is_ok_and(|index| crate::standard_cards_v1::is_special_action(card, index));
+            !is_room_unlock
+                && ability.face.is_none_or(|face| face == 0)
+                && ability.activation_zone != Zone::Exile
+                && (ability.effect)() != EffectOp::Sequence(Vec::new())
+        })
+    {
         return true;
     }
     let back_face_mana_only = matches!(
@@ -899,7 +907,8 @@ fn is_special_or_mana_activation(
             };
             ability.activation_zone == live.zone
                 && ability.cost == components
-                && (crate::eternal_pauper_e6a_v1::is_foretell_action(state, source, index)
+                && (crate::standard_cards_v1::is_special_action(def, index)
+                    || crate::eternal_pauper_e6a_v1::is_foretell_action(state, source, index)
                     || crate::eternal_legacy_e7a_v1::is_special_activation(state, source, index)
                     || crate::eternal_legacy_e8a_v1::statics::is_special_activation(
                         state, source, index,
