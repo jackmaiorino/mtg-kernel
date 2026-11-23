@@ -5103,15 +5103,30 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::Generic => {
-                    crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(
-                        state,
-                        &continuation,
-                        option_index,
-                    )?;
+                    let pending = continuation.clone();
+                    if let Err(err) =
+                        crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(
+                            state,
+                            &pending,
+                            option_index,
+                        )
+                    {
+                        if let Some(continuation) = state.engine.pending_effect.as_mut() {
+                            continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                                player,
+                                path,
+                                options,
+                                purpose,
+                            });
+                        }
+                        return Err(err);
+                    }
                     path.push(option_index);
-                    continuation
-                        .frames
-                        .push(EffectFrame::Program { op: selected, path });
+                    if let Some(continuation) = state.engine.pending_effect.as_mut() {
+                        continuation
+                            .frames
+                            .push(EffectFrame::Program { op: selected, path });
+                    }
                 }
                 EffectOptionChoicePurpose::StandardManaCombinationV1 {
                     player: mana_player,
