@@ -475,19 +475,6 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
     )]
     pub max_prepared_tensor_mebibytes: usize,
-    /// Config-driven bound (MiB) on the record bytes of one prepared update's
-    /// trajectory batch (decompressed for sealed files), checked at
-    /// collection validation and in the update; default 512 keeps every
-    /// existing config byte-identical on the wire and every bound unchanged.
-    /// Raising it admits updates of more than about 190 games of 2.7 MiB.
-    /// It changes no state: an update either fits or is refused. Recorded in
-    /// run.json when non-default. Prepared updates only. See
-    /// `ordered_update_preparation`.
-    #[serde(
-        default = "default_max_trajectory_batch_mebibytes",
-        skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
-    )]
-    pub max_trajectory_batch_mebibytes: usize,
     /// Learner collection sampler (g115 line (b)); the legacy default is
     /// omitted, so every existing config and run identity is unchanged.
     #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
@@ -526,6 +513,21 @@ pub struct NativeExpandedTrainingRunV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_ledger: Option<ChainLedgerOptionsV1>,
     pub output_directory: PathBuf,
+    // Last on purpose: serde also decodes a struct from a positional array, and a
+    // trailing defaulted field keeps every earlier positional config valid.
+    /// Config-driven bound (MiB) on the record bytes of one prepared update's
+    /// trajectory batch (decompressed for sealed files), checked at
+    /// collection validation and in the update; default 512 keeps every
+    /// existing config byte-identical on the wire and every bound unchanged.
+    /// Raising it admits updates of more than about 190 games of 2.7 MiB.
+    /// It changes no state: an update either fits or is refused. Recorded in
+    /// run.json when non-default. Prepared updates only. See
+    /// `ordered_update_preparation`.
+    #[serde(
+        default = "default_max_trajectory_batch_mebibytes",
+        skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+    )]
+    pub max_trajectory_batch_mebibytes: usize,
 }
 
 fn is_zero_non_natural_fraction(value: &f32) -> bool {
