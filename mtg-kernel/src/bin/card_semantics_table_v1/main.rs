@@ -1038,11 +1038,15 @@ mod tests {
         ] {
             match parse_args(&argv) {
                 Ok(cli) => {
-                    assert!(cfg!(feature = "eternal-fixtures"), "{argv:?}");
+                    if !cfg!(feature = "eternal-fixtures") {
+                        panic!("the default build accepted {argv:?}");
+                    }
                     assert!(cli.cube && cli.mode == mode, "{argv:?}");
                 }
                 Err(error) => {
-                    assert!(!cfg!(feature = "eternal-fixtures"), "{argv:?}: {error}");
+                    if cfg!(feature = "eternal-fixtures") {
+                        panic!("the eternal build refused {argv:?}: {error}");
+                    }
                     assert_eq!(error, CUBE_FEATURE_ERR);
                 }
             }
