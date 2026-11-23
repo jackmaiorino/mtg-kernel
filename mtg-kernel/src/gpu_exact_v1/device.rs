@@ -121,6 +121,9 @@ pub(crate) struct ExactDeviceV1 {
     pub(crate) net8_param_grad: CudaFunction,
     pub(crate) net8_embedding_grad: CudaFunction,
     tanh_proof: CudaFunction,
+    tanh_portable_proof: CudaFunction,
+    pub(crate) libm_tanh_proved: bool,
+    pub(crate) portable_tanh_proved: bool,
     #[cfg_attr(
         not(any(test, feature = "gpu-exact-fault-injection-v1")),
         allow(dead_code)
@@ -292,6 +295,9 @@ impl ExactDeviceV1 {
             net8_param_grad: load("mtg_net8_param_grad")?,
             net8_embedding_grad: load("mtg_net8_embedding_grad")?,
             tanh_proof: load("mtg_tanh_proof")?,
+            tanh_portable_proof: load("mtg_tanh_portable_proof")?,
+            libm_tanh_proved: false,
+            portable_tanh_proved: false,
             fault_trap: load("mtg_fault_trap")?,
             s_kernels: std::sync::OnceLock::new(),
             identity,
@@ -299,10 +305,18 @@ impl ExactDeviceV1 {
             ctx,
         };
         let mut device = device;
-        device.identity.host_tanhf_identity =
-            crate::vector_tanh_v1::host_tanhf_identity_v1().unwrap_or_default();
-        device.identity.tanh_proof_key = device.tanh_proof_key_v1()?;
-        device.ensure_tanh_proved_v1()?;
+        // Always prove the portable deterministic tanh (no host libm needed).
+        device.ensure_portable_tanh_proved_v1()?;
+        device.portable_tanh_proved = true;
+        // Prove platform libm tanhf when this host provides the UCRT FMA3 identity;
+        // otherwise keep `libm_tanh_proved = false` so portable-math and S-learner
+        // GPU paths still work while platform-libm Net-8 fails closed.
+        if let Some(host) = crate::vector_tanh_v1::host_tanhf_identity_v1() {
+            device.identity.host_tanhf_identity = host;
+            device.identity.tanh_proof_key = device.tanh_proof_key_v1()?;
+            device.ensure_tanh_proved_v1()?;
+            device.libm_tanh_proved = true;
+        }
         Ok(device)
     }
 
@@ -369,6 +383,103 @@ impl ExactDeviceV1 {
             write_atomically(&path, key.as_bytes());
         }
         Ok(())
+    }
+
+    fn portable_tanh_proof_key_v1(&self) -> String {
+        let id = &self.identity;
+        let mut h = Sha256::new();
+        h.update(b"tanh-portable-proof-v1");
+        h.update(id.program_sha256.as_bytes());
+        h.update(id.name.as_bytes());
+        h.update(format!(
+            "{:?}{:?}{}",
+            id.compute_capability, id.nvrtc_version, id.driver_version
+        ));
+        hex(&h.finalize())
+    }
+
+    fn ensure_portable_tanh_proved_v1(&self) -> Result<(), String> {
+        let key = self.portable_tanh_proof_key_v1();
+        let record = record_dir().map(|dir| {
+            dir.join("tanh-proof")
+                .join(format!("portable-{key}.proved"))
+        });
+        if let Some(path) = &record {
+            if std::fs::read_to_string(path).is_ok_and(|s| s.trim() == key) {
+                return Ok(());
+            }
+        }
+        if let Some(first) = self.portable_tanh_mismatch_v1()? {
+            return Err(format!(
+                "GPU portable tanh differs from deterministic_math_v1::tanh_f32_v1 at input bits {first:#010x}"
+            ));
+        }
+        if let Some(path) = record {
+            write_atomically(&path, key.as_bytes());
+        }
+        Ok(())
+    }
+
+    /// Evaluates `mtg_tanh_portable` on all 2^32 f32 inputs (including NaNs,
+    /// subnormals, signed zero, infinities, and seams) and compares every bit
+    /// against `deterministic_math_v1::tanh_f32_in_place_v1`.
+    pub(crate) fn portable_tanh_mismatch_v1(&self) -> Result<Option<u32>, String> {
+        const CHUNK: u32 = 1 << 24;
+        let mut device_out = self
+            .stream
+            .alloc_zeros::<u32>(CHUNK as usize)
+            .map_err(|e| format!("alloc: {e:?}"))?;
+        let mut gpu = vec![0u32; CHUNK as usize];
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+        let mut first = 0u32;
+        loop {
+            let mut launch = self.stream.launch_builder(&self.tanh_portable_proof);
+            launch.arg(&first).arg(&CHUNK).arg(&mut device_out);
+            let config = LaunchConfig {
+                grid_dim: (1024, 1, 1),
+                block_dim: (256, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            // SAFETY: the kernel writes CHUNK u32 values into a CHUNK buffer.
+            unsafe { launch.launch(config) }
+                .map_err(|e| format!("portable tanh proof launch: {e:?}"))?;
+            self.stream
+                .memcpy_dtoh(&device_out, &mut gpu)
+                .map_err(|e| format!("portable tanh proof download: {e:?}"))?;
+            let span = (CHUNK as usize).div_ceil(threads);
+            let mismatch = std::thread::scope(|s| {
+                let workers: Vec<_> = gpu
+                    .chunks(span)
+                    .enumerate()
+                    .map(|(t, part)| {
+                        s.spawn(move || {
+                            let base = first + (t * span) as u32;
+                            let mut host: Vec<f32> = (0..part.len())
+                                .map(|i| f32::from_bits(base + i as u32))
+                                .collect();
+                            crate::deterministic_math_v1::tanh_f32_in_place_v1(&mut host);
+                            part.iter()
+                                .zip(&host)
+                                .enumerate()
+                                .find_map(|(i, (&g, &c))| {
+                                    (g != c.to_bits()).then_some(base + i as u32)
+                                })
+                        })
+                    })
+                    .collect();
+                workers
+                    .into_iter()
+                    .filter_map(|w| w.join().expect("proof worker"))
+                    .min()
+            });
+            if mismatch.is_some() {
+                return Ok(mismatch);
+            }
+            match first.checked_add(CHUNK) {
+                Some(next) => first = next,
+                None => return Ok(None),
+            }
+        }
     }
 
     /// Evaluates the kernel's tanh on all 2^32 inputs and compares each with
