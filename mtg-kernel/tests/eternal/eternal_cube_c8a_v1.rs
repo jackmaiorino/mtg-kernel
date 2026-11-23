@@ -1503,16 +1503,14 @@ fn jennifer_walters_modal_back_face_cast_and_lurrus_restriction() {
     assert_eq!(state.objects.get(jw).v4.face_index, 0);
     assert_eq!(power_toughness(&state, jw), (2, 3));
 
-    // Muldrotha, the Gravetide (unrestricted MV) allows casting the 6-mana modal
-    // back face (The Sensational She-Hulk) from the graveyard end to end.
+    // Yawgmoth's Will (unrestricted MV graveyard permission) allows casting the
+    // 6-mana modal back face (The Sensational She-Hulk) from the graveyard end to end.
     let mut state = plains();
-    put(
-        &mut state,
-        P0,
-        "Muldrotha, the Gravetide",
-        Zone::Battlefield,
-    );
+    let will = put(&mut state, P0, "Yawgmoth's Will", Zone::Hand);
     let jw = put(&mut state, P0, "Jennifer Walters", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    cast(&mut state, will, &[]);
+    settled(&mut state);
     pool(
         &mut state,
         P0,
@@ -1523,11 +1521,10 @@ fn jennifer_walters_modal_back_face_cast_and_lurrus_restriction() {
     act(&mut state, Action::CastSpell(jw));
     let mut chose_mode = false;
     settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
         Decision::ChooseCastMode { options, .. } => {
             assert!(
                 options.contains(&CastMode::Alternative),
-                "Muldrotha must allow Alternative cast mode for She-Hulk on stack"
+                "Yawgmoth's Will must allow Alternative cast mode for She-Hulk on stack"
             );
             chose_mode = true;
             Action::ChooseCastMode(CastMode::Alternative)
