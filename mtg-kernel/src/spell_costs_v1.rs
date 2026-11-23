@@ -1918,6 +1918,10 @@ pub(super) fn prepare_final_spell_payment_v1(
     }
     let optional_kind = if pending.optional_additional_cost_paid == Some(true) {
         Some(definition.optional_additional_cost?)
+    } else if let Some(minimum_mana_value) =
+        super::pending_collect_evidence_minimum(definition, pending)
+    {
+        Some(super::OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value })
     } else {
         None
     };

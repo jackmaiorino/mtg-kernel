@@ -388,6 +388,14 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c7c_v1::C7cStateV1::is_empty"
     )]
     pub c7c: crate::eternal_cube_c7c_v1::C7cStateV1,
+    /// Vintage Cube wave C8b's state: Phantasmal Image and Superior Spider-Man
+    /// entry copies, copiable modifications, Saheeli temporary copies, and
+    /// Vaultborn Tyrant death-copy LKI (`eternal_cube_c8b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c8b_v1::C8bStateV1::is_empty"
+    )]
+    pub c8b: crate::eternal_cube_c8b_v1::C8bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -475,6 +483,8 @@ pub enum EternalTriggerV1 {
     C6aV1(crate::eternal_cube_c6a_v1::C6aTriggerV1),
     /// Vintage Cube wave C7c's per-color cast mana and Persist conditions.
     C7cV1(crate::eternal_cube_c7c_v1::C7cTriggerV1),
+    /// Vintage Cube wave C8b's Vaultborn Tyrant entry condition.
+    C8bV1(crate::eternal_cube_c8b_v1::C8bTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -816,6 +826,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 }
                 EternalTriggerV1::C7cV1(condition) => {
                     crate::eternal_cube_c7c_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::C8bV1(condition) => {
+                    crate::eternal_cube_c8b_v1::arrival_condition(condition)
                 }
                 _ => false,
             },
@@ -2838,6 +2851,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::C6aV1(condition) => {
             crate::eternal_cube_c6a_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::C8bV1(condition) => {
+            crate::eternal_cube_c8b_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {

@@ -6123,7 +6123,9 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield
                     && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
                         || crate::eternal_vintage_v1::active_copy(state, z.object)
-                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object))
+                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c8b_v1::active_copy(state, z.object)))
                 {
                     let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                         source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -6218,8 +6220,10 @@ fn materialize_event_v1(
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6258,8 +6262,10 @@ fn materialize_event_v1(
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6583,6 +6589,8 @@ fn materialize_event_v1(
                     state.engine.combat.attackers.push(object);
                 }
             }
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8b_v1::apply_pending_token_mods(state, object);
             initialize_entry_counters(state, object, false, counter_input.as_ref());
             if season_entry_active {
                 crate::standard_cards_v1::initialize_entry_counters(
@@ -8825,8 +8833,10 @@ fn materialize_zone_change_v1(
                         return;
                     }
                 }
-            } else {
+            } else if count > 0 {
                 count
+            } else {
+                state.objects.get(id).counters.plus1_plus1
             };
             state.objects.get_mut(id).counters.plus1_plus1 = total;
         }

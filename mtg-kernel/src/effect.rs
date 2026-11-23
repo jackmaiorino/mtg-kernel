@@ -25301,7 +25301,9 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             }
-            if crate::doubling_season_v48::requires_successor(state) {
+            if crate::doubling_season_v48::requires_successor(state)
+                || cfg!(feature = "eternal-fixtures")
+            {
                 let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
                 if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
                     change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {

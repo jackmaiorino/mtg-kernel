@@ -5085,7 +5085,7 @@ fn bestow_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => build_eternal_c8b_v1::bestow_for(name),
     }
 }
 

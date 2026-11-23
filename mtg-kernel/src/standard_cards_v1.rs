@@ -488,6 +488,10 @@ pub enum StandardTargetV1 {
     /// Guardian Scalelord: a nonland permanent card in your graveyard with
     /// mana value at most the attacking creature's power.
     NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1,
+    /// Saheeli, Sublime Artificer (-2): target artifact you control, then
+    /// another target artifact or creature you control. Appended for Vintage
+    /// Cube wave C8b.
+    ControlledArtifactThenAnotherControlledArtifactOrCreatureV1,
 }
 
 impl StandardTargetV1 {
@@ -606,6 +610,7 @@ impl StandardTargetV1 {
             }
             Self::UpToOneCreatureCardInOwnGraveyardV1 => (1, 0),
             Self::UpToTwoLandsV1 => (2, 0),
+            Self::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => (2, 2),
             _ => (1, 1),
         }
     }
@@ -1111,6 +1116,11 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_cube_c8b_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1447,6 +1457,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c8b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1704,6 +1719,7 @@ pub(crate) fn target_matches(
             live.controller == controller.opponent() && has(CardType::Planeswalker)
         }
         StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => false,
+        StandardTargetV1::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => false,
     }
 }
 

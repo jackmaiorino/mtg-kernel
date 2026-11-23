@@ -264,7 +264,8 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         | S::ControlledArtifactOrCreatureThenOpponentSmallCreatureV1 => IndependentSlots,
         S::ArtifactThenArtifactCardInItsControllersGraveyardV1
         | S::OpponentThenUpToOneTheirCreatureV1
-        | S::ControlledCreatureThenUpToOneOpponentCreatureV1 => DependentSlots,
+        | S::ControlledCreatureThenUpToOneOpponentCreatureV1
+        | S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => DependentSlots,
         S::CreatureThenGraveyardCardsV1 => LeadingPermanentSlot,
         S::PlayerThenPlayerV1
         | S::PlayerThenGraveyardCardsV1
