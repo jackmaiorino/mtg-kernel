@@ -915,7 +915,7 @@ pub(crate) fn quote_allowed(
         live.owner,
         zone_change_count,
     ) || crate::eternal_e5a_v1::permissions::will_permission(state, source, live.owner)
-        || crate::muldrotha_v1::allowed(state, source, live.owner)
+        || crate::engine::muldrotha_v1::allows_cast_method(state, source, live.owner, method)
 }
 
 // ---- Execution ----------------------------------------------------------------------
@@ -987,12 +987,13 @@ pub(crate) fn execute(op: &C8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 state,
                 ProposedEvent::zone_change(contract.source, Zone::Exile),
             );
-            // CR 712.14a: check the exiled card's own physical back face AFTER
-            // the zone change has unwound any copy effect so a single-faced
-            // clone stays in exile instead of returning face_index = 1.
-            let has_back_face = CARD_DEFS[usize::from(state.objects.get(contract.source).card_def)]
-                .transform_face
-                .is_some();
+            // CR 712.14a: check the exiled card's own physical transforming back
+            // face AFTER the zone change has unwound any copy effect so a
+            // single-faced clone or modal double-faced card stays in exile.
+            let exiled_def = &CARD_DEFS[usize::from(state.objects.get(contract.source).card_def)];
+            let has_back_face = exiled_def.transform_face.is_some()
+                && !crate::eternal_cards_v1::e3::has_land_back_face(exiled_def.name)
+                && exiled_def.name != JENNIFER_WALTERS;
             if !is_token && has_back_face && state.objects.get(contract.source).zone == Zone::Exile
             {
                 event::propose_and_commit(

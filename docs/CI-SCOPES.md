@@ -13,7 +13,7 @@ A ready pull request whose files all map to one scope runs only that scope's che
 | `.github/workflows/ci.yml`, `.github/actions/*`, `tools/ci/*` | pr |
 | `tools/w5/*`, `.github/workflows/w5-tools.yml` | w5-tools |
 | `.github/workflows/*` | workflow |
-| `tools/checkpoint_codec_bench/*`, `tools/native_fixture_bench/*`, `tools/sd1/*`, `tools/search_experiment/*`, `tools/stage4a/*`, `tools/t1_diagnosis/*` | tools |
+| `tools/checkpoint_codec_bench/*`, `tools/cube_v1/*`, `tools/native_fixture_bench/*`, `tools/sd1/*`, `tools/search_experiment/*`, `tools/stage4a/*`, `tools/t1_diagnosis/*` | tools |
 | `tools/*` | python |
 | `mtg-kernel/src/*mulligan*`, `mtg-kernel/src/*action_windows*`, `mtg-kernel/src/policy_observation_*`, `mtg-kernel/src/native_flat_tensorizer_*`, `mtg-kernel/src/native_policy_value_net_v1*`, `mtg-kernel/src/fast_sampler.rs`, `mtg-kernel/src/unclamped_softmax_sampler_v1.rs`, `mtg-kernel/src/sideboard_play_policy_v1*`, `mtg-kernel/src/rl_session.rs`, `mtg-kernel/src/rl_session/*`, `mtg-kernel/src/expanded_deck_training_v1.rs`, `mtg-kernel/src/expanded_deck_training_v1/*`, `mtg-kernel/src/native_policy_train_step_v1.rs`, `mtg-kernel/src/native_policy_train_step_v1/*` | shared |
 | `mtg-kernel/src/native_expanded_training_run_v1.rs`, `mtg-kernel/src/native_expanded_training_run_v1/*`, `mtg-kernel/src/bin/native_expanded_training_run_v1.rs` | trainer |

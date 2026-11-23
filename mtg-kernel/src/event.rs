@@ -6360,18 +6360,21 @@ fn materialize_event_v1(
                     state.engine.event_log.push(marker.clone());
                     state.engine.event_history.push(marker);
                 }
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, true);
+                }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
-                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
-                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
-                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, true);
                     crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
-                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
                         state, z.object,
                     );
@@ -6408,18 +6411,21 @@ fn materialize_event_v1(
                 crate::standard_keywords_v1::record_descended_zone_change_v1(
                     state, z.object, z.to_zone,
                 );
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, false);
+                }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
-                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
-                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
-                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, false);
                     crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
-                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
                         state, z.object,
                     );
