@@ -287,11 +287,13 @@ pub(crate) fn strict_registry_document(bytes: &[u8]) -> Result<Value, String> {
 }
 
 pub(crate) fn registry_cards(bytes: &[u8]) -> Result<Vec<Value>, String> {
-    require(
-        bytes.len() <= MAX_INPUT_BYTES,
-        "registry input exceeds size bound",
-    )?;
-    let value = strict_registry_json::read(bytes)?;
+    registry_document_cards(&strict_registry_document(bytes)?)
+}
+
+/// The cards of a registry document [`strict_registry_document`] read, with
+/// the checks [`registry_cards`] applies (non-empty, within the card id
+/// space, unique trimmed names).
+pub(crate) fn registry_document_cards(value: &Value) -> Result<Vec<Value>, String> {
     let cards = value
         .get("cards")
         .and_then(Value::as_array)

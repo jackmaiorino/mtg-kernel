@@ -7,12 +7,15 @@ use super::*;
 use crate::expanded_deck_training_v1::archive_distillation_v1::{
     ArchiveDistillationArmV1, ArchiveDistillationProvenanceV1,
 };
+use crate::expanded_deck_training_v1::registry_transfer_source::ExpandedRegistryContinuationV1;
 use crate::expanded_deck_training_v1::tests::checkpoint_fixture_v1;
 use crate::native_flat_tensorizer_v7::{FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7};
 use crate::native_flat_tensorizer_v8::{FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8};
+use crate::phase1_registry_transfer_v1::{registry_cards, RegistryTransferScalarsV1};
 use crate::sideboard_play_policy_v1::{
-    FreshPlayPolicyIdentityV1, TransferredFreshPlayPolicyIdentityV1,
-    FRESH_PLAY_INITIALIZATION_SCHEMA_V1, TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
+    FreshFeatureIdentityV1, FreshPlayPolicyIdentityV1, TransferredFreshPlayPolicyIdentityV1,
+    FRESH_FEATURE_IDENTITY_V3, FRESH_FEATURE_IDENTITY_V4, FRESH_PLAY_INITIALIZATION_SCHEMA_V1,
+    TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
 };
 
 const OLD_CARD_DB_HASH: &str = "0123456789abcdef";
@@ -83,12 +86,14 @@ fn imported_origin(
     identity.into()
 }
 
-/// A fresh initialization identity that passes the origin's own metadata
-/// validation, bound to the given card database, first file and count.
+/// A fresh initialization identity of the feature generation `features`
+/// that passes the origin's own metadata validation, bound to the given card
+/// database, first file and count.
 fn fresh_identity(
     card_db_hash: &str,
     first_segment: &[u8],
     card_count: usize,
+    features: FreshFeatureIdentityV1,
 ) -> FreshPlayPolicyIdentityV1 {
     FreshPlayPolicyIdentityV1 {
         schema: FRESH_PLAY_INITIALIZATION_SCHEMA_V1.into(),
@@ -105,10 +110,10 @@ fn fresh_identity(
         destination_registry_sha256: sha(first_segment),
         destination_card_db_hash: card_db_hash.into(),
         destination_card_count: card_count,
-        feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
-        feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
-        features_source_sha256: "e".repeat(64),
-        feature_descriptor_sha256: "f".repeat(64),
+        feature_contract_digest: features.feature_contract_digest.into(),
+        feature_encoding_digest: features.feature_encoding_digest.into(),
+        features_source_sha256: features.features_source_sha256.into(),
+        feature_descriptor_sha256: features.feature_descriptor_sha256.into(),
         sampler_identity: crate::fast_sampler::WIDE_CATEGORICAL_SAMPLER_VERSION_V1.into(),
     }
 }
@@ -176,6 +181,30 @@ fn pre_wave(
     saved
 }
 
+/// The fresh origin of the feature generation `features` as the source
+/// build of the standard wave stamps it: its card database, first file and
+/// whole card count.
+fn fresh_origin(features: FreshFeatureIdentityV1) -> PlayPolicyOriginV1 {
+    let source = wave_registries().0;
+    PlayPolicyOriginV1::FreshInitialization(fresh_identity(
+        OLD_CARD_DB_HASH,
+        &source[0],
+        3,
+        features,
+    ))
+}
+
+/// `saved` (of a V4-generation feature contract: V4, FlatV7 or FlatV8) as
+/// the fresh lineage writes it before the standard wave: the fresh checkpoint
+/// schema and a fresh origin of the V4 generation, which FlatV7 and FlatV8
+/// keep from the V4 policy they convert.
+fn fresh_v4_pre_wave(mut saved: ExpandedCheckpointV1) -> ExpandedCheckpointV1 {
+    saved.schema = FRESH_CHECKPOINT_SCHEMA.into();
+    let mut saved = pre_wave(saved, &wave_registries().0, 3);
+    saved.source_import = fresh_origin(FRESH_FEATURE_IDENTITY_V4);
+    saved
+}
+
 /// The trainer's fixture (V3, terminal loss, net-8) before the standard wave.
 fn learned_checkpoint() -> ExpandedCheckpointV1 {
     let (_, _, saved) = checkpoint_fixture_v1();
@@ -200,7 +229,7 @@ fn flat_v8_checkpoint() -> ExpandedCheckpointV1 {
     saved.scorer_bias_anchor_bits = snapshot.scorer_bias_anchor_bits;
     saved.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V8.into();
     saved.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V8.into();
-    pre_wave(saved, &wave_registries().0, 3)
+    fresh_v4_pre_wave(saved)
 }
 
 /// Sets the state-digest input columns of the state encoder's weight and
@@ -614,6 +643,9 @@ fn card_wave_refuses_the_same_registry_and_a_second_transfer() {
     assert!(error.contains("no card is appended"), "{error}");
 }
 
+/// An edit of a transfer request, and the refusal it must meet.
+type RequestEditV1 = (fn(&mut CardWaveTransferRequestV1), &'static str);
+
 #[test]
 fn card_wave_refuses_every_request_pin_mismatch() {
     let saved = learned_checkpoint();
@@ -623,7 +655,7 @@ fn card_wave_refuses_every_request_pin_mismatch() {
     let checkpoint = bytes_of(&saved);
     let request = request_for(&saved, &checkpoint, &source, &destination);
     transfer(&checkpoint, &source, &destination, &request).unwrap();
-    let edits: [(fn(&mut CardWaveTransferRequestV1), &str); 7] = [
+    let edits: [RequestEditV1; 7] = [
         (
             |r| r.source_checkpoint_sha256 = "0".repeat(64),
             "source checkpoint SHA256 differs",
@@ -733,10 +765,18 @@ fn card_wave_reads_registry_files_as_build_rs_does() {
     let error = run(&saved, &twice, &destination).unwrap_err();
     assert!(error.contains("duplicate card name across"), "{error}");
 
-    // A repeated object key in a file.
-    let repeated = br#"{"version":2,"version":2,"cards":[{"name":"Alpha"}]}"#.to_vec();
-    let error = run(&saved, &[repeated, source[1].clone()], &destination);
-    assert!(error.is_err());
+    // A repeated object key in a file. The repeated file reads, by a reader
+    // that keeps the last of two keys, as the source's own first file (same
+    // version, same cards), and the checkpoint's origin binds its bytes, so
+    // only the strict reader refuses it.
+    let repeated = [b"{\"version\":2,".as_slice(), &source[0][1..]].concat();
+    let mut bound = saved.clone();
+    let PlayPolicyOriginV1::Imported(identity) = &mut bound.source_import else {
+        panic!("the trainer's checkpoint fixture has an imported origin");
+    };
+    identity.destination_registry_sha256 = sha(&repeated);
+    let error = run(&bound, &[repeated, source[1].clone()], &destination).unwrap_err();
+    assert!(error.contains("duplicate registry object key"), "{error}");
 }
 
 /// Review finding 2: the feature and input contract are ones the trainer's
@@ -769,17 +809,20 @@ fn card_wave_refuses_unsupported_feature_contracts_and_model_shapes() {
         .find(|tensor| tensor.name == "state_encoder.0.weight")
         .unwrap();
     weight.values[no_state_digest_v1::STATE_DIGEST_COLUMNS_V1.start] = 0.5_f32.to_bits();
+    // Resealed, so the state is otherwise valid and only the column refuses.
+    reseal(&mut saved);
     assert!(refusal(&saved).contains("state-digest"));
 
     // FlatV8 digests on net-8's 33 tensors, and V3 digests on the V8
-    // inclusion net's 37.
-    let mut saved = learned_checkpoint();
+    // inclusion net's 37, each with an origin of its digests' generation.
+    let mut saved = fresh_v4_pre_wave(checkpoint_fixture_v1().2);
     saved.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V8.into();
     saved.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V8.into();
     assert!(refusal(&saved).contains("model shape"));
     let mut saved = flat_v8_checkpoint();
     saved.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V3.into();
     saved.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V3.into();
+    saved.source_import = fresh_origin(FRESH_FEATURE_IDENTITY_V3);
     assert!(refusal(&saved).contains("model shape"));
 
     // One tensor fewer, a renamed tensor, a reshaped tensor.
@@ -806,6 +849,22 @@ fn card_wave_refuses_unsupported_feature_contracts_and_model_shapes() {
         section[0].shape = vec![CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1];
     }
     assert!(refusal(&saved).contains("model shape"));
+
+    // A recorded state digest that is not the state's: every other check
+    // passes.
+    let mut saved = learned_checkpoint();
+    saved.state_sha256 = "0".repeat(64);
+    let error = refusal(&saved);
+    assert!(
+        error.contains("source checkpoint state digest differs"),
+        "{error}"
+    );
+
+    // A gauge anchor that is not the scorer bias the parameters hold.
+    let mut saved = learned_checkpoint();
+    saved.scorer_bias_anchor_bits = (f32::from_bits(saved.scorer_bias_anchor_bits) + 1.0).to_bits();
+    let error = refusal(&saved);
+    assert!(!error.contains("state digest differs"), "{error}");
 
     // State the native validation refuses before any digest comparison: a
     // NaN first moment, a negative second moment, a moment on the padding
@@ -843,6 +902,47 @@ fn card_wave_refuses_an_unknown_loss_and_inconsistent_scalars() {
     saved.entropy_coefficient_bits = Some(0);
     assert!(refusal(&saved).contains("gae scalar presence"));
 
+    // One or two stray GAE scalars on the terminal loss, which the presence
+    // rule's conjunction alone admits.
+    type ScalarEditV1 = fn(&mut ExpandedCheckpointV1);
+    let strays: [ScalarEditV1; 4] = [
+        |saved| saved.gamma_bits = Some(f32::NAN.to_bits()),
+        |saved| saved.gae_lambda_bits = Some(0.95_f32.to_bits()),
+        |saved| saved.entropy_coefficient_bits = Some(0),
+        |saved| {
+            saved.gamma_bits = Some(1.0_f32.to_bits());
+            saved.gae_lambda_bits = Some(0.95_f32.to_bits());
+        },
+    ];
+    for stray in strays {
+        let mut saved = learned_checkpoint();
+        stray(&mut saved);
+        let error = refusal(&saved);
+        assert!(
+            error.contains("terminal loss carries a GAE scalar"),
+            "{error}"
+        );
+    }
+
+    // GAE scalars no update writes: gamma or lambda NaN, infinite or out of
+    // range, a non-zero entropy coefficient.
+    for (gamma, lambda, entropy_coefficient) in [
+        (f32::NAN, 0.95_f32, 0.0_f32),
+        (1.0, f32::INFINITY, 0.0),
+        (1.5, 0.95, 0.0),
+        (1.0, -0.25, 0.0),
+        (1.0, 0.95, 0.01),
+        (1.0, 0.95, f32::NAN),
+    ] {
+        let mut saved = learned_checkpoint();
+        saved.loss_identity = GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1.into();
+        saved.gamma_bits = Some(gamma.to_bits());
+        saved.gae_lambda_bits = Some(lambda.to_bits());
+        saved.entropy_coefficient_bits = Some(entropy_coefficient.to_bits());
+        let error = refusal(&saved);
+        assert!(error.contains("not ones an update writes"), "{error}");
+    }
+
     let mut saved = learned_checkpoint();
     saved.loss_identity = "gae_uniform_kl_recovery/v1".into();
     saved.gamma_bits = Some(1.0_f32.to_bits());
@@ -870,6 +970,7 @@ fn card_wave_refuses_an_unknown_loss_and_inconsistent_scalars() {
 
 #[test]
 fn card_wave_carries_every_feature_contract_layout_and_loss_the_trainer_writes() {
+    // V4 and FlatV7 as the fresh lineage writes them, with the V4 origin.
     let (_, _, mut v4) = checkpoint_fixture_v1();
     v4.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V4.into();
     v4.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V4.into();
@@ -880,7 +981,11 @@ fn card_wave_carries_every_feature_contract_layout_and_loss_the_trainer_writes()
     gae.loss_identity = GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1.into();
     gae.gamma_bits = Some(1.0_f32.to_bits());
     gae.gae_lambda_bits = Some(0.95_f32.to_bits());
-    gae.entropy_coefficient_bits = Some(0.01_f32.to_bits());
+    gae.entropy_coefficient_bits = Some(0);
+    // An entropy coefficient of -0.0 passes the update's own validation
+    // (`-0.0 == 0.0`), which then writes its bits as they are.
+    let mut gae_negative_zero = gae.clone();
+    gae_negative_zero.entropy_coefficient_bits = Some((-0.0_f32).to_bits());
     let source = wave_registries().0;
     let mut recovery = pre_wave(checkpoint_fixture_v1().2, &source, 3);
     recovery.loss_identity = "gae_uniform_kl_recovery/v1".into();
@@ -894,11 +999,12 @@ fn card_wave_carries_every_feature_contract_layout_and_loss_the_trainer_writes()
     reseal(&mut recovery);
 
     let checkpoints = [
-        pre_wave(v4, &source, 3),
-        pre_wave(flat_v7, &source, 3),
+        fresh_v4_pre_wave(v4),
+        fresh_v4_pre_wave(flat_v7),
         flat_v8_checkpoint(),
         no_state_digest_checkpoint(),
         pre_wave(gae, &source, 3),
+        pre_wave(gae_negative_zero, &source, 3),
         recovery,
     ];
     for before in &checkpoints {
@@ -921,7 +1027,7 @@ fn card_wave_binds_the_source_checkpoint_to_its_registry() {
     let (_, _, mut fresh) = checkpoint_fixture_v1();
     fresh.schema = FRESH_CHECKPOINT_SCHEMA.into();
     let mut fresh = pre_wave(fresh, &source, 3);
-    let identity = fresh_identity(OLD_CARD_DB_HASH, &source[0], 3);
+    let identity = fresh_identity(OLD_CARD_DB_HASH, &source[0], 3, FRESH_FEATURE_IDENTITY_V3);
     fresh.source_import = PlayPolicyOriginV1::FreshInitialization(identity.clone());
     let candidate = transfer_wave(&fresh).unwrap();
     assert_carried(&fresh, &candidate, &["Delta", "Epsilon"]);
@@ -935,8 +1041,12 @@ fn card_wave_binds_the_source_checkpoint_to_its_registry() {
     assert!(refusal(&wrong_schema).contains("under that origin's checkpoint schema"));
     // A fresh origin of another card count: a truncated source registry.
     let mut short = fresh.clone();
-    short.source_import =
-        PlayPolicyOriginV1::FreshInitialization(fresh_identity(OLD_CARD_DB_HASH, &source[0], 4));
+    short.source_import = PlayPolicyOriginV1::FreshInitialization(fresh_identity(
+        OLD_CARD_DB_HASH,
+        &source[0],
+        4,
+        FRESH_FEATURE_IDENTITY_V3,
+    ));
     assert!(refusal(&short).contains("another card count"));
     // An origin that already went through a registry transfer.
     let mut transferred = fresh.clone();
@@ -950,6 +1060,18 @@ fn card_wave_binds_the_source_checkpoint_to_its_registry() {
             transfer_envelope_sha256: "8".repeat(64),
         });
     assert!(refusal(&transferred).contains("imported or fresh origin"));
+    // An import the phase-1 registry transfer re-bound: still `Imported`,
+    // under its own schema.
+    let mut transferred_import = learned_checkpoint();
+    let PlayPolicyOriginV1::Imported(imported) = &mut transferred_import.source_import else {
+        panic!("the trainer's checkpoint fixture has an imported origin");
+    };
+    imported.schema = REGISTRY_TRANSFERRED_IMPORT_SCHEMA.into();
+    let error = refusal(&transferred_import);
+    assert!(
+        error.contains("never went through a registry transfer"),
+        "{error}"
+    );
 
     // An origin of another card database than the checkpoint's own.
     let mut saved = learned_checkpoint();
@@ -990,6 +1112,70 @@ fn card_wave_binds_the_source_checkpoint_to_its_registry() {
         reseal(&mut saved);
         assert!(refusal(&saved).contains("learned optimizer state"));
     }
+}
+
+/// Review round 2, finding 2: the origin's feature identity is of the
+/// checkpoint's own feature generation, as every trainer path that writes
+/// the checkpoint requires.
+#[test]
+fn card_wave_binds_the_origin_feature_identity_to_the_checkpoint_generation() {
+    let mismatch = "not of the checkpoint's own feature generation";
+    let v4_generation = |contract: &str, encoding: &str| {
+        let mut saved = fresh_v4_pre_wave(checkpoint_fixture_v1().2);
+        saved.feature_contract_digest = contract.into();
+        saved.feature_encoding_digest = encoding.into();
+        saved
+    };
+    // The V4 generation with a V4 origin transfers; with a V3 origin
+    // (imported, or fresh) it is refused, for V4, FlatV7 and FlatV8 alike.
+    let v4 = v4_generation(FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4);
+    transfer_wave(&v4).unwrap();
+    for contract in [
+        (FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4),
+        (FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7),
+    ] {
+        let mut saved = v4_generation(contract.0, contract.1);
+        saved.source_import = fresh_origin(FRESH_FEATURE_IDENTITY_V3);
+        assert!(refusal(&saved).contains(mismatch));
+        let mut imported = v4_generation(contract.0, contract.1);
+        imported.schema = CHECKPOINT_SCHEMA.into();
+        imported.source_import = learned_checkpoint().source_import;
+        assert!(refusal(&imported).contains(mismatch));
+    }
+    let mut flat_v8 = flat_v8_checkpoint();
+    flat_v8.source_import = fresh_origin(FRESH_FEATURE_IDENTITY_V3);
+    assert!(refusal(&flat_v8).contains(mismatch));
+
+    // The V3 generation with a V4 origin: fresh, or an import of V4 digests.
+    let mut saved = learned_checkpoint();
+    saved.schema = FRESH_CHECKPOINT_SCHEMA.into();
+    saved.source_import = fresh_origin(FRESH_FEATURE_IDENTITY_V4);
+    assert!(refusal(&saved).contains(mismatch));
+    let mut saved = learned_checkpoint();
+    let PlayPolicyOriginV1::Imported(identity) = &mut saved.source_import else {
+        panic!("the trainer's checkpoint fixture has an imported origin");
+    };
+    identity.feature_contract_digest = FEATURE_CONTRACT_DIGEST_V4.into();
+    identity.feature_encoding_digest = FEATURE_ENCODING_DIGEST_V4.into();
+    assert!(refusal(&saved).contains(mismatch));
+    // The no-state-digest conversion keeps its base generation's origin.
+    let mut converted = no_state_digest_checkpoint();
+    converted.schema = FRESH_CHECKPOINT_SCHEMA.into();
+    converted.source_import = fresh_origin(FRESH_FEATURE_IDENTITY_V4);
+    assert!(refusal(&converted).contains(mismatch));
+
+    // A fresh origin whose four feature fields are no compiled generation,
+    // though each is well-formed hex.
+    let mut saved = learned_checkpoint();
+    saved.schema = FRESH_CHECKPOINT_SCHEMA.into();
+    let PlayPolicyOriginV1::FreshInitialization(mut identity) =
+        fresh_origin(FRESH_FEATURE_IDENTITY_V3)
+    else {
+        unreachable!()
+    };
+    identity.features_source_sha256 = "e".repeat(64);
+    saved.source_import = PlayPolicyOriginV1::FreshInitialization(identity);
+    assert!(refusal(&saved).contains(mismatch));
 }
 
 /// Review finding 4: a continuation member refuses even as an explicit
@@ -1034,6 +1220,39 @@ fn card_wave_refuses_continuation_members_and_non_canonical_json() {
         rules_pathway: None,
     });
     assert!(refusal(&distilled).contains("archive-distillation provenance"));
+
+    // Registry-transfer continuation provenance, typed, and as an explicit
+    // `null`, which the trainer's reader refuses as no continuation.
+    let mut continued = saved.clone();
+    continued.registry_transfer = Some(ExpandedRegistryContinuationV1 {
+        schema: "mtg-kernel-expanded-registry-continuation/v1".into(),
+        source_descriptor_sha256: "1".repeat(64),
+        source_checkpoint_sha256: "2".repeat(64),
+        source_registry_sha256: "3".repeat(64),
+        transfer_envelope_sha256: "4".repeat(64),
+        continuation_schedule_sha256: "5".repeat(64),
+        transfer_state_sha256: "6".repeat(64),
+        transfer_adam_step: 2,
+        completed_updates: 1,
+        consumed_batch_sha256: "7".repeat(64),
+        preserved_scalars: RegistryTransferScalarsV1 {
+            optimizer_identity: "adam".into(),
+            adam_beta1_bits: 0.9_f32.to_bits(),
+            adam_beta2_bits: 0.999_f32.to_bits(),
+            adam_epsilon_bits: 1e-8_f32.to_bits(),
+            adam_weight_decay_bits: 0,
+            adam_step: 2,
+            scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+            loss_identity: saved.loss_identity.clone(),
+            learning_rate_bits: saved.learning_rate_bits,
+            value_coefficient_bits: saved.value_coefficient_bits,
+        },
+    });
+    let error = refusal(&continued);
+    assert!(error.contains("registry-transfer"), "{error}");
+    let bytes = with_member(&saved, "\"registry_transfer\":null");
+    let error = transfer_bytes(&saved, &bytes).unwrap_err();
+    assert!(error.contains("null"), "{error}");
 
     // Other spacing, and a repeated key.
     let pretty = serde_json::to_vec_pretty(&saved).unwrap();
@@ -1280,5 +1499,48 @@ fn card_wave_command_writes_verified_files_and_requires_its_pins() {
     let error = run_card_wave_transfer_cli_json_v1(&oversized).unwrap_err();
     assert!(error.contains("exceeds 1 MiB"), "{error}");
     assert!(!other.exists());
+    // An input that is not a regular file.
+    let mut not_a_file: Value = serde_json::from_slice(&valid).unwrap();
+    not_a_file["source_checkpoint"] = serde_json::json!(root);
+    let error =
+        run_card_wave_transfer_cli_json_v1(&serde_json::to_vec(&not_a_file).unwrap()).unwrap_err();
+    assert!(error.contains("not a regular file"), "{error}");
+    assert!(!other.exists());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// Review round 2, nit 6: a failed publication removes what it published,
+/// whichever step fails: the second file's publication after the first
+/// succeeded, or the verification after both.
+#[test]
+fn card_wave_publication_removes_its_files_on_any_failure() {
+    let root = scratch_directory("publication");
+    let directory = root.join("out");
+    fs::create_dir_all(&directory).unwrap();
+    // The second publication fails: its name is taken by the first.
+    let taken = [
+        ("checkpoint.json", b"{}".as_slice()),
+        ("checkpoint.json", b"{}".as_slice()),
+    ];
+    let error = publish_verified_outputs_v1(&directory, &taken, |_| Ok(())).unwrap_err();
+    assert!(!directory.exists(), "{error}");
+
+    let outputs = [
+        ("checkpoint.json", b"{}".as_slice()),
+        ("transfer-record.json", b"[]".as_slice()),
+    ];
+    fs::create_dir(&directory).unwrap();
+    let error = publish_verified_outputs_v1(&directory, &outputs, |pins| {
+        assert_eq!(pins.len(), 2);
+        Err("refused".into())
+    })
+    .unwrap_err();
+    assert_eq!(error, "refused");
+    assert!(!directory.exists());
+
+    fs::create_dir(&directory).unwrap();
+    let pins = publish_verified_outputs_v1(&directory, &outputs, |_| Ok(())).unwrap();
+    assert_eq!(fs::read(&pins[0].path).unwrap(), b"{}");
+    assert_eq!(fs::read(&pins[1].path).unwrap(), b"[]");
     fs::remove_dir_all(&root).unwrap();
 }

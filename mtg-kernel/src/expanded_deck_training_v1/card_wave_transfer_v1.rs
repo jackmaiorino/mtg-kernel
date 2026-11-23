@@ -27,7 +27,9 @@
 //!   trainer's own checkpoint checks, not copies of them.
 //! - The source registry is the checkpoint's own: its origin records the
 //!   source card database, the first registry file's bytes and a card count,
-//!   and no row past the source registry holds optimizer state.
+//!   and no row past the source registry holds optimizer state. The origin
+//!   never went through a registry transfer, and its feature identity is of
+//!   the checkpoint's own feature generation.
 //!
 //! The transfer is a pure function of its inputs: it reads and writes no
 //! file. Its output is an ordinary checkpoint with the same fields as its
@@ -44,8 +46,10 @@ use super::*;
 use crate::card_def::CARD_DEFS;
 use crate::native_policy_value_net_v1::{CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1};
 use crate::phase1_registry_transfer_v1::{
-    initial_card_row, registry_cards, strict_registry_document, INITIALIZER,
+    initial_card_row, registry_document_cards, strict_registry_document, INITIALIZER,
 };
+use crate::sideboard_play_policy_v1::{fresh_lineage_generation_v1, FreshLineageGenerationV1};
+use std::io::Read as _;
 
 const RECORD_SCHEMA: &str = "mtg-kernel-expanded-card-wave-transfer/v1";
 const CLI_REQUEST_SCHEMA: &str = "mtg-kernel-expanded-card-wave-transfer-cli-request/v1";
@@ -66,6 +70,11 @@ const REGISTRY_SCHEMA_VERSION: u64 = 2;
 const METADATA_FIELDS: [&str; 3] = ["complexity", "java_file", "sideboard_only"];
 const MODEL_SHAPE_REFUSAL: &str = "checkpoint model shape differs from the train-state layout of its feature contract; card-wave transfer never reshapes a model";
 const MAX_CLI_REQUEST_BYTES: usize = 1024 * 1024;
+/// The schema an imported origin takes once the phase-1 registry transfer
+/// has re-bound it (`FrozenPlayPolicyV1::from_registry_transfer_v1`): it
+/// stays `Imported`, so only this schema tells it from an untransferred one.
+const REGISTRY_TRANSFERRED_IMPORT_SCHEMA: &str = "mtg-kernel-registry-transferred-play/v1";
+const TERMINAL_LOSS_IDENTITY: &str = "terminal_reinforce_value/v3";
 
 const PAUPER_REGISTRY: &[u8] = include_bytes!("../../../data/cards_v1.json");
 #[cfg(all(
@@ -235,14 +244,12 @@ fn registry_v1(segments: &[&[u8]]) -> Result<RegistryCardsV1, String> {
     let mut cards = Vec::new();
     let mut first_segment_cards = 0;
     for (ordinal, segment) in segments.iter().enumerate() {
-        let version = strict_registry_document(segment)?
-            .get("version")
-            .and_then(Value::as_u64);
+        let document = strict_registry_document(segment)?;
         ensure(
-            version == Some(REGISTRY_SCHEMA_VERSION),
+            document.get("version").and_then(Value::as_u64) == Some(REGISTRY_SCHEMA_VERSION),
             "registry file is not of the schema version build.rs compiles",
         )?;
-        cards.extend(registry_cards(segment)?);
+        cards.extend(registry_document_cards(&document)?);
         if ordinal == 0 {
             first_segment_cards = cards.len();
         }
@@ -344,14 +351,24 @@ fn source_checkpoint_v1(checkpoint_bytes: &[u8]) -> Result<ExpandedCheckpointV1,
 }
 
 /// The checkpoint is an ordinary one of an untransferred origin, without
-/// continuation provenance bound to its own card database.
+/// continuation provenance bound to its own card database. An import the
+/// phase-1 registry transfer re-bound is still `Imported`, under its own
+/// schema ([`REGISTRY_TRANSFERRED_IMPORT_SCHEMA`]), and is refused as the
+/// transferred fresh origin is.
 fn check_ordinary_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
-    let untransferred = matches!(
-        saved.source_import,
-        PlayPolicyOriginV1::Imported(_) | PlayPolicyOriginV1::FreshInitialization(_)
-    );
+    let untransferred = match &saved.source_import {
+        PlayPolicyOriginV1::Imported(identity) => {
+            identity.schema != REGISTRY_TRANSFERRED_IMPORT_SCHEMA
+        }
+        PlayPolicyOriginV1::FreshInitialization(_) => true,
+        PlayPolicyOriginV1::TransferredFreshInitialization(_) => false,
+    };
     ensure(
-        untransferred && saved.schema == ordinary_checkpoint_schema_v1(&saved.source_import),
+        untransferred,
+        "card-wave transfer reads only a checkpoint of an imported or fresh origin that never went through a registry transfer",
+    )?;
+    ensure(
+        saved.schema == ordinary_checkpoint_schema_v1(&saved.source_import),
         "card-wave transfer reads only an ordinary expanded-deck checkpoint of an imported or fresh origin, under that origin's checkpoint schema",
     )?;
     ensure(
@@ -385,7 +402,9 @@ fn check_trainer_record_v1(
     if saved.input_contract.is_some() {
         no_state_digest_v1::check_saved_columns_v1(saved)?;
     }
+    check_origin_features_v1(&saved.source_import, resolved.generation)?;
     check_checkpoint_loss_fields_v1(saved)?;
+    check_loss_scalars_v1(saved)?;
     for bits in [saved.learning_rate_bits, saved.value_coefficient_bits] {
         let value = f32::from_bits(bits);
         ensure(
@@ -395,6 +414,90 @@ fn check_trainer_record_v1(
     }
     Ok(resolved.base_contract_digest
         == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8)
+}
+
+/// The origin's feature identity is of the checkpoint's own feature
+/// generation, as every trainer path that writes the checkpoint requires of
+/// the policy it trains: V3 checkpoints come from a V3 policy, and V4, FlatV7
+/// and FlatV8 ones (and the no-state-digest conversion of either generation)
+/// from a V4 one, since FlatV7 and FlatV8 keep the V4 origin they convert.
+/// An import records its contract and encoding digests; a fresh origin all
+/// four feature fields, classified by the trainer's own
+/// `fresh_lineage_generation_v1`.
+fn check_origin_features_v1(
+    origin: &PlayPolicyOriginV1,
+    generation: FreshLineageGenerationV1,
+) -> Result<(), String> {
+    const REFUSAL: &str =
+        "checkpoint origin's feature identity is not of the checkpoint's own feature generation";
+    match origin {
+        PlayPolicyOriginV1::Imported(identity) => {
+            let expected = match generation {
+                FreshLineageGenerationV1::V3 => {
+                    (FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3)
+                }
+                FreshLineageGenerationV1::V4 => {
+                    (FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4)
+                }
+            };
+            ensure(
+                (
+                    identity.feature_contract_digest.as_str(),
+                    identity.feature_encoding_digest.as_str(),
+                ) == expected,
+                REFUSAL,
+            )
+        }
+        PlayPolicyOriginV1::FreshInitialization(identity) => {
+            let origin_generation = fresh_lineage_generation_v1(
+                &identity.feature_contract_digest,
+                &identity.feature_encoding_digest,
+                &identity.features_source_sha256,
+                &identity.feature_descriptor_sha256,
+            )
+            .map_err(|error| format!("{REFUSAL}: {error}"))?;
+            ensure(origin_generation == generation, REFUSAL)
+        }
+        PlayPolicyOriginV1::TransferredFreshInitialization(_) => {
+            Err("checkpoint origin already went through a registry transfer".into())
+        }
+    }
+}
+
+/// The loss scalars a trainer update writes, beyond the presence rule of
+/// `check_checkpoint_loss_fields_v1` (whose conjunction admits one or two
+/// stray scalars on the terminal loss): the terminal loss carries none of
+/// them, and the GAE loss carries the selection its update validated
+/// (`ExpandedLossSelectionV1::validate_v1`: finite gamma and lambda in
+/// `0.0..=1.0`, entropy coefficient 0.0). The recovery loss's exact scalars
+/// are already checked there (`validate_exploration_checkpoint_v1`).
+fn check_loss_scalars_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+    let scalars = (
+        saved.gamma_bits,
+        saved.gae_lambda_bits,
+        saved.entropy_coefficient_bits,
+    );
+    if saved.loss_identity == TERMINAL_LOSS_IDENTITY {
+        return ensure(
+            scalars == (None, None, None),
+            "checkpoint of the terminal loss carries a GAE scalar",
+        );
+    }
+    if saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1 {
+        let (Some(gamma), Some(lambda), Some(entropy_coefficient)) = scalars else {
+            return Err("checkpoint gae scalar presence does not match its loss_identity".into());
+        };
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: f32::from_bits(gamma),
+            lambda: f32::from_bits(lambda),
+            entropy_coefficient: f32::from_bits(entropy_coefficient),
+        }
+        .validate_v1()
+        .map_err(|error| {
+            format!("checkpoint GAE scalars are not ones an update writes: {error}")
+        })?;
+    }
+    Ok(())
 }
 
 /// The checkpoint's state digest by the trainer's own restore
@@ -698,12 +801,27 @@ fn read_cli_input_v1(path: &Path) -> Result<Vec<u8>, String> {
         path.is_absolute(),
         "card-wave transfer CLI requires absolute paths",
     )?;
-    let metadata = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let located = |e: std::io::Error| format!("{}: {e}", path.display());
+    let metadata = fs::metadata(path).map_err(located)?;
+    ensure(
+        metadata.is_file(),
+        "card-wave transfer CLI input is not a regular file",
+    )?;
     ensure(
         metadata.len() <= MAX_FILE_BYTES,
         "card-wave transfer CLI input exceeds the size bound",
     )?;
-    fs::read(path).map_err(|e| format!("{}: {e}", path.display()))
+    // Bounded by the read itself too: a file that grows after its metadata
+    // was read is never read past the bound.
+    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).map_err(err)?);
+    fs::File::open(path)
+        .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(located)?;
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "card-wave transfer CLI input exceeds the size bound",
+    )?;
+    Ok(bytes)
 }
 
 fn read_cli_inputs_v1(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>, String> {
@@ -779,32 +897,27 @@ pub fn run_card_wave_transfer_cli_v1(
             request.output_directory.display()
         )
     })?;
-    let directory = &request.output_directory;
-    let checkpoint =
-        publish_json_bytes_v1(directory, "checkpoint.json", transfer.checkpoint_bytes_v1())?;
-    let record = publish_json_bytes_v1(directory, "transfer-record.json", &record_bytes)?;
+    let outputs = [
+        ("checkpoint.json", transfer.checkpoint_bytes_v1()),
+        ("transfer-record.json", record_bytes.as_slice()),
+    ];
     // What a later reader finds on disk, reproduced from the inputs.
-    let verified = fs::read(&record.path)
-        .map_err(err)
-        .and_then(|written_record| {
-            let written_checkpoint = fs::read(&checkpoint.path).map_err(err)?;
-            verify_card_wave_transfer_v1(
-                &written_record,
-                &written_checkpoint,
-                &checkpoint_bytes,
-                &source_registry,
-                &destination_registry,
-            )
-        });
-    if let Err(error) = verified {
-        // Only this call's own files, in the directory it created.
-        let _ = fs::remove_file(&checkpoint.path);
-        let _ = fs::remove_file(&record.path);
-        let _ = fs::remove_dir(directory);
-        return Err(format!(
-            "written card-wave transfer failed its replay: {error}"
-        ));
-    }
+    let published = publish_verified_outputs_v1(&request.output_directory, &outputs, |pins| {
+        let written_checkpoint = fs::read(&pins[0].path).map_err(err)?;
+        let written_record = fs::read(&pins[1].path).map_err(err)?;
+        verify_card_wave_transfer_v1(
+            &written_record,
+            &written_checkpoint,
+            &checkpoint_bytes,
+            &source_registry,
+            &destination_registry,
+        )
+        .map(drop)
+        .map_err(|error| format!("written card-wave transfer failed its replay: {error}"))
+    })?;
+    let [checkpoint, record]: [PinnedFileV1; 2] = published
+        .try_into()
+        .map_err(|_| "card-wave transfer published another number of files".to_string())?;
     Ok(serde_json::json!({
         "schema": CLI_RESULT_SCHEMA,
         "checkpoint": checkpoint,
@@ -812,6 +925,31 @@ pub fn run_card_wave_transfer_cli_v1(
         "record": transfer.record_v1(),
         "verified": true,
     }))
+}
+
+/// Publishes `outputs` in order into `directory`, which the caller has just
+/// created, and accepts them only if `verify` accepts the published files.
+/// On any failure, a publication's or the verification's, it removes every
+/// file and staging file of these names and then the directory: only this
+/// call's own files, in the directory its caller created.
+fn publish_verified_outputs_v1(
+    directory: &Path,
+    outputs: &[(&str, &[u8])],
+    verify: impl FnOnce(&[PinnedFileV1]) -> Result<(), String>,
+) -> Result<Vec<PinnedFileV1>, String> {
+    let published = outputs
+        .iter()
+        .map(|(name, bytes)| publish_json_bytes_v1(directory, name, bytes))
+        .collect::<Result<Vec<_>, _>>()
+        .and_then(|pins| verify(&pins).map(|()| pins));
+    if published.is_err() {
+        for (name, _) in outputs {
+            let _ = fs::remove_file(directory.join(name));
+            let _ = fs::remove_file(directory.join(format!(".{name}.stage")));
+        }
+        let _ = fs::remove_dir(directory);
+    }
+    published
 }
 
 #[cfg(test)]
