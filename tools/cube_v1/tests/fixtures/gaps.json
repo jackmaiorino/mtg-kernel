@@ -1,0 +1,7 @@
+{
+  "schema": "cube_coverage_gaps/v1",
+  "cube_list": "tools/cube_v1/tests/fixtures/cube_list.json",
+  "partial": ["Fixture Partial 1"],
+  "fdn_only": ["Fixture Fdn Only 1"],
+  "missing": ["Fixture Missing 1"]
+}
