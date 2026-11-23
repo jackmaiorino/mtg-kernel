@@ -23,7 +23,7 @@ import sys
 # Each rule: (patterns, scope). The first rule naming a file decides it. "shared" files are read by both the
 # engine (or agents, search, ladder) and the trainer: a change there is mixed and runs the whole pull request
 # set, never a trainer-only check.
-TOOLS_DIRS = ["checkpoint_codec_bench", "native_fixture_bench", "sd1", "search_experiment", "stage4a", "t1_diagnosis"]
+TOOLS_DIRS = ["checkpoint_codec_bench", "cube_v1", "native_fixture_bench", "sd1", "search_experiment", "stage4a", "t1_diagnosis"]
 TRAINER_ROOTS = ["expanded_deck_training_v1", "native_expanded_training_run_v1", "native_policy_train_step_v1"]
 PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     (("data/*",), "pr"),
@@ -264,7 +264,7 @@ RULES_NOTE = ("Engine rules and card changes that alter play are never bit-ident
 TOOLS_COMMANDS = [f"uv run --no-sync python -m unittest discover -v -s tools/{name}/{sub} -p 'test_*.py'"
                   for name, sub in (("search_experiment", "tests"), ("stage4a", "tests"), ("t1_diagnosis", ""),
                                     ("sd1", "tests"), ("native_fixture_bench", "tests"),
-                                    ("checkpoint_codec_bench", "tests"))]
+                                    ("checkpoint_codec_bench", "tests"), ("cube_v1", "tests"))]
 TOOLS_COMMANDS = [c.replace("/ -p", " -p") for c in TOOLS_COMMANDS]
 
 
