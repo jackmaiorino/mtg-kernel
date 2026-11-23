@@ -37345,7 +37345,9 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/o/OrcishLumberjack.java"
   },
   {
@@ -37377,7 +37379,9 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/u/UrzaLordHighArtificer.java"
   },
   {
@@ -37410,7 +37414,9 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/v/ViviOrnitier.java"
   },
   {

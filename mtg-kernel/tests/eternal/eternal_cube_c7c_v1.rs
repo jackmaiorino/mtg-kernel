@@ -705,7 +705,7 @@ fn vibrance_treasure_mana_counts_noncast_entry_triggers_nothing_and_damage_fizzl
 
     // Target leaving before the {R}{R} damage trigger resolves fizzles cleanly.
     let mut state = plains();
-    let lions = put(&mut state, P1, "Savannah Lions", Zone::Battlefield);
+    let lions = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let vibrance = put(&mut state, P0, "Vibrance", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R, ManaColor::R], 0);
     cast(&mut state, vibrance, &[]);
@@ -1033,7 +1033,7 @@ fn the_wondrous_wasp_flash_and_removes_keywords_activated_and_triggered_abilitie
     // are removed while Wasp remains on the battlefield, and immediately restored
     // when Wasp leaves.
     let mut state = plains();
-    let hawk = put(&mut state, P1, "Healer's Hawk", Zone::Battlefield);
+    let hawk = put(&mut state, P1, "Sage of the Skies", Zone::Battlefield);
     assert!(keyword(&state, hawk, Keywords::FLYING));
     assert!(keyword(&state, hawk, Keywords::LIFELINK));
     let wasp = put(&mut state, P0, "The Wondrous Wasp", Zone::Hand);
@@ -1139,7 +1139,7 @@ fn the_wondrous_wasp_flash_and_removes_keywords_activated_and_triggered_abilitie
 fn the_wondrous_wasp_up_to_one_zero_targets_fizzle_and_leaves_before_etb() {
     // Choosing 0 targets ("up to one") resolves without tapping or removing abilities.
     let mut state = plains();
-    let hawk = put(&mut state, P1, "Healer's Hawk", Zone::Battlefield);
+    let hawk = put(&mut state, P1, "Sage of the Skies", Zone::Battlefield);
     let wasp = put(&mut state, P0, "The Wondrous Wasp", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 1);
     cast(&mut state, wasp, &[]);
@@ -1159,7 +1159,7 @@ fn the_wondrous_wasp_up_to_one_zero_targets_fizzle_and_leaves_before_etb() {
 
     // Target leaving before ETB resolves fizzles cleanly.
     let mut state = plains();
-    let hawk = put(&mut state, P1, "Healer's Hawk", Zone::Battlefield);
+    let hawk = put(&mut state, P1, "Sage of the Skies", Zone::Battlefield);
     let wasp = put(&mut state, P0, "The Wondrous Wasp", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 1);
     cast(&mut state, wasp, &[]);
@@ -1184,7 +1184,7 @@ fn the_wondrous_wasp_up_to_one_zero_targets_fizzle_and_leaves_before_etb() {
     // Wasp leaving before its ETB resolves still taps the target, but does not
     // apply the ability-loss duration (CR 611.2b).
     let mut state = plains();
-    let hawk = put(&mut state, P1, "Healer's Hawk", Zone::Battlefield);
+    let hawk = put(&mut state, P1, "Sage of the Skies", Zone::Battlefield);
     let wasp = put(&mut state, P0, "The Wondrous Wasp", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 1);
     cast(&mut state, wasp, &[]);
@@ -1217,7 +1217,7 @@ fn the_wondrous_wasp_up_to_one_zero_targets_fizzle_and_leaves_before_etb() {
 #[test]
 fn woodfall_primus_etb_destroys_noncreature_permanent_and_excludes_creatures() {
     let mut state = plains();
-    let creature = put(&mut state, P1, "Savannah Lions", Zone::Battlefield);
+    let creature = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let artifact = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
     let enchantment = put(&mut state, P1, "Seal of Cleansing", Zone::Battlefield);
     let land = put(&mut state, P1, "Plains", Zone::Battlefield);
@@ -1502,7 +1502,7 @@ fn guardian_scalelord_backup_self_vs_another_creature_and_end_of_turn_expiry() {
     // X is the backed-up creature's power (5), NOT Scalelord's power (3)!
     let mut state = plains();
     let baloth = put(&mut state, P0, "Ravenous Baloth", Zone::Battlefield);
-    let angel_gy = put(&mut state, P0, "Serra Angel", Zone::Graveyard);
+    let angel_gy = put(&mut state, P0, "Arrogant Wurm", Zone::Graveyard);
     let land_gy = put(&mut state, P0, "Plains", Zone::Graveyard);
     let bolt_gy = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
     let scalelord = put(&mut state, P0, "Guardian Scalelord", Zone::Hand);
@@ -1562,7 +1562,7 @@ fn guardian_scalelord_reanimates_nonland_permanent_types_and_checks_power_on_res
     let wrenn = put(&mut state, P0, "Wrenn and Six", Zone::Graveyard); // Planeswalker MV 2
     let land = put(&mut state, P0, "Plains", Zone::Graveyard);
     let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
-    let too_big = put(&mut state, P0, "Serra Angel", Zone::Graveyard); // MV 5 > power 4
+    let too_big = put(&mut state, P0, "Arrogant Wurm", Zone::Graveyard); // MV 5 > power 4
 
     // First attack: return Wrenn and Six (enters with starting loyalty 3).
     let mut checked = false;

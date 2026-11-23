@@ -1428,18 +1428,29 @@ fn palace_jailer_etb_monarch_and_exile_persists_after_jailer_leaves_until_oppone
     pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
     cast(&mut state, jailer, &[]);
     let mut saw_two_triggers = false;
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::OrderTriggers { pending, .. } => {
-            assert_eq!(pending.len(), 2);
-            saw_two_triggers = true;
-            Action::OrderTriggers(vec![0, 1])
+    for _ in 0..200 {
+        match next(&mut state) {
+            Decision::OrderTriggers { pending, .. } => {
+                assert_eq!(pending.len(), 2);
+                saw_two_triggers = true;
+                act(&mut state, Action::OrderTriggers(vec![0, 1]));
+            }
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(victim)));
+                act(&mut state, Action::ChooseTarget(Target::Object(victim)));
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => {
+                let action = first_answer(other);
+                act(&mut state, action);
+            }
         }
-        Decision::ChooseTargets { legal_targets, .. } => {
-            assert!(legal_targets.contains(&Target::Object(victim)));
-            Action::ChooseTarget(Target::Object(victim))
-        }
-        other => first_answer(other),
-    });
+    }
     assert!(saw_two_triggers);
     assert_eq!(state.monarch, Some(P0));
     assert_eq!(zone(&state, victim), Zone::Exile);
