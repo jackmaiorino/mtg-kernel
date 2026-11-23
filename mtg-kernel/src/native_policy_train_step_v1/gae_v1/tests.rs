@@ -3348,7 +3348,7 @@ mod card_semantics_e1_tests {
         let saved = semantics.section_v1();
         let keep = Some(OffsetVectorV1::scalar(2.5));
         let pass = pass_marks(1.25, [None, None, None]);
-        state.set_london_keep_offset_v1(keep.clone());
+        state.set_london_keep_offset_v1(keep);
         state.set_priority_pass_offset_v1(pass.clone());
         let digest = state.state_sha256_v1().unwrap();
         let before = state_bits(&state);
