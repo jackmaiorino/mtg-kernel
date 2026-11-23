@@ -935,6 +935,7 @@ pub fn generate_fixture_v1(config: &GenerateConfigV1) -> Result<Value, String> {
             root.join(format!("collect-{update:02}")),
         )?;
         let receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: source.clone(),
             trajectories: trajectories.clone(),
             learning_rate: LEARNING_RATE_V1,
@@ -1686,6 +1687,7 @@ fn measure_updates_v1(
             let directory = root.join(format!("{}-{rep:03}", cell.name));
             let (receipt, sample) = meter.time_v1(|| {
                 execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
+                    card_semantics: None,
                     source: measured.source.clone(),
                     trajectories: trajectories.to_vec(),
                     learning_rate: LEARNING_RATE_V1,

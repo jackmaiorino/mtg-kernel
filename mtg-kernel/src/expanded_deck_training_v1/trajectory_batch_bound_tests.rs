@@ -39,6 +39,7 @@ fn prepared(
     output_directory: PathBuf,
 ) -> ExpandedTrainingCommandV1 {
     ExpandedTrainingCommandV1::UpdatePrepared {
+        card_semantics: None,
         source: source.clone(),
         trajectories: trajectories.to_vec(),
         learning_rate: 0.0001,
@@ -370,6 +371,7 @@ fn an_update_just_over_the_default_batch_bound_runs_when_the_key_allows_it() {
         root.join(name),
     ) {
         ExpandedTrainingCommandV1::UpdatePrepared {
+            card_semantics: None,
             preparation_workers: _,
             source,
             trajectories,
@@ -386,6 +388,7 @@ fn an_update_just_over_the_default_batch_bound_runs_when_the_key_allows_it() {
             record_envelope,
             output_directory,
         } => execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
+            card_semantics: None,
             preparation_workers: 1,
             source,
             trajectories,
@@ -593,6 +596,7 @@ fn w_learner_prepared_update_honors_max_trajectory_batch_mebibytes() {
                 "n8-collect",
             );
             let parent_update = execute_v1(ExpandedTrainingCommandV1::Update {
+                card_semantics: None,
                 source: net8.clone(),
                 trajectories: parent_games,
                 learning_rate: 1.0e-3,

@@ -33,6 +33,7 @@ fn update(
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: source.clone(),
         trajectories: trajectories.to_vec(),
         learning_rate: 0.0001,
@@ -445,6 +446,7 @@ fn the_default_record_format_is_never_serialized() {
     );
     assert!(serde_json::from_str::<CheckpointRecordFormatV1>("\"v3\"").is_err());
     let command = |record_format| ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
                 path: "import.json".into(),
@@ -487,6 +489,7 @@ fn the_default_record_format_is_never_serialized() {
     }
     // The prepared command follows the same rule.
     let prepared = |record_format| ExpandedTrainingCommandV1::UpdatePrepared {
+        card_semantics: None,
         source: match command(CheckpointRecordFormatV1::default()) {
             ExpandedTrainingCommandV1::Update { source, .. } => source,
             _ => unreachable!(),

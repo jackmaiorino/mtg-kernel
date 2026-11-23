@@ -528,6 +528,10 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
     )]
     pub max_trajectory_batch_mebibytes: usize,
+    // Trailing on purpose, after the bound above: a positional config from
+    // before this option still decodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_semantics: Option<crate::expanded_deck_training_v1::CardSemanticsConfigV1>,
 }
 
 fn is_zero_non_natural_fraction(value: &f32) -> bool {
@@ -606,6 +610,17 @@ impl NativeExpandedTrainingRunV1 {
     }
 
     pub fn validate_v1(&self) -> Result<(), String> {
+        crate::expanded_deck_training_v1::validate_card_semantics_run_v1(
+            self.card_semantics.as_ref(),
+            &self.initial_source,
+            self.update_backend,
+            &self.loss_selection,
+            self.line_b.is_some()
+                || self.e_supported.is_some()
+                || self.soft_q.is_some()
+                || self.search_targets.is_some()
+                || self.ex1.is_some(),
+        )?;
         check(self.schema == SCHEMA, "unknown successor run schema")?;
         // Line (b) teacher seeds are explicit per update and come from the
         // launcher's manifest (CODEX #572); this driver invents no schedule.
@@ -1745,6 +1760,7 @@ fn update_command(
         }
     } else if config.preparation_workers == 1 {
         ExpandedTrainingCommandV1::Update {
+            card_semantics: config.card_semantics.clone(),
             line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
@@ -1759,6 +1775,7 @@ fn update_command(
         }
     } else {
         ExpandedTrainingCommandV1::UpdatePrepared {
+            card_semantics: config.card_semantics.clone(),
             line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
@@ -2547,6 +2564,7 @@ mod tests {
         };
         let registered = [list("Affinity"), list("Elves")];
         NativeExpandedTrainingRunV1 {
+            card_semantics: None,
             schema: SCHEMA.into(),
             initial_source: source.clone(),
             opponents: vec![NamedExpandedOpponentV1 {
@@ -4154,6 +4172,7 @@ mod tests {
         (
             root,
             NativeExpandedTrainingRunV1 {
+                card_semantics: None,
                 schema: SCHEMA.into(),
                 initial_source,
                 opponents: vec![],
@@ -4573,6 +4592,7 @@ mod tests {
             serde_json::from_value(iteration_update_v1(&result, 0)["trajectories"].clone())
                 .unwrap();
         let error = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: default.initial_source.clone(),
             trajectories,
             learning_rate: default.learning_rate,

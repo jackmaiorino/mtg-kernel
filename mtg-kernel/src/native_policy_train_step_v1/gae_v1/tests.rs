@@ -2446,3 +2446,209 @@ fn london_keep_offset_is_refused_by_each_cpu_entry_that_calls_the_shared_helper(
     );
     untouched(&state, "retained imitation");
 }
+
+mod card_semantics_e1_tests {
+    use super::*;
+    use crate::expanded_deck_training_v1::card_semantics_e1::{
+        checkpoint_test_bytes_v1, restore_test_bytes_v1,
+    };
+    use crate::native_policy_train_step_v1::card_semantics_v1::CardSemanticsV1;
+
+    fn step(
+        state: &mut NativePolicyValueTrainStateV1,
+        semantics: Option<&mut CardSemanticsV1>,
+    ) -> NativePolicyTrainStepResultV1 {
+        let fixture = Fixture::capture(state.model_v1());
+        let steps = fixture.substeps();
+        state
+            .train_step_gae_card_semantics_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups(&steps),
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                1.0e-4,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                semantics,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn absent_matches_legacy_update_and_checkpoint_bytes() {
+        let mut legacy = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+        let mut absent = legacy.clone();
+        let fixture = Fixture::capture(legacy.model_v1());
+        let steps = fixture.substeps();
+        legacy
+            .train_step_gae_feature_transfer_profiled_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups(&steps),
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                1.0e-4,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            )
+            .unwrap();
+        step(&mut absent, None);
+        assert_eq!(state_bits(&legacy), state_bits(&absent));
+        let bytes = checkpoint_test_bytes_v1(&absent, None);
+        assert_eq!(bytes, checkpoint_test_bytes_v1(&legacy, None));
+        let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(document.get("card_semantics").is_none());
+        assert_eq!(
+            document["state_sha256"],
+            legacy
+                .state_sha256_v1()
+                .unwrap()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn first_projection_step_only_changes_folded_table_and_preserves_signed_zero() {
+        let mut base = model();
+        let mut parameters = base.parameter_snapshot_v1();
+        let unused = (CARD_VOCAB_SIZE_V1 - 1) * CARD_EMBEDDING_DIM_V1;
+        parameters[CARD_EMBEDDING].values[unused] = -0.0;
+        base.replace_parameter_snapshot_v1(&parameters).unwrap();
+        let mut off = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+        let mut on = off.clone();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        let reference = step(&mut off, None);
+        let result = step(&mut on, Some(&mut semantics));
+        assert_eq!(result, reference);
+        let mut expected = off.snapshot_v1().unwrap();
+        let actual = on.snapshot_v1().unwrap();
+        assert!(semantics
+            .section_v1()
+            .weight
+            .iter()
+            .any(|&b| f32::from_bits(b) != 0.0));
+        let mut changed = false;
+        for token in 1..=semantics.pathway.cards_v1() {
+            for (column, delta) in semantics.pathway.delta_v1(token).into_iter().enumerate() {
+                if delta != 0.0 {
+                    expected.parameters[CARD_EMBEDDING].values
+                        [token * CARD_EMBEDDING_DIM_V1 + column] += delta;
+                    changed = true;
+                }
+            }
+        }
+        assert!(changed);
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual.state_sha256_v1().unwrap(),
+            expected.state_sha256_v1().unwrap()
+        );
+        assert_eq!(
+            on.model_v1().parameter_snapshot_v1()[CARD_EMBEDDING].values[unused].to_bits(),
+            (-0.0f32).to_bits()
+        );
+        assert_eq!(
+            on.state_sha256_v1().unwrap(),
+            actual.state_sha256_v1().unwrap()
+        );
+        assert_eq!(semantics.section_v1().p_step, 1);
+    }
+
+    #[test]
+    fn two_updates_equal_checkpoint_resume_bit_for_bit() {
+        let mut uninterrupted = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        // Network and projection ages deliberately differ.
+        step(&mut uninterrupted, None);
+        step(&mut uninterrupted, Some(&mut semantics));
+        let bytes = checkpoint_test_bytes_v1(&uninterrupted, Some(&semantics));
+        let (mut resumed, mut resumed_semantics) =
+            restore_test_bytes_v1(&bytes, Some(CardSemanticsV1::fixture_v1())).unwrap();
+        step(&mut uninterrupted, Some(&mut semantics));
+        step(&mut resumed, resumed_semantics.as_mut());
+        assert_eq!(state_bits(&uninterrupted), state_bits(&resumed));
+        assert_eq!(
+            semantics.section_v1(),
+            resumed_semantics.as_ref().unwrap().section_v1()
+        );
+        assert_eq!(
+            checkpoint_test_bytes_v1(&uninterrupted, Some(&semantics)),
+            checkpoint_test_bytes_v1(&resumed, resumed_semantics.as_ref())
+        );
+        assert_eq!(semantics.section_v1().p_step, 2);
+        assert_eq!(uninterrupted.adam_step_v1(), 3);
+    }
+
+    #[test]
+    fn projection_gradient_matches_central_differences_of_gae_loss() {
+        let base = model();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(base.clone()).unwrap();
+        let result = step(&mut state, None);
+        let semantics = CardSemanticsV1::fixture_v1();
+        let gradient = semantics
+            .pathway
+            .weight_gradient_v1(&result.gradients[CARD_EMBEDDING].values)
+            .unwrap();
+        let mut indices: Vec<usize> = (0..gradient.len()).collect();
+        indices.sort_by(|&a, &b| gradient[b].abs().total_cmp(&gradient[a].abs()));
+        assert!(gradient[indices[0]].abs() > 1.0e-5);
+        let epsilon = 2.0e-3f32;
+        for &index in indices.iter().take(4) {
+            let loss = |offset: f32| {
+                let mut pathway = semantics.pathway.clone();
+                let mut weight = pathway.weight_v1().to_vec();
+                weight[index] += offset;
+                pathway.set_weight_v1(weight);
+                let parameters = pathway
+                    .effective_parameters_v1(&base.parameter_snapshot_v1())
+                    .unwrap();
+                let mut candidate = base.clone();
+                candidate
+                    .replace_parameter_snapshot_v1(&parameters)
+                    .unwrap();
+                let mut state = NativePolicyValueTrainStateV1::new_v1(candidate).unwrap();
+                step(&mut state, None).loss
+            };
+            let numerical = (loss(epsilon) - loss(-epsilon)) / (2.0 * epsilon);
+            let analytic = gradient[index];
+            let tolerance = 8.0e-3 + 6.0e-2 * analytic.abs();
+            assert!(
+                (numerical - analytic).abs() <= tolerance,
+                "P[{index}]: {numerical} vs {analytic}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_projection_step_leaves_network_and_projection_unchanged() {
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        let mut saved = semantics.section_v1();
+        saved.p_step = u64::MAX;
+        semantics.restore_v1(&saved).unwrap();
+        let before = state_bits(&state);
+        let fixture = Fixture::capture(state.model_v1());
+        let steps = fixture.substeps();
+        assert!(state
+            .train_step_gae_card_semantics_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups(&steps),
+                &[0.3, -0.2],
+                &[0.15, -0.4],
+                VC,
+                1.0e-4,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                Some(&mut semantics),
+            )
+            .is_err());
+        assert_eq!(before, state_bits(&state));
+        assert_eq!(saved, semantics.section_v1());
+    }
+}

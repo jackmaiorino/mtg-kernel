@@ -179,6 +179,7 @@ fn config_v1(
     output_directory: PathBuf,
 ) -> NativeExpandedTrainingRunV1 {
     NativeExpandedTrainingRunV1 {
+        card_semantics: None,
         schema: SCHEMA.into(),
         initial_source,
         opponents: vec![],

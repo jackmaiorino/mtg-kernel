@@ -476,6 +476,7 @@ pub fn update_command_v1(
     }
     Ok(match path {
         UpdatePathV1::Serial => ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: batch.source.clone(),
             trajectories: batch.trajectories.clone(),
             learning_rate: learning.learning_rate,
@@ -503,6 +504,7 @@ pub fn update_command_v1(
         UpdatePathV1::Prepared => {
             validate_preparation_workers_v1(workers)?;
             ExpandedTrainingCommandV1::UpdatePrepared {
+                card_semantics: None,
                 source: batch.source.clone(),
                 trajectories: batch.trajectories.clone(),
                 learning_rate: learning.learning_rate,

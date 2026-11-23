@@ -62,6 +62,7 @@ fn update(
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: source.clone(),
         trajectories,
         learning_rate: 1.0e-3,
@@ -278,6 +279,7 @@ fn wide_learner_end_to_end_v1() {
         );
         // The update refuses the terminal mode before it reads anything.
         let error = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: wide.clone(),
             trajectories: trajectories.clone(),
             learning_rate: 1.0e-3,
