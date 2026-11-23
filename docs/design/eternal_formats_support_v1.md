@@ -3543,10 +3543,10 @@ tracked in #365.
   the 3-life choice as an alternative cost, so the caster cannot choose it while casting for
   granted flashback or a free cast. See [Choice between additional costs](#choice-between-additional-costs-715)
   for the actor-contract scope and the different treatment of Bone Shards and Demand Answers.
-  A graveyard cast that already stages one object payment can also lack a second selection.
-  The C6 review cites Six's retrace with Abhorrent Oculus's graveyard exile. The corresponding
-  Wrenn emblem case is a pitch selection where the cast offers it. #786 corrected the reported
-  non-completing Gurmag Angler and Avatar of Woe offers without adding a second object selection.
+  The #858 casting changes let Six or Wrenn's emblem combine retrace's land discard with eligible
+  object payments, including Abhorrent Oculus's graveyard exile under Six and Force of Will's
+  pitch cost under Wrenn's emblem. The #786 guard still withholds retrace with delve, including
+  Gurmag Angler. Avatar of Woe keeps its corrected graveyard discount.
 - **Divided damage.** Fire Covenant, Fire and Fury store one pick per point. A spell directing
   multiple picks at one object still has multiple entries, so the single-target Misdirection
   check can reject such a Fire Covenant or Fire. Fury uses the same allocation for a triggered

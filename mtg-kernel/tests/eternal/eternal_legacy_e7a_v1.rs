@@ -1510,6 +1510,95 @@ fn abhorrent_oculus_exiles_six_and_manifests_dread_each_opponent_upkeep() {
 }
 
 #[test]
+fn abhorrent_oculus_escape_requires_nine_distinct_graveyard_cards() {
+    for (order, first_count) in [(0, 6usize), (1, 3usize)] {
+        let mut state = islands();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let oculus = put(&mut state, P0, "Abhorrent Oculus", Zone::Graveyard);
+        let mut fodder: Vec<_> = (0..8)
+            .map(|_| put(&mut state, P0, "Island", Zone::Graveyard))
+            .collect();
+        pool(&mut state, P0, &[ManaColor::U], 2);
+        assert!(!castable(&mut state, oculus));
+        fodder.push(put(&mut state, P0, "Island", Zone::Graveyard));
+        cast(&mut state, oculus, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(order));
+        for (i, &id) in fodder.iter().enumerate() {
+            let expected = if i < first_count {
+                first_count - i
+            } else {
+                9 - i
+            };
+            assert!(
+                matches!(next(&mut state), Decision::ChooseCostTargets { candidates, remaining, .. }
+                if usize::from(remaining) == expected && candidates.contains(&id) && !candidates.contains(&oculus))
+            );
+            if i == first_count {
+                let before = state.clone();
+                assert!(engine::step(&mut state, Action::ChooseCostTarget(fodder[0])).is_err());
+                assert_eq!(state, before);
+            }
+            act(&mut state, Action::ChooseCostTarget(id));
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs.len(), 9);
+        settle_first(&mut state);
+        assert_eq!(zone(&state, oculus), Zone::Battlefield);
+        assert!(fodder.iter().all(|&id| zone(&state, id) == Zone::Exile));
+    }
+}
+
+#[test]
+fn abhorrent_oculus_retrace_can_exile_the_land_discarded_to_six() {
+    let mut state = islands();
+    put(&mut state, P0, "Six", Zone::Battlefield);
+    let oculus = put(&mut state, P0, "Abhorrent Oculus", Zone::Graveyard);
+    let fodder: Vec<_> = (0..5)
+        .map(|_| put(&mut state, P0, "Island", Zone::Graveyard))
+        .collect();
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    assert!(!castable(&mut state, oculus));
+    let land = put(&mut state, P0, "Island", Zone::Hand);
+    cast(&mut state, oculus, &[]);
+    assert!(
+        matches!(next(&mut state), Decision::ChooseCostTargets { candidates, .. } if candidates == [land])
+    );
+    act(&mut state, Action::ChooseCostTarget(land));
+    let mut restored: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    for game in [&mut state, &mut restored] {
+        for id in std::iter::once(land).chain(fodder.iter().copied()) {
+            assert!(
+                matches!(next(game), Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&id))
+            );
+            act(game, Action::ChooseCostTarget(id));
+        }
+        assert!(matches!(next(game), Decision::CastSpellOrPass { .. }));
+        let paid_land: Vec<_> = game
+            .stack
+            .last()
+            .unwrap()
+            .v4
+            .paid_cost_refs
+            .iter()
+            .filter(|r| r.object == land)
+            .map(|r| (r.zone, r.zone_change_count))
+            .collect();
+        assert_eq!(paid_land, [(Zone::Graveyard, 1), (Zone::Exile, 2)]);
+        settle_first(game);
+        assert_eq!(zone(game, oculus), Zone::Battlefield);
+    }
+    assert_eq!(state, restored);
+}
+
+#[test]
 fn archon_of_cruelty_punishes_the_opponent_as_it_enters() {
     let mut state = islands();
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);

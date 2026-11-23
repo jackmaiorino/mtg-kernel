@@ -978,6 +978,17 @@ pub enum SpellCastRouteV4 {
     TinybonesExileV72 {
         play_history_index: u64,
     },
+    BeamMeUpV1,
+    SnapcasterFlashbackV1,
+    RetraceV1,
+    /// Breach's escape chosen on a card that also has its own escape cost.
+    BreachEscapeV1,
+}
+
+impl SpellCastRouteV4 {
+    pub(crate) fn is_escape(self) -> bool {
+        matches!(self, Self::GraveyardEscape | Self::BreachEscapeV1)
+    }
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -1035,6 +1046,13 @@ pub struct StackSourceContractV4 {
     /// Pending placeholders and virtual copies retain `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
+}
+
+impl StackSourceContractV4 {
+    pub(crate) fn breach_escape(self) -> bool {
+        self.spell_cast_origin
+            .is_some_and(|o| o.route == SpellCastRouteV4::BreachEscapeV1)
+    }
 }
 
 impl StackSourceContractV4 {
@@ -6019,6 +6037,7 @@ mod tests {
             convoke_chosen: Vec::new(),
             convoke_finished: false,
             escape_exile_finished_v1: false,
+            graveyard_cost_first_v1: None,
             hand_free_cast_v1: None,
             thornscape_white_kicker_v1: None,
             mandatory_additional_cost: None,

@@ -52,8 +52,8 @@ use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1, StandardTriggerV1};
 use crate::state::{
-    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, SpellCastRouteV4,
-    StackItemKind, Step, Target, Zone,
+    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, StackItemKind, Step, Target,
+    Zone,
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
@@ -918,6 +918,11 @@ pub(crate) fn pending_retrace(state: &GameState, pending: &crate::engine::Pendin
             .source_contract
             .spell_cast_origin
             .is_some_and(|origin| {
+                if origin.origin_zone == Zone::Graveyard
+                    && origin.route == crate::state::SpellCastRouteV4::RetraceV1
+                {
+                    return retrace_permission(state, pending.spell, pending.controller);
+                }
                 origin.origin_zone == Zone::Graveyard
                     && matches!(
                         origin.route,
@@ -2460,11 +2465,7 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
                         casts.push(link);
                     }
                 }
-                Some(URO)
-                    if cast_origin.is_some_and(|origin| {
-                        origin.route == SpellCastRouteV4::GraveyardEscape
-                    }) =>
-                {
+                Some(URO) if cast_origin.is_some_and(|origin| origin.route.is_escape()) => {
                     let casts = &mut e7b_state(state).escaped_casts;
                     if !casts.contains(&link) {
                         casts.push(link);

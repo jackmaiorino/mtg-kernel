@@ -411,6 +411,7 @@ pub mod eternal_premodern_p3f_v1;
 pub mod eternal_premodern_p3g_v1;
 /// Premodern sideboard card programs of the eternal catalog (wave P3h).
 pub mod eternal_premodern_p3h_v1;
+pub(crate) mod eternal_prevention_order_v1;
 /// Legacy sideboard card programs of the eternal catalog (wave S1a).
 pub mod eternal_sideboard_s1a_v1;
 /// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).

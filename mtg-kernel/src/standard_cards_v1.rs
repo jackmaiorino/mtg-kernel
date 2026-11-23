@@ -3448,30 +3448,39 @@ fn ojer_source_controller(state: &GameState, damage: &DamageProposed) -> Option<
     Some(controller)
 }
 
+fn active_ojers(state: &GameState, controller: PlayerId) -> impl Iterator<Item = ObjectId> + '_ {
+    state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(move |id| {
+            let live = state.objects.get(*id);
+            live.v4.face_index == 0
+                && CARD_DEFS[live.card_def as usize].name == OJER
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, *id)
+        })
+}
+
+pub(crate) fn has_active_ojer(state: &GameState, controller: PlayerId) -> bool {
+    active_ojers(state, controller).next().is_some()
+}
+
+pub(crate) fn matching_ojers<'a>(
+    state: &'a GameState,
+    damage: &DamageProposed,
+) -> impl Iterator<Item = (ObjectId, i32)> + 'a {
+    ojer_source_controller(state, damage)
+        .into_iter()
+        .flat_map(move |controller| active_ojers(state, controller))
+        .map(move |id| (id, crate::engine::effective_power(state, id)))
+}
+
 pub(crate) fn applicable_ojers<'a>(
     state: &'a GameState,
     damage: &DamageProposed,
 ) -> impl Iterator<Item = (ObjectId, i32)> + 'a {
     let amount = damage.amount;
-    ojer_source_controller(state, damage)
-        .into_iter()
-        .flat_map(move |controller| {
-            state.players[controller.index()]
-                .battlefield
-                .iter()
-                .copied()
-        })
-        .filter_map(move |id| {
-            let live = state.objects.get(id);
-            if live.v4.face_index != 0
-                || CARD_DEFS[live.card_def as usize].name != OJER
-                || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-            {
-                return None;
-            }
-            let power = crate::engine::effective_power(state, id);
-            (amount < power).then_some((id, power))
-        })
+    matching_ojers(state, damage).filter(move |(_, power)| amount < *power)
 }
 
 /// Records noncombat damage dealt by red sources for Temple of Power.
