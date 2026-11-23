@@ -1241,8 +1241,6 @@ fn skeletal_scrying_restores_both_draw_replacements_before_losing_x_life() {
 
         for branch in [&mut state, &mut restored] {
             act(branch, Action::FinishEffectSelection);
-            assert_eq!(controls(branch, opponent, "Treasure Token").len(), 1);
-            assert_eq!(branch.players[actor.index()].life, life_before);
         }
         let second = settle(&mut state).expect("Skeletal Scrying's second draw replacement");
         assert!(
@@ -1252,6 +1250,8 @@ fn skeletal_scrying_restores_both_draw_replacements_before_losing_x_life() {
         assert_eq!(settle(&mut restored), Some(second));
 
         for branch in [&mut state, &mut restored] {
+            assert_eq!(controls(branch, opponent, "Treasure Token").len(), 1);
+            assert_eq!(branch.players[actor.index()].life, life_before);
             act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
             settled(branch);
             assert_eq!(zone(branch, spell), Zone::Graveyard);
