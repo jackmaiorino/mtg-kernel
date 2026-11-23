@@ -399,3 +399,201 @@ fn insert_v1(entry: Arc<LoadedSourceV1>) {
         entries.push_back(entry);
     });
 }
+
+/// What a learner template ([`LearnerTemplateV1`]) restores: the branch of
+/// `initialize_from_source_bytes_v1` its sources take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TemplateKindV1 {
+    /// The ordinary branch: a fresh-initialization descriptor under its own
+    /// feature identity (fresh V4, or V3).
+    Ordinary,
+    /// The FlatV7 branch with a FlatV7 checkpoint.
+    FlatV7,
+    /// The FlatV8 branch.
+    FlatV8,
+}
+
+/// A learner's policy exactly as the full loader
+/// (`initialize_from_source_bytes_v1`) holds it right before it restores a
+/// checkpoint: the play import loaded under its feature identity and, for
+/// FlatV7 and FlatV8, given that identity. It is a pure function of the
+/// descriptor bytes, their initialization manifest and parameter payload, and
+/// the feature transfer, so it serves every checkpoint of one import
+/// (`collection_tail_v1`, the persistent collection state). It is never
+/// restored itself: each restore starts from an exact duplicate of it
+/// (`FrozenPlayPolicyV1::duplicate_loaded_v1`).
+///
+/// Only fresh-initialization descriptors have a template, as only they have
+/// loaded-source cache entries; every other source loads in full.
+pub(super) struct LearnerTemplateV1 {
+    play_import: PinnedFileV1,
+    feature_transfer: crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3,
+    descriptor_bytes: Vec<u8>,
+    descriptor: ExpandedFreshInitializationSourceV1,
+    kind: TemplateKindV1,
+    policy: FrozenPlayPolicyV1,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEMPLATE_RESTORES_FOR_TEST_V1: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Test-only: restores this thread made from a template.
+#[cfg(test)]
+pub(super) fn template_restores_for_test_v1() -> u64 {
+    TEMPLATE_RESTORES_FOR_TEST_V1.with(std::cell::Cell::get)
+}
+
+impl LearnerTemplateV1 {
+    /// The template of `source`'s import (`bytes` are its verified
+    /// descriptor bytes), or `None` when the source has none or any step of
+    /// building it fails. Nothing here is an error: a source without a
+    /// template loads in full, and that load reports its own errors.
+    pub(super) fn build_v1(source: &ExpandedModelSourceV1, bytes: &[u8]) -> Option<Self> {
+        if source.s_learner.is_some() {
+            return None;
+        }
+        let kind = if super::flat_v8_requested_v1(source).ok()? {
+            TemplateKindV1::FlatV8
+        } else if super::flat_v7_transfer_requested_v1(source).ok()? {
+            TemplateKindV1::FlatV7
+        } else {
+            TemplateKindV1::Ordinary
+        };
+        // Only a fresh-initialization descriptor; the probe the loader makes.
+        let probe: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+        if probe.get("schema").and_then(serde_json::Value::as_str)
+            != Some(fresh_initialization_source::SOURCE_SCHEMA)
+        {
+            return None;
+        }
+        let descriptor = fresh_initialization_source::parse_source_v1(bytes).ok()?;
+        // The source the loader loads the import from: the flat branches load
+        // it under its V4 identity, the ordinary branch under its own.
+        let import_source = ExpandedModelSourceV1 {
+            feature_transfer: match kind {
+                TemplateKindV1::Ordinary => source.feature_transfer.clone(),
+                TemplateKindV1::FlatV7 | TemplateKindV1::FlatV8 => {
+                    crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+                        expected_feature_contract_digest: super::FEATURE_CONTRACT_DIGEST_V4.into(),
+                        expected_feature_encoding_digest: super::FEATURE_ENCODING_DIGEST_V4.into(),
+                    }
+                }
+            },
+            checkpoint: None,
+            ..source.clone()
+        };
+        let policy = super::load_ordinary_policy_v1(&import_source, bytes).ok()?;
+        let policy = match kind {
+            TemplateKindV1::Ordinary => policy,
+            TemplateKindV1::FlatV7 => policy.into_flat_v7_transfer_v1().ok()?,
+            TemplateKindV1::FlatV8 => policy.into_flat_v8_v1().ok()?,
+        };
+        // The template must be duplicable, as every restore duplicates it.
+        policy.duplicate_loaded_v1().ok()?;
+        Some(Self {
+            play_import: source.play_import.clone(),
+            feature_transfer: source.feature_transfer.clone(),
+            descriptor_bytes: bytes.to_vec(),
+            descriptor,
+            kind,
+            policy,
+        })
+    }
+
+    /// Whether this template is `source`'s import's, with these descriptor
+    /// bytes: the same pinned import, the same feature transfer and the same
+    /// bytes. Its checkpoint may be any.
+    pub(super) fn serves_v1(&self, source: &ExpandedModelSourceV1, bytes: &[u8]) -> bool {
+        source.s_learner.is_none()
+            && source.play_import == self.play_import
+            && source.feature_transfer == self.feature_transfer
+            && bytes == self.descriptor_bytes.as_slice()
+    }
+}
+
+/// `initialize_from_source_bytes_v1(source, bytes, None)` for a source with a
+/// checkpoint whose import `template` serves, through the template:
+/// `Ok(None)` when the template does not apply (no checkpoint, another
+/// import, a FlatV7 source whose checkpoint is a V4 one, a FlatV8 source
+/// whose checkpoint lacks the FlatV8 identity), and the caller loads in full.
+///
+/// Otherwise it is the full loader with only its import load replaced by an
+/// exact duplicate of the template. Every other step is the loader's own, in
+/// its order: the same entry checks, the same loaded-source cache lookup (a
+/// hit is served as the loader serves it), the same checkpoint probe, the
+/// same reads of the import's initialization manifest and parameter payload
+/// (`reverify_input_files_v1`, as a cache hit makes them, with the full
+/// load's errors), the same read of the checkpoint record, its parse, the
+/// loader's restore (`restore_checkpoint_state_v1`) and the same cache entry.
+/// So the policy and state are bit for bit the full load's, and a changed,
+/// missing or unreadable file fails exactly as it fails the full load. The
+/// one difference: a flat full load also keeps its import alone in the
+/// loaded-source cache, which a restore does not need; that changes which
+/// later loads hit, never what they return.
+pub(super) fn initialize_with_template_v1(
+    template: &LearnerTemplateV1,
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+) -> Result<Option<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1)>, String> {
+    // The loader's entry checks, in its order.
+    ensure(
+        source.s_learner.is_none(),
+        super::s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
+    let flat_v8 = super::flat_v8_requested_v1(source)?;
+    let flat_v7 = !flat_v8 && super::flat_v7_transfer_requested_v1(source)?;
+    let kind = match (flat_v8, flat_v7) {
+        (true, _) => TemplateKindV1::FlatV8,
+        (false, true) => TemplateKindV1::FlatV7,
+        (false, false) => TemplateKindV1::Ordinary,
+    };
+    let Some(pin) = &source.checkpoint else {
+        return Ok(None);
+    };
+    if kind != template.kind || !template.serves_v1(source, bytes) {
+        return Ok(None);
+    }
+    match kind {
+        TemplateKindV1::FlatV7 | TemplateKindV1::FlatV8 => {
+            if let Some(hit) = lookup_flat_checkpoint_v1(source, bytes, None)? {
+                return Ok(Some(hit));
+            }
+            let identity = if kind == TemplateKindV1::FlatV8 {
+                crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
+            } else {
+                crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7
+            };
+            // The loader's probe of the checkpoint; any other identity takes
+            // the loader's other way (the V4-to-V7 transfer) or its refusal.
+            if super::checkpoint_feature_contract_v1(pin)? != identity {
+                return Ok(None);
+            }
+        }
+        TemplateKindV1::Ordinary => {
+            if let Some(hit) = lookup_v1(source, bytes, None)? {
+                return Ok(Some(hit));
+            }
+        }
+    }
+    // The import load's reads; everything else it does is a pure function of
+    // these verified bytes, done once for the template.
+    fresh_initialization_source::reverify_input_files_v1(&template.descriptor)?;
+    let Ok(mut policy) = template.policy.duplicate_loaded_v1() else {
+        return Ok(None);
+    };
+    let model = policy.training_model_v3();
+    let record = super::read_checkpoint_record_v1(pin)?;
+    let saved = super::parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
+    let state = super::restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+    match kind {
+        TemplateKindV1::Ordinary => remember_v1(source, bytes, &policy, &state, Some(&saved)),
+        TemplateKindV1::FlatV7 | TemplateKindV1::FlatV8 => {
+            remember_flat_checkpoint_v1(source, bytes, &policy, &state, &saved)
+        }
+    }
+    #[cfg(test)]
+    TEMPLATE_RESTORES_FOR_TEST_V1.with(|restores| restores.set(restores.get() + 1));
+    Ok(Some((policy, state)))
+}

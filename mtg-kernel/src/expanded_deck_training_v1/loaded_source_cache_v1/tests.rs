@@ -623,3 +623,231 @@ fn a_flat_checkpoint_that_names_another_file_is_never_kept() {
     assert_eq!(flat_matches(), before + 1);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Learner templates (`collection_tail_v1`): a fresh V3 source, a fresh V4
+/// source, and the FlatV7 and FlatV8 sources over a V4 import, each with a
+/// moved checkpoint, under `root`.
+fn template_sources_v1(root: &Path) -> Vec<ExpandedModelSourceV1> {
+    let v3_root = root.join("v3");
+    let v4_root = root.join("v4");
+    let flat_root = root.join("flat");
+    for directory in [&v3_root, &v4_root, &flat_root] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    let v3 = fresh_source(&v3_root);
+    let v4 = fresh_source_with_v1(
+        &v4_root,
+        crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+    );
+    let mut sources = vec![
+        write_checkpoint(&v3_root, &v3).0,
+        write_checkpoint(&v4_root, &v4).0,
+    ];
+    sources.extend(
+        flat_sources_v1(&flat_root)
+            .into_iter()
+            .map(|(source, _)| source),
+    );
+    sources
+}
+
+/// `source` without its checkpoint: the import alone.
+fn import_only_v1(source: &ExpandedModelSourceV1) -> ExpandedModelSourceV1 {
+    ExpandedModelSourceV1 {
+        checkpoint: None,
+        ..source.clone()
+    }
+}
+
+/// The restore path of `collection_tail_v1` equals a fresh load: for fresh V3
+/// and V4, FlatV7 and FlatV8 sources, a template built from the import alone
+/// restores the checkpoint to the very policy and state the full loader
+/// returns (state, every parameter and moment bit, model and inference
+/// identity, embeddings, flat identity), again and again from the same
+/// template, which a restore never changes. Restored with the cache on, it
+/// keeps the full load's entry, which serves the next load exactly. Each
+/// restore is counted, so a cache hit cannot stand in for it.
+#[test]
+fn a_template_restore_equals_a_full_load() {
+    let root = temp_root("template-restore");
+    for source in template_sources_v1(&root) {
+        let bytes = fs::read(&source.play_import.path).unwrap();
+        let template = LearnerTemplateV1::build_v1(&import_only_v1(&source), &bytes)
+            .expect("a fresh-initialization import has a template");
+        let full = bypassed(|| initialize(&source)).unwrap();
+        for round in 0..2 {
+            let before = template_restores_for_test_v1();
+            let restored = bypassed(|| initialize_with_template_v1(&template, &source, &bytes))
+                .unwrap()
+                .expect("the template applies");
+            assert_eq!(
+                template_restores_for_test_v1(),
+                before + 1,
+                "round {round}: restored, not served"
+            );
+            assert_same_load(&restored, &full, &source);
+            assert_eq!(
+                restored.0.feature_identity_v1(),
+                full.0.feature_identity_v1()
+            );
+            assert_eq!(
+                restored.1.snapshot_v1().unwrap(),
+                full.1.snapshot_v1().unwrap(),
+                "round {round}"
+            );
+        }
+        // With the cache on: the restore keeps the full load's entry.
+        clear_for_test_v1();
+        let before = template_restores_for_test_v1();
+        let kept = initialize_with_template_v1(&template, &source, &bytes)
+            .unwrap()
+            .unwrap();
+        assert_eq!(template_restores_for_test_v1(), before + 1);
+        assert_same_load(&kept, &full, &source);
+        let (before, before_flat) = (matches(), flat_matches());
+        let served = initialize(&source).unwrap();
+        assert_eq!(
+            matches() + flat_matches(),
+            before + before_flat + 1,
+            "the restore's entry serves the next load"
+        );
+        assert_same_load(&served, &full, &source);
+        assert_eq!(
+            served.1.snapshot_v1().unwrap(),
+            full.1.snapshot_v1().unwrap()
+        );
+        clear_for_test_v1();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A template applies only where the full loader would restore through the
+/// same import load: not without a checkpoint, not for another import or
+/// feature transfer, not for a FlatV7 source whose checkpoint is a V4 one
+/// (the loader's V4-to-V7 transfer), and not for a FlatV8 source whose
+/// checkpoint lacks the FlatV8 identity (the loader's refusal). There it
+/// returns nothing and the caller loads in full; a persistent collection
+/// state then returns the full load's result or error.
+#[test]
+fn a_template_serves_only_the_restores_of_its_own_import_load() {
+    use crate::native_flat_tensorizer_v7::{
+        FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+    };
+    let root = temp_root("template-scope");
+    let sources = template_sources_v1(&root);
+    let (v3, v4, v8, v7) = (&sources[0], &sources[1], &sources[2], &sources[3]);
+    let template = |source: &ExpandedModelSourceV1| {
+        let bytes = fs::read(&source.play_import.path).unwrap();
+        (LearnerTemplateV1::build_v1(source, &bytes).unwrap(), bytes)
+    };
+    let none = |template: &LearnerTemplateV1, source: &ExpandedModelSourceV1, bytes: &[u8]| {
+        bypassed(|| initialize_with_template_v1(template, source, bytes))
+            .unwrap()
+            .is_none()
+    };
+    let (v3_template, v3_bytes) = template(v3);
+    let (v4_template, v4_bytes) = template(v4);
+    let (v7_template, v7_bytes) = template(v7);
+    let (v8_template, v8_bytes) = template(v8);
+    assert!(
+        none(&v3_template, &import_only_v1(v3), &v3_bytes),
+        "no checkpoint"
+    );
+    assert!(none(&v3_template, v4, &v4_bytes), "another import");
+    assert!(
+        none(&v4_template, v7, &v7_bytes),
+        "another feature transfer"
+    );
+    assert!(
+        none(&v7_template, v4, &v4_bytes),
+        "another feature transfer"
+    );
+    // A FlatV7 source over the V4 checkpoint: the V4-to-V7 transfer.
+    let transfer = ExpandedModelSourceV1 {
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V7.into(),
+            expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V7.into(),
+        },
+        ..v4.clone()
+    };
+    let (transfer_template, transfer_bytes) = template(&transfer);
+    assert!(none(&transfer_template, &transfer, &transfer_bytes));
+    // A FlatV8 source over the FlatV7 checkpoint: the loader's refusal.
+    let refused = ExpandedModelSourceV1 {
+        checkpoint: v7.checkpoint.clone(),
+        ..v8.clone()
+    };
+    assert!(none(&v8_template, &refused, &v8_bytes));
+    for (source, expected) in [(&transfer, None), (&refused, Some("FlatV8"))] {
+        let persistent = crate::expanded_deck_training_v1::PersistentCollectionV1::new_v1();
+        let full = bypassed(|| initialize(source));
+        let loaded = bypassed(|| persistent.learner_v1(source));
+        assert_eq!(persistent.restored_for_test_v1(), 0);
+        match (full, loaded) {
+            (Ok(full), Ok((policy, state, None))) => {
+                assert!(expected.is_none());
+                assert_same_load(&(policy, state), &full, source);
+            }
+            (Err(full), Err(loaded)) => {
+                assert!(full.contains(expected.unwrap()), "{full}");
+                assert_eq!(loaded, full);
+            }
+            (full, loaded) => panic!(
+                "the full load and the persistent state differ: {:?} {:?}",
+                full.err(),
+                loaded.err()
+            ),
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A persistent collection state builds its template once, from the first
+/// source with a checkpoint, restores every later checkpoint of the same
+/// import from it, and fails exactly as the full load fails when any file a
+/// full load reads is changed or missing: the import, its initialization
+/// manifest, its parameter payload and the checkpoint. The restored bytes
+/// restore again.
+#[test]
+fn a_changed_or_missing_file_fails_a_template_restore_as_it_fails_a_full_load() {
+    let root = temp_root("template-files");
+    for source in template_sources_v1(&root) {
+        let descriptor: ExpandedFreshInitializationSourceV1 =
+            serde_json::from_slice(&fs::read(&source.play_import.path).unwrap()).unwrap();
+        let persistent = crate::expanded_deck_training_v1::PersistentCollectionV1::new_v1();
+        let reference = bypassed(|| initialize(&source)).unwrap();
+        let (policy, state, _) = bypassed(|| persistent.learner_v1(&source)).unwrap();
+        assert_eq!(
+            persistent.restored_for_test_v1(),
+            1,
+            "the template restored"
+        );
+        assert_same_load(&(policy, state), &reference, &source);
+        let files = [
+            source.play_import.path.clone(),
+            descriptor.initialization.path.clone(),
+            descriptor.parameters.path.clone(),
+            source.checkpoint.as_ref().unwrap().path.clone(),
+        ];
+        for path in files {
+            let original = fs::read(&path).unwrap();
+            let mut changed = original.clone();
+            changed[original.len() / 2] ^= 1;
+            for (label, bytes) in [("changed", Some(changed)), ("missing", None)] {
+                match bytes {
+                    Some(bytes) => fs::write(&path, bytes).unwrap(),
+                    None => fs::remove_file(&path).unwrap(),
+                }
+                let full = bypassed(|| initialize(&source)).err().unwrap();
+                let restored = bypassed(|| persistent.learner_v1(&source)).err().unwrap();
+                assert_eq!(restored, full, "{label} {}", path.display());
+                fs::write(&path, &original).unwrap();
+            }
+            let before = persistent.restored_for_test_v1();
+            let (policy, state, _) = bypassed(|| persistent.learner_v1(&source)).unwrap();
+            assert_eq!(persistent.restored_for_test_v1(), before + 1);
+            assert_same_load(&(policy, state), &reference, &source);
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}

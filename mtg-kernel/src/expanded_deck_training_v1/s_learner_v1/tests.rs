@@ -521,6 +521,7 @@ fn run_config(
         record_envelope: Default::default(),
         verified_reads: Default::default(),
         update_tail_overlap_v1: false,
+        collection_tail_v1: false,
         learning_rate: 1.0e-3,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,

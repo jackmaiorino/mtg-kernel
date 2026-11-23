@@ -282,6 +282,10 @@ where
     )?;
     let next = AtomicUsize::new(0);
     let first_error = AtomicUsize::new(job_count);
+    // A caller whose output is held (`held_output_v1`; a prepared update
+    // ahead of its learner gate, `collection_tail_v1`) holds its workers'
+    // lines and panic messages too.
+    let held = crate::held_output_v1::current_v1();
     thread::scope(|scope| {
         let mut handles = Vec::new();
         let mut spawn_error = None;
@@ -290,10 +294,12 @@ where
             let first_error = &first_error;
             let state = &state;
             let work = &work;
+            let held = &held;
             match thread::Builder::new()
                 .name(format!("expanded-preparation-{worker}"))
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
+                    let _held = held.as_ref().map(crate::held_output_v1::install_v1);
                     let mut state = state();
                     let mut values = Vec::new();
                     let mut busy = 0.0;
@@ -411,11 +417,13 @@ pub(super) fn read_trajectories_bounded_v1(
     } else {
         ordered_jobs_v1(workers, pins.len(), read)?.0
     };
-    eprintln!(
+    // Held while the update runs ahead of its learner gate
+    // (`collection_tail_v1`); written at once otherwise, as before.
+    crate::held_output_v1::line_v1(format!(
         "update input: {} of {} trajectories parsed ahead",
         parsed_ahead.into_inner(),
         pins.len()
-    );
+    ));
     Ok(episodes)
 }
 
