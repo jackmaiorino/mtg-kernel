@@ -1847,7 +1847,7 @@ fn minsc_and_boo_make_boo_grow_it_and_fling_it() {
 #[test]
 fn departed_minsc_damage_keeps_the_soul_scar_and_hallow_choices_after_restore() {
     let mut state = islands();
-    put(&mut state, P0, "Soul-Scar Mage", Zone::Battlefield);
+    let mage = put(&mut state, P0, "Soul-Scar Mage", Zone::Battlefield);
     let victim = put(&mut state, P1, "Wall of Blossoms", Zone::Battlefield);
     let minsc = put(&mut state, P0, "Minsc & Boo, Timeless Heroes", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 2);
@@ -1861,11 +1861,17 @@ fn departed_minsc_damage_keeps_the_soul_scar_and_hallow_choices_after_restore() 
     let damage_source_generation = state.objects.get(minsc).zone_change_count;
 
     activate(&mut state, minsc, 1, &[]);
-    assert!(matches!(
-        settle(&mut state),
-        Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. })
-            if legal_targets.as_slice() == [Target::Object(boo)]
-    ));
+    let sacrifice = settle(&mut state);
+    assert!(
+        matches!(
+            &sacrifice,
+            Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. })
+                if legal_targets.len() == 2
+                    && legal_targets.contains(&Target::Object(boo))
+                    && legal_targets.contains(&Target::Object(mage))
+        ),
+        "unexpected Minsc sacrifice choice: {sacrifice:?}"
+    );
     act(&mut state, Action::ChooseEffectTarget(Target::Object(boo)));
     choose_target(&mut state, Target::Object(victim));
     let bounce = put(&mut state, P0, "Echoing Truth", Zone::Hand);
