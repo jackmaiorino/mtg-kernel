@@ -832,12 +832,14 @@ fn prune_influence(state: &mut GameState) {
                             && source.zone_change_count == link.zone_change_count
                     })
                 })
-                || state.engine.pending_triggers.iter().any(|pending| {
-                    pending.source_contract.is_some_and(|source| {
-                        source.source == link.object
-                            && source.zone_change_count == link.zone_change_count
+                || crate::optional_trigger_public_v1::held(state)
+                    .into_iter()
+                    .any(|pending| {
+                        pending.source_contract.is_some_and(|source| {
+                            source.source == link.object
+                                && source.zone_change_count == link.zone_change_count
+                        })
                     })
-                })
         })
         .collect::<Vec<_>>();
     if keep.len() != ledger.influence.len() {

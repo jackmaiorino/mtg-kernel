@@ -1446,38 +1446,73 @@ fn tamiyo_investigates_when_she_attacks() {
 
 #[test]
 fn tamiyo_transforms_on_the_third_draw_of_a_turn() {
-    let mut state = islands();
-    let tamiyo = put(
-        &mut state,
-        P0,
-        "Tamiyo, Inquisitive Student",
-        Zone::Battlefield,
-    );
-    for _ in 0..2 {
-        event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
-    }
-    settled(&mut state);
-    assert_eq!(state.objects.get(tamiyo).v4.face_index, 0, "two draws");
-    // The opponent's draws are not hers.
-    event::propose_and_commit(&mut state, ProposedEvent::draw(P1));
-    settled(&mut state);
-    assert_eq!(state.objects.get(tamiyo).v4.face_index, 0);
+    for controller in [P0, P1] {
+        let owner = controller.opponent();
+        let mut state = islands();
+        let tamiyo = put(
+            &mut state,
+            controller,
+            "Tamiyo, Inquisitive Student",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(tamiyo).owner = owner;
+        let original_generation = state.objects.get(tamiyo).zone_change_count;
+        let history_start = state.engine.event_history.len();
 
-    let (state, tamiyo) = transformed_tamiyo();
-    let live = state.objects.get(tamiyo);
-    assert_eq!(live.zone, Zone::Battlefield);
-    assert_eq!(live.v4.face_index, 1);
-    assert_eq!(live.controller, P0);
-    assert!(engine::object_has_type(
-        &state,
-        tamiyo,
-        CardType::Planeswalker
-    ));
-    assert!(!engine::object_has_type(&state, tamiyo, CardType::Creature));
-    assert_eq!(
-        mtg_kernel::planeswalker_v1::loyalty(&state, tamiyo),
-        Some(2)
-    );
+        for _ in 0..2 {
+            event::propose_and_commit(&mut state, ProposedEvent::draw(controller));
+        }
+        settled(&mut state);
+        assert_eq!(state.objects.get(tamiyo).v4.face_index, 0, "two draws");
+        event::propose_and_commit(&mut state, ProposedEvent::draw(owner));
+        settled(&mut state);
+        assert_eq!(state.objects.get(tamiyo).v4.face_index, 0);
+
+        event::propose_and_commit(&mut state, ProposedEvent::draw(controller));
+        settled(&mut state);
+        let moves: Vec<_> = state
+            .engine
+            .event_history
+            .iter()
+            .skip(history_start)
+            .filter_map(|entry| match entry {
+                event::CommittedEvent::ZoneChange {
+                    object, from, to, ..
+                } if *object == tamiyo => Some((*from, *to)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            moves,
+            [
+                (Zone::Battlefield, Zone::Exile),
+                (Zone::Exile, Zone::Battlefield)
+            ]
+        );
+        let live = state.objects.get(tamiyo);
+        assert_eq!(live.zone_change_count, original_generation + 2);
+        assert_eq!((live.owner, live.controller), (owner, owner));
+        assert_eq!(live.zone, Zone::Battlefield);
+        assert!(state.players[owner.index()].battlefield.contains(&tamiyo));
+        assert!(!state.players[controller.index()]
+            .battlefield
+            .contains(&tamiyo));
+        assert_eq!(live.v4.face_index, 1);
+        assert_eq!(
+            engine::effective_name(&state, tamiyo),
+            "Tamiyo, Seasoned Scholar"
+        );
+        assert!(engine::object_has_type(
+            &state,
+            tamiyo,
+            CardType::Planeswalker
+        ));
+        assert!(!engine::object_has_type(&state, tamiyo, CardType::Creature));
+        assert_eq!(
+            mtg_kernel::planeswalker_v1::loyalty(&state, tamiyo),
+            Some(2)
+        );
+    }
 }
 
 #[test]

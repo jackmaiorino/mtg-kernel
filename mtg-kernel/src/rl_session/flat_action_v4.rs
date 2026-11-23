@@ -229,10 +229,13 @@ fn retained_source_conflicts(
                 .as_ref()
                 .is_some_and(|x| same(x.source, x.zone_change_count))
     };
-    state.engine.pending_triggers.iter().any(|trigger| {
-        trigger.source_contract.as_ref().is_some_and(&ability)
-            || trigger.granted_by.as_ref().is_some_and(&ability)
-    }) || state.stack.iter().any(&stack)
+    crate::optional_trigger_public_v1::held(state)
+        .into_iter()
+        .any(|trigger| {
+            trigger.source_contract.as_ref().is_some_and(&ability)
+                || trigger.granted_by.as_ref().is_some_and(&ability)
+        })
+        || state.stack.iter().any(&stack)
         || state
             .engine
             .pending_effect

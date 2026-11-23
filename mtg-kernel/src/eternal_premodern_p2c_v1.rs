@@ -937,10 +937,8 @@ fn devourer_trigger_outstanding(state: &GameState, object: ObjectId) -> bool {
         item.kind == crate::state::StackItemKind::TriggeredAbility
             && item.source == object
             && item.inline_effect.as_ref().is_some_and(matches)
-    }) || state
-        .engine
-        .pending_triggers
-        .iter()
+    }) || crate::optional_trigger_public_v1::held(state)
+        .into_iter()
         .any(|pending| pending.source == object && matches(&pending.effect))
         || state.eternal_v1.as_ref().is_some_and(|eternal| {
             eternal

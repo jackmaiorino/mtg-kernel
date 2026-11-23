@@ -63,7 +63,7 @@ use serde::{Deserialize, Serialize};
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct E7bStateV1 {
     /// Triggers detected by hooks, waiting for the next trigger collection.
@@ -139,10 +139,53 @@ pub struct E7bStateV1 {
     /// once the mulligans end.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub powder_declined: Vec<(PlayerId, Vec<ObjectLinkV4>)>,
+    /// Whether a resolving effect or draw-step dredge is deferring trigger
+    /// captures until the next trigger-placement checkpoint.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dredge_deferring: bool,
+    /// Event-time trigger captures drained before a dredge mill changes
+    /// graveyard contents, held until `trigger::collect_and_process` orders
+    /// the combined checkpoint batch under APNAP (CR 603.2, 603.3b).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dredge_captures: Vec<PendingTrigger>,
 }
 
 fn no_emblems(emblems: &[u8; 2]) -> bool {
     emblems[0] == 0 && emblems[1] == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl std::hash::Hash for E7bStateV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.queued_triggers.hash(state);
+        self.evoked_casts.hash(state);
+        self.dash_casts.hash(state);
+        self.dashed.hash(state);
+        self.escaped_casts.hash(state);
+        self.graveyard_casts.hash(state);
+        self.end_step_returns.hash(state);
+        self.revoker_names.hash(state);
+        self.shields.hash(state);
+        self.discards.hash(state);
+        self.creature_spells.hash(state);
+        self.skimmer_uses.hash(state);
+        self.dack_emblems.hash(state);
+        self.wrenn_emblems.hash(state);
+        self.dredge_draw.hash(state);
+        self.draw_step_remaining.hash(state);
+        self.casters.hash(state);
+        self.prepared.hash(state);
+        self.prepare_copies.hash(state);
+        self.powder_declined.hash(state);
+        if self.dredge_deferring || !self.dredge_captures.is_empty() {
+            "e7b-dredge-captures/v1".hash(state);
+            self.dredge_deferring.hash(state);
+            self.dredge_captures.hash(state);
+        }
+    }
 }
 
 /// Optional remaining draw-step draw count that hashes zero bytes when `None`,

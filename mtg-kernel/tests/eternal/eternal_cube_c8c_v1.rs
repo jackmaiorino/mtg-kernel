@@ -1565,6 +1565,7 @@ fn zirda_reduces_nonmana_activated_abilities_across_zones_and_skips_mana_abiliti
     pool(&mut state, P0, &[], 2);
     assert!(activatable(&mut state, room, 1));
     act(&mut state, Action::ActivateAbility(room, 1));
+    settled(&mut state);
     assert_eq!(mana(&state, P0, ManaColor::C), 0);
     assert_eq!(mana(&state, P0, ManaColor::B), 0);
 }

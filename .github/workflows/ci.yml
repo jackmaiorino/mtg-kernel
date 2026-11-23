@@ -151,23 +151,25 @@ jobs:
             # with tools/ci/pr_lookup.py.
             if command -v gh > /dev/null 2>&1; then
               open_pr() {
-                gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-                  --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0] | "\(.number // "") \(.head.sha // "")"'
+                gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" |
+                  python3 tools/ci/pr_lookup.py ready-pr
               }
-              pr_files() { gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$1/files" --jq '.[] | .filename, (.previous_filename // empty)'; }
+              pr_files() { gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"; }
             else
               open_pr() { python3 tools/ci/pr_lookup.py open-pr-head; }
               pr_files() { python3 tools/ci/pr_lookup.py pr-files "$1"; }
             fi
             pr=$(open_pr) || pr=
-            read -r pr_number pr_head <<< "$pr"
+            read -r pr_number pr_head pr_base <<< "$pr"
             echo "open pull request ${pr_number:-none} head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
-            if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
+            if [ -n "$pr_base" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               # Its run covered the whole pull request set only if its files
               # did not narrow it to one scope (tools/ci/ci_scope.py).
               pr_scope=$(pr_files "$pr_number" | python3 tools/ci/ci_scope.py file-scope) || pr_scope=
               echo "its files map to: ${pr_scope:-unknown}"
-              if [ "$pr_scope" = pr ]; then
+              # File listing is live and paginated. Narrow only if the same
+              # PR is still ready with the same head and base after that read.
+              if [ "$pr_scope" = pr ] && rechecked=$(open_pr) && [ "$rechecked" = "$pr" ]; then
                 scope=windows-complement
               fi
             fi
@@ -188,12 +190,13 @@ jobs:
           fi
           # The PR checkout is the synthetic merge commit; HEAD^1 is the
           # base branch tip, so this diff is exactly the PR's file set.
-          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
-          echo "changed files:"; echo "$files"
+          # Keep both paths of a rename and preserve Git's raw path bytes.
+          git diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/ci-changed-paths"
+          echo "changed files:"
           python_relevant=false
           rust_relevant=false
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
+          while IFS= read -r -d '' f; do
+            printf '  %q\n' "$f"
             # Python jobs care about python sources/tools/tests, the data
             # artifacts they validate, workflow changes, and the pinned
             # interpreter/lock config. Top-level tools/** is Python only;
@@ -218,7 +221,7 @@ jobs:
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
             esac
-          done <<< "$files"
+          done < "$RUNNER_TEMP/ci-changed-paths"
           echo "python_relevant=$python_relevant" >> "$GITHUB_OUTPUT"
           echo "rust_relevant=$rust_relevant" >> "$GITHUB_OUTPUT"
           echo "verdict: python_relevant=$python_relevant rust_relevant=$rust_relevant"
@@ -237,8 +240,7 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            CHANGED_FILES=$(git diff --no-renames --name-only HEAD^1 HEAD)
-            export CHANGED_FILES
+            exec < "$RUNNER_TEMP/ci-changed-paths"
           fi
           python3 tools/ci/ci_scope.py choose
 

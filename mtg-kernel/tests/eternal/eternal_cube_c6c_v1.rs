@@ -1860,9 +1860,9 @@ fn c6c_printed_characteristics_include_garruk_and_honest_unimplemented_cards() {
         def("Chandra, Torch of Defiance").capability,
         CardCapability::Full
     );
-    assert!(
-        card_id_by_name("Saheeli, Sublime Artificer").is_none(),
-        "Saheeli, Sublime Artificer stays out"
+    assert_eq!(
+        def("Saheeli, Sublime Artificer").capability,
+        CardCapability::Full
     );
     let mut state = plains();
     let walker = put(&mut state, P0, card.name, Zone::Hand);

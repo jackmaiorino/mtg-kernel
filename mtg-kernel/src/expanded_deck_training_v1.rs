@@ -5,6 +5,7 @@
 pub mod archive_distillation_v1;
 pub mod b_width_prescreen_v1;
 pub(crate) mod cache_diagnostics_v1;
+pub mod card_wave_transfer_v1;
 pub mod e_supported_teacher_v1;
 pub mod ex1_collect_v1;
 pub mod ex1_update_v1;
@@ -3314,6 +3315,16 @@ fn check_checkpoint_fields_v1<T: CheckpointTensorV1>(
         saved.source_import == *policy.identity_v1(),
         "checkpoint warm-start provenance differs",
     )?;
+    check_checkpoint_loss_fields_v1(saved)
+}
+
+/// The restore's checks of a checkpoint's loss and the scalars that loss
+/// requires, which read the checkpoint alone: every restore runs them last
+/// ([`check_checkpoint_fields_v1`]), and the card-wave transfer runs them on
+/// the checkpoint it carries (`card_wave_transfer_v1`).
+fn check_checkpoint_loss_fields_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
+) -> Result<(), String> {
     ensure(
         saved.loss_identity == "terminal_reinforce_value/v3"
             || saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1

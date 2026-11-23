@@ -8196,24 +8196,35 @@ pub(crate) fn jace_draw_replacement_origin(
             Some(staged) => staged,
             None => return false,
         },
-        None => match path.split_last() {
-            Some((&1, parent))
-                if matches!(
-                    resolved_definition_op_at(&root, parent, ctx, state),
-                    Some(EffectOp::StandardV1(
-                        crate::standard_cards_v1::StandardOpV1::EternalV1(
-                            crate::eternal_cards_v1::EternalOpV1::OutsideGameV1(
-                                crate::eternal_outside_game_v1::OutsideGameOpV1::LearnV1,
-                            ),
+        None => {
+            let Some((&branch, parent)) = path.split_last() else {
+                return false;
+            };
+            sibling_path = parent;
+            match (branch, resolved_definition_op_at(&root, parent, ctx, state)) {
+                (
+                    1,
+                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                        crate::eternal_cards_v1::EternalOpV1::OutsideGameV1(
+                            crate::eternal_outside_game_v1::OutsideGameOpV1::LearnV1,
                         ),
-                    ))
-                ) =>
-            {
-                sibling_path = parent;
-                (PlayerRef::Controller, 1, Vec::new())
+                    ))),
+                ) => (PlayerRef::Controller, 1, Vec::new()),
+                (
+                    1 | 2,
+                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                        crate::eternal_cards_v1::EternalOpV1::E9bV1(
+                            crate::eternal_e9b_v1::E9bOpV1::DenialMayDrawV1 { player },
+                        ),
+                    ))),
+                ) => (
+                    crate::eternal_e9b_v1::denial_drawer(ctx.controller, *player),
+                    u32::from(branch),
+                    Vec::new(),
+                ),
+                _ => return false,
             }
-            _ => return false,
-        },
+        }
     };
     if count == 0 || pending.ctx.resolve_player(player, state) != drawer {
         return false;
