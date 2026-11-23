@@ -15,7 +15,9 @@ It uses the method of `phase1_registry_transfer_v1` (`PHASE1-REGISTRY-TRANSFER.m
 
 ## Use
 
-Library: `transfer_card_wave_checkpoint_v1(checkpoint, source_registry, destination_registry, request)` returns the destination checkpoint bytes and a `mtg-kernel-expanded-card-wave-transfer/v1` record. `verify_card_wave_transfer_v1` reproduces both from the preserved inputs. Registries are given as each build's registry files in build order. `registry_identity_v1` pins them as one identity.
+Library: `transfer_card_wave_checkpoint_v1(checkpoint, source_registry, destination_registry, request)` returns the destination checkpoint bytes and a `mtg-kernel-expanded-card-wave-transfer/v1` record. `verify_card_wave_transfer_v1` reproduces both from the preserved inputs and accepts them only as the reproduced transfer's own bytes. Registries are given as each build's registry files in build order. `registry_identity_v1` pins them as one identity.
+
+The destination is always the build that runs the transfer: `destination_registry` must be that build's own registry files, byte for byte and in its order (the module embeds them as `build.rs` reads them: `data/cards_v1.json`, then the Foundations or Standard file, then the eternal file), and `request.destination_card_db_hash` its `KERNEL_CARDDB_HASH`.
 
 Command, built with the destination build's features (for example `--features eternal-fixtures`):
 
@@ -30,6 +32,8 @@ with
   "schema": "mtg-kernel-expanded-card-wave-transfer-cli-request/v1",
   "source_checkpoint": "/abs/old/checkpoint.json",
   "source_card_db_hash": "<16 hex: the checkpoint's card_db_hash>",
+  "feature_contract_digest": "<the checkpoint's feature_contract_digest>",
+  "feature_encoding_digest": "<the checkpoint's feature_encoding_digest>",
   "source_registry": ["/abs/old/data/cards_v1.json", "/abs/old/data/standard/magezero_v1/cards_v1.json", "/abs/old/data/eternal_v1/cards_v1.json"],
   "destination_registry": ["/abs/new/data/cards_v1.json", "/abs/new/data/standard/magezero_v1/cards_v1.json", "/abs/new/data/eternal_v1/cards_v1.json"],
   "initialization_seed": 1,
@@ -37,20 +41,24 @@ with
 }
 ```
 
-It writes `checkpoint.json` and `transfer-record.json` to the fresh directory after re-verifying them. It never starts training.
+The request is at most 1 MiB of JSON without a repeated key. The feature digests are the caller's pin: the command compares them with the checkpoint and never copies them from it. It writes `checkpoint.json` and `transfer-record.json` to the fresh directory, reads both back and accepts them only as the reproduced transfer's bytes (removing them otherwise). It never starts training.
 
 ## Refusals
 
-- The source checkpoint, either registry or the destination hash differs from its pin, or the destination is not this build (`KERNEL_CARDDB_HASH`, and the compiled card names in id order).
+- The source checkpoint, either registry identity or the destination hash differs from its pin.
+- The destination registry is not this build's compiled registry files, byte for byte (an edited, merged or re-split copy with the same card names is refused), or a registry file is not of the schema version `build.rs` compiles (2).
 - Source and destination card databases are equal. Transferring the same registry, or a transferred checkpoint again into its own build, is refused.
-- The checkpoint is not an ordinary expanded-deck checkpoint, has a different feature contract from the request, or carries continuation provenance bound to its own card database (registry transfer, archive distillation, E, soft-Q, search targets, EX1).
-- A source row is removed, renamed or reordered, or changes any field except the metadata fields `build.rs` never reads (`complexity`, `java_file`, `sideboard_only`).
+- The checkpoint is not an ordinary expanded-deck checkpoint of an imported or fresh origin under that origin's schema, or carries continuation provenance bound to its own card database (registry transfer, archive distillation, E, soft-Q, search targets, EX1; an explicit `null` member counts). A v1 JSON checkpoint must be the canonical serialization of what it parses to, so nothing it holds is dropped on rewrite.
+- The checkpoint is not one the trainer would restore: its feature contract, encoding and input contract must resolve through the trainer's own resolver (V3, V4, FlatV7, FlatV8, no-state-digest V3/V4, with the stored no-state-digest columns at +0.0), its loss and the scalars that loss requires must pass the trainer's own loss check, and its learning rate and value coefficient must be positive and finite. The checkpoint's feature contract also differs from the request.
+- The tensors are not the model of that contract (the V8 inclusion net for FlatV8, net-8 otherwise), or the state fails the restore's native validation or its recorded digest.
+- The checkpoint is not bound to the declared source registry: its origin records another card database than the checkpoint, another first registry file, or another card count (a fresh origin counts the whole id space; an import counts its first file), or any card-embedding row past the declared source registry holds optimizer state.
+- A source row is removed, renamed or reordered, or changes any field except the metadata fields `build.rs` never reads (`complexity`, `java_file`, `sideboard_only`). Fields `build.rs` does not read either but this list does not name are still compared, which can only refuse more.
 - No row is appended although the hash changed. This is a rules or field change of existing cards, not a card wave.
-- The tensors are not the net-8 or V8 inclusion train-state layout, or the source state fails native validation or its recorded digest.
-- An appended card's row already holds optimizer state.
 
 ## Limits
 
 `KERNEL_CARDDB_HASH` also covers generated rule behavior in `build.rs`. A wave that also changes the rules of an existing card, without changing its registry row, cannot be seen from the registries and is not refused. The record binds both hashes but does not certify engine equivalence.
 
-The checkpoint's `source_import` is kept as recorded. A model source resumes the transferred checkpoint only with a `play_import` whose loaded identity equals it in the destination build. An origin that binds the registry (an imported export's or a fresh initialization's destination fields) needs its own re-binding, which this transfer does not provide.
+**The transferred checkpoint does not yet resume through a model source.** Its `source_import` is kept as recorded, and that origin names the source build's card database, first registry file and card count. Every loader rebuilds the policy from the source's `play_import` in the destination build, which refuses an origin of another card database, and then requires `saved.source_import` to equal that policy's identity ("checkpoint warm-start provenance differs"). The transfer passes the restore's card-database gate and every check after the provenance one, but closing the provenance gate needs an origin re-binding (for example a wrapper that nests the original origin with this record's SHA-256, as `TransferredFreshPlayPolicyIdentityV1` does for the phase-1 tool) and a loader path that admits it. That changes the checkpoint origin format and every loader, so it is left to a design decision.
+
+For an imported origin, the origin records only its first registry file's card count. Rows past that count that hold no optimizer state cannot be told apart from rows never assigned, so a declared source registry shorter than the checkpoint's own in a later file is refused only when one of those rows was trained. An imported policy never reads a card id past its count (`card_embedding_v1`).
