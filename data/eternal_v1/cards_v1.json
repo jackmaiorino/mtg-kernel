@@ -38845,7 +38845,8 @@
   },
   {
    "name": "Elspeth, Storm Slayer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{3}{W}{W}",
    "mana_value": 5,
    "colors": [
@@ -38868,13 +38869,22 @@
     "vintage-cube"
    ],
    "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "token_doubling",
+    "token_creation",
+    "plus_one_counters",
+    "flying",
+    "destroy_target"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/e/ElspethStormSlayer.java"
   },
   {
    "name": "Grist, the Hunger Tide",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
    "mana_cost": "{1}{B}{G}",
    "mana_value": 3,
    "colors": [
@@ -38898,13 +38908,24 @@
     "vintage-cube"
    ],
    "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "characteristic_defining_ability",
+    "token_creation",
+    "mill",
+    "reflexive_trigger",
+    "sacrifice",
+    "destroy_target",
+    "life_loss"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/g/GristTheHungerTide.java"
   },
   {
    "name": "Nissa, Who Shakes the World",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{3}{G}{G}",
    "mana_value": 5,
    "colors": [
@@ -38927,13 +38948,26 @@
     "vintage-cube"
    ],
    "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "triggered_mana_ability",
+    "plus_one_counters",
+    "untap",
+    "land_animation",
+    "vigilance",
+    "haste",
+    "emblem",
+    "indestructible",
+    "library_search"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/n/NissaWhoShakesTheWorld.java"
   },
   {
    "name": "Tamiyo, Collector of Tales",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{2}{G}{U}",
    "mana_value": 4,
    "colors": [
@@ -38957,13 +38991,20 @@
     "vintage-cube"
    ],
    "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "anti_discard_sacrifice_static",
+    "choose_card_name",
+    "library_reveal",
+    "return_from_graveyard"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TamiyoCollectorOfTales.java"
   },
   {
    "name": "Through the Breach",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{4}{R}",
    "mana_value": 5,
    "colors": [
@@ -38984,13 +39025,18 @@
     "vintage-cube"
    ],
    "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
+   "complexity": "complex",
+   "mechanics": [
+    "put_onto_battlefield",
+    "haste",
+    "delayed_sacrifice",
+    "splice_onto_arcane"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/ThroughTheBreach.java"
   },
   {
    "name": "Black Green Insect Token",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [

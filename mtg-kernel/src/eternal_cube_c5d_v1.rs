@@ -580,6 +580,13 @@ fn stage_balance(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     for (index, &player) in players.iter().enumerate() {
+        if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+            state,
+            continuation.ctx.controller,
+            player,
+        ) {
+            continue;
+        }
         let cards = balance_cards(state, player, part);
         if cards.len() <= keep {
             continue;

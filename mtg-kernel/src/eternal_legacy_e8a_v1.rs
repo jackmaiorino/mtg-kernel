@@ -654,7 +654,8 @@ fn hand_cards(
 
 fn vial_hand_cards(state: &GameState, player: PlayerId, charge: i32) -> Vec<EffectObjectBinding> {
     hand_cards(state, player, |def| {
-        def.has_type(CardType::Creature) && i32::from(def.mana_value) == charge
+        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+            && i32::from(def.mana_value) == charge
     })
 }
 
@@ -2060,8 +2061,10 @@ pub(crate) fn drive(
             let recruiter = *op == E8aOpV1::RecruiterSearchV1;
             let cards = library_cards(state, controller, |def| {
                 if recruiter {
-                    def.has_type(CardType::Creature)
-                        && def.toughness.is_some_and(|toughness| toughness <= 2)
+                    (def.has_type(CardType::Creature)
+                        && def.toughness.is_some_and(|toughness| toughness <= 2))
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
                 } else {
                     def.subtypes.contains(&Subtype::Equipment)
                 }

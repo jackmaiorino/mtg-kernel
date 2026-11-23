@@ -1376,7 +1376,7 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 .retain(|(host, _)| *host != aura_link);
             if !link_live_in(state, card, Zone::Graveyard)
                 || !definition(state, card.object)
-                    .is_some_and(|def| def.has_type(CardType::Creature))
+                    .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
             {
                 return;
             }
@@ -1460,7 +1460,7 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     live.owner == ctx.controller
                         && !live.v4.is_token
                         && definition(state, card)
-                            .is_some_and(|def| def.has_type(CardType::Creature))
+                            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
             else {
                 return;
@@ -1547,7 +1547,7 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let copied = exiled.card_def;
             if !CARD_DEFS
                 .get(usize::from(copied))
-                .is_some_and(|def| def.has_type(CardType::Creature))
+                .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
             {
                 return;
             }
@@ -1648,6 +1648,13 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
             halt(state, ctx.source);
             return;
         }
+    }
+    if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+        state,
+        ctx.controller,
+        player,
+    ) {
+        return;
     }
     let discarded = hand
         .into_iter()
@@ -3251,7 +3258,8 @@ pub(crate) fn note_restricted_spending(
             })
     });
     if !arena
-        || !definition(state, spell).is_some_and(|def| def.has_type(CardType::Creature))
+        || !definition(state, spell)
+            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
         || state.objects.get(spell).zone != Zone::Stack
     {
         return;
@@ -3419,7 +3427,9 @@ pub(crate) fn graveyard_target_matches(
                 && def.has_type(CardType::Artifact)
                 && def.mana_value <= u16::from(maximum)
         }
-        S::CreatureCardInAGraveyardV1 => def.has_type(CardType::Creature),
+        S::CreatureCardInAGraveyardV1 => {
+            crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+        }
         S::UpToThreeLandCardsInOwnGraveyardV1 => {
             live.owner == controller && def.has_type(CardType::Land)
         }
