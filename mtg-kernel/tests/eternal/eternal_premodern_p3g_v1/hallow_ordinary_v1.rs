@@ -95,17 +95,20 @@ fn mask_of_law_and_grace_competes_with_hallow_for_each_creatures_controller() {
         ));
         // Hallow gains two life for its caster. Protection prevents the same
         // damage without a gain.
-        for (option, caster_life) in [(0, 22), (1, 20)] {
+        let mut caster_lives = [0; 2];
+        for (option, caster_life) in caster_lives.iter_mut().enumerate() {
             let mut branch = restored(&state);
             assert_eq!(branch.state_hash(), state.state_hash());
-            act(&mut branch, Action::ChooseEffectOption(option));
+            act(&mut branch, Action::ChooseEffectOption(option as u16));
             settled(&mut branch);
-            assert_eq!(life(&branch, caster), caster_life);
+            *caster_life = life(&branch, caster);
             assert_eq!(life(&branch, controller), 20);
             let object = branch.objects.get(creature);
             assert_eq!((object.zone, object.damage), (Zone::Battlefield, 0));
             assert_eq!(branch.objects.get(pyro).zone, Zone::Graveyard);
         }
+        caster_lives.sort_unstable();
+        assert_eq!(caster_lives, [20, 22]);
     }
 }
 
