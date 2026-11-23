@@ -1221,8 +1221,8 @@ fn woodfall_primus_etb_destroys_noncreature_permanent_and_excludes_creatures() {
     let artifact = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
     let enchantment = put(&mut state, P1, "Seal of Cleansing", Zone::Battlefield);
     let land = put(&mut state, P1, "Plains", Zone::Battlefield);
-    let walker = put(&mut state, P1, "Wrenn and Six", Zone::Battlefield);
-    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, walker, 3);
+    let walker = enter(&mut state, P1, "Wrenn and Six");
+    assert_eq!(loyalty(&state, walker), Some(3));
     let primus = put(&mut state, P0, "Woodfall Primus", Zone::Hand);
     pool(
         &mut state,
@@ -1606,7 +1606,6 @@ fn guardian_scalelord_reanimates_nonland_permanent_types_and_checks_power_on_res
     state.objects.get_mut(scalelord).counters.plus1_plus1 = 1; // 4/5
     let baloth_gy = put(&mut state, P0, "Ravenous Baloth", Zone::Graveyard); // MV 4
     let intruder = put(&mut state, P1, "Brinebarrow Intruder", Zone::Hand);
-    pool(&mut state, P1, &[ManaColor::U], 0);
     pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
     act(&mut state, Action::DeclareAttackers(vec![scalelord]));
     // Choose Ravenous Baloth for the attack trigger.
@@ -1627,6 +1626,7 @@ fn guardian_scalelord_reanimates_nonland_permanent_types_and_checks_power_on_res
         }
     }
     assert!(targeted);
+    pool(&mut state, P1, &[ManaColor::U], 0);
     cast(&mut state, intruder, &[]);
     settle_choosing(&mut state, scalelord);
     assert_eq!(power_toughness(&state, scalelord), (2, 5));
