@@ -5,12 +5,14 @@ and its `update` / `update_prepared` command:
 
 ```json
 "card_semantics": {
-  "table_path": "data/card_semantics_v1/pauper_table_v1.json",
+  "table_path": "N:/tables/e1.json",
   "table_sha256": "<SHA-256 of the exact file bytes>"
 }
 ```
 
-The loader checks the file pin, table schema and compiled `KERNEL_CARDDB_HASH`.
+Run validation requires an absolute table path. The loader opens a regular file,
+checks its size, and caps the read at 64 MiB, including growth during the read.
+It checks the file pin, table schema and compiled `KERNEL_CARDDB_HASH`.
 Token `card_id + 1` reads the corresponding dense row. Missing cards get zero
 rows. Each column is divided by the smallest power of two at least its maximum
 absolute integer (minimum divisor 1). Integers must convert exactly to f32.
@@ -30,12 +32,16 @@ Routing: `native_expanded_training_run_v1::update_command` selects
 `UpdatePrepared` when preparation_workers > 1. Ordered preparation builds the
 same groups and GAE targets, including terminal pregame advantage. In
 `execute_update_inner_v1`, plain `GaeAdvantageValueV1` plus CPU reaches
-`train_step_gae_card_semantics_v1`, then the existing
+`train_step_gae_card_projection_e1`, then the existing
 `train_step_gae_core_profiled_dims_v1`. Forward workers come from
 preparation_workers; either existing backward execution mode is supported.
-CUDA, exact-GPU learner installation, wide/S nets, terminal/recovery losses,
+CUDA, exact-GPU learner installation, wide/S nets, FlatV8, terminal/recovery losses,
 auxiliary teachers, distillation and announcement-step scaling are refused.
-Other command schemas reject the configuration as an unknown field.
+Other command schemas reject the configuration as an unknown field. The run
+validates the table and pin, initial checkpoint section and binding, v1 writer
+selection (auto resolves to v1), and GPU exact learner exclusion before any
+iteration collects. Explicit `card_semantics: null` is invalid at each wire
+boundary; omission alone disables the feature.
 
 Each enabled checkpoint has one optional `card_semantics` section: schema
 `card_semantics_e1`, binding, p_step, weight, first_moments and second_moments
@@ -50,10 +56,24 @@ v1 JSON (auto falls back; explicit v2 is refused pending container qualification
 Ordinary expanded collection and evaluators accept and ignore the section after checking this
 integrity digest; they use the folded 33 tensors. Their inference state identity
 remains the ordinary tensor/optimizer digest, as do update before/after receipts.
+Enabled `update.json` receipts also record `card_semantics: {"binding":"..."}`;
+flag-off receipts omit the member. Every recovered and completed update checks
+this member against the run, and checks the loaded checkpoint's section presence,
+schema and binding independently. It cannot substitute a flag-off checkpoint,
+an enabled checkpoint into an off run, or a different table binding.
 The checkpoint pin and checkpoint integrity digest also bind P. No inference
 arithmetic changes or export requirement for collection. Legacy derived learners
 using the unconfigured initializer refuse the section; their readers can use
-the flag-off export. The width prescreen also refuses semantics parents.
+the flag-off export. BO3 transition, V8 inclusion conversion, archive distillation, weights snapshots
+and the width prescreen explicitly refuse semantics parents. The projection
+module is `native_policy_train_step_v1/card_projection_e1.rs`; it does not refer
+to the offline generator or its output path.
+
+The update takes the section from its existing metadata probe. Ordinary source
+loads retain admission metadata on the loaded train state, including source-cache
+clones, so legacy initialization, run recovery and prescreen checks reuse the
+normal read. Archive distillation uses its existing initializer and parent parse.
+No flag-off learner path adds a checkpoint read or parse.
 
 ## Offline tools
 
@@ -66,18 +86,35 @@ not already exist. Neither operation changes source files.
   Validates the checkpoint, removes the section and restores the ordinary
   state digest. Writes `checkpoint.json` using the existing v1 JSON serializer,
   identical to a flag-off v1 checkpoint with these tensors, optimizer and metadata.
+  Loads the published file through the ordinary flag-off loader and compares tensors,
+  moments and Adam step bit for bit.
 * Fork: `{"mode":"fork-import","source":{...},"initial_source":{...},
   "tokens":[1,2],"card_semantics":{...},"output_directory":"..."}`.
+  Admission requires an ordinary 33-tensor checkpoint. It refuses archive
+  distillation, E-supported, soft-Q, search-target, EX1, exploration, registry
+  transfer, input-contract and existing projection sections, and 37-tensor FlatV8.
+  Admission precedes following unsupported sections' external references.
   `initial_source` has no checkpoint and pins the existing fresh-initialization
   descriptor; its manifest/payload are checked by `fresh_initialization_source`.
   Its identity must equal the checkpoint lineage. Tokens are unique, nonzero
   card tokens. Resets only their embedding rows and moments (+0.0), retaining
   the network Adam age. Writes `flag_off.json` and `card_semantics.json` with
   zero P/moments and p_step 0. Reports both pins and checks equality of all
-  33 tensors and both moment sections.
+  33 tensors, both moment sections and Adam step. After both files are written,
+  loads each through the normal checkpoint loader, admits the off output without
+  configuration and the enabled output with the supplied pinned table, then checks
+  both readbacks against the intended tensors and against each other.
 
-Tests cover absent bytes, folded first-step arithmetic and moments, P central
-differences, binding/off-mode refusal and integrity, two-step checkpoint resume
-with separate ages, unsupported paths, signed zero, failure atomicity, file pin,
-card database pin, sparse rows and power-of-two scaling. Builds, clippy and tests
-are reserved for the coordinating session; this worktree is left uncommitted.
+Tests exercise the flag-on GAE step for central differences of P, post-Adam
+failure with both per-batch offsets set, populated digest-cache invalidation,
+checkpoint resume, and the core's unsupported-path refusals. File fixtures cover
+tool publication/readback, every fork refusal, production loader admission,
+recovery receipt and checkpoint binding, strict null handling, invalid table
+rows/schema and bounded file reads. A real `execute_v1(UpdatePrepared)` test
+compares one and four preparation/forward workers bit for bit, and compares the
+off update with the legacy Update route, including fixed-partition backward at
+one and four workers. Metadata-probe counters guard flag-off load costs. Run
+tests check refusal before collection.
+
+These tests are added but not executed in this worktree. Builds, clippy and CI
+remain with the coordinator; Round 2 changes are intentionally uncommitted.

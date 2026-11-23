@@ -527,3 +527,174 @@ fn the_default_record_format_is_never_serialized() {
         assert_eq!(serde_json::to_string(&back).unwrap(), text);
     }
 }
+
+#[test]
+fn projection_prepared_update_matches_serial_and_flag_off_legacy_path() {
+    let (root, source, collect) = fixture(
+        crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4,
+        "projection-prepared",
+    );
+    let trajectories = collect(&source, "collect");
+    // Guarantee that both worker pools cross their 32-substep thresholds.
+    // Copies retain the real replay and differ only in the episode label.
+    let trajectory: ExpandedTrajectoryV1 = read_pinned(&trajectories[0]).unwrap();
+    let learner_steps = trajectory
+        .decisions
+        .iter()
+        .filter(|row| row.actor == trajectory.episode.learner_seat)
+        .count();
+    assert!(learner_steps > 0);
+    let trajectories: Vec<_> = (0..128usize.div_ceil(learner_steps))
+        .map(|index| {
+            let mut copy = trajectory.clone();
+            copy.episode.id = format!("projection-workers-{index}");
+            publish_json(&root, &format!("trajectory-{index}.json"), &copy).unwrap()
+        })
+        .collect();
+    let config = card_semantics_e1::fixture_table_v1(&root);
+    let command = |workers, semantics, label: &str| ExpandedTrainingCommandV1::UpdatePrepared {
+        card_semantics: semantics,
+        source: source.clone(),
+        trajectories: trajectories.clone(),
+        learning_rate: 0.0001,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: gae(),
+        preparation_workers: workers,
+        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format: CheckpointRecordFormatV1::V1,
+        record_envelope: Default::default(),
+        output_directory: root.join(label),
+    };
+    let serial = execute_v1(command(1, Some(config.clone()), "on-serial")).unwrap();
+    crate::native_policy_train_step_v1::take_effective_update_workers_for_test_v1();
+    let parallel = execute_v1(command(4, Some(config.clone()), "on-parallel")).unwrap();
+    let (forward_workers, _) =
+        crate::native_policy_train_step_v1::take_effective_update_workers_for_test_v1();
+    assert!(forward_workers > 1);
+    assert!(
+        parallel["update_preparation"]["started_workers"]
+            .as_u64()
+            .unwrap()
+            > 1
+    );
+    assert_eq!(
+        serial["checkpoint"]["sha256"],
+        parallel["checkpoint"]["sha256"]
+    );
+    let mut fixed_serial = command(1, Some(config.clone()), "fixed-serial");
+    let mut fixed_parallel = command(4, Some(config.clone()), "fixed-parallel");
+    for cmd in [&mut fixed_serial, &mut fixed_parallel] {
+        if let ExpandedTrainingCommandV1::UpdatePrepared {
+            update_backward_execution,
+            ..
+        } = cmd
+        {
+            *update_backward_execution = UpdateBackwardExecutionV1::FixedPartition4;
+        }
+    }
+    set_fixed_partition_backward_worker_limit_override_for_test_v1(Some(1));
+    let fixed_serial_result = execute_v1(fixed_serial);
+    set_fixed_partition_backward_worker_limit_override_for_test_v1(None);
+    let fixed_serial = fixed_serial_result.unwrap();
+    crate::native_policy_train_step_v1::take_effective_update_workers_for_test_v1();
+    let fixed_parallel = execute_v1(fixed_parallel).unwrap();
+    let workers = crate::native_policy_train_step_v1::take_effective_update_workers_for_test_v1();
+    assert!(workers.0 > 1);
+    assert_eq!(
+        fixed_serial["checkpoint"]["sha256"],
+        fixed_parallel["checkpoint"]["sha256"]
+    );
+    assert_eq!(
+        serial["card_semantics"]["binding"],
+        config.load_v1().unwrap().section_v1().binding
+    );
+    let off = execute_v1(command(4, None, "off-prepared")).unwrap();
+    let legacy = update(
+        &source,
+        &trajectories,
+        CheckpointRecordFormatV1::V1,
+        root.join("off-legacy"),
+    )
+    .unwrap();
+    assert_eq!(off["checkpoint"]["sha256"], legacy["checkpoint"]["sha256"]);
+    assert!(off.get("card_semantics").is_none());
+    for workers in [1, 4] {
+        let mut value = serde_json::to_value(command(workers, None, "null")).unwrap();
+        value["card_semantics"] = Value::Null;
+        assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(value)
+            .unwrap_err()
+            .to_string()
+            .contains("must not be null"));
+    }
+    let mut plain_update = serde_json::to_value(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
+        source: source.clone(),
+        trajectories: trajectories.clone(),
+        learning_rate: 0.0001,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: gae(),
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format: CheckpointRecordFormatV1::V1,
+        output_directory: root.join("null-update"),
+    })
+    .unwrap();
+    plain_update["card_semantics"] = Value::Null;
+    assert!(
+        serde_json::from_value::<ExpandedTrainingCommandV1>(plain_update)
+            .unwrap_err()
+            .to_string()
+            .contains("must not be null")
+    );
+
+    // Exercise update admission, not just the shared binder helper.
+    let on_pin: PinnedFileV1 = serde_json::from_value(serial["checkpoint"].clone()).unwrap();
+    let off_pin: PinnedFileV1 = serde_json::from_value(off["checkpoint"].clone()).unwrap();
+    for (label, pin, semantics, expected) in [
+        ("missing", off_pin, Some(config.clone()), "section missing"),
+        ("off", on_pin.clone(), None, "requires"),
+    ] {
+        let mut cmd = command(1, semantics, label);
+        if let ExpandedTrainingCommandV1::UpdatePrepared { source, .. } = &mut cmd {
+            source.checkpoint = Some(pin);
+        }
+        take_checkpoint_metadata_reads_for_test_v1();
+        assert!(execute_v1(cmd).unwrap_err().contains(expected));
+        assert_eq!(
+            take_checkpoint_metadata_reads_for_test_v1(),
+            1,
+            "{label}: reuse the existing update probe"
+        );
+    }
+    let valid = read_checkpoint_v1(&on_pin).unwrap();
+    assert_eq!(valid.card_semantics.as_ref().unwrap().p_step, 1);
+    for field in ["binding", "schema"] {
+        let mut saved = valid.clone();
+        let section = saved.card_semantics.as_mut().unwrap();
+        if field == "binding" {
+            section.binding = "wrong".into();
+        } else {
+            section.schema = "wrong".into();
+        }
+        let (_, state) = initialize_any_math_v1(&source).unwrap();
+        let hash = checkpoint_tensors_v1(&saved, state.model_v1())
+            .unwrap()
+            .state_sha256_v1()
+            .unwrap();
+        saved.state_sha256 = checkpoint_hash_v1(&hash, saved.card_semantics.as_ref()).unwrap();
+        let pin = publish_json(&root, &format!("{field}.json"), &saved).unwrap();
+        let mut cmd = command(1, Some(config.clone()), field);
+        if let ExpandedTrainingCommandV1::UpdatePrepared { source, .. } = &mut cmd {
+            source.checkpoint = Some(pin);
+        }
+        assert!(execute_v1(cmd).unwrap_err().contains("binding"));
+    }
+    fs::remove_dir_all(root).unwrap();
+}

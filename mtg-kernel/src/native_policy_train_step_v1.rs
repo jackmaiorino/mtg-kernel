@@ -86,7 +86,7 @@ use std::thread;
 
 mod accumulate_transposed_v1;
 mod archive_distillation_v1;
-pub mod card_semantics_v1;
+pub mod card_projection_e1;
 mod carryover_probe_v1;
 mod e_supported_policy_v1;
 mod exact_parallel_backward_v1;
@@ -1682,6 +1682,9 @@ mod live_train_state_v1 {
     pub(crate) struct NativePolicyValueTrainStateDimsV1<D: NetDimsV1> {
         fields: LiveTrainStateFieldsV1<D>,
         cached_state_sha256: MemoizedDigestV1<[u8; 32]>,
+        /// Admission metadata from the checkpoint load, retained by source-cache
+        /// clones. Not optimizer state and never used for projection arithmetic.
+        pub(crate) loaded_card_semantics: Option<super::card_projection_e1::CardSemanticsSectionV1>,
     }
 
     impl<D: NetDimsV1> std::ops::Deref for NativePolicyValueTrainStateDimsV1<D> {
@@ -1697,6 +1700,7 @@ mod live_train_state_v1 {
             Self {
                 fields,
                 cached_state_sha256: MemoizedDigestV1::new_v1(),
+                loaded_card_semantics: None,
             }
         }
 

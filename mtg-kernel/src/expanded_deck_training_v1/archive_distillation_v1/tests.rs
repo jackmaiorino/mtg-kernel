@@ -3286,3 +3286,24 @@ fn retention_trace_reads_a_real_gae_run() {
     assert!(error.contains("fresh"), "{error}");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn phase1_parent_refuses_projection_section_even_with_matching_hash_and_moments() {
+    let root = temp_root("projection-parent");
+    let (_policy, model, mut parent, _) = parent_fixture(&root);
+    parent.card_semantics = Some(CardSemanticsV1::fixture_v1().section_v1());
+    let hash = checkpoint_tensors_v1(&parent, &model)
+        .unwrap()
+        .state_sha256_v1()
+        .unwrap();
+    parent.state_sha256 = checkpoint_hash_v1(&hash, parent.card_semantics.as_ref()).unwrap();
+    let pin = write_pinned(&root.join("enabled-parent.json"), &parent);
+    let parameters = distilled(&parent, &model.parameter_snapshot_v1());
+    let mut saved = checkpoint_v1(&parent, &parameters, provenance(&parent, &pin)).unwrap();
+    // The distillation child itself is ordinary. Its named parent is not.
+    saved.card_semantics = None;
+    assert!(validate_phase1_checkpoint_v1(&saved)
+        .unwrap_err()
+        .contains("named ordinary checkpoint"));
+    fs::remove_dir_all(root).unwrap();
+}

@@ -403,7 +403,7 @@ impl NativePolicyValueTrainStateV1 {
 
     /// Profile the actual CPU GAE route without changing its arithmetic.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn train_step_gae_card_semantics_v1(
+    pub(crate) fn train_step_gae_card_projection_e1(
         &mut self,
         generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
         groups: &[NativePolicyPhysicalDecisionV1<'_>],
@@ -414,7 +414,7 @@ impl NativePolicyValueTrainStateV1 {
         backward_worker_limit: Option<usize>,
         forward_workers: usize,
         recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
-        semantics: Option<&mut card_semantics_v1::CardSemanticsV1>,
+        semantics: Option<&mut card_projection_e1::CardSemanticsV1>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let Some(semantics) = semantics else {
             return self.train_step_gae_feature_transfer_profiled_v1(
@@ -773,7 +773,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         exploration: Option<(f32, u64, bool)>,
         forward_workers: usize,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
-        semantics: Option<&mut card_semantics_v1::CardSemanticsV1>,
+        semantics: Option<&mut card_projection_e1::CardSemanticsV1>,
     ) -> Result<
         (
             NativePolicyTrainStepResultV1,
@@ -784,16 +784,17 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
     > {
         if semantics.is_some()
             && (!is_net8_dims_v1::<D>()
+                || self.model.parameter_snapshot_v1().len() != 33
                 || imitation
                 || line_b.is_some()
                 || exploration.is_some()
                 || self.pregame_announcement_step_scale_mut_dims_v1().is_some())
         {
-            return Err(card_semantics_v1::unsupported_v1());
+            return Err(card_projection_e1::unsupported_v1());
         }
         #[cfg(feature = "gpu-exact-v1")]
         if semantics.is_some() && crate::gpu_exact_v1::learner_installed_v1() {
-            return Err(card_semantics_v1::unsupported_v1());
+            return Err(card_projection_e1::unsupported_v1());
         }
         // The London keep offset of this step's batch, or None (every
         // existing step): taken before anything can return, so a step that

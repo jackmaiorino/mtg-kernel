@@ -60,6 +60,10 @@ pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value,
     }
     let mut saved = parse_record_borrowed_v1(&bytes)?;
     ensure(
+        saved.card_semantics.is_none(),
+        "weights snapshot refuses card semantics",
+    )?;
+    ensure(
         !saved.schema.starts_with(WEIGHTS_SNAPSHOT_SCHEMA_PREFIX_V1),
         "the input is already a weights snapshot",
     )?;
