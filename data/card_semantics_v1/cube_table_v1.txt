@@ -84,34 +84,43 @@ low-distinctiveness cards (at least 10 other rows with overlap >= 0.75): 64
   Windswept Heath (10 other rows, 13 nonzero features)
   Wooded Foothills (10 other rows, 13 nonzero features)
 cards with no usable features (no leaf:, op:, or cond: token): 85
-  creature with keywords, cost modifiers, or static flags only (7):
+  creature with keywords, costs, entry, static rules or abilities in its definition and no walked effect (9):
     Barrowgoyf
     Containment Priest
     Lurrus of the Dream-Den
     Nethergoyf
+    Painter's Servant
+    Samut, Hazoret's Champion
     Screaming Nemesis
     Spider-Woman, Stunning Savior
     Super Shredder
-  land with only a mana ability (49):
-    Ancient Tomb
-    Badlands
-    Bayou
+  land with a mana ability and other definition rules (keywords, costs, entry, static, attachment or abilities) (11):
     Blackcleave Cliffs
-    Blazemire Verge
-    Bleachbone Verge
-    Blood Crypt
     Blooming Marsh
     Botanical Sanctum
-    Breeding Pool
-    City of Traitors
     Concealed Courtyard
     Copperline Gorge
     Darkslick Shores
+    Inspiring Vantage
+    Razorverge Thicket
+    Seachrome Coast
+    Spirebluff Canal
+    Starting Town
+  land with no mana ability in its definition (1):
+    Multiversal Passage
+  land with only a mana ability in its definition (38):
+    Ancient Tomb
+    Badlands
+    Bayou
+    Blazemire Verge
+    Bleachbone Verge
+    Blood Crypt
+    Breeding Pool
+    City of Traitors
     Forest
     Gaea's Cradle
     Godless Shrine
     Hallowed Fountain
-    Inspiring Vantage
     Island
     Mana Confluence
     Mishra's Workshop
@@ -119,14 +128,10 @@ cards with no usable features (no leaf:, op:, or cond: token): 85
     Overgrown Tomb
     Plains
     Plateau
-    Razorverge Thicket
     Riverpyre Verge
     Sacred Foundry
     Savannah
     Scrubland
-    Seachrome Coast
-    Spirebluff Canal
-    Starting Town
     Steam Vents
     Stomping Ground
     Swamp
@@ -142,12 +147,10 @@ cards with no usable features (no leaf:, op:, or cond: token): 85
     Wastewood Verge
     Watery Grave
     Yavimaya, Cradle of Growth
-  land with static or unwalked abilities (1):
-    Multiversal Passage
-  noncreature permanent with engine-side or static rules only (2):
+  noncreature artifact or enchantment with no walked effect (2):
     Fastbond
     Oath of Druids
-  nonland permanent with only a mana ability (21):
+  nonland permanent with a mana ability and other definition rules (keywords, costs, entry, static, attachment or abilities) (21):
     Birds of Paradise
     Black Lotus
     Delighted Halfling
@@ -173,9 +176,6 @@ cards with no usable features (no leaf:, op:, or cond: token): 85
     Gandalf, Goblins' Bane
     Headliner Scarlett
     Hullbreacher
-  vanilla body or engine-side creature rules only (no keywords or CardDef abilities) (2):
-    Painter's Servant
-    Samut, Hazoret's Champion
 not implemented cube cards (53):
   Aang, Swift Savior: not implemented
   Absorbing Man: not implemented
