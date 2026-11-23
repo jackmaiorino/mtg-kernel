@@ -1,10 +1,16 @@
 //! The deck format of the trainer's episodes (`ExpandedEpisodeV1::deck_format`,
-//! `sideboard::DeckFormatV1`): the absent field keeps every serialized byte,
-//! the exact 60/15 checks and the session; `limited40-v1` admits 40-card
-//! decks with an empty or short sideboard at the collector's deck-list check
-//! and at the session reset, and still refuses 39 cards; an unknown value is
-//! refused by the strict reader. Games here are driven by seeded picks
-//! through the collector's own session builder, not a network.
+//! `sideboard::DeckFormatV1`): the absent field writes no key and keeps the
+//! exact 60/15 checks; `limited40-v1` admits 40-card decks with an empty or
+//! short sideboard at the collector's deck-list check and at the session
+//! reset, and still refuses 39 cards; an unknown value is refused by the
+//! strict reader; the marker on 60/15 decks changes nothing, including on the
+//! search-opponent and own-registration paths. Games here are driven by
+//! seeded picks through the collector's own session builder, not a network.
+//!
+//! No test here compares against the parent commit: every comparison is
+//! between two code paths of this head. Equality with the parent's bytes,
+//! trajectories and after-states is a node receipt the coordinator runs
+//! (field absent, after-states equal to the parent's), not a unit test.
 
 use super::*;
 use crate::sideboard::DeckFormatV1::{self, Limited40V1};
@@ -64,9 +70,11 @@ pub(crate) fn episode(
     }
 }
 
-/// The session `episode` built before the field existed: the reset its
-/// builder called then, with the builder's own arguments.
-fn session_before_the_field(episode: &ExpandedEpisodeV1) -> FastActorSessionV1 {
+/// The session `episode` gets from the reset entry points its builder called
+/// before the field existed, with the builder's own arguments. At this head
+/// those entry points delegate to the deck-format resets with `None`, so this
+/// checks the builder's wiring, not the parent's behaviour.
+fn session_from_the_pre_field_entry_points(episode: &ExpandedEpisodeV1) -> FastActorSessionV1 {
     let configs = episode.configurations().unwrap();
     let labels = episode.selected.each_ref().map(|d| d.label.clone());
     let mainboards = configs.each_ref().map(|d| d.mainboard().to_vec());
@@ -137,8 +145,12 @@ fn positional(value: &serde_json::Value, fields: &[&str]) -> serde_json::Value {
     )
 }
 
+/// The absent field contributes no byte: no key is written, the stripped
+/// present episode serializes exactly as the absent one, and both positional
+/// layouts decode. These are round trips at this head; they cannot show the
+/// bytes equal the parent's, which the node receipt does.
 #[test]
-fn deck_format_absent_keeps_every_serialized_byte() {
+fn deck_format_absent_writes_no_key_and_round_trips() {
     let absent = episode(pauper(60, 15), false, None);
     let value = serde_json::to_value(&absent).unwrap();
     assert!(value.get("deck_format").is_none());
@@ -275,16 +287,19 @@ fn deck_format_limited40_still_refuses_39_cards() {
         .contains("at most 15"));
 }
 
-/// The D3 search opponent's simulations are unverified on other decks, so
-/// the field is refused with one, before any game; without the field the
-/// same episode passes these checks.
-#[test]
-fn deck_format_is_refused_with_a_search_opponent() {
-    let pin = |name: &str| PinnedFileV1 {
+fn pin(name: &str) -> PinnedFileV1 {
+    PinnedFileV1 {
         path: PathBuf::from(name),
         sha256: "ab".repeat(32),
-    };
-    let mut searched = episode(pauper(60, 15), false, LIMITED);
+    }
+}
+
+/// `lists` against a pinned D3 search opponent.
+fn searched(
+    lists: [ExpandedDeckListV1; 2],
+    deck_format: Option<DeckFormatV1>,
+) -> ExpandedEpisodeV1 {
+    let mut searched = episode(lists, false, deck_format);
     searched.opponent = Some(ExpandedModelSourceV1 {
         play_import: pin("import.json"),
         feature_transfer: FrozenPlayObservationTransferV3 {
@@ -296,25 +311,141 @@ fn deck_format_is_refused_with_a_search_opponent() {
         w_learner: None,
     });
     searched.opponent_search = Some(pin("search.json"));
-    let error = searched.configurations_checked_v1().unwrap_err();
-    assert!(
-        error.contains("deck_format") && error.contains("search opponent"),
-        "{error}"
-    );
-    searched.deck_format = None;
-    assert!(searched.configurations_checked_v1().is_ok());
+    searched
 }
 
-/// Without the field the builder's session is the one it built before the
-/// field existed, at every decision of the same seeded game, on both resets.
-/// The field on the same 60/15 decks plays that game too: it changes
-/// admission only.
+/// Each admitted configuration's cards and hashes: everything the
+/// collectors read from them (the format each remembers aside).
+fn admitted_cards(configs: &[DeckConfigurationV1; 2]) -> Vec<(Vec<u16>, Vec<u16>, [u8; 32])> {
+    configs
+        .iter()
+        .map(|c| {
+            (
+                c.mainboard().to_vec(),
+                c.sideboard().to_vec(),
+                c.mainboard_sha256_v1(),
+            )
+        })
+        .collect()
+}
+
+/// Review finding 2: the marker alone never refuses a search opponent. On
+/// 60/15 decks the marked episode is admitted with the same configurations
+/// and the same session as the unmarked one; only a deck of another size,
+/// which the marker admits, is refused with a search opponent, before any
+/// game. Without the marker the base refusal comes first, unchanged.
 #[test]
-fn deck_format_absent_builds_the_plain_session_and_present_plays_the_same_game() {
+fn deck_format_on_60_15_decks_keeps_the_search_opponent() {
+    let absent = searched(pauper(60, 15), None);
+    let marked = searched(pauper(60, 15), LIMITED);
+    let absent_configs = absent.configurations_checked_v1().unwrap();
+    let marked_configs = marked.configurations_checked_v1().unwrap();
+    assert_eq!(
+        admitted_cards(&marked_configs),
+        admitted_cards(&absent_configs)
+    );
+    // The search episode's session: the same game, decision for decision.
+    let mut sessions = [
+        episode_session_v1(&absent, &absent_configs).unwrap(),
+        episode_session_v1(&marked, &marked_configs).unwrap(),
+    ];
+    let mut rng = SplitMix64::seed(0x5ea_4c40);
+    for step in 0..MAX_DECISIONS {
+        assert_eq!(
+            sessions[1].current_response(),
+            sessions[0].current_response(),
+            "decision {step}"
+        );
+        assert_eq!(
+            sessions[1].game_state(),
+            sessions[0].game_state(),
+            "decision {step}"
+        );
+        let FastActorResponseV1::Decision(d) = sessions[0].current_response() else {
+            break;
+        };
+        let pick = (rng.next_u64() % u64::from(d.legal_action_count)) as u32;
+        for s in &mut sessions {
+            s.step(d.episode_id, d.step, pick).unwrap();
+        }
+    }
+
+    // A deck the marker admits at another size meets the search opponent:
+    // refused, while the same decks without the opponent are admitted.
+    for (main, side) in [(40, 0), (40, 15), (60, 0), (60, 7)] {
+        let error = searched(pauper(main, side), LIMITED)
+            .configurations_checked_v1()
+            .unwrap_err();
+        assert_eq!(error, SEARCH_OPPONENT_DECK_SIZE_REFUSAL_V1, "{main}/{side}");
+        assert!(episode(pauper(main, side), false, LIMITED)
+            .configurations_checked_v1()
+            .is_ok());
+    }
+    // One selected list is enough: a postboard 61/14 selection of a 60/15
+    // registration.
+    let mut short_side = searched(pauper(60, 15), LIMITED);
+    short_side.postboard = true;
+    let moved = short_side.selected[1].sideboard.pop().unwrap();
+    short_side.selected[1].mainboard.push(moved);
+    assert_eq!(
+        short_side.configurations_checked_v1().unwrap_err(),
+        SEARCH_OPPONENT_DECK_SIZE_REFUSAL_V1
+    );
+    // Without the marker, a 40-card deck meets the base size check first.
+    let error = searched(pauper(40, 0), None)
+        .configurations_checked_v1()
+        .unwrap_err();
+    assert!(
+        error.contains("must contain exactly 60 cards, got 40"),
+        "{error}"
+    );
+}
+
+/// Review finding 1 through the collector's check: the registered and
+/// selected multisets compare at full width (40 Forests and 296 Forests,
+/// equal as `u8` counts, differ), and the format's 10,000-card boundary is
+/// admitted while 10,001 is refused. No session is built here.
+#[test]
+fn deck_format_limited40_counts_copies_at_full_width() {
+    let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+    let forests = |count: usize| ExpandedDeckListV1 {
+        label: "Forests".into(),
+        mainboard: vec![forest; count],
+        sideboard: Vec::new(),
+    };
+    let mut wrapped = episode(pauper(40, 0), false, LIMITED);
+    wrapped.postboard = true;
+    wrapped.registered[0] = forests(40);
+    wrapped.selected[0] = forests(296);
+    assert_eq!(
+        wrapped.configurations().unwrap_err(),
+        "postboard configuration changes the registered 75"
+    );
+    wrapped.selected[0] = forests(40);
+    assert!(wrapped.configurations().is_ok());
+
+    let boundary = episode([forests(10_000), forests(10_000)], false, LIMITED);
+    let configs = boundary.configurations().unwrap();
+    assert!(configs.iter().all(|c| c.mainboard().len() == 10_000));
+    let mut over = boundary.clone();
+    over.registered[1] = forests(10_001);
+    over.selected[1] = forests(10_001);
+    let error = over.configurations().unwrap_err();
+    assert!(error.contains("got 10001"), "{error}");
+}
+
+/// Without the field the builder's session equals the one from the reset
+/// entry points it called before the field existed, at every decision of the
+/// same seeded game, on both resets; the field on the same 60/15 decks plays
+/// that game too. Both sides run this head's code (those entry points now
+/// delegate to the same implementation), so this cannot catch a change
+/// shared by both; the parent comparison is the node receipt.
+#[test]
+fn deck_format_absent_matches_the_pre_field_entry_points_and_present_plays_the_same_game() {
     for (i, london) in [false, true].into_iter().enumerate() {
         let absent = episode(pauper(60, 15), london, None);
         let present = episode(pauper(60, 15), london, LIMITED);
-        let mut before = session_before_the_field(&absent);
+        let mut before = session_from_the_pre_field_entry_points(&absent);
         let mut sessions = [
             episode_session_v1(&absent, &absent.configurations().unwrap()).unwrap(),
             episode_session_v1(&present, &present.configurations().unwrap()).unwrap(),
@@ -340,12 +471,14 @@ fn deck_format_absent_builds_the_plain_session_and_present_plays_the_same_game()
 
 /// Real complete games, deliberately opt-in (native engine compute), like
 /// `collect_episode_v4_real_game_stamps_v4_digests_and_is_rejected_by_a_pure_v3_check`.
-/// The absent field's first trajectory has no `deck_format` byte, and the
-/// field on the same 60/15 decks collects the same trajectory but for the
-/// episode's own field.
+/// A comparison of two code paths at this head, not a parent oracle: the
+/// absent field's trajectory has no `deck_format` byte, and the field on the
+/// same 60/15 decks collects the same trajectory but for the episode's own
+/// field. Whether the absent trajectory equals the parent's is the node
+/// receipt's question, which no test here answers.
 #[test]
-#[ignore = "root-owned native qualification: two real complete games"]
-fn deck_format_absent_keeps_the_first_trajectory_and_present_collects_the_same_game() {
+#[ignore = "root-owned native qualification: two real complete games; compares two code paths at this head, not the parent"]
+fn deck_format_present_collects_the_absent_trajectory_on_60_15_decks() {
     let collect = |episode: &ExpandedEpisodeV1| {
         let mut policy = FrozenPlayPolicyV1::training_fixture_v4();
         let learner = test_behavior(&policy, false);

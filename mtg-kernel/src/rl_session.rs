@@ -19999,8 +19999,10 @@ mod tests {
 
     /// The fast session's two deck-format resets (the trainer's plain and
     /// London resets): 40-card decks are refused without the format and
-    /// reach a first decision with it; the absent format is the existing
-    /// reset, decision for decision.
+    /// reach a first decision with it; the pre-format entry points reach the
+    /// same session as the absent format. Those entry points now delegate to
+    /// the deck-format resets, so this checks their wiring at this head, not
+    /// the parent's behaviour (the node receipt compares with the parent).
     #[test]
     fn fast_session_deck_format_resets_admit_forty_card_decks_only_with_the_format() {
         use crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2;
@@ -20063,7 +20065,8 @@ mod tests {
         assert!(plain(short.clone(), limited).is_err());
         assert!(london(short, limited).is_err());
 
-        // The absent format is the reset that existed before it.
+        // The pre-format entry point and the absent format: the same session
+        // (both run this head's implementation).
         let full = burn_and_rally_explicit_mainboards();
         let before =
             FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(

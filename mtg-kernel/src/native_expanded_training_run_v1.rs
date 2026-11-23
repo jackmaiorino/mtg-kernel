@@ -951,10 +951,10 @@ impl NativeExpandedTrainingRunV1 {
                     check(
                         registered
                             .registered_configuration()
-                            .combined_card_counts_v1()
+                            .combined_card_count_map_v1()
                             == selected
                                 .registered_configuration()
-                                .combined_card_counts_v1(),
+                                .combined_card_count_map_v1(),
                         "selected configuration changes registered 75",
                     )?;
                     check(
@@ -2763,8 +2763,40 @@ mod tests {
             .contains("at most 15"));
     }
 
+    /// Review finding 1 at run validation: the registered and selected
+    /// multisets compare at full width (40 and 296 Forests were equal as
+    /// `u8` counts), and the format's 10,000-card boundary is admitted while
+    /// 10,001 is refused.
     #[test]
-    fn run_config_deck_format_absent_keeps_its_bytes_and_unknown_is_refused() {
+    fn run_validation_deck_format_limited40_counts_copies_at_full_width() {
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let forests = |count: usize| crate::expanded_deck_training_v1::ExpandedDeckListV1 {
+            label: "Forests".into(),
+            mainboard: vec![forest; count],
+            sideboard: Vec::new(),
+        };
+        let mut wrapped = deck_format_schedule([forests(40), forests(40)], limited);
+        let episode = &mut wrapped.iterations[0].episodes[0].episode;
+        episode.postboard = true;
+        episode.selected[0] = forests(296);
+        let error = wrapped.validate_v1().unwrap_err();
+        assert!(error.contains("registered 75"), "{error}");
+
+        deck_format_schedule([forests(10_000), forests(10_000)], limited)
+            .validate_v1()
+            .unwrap();
+        let error = deck_format_schedule([forests(10_000), forests(10_001)], limited)
+            .validate_v1()
+            .unwrap_err();
+        assert!(error.contains("got 10001"), "{error}");
+    }
+
+    /// The absent field writes no key and the run config round-trips at
+    /// this head; that the bytes equal the parent's is the node receipt's
+    /// check, not this test's.
+    #[test]
+    fn run_config_deck_format_absent_writes_no_key_and_unknown_is_refused() {
         let absent = schedule();
         let text = serde_json::to_string(&absent).unwrap();
         assert!(!text.contains("deck_format"));

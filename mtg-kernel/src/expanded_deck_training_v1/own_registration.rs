@@ -97,19 +97,30 @@ impl Trajectory {
     }
 }
 
-/// The episode's configurations under this trainer's exact 60/15 contract:
-/// its registration rows (`own_registration_v1`) bound an exact 60-card
-/// mainboard, so an episode with a deck format is refused at admission,
-/// before any game, rather than at its first registration context.
+/// The episode's configurations for this trainer. Its registration rows
+/// (`own_registration_v1`, built from each seat's selected configuration)
+/// bound an exact 60-card mainboard and read no sideboard, so a selected
+/// mainboard of another size (which only a deck format admits) is refused at
+/// admission, before any game, rather than at its first registration
+/// context. Every episode the base admitted is admitted with or without the
+/// deck-format marker, with the same configurations.
 pub(super) fn registration_configurations_v1(
     episode: &ExpandedEpisodeV1,
 ) -> Result<[DeckConfigurationV1; 2], String> {
+    let configs = episode.configurations()?;
     ensure(
-        episode.deck_format.is_none(),
-        "deck_format is refused by own registration (its rows bound an exact 60-card mainboard)",
+        configs
+            .iter()
+            .all(|c| c.mainboard().len() == crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1),
+        OWN_REGISTRATION_DECK_SIZE_REFUSAL_V1,
     )?;
-    episode.configurations()
+    Ok(configs)
 }
+
+/// The admission refusal of an own-registration episode whose selected
+/// mainboard is not 60 cards.
+const OWN_REGISTRATION_DECK_SIZE_REFUSAL_V1: &str =
+    "own registration requires 60-card selected mainboards (its rows bound an exact 60-card mainboard); deck_format admitted another size";
 
 fn collect(
     policy: &mut OwnRegistrationPlayPolicyV1,
@@ -430,17 +441,112 @@ mod tests {
         }
     }
 
+    /// Review finding 2: the deck-format marker alone never refuses this
+    /// trainer. A 60/15 episode carrying it is admitted with the same
+    /// configurations, the same registration rows for both seats and modes,
+    /// and the same session as the unmarked episode. Only a selected
+    /// mainboard of another size, which the marker admits, is refused, at
+    /// admission and before any game. A 60-card mainboard with a short
+    /// sideboard, which the rows never read, is admitted with the same rows.
+    /// Without the marker the base size refusal is unchanged.
     #[test]
-    fn registration_admission_refuses_a_deck_format() {
+    fn registration_admission_keeps_a_60_15_episode_with_a_deck_format() {
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
         let plain = episode("deck-format-plain", 0);
-        assert!(registration_configurations_v1(&plain).is_ok());
-        let mut limited = plain.clone();
-        limited.deck_format = Some(crate::sideboard::DeckFormatV1::Limited40V1);
-        // The episode itself is admitted under the format; this trainer
-        // refuses it before any game.
-        assert!(limited.configurations().is_ok());
-        let error = registration_configurations_v1(&limited).unwrap_err();
-        assert!(error.contains("deck_format"), "{error}");
+        let mut marked = plain.clone();
+        marked.deck_format = limited;
+        let plain_configs = registration_configurations_v1(&plain).unwrap();
+        let marked_configs = registration_configurations_v1(&marked).unwrap();
+        for seat in 0..2 {
+            let (a, b) = (&plain_configs[seat], &marked_configs[seat]);
+            assert_eq!(a.mainboard(), b.mainboard());
+            assert_eq!(a.sideboard(), b.sideboard());
+            assert_eq!(a.mainboard_sha256_v1(), b.mainboard_sha256_v1());
+            let player = actor_seat(seat as u8).unwrap();
+            for mode in [RegistrationModeV1::Own, RegistrationModeV1::Mean] {
+                assert_eq!(
+                    KnownOwnMainboardV1::new(&marked.id, player, b)
+                        .unwrap()
+                        .rows(mode)
+                        .unwrap(),
+                    KnownOwnMainboardV1::new(&plain.id, player, a)
+                        .unwrap()
+                        .rows(mode)
+                        .unwrap(),
+                );
+            }
+            assert_eq!(
+                expectation(&marked, &marked_configs, seat as u8)
+                    .unwrap()
+                    .selected_mainboard_sha256,
+                expectation(&plain, &plain_configs, seat as u8)
+                    .unwrap()
+                    .selected_mainboard_sha256,
+            );
+        }
+        let plain_session = episode_session_v1(&plain, &plain_configs).unwrap();
+        let marked_session = episode_session_v1(&marked, &marked_configs).unwrap();
+        assert_eq!(
+            marked_session.current_response(),
+            plain_session.current_response()
+        );
+        assert_eq!(marked_session.game_state(), plain_session.game_state());
+
+        // A mainboard the marker admits at another size: the episode itself
+        // is admitted, and this trainer refuses it at admission.
+        for (main, side) in [(40, 0), (40, 15), (41, 7)] {
+            let mut sized = marked.clone();
+            for list in sized.registered.iter_mut().chain(sized.selected.iter_mut()) {
+                let spread: Vec<u16> = (0..main)
+                    .map(|i| list.mainboard[i * list.mainboard.len() / main])
+                    .collect();
+                list.mainboard = spread;
+                list.sideboard.truncate(side);
+            }
+            assert!(sized.configurations().is_ok(), "{main}/{side}");
+            assert_eq!(
+                registration_configurations_v1(&sized).unwrap_err(),
+                OWN_REGISTRATION_DECK_SIZE_REFUSAL_V1,
+                "{main}/{side}"
+            );
+            let mut unmarked = sized.clone();
+            unmarked.deck_format = None;
+            let error = registration_configurations_v1(&unmarked).unwrap_err();
+            assert!(error.contains("must contain exactly 60 cards"), "{error}");
+        }
+        // A 60-card mainboard with a short or empty sideboard: admitted under
+        // the marker, with the plain episode's rows.
+        for side in [0, 7] {
+            let mut short_side = marked.clone();
+            for list in short_side
+                .registered
+                .iter_mut()
+                .chain(short_side.selected.iter_mut())
+            {
+                list.sideboard.truncate(side);
+            }
+            let configs = registration_configurations_v1(&short_side).unwrap();
+            for seat in 0..2 {
+                let player = actor_seat(seat as u8).unwrap();
+                assert_eq!(
+                    KnownOwnMainboardV1::new(&short_side.id, player, &configs[seat])
+                        .unwrap()
+                        .rows(RegistrationModeV1::Own)
+                        .unwrap(),
+                    KnownOwnMainboardV1::new(&plain.id, player, &plain_configs[seat])
+                        .unwrap()
+                        .rows(RegistrationModeV1::Own)
+                        .unwrap(),
+                );
+            }
+            let mut unmarked = short_side.clone();
+            unmarked.deck_format = None;
+            let error = registration_configurations_v1(&unmarked).unwrap_err();
+            assert!(
+                error.contains("sideboard must contain exactly 15"),
+                "{error}"
+            );
+        }
     }
 
     /// Synthetic metadata/grouping only. These inherited fixture rows are

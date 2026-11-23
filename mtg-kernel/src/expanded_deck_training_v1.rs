@@ -1903,12 +1903,6 @@ impl ExpandedEpisodeV1 {
         // field checks: a collection is refused before any of its games is
         // played, not at the first session its refused episode builds.
         self.priority_windows_v1()?;
-        // The D3 search opponent's simulations are unverified on decks other
-        // than the exact 60/15 registration: fail closed before any game.
-        ensure(
-            self.deck_format.is_none() || self.opponent_search.is_none(),
-            "deck_format is refused with a search opponent",
-        )?;
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
@@ -1938,7 +1932,7 @@ impl ExpandedEpisodeV1 {
             let initial = registered.registered_configuration();
             let configuration = selected.registered_configuration();
             ensure(
-                initial.combined_card_counts_v1() == configuration.combined_card_counts_v1(),
+                initial.combined_card_count_map_v1() == configuration.combined_card_count_map_v1(),
                 "postboard configuration changes the registered 75",
             )?;
             ensure(
@@ -1947,9 +1941,34 @@ impl ExpandedEpisodeV1 {
             )?;
             configs.push(configuration.clone());
         }
+        // The D3 search opponent's simulations are verified only on the
+        // exact 60/15 registration, so a deck of another size (which only a
+        // deck format admits) fails closed here, before any game. A 60/15
+        // episode is admitted with or without the marker; without one, every
+        // list was just admitted at exactly 60/15, so this never refuses.
+        ensure(
+            self.opponent_search.is_none() || self.decks_are_registered_60_15_v1(),
+            SEARCH_OPPONENT_DECK_SIZE_REFUSAL_V1,
+        )?;
         Ok([configs.remove(0), configs.remove(0)])
     }
+
+    /// Whether every registered and selected list has the exact registered
+    /// shape: 60 mainboard and 15 sideboard cards. Always true for an episode
+    /// admitted without a deck format; false only for a deck-format episode
+    /// whose decks use the format's other sizes.
+    pub(crate) fn decks_are_registered_60_15_v1(&self) -> bool {
+        self.registered.iter().chain(&self.selected).all(|list| {
+            list.mainboard.len() == crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1
+                && list.sideboard.len() == crate::sideboard::REGISTERED_SIDEBOARD_SIZE_V1
+        })
+    }
 }
+
+/// The admission refusal of a search-opponent episode whose decks are not
+/// the exact 60/15 registration.
+pub(crate) const SEARCH_OPPONENT_DECK_SIZE_REFUSAL_V1: &str =
+    "a search opponent requires exact 60/15 decks; deck_format admitted another size";
 
 /// Raw binary32 bits keep JSON round trips exact, including signed zero.
 /// All fields are actor-visible tensors. No private bindings or GameState.
