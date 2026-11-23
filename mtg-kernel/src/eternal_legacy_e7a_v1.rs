@@ -2060,6 +2060,15 @@ pub(crate) fn drive(
             if !continuation.ctx.target_incarnation_matches(0, state) {
                 return Ok(false);
             }
+            // Tamiyo, Collector of Tales (wave C9c): opponents' spells and
+            // abilities can't cause Tamiyo's controller to sacrifice.
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                opponent,
+            ) {
+                return Ok(false);
+            }
             // The sacrifice; the rest of the trigger's sequence follows.
             let candidates = controlled_permanents(state, opponent)
                 .into_iter()
@@ -2855,7 +2864,7 @@ pub(crate) fn prevents_zone_change(state: &GameState, change: &event::ZoneChange
         && !live.v4.is_token
         && CARD_DEFS
             .get(live.card_def as usize)
-            .is_some_and(|def| def.has_type(CardType::Creature))
+            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
         && any_active(state, GRAFDIGGERS_CAGE)
 }
 
@@ -2913,14 +2922,27 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
     // its abilities either (wave S1m), nor does an Invasion Submersible's
     // after its exhaust ability (wave S1q), nor an animated land's or
     // artifact's, which a resolved ability gave it (Celestial Colonnade).
-    if live.zone != Zone::Battlefield
-        || !(CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
-            def.types_for_face(live.v4.face_index)
-                .contains(&CardType::Creature)
-                || (live.v4.animation_timestamp.is_some() && def.animation.is_some())
-        }) || crate::eternal_sideboard_s1m_v1::stationed(state, object)
-            || crate::eternal_sideboard_s1q_v1::animated(state, object))
-    {
+    if live.zone != Zone::Battlefield {
+        return None;
+    }
+    let is_creature = match crate::eternal_cube_c9b_v1::swift_reconfiguration_type_override(
+        state,
+        object,
+        CardType::Creature,
+    ) {
+        Some(answer) => answer,
+        None => {
+            CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
+                def.types_for_face(live.v4.face_index)
+                    .contains(&CardType::Creature)
+                    || (live.v4.animation_timestamp.is_some() && def.animation.is_some())
+            }) || crate::eternal_sideboard_s1m_v1::stationed(state, object)
+                || crate::eternal_sideboard_s1q_v1::animated(state, object)
+                || crate::eternal_cube_c9a_v1::is_earthbent(state, object)
+                || crate::eternal_cube_c9c_v1::nissa_animated_timestamp(state, object).is_some()
+        }
+    };
+    if !is_creature {
         return None;
     }
     active_dress_down_timestamp(state, Some(object))

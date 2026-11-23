@@ -1360,7 +1360,8 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 .iter()
                 .copied()
                 .filter(|&card| {
-                    definition(state, card).is_some_and(|def| def.has_type(CardType::Creature))
+                    definition(state, card)
+                        .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                         && !state.objects.get(card).v4.is_token
                 })
                 .collect::<Vec<_>>();

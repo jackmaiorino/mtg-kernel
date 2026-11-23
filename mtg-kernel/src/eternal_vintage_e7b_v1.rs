@@ -1864,6 +1864,13 @@ pub(crate) fn drive(
                 &ctx,
                 state,
             );
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                returner,
+            ) {
+                return Ok(false);
+            }
             let lands = state.players[returner.index()]
                 .battlefield
                 .iter()
@@ -1909,7 +1916,7 @@ pub(crate) fn drive(
                 .filter(|&other| {
                     other != card
                         && definition(state, other).is_some_and(|def| {
-                            def.has_type(CardType::Creature)
+                            crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
                                 && (def.colors.iter().any(|&color| {
                                     crate::card_def::mana_color_mask(color) & black != 0
                                 }) || crate::eternal_legacy_e9a_v1::statics::painter_mask(

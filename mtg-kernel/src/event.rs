@@ -4746,36 +4746,6 @@ fn commit_with_entry_batch_and_source_color(
     let event = progenitus_plan
         .as_ref()
         .map_or(event, |plan| plan.rewritten());
-    // Blightsteel Colossus (Vintage Cube wave C9a): if it would be put into a
-    // graveyard from anywhere, reveal it and shuffle it into its owner's
-    // library instead.
-    let blightsteel_shuffle = crate::eternal_cube_c9a_v1::plan_blightsteel_shuffle(
-        state,
-        &event,
-        abilities_removed_before,
-    );
-    if let Some((owner, source, true)) = blightsteel_shuffle {
-        if let Some(queue) = blightsteel_shuffles.as_mut() {
-            queue.push((owner, source));
-        } else if let Err(source) =
-            crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, vec![(owner, source)])
-        {
-            halt_zone_pt_v1(state, source);
-        }
-        return;
-    }
-    let event = if blightsteel_shuffle.is_some() {
-        match event {
-            ProposedEvent::ZoneChange(mut change) => {
-                change.to_zone = Zone::Library;
-                change.library_insert_visibility = LibraryInsertVisibility::Public;
-                ProposedEvent::ZoneChange(change)
-            }
-            other => other,
-        }
-    } else {
-        event
-    };
     // Direct commits are also used for simultaneous state-based deaths. Apply
     // an installed Fiery shield before any zone bookkeeping or frozen death
     // capture is published. Unrelated direct commits retain their old path.
@@ -4806,6 +4776,59 @@ fn commit_with_entry_batch_and_source_color(
             change.to_zone = Zone::Exile;
         }
     }
+    // Blightsteel Colossus (Vintage Cube wave C9a): if it would be put into a
+    // graveyard from anywhere, reveal it and shuffle it into its owner's
+    // library instead. Check after Fiery/Finality and skip if an active
+    // graveyard-exile replacement (Rest in Peace, Leyline of the Void, Dauthi
+    // Voidwalker, Yawgmoth's Will, Unearth, etc.) already redirects it, matching
+    // batch replacement ordering.
+    #[cfg(feature = "eternal-fixtures")]
+    let graveyard_redirected = match &event {
+        ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Graveyard => {
+            let mut probe = change.clone();
+            crate::standard_keywords_v1::unearth_exile_instead(state, &mut probe);
+            crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut probe);
+            crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut probe);
+            crate::eternal_cube_c8a_v1::adjust_zone_change(state, &mut probe);
+            crate::eternal_e9b_v1::replace_zone_change(state, &mut probe, false);
+            crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut probe);
+            probe.to_zone != Zone::Graveyard
+        }
+        _ => false,
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let graveyard_redirected = false;
+    let blightsteel_shuffle = if graveyard_redirected {
+        None
+    } else {
+        crate::eternal_cube_c9a_v1::plan_blightsteel_shuffle(
+            state,
+            &event,
+            abilities_removed_before,
+        )
+    };
+    if let Some((owner, source, true)) = blightsteel_shuffle {
+        if let Some(queue) = blightsteel_shuffles.as_mut() {
+            queue.push((owner, source));
+        } else if let Err(source) =
+            crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, vec![(owner, source)])
+        {
+            halt_zone_pt_v1(state, source);
+        }
+        return;
+    }
+    let event = if blightsteel_shuffle.is_some() {
+        match event {
+            ProposedEvent::ZoneChange(mut change) => {
+                change.to_zone = Zone::Library;
+                change.library_insert_visibility = LibraryInsertVisibility::Public;
+                ProposedEvent::ZoneChange(change)
+            }
+            other => other,
+        }
+    } else {
+        event
+    };
     let local_zone_plan = if zone_plan.is_none()
         && needs_final_zone_pt_plan_v1(state, std::slice::from_ref(&event))
     {
@@ -6059,14 +6082,34 @@ fn materialize_event_v1(
             // Infect (CR 702.90, Vintage Cube wave C9a): damage dealt to a
             // player gives poison counters instead of losing life; damage
             // dealt to a creature puts -1/-1 counters on it instead of marking
-            // damage. Planeswalker loyalty damage is unchanged.
+            // damage. Planeswalker loyalty damage is unchanged. Consult LKI
+            // (`historical`) when the source already left the battlefield.
             let source_has_infect = cfg!(feature = "eternal-fixtures")
                 && d.amount > 0
-                && state.objects.try_get(d.source).is_some()
-                && crate::engine::has_effective_keyword(
-                    state,
-                    d.source,
-                    crate::card_def::Keywords::INFECT,
+                && historical.map_or_else(
+                    || {
+                        state.objects.try_get(d.source).is_some()
+                            && crate::engine::has_effective_keyword(
+                                state,
+                                d.source,
+                                crate::card_def::Keywords::INFECT,
+                            )
+                    },
+                    |facts| {
+                        crate::card_def::CARD_DEFS
+                            .get(usize::from(facts.source.card_def))
+                            .is_some_and(|def| def.keywords.has(crate::card_def::Keywords::INFECT))
+                            && !state.engine.event_history.iter().any(|ev| {
+                                matches!(
+                                    ev,
+                                    CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                                        object,
+                                        zone_change_count,
+                                    } if *object == facts.source.source
+                                        && *zone_change_count == facts.source.zone_change_count
+                                )
+                            })
+                    },
                 );
             match d.target {
                 Target::Object(id) => {

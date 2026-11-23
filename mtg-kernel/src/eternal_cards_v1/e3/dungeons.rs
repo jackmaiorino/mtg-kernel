@@ -954,6 +954,14 @@ fn stage_punisher(
 ) -> Result<bool, String> {
     let mut chosen = chosen;
     for (index, &player) in players.iter().enumerate() {
+        if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+            state,
+            continuation.ctx.controller,
+            player,
+        ) {
+            chosen.push((player, None));
+            continue;
+        }
         let cards = punisher_candidates(state, room, player);
         if cards.is_empty() {
             chosen.push((player, None));
@@ -1015,6 +1023,13 @@ fn stage_oubliette(
     stage: u8,
     path: Vec<u16>,
 ) -> Result<bool, String> {
+    if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+        state,
+        continuation.ctx.controller,
+        player,
+    ) {
+        return Ok(false);
+    }
     let mut stage = stage;
     while stage <= 3 {
         let cards = if stage == 0 {

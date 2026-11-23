@@ -2268,6 +2268,14 @@ pub(crate) fn drive(
                 return Ok(false);
             };
             let payer = item.controller;
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                payer,
+            ) {
+                counter_spell_item(state, *spell, continuation.ctx.source);
+                return Ok(false);
+            }
             let hand = state.players[payer.index()]
                 .hand
                 .iter()
@@ -2732,7 +2740,9 @@ fn lazotep_zombie_copy(ctx: &ExecCtx, state: &mut GameState) {
     if !ctx.target_incarnation_matches(0, state)
         || live.zone != Zone::Graveyard
         || live.owner != ctx.controller
-        || !CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+        || !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(
+            &CARD_DEFS[live.card_def as usize],
+        )
         || crate::engine::object_mana_value(state, card) != ctx.x_value
     {
         return;

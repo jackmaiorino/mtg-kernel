@@ -66,14 +66,11 @@ use crate::event::{self, CommittedEvent, HistoricalDamageSourceV1, ProposedEvent
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{
-    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, StackItem, StackItemKind,
-    Target, Zone,
+    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, StackItem, Target, Zone,
 };
 use crate::trigger::{PendingTrigger, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
-pub(crate) const FIGURE_OF_DESTINY: &str = "Figure of Destiny";
-pub(crate) const FIGURE_OF_FABLE: &str = "Figure of Fable";
 pub(crate) const HEXDRINKER: &str = "Hexdrinker";
 pub(crate) const NADU: &str = "Nadu, Winged Wisdom";
 pub(crate) const SERRA_PARAGON: &str = "Serra Paragon";
@@ -726,6 +723,11 @@ pub(crate) fn swift_reconfiguration_type_override(
     {
         return None;
     }
+    if crate::continuous_characteristics_v1::land_type_timestamp(state, object)
+        .is_some_and(|other| other > sr_ts)
+    {
+        return None;
+    }
     if card_type == CardType::Artifact {
         return Some(true);
     }
@@ -733,7 +735,13 @@ pub(crate) fn swift_reconfiguration_type_override(
         let later_creature = crewed_after_timestamp(state, object, sr_ts)
             || crate::continuous_characteristics_v1::animation(state, object)
                 .is_some_and(|(_, other)| other > sr_ts)
-            || crate::continuous_characteristics_v1::later_land_animation(state, object, sr_ts);
+            || crate::continuous_characteristics_v1::later_land_animation(state, object, sr_ts)
+            || crate::eternal_sideboard_s1e_v1::scream_timestamp(state, object)
+                .is_some_and(|other| other > sr_ts)
+            || crate::eternal_cube_c9a_v1::earthbent_timestamp(state, object)
+                .is_some_and(|other| other > sr_ts)
+            || crate::eternal_cube_c9c_v1::nissa_animated_timestamp(state, object)
+                .is_some_and(|other| other > sr_ts);
         return Some(later_creature);
     }
     Some(false)
@@ -888,13 +896,6 @@ fn source_is_instant_spell(state: &GameState, source: ObjectId) -> bool {
         return false;
     };
     if live.zone == Zone::Battlefield {
-        return false;
-    }
-    if state
-        .stack
-        .iter()
-        .any(|item| item.source == source && item.kind != StackItemKind::Spell)
-    {
         return false;
     }
     crate::source_type_hexproof_v1::source_types(
@@ -1679,5 +1680,5 @@ pub(crate) fn drive(
     _path: Vec<u16>,
 ) -> Result<bool, String> {
     execute(op, &continuation.ctx, state);
-    Ok(true)
+    Ok(false)
 }

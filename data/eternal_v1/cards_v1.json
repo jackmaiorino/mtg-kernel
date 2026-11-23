@@ -39003,7 +39003,7 @@
     "vigilance",
     "haste",
     "emblem",
-    "indestructible",
+    "emblem_indestructible",
     "library_search"
    ],
    "java_file": "Mage.Sets/src/mage/cards/n/NissaWhoShakesTheWorld.java"

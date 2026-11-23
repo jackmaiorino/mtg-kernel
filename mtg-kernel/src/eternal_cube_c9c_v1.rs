@@ -71,7 +71,6 @@ pub(crate) const ELSPETH: &str = "Elspeth, Storm Slayer";
 pub(crate) const GRIST: &str = "Grist, the Hunger Tide";
 pub(crate) const NISSA: &str = "Nissa, Who Shakes the World";
 pub(crate) const TAMIYO: &str = "Tamiyo, Collector of Tales";
-pub(crate) const THROUGH_THE_BREACH: &str = "Through the Breach";
 pub(crate) const BLACK_GREEN_INSECT_TOKEN: &str = "Black Green Insect Token";
 pub(crate) const SOLDIER_TOKEN: &str = "Soldier Token";
 
@@ -844,10 +843,7 @@ pub(crate) fn drive(
         C9cOpV1::NissaMinusEightV1 => {
             let player = continuation.ctx.controller;
             let timestamp = crate::engine::next_timestamp(state);
-            let slot = &mut c9c_state(state).nissa_emblems[player.index()];
-            if slot.is_none() {
-                *slot = Some(timestamp);
-            }
+            c9c_state(state).nissa_emblems[player.index()] = Some(timestamp);
             let forests: Vec<EffectObjectBinding> = state.players[player.index()]
                 .library
                 .iter()

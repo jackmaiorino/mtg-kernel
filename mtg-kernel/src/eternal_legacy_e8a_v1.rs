@@ -1350,7 +1350,8 @@ pub(crate) fn execute(op: &E8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let returns = definition(state, card.object).is_some_and(|def| {
-                !def.has_type(CardType::Creature) && !def.has_type(CardType::Land)
+                !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                    && !def.has_type(CardType::Land)
             });
             if returns {
                 event::propose_and_commit(
@@ -1884,7 +1885,7 @@ pub(crate) fn drive(
                     *host == emperor
                         && link_live_in(state, *card, Zone::Exile)
                         && definition(state, card.object)
-                            .is_some_and(|def| def.has_type(CardType::Creature))
+                            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .map(|(_, card)| bind(state, card.object))
                 .collect::<Vec<_>>();

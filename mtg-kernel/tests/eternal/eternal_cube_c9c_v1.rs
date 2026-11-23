@@ -298,7 +298,8 @@ fn cast_targets(state: &GameState, spell: ObjectId) -> Vec<Target> {
     assert!(castable(&mut probe, spell));
     act(&mut probe, Action::CastSpell(spell));
     match next(&mut probe) {
-        Decision::ChooseTargets { legal_targets, .. } => legal_targets,
+        Decision::ChooseTargets { legal_targets, .. }
+        | Decision::ChooseEffectTargets { legal_targets, .. } => legal_targets,
         other => panic!("expected targets, got {other:?}"),
     }
 }
@@ -308,7 +309,8 @@ fn activate_targets(state: &GameState, source: ObjectId, index: u8) -> Vec<Targe
     assert!(activatable(&mut probe, source, index));
     act(&mut probe, Action::ActivateAbility(source, index));
     match next(&mut probe) {
-        Decision::ChooseTargets { legal_targets, .. } => legal_targets,
+        Decision::ChooseTargets { legal_targets, .. }
+        | Decision::ChooseEffectTargets { legal_targets, .. } => legal_targets,
         other => panic!("expected targets, got {other:?}"),
     }
 }
@@ -1150,6 +1152,12 @@ fn nissa_forest_mana_trigger_works_manually_and_in_automatic_payment() {
 
 #[test]
 fn nissa_plus_one_animates_noncreature_land_permanently_and_allows_zero_targets() {
+    assert!(
+        !def("Nissa, Who Shakes the World")
+            .keywords
+            .has(Keywords::INDESTRUCTIBLE),
+        "Nissa herself must NOT have printed Indestructible"
+    );
     let mut state = plains();
     let nissa = cast_nissa(&mut state, P0);
     let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
@@ -1171,6 +1179,9 @@ fn nissa_plus_one_animates_noncreature_land_permanently_and_allows_zero_targets(
     act(&mut zero_probe, Action::ActivateAbility(nissa, 0));
     match next(&mut zero_probe) {
         Decision::ChooseTargets {
+            can_finish: true, ..
+        }
+        | Decision::ChooseEffectTargets {
             can_finish: true, ..
         } => act(&mut zero_probe, Action::FinishEffectSelection),
         other => panic!("expected optional target prompt, got {other:?}"),

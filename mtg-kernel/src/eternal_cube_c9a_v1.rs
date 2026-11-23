@@ -926,6 +926,11 @@ pub(crate) fn apply_entry_counters(
     let entries = &mut c9a_state(state).batroc_kicks;
     entries.retain(|(recorded, _)| *recorded != link);
     entries.push((link, kicks));
+    // CR 614.12: Dress Down removes Batroc's entry-counter replacement ability
+    // as he enters, so he enters with 0 counters.
+    if !crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
+        return;
+    }
     let count = i32::from(kicks);
     match crate::doubling_season_v48::entry_amount(state, input, controller, count).and_then(
         |amount| {
@@ -1134,13 +1139,23 @@ pub(crate) fn plan_blightsteel_shuffle(
     Some((live.owner, change.object, live.zone == Zone::Library))
 }
 
-/// Performs one checked library shuffle per Blightsteel Colossus replacement
-/// in original batch order.
+/// Performs one checked library reveal + shuffle per Blightsteel Colossus
+/// replacement in original batch order.
 pub(crate) fn finish_blightsteel_shuffles(
     state: &mut GameState,
     shuffles: Vec<(PlayerId, ObjectId)>,
 ) -> Result<(), ObjectId> {
     for (owner, source) in shuffles {
+        if let Some(pos) = state.players[owner.index()]
+            .library
+            .iter()
+            .position(|&id| id == source)
+        {
+            // spellbench-public-reveal: Oracle text reveals Blightsteel before shuffling.
+            for viewer in [PlayerId::P0, PlayerId::P1] {
+                state.reveal_library_position(viewer, owner, pos);
+            }
+        }
         let token = state.preflight_library_shuffle(owner).map_err(|_| source)?;
         state
             .commit_library_shuffle(owner, token)
@@ -1748,7 +1763,7 @@ pub(crate) fn execute(op: &C9aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             if state.objects.get(creature).tapped {
-                crate::engine::attempt_untap(state, creature);
+                let _ = crate::engine::attempt_untap(state, creature);
             }
             let c9a = c9a_state(state);
             c9a.extra_combat_phases = c9a.extra_combat_phases.saturating_add(1);

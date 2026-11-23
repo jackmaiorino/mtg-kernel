@@ -2251,12 +2251,14 @@ pub(crate) fn target_contract_matches_live(
             ..
         } => state.objects.try_get(object).is_some_and(|live| {
             (live.card_def == card_def
-                || crate::standard_cards_v1::had_card_def(
-                    state,
-                    object,
-                    zone_change_count,
-                    card_def,
-                ))
+                || (cfg!(feature = "eternal-fixtures")
+                    && !crate::standard_cards_v1::active_aegis_copy(state, object)
+                    && crate::standard_cards_v1::had_card_def(
+                        state,
+                        object,
+                        zone_change_count,
+                        card_def,
+                    )))
                 && live.owner == owner
                 && live.zone == zone
                 && live.zone_change_count == zone_change_count
@@ -2294,12 +2296,14 @@ fn target_contracts_are_structurally_valid(
                         spell_copy_origin,
                     } => state.objects.try_get(object).is_some_and(|live| {
                         (live.card_def == card_def
-                            || crate::standard_cards_v1::had_card_def(
-                                state,
-                                object,
-                                zone_change_count,
-                                card_def,
-                            ))
+                            || (cfg!(feature = "eternal-fixtures")
+                                && !crate::standard_cards_v1::active_aegis_copy(state, object)
+                                && crate::standard_cards_v1::had_card_def(
+                                    state,
+                                    object,
+                                    zone_change_count,
+                                    card_def,
+                                )))
                             && live.owner == owner
                             && live.controller == controller
                             && live.zone == zone
@@ -5394,8 +5398,8 @@ fn legal_targets_unrestricted_v1(
                 });
             }
         }
-        // Hexdrinker LEVEL 3-7: "Protection from instants" (spells, not
-        // abilities; Vintage Cube wave C9b).
+        // Hexdrinker LEVEL 3-7: "Protection from instants" (CR 702.16b:
+        // instant spells and abilities of instant sources; Vintage Cube wave C9b).
         #[cfg(feature = "eternal-fixtures")]
         if source.zone != Zone::Battlefield
             && targets.iter().any(|target| {
@@ -5406,47 +5410,36 @@ fn legal_targets_unrestricted_v1(
                 )
             })
         {
-            let non_spell_ability = state
-                .engine
-                .pending_activation
-                .as_ref()
-                .is_some_and(|pending| pending.source == source.object)
-                || state
-                    .stack
-                    .iter()
-                    .any(|item| item.source == source.object && item.kind != StackItemKind::Spell);
-            if !non_spell_ability {
-                let is_instant = source.types_override.map_or_else(
-                    || {
-                        crate::source_type_hexproof_v1::source_types(
-                            state,
-                            source.object,
-                            source.card_def,
-                            source.zone,
-                            source.zone_change_count,
-                        )
-                        .map_or_else(
-                            |_| {
-                                card_def::CARD_DEFS
-                                    .get(usize::from(source.card_def))
-                                    .is_some_and(|def| def.has_type(CardType::Instant))
-                            },
-                            |types| types.contains(CardType::Instant),
-                        )
-                    },
-                    |types| types.contains(CardType::Instant),
-                );
-                if is_instant {
-                    targets.retain(|target| {
-                        !matches!(
-                            target,
-                            Target::Object(id)
-                                if crate::eternal_cube_c9b_v1::has_protection_from_instants(
-                                    state, *id,
-                                )
-                        )
-                    });
-                }
+            let is_instant = source.types_override.map_or_else(
+                || {
+                    crate::source_type_hexproof_v1::source_types(
+                        state,
+                        source.object,
+                        source.card_def,
+                        source.zone,
+                        source.zone_change_count,
+                    )
+                    .map_or_else(
+                        |_| {
+                            card_def::CARD_DEFS
+                                .get(usize::from(source.card_def))
+                                .is_some_and(|def| def.has_type(CardType::Instant))
+                        },
+                        |types| types.contains(CardType::Instant),
+                    )
+                },
+                |types| types.contains(CardType::Instant),
+            );
+            if is_instant {
+                targets.retain(|target| {
+                    !matches!(
+                        target,
+                        Target::Object(id)
+                            if crate::eternal_cube_c9b_v1::has_protection_from_instants(
+                                state, *id,
+                            )
+                    )
+                });
             }
         }
     }
@@ -17770,6 +17763,21 @@ pub(crate) fn validate_pending_cast(
                 return Err("pending cast chose an unavailable splice combination".to_string());
             }
             let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+            #[cfg(feature = "eternal-fixtures")]
+            if let Some(cap) = crate::eternal_cube_c9b_v1::serra_paragon_x_cap(
+                state,
+                pending.controller,
+                pending.spell,
+                pending.origin_zone,
+                def,
+                cost,
+            ) {
+                if x_value > cap {
+                    return Err(
+                        "pending cast chose X above Serra Paragon's mana value 3 cap".to_string(),
+                    );
+                }
+            }
             if pending_cast_quote_v1(
                 def,
                 pending,
@@ -25514,29 +25522,38 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i128 {
 /// are always front-face objects because every zone change resets the face.
 pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
     if let Some(timestamp) = crate::continuous_characteristics_v1::land_type_timestamp(state, id) {
-        return card_type == CardType::Land
-            || (crate::continuous_characteristics_v1::later_land_animation(state, id, timestamp)
-                && matches!(card_type, CardType::Creature | CardType::Artifact))
-            || crate::continuous_characteristics_v1::animation(state, id).is_some_and(
-                |(animation, other)| {
-                    other > timestamp
-                        && (card_type == CardType::Creature
-                            || (animation.artifact && card_type == CardType::Artifact))
-                },
-            )
-            // Nissa, Who Shakes the World's +1 animation with a later timestamp (wave C9c).
-            || (cfg!(feature = "eternal-fixtures")
-                && card_type == CardType::Creature
-                && crate::eternal_cube_c9c_v1::nissa_animated_timestamp(state, id)
-                    .is_some_and(|other| other > timestamp))
-            // A Mycosynth Lattice with a later timestamp (wave S1f).
-            || (card_type == CardType::Artifact
-                && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id))
-            // A Badgermole Cub earthbend animation with a later timestamp (wave C9a).
-            || (cfg!(feature = "eternal-fixtures")
-                && card_type == CardType::Creature
-                && crate::eternal_cube_c9a_v1::earthbent_timestamp(state, id)
-                    .is_some_and(|other| other > timestamp));
+        #[cfg(feature = "eternal-fixtures")]
+        let overridden_by_swift_reconfig =
+            crate::eternal_cube_c9b_v1::swift_reconfiguration_timestamp(state, id)
+                .is_some_and(|sr_ts| sr_ts > timestamp);
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let overridden_by_swift_reconfig = false;
+        if !overridden_by_swift_reconfig {
+            return card_type == CardType::Land
+                || (crate::continuous_characteristics_v1::later_land_animation(
+                    state, id, timestamp,
+                ) && matches!(card_type, CardType::Creature | CardType::Artifact))
+                || crate::continuous_characteristics_v1::animation(state, id).is_some_and(
+                    |(animation, other)| {
+                        other > timestamp
+                            && (card_type == CardType::Creature
+                                || (animation.artifact && card_type == CardType::Artifact))
+                    },
+                )
+                // Nissa, Who Shakes the World's +1 animation with a later timestamp (wave C9c).
+                || (cfg!(feature = "eternal-fixtures")
+                    && card_type == CardType::Creature
+                    && crate::eternal_cube_c9c_v1::nissa_animated_timestamp(state, id)
+                        .is_some_and(|other| other > timestamp))
+                // A Mycosynth Lattice with a later timestamp (wave S1f).
+                || (card_type == CardType::Artifact
+                    && crate::eternal_sideboard_s1f_v1::adds_artifact(state, id))
+                // A Badgermole Cub earthbend animation with a later timestamp (wave C9a).
+                || (cfg!(feature = "eternal-fixtures")
+                    && card_type == CardType::Creature
+                    && crate::eternal_cube_c9a_v1::earthbent_timestamp(state, id)
+                        .is_some_and(|other| other > timestamp));
+        }
     }
     // Mycosynth Lattice: "All permanents are artifacts in addition to their
     // other types", face-down permanents included, unless a later
@@ -25547,10 +25564,14 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
         return true;
     }
     // Unable to Scream: "is a Toy artifact creature ... in addition to its
-    // other types", a face-down host included (wave S1e).
+    // other types", a face-down host included (wave S1e), unless a later
+    // Swift Reconfiguration removes Creature.
     #[cfg(feature = "eternal-fixtures")]
     if matches!(card_type, CardType::Artifact | CardType::Creature)
-        && crate::eternal_sideboard_s1e_v1::adds_artifact_creature(state, id)
+        && crate::eternal_sideboard_s1e_v1::scream_timestamp(state, id).is_some_and(|scream_ts| {
+            crate::eternal_cube_c9b_v1::swift_reconfiguration_timestamp(state, id)
+                .is_none_or(|sr_ts| scream_ts > sr_ts)
+        })
     {
         return true;
     }
