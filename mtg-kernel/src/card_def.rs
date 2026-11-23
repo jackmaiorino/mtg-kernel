@@ -540,6 +540,13 @@ pub enum Subtype {
     /// Appended for Vintage Cube wave C7 (Black Widow, Super Spy), stable id
     /// 750. A creature type.
     Spy = 750,
+    /// Appended for Vintage Cube wave C8 (Zirda, the Dawnwaker; Jennifer
+    /// Walters // The Sensational She-Hulk; Saheeli, Sublime Artificer),
+    /// stable ids 760 to 762. Fox and Gamma are creature types; Saheeli is a
+    /// planeswalker type.
+    Fox = 760,
+    Gamma = 761,
+    Saheeli = 762,
 }
 
 impl Subtype {
@@ -961,6 +968,10 @@ impl Subtype {
         Subtype::Klingon,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Spy,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Fox,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Gamma,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1227,6 +1238,9 @@ impl Subtype {
             721 => Subtype::Garruk,
             740 => Subtype::Klingon,
             750 => Subtype::Spy,
+            760 => Subtype::Fox,
+            761 => Subtype::Gamma,
+            762 => Subtype::Saheeli,
             _ => return None,
         })
     }
@@ -1472,6 +1486,9 @@ impl Subtype {
             Subtype::Garruk => false,
             Subtype::Klingon => true,
             Subtype::Spy => true,
+            Subtype::Fox => true,
+            Subtype::Gamma => true,
+            Subtype::Saheeli => false,
         }
     }
 
@@ -1597,6 +1614,8 @@ impl Subtype {
                     | Subtype::Doctor
                     | Subtype::Klingon
                     | Subtype::Spy
+                    | Subtype::Fox
+                    | Subtype::Gamma
             )
         {
             return true;

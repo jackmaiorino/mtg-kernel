@@ -44,6 +44,9 @@ mod build_eternal_c6c_v1;
 mod build_eternal_c7a_v1;
 mod build_eternal_c7b_v1;
 mod build_eternal_c7c_v1;
+mod build_eternal_c8a_v1;
+mod build_eternal_c8b_v1;
+mod build_eternal_c8c_v1;
 mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
@@ -11704,6 +11707,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Garruk" => "Subtype::Garruk",
         "Klingon" => "Subtype::Klingon",
         "Spy" => "Subtype::Spy",
+        "Fox" => "Subtype::Fox",
+        "Gamma" => "Subtype::Gamma",
+        "Saheeli" => "Subtype::Saheeli",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }
