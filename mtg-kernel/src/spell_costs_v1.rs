@@ -152,7 +152,8 @@ pub(super) struct SpellComponentChoicesV1 {
 pub(super) struct SelectedSpellManaCostsV1 {
     granted_flashback_v1: bool,
     breach_escape: bool,
-    tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
+    pub(super) tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
+    pub(super) any_mana_type: bool,
     /// Whether the last component group is retrace's land discard
     /// (Wrenn and Six's emblem), added after any definition-owned groups.
     pub(super) retrace: bool,
@@ -606,6 +607,7 @@ impl SelectedSpellManaCostsV1 {
                     &self.spell_subtypes,
                     self.all_creature_types_v60,
                     self.tinybones_mana_v72.as_ref(),
+                    self.any_mana_type,
                     self.types.contains(&CardType::Artifact),
                     self.colorless_eldrazi,
                     self.improvise,
@@ -641,6 +643,7 @@ impl SelectedSpellManaCostsV1 {
                 &self.spell_subtypes,
                 self.all_creature_types_v60,
                 self.tinybones_mana_v72.as_ref(),
+                self.any_mana_type,
                 self.types.contains(&CardType::Artifact),
                 self.colorless_eldrazi,
             ) {
@@ -762,6 +765,7 @@ fn selected_spell_mana_costs_with_escape(
         breach_escape,
         granted_flashback_v1: false,
         tinybones_mana_v72: None,
+        any_mana_type: false,
         retrace: false,
         legendary_spell: definition
             .supertypes
@@ -1095,6 +1099,8 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         }
     }
     selected.tinybones_mana_v72 = super::tinybones_v72::mana_grant(state, source, player);
+    selected.any_mana_type = cfg!(feature = "eternal-fixtures")
+        && super::permission_allows_any_mana_type_v1(state, source, player);
     if selected.no_mana {
         selected.no_mana_source = Some(source);
     }
@@ -1903,6 +1909,30 @@ impl PreparedSpellPaymentV1 {
                 })
         })
         .count() as u8
+    }
+
+    /// Count of mana of each color (indexed by `ManaColor::pool_index`) spent
+    /// by this payment: tapped sources' consumed units, pool units, and
+    /// restricted-pool units (Vibrance, Wistfulness).
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn mana_by_color(&self, state: &GameState, player: PlayerId) -> [u8; 6] {
+        let plan = &self.mana.mana;
+        let mut counts = plan.pool_used;
+        for &(_, color) in &plan.taps {
+            let slot = &mut counts[color.pool_index()];
+            *slot = slot.saturating_add(1);
+        }
+        for &index in &plan.restricted_pool_used {
+            if let Some(unit) = state.players[player.index()]
+                .restricted_mana_pool
+                .0
+                .get(index)
+            {
+                let slot = &mut counts[unit.color.pool_index()];
+                *slot = slot.saturating_add(1);
+            }
+        }
+        counts
     }
 
     fn commit_optional(&self, state: &mut GameState) {

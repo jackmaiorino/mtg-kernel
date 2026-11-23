@@ -85,7 +85,8 @@ impl Packet {
             e9a::statics::applicable_redirects(state, damage)
                 .map(|(position, record)| Redirect { position, record }),
         );
-        let unpreventable = crate::eternal_prevention_order_v1::cannot_prevent(state);
+        let unpreventable =
+            crate::eternal_prevention_order_v1::cannot_prevent_damage(state, damage);
         if unpreventable {
             // Only redirection can admit such a packet. The recipients are
             // creatures; Nishoba's additional instruction still applies (615.12).
@@ -159,7 +160,7 @@ impl Packet {
                 if crate::eternal_premodern_p2c_v1::statics::prevent_damage(
                     state,
                     &self.damage,
-                    crate::eternal_prevention_order_v1::cannot_prevent(state),
+                    crate::eternal_prevention_order_v1::cannot_prevent_damage(state, &self.damage),
                 ) {
                     return;
                 }

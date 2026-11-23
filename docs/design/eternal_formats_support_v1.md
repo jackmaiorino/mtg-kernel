@@ -3444,6 +3444,49 @@ Ten cards stay out, each for a stated missing piece:
   Sublime Artificer (full copiable values for a token that becomes a copy); Chandra, Torch of
   Defiance (casting an exiled card for its mana cost).
 
+### C7: partial promotions, extended mana, evoke and linked durations
+
+Wave C7 adds 21 cards (promoting all four Partial cube cards and adding 17 missing cards), raising
+the cube to 504 of 540 Full with zero Partial cards remaining. Its three sub-modules chain after
+Pauper field wave Pf1c: C7a (`eternal_cube_c7a_v1`), C7b (`eternal_cube_c7b_v1`) and C7c
+(`eternal_cube_c7c_v1`), the new tail.
+
+- C7a: Hullbreacher (Partial to Full), Headliner Scarlett (Partial to Full), Gandalf, Goblins' Bane
+  (Partial to Full), Metamorphosis Fanatic (Partial to Full), Inti, Seneschal of the Sun, Malcolm,
+  Alluring Scoundrel, Chandra, Torch of Defiance, plus the Brain Freeze graveyard Storm fix
+  (issue #710).
+- C7b: Orcish Lumberjack, Urza, Lord High Artificer, Vivi Ornitier, Black Widow, Super Spy,
+  Soul-Scar Mage, Questing Beast, Palace Jailer.
+- C7c: Vibrance, Wistfulness, Tidehollow Sculler, The Wondrous Wasp, Woodfall Primus, Sanctum
+  Lurker, Guardian Scalelord.
+
+Engine changes shared with other cards:
+
+- Storm producing casts now accept genuine non-hand routes (Flashback, Escape, graveyard/exile
+  permissions, Adventure, Plot, Madness) matching their finalized cast method, and
+  `validate_spell_sourced_trigger` rejects bare `MaterializeStormCopies` without recursing.
+- Draw-step extra draws (Quantum Riddler) now run through the resumable replacement path so Jace
+  and Hullbreacher offer their choice after the exempt first draw; twelve Eternal draw leaves and
+  `RingLootV1` are included in the draw-replacement origin audit. Promoting Hullbreacher brings
+  `vintage-paradoxical-outcome` and `vintage-rug-control` into `PLAYABLE_75` (136 decks).
+- `rl::exile_play_permissions_public_v2` takes the acting observer and projects concealed face-down
+  exile permissions neutrally as `Play` to non-lookers, preserving opponent observation
+  indistinguishability for Headliner Scarlett and Flameshape; `PlayPermissionExpiry::AsLongAsExiled`
+  supports unbounded exile permissions and `PlayPermission::any_mana_type` adds spell-scoped
+  any-type mana spending (Black Widow).
+- Multi-card discard callers (cleanup, Time Stop cleanup, Breakthrough, Cabal Therapy, Verdict,
+  `DiscardUpToThenDraw`, and discard cost components) preserve batch boundaries for Inti.
+- Metamorphosis Fanatic's return offers a trigger-owned Phyrexian Metamorph as-enters copy choice
+  and applies the lifelink counter as the creature enters.
+- Extended mana ability costs and dynamic outputs (`TapSelfSacrificeControlledWithSubtypeV1`,
+  `TapUntappedControlledArtifactV1`, `NoneOwnTurnOnlyV1`, `SourcePowerAnyCombinationV1`),
+  noncombat damage-to-`-1/-1`-counters replacement (Soul-Scar Mage), combat damage cannot be
+  prevented static (Questing Beast), monarch-change release hook (Palace Jailer), per-color cast
+  mana tracking (Vibrance, Wistfulness), linked battlefield ability loss (The Wondrous Wasp),
+  CR 704.5q `+1/+1`/`-1/-1` counter cancellation after death SBAs (Woodfall Primus Persist),
+  planeswalker 0-loyalty SBA exemption and granted loyalty ability (Sanctum Lurker), Backup 1
+  granted attack triggers (Guardian Scalelord), and `Subtype::Spy` (stable id 750).
+
 ## Eternal rules precision closeout (#717)
 
 This records the finite [rules review checklist](https://github.com/jackmaiorino/mtg-kernel/issues/717)

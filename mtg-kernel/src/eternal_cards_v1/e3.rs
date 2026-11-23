@@ -333,6 +333,8 @@ pub enum E3ChoiceKindV1 {
     Pf1aV1(crate::eternal_pauper_pf1a_v1::Pf1aChoiceV1),
     /// A Pauper field wave Pf1b choice (`eternal_pauper_pf1b_v1`).
     Pf1bV1(crate::eternal_pauper_pf1b_v1::Pf1bChoiceV1),
+    /// A Vintage Cube wave C7a choice (`eternal_cube_c7a_v1`).
+    C7aV1(crate::eternal_cube_c7a_v1::C7aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -443,6 +445,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::Pf1bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C7aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -531,6 +536,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C6bV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
             E3ChoiceKindV1::Pf1aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::Pf1bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C7aV1(kind) => kind.public_purpose(),
         }
     }
 
@@ -575,6 +581,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::P2cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::Pf1bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C7aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -995,6 +1002,13 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
+        E3ChoiceKindV1::C7aV1(kind) => crate::eternal_cube_c7a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
     }
 }
 
@@ -1391,6 +1405,9 @@ pub(crate) fn drive(
         EternalOpV1::Pf1cV1(op) => {
             crate::eternal_pauper_pf1c_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::C7aV1(op) => crate::eternal_cube_c7a_v1::drive(state, continuation, op, path),
+        EternalOpV1::C7bV1(op) => crate::eternal_cube_c7b_v1::drive(state, continuation, op, path),
+        EternalOpV1::C7cV1(op) => crate::eternal_cube_c7c_v1::drive(state, continuation, op, path),
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
@@ -2034,6 +2051,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_cube_c2a_v1::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Vivi Ornitier's dynamic mana combination choice (Vintage Cube wave C7b).
+    if let Some(decision) = crate::eternal_cube_c7b_v1::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -2172,6 +2193,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_cube_c2a_v1::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_cube_c7b_v1::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;

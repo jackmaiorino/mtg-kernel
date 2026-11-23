@@ -457,6 +457,7 @@ pub(crate) fn finish(
                 }
                 let permission = crate::engine::PlayPermission {
                     without_mana_cost: crate::engine::FreeCastV1(true),
+                    any_mana_type: Default::default(),
                     object: card.object,
                     holder: player,
                     zone_change_generation: live.zone_change_count,

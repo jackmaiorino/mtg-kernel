@@ -78,8 +78,14 @@ pub(crate) fn cannot_prevent(state: &GameState) -> bool {
     })
 }
 
+pub(crate) fn cannot_prevent_damage(state: &GameState, damage: &DamageProposed) -> bool {
+    cannot_prevent(state)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+}
+
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
-    if damage.amount <= 0 || cannot_prevent(state) {
+    if damage.amount <= 0 || cannot_prevent_damage(state, damage) {
         return false;
     }
     if legacy_damage_order_v1() {
@@ -129,12 +135,14 @@ pub(crate) fn packet_options(
     // path, identical reductions are one initial choice; each real Sphere is
     // still applied at most once and may surround an intervening increase.
     let coalesce_spheres = !full_prevention(state, &packet.damage);
-    for (position, shield) in circles::matching_circle_shields(state, &packet.damage) {
-        if !options.iter().any(|effect| {
-            matches!(effect,
-            OrdinaryV1::Circle { shield: existing, .. } if *existing == shield)
-        }) {
-            options.push(OrdinaryV1::Circle { position, shield });
+    if !cannot_prevent_damage(state, &packet.damage) {
+        for (position, shield) in circles::matching_circle_shields(state, &packet.damage) {
+            if !options.iter().any(|effect| {
+                matches!(effect,
+                OrdinaryV1::Circle { shield: existing, .. } if *existing == shield)
+            }) {
+                options.push(OrdinaryV1::Circle { position, shield });
+            }
         }
     }
     let legacy = legacy_damage_order_v1();
@@ -176,7 +184,7 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
     let legacy = legacy_damage_order_v1();
     if (legacy && !legacy_sphere_order_v1()) || damage.is_combat
         || damage.amount <= 0
-        || cannot_prevent(state)
+        || cannot_prevent_damage(state, damage)
         // With any matching Circle, only its observable consumption predicate
         // admits the packet. Amount changes before an inevitable identical
         // shield consumption do not introduce a redundant numeric menu.
@@ -268,6 +276,10 @@ impl PreparedDamageBatchV1 {
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 damage.source,
             ));
+            return None;
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage) {
             return None;
         }
         Some(event)

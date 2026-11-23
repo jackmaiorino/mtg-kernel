@@ -3079,13 +3079,18 @@ fn apply_replacements_inner(
             change.to_zone = Zone::Exile;
         }
     }
-    let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-        && state.engine.until_end_of_turn.iter().any(|effect| {
-            matches!(
-                effect,
-                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-            )
-        });
+    let damage_cannot_be_prevented = match &proposed {
+        ProposedEvent::Damage(damage) => {
+            state.engine.until_end_of_turn.iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                )
+            }) || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+        }
+        _ => false,
+    };
     if let ProposedEvent::Damage(damage) = &mut proposed {
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented {
@@ -3093,7 +3098,12 @@ fn apply_replacements_inner(
             match crate::eternal_pauper_pf1c_v1::replace_damage(state, damage) {
                 DamageResultV1::Uncovered => {}
                 DamageResultV1::Prevented => return None,
-                DamageResultV1::Residual(damage) => return Some(ProposedEvent::Damage(damage)),
+                DamageResultV1::Residual(damage) => {
+                    if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, &damage) {
+                        return None;
+                    }
+                    return Some(ProposedEvent::Damage(damage));
+                }
             }
         }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before
@@ -3175,13 +3185,18 @@ fn apply_replacements_inner(
         }
     }
     loop {
-        let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-            && state.engine.until_end_of_turn.iter().any(|effect| {
-                matches!(
-                    effect,
-                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-                )
-            });
+        let damage_cannot_be_prevented = match &proposed {
+            ProposedEvent::Damage(damage) => {
+                state.engine.until_end_of_turn.iter().any(|effect| {
+                    matches!(
+                        effect,
+                        crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                    )
+                }) || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+            }
+            _ => false,
+        };
         let hit = state
             .engine
             .active_replacements
@@ -3200,6 +3215,15 @@ fn apply_replacements_inner(
             .cloned();
 
         let Some(repl) = hit else {
+            // Soul-Scar Mage (Vintage Cube wave C7b): noncombat damage from a
+            // controlled source to an opponent's creature becomes -1/-1
+            // counters instead.
+            #[cfg(feature = "eternal-fixtures")]
+            if let ProposedEvent::Damage(damage) = &proposed {
+                if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage) {
+                    return None;
+                }
+            }
             return Some(proposed);
         };
 
@@ -8689,6 +8713,12 @@ fn materialize_zone_change_v1(
         // the battlefield, under the controller it entered under. A Moon
         // effect that already applies removes its printed entry rule (an
         // entry tapped for another reason stays tapped).
+        #[cfg(feature = "eternal-fixtures")]
+        let copied_entry_tapped = entering_face_down.is_none()
+            && crate::eternal_cube_c7a_v1::apply_pending_metamorph_entry_copy(state, id);
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let copied_entry_tapped = false;
+        let printed_entry_tapped = printed_entry_tapped || copied_entry_tapped;
         let controller = state.objects.get(id).controller;
         if printed_entry_tapped
             && !force_battlefield_tapped

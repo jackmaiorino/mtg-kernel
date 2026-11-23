@@ -1393,6 +1393,7 @@ fn caves_exile_top(ctx: &ExecCtx, state: &mut GameState) {
             without_mana_cost: crate::engine::FreeCastV1(
                 completed && play_or_cast == crate::engine::PlayOrCast::Cast,
             ),
+            any_mana_type: Default::default(),
             object: top,
             holder: player,
             zone_change_generation,
@@ -1529,9 +1530,7 @@ pub(crate) fn drive(
                 return Ok(false);
             }
             if keep == 0 {
-                for card in hand {
-                    crate::engine::commit_discarded_card(state, card);
-                }
+                crate::engine::commit_discarded_cards(state, &hand);
                 return Ok(false);
             }
             let bindings = hand.iter().map(|&card| bind(state, card)).collect();
@@ -1729,11 +1728,11 @@ pub(crate) fn finish_selection(
                 .iter()
                 .map(|binding| binding.object)
                 .collect::<Vec<_>>();
-            for card in hand_cards(state, player) {
-                if !kept.contains(&card) {
-                    crate::engine::commit_discarded_card(state, card);
-                }
-            }
+            let discarded = hand_cards(state, player)
+                .into_iter()
+                .filter(|card| !kept.contains(card))
+                .collect::<Vec<_>>();
+            crate::engine::commit_discarded_cards(state, &discarded);
             Ok(false)
         }
         E9aChoiceV1::ZenithSearchV1 => {
@@ -1775,6 +1774,7 @@ pub(crate) fn finish_selection(
                 .exile_play_permissions
                 .push(crate::engine::PlayPermission {
                     without_mana_cost: crate::engine::FreeCastV1::default(),
+                    any_mana_type: Default::default(),
                     object: card.object,
                     holder,
                     zone_change_generation: card.expected_zone_change_count,

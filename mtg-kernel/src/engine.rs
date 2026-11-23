@@ -692,6 +692,11 @@ pub enum PlayPermissionExpiry {
         granted_active_player: PlayerId,
     },
     UntilHoldersNextEndStep,
+    /// "For as long as it remains exiled, you may play it" (Flameshape /
+    /// Gandalf, Goblins' Bane): never expires at cleanup or end step while
+    /// the card remains in exile at its granted incarnation. Appended last to
+    /// preserve existing enum discriminants and hashes.
+    AsLongAsExiled,
 }
 
 /// Grants `holder` permission to play/cast `object` straight out of
@@ -724,6 +729,8 @@ pub enum PlayPermissionExpiry {
 pub struct PlayPermission {
     #[serde(default, skip_serializing_if = "FreeCastV1::is_false")]
     pub without_mana_cost: FreeCastV1,
+    #[serde(default, skip_serializing_if = "AnyManaTypeV1::is_false")]
+    pub any_mana_type: AnyManaTypeV1,
     pub object: ObjectId,
     pub holder: PlayerId,
     pub zone_change_generation: u32,
@@ -744,6 +751,24 @@ impl std::hash::Hash for FreeCastV1 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         if self.0 {
             std::hash::Hash::hash(&"without-mana-cost/v1", h);
+        }
+    }
+}
+
+/// Transparent optional flag for "mana of any type can be spent to cast that
+/// spell"; an absent grant retains historical state hashes and snapshots.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AnyManaTypeV1(pub bool);
+impl AnyManaTypeV1 {
+    pub fn is_false(&self) -> bool {
+        !self.0
+    }
+}
+impl std::hash::Hash for AnyManaTypeV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        if self.0 {
+            std::hash::Hash::hash(&"any-mana-type/v1", h);
         }
     }
 }
@@ -2494,20 +2519,29 @@ fn validate_physical_spell_cast_origin(
     }
     let route_supports_method = match origin.route {
         SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
-            // A resolving instruction casts from exile for free, (Bilbo)
-            // from the caster's graveyard paying its costs, or (Mad Wizard's
-            // Lair) from the caster's hand for free.
+            // A resolving instruction casts from exile for free (or paying its
+            // costs for Chandra, Torch of Defiance), from the caster's
+            // graveyard (paying costs for Bilbo, or free for Malcolm), or (Mad
+            // Wizard's Lair) from the caster's hand for free.
             let from_graveyard = cfg!(feature = "eternal-fixtures")
                 && origin.origin_zone == Zone::Graveyard
                 && source.owner == caster;
             let from_hand = cfg!(feature = "eternal-fixtures")
                 && origin.origin_zone == Zone::Hand
                 && source.owner == caster;
+            let paid_exile = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Exile
+                && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, item.source);
+            let free_graveyard = from_graveyard
+                && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, item.source);
             // A free cast's X is 0, but a replicate, multikicker or splice
             // count in the X slot counts additional costs paid.
             (origin.origin_zone == Zone::Exile || from_graveyard || from_hand)
                 && holder == caster
-                && (from_graveyard || item.v4.x_value == 0 || announces_additional_cost_count(def))
+                && ((from_graveyard && !free_graveyard)
+                    || paid_exile
+                    || item.v4.x_value == 0
+                    || announces_additional_cost_count(def))
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
                     || (is_pending_placeholder
                         && resolution_cast_v1::form_allowed(
@@ -3237,9 +3271,14 @@ fn storm_source_contract_is_structurally_valid(
                 || (cfg!(feature = "eternal-fixtures")
                     && matches!(origin.origin_zone, Zone::Graveyard | Zone::Hand)))
                 && holder == contract.controller
+                && contract.cast_method == CastMethodV4::Normal
         }
         SpellCastRouteV4::Hand => {
-            origin.origin_zone == Zone::Hand && contract.owner == contract.controller
+            origin.origin_zone == Zone::Hand
+                && contract.owner == contract.controller
+                && (contract.cast_method == CastMethodV4::Normal
+                    || (contract.cast_method == CastMethodV4::Alternative
+                        && definition.alt_cost.is_some()))
         }
         SpellCastRouteV4::ExilePermission {
             holder,
@@ -3252,14 +3291,30 @@ fn storm_source_contract_is_structurally_valid(
             origin.origin_zone == Zone::Exile
                 && holder == contract.controller
                 && permission_zone_change_count == origin.origin_zone_change_count
+                && (contract.cast_method == CastMethodV4::Normal
+                    || (contract.cast_method == CastMethodV4::Alternative
+                        && definition.alt_cost.is_some()))
         }
-        SpellCastRouteV4::GraveyardPermissionV1 { holder, .. }
-            if cfg!(feature = "eternal-fixtures") =>
-        {
-            origin.origin_zone == Zone::Graveyard && holder == contract.controller
+        SpellCastRouteV4::GraveyardPermissionV1 {
+            holder,
+            permission_zone_change_count,
+        } if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && holder == contract.controller
+                && permission_zone_change_count == origin.origin_zone_change_count
+                && (contract.cast_method == CastMethodV4::Normal
+                    || (contract.cast_method == CastMethodV4::Alternative
+                        && definition.alt_cost.is_some()))
         }
-        SpellCastRouteV4::LibraryPermissionV1 { holder, .. } => {
-            origin.origin_zone == Zone::Library && holder == contract.controller
+        SpellCastRouteV4::LibraryPermissionV1 {
+            holder,
+            permission_zone_change_count,
+        } => {
+            origin.origin_zone == Zone::Library
+                && holder == contract.controller
+                && permission_zone_change_count == origin.origin_zone_change_count
+                && contract.cast_method == CastMethodV4::Normal
         }
         SpellCastRouteV4::OmniscienceHandV1 {
             holder,
@@ -3269,7 +3324,70 @@ fn storm_source_contract_is_structurally_valid(
             origin.origin_zone == Zone::Hand
                 && holder == contract.controller
                 && hand_generation == origin.origin_zone_change_count
+                && contract.cast_method == CastMethodV4::Normal
                 && omniscience_cast_v1::paid_contract(state, contract).is_ok()
+        }
+        SpellCastRouteV4::GraveyardFlashback if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Flashback
+        }
+        SpellCastRouteV4::GraveyardEscape if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Escape
+        }
+        SpellCastRouteV4::SnapcasterFlashbackV1 if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Flashback
+        }
+        SpellCastRouteV4::RetraceV1 if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && (contract.cast_method == CastMethodV4::Normal
+                    || (contract.cast_method == CastMethodV4::Alternative
+                        && definition.alt_cost.is_some()))
+        }
+        SpellCastRouteV4::BreachEscapeV1 if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Escape
+                && definition.escape.is_some()
+        }
+        SpellCastRouteV4::SphinxLoreFlashbackV1 {
+            holder,
+            graveyard_generation,
+            ..
+        } => {
+            origin.origin_zone == Zone::Graveyard
+                && contract.owner == holder
+                && holder == contract.controller
+                && graveyard_generation == origin.origin_zone_change_count
+                && contract.cast_method == CastMethodV4::Flashback
+        }
+        SpellCastRouteV4::Plotted { .. } if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Exile
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Plotted
+                && definition.plot_cost.is_some()
+        }
+        SpellCastRouteV4::Madness if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Exile
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Madness
+                && definition.madness_cost.is_some()
+        }
+        SpellCastRouteV4::AdventureExile if cfg!(feature = "eternal-fixtures") => {
+            origin.origin_zone == Zone::Exile
+                && contract.owner == contract.controller
+                && contract.cast_method == CastMethodV4::Normal
+                && definition.adventure.is_some()
+        }
+        SpellCastRouteV4::TinybonesExileV72 { .. } => {
+            origin.origin_zone == Zone::Exile
+                && contract.cast_method == CastMethodV4::Normal
+                && tinybones_v72::validate_contract(state, contract).is_ok()
         }
         SpellCastRouteV4::GraveyardFlashback
         | SpellCastRouteV4::BeamMeUpV1
@@ -3282,18 +3400,15 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::AdventureExile
         | SpellCastRouteV4::GraveyardPermissionV1 { .. }
         | SpellCastRouteV4::GraveyardAdventure { .. }
-        | SpellCastRouteV4::TinybonesExileV72 { .. }
         | SpellCastRouteV4::MuldrothaGraveyardV1 { .. }
-        | SpellCastRouteV4::GreatwurmGraveyardV1 { .. }
-        | SpellCastRouteV4::SphinxLoreFlashbackV1 { .. } => false,
+        | SpellCastRouteV4::GreatwurmGraveyardV1 { .. } => false,
     };
     has_storm(definition)
         && definition.is_executable()
         && definition.is_castable()
         && contract.zone == Zone::Stack
-        && contract.cast_method == CastMethodV4::Normal
         && contract.spell_copy_origin.is_none()
-        && origin.finalized_method == Some(CastMethodV4::Normal)
+        && origin.finalized_method == Some(contract.cast_method)
         && origin
             .origin_zone_change_count
             .checked_add(1)
@@ -3520,6 +3635,9 @@ fn validate_spell_sourced_trigger(
     {
         return crate::faebloom_trick_v43::validate_trigger_metadata(state, item);
     }
+    if item.inline_effect.as_ref() == Some(&EffectOp::MaterializeStormCopies) {
+        return Err("unmaterialized Storm trigger cannot sit on the stack".to_string());
+    }
     if let Some(EffectOp::CreateStormCopies { binding }) = item.inline_effect.as_ref() {
         if contract != binding.source_contract
             || item.source != binding.source_contract.source
@@ -3557,7 +3675,10 @@ fn validate_spell_sourced_trigger(
     }
     let definition_matches = crate::trigger::triggers_for(source.card_def)
         .iter()
-        .filter(|trigger| trigger.home_zone == Zone::Stack)
+        .filter(|trigger| {
+            trigger.home_zone == Zone::Stack
+                && (trigger.effect)() != EffectOp::MaterializeStormCopies
+        })
         .any(|trigger| {
             crate::trigger::materialize_trigger_effect(trigger, item.source, state)
                 == *item.inline_effect.as_ref().expect("checked Some above")
@@ -8065,6 +8186,8 @@ fn commit_cost_components_from_plan_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c6a_v1::note_discards(state, &[source]);
                 #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c7a_v1::note_discards(state, &[source]);
+                #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
@@ -8266,8 +8389,12 @@ fn commit_cost_components_from_plan_v1(
                 );
             }
             CostComponent::DiscardLandCardsV1(_) => {
-                for &card in object_cost_chosen {
-                    commit_discarded_card(state, card);
+                if cfg!(feature = "eternal-fixtures") {
+                    commit_discarded_cards(state, object_cost_chosen);
+                } else {
+                    for &card in object_cost_chosen {
+                        commit_discarded_card(state, card);
+                    }
                 }
             }
             CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(_)
@@ -8275,8 +8402,12 @@ fn commit_cost_components_from_plan_v1(
                 commit_graveyard_exile(state, object_cost_chosen);
             }
             CostComponent::DiscardIslandAndAnotherCardV1 => {
-                for &card in object_cost_chosen {
-                    commit_discarded_card(state, card);
+                if cfg!(feature = "eternal-fixtures") {
+                    commit_discarded_cards(state, object_cost_chosen);
+                } else {
+                    for &card in object_cost_chosen {
+                        commit_discarded_card(state, card);
+                    }
                 }
             }
             CostComponent::ReturnControlledPermanentsToOwnersHandV1 { .. } => {
@@ -11003,9 +11134,10 @@ fn viable_pending_spell_forms(
                 .is_some_and(|origin| {
                     matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
                 })
-            // Bilbo casts an Adventure's instant or sorcery from the graveyard.
+            // Bilbo and Malcolm can cast an Adventure's instant or sorcery from the graveyard.
             || (cfg!(feature = "eternal-fixtures")
-                && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell)))
+                && (resolution_cast_v1::graveyard_resolution_cast(state, pending.spell)
+                    || crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, pending.spell))))
         .then_some((CastMethodV4::Omen, adventure.types))
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
@@ -11024,6 +11156,8 @@ fn viable_pending_spell_forms(
                 && pending.origin_zone == Zone::Graveyard
                 && supported_adventure(def).is_some()
                 && !pending_has_graveyard_creature_permission(pending, state)
+                && !(cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, pending.spell))
             {
                 continue;
             }
@@ -12242,8 +12376,57 @@ pub(crate) fn active_permission_for(
             )
             && !crate::standard_cards_v1::exile_cast_group_spent(state, id)
             && !(cfg!(feature = "eternal-fixtures")
-                && crate::eternal_legacy_e7a_v1::permission_dormant(state, p))
+                && (crate::eternal_legacy_e7a_v1::permission_dormant(state, p)
+                    || crate::eternal_cube_c7a_v1::permission_dormant(state, p)))
     })
+}
+
+/// Whether casting `source` from exile (or paying for `source` already moved
+/// from exile to the stack through its exile permission) carries an
+/// "any type of mana can be spent to cast that spell" grant.
+pub(crate) fn permission_allows_any_mana_type_v1(
+    state: &GameState,
+    source: ObjectId,
+    player: PlayerId,
+) -> bool {
+    let Some(object) = state.objects.try_get(source) else {
+        return false;
+    };
+    match object.zone {
+        Zone::Exile => active_permission_for(player, source, state)
+            .is_some_and(|perm| perm.play_or_cast == PlayOrCast::Cast && perm.any_mana_type.0),
+        Zone::Stack if object.controller == player => {
+            let Some(origin) = object.v4.spell_cast_origin else {
+                return false;
+            };
+            if origin.origin_zone != Zone::Exile
+                || origin.origin_zone_change_count.checked_add(1) != Some(object.zone_change_count)
+            {
+                return false;
+            }
+            let (SpellCastRouteV4::ExilePermission {
+                holder,
+                permission_zone_change_count,
+            }
+            | SpellCastRouteV4::ExileFreePermission {
+                holder,
+                permission_zone_change_count,
+            }) = origin.route
+            else {
+                return false;
+            };
+            holder == player
+                && permission_zone_change_count == origin.origin_zone_change_count
+                && state.engine.exile_play_permissions.iter().any(|perm| {
+                    perm.object == source
+                        && perm.holder == player
+                        && perm.zone_change_generation == permission_zone_change_count
+                        && perm.play_or_cast == PlayOrCast::Cast
+                        && perm.any_mana_type.0
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Sorcery-speed timing (508.1a's "any time you could cast a sorcery"),
@@ -12371,7 +12554,21 @@ fn rich_mana_ability_amount(
         ManaAbilityAmountDef::ChargeCountersOnSourceV1 => {
             Err("a charge-counter mana amount needs its source".into())
         }
+        ManaAbilityAmountDef::SourcePowerAnyCombinationV1(_) => {
+            Err("source-power combination mana must use its choice path".into())
+        }
     }
+}
+
+fn fixed_colors_fit_in_pool(mut pool: [u8; 6], colors: &[ManaColor]) -> bool {
+    for &color in colors {
+        let slot = &mut pool[color.pool_index()];
+        let Some(next) = slot.checked_add(1) else {
+            return false;
+        };
+        *slot = next;
+    }
+    true
 }
 
 /// `rich_mana_ability_amount` for an ability of `source`, which also reads the
@@ -12454,6 +12651,15 @@ fn rich_mana_ability_is_payable(
                 .count()
                 == 2
         }
+        ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(subtype) => {
+            !object.tapped
+                && !creature_summoning_sick(state, source, def)
+                && has_sacrificeable_mana_cost_subtype(player, subtype, state)
+        }
+        ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
+            has_untapped_controlled_artifact(player, state)
+        }
+        ManaAbilityCostDef::NoneOwnTurnOnlyV1 => state.active_player == player,
     }
 }
 
@@ -12536,6 +12742,57 @@ pub(crate) fn granted_tap_mana_choices(state: &GameState, source: ObjectId) -> V
         return vec![ManaColor::B];
     }
     colors
+}
+
+fn has_sacrificeable_mana_cost_subtype(
+    player: PlayerId,
+    subtype: card_def::Subtype,
+    state: &GameState,
+) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .any(|candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && has_effective_subtype(state, candidate, subtype)
+        })
+}
+
+fn has_untapped_controlled_artifact(player: PlayerId, state: &GameState) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .any(|candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && object_has_type(state, candidate, CardType::Artifact)
+        })
+}
+
+/// The untapped controlled artifacts `player` may tap for "Tap an untapped
+/// artifact you control" (Urza, Lord High Artificer, Vintage Cube wave C7b).
+fn untapped_controlled_artifacts(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .filter(|&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && object_has_type(state, candidate, CardType::Artifact)
+        })
+        .collect()
 }
 
 /// The permanents `player` may sacrifice for "Sacrifice a Goblin" (Skirk
@@ -12784,9 +13041,21 @@ fn available_mana_ability_choices_unreplaced_into(
                     if rich.cost != ManaAbilityCostDef::TapSelf
                         || rich.controller_damage != 0
                         || rich.max_activations_per_turn.is_some()
-                        || !colors.iter().all(|color| {
-                            state.players[player.index()].mana_pool[color.pool_index()] < u8::MAX
-                        })
+                        || !fixed_colors_fit_in_pool(
+                            state.players[player.index()].mana_pool,
+                            colors,
+                        )
+                    {
+                        continue;
+                    }
+                } else if let ManaAbilityAmountDef::SourcePowerAnyCombinationV1(colors) =
+                    rich.amount
+                {
+                    if !cfg!(feature = "eternal-fixtures")
+                        || colors.len() != 2
+                        || !crate::eternal_cube_c7b_v1::combo_mana_available(
+                            state, player, source, colors[0], colors[1],
+                        )
                     {
                         continue;
                     }
@@ -12847,6 +13116,14 @@ fn available_mana_ability_choices_unreplaced_into(
                 state,
             )
         {
+            if let ManaAbilityAmountDef::FixedColorsV1(colors) = additional.ability.amount {
+                if additional.mana_cost.generic == 0
+                    && additional.mana_cost.pips.is_empty()
+                    && !fixed_colors_fit_in_pool(state.players[player.index()].mana_pool, colors)
+                {
+                    continue;
+                }
+            }
             for &color in additional.colors {
                 if out.contains(color) {
                     *out = ManaColorSetV1::new();
@@ -12912,9 +13189,14 @@ fn loyalty_ability_activated_this_turn(state: &GameState, source: ObjectId) -> b
     object.v4.ability_uses_this_turn.iter().any(|entry| {
         entry.ability_kind == AbilityKindV4::Activated
             && entry.uses > 0
-            && abilities
+            && (abilities
                 .get(usize::from(entry.ability_index))
                 .is_some_and(card_def::ActivatedAbilityDef::is_loyalty_ability)
+                || (cfg!(feature = "eternal-fixtures")
+                    && (entry.ability_index
+                        == u16::from(crate::eternal_cube_c7c_v1::LURKER_GRANTED_INDEX)
+                        || (usize::from(entry.ability_index) == abilities.len()
+                            && object_has_type(state, source, CardType::Planeswalker)))))
     })
 }
 
@@ -12958,10 +13240,18 @@ pub(crate) fn mana_ability_cost_targets(
     let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return Vec::new();
     };
-    if let Some(ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype)) =
-        definition.mana_ability_def.map(|ability| ability.cost)
+    if let Some(
+        ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype)
+        | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(subtype),
+    ) = definition.mana_ability_def.map(|ability| ability.cost)
     {
         return sacrificeable_mana_cost_subtype(player, subtype, state);
+    }
+    if matches!(
+        definition.mana_ability_def.map(|ability| ability.cost),
+        Some(ManaAbilityCostDef::TapUntappedControlledArtifactV1)
+    ) {
+        return untapped_controlled_artifacts(player, state);
     }
     if !matches!(
         definition.mana_ability_def.map(|ability| ability.cost),
@@ -13105,9 +13395,10 @@ fn damped_rich_mana_ability(
                 crate::bloom_tender_mana_v1::colors(state, player).len() >= 2
             }
             ManaAbilityAmountDef::FixedColorsV1(colors) => colors.len() >= 2,
-            // Damping Sphere's lands only; a charge-counter source is an
-            // artifact.
-            ManaAbilityAmountDef::ChargeCountersOnSourceV1 => false,
+            // Damping Sphere's lands only; a charge-counter or source-power
+            // combination source is not a land.
+            ManaAbilityAmountDef::ChargeCountersOnSourceV1
+            | ManaAbilityAmountDef::SourcePowerAnyCombinationV1(_) => false,
             amount => rich_mana_ability_amount(amount, player, state).is_ok_and(|n| n >= 2),
         }
 }
@@ -13122,6 +13413,7 @@ fn mana_ability_cost_taps_source(cost: ManaAbilityCostDef) -> bool {
             | ManaAbilityCostDef::TapAndSacrificeSelf
             | ManaAbilityCostDef::TapSelfPayLife(_)
             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
+            | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
     )
 }
 
@@ -13420,9 +13712,11 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
             }
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
-            | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
+            | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_)
+            | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
+            | ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
                 let target = cost_target.ok_or_else(|| {
-                    format!("{source} requires another untapped controlled creature as a cost")
+                    format!("{source} requires an additional mana-ability cost target")
                 })?;
                 if !legal_cost_targets.contains(&target) {
                     return Err(format!("{target} is not a legal mana-ability cost target"));
@@ -13464,12 +13758,18 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         } else if let ManaAbilityAmountDef::FixedColorsV1(colors) = rich.amount {
             let tap_and_sacrifice = cfg!(feature = "eternal-fixtures")
                 && rich.cost == ManaAbilityCostDef::TapAndSacrificeSelf;
+            let tap_and_sacrifice_subtype = cfg!(feature = "eternal-fixtures")
+                && matches!(
+                    rich.cost,
+                    ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
+                );
             // A paid filter ability ("{1}, {T}: Add {W}{U}.", Skycloud
             // Expanse) adds its whole bundle after `mana_plan` pays.
             let paid_tap_bundle = cfg!(feature = "eternal-fixtures")
                 && additional.is_some()
                 && rich.cost == ManaAbilityCostDef::TapSelf;
             if (!tap_and_sacrifice
+                && !tap_and_sacrifice_subtype
                 && !paid_tap_bundle
                 && (additional.is_some() || rich.cost != ManaAbilityCostDef::TapSelf))
                 || rich.controller_damage != 0
@@ -13477,17 +13777,28 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
             {
                 return Err("fixed multi-color mana requires its pure primary tap recipe".into());
             }
-            if !colors
-                .iter()
-                .all(|color| state.players[player.index()].mana_pool[color.pool_index()] < u8::MAX)
-            {
+            if !fixed_colors_fit_in_pool(state.players[player.index()].mana_pool, colors) {
                 return Err("mana bundle exceeds the pool capacity".into());
             }
             Some(colors.to_vec())
         } else {
             None
         };
-        let amount = if bundle.is_some() {
+        let combo_choice =
+            if let ManaAbilityAmountDef::SourcePowerAnyCombinationV1(colors) = rich.amount {
+                if !cfg!(feature = "eternal-fixtures") || colors.len() != 2 {
+                    return Err("source-power combination mana requires two colors".into());
+                }
+                if !crate::eternal_cube_c7b_v1::combo_mana_available(
+                    state, player, source, colors[0], colors[1],
+                ) {
+                    return Err("mana combination exceeds the pool capacity".into());
+                }
+                Some((colors[0], colors[1]))
+            } else {
+                None
+            };
+        let amount = if bundle.is_some() || combo_choice.is_some() {
             0
         } else {
             rich_mana_ability_amount_for_source_v1(rich.amount, player, source, state)?
@@ -13573,8 +13884,12 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
             ManaAbilityCostDef::None => {}
             ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1 => {
                 let hand = state.players[player.index()].hand.clone();
-                for card in hand {
-                    commit_discarded_card(state, card);
+                if cfg!(feature = "eternal-fixtures") {
+                    commit_discarded_cards(state, &hand);
+                } else {
+                    for card in hand {
+                        commit_discarded_card(state, card);
+                    }
                 }
                 commit_sacrifice(state, &[source]);
             }
@@ -13585,12 +13900,25 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
             ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
                 commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
             }
+            ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_) => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+                commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
+            }
+            ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::tap(cost_target.expect("validated cost target")),
+                );
+            }
+            ManaAbilityCostDef::NoneOwnTurnOnlyV1 => {}
         }
         // Damping Sphere: a land tapped for two or more mana produces one {C}
         // instead; its costs and other effects stay (Legacy wave S1g).
         let damps_amount =
             |count: usize| damped && count >= 2 && mana_ability_cost_taps_source(rich.cost);
-        if let Some(colors) = bundle {
+        if let Some((first, second)) = combo_choice {
+            crate::eternal_cube_c7b_v1::begin_combo_mana(state, player, source, first, second);
+        } else if let Some(colors) = bundle {
             let colors = if damps_amount(colors.len()) {
                 vec![ManaColor::C]
             } else {
@@ -13661,11 +13989,14 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c2c_v1::note_mana_ability_used(state, source);
     #[cfg(feature = "eternal-fixtures")]
-    if cost_targets.len() != 2 {
+    if cost_targets.len() != 2 && rich.is_none_or(|r| mana_ability_cost_taps_source(r.cost)) {
         crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
     }
     #[cfg(feature = "eternal-fixtures")]
-    if cost_targets.len() != 2 && state.objects.get(source).tapped {
+    if cost_targets.len() != 2
+        && rich.is_none_or(|r| mana_ability_cost_taps_source(r.cost))
+        && state.objects.get(source).tapped
+    {
         crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
     }
     if let Some(text) = donated_wall {
@@ -13909,6 +14240,22 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         {
                             out.push((id, index));
                         }
+                    }
+                }
+                // Sanctum Lurker (Vintage Cube wave C7c): its controller's
+                // planeswalkers have a [+2] loyalty ability at dedicated
+                // index `LURKER_GRANTED_INDEX`.
+                #[cfg(feature = "eternal-fixtures")]
+                if let Some(granted) = crate::eternal_cube_c7c_v1::granted_lurker_ability(state, id)
+                {
+                    if !crate::standard_cards_v1::activations_locked(state, id)
+                        && (sorcery_speed_timing_ok(player, state)
+                            || crate::eternal_cube_c6c_v1::emperor_instant_loyalty(state, id))
+                        && !loyalty_ability_activated_this_turn(state, id)
+                        && can_pay_activation_components(granted.cost, player, id, state)
+                        && activation_target_prefix_can_complete(id, &granted, &[], state)
+                    {
+                        out.push((id, crate::eternal_cube_c7c_v1::LURKER_GRANTED_INDEX));
                     }
                 }
                 // Rain of Filth (eternal wave E8a): its lands have
@@ -15446,6 +15793,8 @@ pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId])
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c6a_v1::note_discards(state, chosen);
     #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c7a_v1::note_discards(state, chosen);
+    #[cfg(feature = "eternal-fixtures")]
     for &id in chosen {
         crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);
         crate::eternal_sideboard_s1b_v1::note_discard(state, id);
@@ -16578,6 +16927,23 @@ pub(crate) fn validate_pending_cast(
 
     let has_prior_exile_permission = || {
         resolution_cast_v1::free_cast(state, pending.spell)
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, pending.spell)
+                && pending
+                    .source_contract
+                    .spell_cast_origin
+                    .is_some_and(|origin| {
+                        matches!(
+                            origin.route,
+                            SpellCastRouteV4::ResolvingEffectV1 { holder, .. }
+                                if holder == pending.controller
+                        )
+                    })
+                && resolution_cast_v1::permit(state, pending.spell).is_some_and(|permission| {
+                    permission.card.expected_zone == Zone::Exile
+                        && permission.controller == pending.controller
+                        && !permission.land
+                }))
             || pending.source_contract.spell_cast_origin.is_some_and(|o| {
                 matches!(o.route, SpellCastRouteV4::TinybonesExileV72 { .. })
                     && tinybones_v72::validate_contract(state, pending.source_contract).is_ok()
@@ -16783,8 +17149,11 @@ pub(crate) fn validate_pending_cast(
         }
     };
     if pending.origin_zone == Zone::Graveyard && supported_adventure(def).is_some() {
+        let malcolm_free = cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, pending.spell);
         if pending.mode_chosen == Some(0)
             && !pending_has_graveyard_creature_permission(pending, state)
+            && !malcolm_free
         {
             return Err(
                 "graveyard Adventure permission cannot cast the permanent form".to_string(),
@@ -16797,6 +17166,7 @@ pub(crate) fn validate_pending_cast(
                 .is_some_and(|origin| {
                     matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { .. })
                 })
+                || malcolm_free
                 || (cfg!(feature = "eternal-fixtures")
                     && resolution_cast_v1::graveyard_resolution_cast(state, pending.spell))
                 || (crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)
@@ -19453,6 +19823,7 @@ pub(crate) fn validate_pending_trigger(
                     | TargetSpec::UpToOneOtherControlledPermanent
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | crate::eternal_sideboard_s1o_v1::EOWYN_TARGET
+                    | crate::eternal_cube_c7c_v1::SCALELORD_TARGET
             ) {
             completable_next_targets_for_controller_and_source(
                 expected,
@@ -24362,7 +24733,8 @@ fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
                 holder_turn_started,
             } => !(perm.holder == p && holder_turn_started),
             PlayPermissionExpiry::LaterTurn { .. }
-            | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
+            | PlayPermissionExpiry::UntilHoldersNextEndStep
+            | PlayPermissionExpiry::AsLongAsExiled => true,
         });
     if crate::effect::sphinx_lore_v1::cleanup(state).is_err()
         || crate::zul_ashur_v1::note_cleanup(state).is_err()
@@ -26209,6 +26581,12 @@ pub(crate) fn resolved_activated_ability(
         return Some(*ability);
     }
     #[cfg(feature = "eternal-fixtures")]
+    if ability_index == crate::eternal_cube_c7c_v1::LURKER_GRANTED_INDEX {
+        if let Some(granted) = crate::eternal_cube_c7c_v1::granted_lurker_ability(state, source) {
+            return Some(granted);
+        }
+    }
+    #[cfg(feature = "eternal-fixtures")]
     if usize::from(ability_index) == def.activated_abilities.len() {
         if let Some(retained) = crate::eternal_legacy_e7a_v1::retained_stage_ability(state, source)
         {
@@ -26326,6 +26704,16 @@ fn resolved_stack_activated_ability(
                 ability_index,
             )
         {
+            return Ok(granted);
+        }
+    }
+    // Sanctum Lurker's granted loyalty ability (Vintage Cube wave C7c).
+    #[cfg(feature = "eternal-fixtures")]
+    if granted_by.is_none() {
+        if let Some(granted) = crate::eternal_cube_c7c_v1::granted_lurker_ability_on_stack(
+            host_contract,
+            ability_index,
+        ) {
             return Ok(granted);
         }
     }
@@ -26807,8 +27195,14 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
                 _ => None,
             });
         if let Some((source, player)) = transfer {
+            #[cfg(feature = "eternal-fixtures")]
+            let previous = state.monarch;
             state.monarch = Some(player);
             state.engine.monarch_source = Some(AbilitySourceContractV4::capture(state, source));
+            #[cfg(feature = "eternal-fixtures")]
+            if previous != Some(player) {
+                crate::eternal_cube_c7b_v1::note_became_monarch(state, player);
+            }
         }
     }
     // Psychic Frog's and Forth Eorlingas!'s combat damage triggers.
@@ -26819,6 +27213,8 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
         crate::eternal_vintage_e7b_v1::note_combat_damage(state, &events);
         // Umezawa's Jitte's and Kaldra Compleat's combat damage triggers.
         crate::eternal_cube_c4c_v1::note_combat_damage(state, &events);
+        // Questing Beast's combat damage to opponent trigger (Vintage Cube wave C7b).
+        crate::eternal_cube_c7b_v1::note_combat_damage(state, &events);
     }
     collect_and_queue_triggers(state);
 }
@@ -30214,7 +30610,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                 // Glimmer Lens counts every declared attacker.
                 || crate::eternal_cube_c4c_v1::observes_attacks(state)
                 // Okoye watches the creature her trigger chose.
-                || crate::eternal_cube_c4b_v1::observes_attacks(state)));
+                || crate::eternal_cube_c4b_v1::observes_attacks(state)
+                // Guardian Scalelord's Backup 1 grants an attack trigger.
+                || crate::eternal_cube_c7c_v1::observes_attacks(state)));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if cfg!(all(
@@ -31004,11 +31402,18 @@ fn materialize_begin_cast_with_quote_v1(
     if origin_zone == Zone::Library {
         crate::eternal_e5a_v1::permissions::note_library_cast(state, player, spell_id);
     }
-    // A resolving graveyard cast (Bilbo, Thief in the Night) pays its costs,
-    // X included; every other resolving instruction casts for free.
+    // Bilbo (graveyard) and Chandra, Torch of Defiance (exile) pay costs,
+    // X included; every other resolving instruction (including Malcolm's
+    // graveyard cast) casts for free.
     let without_mana_cost = omniscience_cast_v1::free_choice(omniscience_choice)
-        || resolution_permission
-            .is_some_and(|permission| permission.card.expected_zone != Zone::Graveyard)
+        || resolution_permission.is_some_and(|permission| {
+            let malcolm_free = cfg!(feature = "eternal-fixtures")
+                && permission.card.expected_zone == Zone::Graveyard
+                && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, spell_id);
+            let chandra_paid = cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, spell_id);
+            (permission.card.expected_zone != Zone::Graveyard || malcolm_free) && !chandra_paid
+        })
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
     // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's
     // "as though they had flash" applies only to such a cast, so outside
@@ -31489,6 +31894,8 @@ fn finalize_owned_cast(
     let colored_mana_spent = payment.spends_colored_mana(state, pending.controller);
     #[cfg(feature = "eternal-fixtures")]
     let colors_spent = payment.colors_spent(state, pending.controller);
+    #[cfg(feature = "eternal-fixtures")]
+    let mana_by_color = payment.mana_by_color(state, pending.controller);
     // Arena of Glory: a creature spell paid with its exerted mana gains
     // haste.
     #[cfg(feature = "eternal-fixtures")]
@@ -31535,6 +31942,8 @@ fn finalize_owned_cast(
     muldrotha_v1::record_cast(state, &pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_lurrus_v1::note_colors_spent(state, pending.spell, colors_spent);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c7c_v1::note_mana_by_color(state, pending.spell, mana_by_color);
     // Lurrus of the Dream-Den's permission is used once the cast is paid.
     #[cfg(feature = "eternal-fixtures")]
     if pending.origin_zone == Zone::Graveyard && cast_method == CastMethodV4::Normal {
@@ -31920,10 +32329,11 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
         owner,
         to_zone,
     } = materialized;
-    // A foretold card stays foretold across an aborted cast.
+    // A foretold or concealed exiled card stays face down across an aborted cast.
     #[cfg(feature = "eternal-fixtures")]
     if to_zone == Zone::Exile {
         crate::eternal_pauper_e6a_v1::restore_aborted_foretell(state, pending.spell);
+        crate::eternal_cube_c7a_v1::restore_aborted_concealed_exile(state, pending.spell);
     }
     if to_zone == Zone::Library {
         // The spell was public on the stack.
@@ -39867,6 +40277,7 @@ mod tests {
         event::propose_and_commit(&mut success, ProposedEvent::zone_change(bolt, Zone::Exile));
         success.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: success.objects.get(bolt).zone_change_count,
@@ -39927,6 +40338,7 @@ mod tests {
         event::propose_and_commit(&mut aborted, ProposedEvent::zone_change(bolt, Zone::Exile));
         aborted.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: aborted.objects.get(bolt).zone_change_count,
@@ -40522,6 +40934,7 @@ mod tests {
         );
         resolved.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: robbery,
             holder: PlayerId::P0,
             zone_change_generation: resolved.objects.get(robbery).zone_change_count,
@@ -40617,6 +41030,7 @@ mod tests {
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(clue, Zone::Exile));
         state.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: clue,
             holder: PlayerId::P0,
             zone_change_generation: state.objects.get(clue).zone_change_count,
