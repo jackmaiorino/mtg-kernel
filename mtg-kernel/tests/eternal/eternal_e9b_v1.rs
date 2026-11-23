@@ -1383,6 +1383,10 @@ fn copied_arcane_denial_restores_its_delayed_draw_replacements_both_seats() {
         let bolt = put(&mut state, drawer, "Lightning Bolt", Zone::Hand);
         pool(&mut state, drawer, &[ManaColor::R], 0);
         cast(&mut state, bolt, &[Target::Player(caster)]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == drawer
+        ));
         act(&mut state, Action::Pass);
         let denial = put(&mut state, caster, "Arcane Denial", Zone::Hand);
         pool(&mut state, caster, &[ManaColor::U], 1);
