@@ -273,6 +273,9 @@ fn assert_apply_prepared_matches_direct_weighted_update(
                     lr,
                     crate::native_policy_train_step_v1::FIXED_BACKWARD_PARTITION_COUNT_V1,
                 ),
+            (_, UpdateBackwardExecutionV1::FixedTreeV1) => {
+                unreachable!("the weighted update refuses the fixed tree; no caller passes it")
+            }
         })
         .unwrap();
     apply_prepared(
@@ -284,6 +287,24 @@ fn assert_apply_prepared_matches_direct_weighted_update(
     )
     .unwrap();
     assert_eq!(state.adam_step_v1(), direct.adam_step_v1());
+    assert_eq!(
+        StateBits::capture(&state).unwrap(),
+        StateBits::capture(&direct).unwrap()
+    );
+    // The fixed tree is the ordinary trainer's plain GAE update's only: this
+    // update refuses it by name and leaves the state as it was.
+    let error = apply_prepared(
+        &mut state,
+        &batch,
+        lr.to_bits(),
+        value.to_bits(),
+        UpdateBackwardExecutionV1::FixedTreeV1,
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("fixed_tree_v1 is not available to the BO3 weighted update"),
+        "{error}"
+    );
     assert_eq!(
         StateBits::capture(&state).unwrap(),
         StateBits::capture(&direct).unwrap()

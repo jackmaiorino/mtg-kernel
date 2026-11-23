@@ -936,6 +936,12 @@ fn apply_prepared(
     // fully shared, only the input-config schema differs (see
     // native_policy_train_step_v1::weighted_v3).
     let generation = batch.learner_generation_v1();
+    // The fixed-tree backward is the ordinary trainer's plain GAE update's
+    // only; the weighted update refuses it before touching the model.
+    require(
+        !backward_execution.is_fixed_tree_v1(),
+        "update_backward_execution fixed_tree_v1 is not available to the BO3 weighted update",
+    )?;
     // Fixed-partition backward is a fresh-V4-lineage-only option: reject any
     // other combination before touching the model, so a V3-generation batch
     // can never reach anything but `Sequential` (see the ordinary trainer's
@@ -949,6 +955,12 @@ fn apply_prepared(
     }
     batch
         .with_native_groups_v1(|groups, weights| match (generation, backward_execution) {
+            // Refused above.
+            (_, UpdateBackwardExecutionV1::FixedTreeV1) => Err(
+                crate::native_policy_train_step_v1::NativePolicyTrainErrorV1::FixedTreeBackward {
+                    code: "fixed-tree-backward-requires-plain-gae",
+                },
+            ),
             (FreshLineageGenerationV1::V3, _) => state.train_step_weighted_feature_transfer_v3(
                 groups,
                 weights,
@@ -1019,6 +1031,12 @@ pub fn update_bo3_gameplay_v1(
     require(
         request.schema == BO3_GAMEPLAY_UPDATE_SCHEMA_V1 && request.output_directory.is_absolute(),
         "BO3 update schema or absolute output differs",
+    )?;
+    // The fixed-tree backward is the ordinary trainer's plain GAE update's
+    // only: refused by name before any input is read.
+    require(
+        !request.update_backward_execution.is_fixed_tree_v1(),
+        "update_backward_execution fixed_tree_v1 is not available to the BO3 weighted update",
     )?;
     let request_bytes = json(&request, MAX_REQUEST_BYTES)?;
     let mut parent = load_parent(&request.input)?;

@@ -469,6 +469,15 @@ impl ExpandedLossSelectionV1 {
 /// workers when this is selected; see `fixed_partition_backward_worker_limit_v1`
 /// for the `#[cfg(test)]`-only override that lets tests exercise 1..=4
 /// workers through this same real entry point.
+///
+/// `FixedTreeV1` (`"fixed_tree_v1"`) is an opt-in prototype for the plain CPU
+/// GAE update only (`native_policy_train_step_v1::fixed_tree_backward_v1`):
+/// the gradient's terms are added in fixed chunks of 64 learner rows and a
+/// fixed pairwise tree, on the update's preparation workers. Its states are
+/// the same bits for every worker count and are not the sequential
+/// backward's, so a lineage trains under it from its first update or not at
+/// all. Like every value but `Sequential` it is serialized, so a config that
+/// does not name it keeps its bytes and its sequential updates.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateBackwardExecutionV1 {
@@ -476,11 +485,65 @@ pub enum UpdateBackwardExecutionV1 {
     Sequential,
     #[serde(rename = "fixed_partition_4")]
     FixedPartition4,
+    #[serde(rename = "fixed_tree_v1")]
+    FixedTreeV1,
 }
+
+/// The update receipt's `backward_execution.identity` under
+/// `UpdateBackwardExecutionV1::FixedTreeV1`.
+pub const FIXED_TREE_BACKWARD_EXECUTION_IDENTITY_V1: &str = "fixed_tree_v1";
 
 impl UpdateBackwardExecutionV1 {
     pub(crate) fn is_sequential(&self) -> bool {
         matches!(self, Self::Sequential)
+    }
+
+    pub(crate) fn is_fixed_tree_v1(&self) -> bool {
+        matches!(self, Self::FixedTreeV1)
+    }
+
+    /// Whether this backward routes the pregame announcement step scale's
+    /// second gradient buffer (`pregame_announcement_step_v1`).
+    pub(crate) fn routes_announcement_buffer_v1(&self) -> bool {
+        matches!(self, Self::Sequential | Self::FixedTreeV1)
+    }
+
+    /// What an update's receipt records under `backward_execution`: nothing
+    /// for the sequential and fixed-partition backwards, whose receipts keep
+    /// their bytes, and the fixed tree's identity and constants for
+    /// `FixedTreeV1`. `rows` is the batch's learner substeps.
+    pub(crate) fn receipt_v1(&self, rows: usize) -> Option<Value> {
+        self.is_fixed_tree_v1().then(|| {
+            json!({
+                "identity": FIXED_TREE_BACKWARD_EXECUTION_IDENTITY_V1,
+                "numerical_backend": crate::native_policy_train_step_v1::FIXED_TREE_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1,
+                "chunk_rows": crate::native_policy_train_step_v1::FIXED_TREE_CHUNK_ROWS_V1,
+                "rows": rows,
+                "chunks": crate::native_policy_train_step_v1::fixed_tree_chunk_count_v1(rows),
+            })
+        })
+    }
+
+    /// Whether a completed update's receipt records exactly this backward:
+    /// no `backward_execution` member unless this is the fixed tree, and then
+    /// its identity, numerical backend and chunk size.
+    pub(crate) fn validate_receipt_v1(&self, document: &Value) -> Result<(), String> {
+        let recorded = document.get("backward_execution");
+        let matches = match (self.is_fixed_tree_v1(), recorded) {
+            (false, None) => true,
+            (true, Some(recorded)) => {
+                recorded["identity"] == FIXED_TREE_BACKWARD_EXECUTION_IDENTITY_V1
+                    && recorded["numerical_backend"]
+                        == crate::native_policy_train_step_v1::FIXED_TREE_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1
+                    && recorded["chunk_rows"]
+                        == json!(crate::native_policy_train_step_v1::FIXED_TREE_CHUNK_ROWS_V1)
+            }
+            _ => false,
+        };
+        ensure(
+            matches,
+            "completed update backward execution differs from the run's",
+        )
     }
 }
 
@@ -4734,6 +4797,11 @@ fn fixed_partition_backward_worker_limit_v1() -> usize {
     crate::native_policy_train_step_v1::FIXED_BACKWARD_PARTITION_COUNT_V1
 }
 
+/// The error of a learner step the fixed-tree backward reached although
+/// `execute_update_inner_v1`'s guard admits it to the plain CPU GAE step only.
+const FIXED_TREE_NOT_THIS_STEP_V1: &str =
+    "update_backward_execution fixed_tree_v1 reached a learner step that does not run it";
+
 /// Pre-registered constant (the lead's decision; not tuned): the epsilon
 /// guard in `normalize_advantages_v1`'s `std + epsilon` denominator.
 const GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1: f32 = 1.0e-6;
@@ -5081,6 +5149,25 @@ fn execute_update_inner_v1(
         line_b.is_some(),
         e_supported.is_some() || soft_q.is_some() || search_targets.is_some() || ex1.is_some(),
     )?;
+    // The fixed-tree backward (opt-in prototype) is the plain CPU GAE
+    // update's only, refused before any input is read.
+    if backward_execution.is_fixed_tree_v1() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none()
+                && source.s_learner.is_none(),
+            "update_backward_execution fixed_tree_v1 requires the plain CPU GAE update of a \
+             net-8 learner, without line (b), E, SQ1, search targets or EX1",
+        )?;
+    }
     if let Some(options) = &ex1 {
         options.validate_v1()?;
         ensure(
@@ -5388,7 +5475,7 @@ fn execute_update_inner_v1(
             "pregame_announcement_step_scale requires pregame_advantage terminal_v1",
         )?;
         ensure(
-            backward_execution.is_sequential(),
+            backward_execution.routes_announcement_buffer_v1(),
             "pregame_announcement_step_scale requires the sequential backward",
         )?;
     }
@@ -5502,8 +5589,12 @@ fn execute_update_inner_v1(
     // rejected here, before any learner tensor is built, so a V3-generation
     // or CUDA-backend update can never reach anything but `Sequential`: the
     // V3 and imported paths stay byte-identical by construction, not by
-    // convention.
-    if !backward_execution.is_sequential() {
+    // convention. (The fixed tree has its own guard at the top: the plain CPU
+    // GAE update, of either generation.)
+    if matches!(
+        backward_execution,
+        UpdateBackwardExecutionV1::FixedPartition4
+    ) {
         ensure(
             matches!(update_backend, ExpandedUpdateBackendV1::Cpu),
             "fixed-partition backward requires the CPU update backend",
@@ -5805,6 +5896,10 @@ fn execute_update_inner_v1(
                             fixed_partition_backward_worker_limit_v1(),
                         )
                         .map_err(err)?,
+                    // Refused at the top: the fixed tree is the GAE loss's.
+                    UpdateBackwardExecutionV1::FixedTreeV1 => {
+                        return Err(FIXED_TREE_NOT_THIS_STEP_V1.into())
+                    }
                 }
             }
             (ExpandedUpdateBackendV1::Cuda { device_ordinal }, FreshLineageGenerationV1::V3) => {
@@ -6007,6 +6102,10 @@ fn execute_update_inner_v1(
                                 UpdateBackwardExecutionV1::FixedPartition4 => {
                                     Some(fixed_partition_backward_worker_limit_v1())
                                 }
+                                // Refused at the top: no line (b) under it.
+                                UpdateBackwardExecutionV1::FixedTreeV1 => {
+                                    return Err(FIXED_TREE_NOT_THIS_STEP_V1.into())
+                                }
                             },
                             input,
                         )
@@ -6014,6 +6113,20 @@ fn execute_update_inner_v1(
                     line_b_auxiliary = Some(auxiliary);
                     result
                 }
+                // Opt-in: the plain update with the gradient reduced in fixed
+                // chunks and a fixed tree, on the preparation workers.
+                (ExpandedUpdateBackendV1::Cpu, _) if backward_execution.is_fixed_tree_v1() => state
+                    .train_step_gae_feature_transfer_fixed_tree_dims_v1(
+                        generation,
+                        &groups,
+                        &gae.value_targets,
+                        &gae.advantages,
+                        value_coefficient,
+                        learning_rate,
+                        preparation_workers.unwrap_or(1),
+                        &mut gae_phase_recorder,
+                    )
+                    .map_err(err)?,
                 (ExpandedUpdateBackendV1::Cpu, _) => state
                     .train_step_gae_feature_transfer_profiled_v1(
                         generation,
@@ -6026,6 +6139,10 @@ fn execute_update_inner_v1(
                             UpdateBackwardExecutionV1::Sequential => None,
                             UpdateBackwardExecutionV1::FixedPartition4 => {
                                 Some(fixed_partition_backward_worker_limit_v1())
+                            }
+                            // The arm above takes every fixed-tree update.
+                            UpdateBackwardExecutionV1::FixedTreeV1 => {
+                                return Err(FIXED_TREE_NOT_THIS_STEP_V1.into())
                             }
                         },
                         preparation_workers.unwrap_or(1),
@@ -6426,6 +6543,10 @@ fn execute_update_inner_v1(
         result["exploration"] = exploration;
     }
     update_backend.record_update_execution_v1(&mut result);
+    // Present only under the fixed tree, so every other receipt gains no key.
+    if let Some(record) = backward_execution.receipt_v1(update.selected_outputs.len()) {
+        result["backward_execution"] = record;
+    }
     training_math.record_v1(&mut result);
     if let Some(record) = &input_contract {
         result["input_contract"] = json!(record);
@@ -7016,6 +7137,9 @@ mod warm_cuda_timing_tests;
 
 #[cfg(test)]
 mod trajectory_batch_bound_tests;
+
+#[cfg(test)]
+mod fixed_tree_update_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {

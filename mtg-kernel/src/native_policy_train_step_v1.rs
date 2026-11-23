@@ -90,6 +90,7 @@ mod carryover_probe_v1;
 mod e_supported_policy_v1;
 mod exact_parallel_backward_v1;
 pub(crate) mod exploration_v1;
+mod fixed_tree_backward_v1;
 mod gae_v1;
 #[cfg(feature = "gpu-exact-v1")]
 mod gpu_exact_backward_v1;
@@ -106,6 +107,10 @@ pub(crate) use archive_distillation_v1::{
 };
 pub(crate) use e_supported_policy_v1::{
     ESupportedPolicyInputV1, ESupportedPolicyRowV1, SoftTargetPolicyInputV1, SoftTargetPolicyRowV1,
+};
+pub(crate) use fixed_tree_backward_v1::{
+    fixed_tree_chunk_count_v1, FIXED_TREE_BACKWARD_NUMERICAL_BACKEND_IDENTITY_V1,
+    FIXED_TREE_CHUNK_ROWS_V1,
 };
 pub(crate) use head_only_mask_v1::{
     HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1, HEAD_ONLY_TRAINABLE_TENSORS_V1,
@@ -1420,6 +1425,12 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     FixedPartitionBackwardWorkerPanicked {
         partition_ordinal: usize,
     },
+    /// The fixed-tree backward (`fixed_tree_backward_v1`) covers only the
+    /// plain CPU GAE step on the CPU backward. Every other learner path
+    /// refuses it before any forward work; the state is unchanged.
+    FixedTreeBackward {
+        code: &'static str,
+    },
     NonFinite {
         stage: &'static str,
         index: usize,
@@ -1922,11 +1933,22 @@ fn check_no_state_digest_state_dims_v1<D: NetDimsV1>(
     Err(NativePolicyTrainErrorV1::NoStateDigestInvariant { code })
 }
 
+/// How a train step's backward runs. `FixedTree` is the fixed-tree backward
+/// (`fixed_tree_backward_v1`) on the step's forward workers; only the plain
+/// CPU GAE step runs it.
 #[derive(Clone, Copy)]
 enum BackwardExecutionV1 {
     Sequential,
     FixedPartitions { worker_limit: usize },
+    FixedTree,
 }
+
+/// The refusal of the fixed-tree backward by a step that is not the plain
+/// CPU GAE step.
+const FIXED_TREE_REQUIRES_PLAIN_GAE_V1: NativePolicyTrainErrorV1 =
+    NativePolicyTrainErrorV1::FixedTreeBackward {
+        code: "fixed-tree-backward-requires-plain-gae",
+    };
 
 /// The state methods every architecture shares; the narrow names below are
 /// these at `Net8DimsV1`.
@@ -3323,6 +3345,10 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         // The terminal-reinforce loss never takes a London keep offset.
         self.require_no_london_keep_offset_v1()?;
+        // Nor the fixed-tree backward, which only the plain GAE step runs.
+        if matches!(backward_execution, BackwardExecutionV1::FixedTree) {
+            return Err(FIXED_TREE_REQUIRES_PLAIN_GAE_V1);
+        }
         // The wide refusal list (design section 2.1), before any forward work.
         if !is_net8_dims_v1::<D>() {
             if groups
@@ -3697,6 +3723,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 drop(group_tapes);
                 (gradients, gauge_accumulator, ReverseWorkspaceV1::default())
             }
+            // Refused on entry, before the forward.
+            BackwardExecutionV1::FixedTree => return Err(FIXED_TREE_REQUIRES_PLAIN_GAE_V1),
         };
         validate_finite_nested("gradient", &gradients)?;
         let raw_scorer_bias_residual = gradients[SCORER_SECOND_BIAS][0];

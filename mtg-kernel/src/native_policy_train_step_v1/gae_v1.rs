@@ -654,6 +654,50 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         .map(|(result, _, _)| result)
     }
 
+    /// The plain CPU GAE update of either fresh-lineage generation under the
+    /// fixed-tree backward (`fixed_tree_backward_v1`, opt-in): the forward
+    /// tapes and the backward run on up to `workers` threads, and every
+    /// result is the same bits for every `workers`. Only the order in which
+    /// the gradient's terms are added differs from
+    /// `train_step_gae_feature_transfer_profiled_dims_v1` with the sequential
+    /// backward; the loss, the gauge evidence, Adam and the commit are its.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_feature_transfer_fixed_tree_dims_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        workers: usize,
+        recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        self.train_step_gae_core_profiled_dims_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            BackwardExecutionV1::FixedTree,
+            config,
+            false,
+            None,
+            None,
+            workers,
+            recorder,
+        )
+        .map(|(result, _, _)| result)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn train_step_gae_core_dims_v1(
         &mut self,
@@ -735,7 +779,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                     code: "pregame-announcement-step-requires-plain-gae",
                 });
             }
-            if !matches!(backward_execution, BackwardExecutionV1::Sequential) {
+            // The sequential backward and the fixed tree route the second
+            // buffer; the fixed-partition backward does not.
+            if matches!(
+                backward_execution,
+                BackwardExecutionV1::FixedPartitions { .. }
+            ) {
                 return Err(NativePolicyTrainErrorV1::PregameAnnouncementStep {
                     code: "pregame-announcement-step-requires-sequential-backward",
                 });
@@ -754,6 +803,19 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                     code: "pregame-announcement-step-requires-net8-platform-math",
                 });
             }
+        }
+        // The fixed-tree backward (`fixed_tree_backward_v1`): the plain GAE
+        // objective on the CPU backward only, refused before any forward work.
+        let fixed_tree = matches!(backward_execution, BackwardExecutionV1::FixedTree);
+        if fixed_tree && (line_b.is_some() || exploration.is_some() || imitation) {
+            return Err(FIXED_TREE_REQUIRES_PLAIN_GAE_V1);
+        }
+        // An exact GPU learner gives the sequential order's bits.
+        #[cfg(feature = "gpu-exact-v1")]
+        if fixed_tree && crate::gpu_exact_v1::learner_installed_v1() {
+            return Err(NativePolicyTrainErrorV1::FixedTreeBackward {
+                code: "fixed-tree-backward-requires-cpu-backward",
+            });
         }
         // The wide refusal list (design section 2.1), before any forward work.
         if !is_net8_dims_v1::<D>() {
@@ -1137,8 +1199,23 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // step without the scale, runs the ordinary backward on everything.
         let announcement_step = match announcement_scale {
             Some(scale) if announcement_marks.iter().any(|mark| *mark) => {
-                let (mut announcement_gradients, announcement_gauge) =
-                    pregame_announcement_step_v1::announcement_backward_dims_v1::<D>(
+                let (mut announcement_gradients, announcement_gauge) = match backward_execution {
+                    // The same part of the loss, reduced by the fixed tree.
+                    BackwardExecutionV1::FixedTree => {
+                        fixed_tree_backward_v1::fixed_tree_backward_dims_v1::<D>(
+                            &parameters,
+                            &group_tapes,
+                            pregame_announcement_step_v1::BackwardPartV1::Announcement(
+                                &announcement_marks,
+                            ),
+                            group_count,
+                            value_coefficient,
+                            forward_workers,
+                            math,
+                            mxcsr,
+                        )?
+                    }
+                    _ => pregame_announcement_step_v1::announcement_backward_dims_v1::<D>(
                         &parameters,
                         &group_tapes,
                         &announcement_marks,
@@ -1147,7 +1224,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         forward_workers,
                         math,
                         mxcsr,
-                    )?;
+                    )?,
+                };
                 validate_finite_nested("gae_announcement_gradient", &announcement_gradients)?;
                 // The same gauge check and projection as the ordinary buffer.
                 let announcement_gauge_record = announcement_gauge.finish(
@@ -1332,6 +1410,22 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 )?;
                 drop(group_tapes);
                 (gradients, gauge_accumulator)
+            }
+            (None, BackwardExecutionV1::FixedTree) => {
+                // Opt-in: the same rows and kernels, reduced in fixed chunks
+                // and a fixed tree on the update's forward workers.
+                let backward = fixed_tree_backward_v1::fixed_tree_backward_dims_v1::<D>(
+                    &parameters,
+                    &group_tapes,
+                    backward_part,
+                    group_count,
+                    value_coefficient,
+                    forward_workers,
+                    math,
+                    mxcsr,
+                )?;
+                drop(group_tapes);
+                backward
             }
         };
         validate_finite_nested("gae_gradient", &gradients)?;

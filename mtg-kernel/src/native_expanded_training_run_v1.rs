@@ -621,7 +621,9 @@ impl NativeExpandedTrainingRunV1 {
                 .pregame_announcement_step_scale_v1()
                 .is_none()
                 || (self.update_backend.is_cpu()
-                    && self.update_backward_execution.is_sequential()
+                    && self
+                        .update_backward_execution
+                        .routes_announcement_buffer_v1()
                     && self.line_b.is_none()
                     && self.e_supported.is_none()
                     && self.soft_q.is_none()
@@ -630,6 +632,24 @@ impl NativeExpandedTrainingRunV1 {
                     && self.initial_source.s_learner.is_none()),
             "pregame_announcement_step_scale requires the plain CPU GAE update with the sequential \
              backward, without line (b), E, SQ1, search targets, EX1 or an S learner",
+        )?;
+        // The fixed-tree backward (opt-in prototype) is the plain CPU GAE
+        // update's only (the update refuses the rest again).
+        check(
+            !self.update_backward_execution.is_fixed_tree_v1()
+                || (self.update_backend.is_cpu()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    )
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()
+                    && self.initial_source.s_learner.is_none()),
+            "update_backward_execution fixed_tree_v1 requires the plain CPU GAE update of a net-8 \
+             learner, without line (b), E, SQ1, search targets, EX1 or an S learner",
         )?;
         // The E-supported, SQ1, TP1 Stage B and EX1 updates always write v1
         // checkpoints (outside the v2 writer's scope gate), so a run that
@@ -1460,12 +1480,16 @@ fn validate_update(
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
     loss_selection: &ExpandedLossSelectionV1,
+    update_backward_execution: UpdateBackwardExecutionV1,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     check(
         document.get("input_contract") == input_contract,
         "update no-state-digest contract differs from the run's",
     )?;
+    // A fixed-tree run's updates record its backward and no other run's do:
+    // the two orders train different bits and never share a lineage.
+    update_backward_execution.validate_receipt_v1(&document)?;
     validate_e_supported_update(&document, e_supported)?;
     validate_soft_q_update(&document, soft_q)?;
     validate_search_targets_update(&document, search_targets)?;
@@ -2055,6 +2079,7 @@ pub fn run_native_expanded_training_v1(
                 config.training_math,
                 input_contract.as_ref(),
                 &config.loss_selection,
+                config.update_backward_execution,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -2179,6 +2204,7 @@ pub fn run_native_expanded_training_v1(
                     config.training_math,
                     input_contract.as_ref(),
                     &config.loss_selection,
+                    config.update_backward_execution,
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -2306,6 +2332,7 @@ pub fn run_native_expanded_training_v1(
             config.training_math,
             input_contract.as_ref(),
             &config.loss_selection,
+            config.update_backward_execution,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -2401,6 +2428,7 @@ mod verified_pin_tests;
 mod tests {
     use super::*;
 
+    mod fixed_tree_tests;
     mod follow_tests;
     /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
     /// the same on every system. Native236 and CI39598628050 observe this CPU

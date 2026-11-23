@@ -1072,7 +1072,7 @@ fn add_input_major_layer_body_v1(
 /// calling thread once every thread has stopped. A helper outside the pinned
 /// MXCSR state (`mxcsr`) takes no item and its error is returned once every
 /// thread has stopped; the calling thread verifies before its own share.
-fn drain_in_parallel_v1<T: Send, S>(
+pub(super) fn drain_in_parallel_v1<T: Send, S>(
     items: Vec<T>,
     workers: usize,
     mxcsr: ThreadMxcsrCheckV1,

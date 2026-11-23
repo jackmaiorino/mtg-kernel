@@ -3149,3 +3149,6 @@ fn priority_pass_offset_is_refused_off_the_plain_gae_loss_and_with_bad_marks() {
         assert_eq!(state_bits(&bad), state_bits(&base));
     }
 }
+
+// The fixed-tree backward (`fixed_tree_backward_v1`, opt-in).
+mod fixed_tree;

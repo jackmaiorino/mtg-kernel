@@ -179,6 +179,10 @@ impl NativePolicyValueTrainStateV1 {
         self.require_platform_math_v1("weighted loss")?;
         self.require_no_input_contract_v1("weighted loss")?;
         self.require_no_london_keep_offset_v1()?;
+        // The fixed-tree backward is the plain GAE step's only.
+        if matches!(backward_execution, BackwardExecutionV1::FixedTree) {
+            return Err(FIXED_TREE_REQUIRES_PLAIN_GAE_V1);
+        }
         validate_weighted_inputs_v3(groups, group_weights)?;
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
@@ -383,6 +387,8 @@ impl NativePolicyValueTrainStateV1 {
                 )?;
                 (gradients, gauge_accumulator)
             }
+            // Refused on entry, before the forward.
+            BackwardExecutionV1::FixedTree => return Err(FIXED_TREE_REQUIRES_PLAIN_GAE_V1),
         };
         validate_finite_nested("weighted_gradient", &gradients)?;
         let mut scorer_bias_gauge = gauge_accumulator.finish(
