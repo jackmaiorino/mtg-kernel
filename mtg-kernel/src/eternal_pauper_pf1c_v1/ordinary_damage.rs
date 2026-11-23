@@ -3,7 +3,7 @@ use crate::eternal_legacy_e9a_v1::{self as e9a, RedirectV1};
 use crate::eternal_sideboard_s1d_v1::{statics as circles, CopShieldV1};
 use crate::event::{self, ActiveReplacement, DamageProposed, ProposedEvent};
 use crate::ids::ObjectId;
-use crate::state::{GameState, Target};
+use crate::state::{GameState, ObjectLinkV4, Target};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +25,7 @@ pub enum OrdinaryV1 {
         position: usize,
         shield: CopShieldV1,
     },
+    SoulScar(ObjectLinkV4),
 }
 
 pub(crate) fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
@@ -92,6 +93,9 @@ impl Packet {
             // creatures; Nishoba's additional instruction still applies (615.12).
             options.retain(|effect| matches!(effect, Redirect { .. }));
         }
+        let mage = crate::linked_aura_operation_v1::soul_scar_damage_order_v1()
+            .then(|| crate::eternal_cube_c7b_v1::noncombat_damage_replacement_source(state, damage))
+            .flatten();
         if !unpreventable && prevention_without_cost(state, damage) {
             options.push(PreventAll);
         }
@@ -117,6 +121,7 @@ impl Packet {
                     .map(Registered),
             );
         }
+        options.extend(mage.map(SoulScar));
         options
     }
 
@@ -156,6 +161,20 @@ impl Packet {
                 }
             }
             PreventAll => return,
+            SoulScar(mage) => {
+                if crate::eternal_cube_c7b_v1::noncombat_damage_replacement_source(
+                    state,
+                    &self.damage,
+                ) != Some(mage)
+                    || !crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, &self.damage)
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        self.damage.source,
+                    ));
+                }
+                return;
+            }
             Nishoba(_) => {
                 if crate::eternal_premodern_p2c_v1::statics::prevent_damage(
                     state,

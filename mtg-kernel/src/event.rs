@@ -3093,13 +3093,17 @@ fn apply_replacements_inner(
     };
     if let ProposedEvent::Damage(damage) = &mut proposed {
         #[cfg(feature = "eternal-fixtures")]
-        if !damage_cannot_be_prevented {
+        if !damage_cannot_be_prevented
+            || crate::eternal_prevention_order_v1::soul_scar_competes(state, damage)
+        {
             use crate::eternal_prevention_order_v1::DamageResultV1;
             match crate::eternal_pauper_pf1c_v1::replace_damage(state, damage) {
                 DamageResultV1::Uncovered => {}
                 DamageResultV1::Prevented => return None,
                 DamageResultV1::Residual(damage) => {
-                    if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, &damage) {
+                    if !crate::linked_aura_operation_v1::soul_scar_damage_order_v1()
+                        && crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, &damage)
+                    {
                         return None;
                     }
                     return Some(ProposedEvent::Damage(damage));

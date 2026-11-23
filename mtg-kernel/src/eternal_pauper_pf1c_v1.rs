@@ -580,9 +580,9 @@ fn covered_packet(
     let (source, source_zone) = damage_source_incarnation(state, damage)?;
     if !shared_redirect
         && !crate::eternal_prevention_order_v1::nomads_v1::needs_frontier(state, damage)
+        && !crate::eternal_prevention_order_v1::eligible(state, damage)
         && (crate::eternal_prevention_order_v1::cannot_prevent_damage(state, damage)
             || (hallow_beneficiaries(state, source, source_zone).is_empty()
-                && !crate::eternal_prevention_order_v1::eligible(state, damage)
                 && !crate::eternal_prevention_order_v1::residual_order_applies(state, damage)))
     {
         return None;

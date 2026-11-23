@@ -6,7 +6,7 @@ use crate::event::{DamageProposed, ReplacementEffectKind};
 use crate::ids::ObjectId;
 use crate::state::{GameState, Target};
 
-fn counter_can_be_removed(state: &GameState, target: ObjectId) -> bool {
+pub(super) fn counter_can_be_removed(state: &GameState, target: ObjectId) -> bool {
     state.objects.get(target).counters.plus1_plus1 > 0
         && !p2c::read_state(state)
             .and_then(|p2c| p2c.nishoba_batch.as_ref())

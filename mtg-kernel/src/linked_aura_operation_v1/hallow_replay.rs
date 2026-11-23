@@ -2,50 +2,64 @@
 //! A versionless capture must reproduce the entire serialized game under one
 //! historical rule set, including earlier answers and packet ordinals.
 use super::{as_recorded, has_pending, replay_general, GameState, HallowCheckpointV1};
+use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) enum Order {
     HallowOnly,
     CircleGlobal,
     StampedCircleGlobal,
     SphereOjer,
     Expanded,
+    SoulScar,
 }
 
 thread_local! {
-    static ORDER: Cell<Order> = const { Cell::new(Order::Expanded) };
+    static ORDER: Cell<(Order, Option<Order>)> = const {
+        Cell::new((Order::SoulScar, Some(Order::SoulScar)))
+    };
 }
 
 pub(crate) fn legacy_damage_order_v1() -> bool {
-    ORDER.with(|mode| mode.get() != Order::Expanded)
+    ORDER.with(|mode| !matches!(mode.get().0, Order::Expanded | Order::SoulScar))
+}
+
+pub(crate) fn soul_scar_damage_order_v1() -> bool {
+    cfg!(feature = "eternal-fixtures") && ORDER.with(|mode| mode.get().0 == Order::SoulScar)
+}
+
+pub(super) fn checkpoint_marker() -> Option<Order> {
+    cfg!(feature = "eternal-fixtures")
+        .then(|| ORDER.with(|mode| mode.get().1))
+        .flatten()
 }
 
 pub(crate) fn legacy_hallow_only_v1() -> bool {
-    ORDER.with(|mode| mode.get() == Order::HallowOnly)
+    ORDER.with(|mode| mode.get().0 == Order::HallowOnly)
 }
 
 pub(crate) fn legacy_sphere_order_v1() -> bool {
-    ORDER.with(|mode| mode.get() == Order::SphereOjer)
+    ORDER.with(|mode| mode.get().0 == Order::SphereOjer)
 }
 
 pub(super) fn stamp_checkpoint() -> bool {
-    ORDER.with(|mode| mode.get() == Order::Expanded)
+    !legacy_damage_order_v1()
 }
 
 pub(super) fn stamp_circle_global() -> bool {
-    ORDER.with(|mode| mode.get() == Order::StampedCircleGlobal)
+    ORDER.with(|mode| mode.get().0 == Order::StampedCircleGlobal)
 }
 
 impl Order {
-    pub(super) fn with<T>(self, f: impl FnOnce() -> T) -> T {
-        struct Restore(Order);
+    pub(super) fn with<T>(self, marker: Option<Order>, f: impl FnOnce() -> T) -> T {
+        struct Restore((Order, Option<Order>));
         impl Drop for Restore {
             fn drop(&mut self) {
                 ORDER.with(|mode| mode.set(self.0));
             }
         }
-        let _restore = Restore(ORDER.with(|mode| mode.replace(self)));
+        let _restore = Restore(ORDER.with(|mode| mode.replace((self, marker))));
         f()
     }
 }
@@ -54,8 +68,9 @@ pub(super) fn recorded_order(
     state: &GameState,
     pending: &HallowCheckpointV1,
 ) -> Result<Order, String> {
+    let marker = state.engine.linked_aura_operation_v1.damage_order;
     let check = |order: Order| {
-        order.with(|| {
+        order.with(marker, || {
             as_recorded(|| {
                 let (expected, _) = replay_general(
                     &pending.original,
@@ -74,6 +89,9 @@ pub(super) fn recorded_order(
             })
         })
     };
+    if let Some(order) = marker {
+        return check(order);
+    }
     if pending.expanded_damage_order {
         return check(Order::Expanded);
     }
