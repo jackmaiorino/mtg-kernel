@@ -47,6 +47,10 @@ POOLED_LINEAGE_STAGE1_REVIEWED_SOURCE = "7bec154586c9548bf4ca5b3bbe0806c185f1ded
 POOLED_FAST_RELEASE_HEAD_SOURCE = "cf36c1a14f00496480d1e20a47db1fe80b634f26"
 # Pooled collection, stage 3 trainer (draft PR 885 on release/mull-c5719e1cf), a proof build for bit-identity rows (this guard branch only).
 POOLED_STAGE3_PROOF_SOURCE = "dbfac6359f761f12424681b237227f4fb7055293"
+# Learner update speedups on the release line (46f7ecfec), proof builds for node identity rows and timing (this guard branch only):
+# the update tail overlap (key update_tail_overlap_v1) and the fixed-tree backward (update_backward_execution fixed_tree_v1).
+POOLED_TAIL_OVERLAP_SOURCE = "51b38a9e7276559ee56689c2869efaca2591e85b"
+POOLED_FIXED_TREE_SOURCE = "7508760ada32c56e7d5ae738dd257798476ffac9"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -72,6 +76,8 @@ SOURCES = (
     POOLED_LINEAGE_STAGE1_REVIEWED_SOURCE,
     POOLED_FAST_RELEASE_HEAD_SOURCE,
     POOLED_STAGE3_PROOF_SOURCE,
+    POOLED_TAIL_OVERLAP_SOURCE,
+    POOLED_FIXED_TREE_SOURCE,
 )
 # The image follows the host (this guard branch only): the amd64 image for the portable x86-64 build (unchanged),
 # and on an arm64 hosted runner the linux/arm64 member of the python:3.12-slim-bookworm index 935c3c5b... that the
