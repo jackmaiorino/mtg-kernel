@@ -1,45 +1,137 @@
 {
- "schema": "cube_coverage_gaps/v1",
- "cube_list": "data/cube_v1/mtgo_vintage_cube_20261007.json",
- "note": "Cube cards that are not Full in the eternal-fixtures build. python/tests/test_cube_coverage_v1.py keeps this record equal to the registries, so each card wave removes its cards here.",
+ "schema": "cube_coverage/v1",
+ "cube": "Magic Online Vintage Cube",
+ "effective": "2026-10-07",
+ "cards": 540,
+ "card_status": {
+  "full": 523,
+  "partial": 0,
+  "fdn_only": 0,
+  "missing": 17
+ },
+ "groups": {
+  "White": {
+   "full": 56,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 3
+  },
+  "Blue": {
+   "full": 80,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 0
+  },
+  "Black": {
+   "full": 65,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 1
+  },
+  "Red": {
+   "full": 63,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 3
+  },
+  "Green": {
+   "full": 53,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 3
+  },
+  "Azorius": {
+   "full": 13,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 1
+  },
+  "Boros": {
+   "full": 10,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 1
+  },
+  "Dimir": {
+   "full": 12,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 0
+  },
+  "Golgari": {
+   "full": 13,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 1
+  },
+  "Gruul": {
+   "full": 13,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 0
+  },
+  "Izzet": {
+   "full": 15,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 0
+  },
+  "Orzhov": {
+   "full": 10,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 0
+  },
+  "Rakdos": {
+   "full": 10,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 0
+  },
+  "Selesnya": {
+   "full": 10,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 1
+  },
+  "Simic": {
+   "full": 12,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 2
+  },
+  "Multicolor": {
+   "full": 20,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 0
+  },
+  "Colorless": {
+   "full": 68,
+   "partial": 0,
+   "fdn_only": 0,
+   "missing": 1
+  }
+ },
  "partial": [],
  "fdn_only": [],
  "missing": [
   "Aang, Swift Savior",
-  "Absorbing Man",
   "Badgermole Cub",
   "Batroc the Leaper",
   "Blightsteel Colossus",
-  "Bonecrusher Giant",
-  "Concealing Curtains",
   "Crabomination",
-  "Detective's Phoenix",
-  "Elite Spellbinder",
   "Elspeth, Storm Slayer",
-  "Emeritus of Abundance",
-  "Emeritus of Ideation",
   "Fear of Missing Out",
   "Figure of Destiny",
   "Figure of Fable",
   "Grist, the Hunger Tide",
   "Hexdrinker",
-  "Jace, Vryn's Prodigy",
-  "Jennifer Walters",
   "Nadu, Winged Wisdom",
   "Nissa, Who Shakes the World",
-  "Phantasmal Image",
-  "Pyrogoyf",
-  "Saheeli, Sublime Artificer",
   "Serra Paragon",
-  "Springheart Nantuko",
-  "Superior Spider-Man",
   "Swift Reconfiguration",
   "Tamiyo, Collector of Tales",
-  "Thieving Skydiver",
-  "Through the Breach",
-  "Vaultborn Tyrant",
-  "Wan Shi Tong, All-Knowing",
-  "Wan Shi Tong, Librarian",
-  "Zirda, the Dawnwaker"
+  "Through the Breach"
  ]
 }
