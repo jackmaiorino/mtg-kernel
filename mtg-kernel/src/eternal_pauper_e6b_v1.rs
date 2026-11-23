@@ -1569,6 +1569,11 @@ pub(crate) fn protection_removes_attachment(
     if colors & 0x1f == 0 && crate::eternal_cube_c3a_v1::has_colorless_protection(state, host) {
         return true;
     }
+    // Figure of Fable's protection from each of your opponents removes
+    // opponent-controlled Auras and Equipment (Vintage Cube wave C9b).
+    if crate::eternal_cube_c9b_v1::protected_from_attachment(state, host, attachment) {
+        return true;
+    }
     attached_named(state, host, BENEVOLENT_BLESSING).any(|blessing| {
         let live = state.objects.get(blessing);
         live.controller != controller

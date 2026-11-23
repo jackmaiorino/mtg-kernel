@@ -5358,6 +5358,61 @@ fn legal_targets_unrestricted_v1(
                 });
             }
         }
+        // Hexdrinker LEVEL 3-7: "Protection from instants" (spells, not
+        // abilities; Vintage Cube wave C9b).
+        #[cfg(feature = "eternal-fixtures")]
+        if source.zone != Zone::Battlefield
+            && targets.iter().any(|target| {
+                matches!(
+                    target,
+                    Target::Object(id)
+                        if crate::eternal_cube_c9b_v1::has_protection_from_instants(state, *id)
+                )
+            })
+        {
+            let non_spell_ability = state
+                .engine
+                .pending_activation
+                .as_ref()
+                .is_some_and(|pending| pending.source == source.object)
+                || state
+                    .stack
+                    .iter()
+                    .any(|item| item.source == source.object && item.kind != StackItemKind::Spell);
+            if !non_spell_ability {
+                let is_instant = source.types_override.map_or_else(
+                    || {
+                        crate::source_type_hexproof_v1::source_types(
+                            state,
+                            source.object,
+                            source.card_def,
+                            source.zone,
+                            source.zone_change_count,
+                        )
+                        .map_or_else(
+                            |_| {
+                                card_def::CARD_DEFS
+                                    .get(usize::from(source.card_def))
+                                    .is_some_and(|def| def.has_type(CardType::Instant))
+                            },
+                            |types| types.contains(CardType::Instant),
+                        )
+                    },
+                    |types| types.contains(CardType::Instant),
+                );
+                if is_instant {
+                    targets.retain(|target| {
+                        !matches!(
+                            target,
+                            Target::Object(id)
+                                if crate::eternal_cube_c9b_v1::has_protection_from_instants(
+                                    state, *id,
+                                )
+                        )
+                    });
+                }
+            }
+        }
     }
     if dungeon_colors.is_some() {
         targets.retain(|&target| {
@@ -11708,6 +11763,19 @@ fn maximum_payable_x(
             // Toxic Deluge: at most the life its caster has (wave S1b).
             .or_else(|| crate::eternal_sideboard_s1b_v1::life_x_cap(def, pending.controller, state))
             .unwrap_or(u8::MAX);
+    // Serra Paragon: X-cost permanent spells cast from graveyard via Serra
+    // Paragon must keep spell mana value <= 3 (Vintage Cube wave C9b).
+    #[cfg(feature = "eternal-fixtures")]
+    let cap = crate::eternal_cube_c9b_v1::serra_paragon_x_cap(
+        def,
+        pending.spell,
+        pending.origin_zone,
+        pending.controller,
+        pending.source_contract.zone_change_count.saturating_sub(1),
+        method,
+        state,
+    )
+    .map_or(cap, |serra_cap| cap.min(serra_cap));
     let payable = |x| {
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
             .is_some()
@@ -14372,6 +14440,24 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         out.push((id, crate::eternal_cube_c7c_v1::LURKER_GRANTED_INDEX));
                     }
                 }
+                // Swift Reconfiguration (Vintage Cube wave C9b): enchanted
+                // permanent has Crew 5 at dedicated index
+                // `SWIFT_RECONFIGURATION_CREW_INDEX`.
+                #[cfg(feature = "eternal-fixtures")]
+                if let Some(granted) = crate::eternal_cube_c9b_v1::granted_crew_ability(state, id) {
+                    if !crate::standard_cards_v1::activations_locked(state, id)
+                        && crate::eternal_lurrus_v1::activation_allowed(state, id)
+                        && crate::eternal_legacy_e5b_v1::activation_allowed(state, id)
+                        && crate::eternal_sideboard_s1a_v1::statics::activation_allowed(state, id)
+                        && can_pay_activation_components(granted.cost, player, id, state)
+                        && activation_target_prefix_can_complete(id, &granted, &[], state)
+                    {
+                        out.push((
+                            id,
+                            crate::eternal_cube_c9b_v1::SWIFT_RECONFIGURATION_CREW_INDEX,
+                        ));
+                    }
+                }
                 // Rain of Filth (eternal wave E8a): its lands have
                 // "Sacrifice this land: Add {B}." one index past their
                 // printed abilities.
@@ -14496,6 +14582,13 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     // Mole Man, Moloid Master (Vintage Cube wave C5b).
     #[cfg(feature = "eternal-fixtures")]
     for id in crate::eternal_cube_c5b_v1::extra_land_candidates(state, player) {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    // Serra Paragon (Vintage Cube wave C9b).
+    #[cfg(feature = "eternal-fixtures")]
+    for id in crate::eternal_cube_c9b_v1::extra_land_candidates(state, player) {
         if !out.contains(&id) {
             out.push(id);
         }
@@ -20067,6 +20160,7 @@ fn log_final_targeting_events(
         crate::eternal_legacy_e9a_v1::note_targeting(state, item);
         crate::eternal_cube_c8a_v1::note_targeting(state, item);
         crate::eternal_cube_c8b_v1::note_targeting(state, item);
+        crate::eternal_cube_c9b_v1::note_targeting(state, item);
     }
     // A copy is neither cast nor put on the stack by its controller's
     // announcement, so retargeting one never commits a crime.
@@ -24811,6 +24905,7 @@ fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
     {
         crate::eternal_cube_c5c_v1::begin_cleanup(state);
         crate::eternal_cube_c8b_v1::begin_cleanup(state);
+        crate::eternal_cube_c9b_v1::begin_cleanup(state);
     }
     for player in &mut state.players {
         player.poison_prevention_v1.0 = false;
@@ -25286,6 +25381,15 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
         && crate::eternal_sideboard_s1e_v1::adds_artifact_creature(state, id)
     {
         return true;
+    }
+    // Swift Reconfiguration: "Enchanted permanent is a Vehicle artifact with
+    // crew 5 and it loses all other card types" (Vintage Cube wave C9b),
+    // including face-down permanents.
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(answer) =
+        crate::eternal_cube_c9b_v1::swift_reconfiguration_type_override(state, id, card_type)
+    {
+        return answer;
     }
     if let Some(face) = state.objects.get(id).v4.face_down_v1 {
         return face.disguised && card_type == CardType::Creature;
@@ -26155,6 +26259,12 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if crate::eternal_sideboard_s1m_v1::granted_keywords(state, id).has(kw) {
         return true;
     }
+    // Figure of Destiny flying/first strike and Hexdrinker LEVEL 8+
+    // protection from everything (Vintage Cube wave C9b).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cube_c9b_v1::granted_keywords(state, id).has(kw) {
+        return true;
+    }
     if printed_active
         && obj.zone == Zone::Battlefield
         && static_graveyard_threshold_keyword_for(def.name).is_some_and(|(minimum, keyword)| {
@@ -26448,7 +26558,8 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
         found = found
             | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id)
             | crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id)
-            | crate::eternal_sideboard_s1m_v1::granted_keywords(state, id);
+            | crate::eternal_sideboard_s1m_v1::granted_keywords(state, id)
+            | crate::eternal_cube_c9b_v1::granted_keywords(state, id);
         // Carnage Interpreter's menace and Keen-Eyed Curator's trample
         // (Vintage Cube wave C5a); `has_effective_keyword` reads them through
         // `eternal_cards_v1::conditional_self_keywords`.
@@ -26840,6 +26951,12 @@ pub(crate) fn resolved_activated_ability(
         }
     }
     #[cfg(feature = "eternal-fixtures")]
+    if ability_index == crate::eternal_cube_c9b_v1::SWIFT_RECONFIGURATION_CREW_INDEX {
+        if let Some(granted) = crate::eternal_cube_c9b_v1::granted_crew_ability(state, source) {
+            return Some(granted);
+        }
+    }
+    #[cfg(feature = "eternal-fixtures")]
     if usize::from(ability_index) == def.activated_abilities.len() {
         if let Some(retained) = crate::eternal_legacy_e7a_v1::retained_stage_ability(state, source)
         {
@@ -26970,6 +27087,13 @@ fn resolved_stack_activated_ability(
             return Ok(granted);
         }
     }
+    // Swift Reconfiguration's granted Crew 5 ability (Vintage Cube wave C9b).
+    #[cfg(feature = "eternal-fixtures")]
+    if granted_by.is_none()
+        && ability_index == crate::eternal_cube_c9b_v1::SWIFT_RECONFIGURATION_CREW_INDEX
+    {
+        return Ok(crate::eternal_cube_c9b_v1::swift_reconfiguration_crew_ability());
+    }
     let fishing_grant = granted_by
         .is_some_and(|grant| crate::fishing_pole_v39::selected_definition(grant.card_def));
     if ability_index as usize > def.activated_abilities.len() && !fishing_grant {
@@ -27034,6 +27158,15 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         subtype_ids.retain(|id| crate::continuous_characteristics_v1::is_land_subtype(*id));
         replacement_timestamp = Some(timestamp);
     }
+    // Figure of Destiny, Figure of Fable, and Swift Reconfiguration Layer 4
+    // subtype changes (Vintage Cube wave C9b).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c9b_v1::adjust_subtypes(
+        state,
+        id,
+        &mut subtype_ids,
+        &mut replacement_timestamp,
+    );
     if object.zone == Zone::Battlefield {
         if let Some((subtype, timestamp)) = object.v4.added_subtype_v1 {
             // A creature subtype grant remains stored on the incarnation, but
@@ -27127,6 +27260,10 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         subtype_ids.retain(|id| crate::continuous_characteristics_v1::is_land_subtype(*id));
     }
     subtype_ids.dedup();
+    // Swift Reconfiguration CR 205.3d: a noncreature Vehicle artifact keeps no
+    // creature subtypes (Vintage Cube wave C9b).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c9b_v1::finalize_subtypes(state, id, &mut subtype_ids);
     // Harbinger of the Seas: "Nonbasic lands are Islands."
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_legacy_e8a_v1::statics::adjust_subtypes(state, id, &mut subtype_ids);
@@ -31320,6 +31457,13 @@ fn play_land(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let muldrotha_land = muldrotha_v1::land_input(state, id, player)?;
+    #[cfg(feature = "eternal-fixtures")]
+    let serra_land = crate::eternal_cube_c9b_v1::begin_graveyard_land_play(
+        state,
+        id,
+        player,
+        muldrotha_land.is_some(),
+    );
     let next_land_count = state.players[player.index()]
         .lands_played_this_turn
         .checked_add(1)
@@ -31359,6 +31503,8 @@ fn play_land(
         );
     }
     muldrotha_v1::record_land(state, muldrotha_land);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c9b_v1::finish_graveyard_land_play(state, serra_land, id);
     tinybones_v72::record_land(state, tinybones_land, id);
     state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn = next_land_count;
@@ -32217,15 +32363,29 @@ fn finalize_owned_cast(
     crate::eternal_lurrus_v1::note_colors_spent(state, pending.spell, colors_spent);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c7c_v1::note_mana_by_color(state, pending.spell, mana_by_color);
-    // Lurrus of the Dream-Den's permission is used once the cast is paid.
+    // Lurrus of the Dream-Den's and Serra Paragon's permissions are used once
+    // the cast is paid.
     #[cfg(feature = "eternal-fixtures")]
-    if pending.origin_zone == Zone::Graveyard && cast_method == CastMethodV4::Normal {
+    if pending.origin_zone == Zone::Graveyard
+        && matches!(
+            cast_method,
+            CastMethodV4::Normal | CastMethodV4::Alternative
+        )
+    {
         if let Some(origin) = pending
             .source_contract
             .spell_cast_origin
             .filter(|origin| matches!(origin.route, SpellCastRouteV4::GraveyardPermissionV1 { .. }))
         {
-            crate::eternal_lurrus_v1::note_graveyard_permission_cast(
+            if cast_method == CastMethodV4::Normal {
+                crate::eternal_lurrus_v1::note_graveyard_permission_cast(
+                    state,
+                    pending.spell,
+                    origin.origin_zone_change_count,
+                    pending.controller,
+                );
+            }
+            crate::eternal_cube_c9b_v1::note_graveyard_permission_cast(
                 state,
                 pending.spell,
                 origin.origin_zone_change_count,

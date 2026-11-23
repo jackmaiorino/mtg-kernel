@@ -6127,6 +6127,10 @@ fn materialize_event_v1(
                 // (Vintage Cube wave C4c).
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
+                // Serra Paragon's granted dies trigger and C9b incarnation
+                // pruning (Vintage Cube wave C9b).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c9b_v1::note_departure(state, z.object, from, z.to_zone);
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c6a_v1::note_zone_change(
                     state,

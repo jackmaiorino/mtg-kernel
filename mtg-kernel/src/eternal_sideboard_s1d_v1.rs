@@ -1992,17 +1992,21 @@ pub(crate) mod statics {
 // ---- Auras --------------------------------------------------------------------------
 
 /// This module's Auras that the Standard Aura entry attaches: Spreading Seas
-/// ("Enchant land").
+/// ("Enchant land"), falling through to wave C9b (Swift Reconfiguration).
 pub(crate) fn is_aura(def: &CardDef) -> bool {
-    def.name == SPREADING_SEAS
+    def.name == SPREADING_SEAS || crate::eternal_cube_c9b_v1::is_aura(def)
 }
 
 /// Whether this module's Aura `def` may enchant `host`. `None` for every
 /// other definition.
 pub(crate) fn aura_host_legal(def: &CardDef, host: ObjectId, state: &GameState) -> Option<bool> {
-    (def.name == SPREADING_SEAS).then(|| {
-        state.objects.get(host).zone == Zone::Battlefield && has_type(state, host, CardType::Land)
-    })
+    if def.name == SPREADING_SEAS {
+        return Some(
+            state.objects.get(host).zone == Zone::Battlefield
+                && has_type(state, host, CardType::Land),
+        );
+    }
+    crate::eternal_cube_c9b_v1::aura_host_legal(def, host, state)
 }
 
 // ---- Targets ------------------------------------------------------------------------

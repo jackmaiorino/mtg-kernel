@@ -2291,6 +2291,8 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 if !standard.crewed_creatures.contains(&key) {
                     standard.crewed_creatures.push(key);
                 }
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c9b_v1::note_crewed(state, ctx.source);
             }
         }
         StandardOpV1::DamageEachTargetChosenX => {
@@ -4660,6 +4662,8 @@ fn has_counters(state: &GameState, object: ObjectId) -> bool {
             .as_ref()
             .is_some_and(|u| u.finality > 0)
         || crate::planeswalker_v1::loyalty(state, object).is_some_and(|loyalty| loyalty > 0)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cube_c9b_v1::level_counters(state, object) > 0)
 }
 
 fn innkeeper_counter() -> EffectOp {
@@ -4780,6 +4784,12 @@ pub(crate) fn graveyard_cast_granted_without_retrace(
                     zone_change_count,
                 )
                 || crate::eternal_cube_c8a_v1::jace_graveyard_permission(
+                    state,
+                    object,
+                    holder,
+                    zone_change_count,
+                )
+                || crate::eternal_cube_c9b_v1::serra_paragon_permission(
                     state,
                     object,
                     holder,

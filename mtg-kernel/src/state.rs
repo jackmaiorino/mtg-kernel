@@ -3881,6 +3881,8 @@ impl GameState {
         crate::standard_cards_v1::refresh_aegis_copies(self);
         if changed_host {
             crate::standard_cards_v1::aegis_attached(self, source, host_link);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c9b_v1::after_attachment(self, target);
         }
         self.validate_attachment_relations()?;
         crate::fake_your_own_death_v50::return_aura::record_attachment(

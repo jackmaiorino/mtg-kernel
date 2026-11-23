@@ -1829,6 +1829,9 @@ pub(crate) fn damage_prevented_by_protection(
                 || crate::eternal_premodern_p2d_v1::statics::protected_from_source(
                     state, object, source,
                 )
+                // Figure of Fable (protection from opponents) and Hexdrinker
+                // LEVEL 3-7 (protection from instants), Vintage Cube wave C9b.
+                || crate::eternal_cube_c9b_v1::protected_from_damage(state, object, source)
         }
         Target::StackItem(_) => false,
     };
@@ -2603,6 +2606,13 @@ pub(crate) fn object_targetable(
     if source.is_some_and(|source| {
         crate::eternal_e5a_v1::statics::object_protected_from(state, object, source)
     }) {
+        return false;
+    }
+    // Figure of Fable: protection from each of your opponents (Vintage Cube
+    // wave C9b).
+    if live.zone == Zone::Battlefield
+        && crate::eternal_cube_c9b_v1::protected_from_targeting(state, object, controller)
+    {
         return false;
     }
     // Benevolent Blessing's protection from a color, Stonecoil Serpent's

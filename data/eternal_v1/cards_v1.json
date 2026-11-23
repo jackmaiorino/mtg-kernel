@@ -38642,7 +38642,7 @@
   },
   {
    "name": "Figure of Destiny",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R/W}",
    "mana_value": 1,
    "colors": [
@@ -38665,12 +38665,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "pt_override",
+    "subtype_change",
+    "flying",
+    "first_strike"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FigureOfDestiny.java"
   },
   {
    "name": "Figure of Fable",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G/W}",
    "mana_value": 1,
    "colors": [
@@ -38693,12 +38699,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "pt_override",
+    "subtype_change",
+    "protection"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FigureOfFable.java"
   },
   {
    "name": "Hexdrinker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}",
    "mana_value": 1,
    "colors": [
@@ -38720,12 +38731,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "level_up",
+    "counters",
+    "pt_override",
+    "protection"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/h/Hexdrinker.java"
   },
   {
    "name": "Nadu, Winged Wisdom",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}{U}",
    "mana_value": 3,
    "colors": [
@@ -38751,12 +38767,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "triggered_ability",
+    "targeted_trigger",
+    "reveal",
+    "ramp",
+    "card_advantage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/n/NaduWingedWisdom.java"
   },
   {
    "name": "Serra Paragon",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}{W}",
    "mana_value": 4,
    "colors": [
@@ -38778,12 +38801,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "graveyard_play",
+    "graveyard_casting",
+    "dies_trigger",
+    "exile",
+    "life_gain"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SerraParagon.java"
   },
   {
    "name": "Swift Reconfiguration",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -38805,7 +38835,12 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flash",
+    "aura",
+    "type_change",
+    "crew"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SwiftReconfiguration.java"
   },
   {

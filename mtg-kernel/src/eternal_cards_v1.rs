@@ -414,6 +414,15 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c8c_v1::C8cStateV1::is_empty"
     )]
     pub c8c: crate::eternal_cube_c8c_v1::C8cStateV1,
+    /// Vintage Cube wave C9b's state: Figure of Destiny and Figure of Fable
+    /// characteristic forms, Hexdrinker level counters, Nadu trigger counts,
+    /// Serra Paragon graveyard plays and granted dies triggers, and Swift
+    /// Reconfiguration post-attachment crew timestamps (`eternal_cube_c9b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c9b_v1::C9bStateV1::is_empty"
+    )]
+    pub c9b: crate::eternal_cube_c9b_v1::C9bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -1458,6 +1467,11 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_cube_c7c_v1::granted_trigger_target_spec(effect) {
         return Some(spec);
     }
+    // Nadu, Winged Wisdom's targeting trigger and Serra Paragon's dies trigger,
+    // granted to any permanent (Vintage Cube wave C9b).
+    if let Some(spec) = crate::eternal_cube_c9b_v1::granted_trigger_target_spec(effect) {
+        return Some(spec);
+    }
     match name {
         INVENTORS_AXE => Some(if *effect == attach_to_target() {
             TargetSpec::ControlledCreature
@@ -2202,6 +2216,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_cube_c7a_v1::blocker_allowed(state, blocker)
         && crate::eternal_cube_c7b_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_cube_c8c_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_cube_c9b_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -2313,6 +2328,9 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_cube_c5a_v1::apply_entry(state, object, input);
     // Woodfall Primus's Persist -1/-1 entry counter (Vintage Cube wave C7c).
     crate::eternal_cube_c7c_v1::apply_entry_counters(state, object, input);
+    // Serra Paragon's granted dies trigger on spells cast from graveyard
+    // (Vintage Cube wave C9b).
+    crate::eternal_cube_c9b_v1::apply_entry(state, object);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -2580,6 +2598,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c7c_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c8a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c8c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c9b_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2627,6 +2646,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_pauper_e8b_v1::granted_trigger_effect(effect)
         || crate::eternal_legacy_e9a_v1::granted_trigger_effect(effect)
         || crate::eternal_cube_c7c_v1::granted_trigger_effect(effect)
+        || crate::eternal_cube_c9b_v1::granted_trigger_effect(effect)
     {
         return true;
     }
@@ -2749,6 +2769,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_cube_c7c_v1::begin_turn(state, player);
     crate::eternal_cube_c8a_v1::begin_turn(state, player);
     crate::eternal_cube_c8c_v1::begin_turn(state, player);
+    crate::eternal_cube_c9b_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
