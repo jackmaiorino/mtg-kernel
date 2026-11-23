@@ -297,6 +297,44 @@ class NodeStateTests(unittest.TestCase):
             self.assertEqual(sup.node.lock_path.read_bytes(), b"existing lock contents")
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "the supervisor uses Linux flock")
+    def test_supervisor_poll_refuses_real_lock_symlink_swap_without_truncating_target(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp).resolve()
+            outside = Path(outside_tmp).resolve()
+            kept_checkpoint = outside / "kept-checkpoint.bin"
+            kept_payload = b"kept checkpoint bytes from another chain"
+            kept_checkpoint.write_bytes(kept_payload)
+
+            spec = dict(box_slot=0, arm="C", argv=[], binary={}, config={}, memory_max_bytes=1, seed_root="test")
+            plan = dict(state_root=str(root / "state"), cgroup_root=str(root / "cgroups"), chains={"c1": spec})
+            sup = w5box.Supervisor(plan, "plan", "c1", None, None, {"boxes": [{"slot": 0}]}, "host", None)
+            sup.node.lock_path.parent.mkdir()
+            sup.node.lock_path.write_bytes(b"existing lock contents")
+
+            # First real poll succeeds without truncating occupancy.lock.
+            sup.follow_node()
+            self.assertEqual(sup.node.lock_path.read_bytes(), b"existing lock contents")
+
+            # Between polls, replace state/occupancy.lock with a real symlink to a file outside the root.
+            sup.node.lock_path.unlink()
+            sup.node.lock_path.symlink_to(kept_checkpoint)
+            with self.assertRaisesRegex(w5box.Refusal, "linked state file"):
+                sup.follow_node()
+            self.assertEqual(kept_checkpoint.read_bytes(), kept_payload)
+
+            # Replacing the state directory itself with a symlink to an outside directory is also refused.
+            outside_state = outside / "other-state"
+            outside_state.mkdir()
+            outside_lock = outside_state / "occupancy.lock"
+            outside_lock.write_bytes(kept_payload)
+            state_dir = sup.node.lock_path.parent
+            state_dir.rename(root / "state-original")
+            state_dir.symlink_to(outside_state, target_is_directory=True)
+            with self.assertRaisesRegex(w5box.Refusal, "state directory requires plain directories"):
+                sup.follow_node()
+            self.assertEqual(outside_lock.read_bytes(), kept_payload)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the supervisor uses Linux flock")
     def test_nonblocking_box_lock_keeps_its_contents_and_exclusivity(self):
         with tempfile.TemporaryDirectory() as tmp:
             lock = Path(tmp) / "box0.lock"
