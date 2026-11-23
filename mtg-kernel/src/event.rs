@@ -6085,6 +6085,16 @@ fn materialize_event_v1(
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;
+            let transformed_entry = match plan_transformed_entry_v1(state, &z) {
+                Ok(face) => face,
+                Err(()) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        z.object,
+                    ));
+                    return None;
+                }
+            };
             if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                 curie_departure = mode.curie_departure(state, z.object);
                 minsc_departure = mode.minsc_departure(state, z.object);
@@ -6286,7 +6296,7 @@ fn materialize_event_v1(
                 z.preserve_known_identity,
                 z.library_insert_visibility,
                 z.force_battlefield_tapped,
-                z.battlefield_face_index,
+                transformed_entry,
                 z.battlefield_controller,
                 (
                     authority_observers,
@@ -8444,6 +8454,54 @@ type MaterializedZoneEntryV1<'a> = (
     Option<i32>,
 );
 
+pub(crate) fn battlefield_back_face_v1(
+    definition: u16,
+) -> Option<&'static crate::card_def::TransformFaceDef> {
+    let face = crate::card_def::CARD_DEFS
+        .get(usize::from(definition))?
+        .transform_face
+        .as_ref()?;
+    (!face.types.iter().any(|kind| {
+        matches!(
+            kind,
+            crate::card_def::CardType::Instant | crate::card_def::CardType::Sorcery
+        )
+    }))
+    .then_some(face)
+}
+
+type TransformedEntryV1 = (u16, &'static crate::card_def::TransformFaceDef);
+
+fn plan_transformed_entry_v1(
+    state: &GameState,
+    change: &ZoneChangeProposed,
+) -> Result<Option<TransformedEntryV1>, ()> {
+    if change.to_zone != Zone::Battlefield {
+        return Ok(None);
+    }
+    let face_index = change.battlefield_face_index;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let face_index = face_index.or_else(|| {
+        crate::standard_keywords_v1::enters_transformed_at_night(
+            state,
+            state.objects.get(change.object).card_def,
+        )
+        .then_some(1)
+    });
+    let Some(face_index) = face_index else {
+        return Ok(None);
+    };
+    if face_index != 1 {
+        return Err(());
+    }
+    let definition = crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
+        .map_or(state.objects.get(change.object).card_def, |copy| {
+            copy.copied.card_def
+        });
+    let face = battlefield_back_face_v1(definition).ok_or(())?;
+    Ok(Some((definition, face)))
+}
+
 /// Zone bookkeeping shared by every `MoveObject` effect leaf. "Hand ->
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
@@ -8457,29 +8515,23 @@ fn materialize_zone_change_v1(
     preserve_known_identity: bool,
     library_insert_visibility: LibraryInsertVisibility,
     force_battlefield_tapped: bool,
-    battlefield_face_index: Option<u8>,
+    transformed_entry: Option<TransformedEntryV1>,
     battlefield_controller: Option<PlayerId>,
     entry_context: MaterializedZoneEntryV1<'_>,
 ) {
     let (authority_observers, entering_characteristics, counter_input, requested_revival) =
         entry_context;
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
-    #[cfg(feature = "standard-magezero-fixtures")]
-    let battlefield_face_index = battlefield_face_index.or_else(|| {
-        (to_zone == Zone::Battlefield
-            && crate::standard_keywords_v1::enters_transformed_at_night(
-                state,
-                state.objects.get(id).card_def,
-            ))
-        .then_some(1)
-    });
+
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
     let metamorph_mage_copy = (to_zone == Zone::Battlefield)
         .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
         .flatten();
-    let entry_definition =
-        metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def);
+    let entry_definition = transformed_entry.map_or_else(
+        || metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def),
+        |(definition, _)| definition,
+    );
     let source_face = state.objects.get(id).v4.face_down_v1;
     let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
@@ -8656,15 +8708,8 @@ fn materialize_zone_change_v1(
         obj.counters = Default::default();
         obj.attachments.clear();
         if to_zone == Zone::Battlefield {
-            if let Some(face_index) = battlefield_face_index {
-                let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-                let Some(face) = (face_index == 1)
-                    .then_some(def.transform_face.as_ref())
-                    .flatten()
-                else {
-                    panic!("transformed battlefield return requested an undefined face");
-                };
-                obj.v4.face_index = face_index;
+            if let Some((_, face)) = transformed_entry {
+                obj.v4.face_index = 1;
                 obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
                 obj.v4.effective_subtype_ids = face
                     .subtypes
