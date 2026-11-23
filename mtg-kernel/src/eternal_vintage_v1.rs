@@ -1172,6 +1172,45 @@ pub(crate) fn paid_metamorph_copy_is_suppressed(state: &GameState, ctx: &ExecCtx
             .is_some()
 }
 
+/// Applies Phyrexian Metamorph's as-enters copy modification during entry
+/// initialization (`apply_entry_counters`), before entry observers, copied
+/// entry counters, and ETB triggers run. Used when an effect such as
+/// Metamorphosis Fanatic returns Metamorph to the battlefield.
+pub(crate) fn apply_metamorph_entry_copy(state: &mut GameState, host: ObjectId, copied_def: u16) {
+    if state
+        .objects
+        .try_get(host)
+        .is_none_or(|live| live.zone != Zone::Battlefield)
+    {
+        return;
+    }
+    let link = live_link(state, host);
+    let live = state.objects.get_mut(host);
+    let record = CopyV1 {
+        host: link,
+        card_def: live.card_def,
+        name: std::mem::take(&mut live.name),
+        color_mask: live.v4.effective_color_mask,
+        subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
+    };
+    let base = crate::state::ObjectStateV4::from_card_def(copied_def);
+    live.card_def = copied_def;
+    live.name = CARD_DEFS[copied_def as usize].object_name.into();
+    live.v4.effective_color_mask = base.effective_color_mask;
+    live.v4.effective_subtype_ids = base.effective_subtype_ids;
+    let own_def = record.card_def;
+    vintage_state(state).copies.push(record);
+    crate::standard_cards_v1::note_copied_definitions(
+        state,
+        host,
+        link.zone_change_count,
+        &[own_def, copied_def],
+    );
+    if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
+        state.objects.get_mut(host).tapped = true;
+    }
+}
+
 /// Retain Metamorph's physical printing before any entry observer sees the
 /// copied Mage. The existing copy marker also supplies the artifact type.
 pub(crate) fn retain_mage_copy_on_entry(

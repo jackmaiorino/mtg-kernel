@@ -2927,7 +2927,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             accept_crystal || ordered_full_text,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
-        exile_play_permissions: exile_play_permissions_public_v2(state)?,
+        exile_play_permissions: exile_play_permissions_public_v2(state, acting_player)?,
         engine_context: if accept_akroma {
             engine_context_v2_conqueror_inner_v49_fake_v50(
                 state,
@@ -11984,22 +11984,37 @@ fn continuous_effects_common_v2(
     Ok(out)
 }
 
-fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPermissionPublicV2>> {
+fn exile_play_permissions_public_v2(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<Vec<ExilePlayPermissionPublicV2>> {
     let mut out = Vec::new();
     for perm in &state.engine.exile_play_permissions {
         // Validate this grant's incarnation. Looking up any active grant for
         // the same holder/object can incorrectly revive an older grant when
         // the card leaves exile and later returns with a fresh permission.
-        if perm.zone_change_generation != state.objects.get(perm.object).zone_change_count {
+        let obj = state.objects.get(perm.object);
+        if perm.zone_change_generation != obj.zone_change_count {
             continue;
         }
+        // Concealed face-down exiled cards (Headliner Scarlett, Gandalf's
+        // Flameshape) grant "play" for both lands and spells. Never leak
+        // whether a concealed card is a land or nonland to a non-looker.
+        let hidden_from_observer = obj
+            .v4
+            .face_down_v1
+            .is_some_and(|face| face.lookers & (1u8 << acting_player.index()) == 0);
         out.push(ExilePlayPermissionPublicV2 {
             without_mana_cost: perm.without_mana_cost,
             object: card_ref(state, perm.object)?,
             holder: perm.holder.into(),
-            play_or_cast: match perm.play_or_cast {
-                PlayOrCast::Play => PlayOrCastV2::Play,
-                PlayOrCast::Cast => PlayOrCastV2::Cast,
+            play_or_cast: if hidden_from_observer {
+                PlayOrCastV2::Play
+            } else {
+                match perm.play_or_cast {
+                    PlayOrCast::Play => PlayOrCastV2::Play,
+                    PlayOrCast::Cast => PlayOrCastV2::Cast,
+                }
             },
             zone_change_generation: perm.zone_change_generation,
             expiry: match perm.expiry {
@@ -12013,9 +12028,10 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
                     holder_turn_started,
                 },
                 // The frozen V2 projection has no unbounded expiry. Warp's
-                // later-turn permission is projected as a not-yet-started
-                // multi-turn permission, its nearest public meaning.
-                PlayPermissionExpiry::LaterTurn { .. } => {
+                // later-turn permission and Flameshape's unbounded permission
+                // are projected as a not-yet-started multi-turn permission,
+                // their nearest public meaning.
+                PlayPermissionExpiry::LaterTurn { .. } | PlayPermissionExpiry::AsLongAsExiled => {
                     PlayPermissionExpiryV2::UntilHoldersNextTurn {
                         holder_turn_started: false,
                     }

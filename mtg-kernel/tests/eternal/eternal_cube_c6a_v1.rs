@@ -27,12 +27,12 @@ const C6A_CARDS: [&str; 6] = [
     "Gut, True Soul Zealot",
 ];
 
-// These are admission checks for unfinished cards, not printed-text rules
-// tests. Concealed play permissions currently reveal land versus spell in
-// the opponent's observation. Keep both cards out of Full session decks.
-fn assert_private_impulse_card_is_partial(name: &str) {
-    assert_eq!(def(name).capability, CardCapability::Partial);
-    assert!(!C6A_CARDS.contains(&name));
+// Headliner Scarlett and Gandalf, Goblins' Bane were promoted to Full in wave
+// C7a once concealed play permissions gained observer-private projection and
+// Wizard-gated dormancy.
+fn assert_private_impulse_card_is_full(name: &str) {
+    assert_eq!(def(name).capability, CardCapability::Full);
+    assert!(def(name).has_full_support());
     let deck = CustomDeckV1 {
         cards: vec![
             CustomCardCountV1 {
@@ -46,20 +46,17 @@ fn assert_private_impulse_card_is_partial(name: &str) {
         ],
         companion: None,
     };
-    assert_eq!(
-        deck.resolve().unwrap_err(),
-        format!("card {name:?} is a token or lacks full engine support")
-    );
+    deck.resolve().expect("Full card resolves in a custom deck");
 }
 
 #[test]
 fn headliner_scarlett_stays_partial_until_impulse_permissions_preserve_hidden_information() {
-    assert_private_impulse_card_is_partial("Headliner Scarlett");
+    assert_private_impulse_card_is_full("Headliner Scarlett");
 }
 
 #[test]
 fn gandalf_stays_partial_until_hidden_wizard_conditional_permissions_are_supported() {
-    assert_private_impulse_card_is_partial("Gandalf, Goblins' Bane");
+    assert_private_impulse_card_is_full("Gandalf, Goblins' Bane");
 }
 
 #[test]

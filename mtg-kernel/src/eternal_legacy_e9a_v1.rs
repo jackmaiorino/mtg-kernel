@@ -1530,9 +1530,7 @@ pub(crate) fn drive(
                 return Ok(false);
             }
             if keep == 0 {
-                for card in hand {
-                    crate::engine::commit_discarded_card(state, card);
-                }
+                crate::engine::commit_discarded_cards(state, &hand);
                 return Ok(false);
             }
             let bindings = hand.iter().map(|&card| bind(state, card)).collect();
@@ -1730,11 +1728,11 @@ pub(crate) fn finish_selection(
                 .iter()
                 .map(|binding| binding.object)
                 .collect::<Vec<_>>();
-            for card in hand_cards(state, player) {
-                if !kept.contains(&card) {
-                    crate::engine::commit_discarded_card(state, card);
-                }
-            }
+            let discarded = hand_cards(state, player)
+                .into_iter()
+                .filter(|card| !kept.contains(card))
+                .collect::<Vec<_>>();
+            crate::engine::commit_discarded_cards(state, &discarded);
             Ok(false)
         }
         E9aChoiceV1::ZenithSearchV1 => {

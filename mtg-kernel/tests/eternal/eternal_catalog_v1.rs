@@ -247,17 +247,14 @@ const SNAPSHOTS: [&str; 2] = [
     "data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json",
 ];
 
-/// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 1] = ["Hullbreacher"];
+/// Executable S1 implementations with known missing reachable branches: none.
+const PARTIAL_S1: [&str; 0] = [];
 
 /// Vintage Cube implementations with known missing reachable branches: none.
 /// Bone Shards became Full with the choice between additional costs (#715),
-/// The Mightstone and Weakstone with the Powerstone payments (#726).
-const PARTIAL_CUBE: [&str; 3] = [
-    "Headliner Scarlett",
-    "Gandalf, Goblins' Bane",
-    "Metamorphosis Fanatic",
-];
+/// The Mightstone and Weakstone with the Powerstone payments (#726), and
+/// Headliner Scarlett, Gandalf, Goblins' Bane and Metamorphosis Fanatic in C7a.
+const PARTIAL_CUBE: [&str; 0] = [];
 
 /// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
 /// only Partial definitions.
@@ -321,7 +318,11 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
             "{name}"
         );
     }
-    for name in PARTIAL_S1 {
+    for name in ["Volrath's Shapeshifter"]
+        .into_iter()
+        .chain(PARTIAL_S1)
+        .chain(PARTIAL_CUBE)
+    {
         let id = card_id_by_name(name).unwrap();
         assert!(CARD_DEFS[usize::from(id)].is_executable());
         assert!(matches!(
