@@ -1117,27 +1117,23 @@ pub fn publish_new_bytes_bracketed_v1(
 }
 
 /// [`publish_new_bytes_v1`] (or, with `bracketed`,
-/// [`publish_new_bytes_bracketed_v1`]) for a caller that already computed
-/// `expectation` from these same `bytes` with
-/// [`DurableFileExpectationV1::from_bytes`], because it needed their SHA-256
-/// before the first write. The digest is not computed a second time; the
-/// publication, every readback (each compares the file with `bytes`) and the
-/// receipt are the ones those functions make. An expectation of another
-/// length is refused before any write.
-pub(crate) fn publish_expected_bytes_v1(
+/// [`publish_new_bytes_bracketed_v1`]) for a caller that needs the bytes'
+/// expectation (their exact length and SHA-256) before the first write: it is
+/// computed here from `bytes`, once, and given to `announce` before anything
+/// is written; the publication, every readback (each compares the file with
+/// `bytes`) and the receipt, whose digest is the announced one, are the ones
+/// those functions make. The caller never supplies the expectation, so it
+/// cannot announce, or publish under, a digest that is not the bytes'.
+pub(crate) fn publish_new_bytes_announced_v1(
     parent: &ValidatedPublicationParentV1,
     stage_name: impl AsRef<OsStr>,
     final_name: impl AsRef<OsStr>,
     bytes: &[u8],
-    expectation: DurableFileExpectationV1,
     bracketed: bool,
+    announce: impl FnOnce(&DurableFileExpectationV1),
 ) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
-    if u64::try_from(bytes.len()).ok() != Some(expectation.exact_length) {
-        return Err(DurablePublicationErrorV1::new(
-            DurablePublicationErrorKindV1::InputContentMismatch,
-            "borrowed caller bytes do not match the required exact length",
-        ));
-    }
+    let expectation = DurableFileExpectationV1::from_bytes(bytes)?;
+    announce(&expectation);
     publish_verified_bytes_with_hook_v1(
         parent,
         stage_name.as_ref(),
@@ -1618,6 +1614,38 @@ mod tests {
         file.write_all(&vec![0xa5; length])
             .expect("write corrupt bytes");
         file.sync_all().expect("sync corrupt bytes");
+    }
+
+    /// The announced publication (`publish_new_bytes_announced_v1`, both
+    /// readback modes): the expectation it announces, once and before any file
+    /// of the publication exists, is the one computed from the bytes, and the
+    /// receipt carries exactly it.
+    #[test]
+    fn an_announced_publication_announces_the_bytes_expectation_before_its_first_write() {
+        let directory = TestDirectoryV1::new("announced");
+        let parent = capture_existing_publication_parent_v1(directory.path()).unwrap();
+        let bytes = b"announced immutable checkpoint payload";
+        let expected = DurableFileExpectationV1::from_bytes(bytes).unwrap();
+        for (bracketed, name) in [(false, "every.bin"), (true, "bracketed.bin")] {
+            let before = fs::read_dir(directory.path()).unwrap().count();
+            let mut announced = Vec::new();
+            let receipt = publish_new_bytes_announced_v1(
+                &parent,
+                format!(".{name}.stage"),
+                name,
+                bytes,
+                bracketed,
+                |expectation| {
+                    let present = fs::read_dir(directory.path()).unwrap().count();
+                    announced.push((*expectation, present));
+                },
+            )
+            .unwrap();
+            assert_eq!(announced, vec![(expected, before)], "{name}");
+            assert_eq!(receipt.sha256(), expected.sha256());
+            assert_eq!(receipt.exact_length(), expected.exact_length());
+            assert_eq!(fs::read(receipt.final_path()).unwrap(), bytes);
+        }
     }
 
     #[test]

@@ -7119,30 +7119,33 @@ fn publish_json_shared_with_handoff_in_v1(
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
     let stage = format!(".{name}.stage");
-    let expectation =
-        crate::durable_publication_v1::DurableFileExpectationV1::from_bytes(bytes).map_err(err)?;
-    let pin = PinnedFileV1 {
-        path: directory.join(name),
-        sha256: hex(&expectation.sha256()),
-    };
-    let pending = cache.begin_pending_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
-    handoff(&pin);
+    // The publication computes the bytes' expectation and announces it before
+    // its first write: the pin is made from it there, becomes pending, and is
+    // handed over. It stays pending until this function returns, whatever
+    // the outcome.
+    let mut announced = None;
     // Resident reads also skip the two non-bracketing readbacks, as in
     // `publish_json_unrecorded_v1`.
-    let receipt = crate::durable_publication_v1::publish_expected_bytes_v1(
+    let receipt = crate::durable_publication_v1::publish_new_bytes_announced_v1(
         &parent,
         stage,
         name,
         bytes,
-        expectation,
         cache.resident_v1(),
+        |expectation| {
+            let pin = PinnedFileV1 {
+                path: directory.join(name),
+                sha256: hex(&expectation.sha256()),
+            };
+            let pending = cache.begin_pending_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
+            handoff(&pin);
+            announced = Some((pin, pending));
+        },
     )
     .map_err(err)?;
-    // The receipt's digest is the expectation's, which the pin was made from.
-    ensure(
-        hex(&receipt.sha256()) == pin.sha256,
-        "published checkpoint digest differs from its handoff",
-    )?;
+    let (pin, pending) = announced.ok_or("the checkpoint publication announced no pin")?;
+    // The receipt carries the announced expectation (`publish_new_bytes_announced_v1`).
+    debug_assert_eq!(hex(&receipt.sha256()), pin.sha256);
     // Recorded before the pending state ends, so no reader in between falls
     // back to hashing the file.
     cache.record_verified_shared_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
