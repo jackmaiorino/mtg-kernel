@@ -11495,16 +11495,16 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
             || state.engine.linked_exile_records[..index]
                 .iter()
                 .any(|other| {
+                    let allows_duplicate_source = until_leaves
+                        || matches!(
+                            definition.name,
+                            "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
+                        )
+                        || (cfg!(feature = "eternal-fixtures")
+                            && definition.name == "Tidehollow Sculler");
                     (other.exiled == record.exiled
                         && other.exiled_zone_change_count == record.exiled_zone_change_count)
-                        || (other.source == record.source
-                            && !until_leaves
-                            && !matches!(
-                                definition.name,
-                                "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
-                            )
-                            && !(cfg!(feature = "eternal-fixtures")
-                                && definition.name == "Tidehollow Sculler"))
+                        || (other.source == record.source && !allows_duplicate_source)
                 })
         {
             return Err(RlContractError(
