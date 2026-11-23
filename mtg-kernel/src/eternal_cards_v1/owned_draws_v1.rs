@@ -24,8 +24,10 @@ use crate::state::{
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod bonder;
+pub(crate) mod denial;
 pub(crate) mod echo;
 pub(crate) mod fixed;
+pub(crate) mod knowledge;
 pub(crate) mod portent;
 pub(crate) mod rooms;
 pub(crate) mod standstill;
@@ -86,6 +88,15 @@ enum InstructionV1 {
     Outcome {
         returned_at: usize,
         count: u32,
+    },
+    Knowledge {
+        paid_at: usize,
+        second_at: Option<usize>,
+    },
+    Denial {
+        begun_at: usize,
+        drawer: PlayerId,
+        count: u8,
     },
 }
 
@@ -189,6 +200,8 @@ impl InstructionV1 {
             Self::Echo { .. } => 7,
             Self::Bonder { .. } | Self::Portent { .. } => 1,
             Self::Room { kind, .. } => kind.count(),
+            Self::Denial { count, .. } => u32::from(count),
+            Self::Knowledge { second_at, .. } => knowledge::count(state, second_at).unwrap_or(0),
             Self::Curie { combat_at } => {
                 eternal_legacy_e7a_v1::curie::draw_count(state, ctx, combat_at).unwrap_or(0)
             }
@@ -210,6 +223,7 @@ impl InstructionV1 {
             Self::Echo { drawer, .. }
             | Self::Bonder { drawer, .. }
             | Self::Standstill { drawer, .. }
+            | Self::Denial { drawer, .. }
                 if drawer != ctx.controller =>
             {
                 PlayerRef::Opponent
@@ -227,7 +241,8 @@ impl InstructionV1 {
             Self::FixedRoot { drawer, .. }
             | Self::Echo { drawer, .. }
             | Self::Bonder { drawer, .. }
-            | Self::Standstill { drawer, .. } => Some(drawer),
+            | Self::Standstill { drawer, .. }
+            | Self::Denial { drawer, .. } => Some(drawer),
             Self::JewelCombat => Some(ctx.controller.opponent()),
             _ => Some(ctx.controller),
         }
@@ -440,6 +455,8 @@ pub enum JournalV1 {
         at: usize,
         departure: crate::full_text_v1::DepartureV1,
     },
+    KnowledgeV1(knowledge::JournalV1),
+    DenialV1(denial::JournalV1),
 }
 
 impl JournalV1 {
@@ -861,6 +878,14 @@ fn progress(
         InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
         InstructionV1::Outcome { .. } => outcome::physical_spell_source(state, pending)
             .map(|source| (started.instruction, SourceV1::Spell(source))),
+        InstructionV1::Denial { .. } => {
+            denial::matches_start(state, pending, started, progress.started_at)
+                .then_some((started.instruction, started.source))
+        }
+        InstructionV1::Knowledge { .. } => {
+            knowledge::matches_start(state, pending, started, progress.started_at)
+                .then_some((started.instruction, started.source))
+        }
         InstructionV1::Bonder { .. } => {
             bonder::matches_start(state, pending, started, progress.started_at)
                 .then_some((started.instruction, started.source))
@@ -930,6 +955,18 @@ pub(crate) fn complete(
         state.eternal_owned_draw_progress_v1 = None;
         if !terminal {
             match started.instruction {
+                InstructionV1::Knowledge {
+                    paid_at,
+                    second_at: None,
+                } => {
+                    knowledge::finish_first(
+                        state,
+                        pending,
+                        paid_at,
+                        progress.started_at,
+                        started.source,
+                    )?;
+                }
                 InstructionV1::Bonder {
                     resolution_at,
                     drawer,
@@ -1235,6 +1272,12 @@ fn dragon_before_start(pending: &EffectContinuation) -> bool {
 pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Result<(), String> {
     portent::validate_parent(state, pending)?;
     if state.eternal_owned_draw_progress_v1.is_none() {
+        if denial::validate_idle(state, pending)? {
+            return Ok(());
+        }
+        if knowledge::validate_idle(state, pending)? {
+            return Ok(());
+        }
         if rooms::validate_idle(state, pending)? {
             return Ok(());
         }
@@ -1269,6 +1312,8 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         && echo::selected(state, pending).is_none()
         && bonder::selected(state, pending).is_none()
         && outcome::physical_spell_source(state, pending).is_none()
+        && knowledge::selected(state, pending).is_none()
+        && denial::selected(state, pending).is_none()
     {
         return Err("Eternal draw progress lost its original source".into());
     }
