@@ -9,6 +9,8 @@ use mtg_kernel::card_def::{
     Supertype, TargetSpec, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::eternal_cards_v1::EternalStateV1;
+use mtg_kernel::eternal_cube_c8b_v1::C8bStateV1;
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
@@ -16,6 +18,7 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::planeswalker_v1::loyalty;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use serde_json::Value;
+use std::hash::{Hash, Hasher};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -1407,6 +1410,233 @@ fn detectives_phoenix_graveyard_bestow_excludes_self_fizzle_and_unattaches_from_
     assert!(has_subtype(&state, phoenix, Subtype::Phoenix));
     assert!(!has_subtype(&state, phoenix, Subtype::Aura));
     assert_eq!(power_toughness(&state, phoenix), (2, 2));
+}
+
+#[test]
+fn empty_c8b_state_hashes_zero_bytes_and_skips_serde() {
+    let empty = EternalStateV1::default();
+    assert_eq!(empty.c8b, C8bStateV1::default());
+    let json = serde_json::to_string(&empty).expect("serialize empty EternalStateV1");
+    assert!(
+        !json.contains("c8b"),
+        "empty C8bStateV1 must skip serde: {json}"
+    );
+    let mut h_empty = std::collections::hash_map::DefaultHasher::new();
+    C8bStateV1::default().hash(&mut h_empty);
+    let mut h_zero = std::collections::hash_map::DefaultHasher::new();
+    ().hash(&mut h_zero);
+    assert_eq!(
+        h_empty.finish(),
+        h_zero.finish(),
+        "empty C8bStateV1 must hash zero bytes"
+    );
+}
+
+#[test]
+fn oko_layer_four_overrides_vaultborn_and_saheeli_added_artifact_and_insect_token_name() {
+    // 1. CR 111.4: Green Insect Token's visible object name is "Insect Token".
+    assert_eq!(
+        CARD_DEFS[id("Green Insect Token") as usize].object_name,
+        "Insect Token"
+    );
+
+    // 2. Oko +1 (Layer 4 type-setter) overrides Vaultborn Tyrant artifact token
+    //    copy's Layer 1 added Artifact type: becomes a green 3/3 Elk Creature only.
+    let mut state = plains();
+    let tyrant = put(&mut state, P0, "Vaultborn Tyrant", Zone::Battlefield);
+    let oko = put(&mut state, P0, "Oko, Thief of Crowns", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::U], 1);
+    cast(&mut state, oko, &[]);
+    settled(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(tyrant, Zone::Graveyard),
+    );
+    settled(&mut state);
+    let token_copy = *named(&state, P0, "Vaultborn Tyrant")
+        .first()
+        .expect("artifact token copy created");
+    assert!(has_type(&state, token_copy, CardType::Artifact));
+    assert!(has_type(&state, token_copy, CardType::Creature));
+    activate(&mut state, oko, 1, &[Target::Object(token_copy)]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, token_copy), (3, 3));
+    assert!(has_type(&state, token_copy, CardType::Creature));
+    assert!(
+        !has_type(&state, token_copy, CardType::Artifact),
+        "Oko Layer 4 Elk override must remove Layer 1 copy-added Artifact type"
+    );
+
+    // 3. Oko +1 overrides Saheeli -2's Layer 1 added Artifact type as well.
+    let mut state = plains();
+    let saheeli = put(&mut state, P0, "Saheeli, Sublime Artificer", Zone::Hand);
+    let oko = put(&mut state, P0, "Oko, Thief of Crowns", Zone::Hand);
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    let bears = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::R], 1);
+    cast(&mut state, saheeli, &[]);
+    settled(&mut state);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::U], 1);
+    cast(&mut state, oko, &[]);
+    settled(&mut state);
+    activate(
+        &mut state,
+        saheeli,
+        0,
+        &[Target::Object(ring), Target::Object(bears)],
+    );
+    settled(&mut state);
+    assert!(has_type(&state, ring, CardType::Artifact));
+    assert!(has_type(&state, ring, CardType::Creature));
+    activate(&mut state, oko, 1, &[Target::Object(ring)]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, ring), (3, 3));
+    assert!(has_type(&state, ring, CardType::Creature));
+    assert!(
+        !has_type(&state, ring, CardType::Artifact),
+        "Oko Layer 4 Elk override must remove Saheeli -2's added Artifact type"
+    );
+}
+
+#[test]
+fn stacked_phantasmal_image_and_absorbing_man_copies_propagate_and_unwind_cleanly() {
+    // 1. Phantasmal Image enters copying P1's Absorbing Man; next Main 1 it
+    //    copies Sol Ring (stacked C8b permanent copy + C8c absorbing copy).
+    let mut state = plains();
+    let _opp_ab = put(&mut state, P1, "Absorbing Man", Zone::Battlefield);
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+    let img = put(&mut state, P0, "Phantasmal Image", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, img, &[]);
+    settle_option(&mut state, 1);
+    assert_eq!(
+        CARD_DEFS[state.objects.get(img).card_def as usize].name,
+        "Absorbing Man"
+    );
+
+    let turn_start = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > turn_start
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(ring)) =>
+            {
+                Some(Action::ChooseTarget(Target::Object(ring)))
+            }
+            _ => None,
+        },
+    );
+    assert_eq!(engine::effective_name(&state, img), "Absorbing Man");
+    assert_eq!(power_toughness(&state, img), (4, 4));
+    assert!(has_type(&state, img, CardType::Artifact));
+    assert!(has_type(&state, img, CardType::Creature));
+    assert!(engine::effective_keywords(&state, img, Keywords::VIGILANCE).has(Keywords::VIGILANCE));
+
+    // 2. A second Phantasmal Image (cast on P1's Main 1) copying P0's active
+    //    Absorbing Man copy inherits CR 707.9 exceptions (name "Absorbing Man",
+    //    4/4, Legendary, Creature, Artifact, Human, Villain, Illusion, Vigilance).
+    let mut clone_state = plains();
+    let _p0_ab = put(&mut clone_state, P0, "Absorbing Man", Zone::Battlefield);
+    let p0_ring = put(&mut clone_state, P0, "Sol Ring", Zone::Battlefield);
+    let ts = clone_state.turn;
+    run_until(
+        &mut clone_state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > ts
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(p0_ring)) =>
+            {
+                Some(Action::ChooseTarget(Target::Object(p0_ring)))
+            }
+            _ => None,
+        },
+    );
+    to_next_main(&mut clone_state, P1);
+    let p1_copy = put(&mut clone_state, P1, "Phantasmal Image", Zone::Hand);
+    pool(&mut clone_state, P1, &[ManaColor::U], 1);
+    cast(&mut clone_state, p1_copy, &[]);
+    settle_option(&mut clone_state, 1);
+    assert_eq!(zone(&clone_state, p1_copy), Zone::Battlefield);
+    assert_eq!(
+        engine::effective_name(&clone_state, p1_copy),
+        "Absorbing Man"
+    );
+    assert_eq!(power_toughness(&clone_state, p1_copy), (4, 4));
+    assert!(has_type(&clone_state, p1_copy, CardType::Artifact));
+    assert!(has_type(&clone_state, p1_copy, CardType::Creature));
+    assert!(engine::effective_supertypes(&clone_state, p1_copy).contains(&Supertype::Legendary));
+    assert!(has_subtype(&clone_state, p1_copy, Subtype::Human));
+    assert!(has_subtype(&clone_state, p1_copy, Subtype::Villain));
+    assert!(has_subtype(&clone_state, p1_copy, Subtype::Illusion));
+    assert!(
+        engine::effective_keywords(&clone_state, p1_copy, Keywords::VIGILANCE)
+            .has(Keywords::VIGILANCE)
+    );
+    assert!(keyword(&clone_state, p1_copy, Keywords::VIGILANCE));
+
+    // 3. Departure unwinding: killing P0's stacked `img` (Phantasmal Image ->
+    //    Absorbing Man -> Sol Ring) restores it to Phantasmal Image in graveyard!
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(img, Zone::Graveyard));
+    assert_eq!(zone(&state, img), Zone::Graveyard);
+    assert_eq!(
+        CARD_DEFS[state.objects.get(img).card_def as usize].name,
+        "Phantasmal Image",
+        "stacked C8b+C8c copy must unwind to physical Phantasmal Image on departure"
+    );
+
+    // 4. Absorbing Man copying a Vaultborn Tyrant artifact token copy inherits
+    //    its Layer 1 added Artifact type.
+    let mut state = plains();
+    let ab = put(&mut state, P0, "Absorbing Man", Zone::Battlefield);
+    let tyrant = put(&mut state, P0, "Vaultborn Tyrant", Zone::Battlefield);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(tyrant, Zone::Graveyard),
+    );
+    settled(&mut state);
+    let art_tok = *named(&state, P0, "Vaultborn Tyrant")
+        .first()
+        .expect("Vaultborn artifact token");
+    assert!(has_type(&state, art_tok, CardType::Artifact));
+    let ts = state.turn;
+    run_until(
+        &mut state,
+        |s| {
+            s.active_player == P0
+                && s.step == Step::Main1
+                && s.turn > ts
+                && s.stack.is_empty()
+                && s.engine.pending_triggers.is_empty()
+        },
+        |_, decision| match decision {
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(art_tok)) =>
+            {
+                Some(Action::ChooseTarget(Target::Object(art_tok)))
+            }
+            _ => None,
+        },
+    );
+    assert!(
+        has_type(&state, ab, CardType::Artifact),
+        "Absorbing Man must inherit C8b added Artifact type from Vaultborn token copy"
+    );
+    assert!(has_type(&state, ab, CardType::Creature));
+    assert_eq!(power_toughness(&state, ab), (4, 4));
+    assert!(engine::effective_keywords(&state, ab, Keywords::VIGILANCE).has(Keywords::VIGILANCE));
 }
 
 // ---- Public Sessions -----------------------------------------------------------

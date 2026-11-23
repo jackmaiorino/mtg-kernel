@@ -1514,12 +1514,14 @@ fn selected_spell_quote_branch_grant_v1(
     // additional cost's discards (Premodern wave P1b), a replicate,
     // multikicker or splice count, which counts additional cost payments, and
     // an X kicker cost paid on top of a free cast (Thieving Skydiver, wave C8c).
+    let x_is_additional_cost =
+        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
+            || super::announces_additional_cost_count(definition)
+            || (cfg!(feature = "eternal-fixtures")
+                && kicked
+                && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0));
     if x != 0
-        && !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
-        && !super::announces_additional_cost_count(definition)
-        && !(cfg!(feature = "eternal-fixtures")
-            && kicked
-            && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0))
+        && !x_is_additional_cost
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
             || (cfg!(feature = "eternal-fixtures")
                 && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, source, player))
@@ -2180,12 +2182,10 @@ pub(super) fn prepare_final_spell_payment_v1(
     let optional_kind = if !ordered_optional && pending.optional_additional_cost_paid == Some(true)
     {
         Some(definition.optional_additional_cost?)
-    } else if let Some(minimum_mana_value) =
-        super::pending_collect_evidence_minimum(definition, pending)
-    {
-        Some(super::OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value })
     } else {
-        None
+        super::pending_collect_evidence_minimum(definition, pending).map(|minimum_mana_value| {
+            super::OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }
+        })
     };
     let optional_objects = pending
         .optional_additional_cost_chosen

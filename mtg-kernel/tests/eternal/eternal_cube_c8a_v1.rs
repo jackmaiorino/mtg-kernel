@@ -1294,6 +1294,71 @@ fn jace_telepath_unbound_minus_nine_emblem_persists_after_death_and_mills_five()
     assert_eq!(state.players[P1.index()].library.len(), p1_lib);
 }
 
+#[test]
+fn non_dfc_clones_and_tokens_cannot_transform_jace_or_curtains() {
+    // 1. CR 712.14a: Phantasmal Image copying Jace, Vryn's Prodigy with 5+
+    //    cards in graveyard exiles itself, unwinds to Phantasmal Image, and
+    //    STAYS in exile (does not return with face_index = 1).
+    let mut state = plains();
+    let _opp_jace = put(&mut state, P1, "Jace, Vryn's Prodigy", Zone::Battlefield);
+    for _ in 0..4 {
+        put(&mut state, P0, "Plains", Zone::Graveyard);
+    }
+    let img = put(&mut state, P0, "Phantasmal Image", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, img, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, img), Zone::Battlefield);
+    assert_eq!(name_of(&state, img), "Jace, Vryn's Prodigy");
+    state.objects.get_mut(img).summoning_sick = false;
+    activate(&mut state, img, 0, &[]);
+    settle_first(&mut state);
+    assert_eq!(
+        zone(&state, img),
+        Zone::Exile,
+        "single-faced clone of Jace must stay exiled per CR 712.14a"
+    );
+    assert_eq!(name_of(&state, img), "Phantasmal Image");
+    assert_eq!(state.objects.get(img).v4.face_index, 0);
+
+    // 2. CR 701.28a / 712.9: Phantasmal Image copying Concealing Curtains
+    //    resolves the {2}{B} transform ability as a no-op (face_index stays 0).
+    let mut state = plains();
+    let _opp_curtains = put(&mut state, P1, "Concealing Curtains", Zone::Battlefield);
+    let img = put(&mut state, P0, "Phantasmal Image", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, img, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+        other => first_answer(other),
+    });
+    assert_eq!(name_of(&state, img), "Concealing Curtains");
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    activate(&mut state, img, 0, &[]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(img).v4.face_index,
+        0,
+        "non-DFC clone cannot transform in place"
+    );
+
+    // 3. Token copy of Concealing Curtains cannot transform in place.
+    let mut state = plains();
+    let tok = put(&mut state, P0, "Concealing Curtains", Zone::Battlefield);
+    state.objects.get_mut(tok).v4.is_token = true;
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    activate(&mut state, tok, 0, &[]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(tok).v4.face_index,
+        0,
+        "token copy cannot transform in place"
+    );
+}
+
 // ---- Jennifer Walters // The Sensational She-Hulk ------------------------------
 
 #[test]

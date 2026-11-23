@@ -192,9 +192,9 @@ pub(super) fn ward_cost_for(name: &str) -> &'static str {
 }
 
 /// Printed evergreen keywords on front faces, in printed order.
+/// Concealing Curtains's Defender is emitted by `build.rs` from its mechanics list.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
-        "Concealing Curtains" => &["Keywords::DEFENDER"],
         "Emeritus of Abundance" => &["Keywords::VIGILANCE"],
         "Emeritus of Ideation" => &["Keywords::FLYING"],
         _ => super::build_eternal_c8b_v1::keywords_for(name),

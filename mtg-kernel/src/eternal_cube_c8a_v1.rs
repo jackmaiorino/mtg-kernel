@@ -915,6 +915,7 @@ pub(crate) fn quote_allowed(
         live.owner,
         zone_change_count,
     ) || crate::eternal_e5a_v1::permissions::will_permission(state, source, live.owner)
+        || crate::muldrotha_v1::allowed(state, source, live.owner)
 }
 
 // ---- Execution ----------------------------------------------------------------------
@@ -943,9 +944,18 @@ pub(crate) fn execute(op: &C8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
-            // CR 701.28f: if this permanent already transformed since the
-            // ability was put on the stack, do nothing.
-            if live.v4.face_index != 0
+            // CR 701.28a / 701.28f / 712.9: only a real transforming double-faced
+            // permanent on its front face can transform in place; non-DFC clones
+            // and token copies do nothing.
+            let link = ObjectLinkV4 {
+                object: contract.source,
+                zone_change_count: live.zone_change_count,
+            };
+            let physical_def =
+                crate::standard_cards_v1::archived_copy_printing(state, link, live.card_def);
+            if live.v4.is_token
+                || live.v4.face_index != 0
+                || physical_def != Some(live.card_def)
                 || CARD_DEFS[usize::from(live.card_def)]
                     .transform_face
                     .is_none()
@@ -973,13 +983,16 @@ pub(crate) fn execute(op: &C8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
             let owner = live.owner;
             let is_token = live.v4.is_token;
-            let has_back_face = CARD_DEFS[usize::from(live.card_def)]
-                .transform_face
-                .is_some();
             event::propose_and_commit(
                 state,
                 ProposedEvent::zone_change(contract.source, Zone::Exile),
             );
+            // CR 712.14a: check the exiled card's own physical back face AFTER
+            // the zone change has unwound any copy effect so a single-faced
+            // clone stays in exile instead of returning face_index = 1.
+            let has_back_face = CARD_DEFS[usize::from(state.objects.get(contract.source).card_def)]
+                .transform_face
+                .is_some();
             if !is_token && has_back_face && state.objects.get(contract.source).zone == Zone::Exile
             {
                 event::propose_and_commit(

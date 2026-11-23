@@ -5633,14 +5633,33 @@ pub(crate) fn archived_copy_printing(
     let mut entered = state
         .eternal_v1
         .iter()
-        .flat_map(|e| &e.vintage.copies)
-        .filter(|copy| copy.host == host);
-    if let Some(copy) = entered.next() {
+        .flat_map(|e| {
+            e.vintage
+                .copies
+                .iter()
+                .map(|copy| (copy.host, copy.card_def, true))
+                .chain(
+                    e.c8b
+                        .permanent_copies
+                        .iter()
+                        .map(|copy| (copy.host, copy.card_def, false)),
+                )
+        })
+        .filter(|(copy_host, _, _)| *copy_host == host);
+    if let Some((_, card_def, is_metamorph)) = entered.next() {
         return (entered.next().is_none()
-            && CARD_DEFS
-                .get(usize::from(copy.card_def))
-                .is_some_and(|d| d.name == "Phyrexian Metamorph"))
-        .then_some(copy.card_def);
+            && CARD_DEFS.get(usize::from(card_def)).is_some_and(|d| {
+                if is_metamorph {
+                    d.name == "Phyrexian Metamorph"
+                } else {
+                    matches!(
+                        d.name,
+                        crate::eternal_cube_c8b_v1::PHANTASMAL_IMAGE
+                            | crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN
+                    )
+                }
+            }))
+        .then_some(card_def);
     }
     let key = (host.object, host.zone_change_count);
     let aegis = state
@@ -5656,6 +5675,12 @@ pub(crate) fn archived_copy_printing(
                 .copies
                 .iter()
                 .map(|copy| (copy.host, copy.card_def))
+                .chain(
+                    e.c8b
+                        .saheeli_copies
+                        .iter()
+                        .map(|copy| (copy.host, copy.card_def)),
+                )
                 .chain(
                     e.c8c
                         .absorbing_copies
