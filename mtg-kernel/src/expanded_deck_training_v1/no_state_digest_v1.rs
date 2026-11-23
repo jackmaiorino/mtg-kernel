@@ -917,6 +917,8 @@ fn convert_state_v1(
     let mut converted =
         NativePolicyValueTrainStateV1::from_snapshot_v1(base_state.model_v1().clone(), &candidate)
             .map_err(err)?;
+    // Preserve admission metadata when rebuilding the converted optimizer.
+    converted.loaded_card_semantics = base_state.loaded_card_semantics.clone();
     converted.set_training_math_v1(base_state.training_math_v1());
     ensure(
         converted.model_v1().parameter_manifest_sha256_v1()

@@ -663,6 +663,7 @@ pub(crate) fn load_expanded_update_inference_v1(
         value_coefficient,
         None,
     )
+    .map(|(identity, _)| identity)
 }
 
 pub(crate) fn load_expanded_update_bound_projection_v1(
@@ -670,25 +671,47 @@ pub(crate) fn load_expanded_update_bound_projection_v1(
     trajectories: &[PinnedFileV1],
     learning_rate: f32,
     value_coefficient: f32,
-    binding: Option<&str>,
-) -> Result<ExpandedInferenceIdentityV1, String> {
+    before_projection: Option<&CardSemanticsV1>,
+) -> Result<(ExpandedInferenceIdentityV1, Option<CardSemanticsV1>), String> {
     let inputs = CheckpointInputExpectationV1 {
         trajectories,
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
     };
     if source.s_learner.is_some() {
-        ensure(binding.is_none(), "card semantics refuses S learner")?;
-        return s_learner_v1::load_update_inference_v1(source, &inputs);
+        ensure(
+            before_projection.is_none(),
+            "card semantics refuses S learner",
+        )?;
+        return s_learner_v1::load_update_inference_v1(source, &inputs)
+            .map(|identity| (identity, None));
     }
     if source.w_learner.is_some() {
-        ensure(binding.is_none(), "card semantics refuses wide learner")?;
-        return w_learner_v1::load_update_inference_v1(source, &inputs);
+        ensure(
+            before_projection.is_none(),
+            "card semantics refuses wide learner",
+        )?;
+        return w_learner_v1::load_update_inference_v1(source, &inputs)
+            .map(|identity| (identity, None));
     }
     let bytes = read_pinned_shared_v1(&source.play_import)?;
     let (identity, section) = load_update_identity_from_source_bytes_v1(source, &bytes, &inputs)?;
+    let binding = before_projection.map(CardSemanticsV1::binding_v1);
     card_semantics_e1::validate_binding_v1(section.as_ref(), binding)?;
-    Ok(identity)
+    let mut projection = before_projection.cloned();
+    if let Some(projection) = &mut projection {
+        let expected_step = projection
+            .p_step_v1()
+            .checked_add(1)
+            .ok_or("card semantics step overflow")?;
+        let saved = section.as_ref().ok_or("missing card semantics section")?;
+        projection.restore_v1(saved)?;
+        ensure(
+            saved.p_step == expected_step,
+            "card semantics update does not advance exactly one P step",
+        )?;
+    }
+    Ok((identity, projection))
 }
 
 struct CheckpointInputExpectationV1<'a> {
@@ -2576,14 +2599,15 @@ pub(crate) struct LoadedRunInitialV1 {
 /// Validates a run's initial source under `math` and, when `want_carried` is
 /// true and the source is a verifiable net-8 learner, returns the single owned
 /// `CarriedLearnerV1` without cloning `NativePolicyValueTrainStateV1`.
-/// A run with `card_semantics` loads the train state either way: its
-/// checkpoint section is bound from that load (`card_semantics_e1`).
+/// A run with card semantics loads the train state either way: its
+/// checkpoint section is restored from that load into the run's projection,
+/// the table the run's validation loaded once (`card_semantics_e1`).
 #[inline(never)]
 pub(crate) fn load_initial_for_run_v1(
     source: &ExpandedModelSourceV1,
     math: TrainingMathV1,
     want_carried: bool,
-    card_semantics: Option<&CardSemanticsConfigV1>,
+    semantics: &mut Option<CardSemanticsV1>,
 ) -> Result<LoadedRunInitialV1, String> {
     let build_response = |policy: &FrozenPlayPolicyV1,
                           identity: ExpandedInferenceIdentityV1,
@@ -2602,11 +2626,11 @@ pub(crate) fn load_initial_for_run_v1(
     };
     if source.s_learner.is_some() || source.w_learner.is_some() {
         ensure(
-            card_semantics.is_none(),
+            semantics.is_none(),
             "card semantics refuses S and wide learners",
         )?;
     }
-    if (!want_carried && card_semantics.is_none())
+    if (!want_carried && semantics.is_none())
         || source.s_learner.is_some()
         || source.w_learner.is_some()
     {
@@ -2628,7 +2652,7 @@ pub(crate) fn load_initial_for_run_v1(
     };
     if delegates_to_inference {
         ensure(
-            card_semantics.is_none(),
+            semantics.is_none(),
             "card semantics requires an ordinary 33-tensor learner",
         )?;
         let (mut policy, identity) = load_expanded_inference_from_bytes_v1(source, &bytes)?;
@@ -2642,7 +2666,7 @@ pub(crate) fn load_initial_for_run_v1(
         &loaded.policy,
         &loaded.state,
         loaded.transfer.is_some(),
-        card_semantics,
+        semantics,
     )?;
     if source.checkpoint.is_some() {
         ensure(
@@ -6433,12 +6457,7 @@ fn execute_update_inner_v1(
                 loaded.transfer,
             ))
         })?;
-    let mut semantics = card_semantics_e1::load_training_v1(
-        &source,
-        card_semantics.as_ref(),
-        saved_semantics.as_ref(),
-    )?;
-    if semantics.is_some() {
+    if card_semantics.is_some() {
         ensure(
             transfer.is_none()
                 && policy.input_contract_v1().is_none()
@@ -6446,6 +6465,12 @@ fn execute_update_inner_v1(
             "card semantics requires an ordinary 33-tensor learner",
         )?;
     }
+
+    let mut semantics = card_semantics_e1::load_training_v1(
+        &source,
+        card_semantics.as_ref(),
+        saved_semantics.as_ref(),
+    )?;
 
     bind_training_math_v1(
         &source,

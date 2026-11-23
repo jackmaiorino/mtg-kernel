@@ -33,6 +33,7 @@ use crate::expanded_deck_training_v1::{
     DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
+use crate::native_policy_train_step_v1::card_projection_e1::CardSemanticsV1;
 use crate::sideboard::RegisteredDeckV1;
 use crate::training_math_v1::TrainingMathV1;
 use crate::w5_xact_v1::W5_XACT_VERSION_V1;
@@ -613,6 +614,11 @@ impl NativeExpandedTrainingRunV1 {
     }
 
     pub fn validate_v1(&self) -> Result<(), String> {
+        self.validate_with_projection_v1().map(|_| ())
+    }
+
+    fn validate_with_projection_v1(&self) -> Result<Option<CardSemanticsV1>, String> {
+        let mut projection = None;
         crate::expanded_deck_training_v1::validate_card_semantics_run_v1(
             self.card_semantics.as_ref(),
             &self.initial_source,
@@ -637,7 +643,7 @@ impl NativeExpandedTrainingRunV1 {
                 !self.record_format.is_v2(),
                 "card semantics requires record_format v1",
             )?;
-            config.load_v1()?;
+            projection = Some(config.load_v1()?);
             #[cfg(feature = "gpu-exact-v1")]
             check(
                 !crate::gpu_exact_v1::learner_installed_v1(),
@@ -967,7 +973,7 @@ impl NativeExpandedTrainingRunV1 {
                 }
             }
         }
-        Ok(())
+        Ok(projection)
     }
 }
 
@@ -1506,8 +1512,16 @@ pub(crate) fn validate_update(
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
     loss_selection: &ExpandedLossSelectionV1,
-    card_semantics_binding: Option<&str>,
-) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
+    before_projection: Option<&CardSemanticsV1>,
+) -> Result<
+    (
+        ExpandedModelSourceV1,
+        ExpandedInferenceIdentityV1,
+        Option<CardSemanticsV1>,
+    ),
+    String,
+> {
+    let card_semantics_binding = before_projection.map(CardSemanticsV1::binding_v1);
     let document = read_pin(update)?;
     crate::expanded_deck_training_v1::card_semantics_e1::validate_receipt_v1(
         &document,
@@ -1555,13 +1569,13 @@ pub(crate) fn validate_update(
         checkpoint: Some(checkpoint.clone()),
         ..source.clone()
     };
-    let after = scoped_v1(LoadRoleV1::UpdateValidation, || {
+    let (after, projection) = scoped_v1(LoadRoleV1::UpdateValidation, || {
         crate::expanded_deck_training_v1::load_expanded_update_bound_projection_v1(
             &next,
             trajectories,
             learning_rate,
             value_coefficient,
-            card_semantics_binding,
+            before_projection,
         )
     })?;
     // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
@@ -1578,7 +1592,7 @@ pub(crate) fn validate_update(
             && document["after_state_sha256"] == after.state_sha256,
         "update does not advance exactly one optimizer step",
     )?;
-    Ok((next, after))
+    Ok((next, after, projection))
 }
 
 /// An E run's update must carry its packet, bound into the new checkpoint with
@@ -1838,18 +1852,22 @@ struct ConvertedInitialV1 {
     carried: Option<CarriedLearnerV1>,
 }
 
-/// Never inlined: the loaded policy stays out of the driver's frame.
+/// Never inlined: the loaded policy stays out of the driver's frame. Run
+/// validation refuses card semantics for a converted source, so `projection`
+/// is None: a run-start training load refuses a checkpoint section through
+/// the same admission as an ordinary source (`card_semantics_e1`).
 #[inline(never)]
 fn load_converted_initial_v1(
     config: &NativeExpandedTrainingRunV1,
     want_carried: bool,
+    projection: &mut Option<CardSemanticsV1>,
 ) -> Result<ConvertedInitialV1, String> {
     let loaded = scoped_v1(LoadRoleV1::RunInitial, || {
         load_initial_for_run_v1(
             &config.initial_source,
             config.training_math,
             want_carried,
-            config.card_semantics.as_ref(),
+            projection,
         )
     })?;
     let record = loaded
@@ -1906,13 +1924,8 @@ pub fn run_native_expanded_training_v1(
     config: &NativeExpandedTrainingRunV1,
     max_new_iterations: Option<usize>,
 ) -> Result<Value, String> {
-    config.validate_v1()?;
+    let mut projection = config.validate_with_projection_v1()?;
     config.update_backend.require_compiled_v1()?;
-    let card_semantics_binding = config
-        .card_semantics
-        .as_ref()
-        .map(|c| c.load_v1().map(|s| s.section_v1().binding))
-        .transpose()?;
     // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
     // run is admitted before its first pinned read: a run without resident
     // reads is refused in a process that has them on instead of silently
@@ -1951,7 +1964,7 @@ pub fn run_native_expanded_training_v1(
     let want_initial_carried = !root.join("iterations/000000/complete.json").exists()
         && !root.join("completion.json").exists();
     let converted_initial = is_converted_source_v1(&config.initial_source)
-        .then(|| load_converted_initial_v1(config, want_initial_carried))
+        .then(|| load_converted_initial_v1(config, want_initial_carried, &mut projection))
         .transpose()?;
     let input_contract = converted_initial
         .as_ref()
@@ -2004,7 +2017,7 @@ pub fn run_native_expanded_training_v1(
                     &config.initial_source,
                     config.training_math,
                     want_initial_carried,
-                    config.card_semantics.as_ref(),
+                    &mut projection,
                 )
             })?;
             (loaded.identity, None, loaded.carried)
@@ -2083,7 +2096,7 @@ pub fn run_native_expanded_training_v1(
                 config.trajectory_batch_bytes_v1(),
             )?;
             let update = parse_pin(&receipt, "update")?;
-            let (next, after) = validate_update(
+            let (next, after, next_projection) = validate_update(
                 &update,
                 &current,
                 &trajectories,
@@ -2104,7 +2117,7 @@ pub fn run_native_expanded_training_v1(
                 config.training_math,
                 input_contract.as_ref(),
                 &config.loss_selection,
-                card_semantics_binding.as_deref(),
+                projection.as_ref(),
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -2119,6 +2132,7 @@ pub fn run_native_expanded_training_v1(
                 stopped_at_ledger = usec >= stop;
             }
             carried = None;
+            projection = next_projection;
             current = next;
             current_identity = after;
             history.push(current.clone());
@@ -2232,7 +2246,7 @@ pub fn run_native_expanded_training_v1(
                     config.training_math,
                     input_contract.as_ref(),
                     &config.loss_selection,
-                    card_semantics_binding.as_deref(),
+                    projection.as_ref(),
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -2350,7 +2364,7 @@ pub fn run_native_expanded_training_v1(
         };
         collection_validation_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
-        let (next, after) = validate_update(
+        let (next, after, next_projection) = validate_update(
             &update,
             &current,
             &trajectories,
@@ -2371,7 +2385,7 @@ pub fn run_native_expanded_training_v1(
             config.training_math,
             input_contract.as_ref(),
             &config.loss_selection,
-            card_semantics_binding.as_deref(),
+            projection.as_ref(),
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -2410,6 +2424,7 @@ pub fn run_native_expanded_training_v1(
         }
         receipts.push(publish(&directory, "complete.json", &receipt)?);
         carried = pending_carried.and_then(|pending| pending.commit_v1(&next, &after));
+        projection = next_projection;
         current = next;
         current_identity = after;
         history.push(current.clone());
@@ -3211,7 +3226,7 @@ mod tests {
             &config.initial_source,
             config.training_math,
             false,
-            config.card_semantics.as_ref(),
+            &mut None,
         )
         .unwrap()
         .identity;
@@ -6175,6 +6190,55 @@ mod tests {
             .unwrap_err()
             .contains("sha256"));
         assert!(!config.output_directory.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn projection_run_dispatch_refuses_s_wide_and_flat_v8() {
+        let (root, source, semantics, _) =
+            crate::expanded_deck_training_v1::card_semantics_e1::fixture_files_v1("run-gates");
+        for case in ["s-learner", "w-learner", "flat-v8"] {
+            let mut config = schedule();
+            config.initial_source = source.clone();
+            config.card_semantics = Some(semantics.clone());
+            config.output_directory = root.join(case);
+            config.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+                pregame_advantage: Default::default(),
+            };
+            if case == "s-learner" {
+                config.initial_source.s_learner = Some(Box::new(
+                    crate::expanded_deck_training_v1::s_learner_v1::SLearnerSourceV1 {
+                        schema: crate::expanded_deck_training_v1::s_learner_v1::S_LEARNER_SOURCE_SCHEMA_V1.into(),
+                        initial: source.play_import.clone(),
+                    }));
+            } else if case == "w-learner" {
+                config.initial_source.w_learner = Some(Box::new(
+                    crate::expanded_deck_training_v1::w_learner_v1::WLearnerSourceV1 {
+                        schema: crate::expanded_deck_training_v1::w_learner_v1::W_LEARNER_SOURCE_SCHEMA_V1.into(),
+                        initial: source.play_import.clone(),
+                    }));
+            } else {
+                config
+                    .initial_source
+                    .feature_transfer
+                    .expected_feature_contract_digest =
+                    crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8.into();
+                config
+                    .initial_source
+                    .feature_transfer
+                    .expected_feature_encoding_digest =
+                    crate::native_flat_tensorizer_v8::FEATURE_ENCODING_DIGEST_V8.into();
+            }
+            assert_eq!(
+                run_native_expanded_training_v1(&config, Some(1)).unwrap_err(),
+                "card semantics requires ordinary net8 CPU GAE",
+                "{case}"
+            );
+            assert!(!config.output_directory.exists());
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

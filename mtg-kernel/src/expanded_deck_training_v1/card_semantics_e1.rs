@@ -132,7 +132,11 @@ pub fn tool_json_v1(text: &str) -> Result<Value, String> {
                     && !flat_v8_requested_v1(&source)?,
                 "fork-import requires an ordinary 33-tensor source",
             )?;
-            let (_, state) = initialize_any_math_v1(&source)?;
+            let (policy, state, transfer) = initialize_with_transfer_context(&source)?;
+            ensure(
+                transfer.is_none() && policy.input_contract_v1().is_none(),
+                "fork-import requires an ordinary input contract without registry transfer",
+            )?;
             ensure(
                 initial_source.checkpoint.is_none()
                     && initial_source.s_learner.is_none()
@@ -326,14 +330,16 @@ fn readback_v1(
 /// Run preflight reuses the source's normal checkpoint load and source cache:
 /// the run's initial load (`load_initial_for_run_v1`) passes the policy and
 /// train state it loaded, with whether the source is a registry transfer.
+/// The run's projection, loaded once by its validation, takes the
+/// checkpoint's section.
 pub(crate) fn admit_run_initial_v1(
     source: &ExpandedModelSourceV1,
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
     transfer: bool,
-    config: Option<&CardSemanticsConfigV1>,
+    semantics: &mut Option<CardSemanticsV1>,
 ) -> Result<(), String> {
-    if config.is_some() {
+    if semantics.is_some() {
         ensure(
             !transfer
                 && policy.input_contract_v1().is_none()
@@ -341,7 +347,11 @@ pub(crate) fn admit_run_initial_v1(
             "card semantics requires an ordinary 33-tensor learner",
         )?;
     }
-    load_training_v1(source, config, state.loaded_card_semantics.as_ref())?;
+    *semantics = bind_training_v1(
+        semantics.clone(),
+        state.loaded_card_semantics.as_ref(),
+        source.checkpoint.is_some(),
+    )?;
     Ok(())
 }
 
@@ -350,9 +360,9 @@ pub(crate) fn admit_run_initial_v1(
 pub(crate) fn load_run_initial_v1(
     source: &ExpandedModelSourceV1,
     math: TrainingMathV1,
-    config: Option<&CardSemanticsConfigV1>,
+    semantics: &mut Option<CardSemanticsV1>,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
-    load_initial_for_run_v1(source, math, true, config).map(|loaded| loaded.identity)
+    load_initial_for_run_v1(source, math, true, semantics).map(|loaded| loaded.identity)
 }
 
 /// Bind both the update receipt and the loaded checkpoint to the run. The
@@ -484,12 +494,54 @@ pub(crate) fn fixture_plain_checkpoint_v1(
 
 #[cfg(test)]
 pub(crate) fn fixture_table_v1(root: &Path) -> CardSemanticsConfigV1 {
+    fixture_table_for_cards_v1(root, [8, 58, 96, 120])
+}
+
+/// The fixture table's four rows on `cards`. Main plays different games
+/// from the release line, so its end-to-end update test passes cards its
+/// own game's learner decisions read.
+#[cfg(test)]
+pub(crate) fn fixture_table_for_cards_v1(root: &Path, cards: [u16; 4]) -> CardSemanticsConfigV1 {
+    let rows: Vec<Value> = cards
+        .into_iter()
+        .zip([[2, 1], [-1, 0], [1, 2], [0, -1]])
+        .map(|(card, vector)| json!({"card_id":card,"vector":vector}))
+        .collect();
     let table = json!({"schema":"card_semantics_table/v1", "kernel_carddb_hash":format!("{KERNEL_CARDDB_HASH:016x}"),
-        "vector_width":2, "card_count":2, "cards":[{"card_id":0,"vector":[2,1]},{"card_id":1,"vector":[-1,0]}]});
+        "vector_width":2, "card_count":4, "cards":rows});
     let pin = publish_json(root, "table.json", &table).unwrap();
     CardSemanticsConfigV1 {
         table_path: pin.path,
         table_sha256: pin.sha256,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_update_v1(
+    source: &ExpandedModelSourceV1,
+    config: &CardSemanticsConfigV1,
+    output_directory: PathBuf,
+) -> ExpandedTrainingCommandV1 {
+    ExpandedTrainingCommandV1::Update {
+        source: source.clone(),
+        // Admission must precede reading any trajectory. If a gate vanishes,
+        // this valid pin to a non-trajectory fails with a different error.
+        trajectories: vec![source.play_import.clone()],
+        card_semantics: Some(config.clone()),
+        learning_rate: 0.0001,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage: Default::default(),
+        },
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format: CheckpointRecordFormatV1::V1,
+        output_directory,
     }
 }
 
@@ -571,6 +623,81 @@ mod tests {
         )
         .is_err());
     }
+    #[test]
+    fn update_dispatch_refuses_s_wide_and_flat_v8() {
+        let (root, source, config, _) = fixture_files_v1("dispatch-refusals");
+        for case in ["s-learner", "w-learner", "flat-v8"] {
+            let output = root.join(case);
+            let mut command = fixture_update_v1(&source, &config, output.clone());
+            if let ExpandedTrainingCommandV1::Update { source, .. } = &mut command {
+                match case {
+                    "s-learner" => {
+                        source.s_learner = Some(Box::new(s_learner_v1::SLearnerSourceV1 {
+                            schema: s_learner_v1::S_LEARNER_SOURCE_SCHEMA_V1.into(),
+                            initial: source.play_import.clone(),
+                        }))
+                    }
+                    "w-learner" => {
+                        source.w_learner = Some(Box::new(w_learner_v1::WLearnerSourceV1 {
+                            schema: w_learner_v1::W_LEARNER_SOURCE_SCHEMA_V1.into(),
+                            initial: source.play_import.clone(),
+                        }))
+                    }
+                    _ => {
+                        source.feature_transfer = FrozenPlayObservationTransferV3 {
+                            expected_feature_contract_digest:
+                                crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8.into(),
+                            expected_feature_encoding_digest:
+                                crate::native_flat_tensorizer_v8::FEATURE_ENCODING_DIGEST_V8.into(),
+                        }
+                    }
+                }
+            }
+            // Both public update routes must reach validate_update_v1. Check
+            // its exact error so a later, unrelated refusal cannot pass.
+            let plain = serde_json::to_value(&command).unwrap();
+            let mut prepared = plain.clone();
+            prepared["mode"] = json!("update_prepared");
+            prepared["preparation_workers"] = json!(2);
+            prepared["max_prepared_tensor_mebibytes"] =
+                json!(DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES);
+            for document in [plain, prepared] {
+                let command = serde_json::from_value(document).unwrap();
+                assert_eq!(
+                    execute_v1(command).unwrap_err(),
+                    "card semantics requires ordinary net8 CPU GAE",
+                    "{case}"
+                );
+                assert!(!output.exists());
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registry_transfer_is_refused_by_update_and_run_initial_load() {
+        let transfer = fresh_registry_transfer_source::tests::fixture();
+        let (root, _, config, _) = fixture_files_v1("transfer-refusal");
+        let (_, _, context) = initialize_with_transfer_context(&transfer.source).unwrap();
+        assert!(context.is_some());
+        let output = root.join("update");
+        assert_eq!(
+            execute_v1(fixture_update_v1(&transfer.source, &config, output.clone())).unwrap_err(),
+            "card semantics requires an ordinary 33-tensor learner"
+        );
+        assert!(!output.exists());
+        assert_eq!(
+            load_run_initial_v1(
+                &transfer.source,
+                TrainingMathV1::PlatformLibm,
+                &mut Some(config.load_v1().unwrap())
+            )
+            .unwrap_err(),
+            "card semantics requires an ordinary 33-tensor learner"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn write_saved(
         root: &Path,
         name: &str,
@@ -596,6 +723,10 @@ mod tests {
         saved.parameters[0].values[16] = 0.25f32.to_bits();
         saved.first_moments[0].values[16] = 0.5f32.to_bits();
         saved.second_moments[0].values[16] = 0.25f32.to_bits();
+        // Token 2 is unlisted: all its weights and moments must survive.
+        saved.parameters[0].values[32..48].fill((-0.375f32).to_bits());
+        saved.first_moments[0].values[32..48].fill((-0.125f32).to_bits());
+        saved.second_moments[0].values[32..48].fill(0.0625f32.to_bits());
         let source = write_saved(&root, "parent.json", &initial, &mut saved);
         let fork = tool_json_v1(
             &json!({"mode":"fork-import", "source":source,
@@ -618,6 +749,20 @@ mod tests {
         );
         assert_eq!(&a.first_moments[0].values[16..32], &[0; 16]);
         assert_eq!(&a.second_moments[0].values[16..32], &[0; 16]);
+        for output in [&a, &b] {
+            assert_eq!(
+                &output.parameters[0].values[32..48],
+                &saved.parameters[0].values[32..48]
+            );
+            assert_eq!(
+                &output.first_moments[0].values[32..48],
+                &saved.first_moments[0].values[32..48]
+            );
+            assert_eq!(
+                &output.second_moments[0].values[32..48],
+                &saved.second_moments[0].values[32..48]
+            );
+        }
         let section = b.card_semantics.as_ref().unwrap();
         assert_eq!(section.p_step, 0);
         assert!(section
@@ -726,16 +871,25 @@ mod tests {
     fn production_loaders_refuse_missing_off_binding_and_schema_even_on_cache_hits() {
         let (root, initial, config, mut saved) = fixture_files_v1("admission");
         let plain = write_saved(&root, "plain.json", &initial, &mut saved);
-        let error = load_run_initial_v1(&plain, TrainingMathV1::PlatformLibm, Some(&config))
-            .err()
-            .unwrap();
+        let error = load_run_initial_v1(
+            &plain,
+            TrainingMathV1::PlatformLibm,
+            &mut Some(config.load_v1().unwrap()),
+        )
+        .err()
+        .unwrap();
         assert!(error.contains("section missing"));
         saved.card_semantics = Some(config.load_v1().unwrap().section_v1());
         let enabled = write_saved(&root, "enabled.json", &initial, &mut saved);
         for _ in 0..2 {
-            load_run_initial_v1(&enabled, TrainingMathV1::PlatformLibm, Some(&config)).unwrap();
+            load_run_initial_v1(
+                &enabled,
+                TrainingMathV1::PlatformLibm,
+                &mut Some(config.load_v1().unwrap()),
+            )
+            .unwrap();
             assert!(
-                load_run_initial_v1(&enabled, TrainingMathV1::PlatformLibm, None)
+                load_run_initial_v1(&enabled, TrainingMathV1::PlatformLibm, &mut None)
                     .err()
                     .unwrap()
                     .contains("requires")
@@ -767,24 +921,43 @@ mod tests {
                 section.schema = "wrong".into();
             }
             let source = write_saved(&root, &format!("{field}.json"), &initial, &mut invalid);
-            assert!(
-                load_run_initial_v1(&source, TrainingMathV1::PlatformLibm, Some(&config))
-                    .err()
-                    .unwrap()
-                    .contains("binding")
-            );
+            assert!(load_run_initial_v1(
+                &source,
+                TrainingMathV1::PlatformLibm,
+                &mut Some(config.load_v1().unwrap())
+            )
+            .err()
+            .unwrap()
+            .contains("binding"));
         }
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn recovered_update_binds_both_receipt_and_checkpoint_to_run() {
+    fn recovered_update_checks_receipt_binding_projection_state_and_age() {
         let (root, source, config, mut saved) = fixture_files_v1("recovery");
         let (_, before) =
             load_expanded_inference_bound_v1(&source, TrainingMathV1::PlatformLibm).unwrap();
         saved.adam_step = 1;
         saved.trajectories.clear();
-        let section = config.load_v1().unwrap().section_v1();
+        let mut before_projection = config.load_v1().unwrap();
+        let mut section = before_projection.section_v1();
+        section.p_step = 7;
+        before_projection.restore_v1(&section).unwrap();
+        let mut prior = saved.clone();
+        prior.adam_step = 0;
+        prior.card_semantics = Some(section.clone());
+        let prior_source = write_saved(&root, "before.json", &source, &mut prior);
+        let mut loaded_projection = Some(config.load_v1().unwrap());
+        load_run_initial_v1(
+            &prior_source,
+            TrainingMathV1::PlatformLibm,
+            &mut loaded_projection,
+        )
+        .unwrap();
+        let before_projection = loaded_projection.unwrap();
+        assert_eq!(before_projection.section_v1().p_step, 7);
+        section.p_step = 8;
         // The receipt always matches the declared run. Substitution of a
         // valid, correctly hashed checkpoint must still fail admission.
         for (case, run_binding, checkpoint_binding) in [
@@ -802,6 +975,26 @@ mod tests {
                 Some(section.binding.as_str()),
                 Some(section.binding.as_str()),
             ),
+            (
+                "stale-step",
+                Some(section.binding.as_str()),
+                Some(section.binding.as_str()),
+            ),
+            (
+                "empty-weight",
+                Some(section.binding.as_str()),
+                Some(section.binding.as_str()),
+            ),
+            (
+                "nan-weight",
+                Some(section.binding.as_str()),
+                Some(section.binding.as_str()),
+            ),
+            (
+                "negative-second",
+                Some(section.binding.as_str()),
+                Some(section.binding.as_str()),
+            ),
         ] {
             saved.card_semantics = checkpoint_binding.map(|binding| CardSemanticsSectionV1 {
                 binding: binding.into(),
@@ -810,10 +1003,24 @@ mod tests {
             if case == "schema" {
                 saved.card_semantics.as_mut().unwrap().schema = "wrong".into();
             }
+            if let Some(saved) = &mut saved.card_semantics {
+                match case {
+                    "stale-step" => saved.p_step = 7,
+                    "empty-weight" => saved.weight.clear(),
+                    "nan-weight" => saved.weight[0] = f32::NAN.to_bits(),
+                    "negative-second" => saved.second_moments[0] = (-1.0f32).to_bits(),
+                    _ => {}
+                }
+            }
             let next = write_saved(&root, &format!("cp-{case}.json"), &source, &mut saved);
             let (_, after) =
                 load_expanded_inference_bound_v1(&next, TrainingMathV1::PlatformLibm).unwrap();
-            let mut document = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":[],
+            let run_source = if run_binding.is_some() {
+                &prior_source
+            } else {
+                &source
+            };
+            let mut document = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":run_source, "trajectories":[],
                 "checkpoint":next.checkpoint, "before_state_sha256":before.state_sha256,
                 "after_state_sha256":after.state_sha256,"adam_step":1,"numerical_backend":"native-cpu-sequential"});
             if let Some(binding) = run_binding {
@@ -823,7 +1030,7 @@ mod tests {
             let validate = |pin: &PinnedFileV1| {
                 crate::native_expanded_training_run_v1::validate_update(
                     pin,
-                    &source,
+                    run_source,
                     &[],
                     &before,
                     f32::from_bits(saved.learning_rate_bits),
@@ -840,17 +1047,21 @@ mod tests {
                     TrainingMathV1::PlatformLibm,
                     None,
                     &ExpandedLossSelectionV1::TerminalReinforceValueV3,
-                    run_binding,
+                    run_binding.map(|_| &before_projection),
                 )
             };
             let result = validate(&pin);
             if case.ends_with("ok") {
-                result.unwrap();
+                let (_, _, restored) = result.unwrap();
+                assert_eq!(restored.map(|p| p.section_v1()), saved.card_semantics);
             } else {
-                assert!(
-                    result.err().unwrap().contains("card semantics binding"),
-                    "{case}"
-                );
+                let error = result.err().unwrap();
+                let expected = match case {
+                    "stale-step" => "exactly one P step",
+                    "empty-weight" | "nan-weight" | "negative-second" => "rules-pathway",
+                    _ => "card semantics binding",
+                };
+                assert!(error.contains(expected), "{case}: {error}");
             }
             for (label, invalid) in [("null", Value::Null), ("wrong", json!({"binding":"wrong"}))] {
                 document["card_semantics"] = invalid;
@@ -877,32 +1088,35 @@ mod tests {
     }
 
     /// The loaded-source cache serves update validation an identity without
-    /// a train state. Its entry keeps the section, so a hit still checks it.
+    /// a train state. Its entry keeps the whole section, so a hit still
+    /// checks it and restores and ages the run's projection from it.
     #[test]
     fn update_validation_checks_the_section_on_an_identity_only_cache_hit() {
         let (root, initial, config, mut saved) = fixture_files_v1("identity-hit");
-        let section = config.load_v1().unwrap().section_v1();
+        let projection = config.load_v1().unwrap();
+        let mut section = projection.section_v1();
+        section.p_step = 1;
         saved.card_semantics = Some(section.clone());
         let enabled = write_saved(&root, "enabled.json", &initial, &mut saved);
         // An inference load keeps a policy-only entry: no train state.
         load_expanded_inference_bound_v1(&enabled, TrainingMathV1::PlatformLibm).unwrap();
-        let load = |binding: Option<&str>| {
+        let load = |before: Option<&CardSemanticsV1>| {
             let hits = loaded_source_cache_v1::matches_for_test_v1();
             let result = load_expanded_update_bound_projection_v1(
                 &enabled,
                 &saved.trajectories,
                 f32::from_bits(saved.learning_rate_bits),
                 f32::from_bits(saved.value_coefficient_bits),
-                binding,
+                before,
             );
             assert_eq!(loaded_source_cache_v1::matches_for_test_v1(), hits + 1);
             result
         };
-        load(Some(&section.binding)).unwrap();
-        for binding in [None, Some("different")] {
-            assert!(load(binding)
-                .unwrap_err()
-                .contains("card semantics binding"));
+        let (_, restored) = load(Some(&projection)).unwrap();
+        assert_eq!(restored.map(|p| p.section_v1()), Some(section));
+        let other = CardSemanticsV1::fixture_v1();
+        for before in [None, Some(&other)] {
+            assert!(load(before).unwrap_err().contains("card semantics binding"));
         }
         fs::remove_dir_all(root).unwrap();
     }
