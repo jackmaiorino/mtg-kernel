@@ -7389,7 +7389,14 @@ fn execute_update_inner_v1(
         feature_encoding_digest: policy.feature_identity_v1().feature_encoding_digest.into(),
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         source_import: policy.identity_v1().clone(),
-        state_sha256: checkpoint_hash_v1(&state.state_sha256_v1().map_err(err)?, semantics.as_ref().map(CardSemanticsV1::section_v1).as_ref())?,
+        // Flag off: the digest computed above, unchanged and not recomputed.
+        state_sha256: match &semantics {
+            None => after.clone(),
+            Some(semantics) => checkpoint_hash_v1(
+                &state.state_sha256_v1().map_err(err)?,
+                Some(&semantics.section_v1()),
+            )?,
+        },
         card_semantics: semantics.as_ref().map(CardSemanticsV1::section_v1),
         e_supported:e_supported.as_ref().map(|options|json!({
             "continuation":e_supported_teacher_v1::continuation_identity(options),"packet":e_packet_pin})),

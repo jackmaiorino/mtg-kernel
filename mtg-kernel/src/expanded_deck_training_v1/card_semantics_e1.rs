@@ -58,6 +58,8 @@ fn bind_training_v1(
     Ok(state)
 }
 
+// A one-shot tool command; the size difference between variants is irrelevant.
+#[allow(clippy::large_enum_variant)]
 #[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "kebab-case", deny_unknown_fields)]
 enum ToolV1 {
