@@ -44,7 +44,7 @@ TRAINER_TAIL_LEAN_SOURCE_V1 = "553018fe4cafd58d352b0121d5b1ad16da1cc8c5"
 # The followed-trainer branch on the release line (this guard branch only).
 FOLLOW_SOURCE_V1 = "46f7ecfec16dd0483f14865ff5a1af37fe6c3420"
 # The card semantics e1 trainer branch on the release line, PR 888 (this guard branch only).
-CARD_SEMANTICS_E1_SOURCE_V1 = "e1ecbdc25aeaab711ea4b92ef9fed143bff31127"
+CARD_SEMANTICS_E1_SOURCE_V1 = "54e9dff472951390caafa7fbd7885f0f09dcfe92"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
