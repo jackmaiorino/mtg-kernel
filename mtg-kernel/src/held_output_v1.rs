@@ -122,6 +122,26 @@ impl HeldOutputV1 {
         eprintln!("{line}");
     }
 
+    /// A panic's message, from the panic hook: as [`Self::line_v1`], except
+    /// that a released holder writes it without ever panicking. A failed
+    /// `eprintln!` there would panic inside the hook, which aborts the
+    /// process instead of unwinding to the worker's `catch_unwind`; so a
+    /// failed write is ignored, as the standard hook ignores it.
+    fn panic_line_v1(&self, text: String) {
+        self.with_state_v1(|state| match state {
+            StateV1::Holding(lines) => lines.push(text),
+            StateV1::Released => {
+                #[cfg(test)]
+                if self.record_v1(HeldEventV1::Written(text.clone())) {
+                    return;
+                }
+                use std::io::Write;
+                let _ = writeln!(std::io::stderr().lock(), "{text}");
+            }
+            StateV1::Discarded => {}
+        });
+    }
+
     /// Runs `f` on the state under its lock, marked for the panic hook.
     fn with_state_v1<R>(&self, f: impl FnOnce(&mut StateV1) -> R) -> R {
         let _locked = LockedV1::enter_v1();
@@ -226,7 +246,7 @@ fn install_panic_hook_v1() {
         std::panic::set_hook(Box::new(move |info| {
             let locked = LOCKED.try_with(Cell::get).unwrap_or(true);
             match current_v1().filter(|_| !locked) {
-                Some(holder) => holder.line_v1(panic_text_v1(info)),
+                Some(holder) => holder.panic_line_v1(panic_text_v1(info)),
                 None => standard(info),
             }
         }));

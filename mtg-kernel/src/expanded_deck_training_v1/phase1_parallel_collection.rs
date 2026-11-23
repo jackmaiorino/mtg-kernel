@@ -583,6 +583,77 @@ mod tests {
         assert!(result.unwrap_err().contains("worker panicked"));
     }
 
+    /// The environment variable that runs
+    /// `phase1_parallel_jobs_failed_stderr_child_v1` in its child process.
+    const FAILED_STDERR_CHILD_ENV_V1: &str = "MTG_KERNEL_PARALLEL_JOBS_FAILED_STDERR_CHILD_V1";
+
+    /// A worker that panics after its held output was released
+    /// (`held_output_v1`), while every write to stderr fails, returns the
+    /// ordinary worker failure: reporting the panic never panics, which
+    /// inside the panic hook would abort the process. The child process
+    /// (`phase1_parallel_jobs_failed_stderr_child_v1`) gets a stderr pipe
+    /// whose reading end this test closes at once.
+    #[test]
+    fn phase1_parallel_jobs_report_a_held_panic_without_panicking_when_stderr_fails() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "expanded_deck_training_v1::phase1_parallel_collection::tests::phase1_parallel_jobs_failed_stderr_child_v1",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(FAILED_STDERR_CHILD_ENV_V1, "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Every write to the child's stderr fails from here on.
+        drop(child.stderr.take());
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "child failed or aborted ({}):\n{stdout}",
+            output.status
+        );
+    }
+
+    /// The child of
+    /// `phase1_parallel_jobs_report_a_held_panic_without_panicking_when_stderr_fails`.
+    /// Skipped unless the parent set its variable.
+    #[test]
+    #[ignore = "run by phase1_parallel_jobs_report_a_held_panic_without_panicking_when_stderr_fails in a child process"]
+    fn phase1_parallel_jobs_failed_stderr_child_v1() {
+        use std::io::Write;
+        if std::env::var(FAILED_STDERR_CHILD_ENV_V1).as_deref() != Ok("1") {
+            return;
+        }
+        // The parent closes the pipe's reading end once this process has
+        // started: wait until a write to stderr fails.
+        let failing = (0..1_000).any(|_| {
+            let failed = writeln!(std::io::stderr().lock()).is_err();
+            if !failed {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            failed
+        });
+        assert!(failing, "stderr never failed");
+        let holder = crate::held_output_v1::HeldOutputV1::new_v1();
+        holder.release_v1();
+        let _held = crate::held_output_v1::install_v1(&holder);
+        let result = ordered_parallel_jobs_v1(
+            vec![(); 2],
+            4,
+            |_, index| {
+                assert_ne!(index, 0, "deliberate panic");
+                Ok(index)
+            },
+            || (),
+        );
+        assert!(result.unwrap_err().contains("worker panicked"));
+    }
+
     #[test]
     fn phase1_parallel_jobs_reject_invalid_dimensions() {
         for (workers, jobs) in [(0, 1), (2, 1), (1, 0)] {

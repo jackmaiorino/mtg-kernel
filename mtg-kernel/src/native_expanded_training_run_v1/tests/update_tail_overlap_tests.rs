@@ -17,8 +17,8 @@ use crate::held_output_v1::HeldEventV1;
 use crate::native_expanded_training_run_v1::follow_v1::FollowEndV1;
 use crate::native_expanded_training_run_v1::update_tail_overlap_v1::{
     capture_refusal_v1, collected_for_test_v1, gate_opened_for_test_v1, hold_at_gate_for_test_v1,
-    record_held_output_for_test_v1, refuse_captures_v1, CAPTURE_VARIABLES_V1,
-    LEDGER_STOP_REFUSAL_V1, VALIDATION_REFUSAL_V1,
+    record_held_output_for_test_v1, refuse_captures_v1, LEDGER_STOP_REFUSAL_V1,
+    VALIDATION_REFUSAL_V1,
 };
 use std::sync::{Arc, Mutex};
 
@@ -743,10 +743,21 @@ fn update_tail_overlap_flat_v7_and_v8_runs_publish_the_serial_runs_bytes() {
 /// its child process, with the child's role as its value.
 const CHILD_ENV_V1: &str = "MTG_KERNEL_UPDATE_TAIL_OVERLAP_CHILD_V1";
 
+/// The environment variable that names, for a child test, the config file
+/// its parent wrote.
+const CHILD_CONFIG_ENV_V1: &str = "MTG_KERNEL_UPDATE_TAIL_OVERLAP_CHILD_CONFIG_V1";
+
+/// The environment variable that names, for a child test, where it leaves
+/// its result for its parent.
+const CHILD_RESULT_ENV_V1: &str = "MTG_KERNEL_UPDATE_TAIL_OVERLAP_CHILD_RESULT_V1";
+
 /// Runs the ignored test `name` of this module alone in a new process of this
-/// test binary, with `CHILD_ENV_V1` set to `role`, and asserts that it passed.
-fn run_child_v1(name: &str, role: &str) {
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+/// test binary, with `CHILD_ENV_V1` set to `role` and every variable of
+/// `paths` set to its path, and asserts that it passed.
+fn run_child_v1(name: &str, role: &str, paths: &[(&str, &Path)]) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.envs(paths.iter().map(|&(variable, path)| (variable, path)));
+    let output = command
         .args([
             format!("native_expanded_training_run_v1::tests::update_tail_overlap_tests::{name}")
                 .as_str(),
@@ -766,22 +777,6 @@ fn run_child_v1(name: &str, role: &str) {
     );
 }
 
-/// The run of the sealed and resident test.
-fn sealed_resident_config_v1() -> NativeExpandedTrainingRunV1 {
-    let mut serial = overlap_config_v1("overlap-sealed-resident", 3);
-    serial.record_envelope = crate::expanded_deck_training_v1::RecordEnvelopeV1::Zstd1;
-    serial.verified_reads = VerifiedReadsV1::Resident;
-    serial.validate_v1().unwrap();
-    serial
-}
-
-/// Where the sealed and resident child of role `role` leaves its result.
-fn sealed_resident_result_path_v1(role: &str) -> PathBuf {
-    sealed_resident_config_v1()
-        .output_directory
-        .with_file_name(format!("result-{role}.json"))
-}
-
 /// Invariant 1 (bytes) in the modes the C-recipe chains run: a three-update
 /// run with sealed records (`record_envelope: zstd1`) and resident reads
 /// (`verified_reads: resident`) publishes with the key the bytes it publishes
@@ -790,23 +785,38 @@ fn sealed_resident_result_path_v1(role: &str) -> PathBuf {
 /// (`update_tail_overlap_sealed_resident_child_v1`): the serial run's cache
 /// never serves the overlapped run, whose collections load each new
 /// checkpoint while it is absent on disk (the gate hold), so only from the
-/// pending publication.
+/// pending publication. The fixture's root is named after the process, so
+/// the parent makes the one config, with its sources, and gives both
+/// children its file and their result paths.
 #[test]
 fn update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads() {
     use crate::expanded_deck_training_v1::record_envelope_v1::is_sealed_v1;
-    let serial = sealed_resident_config_v1();
+    let mut serial = overlap_config_v1("overlap-sealed-resident", 3);
+    serial.record_envelope = crate::expanded_deck_training_v1::RecordEnvelopeV1::Zstd1;
+    serial.verified_reads = VerifiedReadsV1::Resident;
+    serial.validate_v1().unwrap();
     let directory = serial.output_directory.clone();
     let reference = directory.with_file_name("run-serial");
+    let config_path = directory.with_file_name("sealed-resident-config.json");
     let _ = fs::remove_dir_all(&directory);
     let _ = fs::remove_dir_all(&reference);
-    let read_result = |role: &str| -> Value {
-        let path = sealed_resident_result_path_v1(role);
-        let result = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        fs::remove_file(&path).unwrap();
+    fs::write(&config_path, serde_json::to_vec(&serial).unwrap()).unwrap();
+    let run_child = |role: &str| -> Value {
+        let result_path = directory.with_file_name(format!("result-{role}.json"));
+        let _ = fs::remove_file(&result_path);
+        run_child_v1(
+            "update_tail_overlap_sealed_resident_child_v1",
+            role,
+            &[
+                (CHILD_CONFIG_ENV_V1, &config_path),
+                (CHILD_RESULT_ENV_V1, &result_path),
+            ],
+        );
+        let result = serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+        fs::remove_file(&result_path).unwrap();
         result
     };
-    run_child_v1("update_tail_overlap_sealed_resident_child_v1", "serial");
-    let serial_result = read_result("serial");
+    let serial_result = run_child("serial");
     assert_eq!(serial_result["complete"], true);
     // The records are sealed. Read through the receipts' pins, so before
     // the tree moves.
@@ -814,8 +824,7 @@ fn update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads()
     assert!(is_sealed_v1(&fs::read(checkpoint.path).unwrap()));
     let serial_states = after_states_v1(&serial_result);
     fs::rename(&directory, &reference).unwrap();
-    run_child_v1("update_tail_overlap_sealed_resident_child_v1", "overlapped");
-    let result = read_result("overlapped");
+    let result = run_child("overlapped");
     assert_eq!(result["complete"], true);
     assert_eq!(result["actual_identity"], serial_result["actual_identity"]);
     assert_eq!(after_states_v1(&result), serial_states);
@@ -823,21 +832,26 @@ fn update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads()
     assert!(!directory.join("restarts.log").exists());
     fs::remove_dir_all(&directory).unwrap();
     fs::remove_dir_all(&reference).unwrap();
+    fs::remove_file(&config_path).unwrap();
 }
 
 /// A child of
 /// `update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads`:
 /// with role `serial` the run without the key, with role `overlapped` the
 /// run with it, every update held at its handoff until its collection has
-/// played a game. Each runs in a new process that reads resident and leaves
-/// its result beside the run. Skipped unless the parent set its role.
+/// played a game. Each runs in a new process that reads resident, on the
+/// config its parent wrote, and leaves its result where its parent said.
+/// Skipped unless the parent set its role.
 #[test]
 #[ignore = "run by update_tail_overlap_keeps_every_byte_with_sealed_records_and_resident_reads in a child process"]
 fn update_tail_overlap_sealed_resident_child_v1() {
     let Ok(role) = std::env::var(CHILD_ENV_V1) else {
         return;
     };
-    let serial = sealed_resident_config_v1();
+    let path = |variable: &str| PathBuf::from(std::env::var_os(variable).unwrap());
+    let serial: NativeExpandedTrainingRunV1 =
+        serde_json::from_slice(&fs::read(path(CHILD_CONFIG_ENV_V1)).unwrap()).unwrap();
+    serial.validate_v1().unwrap();
     let (result, prefetched) = match role.as_str() {
         "serial" => run_counted_v1(&serial, None, || {}),
         "overlapped" => run_counted_v1(&overlapped_v1(&serial), None, hold_at_gate_for_test_v1),
@@ -852,7 +866,7 @@ fn update_tail_overlap_sealed_resident_child_v1() {
     );
     assert!(verified_bytes_cache_v1::global_v1().resident_v1());
     fs::write(
-        sealed_resident_result_path_v1(&role),
+        path(CHILD_RESULT_ENV_V1),
         serde_json::to_vec(&result).unwrap(),
     )
     .unwrap();
@@ -1063,7 +1077,7 @@ fn update_tail_overlap_reads_the_ledger_where_the_serial_run_does_and_refuses_it
 }
 
 /// Sol 1 of the second review (diagnostic captures): a run with the key is
-/// refused while any capture variable of `CAPTURE_VARIABLES_V1` is set, with
+/// refused while any of the five capture variables is set, with
 /// a message that names that variable, before any work. No run directory
 /// and no collection exist, so no collection can write a capture and then be
 /// abandoned. The check admits the same run without the key. The variables
@@ -1071,7 +1085,7 @@ fn update_tail_overlap_reads_the_ledger_where_the_serial_run_does_and_refuses_it
 /// no other test sees them.
 #[test]
 fn update_tail_overlap_is_refused_while_a_diagnostic_capture_is_on() {
-    run_child_v1("update_tail_overlap_capture_child_v1", "capture");
+    run_child_v1("update_tail_overlap_capture_child_v1", "capture", &[]);
 }
 
 /// The child of `update_tail_overlap_is_refused_while_a_diagnostic_capture_is_on`.
@@ -1089,7 +1103,16 @@ fn update_tail_overlap_capture_child_v1() {
     let _ = fs::remove_dir_all(&directory);
     let _ = fs::remove_file(&capture);
     assert_eq!(refuse_captures_v1(&overlapped), Ok(()));
-    for variable in CAPTURE_VARIABLES_V1 {
+    // Listed here, not taken from `CAPTURE_VARIABLES_V1`, so dropping one
+    // from the refusal fails this test.
+    let variables = [
+        "MTG_KERNEL_FAST_ACTOR_REJECTION_CAPTURE",
+        "MTG_KERNEL_V3_ACTION_ERROR_CAPTURE",
+        "MTG_KERNEL_V3_SCORING_ERROR_CAPTURE",
+        "MTG_V4_SEARCH_FAILURE_STATE",
+        "MTG_V4_SEARCH_BOUNDARY_FAILURE_STATE",
+    ];
+    for variable in variables {
         assert!(std::env::var_os(variable).is_none(), "{variable} was set");
         std::env::set_var(variable, &capture);
         let (refused, prefetched) = run_counted_v1(&overlapped, None, || {});
