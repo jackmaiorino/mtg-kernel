@@ -155,6 +155,52 @@ where
     })
 }
 
+/// What a gated collection asks before each of its filesystem writes
+/// ([`collect_parallel_gated_v1`]): `Ok` admits the write, an error ends the
+/// collection with that error and without the write. It is called from the
+/// collection's workers, several at once.
+pub(crate) type CollectionWriteGateV1<'a> = &'a (dyn Fn() -> Result<(), String> + Sync);
+
+/// A collection's output directory, its first filesystem write.
+///
+/// Without a gate it is created before any game, as always, and admits every
+/// later write at once. With a gate nothing is created up front: every write
+/// first asks the gate, and the first one admitted creates the directory, so
+/// games are played in memory until the gate opens and a gate that never
+/// opens leaves no trace of the collection.
+struct OutputDirectoryV1<'a> {
+    path: &'a Path,
+    write_gate: Option<CollectionWriteGateV1<'a>>,
+    created: std::sync::OnceLock<Result<(), String>>,
+}
+
+impl<'a> OutputDirectoryV1<'a> {
+    fn new_v1(
+        path: &'a Path,
+        write_gate: Option<CollectionWriteGateV1<'a>>,
+    ) -> Result<Self, String> {
+        if write_gate.is_none() {
+            fs::create_dir(path).map_err(err)?;
+        }
+        Ok(Self {
+            path,
+            write_gate,
+            created: std::sync::OnceLock::new(),
+        })
+    }
+
+    /// Before a write into the directory. Ungated: nothing to do.
+    fn admit_v1(&self) -> Result<(), String> {
+        let Some(write_gate) = self.write_gate else {
+            return Ok(());
+        };
+        write_gate()?;
+        self.created
+            .get_or_init(|| fs::create_dir(self.path).map_err(err))
+            .clone()
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the collection command's fields, plus EX1's hook"
@@ -170,6 +216,43 @@ pub(super) fn collect_parallel_v1(
     record_envelope: RecordEnvelopeV1,
     shard: Option<super::pooled_collection_v1::CollectionShardV1>,
     output_directory: PathBuf,
+) -> Result<Value, String> {
+    collect_parallel_gated_v1(
+        source,
+        episodes,
+        workers,
+        max_non_natural_episode_fraction,
+        collection_sampler,
+        training_math,
+        ex1,
+        record_envelope,
+        shard,
+        output_directory,
+        None,
+    )
+}
+
+/// [`collect_parallel_v1`]. With `write_gate`, the collection asks it before
+/// each filesystem write ([`OutputDirectoryV1`]) and writes nothing it has
+/// not admitted; the games, the published bytes and the receipt are the same.
+/// A refused write ends the collection with the gate's own error, whichever
+/// worker met it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the collection command's fields, plus EX1's hook and the write gate"
+)]
+pub(super) fn collect_parallel_gated_v1(
+    source: ExpandedModelSourceV1,
+    episodes: Vec<ExpandedEpisodeV1>,
+    workers: usize,
+    max_non_natural_episode_fraction: f32,
+    collection_sampler: CollectionSamplerV1,
+    training_math: TrainingMathV1,
+    ex1: Option<super::ex1_collect_v1::Ex1CollectOptionsV1>,
+    record_envelope: RecordEnvelopeV1,
+    shard: Option<super::pooled_collection_v1::CollectionShardV1>,
+    output_directory: PathBuf,
+    write_gate: Option<CollectionWriteGateV1<'_>>,
 ) -> Result<Value, String> {
     let started = Instant::now();
     validate_collection_workers_v1(workers)?;
@@ -247,7 +330,8 @@ pub(super) fn collect_parallel_v1(
         .collect::<Result<Vec<_>, String>>()?;
     drop(policy);
     let initialization_seconds = started.elapsed().as_secs_f64();
-    fs::create_dir(&output_directory).map_err(err)?;
+    // Ungated, this creates the directory here, before any game.
+    let output = OutputDirectoryV1::new_v1(&output_directory, write_gate)?;
     // Side channel, independent of `ordered_parallel_jobs_v1`'s own success/
     // failure return: a worker extends this the moment it has an attempt's
     // ledger entries, whether or not that worker (or a sibling) ultimately
@@ -320,6 +404,7 @@ pub(super) fn collect_parallel_v1(
             let bytes = std::sync::Arc::new(
                 record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?,
             );
+            output.admit_v1()?;
             let pin = publish_json_shared_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record
@@ -331,6 +416,11 @@ pub(super) fn collect_parallel_v1(
         },
         trajectory_parse_ahead_v1::start_helper_v1,
     );
+    // Gated: the writes below wait for the gate as the workers' did, and the
+    // directory exists from here on, as it does ungated, also when no worker
+    // published. A refused gate ends the collection here, with the gate's own
+    // error rather than a worker's wrapping of it and without another write.
+    output.admit_v1()?;
     let mut ledger_entries = ledger
         .into_inner()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -521,6 +611,17 @@ mod tests {
     /// A five-game parallel collection on two workers under a fresh temporary
     /// root, returning the root and the published trajectory pins.
     fn collect_parallel_for_parse_ahead_test_v1(label: &str) -> (PathBuf, Vec<PinnedFileV1>) {
+        let (root, command) = parallel_collection_command_for_test_v1(label);
+        let result = execute_v1(command).unwrap();
+        let pins = serde_json::from_value(result["trajectories"].clone()).unwrap();
+        (root, pins)
+    }
+
+    /// The command of a five-game parallel collection on two workers into
+    /// `collect` under a fresh temporary root, and that root.
+    fn parallel_collection_command_for_test_v1(
+        label: &str,
+    ) -> (PathBuf, ExpandedTrainingCommandV1) {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
         let root = std::env::temp_dir().join(format!(
             "expanded-collect-parallel-{label}-{}",
@@ -581,7 +682,7 @@ mod tests {
                 priority_pass_offset: None,
             })
             .collect();
-        let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
+        let command = ExpandedTrainingCommandV1::CollectParallel {
             source,
             episodes,
             workers: 2,
@@ -592,10 +693,86 @@ mod tests {
             record_envelope: Default::default(),
             shard: None,
             output_directory: root.join("collect"),
-        })
-        .unwrap();
-        let pins = serde_json::from_value(result["trajectories"].clone()).unwrap();
-        (root, pins)
+        };
+        (root, command)
+    }
+
+    /// The write gate (`update_tail_overlap_v1`): a gated collection writes
+    /// nothing before its gate admits a write. A gate that refuses leaves no
+    /// trace of the collection and ends it with the gate's own error; a gate
+    /// that admits is first asked while the output directory does not exist,
+    /// and the collection then publishes the files of the ungated collection
+    /// of the same command, trajectory for trajectory, byte for byte.
+    #[test]
+    fn a_gated_collection_writes_nothing_before_its_gate_admits() {
+        let (root, command) = parallel_collection_command_for_test_v1("write-gate");
+        let output = root.join("collect");
+        // Refused: games are played, nothing is written.
+        let asked = AtomicUsize::new(0);
+        let refuse = || -> Result<(), String> {
+            asked.fetch_add(1, Ordering::SeqCst);
+            Err("the gate refused".to_string())
+        };
+        assert_eq!(
+            execute_collection_gated_v1(command.clone(), &refuse).unwrap_err(),
+            "the gate refused"
+        );
+        assert!(asked.load(Ordering::SeqCst) >= 1);
+        assert!(!output.exists(), "a refused collection wrote");
+        // Admitted: the first question comes before the first write.
+        let asked = AtomicUsize::new(0);
+        let written_before_first = AtomicBool::new(false);
+        let admit = || -> Result<(), String> {
+            if asked.fetch_add(1, Ordering::SeqCst) == 0 && output.exists() {
+                written_before_first.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        };
+        let gated = execute_collection_gated_v1(command.clone(), &admit).unwrap();
+        assert!(!written_before_first.load(Ordering::SeqCst));
+        // Every trajectory, then the receipt: at least six writes asked for.
+        assert!(asked.load(Ordering::SeqCst) >= 6);
+        let files = |directory: &Path| -> std::collections::BTreeMap<String, Vec<u8>> {
+            fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    (
+                        entry.file_name().to_string_lossy().into_owned(),
+                        fs::read(entry.path()).unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let gated_files = files(&output);
+        fs::rename(&output, root.join("collect-gated")).unwrap();
+        // The ungated collection of the same command, into the same path.
+        let ungated = execute_v1(command).unwrap();
+        let ungated_files = files(&output);
+        assert_eq!(
+            gated_files.keys().collect::<Vec<_>>(),
+            ungated_files.keys().collect::<Vec<_>>()
+        );
+        // The receipts differ in their timings alone.
+        let untimed = |receipt: &Value| {
+            let mut receipt = receipt.clone();
+            let members = receipt.as_object_mut().unwrap();
+            members.retain(|name, _| {
+                !name.ends_with("_seconds") && name.as_str() != "collection_worker_timings"
+            });
+            receipt
+        };
+        assert_eq!(untimed(&gated), untimed(&ungated));
+        assert_eq!(gated["trajectories"].as_array().unwrap().len(), 5);
+        for (name, bytes) in &gated_files {
+            if name == "collection.json" {
+                let parse = |bytes: &[u8]| untimed(&serde_json::from_slice(bytes).unwrap());
+                assert_eq!(parse(bytes), parse(&ungated_files[name]));
+            } else {
+                assert!(bytes == &ungated_files[name], "{name} differs");
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// Parse-ahead end to end: every trajectory a parallel collection

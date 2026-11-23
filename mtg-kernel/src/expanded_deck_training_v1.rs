@@ -4234,6 +4234,44 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
     execute_with_handoff_v1(command, None)
 }
 
+/// A parallel collection (`CollectParallel`) that asks `write_gate` before
+/// each of its filesystem writes
+/// (`phase1_parallel_collection::collect_parallel_gated_v1`): the same
+/// collection, records and receipt as [`execute_v1`]'s. Any other command is
+/// refused.
+pub(crate) fn execute_collection_gated_v1(
+    command: ExpandedTrainingCommandV1,
+    write_gate: phase1_parallel_collection::CollectionWriteGateV1<'_>,
+) -> Result<Value, String> {
+    match command {
+        ExpandedTrainingCommandV1::CollectParallel {
+            source,
+            episodes,
+            workers,
+            max_non_natural_episode_fraction,
+            collection_sampler,
+            training_math,
+            ex1,
+            record_envelope,
+            shard,
+            output_directory,
+        } => phase1_parallel_collection::collect_parallel_gated_v1(
+            source,
+            episodes,
+            workers,
+            max_non_natural_episode_fraction,
+            collection_sampler,
+            training_math,
+            ex1,
+            record_envelope,
+            shard,
+            output_directory,
+            Some(write_gate),
+        ),
+        _ => Err("only a parallel collection takes a write gate".into()),
+    }
+}
+
 /// [`execute_v1`]. With `handoff`, a prepared update (`UpdatePrepared`) also
 /// calls it once with its new checkpoint's pin, after its learner step and
 /// before the checkpoint's first byte is written
