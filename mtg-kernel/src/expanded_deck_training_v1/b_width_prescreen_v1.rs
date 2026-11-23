@@ -895,7 +895,10 @@ pub(crate) fn load_parent_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<ParentV1, String> {
     let (mut policy, mut state, transfer) = initialize_with_transfer_context(source)?;
-    super::card_semantics_e1::load_training_v1(source, None)?;
+    ensure(
+        state.loaded_card_semantics.is_none(),
+        "screen parent refuses card semantics",
+    )?;
     ensure(
         transfer.is_none(),
         "a registry-transfer source is not a screen parent",

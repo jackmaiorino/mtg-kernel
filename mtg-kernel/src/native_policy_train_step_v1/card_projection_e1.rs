@@ -26,6 +26,8 @@ pub(crate) struct CardSemanticsV1 {
     pub(crate) pathway: RulesPathwayV1,
     binding: String,
     p_step: u64,
+    #[cfg(test)]
+    pub(crate) fail_fold_for_test: bool,
 }
 
 pub(super) fn unsupported_v1() -> NativePolicyTrainErrorV1 {
@@ -50,7 +52,23 @@ struct RowV1 {
 
 impl CardSemanticsConfigV1 {
     pub(crate) fn load_v1(&self) -> Result<CardSemanticsV1, String> {
-        let bytes = std::fs::read(&self.table_path).map_err(|e| e.to_string())?;
+        use std::io::Read;
+        const CAP: u64 = 64 * 1024 * 1024;
+        let metadata = std::fs::metadata(&self.table_path).map_err(|e| e.to_string())?;
+        if !metadata.is_file() || metadata.len() > CAP {
+            return Err("card semantics table must be a regular file of at most 64 MiB".into());
+        }
+        let file = std::fs::File::open(&self.table_path).map_err(|e| e.to_string())?;
+        if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+            return Err("card semantics table must be a regular file".into());
+        }
+        let mut bytes = Vec::new();
+        file.take(CAP + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > CAP {
+            return Err("card semantics table exceeds 64 MiB".into());
+        }
         self.load_bytes_v1(&bytes)
     }
 
@@ -119,6 +137,8 @@ impl CardSemanticsConfigV1 {
             pathway: RulesPathwayV1::new_v1(rows, cards, width).map_err(|e| e.to_string())?,
             binding: format!("{:x}", hash.finalize()),
             p_step: 0,
+            #[cfg(test)]
+            fail_fold_for_test: false,
         })
     }
 }
@@ -172,6 +192,12 @@ impl CardSemanticsV1 {
         next: &Self,
         table: &mut [f32],
     ) -> Result<(), NativePolicyTrainErrorV1> {
+        #[cfg(test)]
+        if self.fail_fold_for_test {
+            return Err(NativePolicyTrainErrorV1::LineBAuxiliary {
+                code: "injected-post-adam-fold-failure",
+            });
+        }
         if table.len() != CARD_VOCAB_SIZE_V1 * CARD_EMBEDDING_DIM_V1 {
             return Err(unsupported_v1());
         }
@@ -229,6 +255,8 @@ impl CardSemanticsV1 {
             pathway: RulesPathwayV1::new_v1(rows, cards, 2).unwrap(),
             binding: "test-binding".into(),
             p_step: 0,
+            #[cfg(test)]
+            fail_fold_for_test: false,
         }
     }
 }
@@ -275,6 +303,63 @@ mod tests {
             .unwrap_err()
             .contains("kernel_carddb_hash"));
     }
+    #[test]
+    fn rejects_invalid_table_schema_ids_dimensions_and_inexact_integers() {
+        let bytes = table_bytes(format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH));
+        let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        for (case, expected) in [
+            (0, "schema"),
+            (1, "duplicate"),
+            (2, "vocabulary"),
+            (3, "not exact"),
+            (4, "dimensions"),
+            (5, "row width"),
+        ] {
+            let mut value = original.clone();
+            match case {
+                0 => value["schema"] = "wrong".into(),
+                1 => value["cards"][1]["card_id"] = 0.into(),
+                2 => value["cards"][1]["card_id"] = CARD_VOCAB_SIZE_V1.into(),
+                3 => value["cards"][0]["vector"][0] = 16_777_217.into(),
+                4 => value["card_count"] = 3.into(),
+                5 => value["cards"][0]["vector"] = serde_json::json!([1]),
+                _ => unreachable!(),
+            }
+            let bytes = serde_json::to_vec(&value).unwrap();
+            assert!(
+                config(&bytes)
+                    .load_bytes_v1(&bytes)
+                    .unwrap_err()
+                    .contains(expected),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn table_file_must_be_regular_and_bounded() {
+        let root = std::env::temp_dir().join(format!(
+            "projection-size-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut cfg = CardSemanticsConfigV1 {
+            table_path: root.clone(),
+            table_sha256: String::new(),
+        };
+        assert!(cfg.load_v1().is_err());
+        cfg.table_path = root.join("large.json");
+        let file = std::fs::File::create(&cfg.table_path).unwrap();
+        file.set_len(64 * 1024 * 1024 + 1).unwrap();
+        assert!(cfg.load_v1().unwrap_err().contains("at most 64 MiB"));
+        drop(file);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn zero_delta_difference_does_not_add_positive_zero() {
         let state = CardSemanticsV1::fixture_v1();
