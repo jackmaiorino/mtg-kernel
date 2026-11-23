@@ -137,7 +137,14 @@ mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
+pub use crate::native_policy_train_step_v1::card_projection_e1::CardSemanticsConfigV1;
+use crate::native_policy_train_step_v1::card_projection_e1::{
+    checkpoint_hash_v1, CardSemanticsSectionV1, CardSemanticsV1,
+};
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
+pub(crate) mod card_semantics_e1;
+pub use card_semantics_e1::tool_json_v1 as card_semantics_tool_json_v1;
+pub(crate) use card_semantics_e1::validate_update_v1 as validate_card_semantics_run_v1;
 use checkpoint_container_v1::{BorrowedParameterBitsV1, ParameterBitsRefV1};
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub use record_envelope_v1::RecordEnvelopeV1;
@@ -643,23 +650,64 @@ fn load_expanded_inference_any_math_v1(
 /// Validate the update's input binding during the typed continuation read.
 /// Ordinary checkpoints are decoded once; transfer loaders retain their full
 /// validation and use a small metadata projection for this additional check.
+#[cfg(test)]
 pub(crate) fn load_expanded_update_inference_v1(
     source: &ExpandedModelSourceV1,
     trajectories: &[PinnedFileV1],
     learning_rate: f32,
     value_coefficient: f32,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
+    load_expanded_update_bound_projection_v1(
+        source,
+        trajectories,
+        learning_rate,
+        value_coefficient,
+        None,
+    )
+    .map(|(identity, _)| identity)
+}
+
+pub(crate) fn load_expanded_update_bound_projection_v1(
+    source: &ExpandedModelSourceV1,
+    trajectories: &[PinnedFileV1],
+    learning_rate: f32,
+    value_coefficient: f32,
+    before_projection: Option<&CardSemanticsV1>,
+) -> Result<(ExpandedInferenceIdentityV1, Option<CardSemanticsV1>), String> {
     let inputs = CheckpointInputExpectationV1 {
         trajectories,
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
     };
     if source.s_learner.is_some() {
-        return s_learner_v1::load_update_inference_v1(source, &inputs);
+        ensure(
+            before_projection.is_none(),
+            "card semantics refuses S learner",
+        )?;
+        return s_learner_v1::load_update_inference_v1(source, &inputs)
+            .map(|identity| (identity, None));
     }
     let bytes = read_pinned_bytes(&source.play_import)?;
     let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, Some(&inputs))?;
-    inference_identity_v1(source, &policy, &state)
+    let binding = before_projection.map(CardSemanticsV1::binding_v1);
+    card_semantics_e1::validate_binding_v1(state.loaded_card_semantics.as_ref(), binding)?;
+    let mut projection = before_projection.cloned();
+    if let Some(projection) = &mut projection {
+        let expected_step = projection
+            .p_step_v1()
+            .checked_add(1)
+            .ok_or("card semantics step overflow")?;
+        let saved = state
+            .loaded_card_semantics
+            .as_ref()
+            .ok_or("missing card semantics section")?;
+        projection.restore_v1(saved)?;
+        ensure(
+            saved.p_step == expected_step,
+            "card semantics update does not advance exactly one P step",
+        )?;
+    }
+    Ok((inference_identity_v1(source, &policy, &state)?, projection))
 }
 
 struct CheckpointInputExpectationV1<'a> {
@@ -781,6 +829,10 @@ pub(crate) fn load_ordinary_bo3_parent_v1(
         .map_err(err)?;
     let record = read_checkpoint_record_v1(pin)?;
     let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
+    ensure(
+        saved.card_semantics.is_none(),
+        "BO3 transition refuses card semantics",
+    )?;
     ensure(
         saved.training_math.is_platform_libm(),
         "BO3 transition does not support portable training math",
@@ -1846,6 +1898,12 @@ pub(crate) struct ExpandedCheckpointV1<T = ParameterBitsV1> {
     card_db_hash: String,
     source_import: PlayPolicyOriginV1,
     state_sha256: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "card_semantics_e1::deserialize_present_v1"
+    )]
+    card_semantics: Option<CardSemanticsSectionV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     e_supported: Option<Value>,
     /// SQ1's continuation identity and packet pin; absent otherwise.
@@ -1932,6 +1990,11 @@ fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), Str
 /// `Some(Value::Null)`, as `Value::get` returned it.
 #[derive(Deserialize)]
 struct CheckpointESupportedProbeV1 {
+    #[serde(
+        default,
+        deserialize_with = "card_semantics_e1::deserialize_present_v1"
+    )]
+    card_semantics: Option<CardSemanticsSectionV1>,
     #[serde(default, deserialize_with = "present_value_v1")]
     e_supported: Option<Value>,
     #[serde(default, deserialize_with = "present_value_v1")]
@@ -1955,6 +2018,12 @@ fn initialize(
 ) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
     let (policy, state) = initialize_any_math_v1(source)?;
     refuse_portable_math_v1(&policy)?;
+    // Legacy learners cannot silently drop a folded projection on resume.
+    // Collection and ordinary inference use their dedicated loaders.
+    ensure(
+        state.loaded_card_semantics.is_none(),
+        "card semantics checkpoint requires explicit training configuration",
+    )?;
     Ok((policy, state))
 }
 
@@ -2465,7 +2534,7 @@ fn restore_checkpoint_fields_v1<T: CheckpointTensorV1>(
     let tensors = checkpoint_tensors_v1(saved, &model)?;
     let state_sha256 = tensors.state_sha256_v1().map_err(err)?;
     ensure(
-        hex(&state_sha256) == saved.state_sha256,
+        checkpoint_hash_v1(&state_sha256, saved.card_semantics.as_ref())? == saved.state_sha256,
         "checkpoint state hash differs",
     )?;
     // Validate the model's gauge anchor and full optimizer state before the
@@ -2473,6 +2542,7 @@ fn restore_checkpoint_fields_v1<T: CheckpointTensorV1>(
     let mut state = NativePolicyValueTrainStateV1::from_tensors_v1(model, &tensors).map_err(err)?;
     policy.replace_training_parameters_v3(&state.model_v1().parameter_snapshot_v1())?;
     // Inference and probes run a checkpoint under the math it trained with.
+    state.loaded_card_semantics = saved.card_semantics.clone();
     state.set_training_math_v1(saved.training_math);
     state.record_verified_state_sha256_v1(state_sha256);
     policy.set_training_math_v1(saved.training_math);
@@ -3985,6 +4055,12 @@ pub enum ExpandedTrainingCommandV1 {
     },
     Update {
         source: ExpandedModelSourceV1,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "card_semantics_e1::deserialize_present_v1"
+        )]
+        card_semantics: Option<CardSemanticsConfigV1>,
         trajectories: Vec<PinnedFileV1>,
         learning_rate: f32,
         value_coefficient: f32,
@@ -4025,6 +4101,12 @@ pub enum ExpandedTrainingCommandV1 {
     /// sequential reference remain unchanged; backward and Adam are identical.
     UpdatePrepared {
         source: ExpandedModelSourceV1,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "card_semantics_e1::deserialize_present_v1"
+        )]
+        card_semantics: Option<CardSemanticsConfigV1>,
         trajectories: Vec<PinnedFileV1>,
         learning_rate: f32,
         value_coefficient: f32,
@@ -4258,6 +4340,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -4285,6 +4368,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
@@ -4314,6 +4398,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -4343,6 +4428,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -4621,6 +4707,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
         }
         ExpandedTrainingCommandV1::Update {
             source,
+            card_semantics,
             trajectories,
             learning_rate,
             value_coefficient,
@@ -4649,9 +4736,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             training_math,
             record_format,
             RecordEnvelopeV1::None,
+            card_semantics,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
+            card_semantics,
             trajectories,
             learning_rate,
             value_coefficient,
@@ -4694,6 +4783,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 training_math,
                 record_format,
                 record_envelope,
+                card_semantics,
             )
         }
     }
@@ -5022,6 +5112,7 @@ fn execute_update_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    card_semantics: Option<CardSemanticsConfigV1>,
 ) -> Result<Value, String> {
     execute_update_inner_v1(
         source,
@@ -5043,6 +5134,7 @@ fn execute_update_v1(
         training_math,
         record_format,
         record_envelope,
+        card_semantics,
     )
 }
 
@@ -5070,7 +5162,19 @@ fn execute_update_inner_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    card_semantics: Option<CardSemanticsConfigV1>,
 ) -> Result<Value, String> {
+    card_semantics_e1::validate_update_v1(
+        card_semantics.as_ref(),
+        &source,
+        update_backend,
+        &loss_selection,
+        line_b.is_some()
+            || e_supported.is_some()
+            || soft_q.is_some()
+            || search_targets.is_some()
+            || ex1.is_some(),
+    )?;
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
     loss_selection.validate_v1()?;
@@ -5171,6 +5275,7 @@ fn execute_update_inner_v1(
             started: update_started,
         });
     }
+    let mut saved_semantics = None;
     if let Some(pin) = &source.checkpoint {
         let saved: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(pin)?;
         if let Some(identity) = &saved.e_supported {
@@ -5186,6 +5291,7 @@ fn execute_update_inner_v1(
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
             read_pinned_bytes(&packet)?;
         }
+        saved_semantics = saved.card_semantics;
         ex1_update_v1::check_continuation_v1(saved.ex1.as_ref(), ex1.as_ref())?;
         if let Some(identity) = &saved.search_targets {
             search_targets_v1::check_continuation_v1(identity, search_targets.as_ref())?;
@@ -5208,6 +5314,21 @@ fn execute_update_inner_v1(
         }
     }
     let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    if card_semantics.is_some() {
+        ensure(
+            transfer.is_none()
+                && policy.input_contract_v1().is_none()
+                && state.model_v1().parameter_snapshot_v1().len() == 33,
+            "card semantics requires an ordinary 33-tensor learner",
+        )?;
+    }
+
+    let mut semantics = card_semantics_e1::load_training_v1(
+        &source,
+        card_semantics.as_ref(),
+        saved_semantics.as_ref(),
+    )?;
+
     bind_training_math_v1(
         &source,
         transfer.as_ref(),
@@ -6015,7 +6136,7 @@ fn execute_update_inner_v1(
                     result
                 }
                 (ExpandedUpdateBackendV1::Cpu, _) => state
-                    .train_step_gae_feature_transfer_profiled_v1(
+                    .train_step_gae_card_projection_e1(
                         generation,
                         &groups,
                         &gae.value_targets,
@@ -6030,6 +6151,7 @@ fn execute_update_inner_v1(
                         },
                         preparation_workers.unwrap_or(1),
                         &mut gae_phase_recorder,
+                        semantics.as_mut(),
                     )
                     .map_err(err)?,
                 (ExpandedUpdateBackendV1::Cuda { device_ordinal }, _)
@@ -6277,7 +6399,15 @@ fn execute_update_inner_v1(
         feature_encoding_digest: policy.feature_identity_v1().feature_encoding_digest.into(),
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         source_import: policy.identity_v1().clone(),
-        state_sha256: after.clone(),
+        // Flag off: the digest computed above, unchanged and not recomputed.
+        state_sha256: match &semantics {
+            None => after.clone(),
+            Some(semantics) => checkpoint_hash_v1(
+                &state.state_sha256_v1().map_err(err)?,
+                Some(&semantics.section_v1()),
+            )?,
+        },
+        card_semantics: semantics.as_ref().map(CardSemanticsV1::section_v1),
         e_supported:e_supported.as_ref().map(|options|json!({
             "continuation":e_supported_teacher_v1::continuation_identity(options),"packet":e_packet_pin})),
         soft_q:soft_q.as_ref().map(|options|json!({
@@ -6411,6 +6541,9 @@ fn execute_update_inner_v1(
         )?;
     }
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
+    if let Some(section) = &checkpoint.card_semantics {
+        result["card_semantics"] = json!({"binding": section.binding});
+    }
     if let Some(mut exploration) = exploration_report {
         let gauge = &update.scorer_bias_gauge;
         exploration["scorer_bias_gauge"] = json!({
@@ -6639,11 +6772,23 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
     checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_shared_v1(pin)?)
 }
 
+#[cfg(test)]
+thread_local! {
+    static CHECKPOINT_METADATA_READS_FOR_TEST_V1: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn take_checkpoint_metadata_reads_for_test_v1() -> usize {
+    CHECKPOINT_METADATA_READS_FOR_TEST_V1.with(|count| count.replace(0))
+}
+
 /// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
 /// container's small JSON document, never from its tensor sections.
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
+    #[cfg(test)]
+    CHECKPOINT_METADATA_READS_FOR_TEST_V1.with(|count| count.set(count.get() + 1));
     // The pinned file's check runs every time; only its view, a pure function
     // of the checked bytes, may come from the memo.
     let bytes = read_pinned_shared_v1(pin)?;
@@ -7353,6 +7498,7 @@ pub(crate) mod tests {
         let mut state =
             NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
         policy.replace_training_parameters_v3(&snapshot.parameters)?;
+        state.loaded_card_semantics = saved.card_semantics.clone();
         state.set_training_math_v1(saved.training_math);
         policy.set_training_math_v1(saved.training_math);
         Ok(state)
@@ -8108,6 +8254,7 @@ pub(crate) mod tests {
             .unwrap()
             .values[16] = 0.4375;
         let saved = ExpandedCheckpointV1 {
+            card_semantics: None,
             schema: CHECKPOINT_SCHEMA.into(),
             feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
             feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
@@ -11515,6 +11662,7 @@ pub(crate) mod tests {
             let trajectories: Vec<PinnedFileV1> =
                 serde_json::from_value(collect_result["trajectories"].clone()).unwrap();
             let update_result = execute_v1(ExpandedTrainingCommandV1::Update {
+                card_semantics: None,
                 line_b: None,
                 source: source.clone(),
                 trajectories,
@@ -11896,6 +12044,7 @@ pub(crate) mod tests {
         };
         let update = |trajectories, math, name: &str| {
             execute_v1(ExpandedTrainingCommandV1::Update {
+                card_semantics: None,
                 line_b: None,
                 source: source.clone(),
                 trajectories,
@@ -12330,6 +12479,7 @@ pub(crate) mod tests {
                 })
                 .unwrap();
                 let receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+                    card_semantics: None,
                     source: source.clone(),
                     trajectories: serde_json::from_value(collected["trajectories"].clone())
                         .unwrap(),
@@ -13097,6 +13247,7 @@ pub(crate) mod tests {
         };
         let update = |label: &str, teacher: Option<LineBTeacherOptionsV1>| {
             execute_v1(ExpandedTrainingCommandV1::Update {
+                card_semantics: None,
                 source: source.clone(),
                 trajectories: trajectories.clone(),
                 learning_rate: 0.0003,
@@ -13569,6 +13720,7 @@ pub(crate) mod tests {
             selection_transition_cap: 128,
         };
         let ordinary = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: source.clone(),
             trajectories: trajectories.clone(),
             learning_rate: 0.0001,
