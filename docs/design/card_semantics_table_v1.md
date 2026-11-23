@@ -53,3 +53,33 @@ The floors were written before the first table was generated. Three like pairs f
 ## Limits
 
 The walk reads the definition, not the engine's behaviour: two leaves that do the same thing under different names stay different columns until mapped. A value token keeps the largest amount, so a card with two amounts of one kind loses the smaller.
+
+## Cube table
+
+A second generated table covers the Vintage Cube list (`data/cube_v1/mtgo_vintage_cube_20261007.json`) in the `eternal-fixtures` build. **Nothing reads the cube table yet**: no engine module, feature contract, digest or golden reads it.
+
+Files:
+
+- `data/card_semantics_v1/cube_table_v1.json`: the cube table. Rows are every card in the cube list that has an executable definition (`Full` or `Partial`) in the `eternal-fixtures` build, plus the five basic lands (`Plains`, `Island`, `Swamp`, `Mountain`, `Forest`). Cube cards without an executable definition are excluded from the rows and listed as `not implemented` in the dump and report.
+- `data/card_semantics_v1/cube_table_v1.txt`: human-readable dump with the same sections as the Pauper dump (`Census`, `Cards`, `Vocabulary`, `Token families`), with the cube report in the census section.
+- Shares `data/card_semantics_v1/leaf_mapping_v1.json`, the schema string family (`card_semantics_table/v1`), the typed token walk, and the integer-only count/value encoding (value tokens clamped to plus or minus 1000).
+
+Regenerate and check (requires `--features eternal-fixtures`):
+
+- Regenerate: `cargo run --release -p mtg-kernel --features eternal-fixtures --bin card_semantics_table_v1 -- --cube --write`
+- Check: `cargo run --release -p mtg-kernel --features eternal-fixtures --bin card_semantics_table_v1 -- --cube --check`
+
+The default build refuses `--cube`. Without `--cube`, the `eternal-fixtures` build refuses to write the Pauper table and notes that the Pauper table is checked in the default build. The cube table records the eternal build's `KERNEL_CARDDB_HASH`, the cube list SHA-256, the mapping SHA-256, the SHA-256 of the Pauper vocabulary it extends (`index\tkind\ttoken\n`), and a content SHA-256. A card database mismatch fails `--cube --check` and names the regeneration command above. Hard validation failures leave previous output files untouched.
+
+Column rule:
+
+- The cube vocabulary starts with the Pauper table's columns in the exact Pauper table order so column `i` means the same token in both tables. A Pauper column that no cube row carries is kept with 0 carriers (all zero).
+- Cube-only tokens are appended after the Pauper prefix in sorted deterministic order. Regeneration preserves the committed cube column order and only appends new tokens.
+
+Cube report (written in `cube_table_v1.txt` and printed by `--cube --check`; informational only, with no pass or fail thresholds; the Pauper pair checks are not applied to the cube table):
+
+- Row count, vector width, Pauper prefix width, and number of columns new beyond the Pauper vocabulary.
+- **Low-distinctiveness cards**: for rows `a` and `b`, `overlap(a, b)` is the count of nonzero `(column, value)` pairs of `a` that `b` also carries divided by the count of nonzero `(column, value)` pairs of `a`. The report counts and lists every row `a` for which at least 10 other cube rows `b` satisfy `overlap(a, b) >= 0.75` (exact integer arithmetic).
+- **Cards with no usable features**: rows with no effect-tree token (`leaf:`, `op:`, `cond:` prefixes), grouped by a reason derived directly from `CardDef` (never by card-name lists), such as partial definition without a walked effect program, land with only a mana ability, nonland permanent with only a mana ability, saga chapter effects not walked, transform back face not walked, planeswalker loyalty abilities not walked, vanilla body or engine-side creature rules only, or noncreature permanent with engine-side or static rules only.
+- **Census**: the same token census as the Pauper dump (distinct tokens, tokens on exactly one card, cards with a token no other row shares, cards with no effect-tree token), before and after mapping, for all tokens and for effect-tree tokens.
+- **Not implemented**: cube list entries without an executable definition in the `eternal-fixtures` build, listed with reason `not implemented`.
