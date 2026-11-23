@@ -35,7 +35,7 @@ pub use fresh::{
 const CURRENT_REGISTRY: &[u8] = include_bytes!("../../../data/cards_v1.json");
 const MAX_INPUT_BYTES: usize = 512 * 1024 * 1024;
 const TRANSFER_SCHEMA: &str = "mtg-kernel-expanded-registry-transfer/v1";
-const INITIALIZER: &str = "sha256-card-name-seed-signed24-div2pow28/v1";
+pub(crate) const INITIALIZER: &str = "sha256-card-name-seed-signed24-div2pow28/v1";
 const LOSS: &str = "terminal_reinforce_value/v3";
 
 fn require(ok: bool, message: &str) -> Result<(), String> {
@@ -275,12 +275,25 @@ impl VerifiedRegistryTransferV1 {
     }
 }
 
-fn registry_cards(bytes: &[u8]) -> Result<Vec<Value>, String> {
+/// A registry file's whole document through the strict reader
+/// [`registry_cards`] uses (duplicate object keys refused), for a caller that
+/// reads more of it than its cards.
+pub(crate) fn strict_registry_document(bytes: &[u8]) -> Result<Value, String> {
     require(
         bytes.len() <= MAX_INPUT_BYTES,
         "registry input exceeds size bound",
     )?;
-    let value = strict_registry_json::read(bytes)?;
+    strict_registry_json::read(bytes)
+}
+
+pub(crate) fn registry_cards(bytes: &[u8]) -> Result<Vec<Value>, String> {
+    registry_document_cards(&strict_registry_document(bytes)?)
+}
+
+/// The cards of a registry document [`strict_registry_document`] read, with
+/// the checks [`registry_cards`] applies (non-empty, within the card id
+/// space, unique trimmed names).
+pub(crate) fn registry_document_cards(value: &Value) -> Result<Vec<Value>, String> {
     let cards = value
         .get("cards")
         .and_then(Value::as_array)
@@ -331,7 +344,7 @@ fn mapping(source: &[Value], destination: &[Value]) -> Result<Vec<RegistryCardMa
 /// Stable per-card initializer, independent of registry length and placement.
 /// Exactly representable signed 24-bit integer divided by 2^28, in [-1/32,1/32).
 /// Uses no host RNG, transcendental function, or default model initializer.
-fn initial_card_row(name: &str, seed: u64) -> [f32; CARD_EMBEDDING_DIM_V1] {
+pub(crate) fn initial_card_row(name: &str, seed: u64) -> [f32; CARD_EMBEDDING_DIM_V1] {
     std::array::from_fn(|column| {
         let mut digest = Sha256::new();
         digest.update(INITIALIZER.as_bytes());
