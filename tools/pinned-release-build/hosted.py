@@ -40,6 +40,10 @@ TARGET_CPUS = ("default", "x86-64-v3-no-fma", "x86-64-v3", "znver5", "znver3")
 TARGET_CPU = os.environ.get("PINNED_TARGET_CPU", "default")
 if TARGET_CPU not in TARGET_CPUS:
     raise SystemExit("unknown PINNED_TARGET_CPU")
+# Dispatch-only branch: the cube trainer ports stack head (PR 902) and its main base, built for
+# self-relative receipts on a node. Not for merge.
+CUBE_STACK_SOURCE = "4eb9488a7eb9a9ebe27cdde9703cac788283f21a"
+CUBE_MAIN_BASE_SOURCE = "71a88d9c66352fe5e9e9e933f4b857cdb1618d3e"
 SOURCES = (
     SOURCE,
     PRE_FIX_SOURCE,
@@ -48,6 +52,8 @@ SOURCES = (
     LONDON_VECTOR_SOURCE_B,
     LONDON_VECTOR_SOURCE_MERGED,
     ANNOUNCE_STEP_SOURCE_MERGED,
+    CUBE_STACK_SOURCE,
+    CUBE_MAIN_BASE_SOURCE,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
