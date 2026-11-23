@@ -18552,7 +18552,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, pending) {
+    if let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, &pending) {
         if !pending.optional_additional_cost_selection_finished {
             let candidates = match collect_evidence_candidates_excluding(
                 pending.controller,

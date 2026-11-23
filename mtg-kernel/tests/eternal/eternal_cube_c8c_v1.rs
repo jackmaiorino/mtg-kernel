@@ -1225,11 +1225,12 @@ fn thieving_skydiver_kicker_x_forbids_zero_and_steals_artifact_and_attaches_equi
     let mut state = plains();
     let opp_elf = put(&mut state, P1, "Elvish Mystic", Zone::Battlefield);
     let opp_jitte = put(&mut state, P1, "Umezawa's Jitte", Zone::Battlefield);
-    let jitte_zcc = state.objects.get(opp_jitte).zone_change_count;
     let elf_zcc = state.objects.get(opp_elf).zone_change_count;
-    state
-        .attach_object_exact(opp_jitte, jitte_zcc, opp_elf, elf_zcc)
-        .unwrap();
+    state.objects.get_mut(opp_jitte).v4.attached_to = Some(mtg_kernel::state::ObjectLinkV4 {
+        object: opp_elf,
+        zone_change_count: elf_zcc,
+    });
+    state.objects.get_mut(opp_elf).attachments.push(opp_jitte);
     let skydiver = put(&mut state, P0, "Thieving Skydiver", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 3);
     cast(&mut state, skydiver, &[]);
@@ -1554,11 +1555,12 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
     put(&mut state, P0, "Sol Ring", Zone::Battlefield);
     let opp_elf = put(&mut state, P1, "Elvish Mystic", Zone::Battlefield);
     let opp_rancor = put(&mut state, P1, "Rancor", Zone::Battlefield);
-    let rancor_zcc = state.objects.get(opp_rancor).zone_change_count;
     let elf_zcc = state.objects.get(opp_elf).zone_change_count;
-    state
-        .attach_object_exact(opp_rancor, rancor_zcc, opp_elf, elf_zcc)
-        .unwrap();
+    state.objects.get_mut(opp_rancor).v4.attached_to = Some(mtg_kernel::state::ObjectLinkV4 {
+        object: opp_elf,
+        zone_change_count: elf_zcc,
+    });
+    state.objects.get_mut(opp_elf).attachments.push(opp_rancor);
 
     // Advance to P0's next Main1 so Absorbing Man's precombat main trigger fires.
     let mut saw_targets = false;
