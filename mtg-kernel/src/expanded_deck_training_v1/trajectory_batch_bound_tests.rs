@@ -383,9 +383,11 @@ fn the_prepared_command_keeps_its_wire_bytes_at_the_default_bound() {
         record_envelope: RecordEnvelopeV1::None,
         output_directory: "out".into(),
     };
-    let ex1_default =
-        serde_json::to_string(&ex1_command(Some(2), DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES))
-            .unwrap();
+    let ex1_default = serde_json::to_string(&ex1_command(
+        Some(2),
+        DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+    ))
+    .unwrap();
     assert!(!ex1_default.contains("max_trajectory_batch_mebibytes"));
     let ex1_back: ExpandedTrainingCommandV1 = serde_json::from_str(&ex1_default).unwrap();
     match &ex1_back {
@@ -409,18 +411,19 @@ fn the_prepared_command_keeps_its_wire_bytes_at_the_default_bound() {
         );
     }
 
-    let verified_command = |workers, mebibytes| ExpandedTrainingCommandV1::UpdateSVerifiedPrepared {
-        source: source.clone(),
-        trajectories: Vec::new(),
-        learning_rate: 0.0001,
-        value_coefficient: 0.5,
-        loss_selection: gae(),
-        preparation_workers: workers,
-        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
-        max_trajectory_batch_mebibytes: mebibytes,
-        tape_cap_bytes: 1 << 20,
-        output_directory: "out".into(),
-    };
+    let verified_command =
+        |workers, mebibytes| ExpandedTrainingCommandV1::UpdateSVerifiedPrepared {
+            source: source.clone(),
+            trajectories: Vec::new(),
+            learning_rate: 0.0001,
+            value_coefficient: 0.5,
+            loss_selection: gae(),
+            preparation_workers: workers,
+            max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            max_trajectory_batch_mebibytes: mebibytes,
+            tape_cap_bytes: 1 << 20,
+            output_directory: "out".into(),
+        };
     let verified_default =
         serde_json::to_string(&verified_command(2, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES))
             .unwrap();

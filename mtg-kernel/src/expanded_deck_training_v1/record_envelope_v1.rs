@@ -87,8 +87,7 @@ impl RecordEnvelopeV1 {
 }
 
 fn compress_zstd1_v1(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let mut compressor =
-        zstd::bulk::Compressor::new(ZSTD1_LEVEL_V1).map_err(|e| e.to_string())?;
+    let mut compressor = zstd::bulk::Compressor::new(ZSTD1_LEVEL_V1).map_err(|e| e.to_string())?;
     compressor
         .set_parameter(zstd::stream::raw::CParameter::ChecksumFlag(true))
         .map_err(|e| e.to_string())?;
