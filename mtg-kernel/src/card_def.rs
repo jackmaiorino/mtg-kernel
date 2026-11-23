@@ -537,6 +537,9 @@ pub enum Subtype {
     /// Warrior token), stable id 740 from the 740 to 749 range reserved for
     /// wave W1. A creature type.
     Klingon = 740,
+    /// Appended for Vintage Cube wave C7 (Black Widow, Super Spy), stable id
+    /// 750. A creature type.
+    Spy = 750,
 }
 
 impl Subtype {
@@ -956,6 +959,8 @@ impl Subtype {
         Subtype::Doctor,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Klingon,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Spy,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1221,6 +1226,7 @@ impl Subtype {
             720 => Subtype::Narset,
             721 => Subtype::Garruk,
             740 => Subtype::Klingon,
+            750 => Subtype::Spy,
             _ => return None,
         })
     }
@@ -1465,6 +1471,7 @@ impl Subtype {
             Subtype::Narset => false,
             Subtype::Garruk => false,
             Subtype::Klingon => true,
+            Subtype::Spy => true,
         }
     }
 
@@ -1589,6 +1596,7 @@ impl Subtype {
                     | Subtype::Mount
                     | Subtype::Doctor
                     | Subtype::Klingon
+                    | Subtype::Spy
             )
         {
             return true;

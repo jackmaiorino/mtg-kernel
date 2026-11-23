@@ -37225,6 +37225,505 @@
     "haste"
    ],
    "is_token": true
+  },
+  {
+   "name": "Inti, Seneschal of the Sun",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Knight"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/i/IntiSeneschalOfTheSun.java"
+  },
+  {
+   "name": "Malcolm, Alluring Scoundrel",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Siren",
+    "Pirate"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/m/MalcolmAlluringScoundrel.java"
+  },
+  {
+   "name": "Chandra, Torch of Defiance",
+   "engine_capability": "no_effect",
+   "starting_loyalty": 4,
+   "mana_cost": "{2}{R}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Chandra"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "R"
+   ],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChandraTorchOfDefiance.java"
+  },
+  {
+   "name": "Orcish Lumberjack",
+   "engine_capability": "no_effect",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Orc"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [
+    "R",
+    "G"
+   ],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/o/OrcishLumberjack.java"
+  },
+  {
+   "name": "Urza, Lord High Artificer",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Artificer"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [
+    "U"
+   ],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/u/UrzaLordHighArtificer.java"
+  },
+  {
+   "name": "Vivi Ornitier",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{U}{R}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Wizard"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 0,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [
+    "U",
+    "R"
+   ],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/v/ViviOrnitier.java"
+  },
+  {
+   "name": "Black Widow, Super Spy",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Spy",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Soul-Scar Mage",
+   "engine_capability": "no_effect",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/s/SoulScarMage.java"
+  },
+  {
+   "name": "Questing Beast",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{G}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Beast"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/q/QuestingBeast.java"
+  },
+  {
+   "name": "Palace Jailer",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{W}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/p/PalaceJailer.java"
+  },
+  {
+   "name": "Vibrance",
+   "engine_capability": "no_effect",
+   "mana_cost": "{3}{R/G}{R/G}",
+   "mana_value": 5,
+   "colors": [
+    "R",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental",
+    "Incarnation"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/v/Vibrance.java"
+  },
+  {
+   "name": "Wistfulness",
+   "engine_capability": "no_effect",
+   "mana_cost": "{3}{G/U}{G/U}",
+   "mana_value": 5,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental",
+    "Incarnation"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/w/Wistfulness.java"
+  },
+  {
+   "name": "Tidehollow Sculler",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}{B}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "B"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/t/TidehollowSculler.java"
+  },
+  {
+   "name": "The Wondrous Wasp",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Woodfall Primus",
+   "engine_capability": "no_effect",
+   "mana_cost": "{5}{G}{G}{G}",
+   "mana_value": 8,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Treefolk",
+    "Shaman"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/w/WoodfallPrimus.java"
+  },
+  {
+   "name": "Sanctum Lurker",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Horror"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Guardian Scalelord",
+   "engine_capability": "no_effect",
+   "mana_cost": "{4}{W}",
+   "mana_value": 5,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dragon"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/g/GuardianScalelord.java"
   }
  ]
 }

@@ -372,6 +372,12 @@ pub mod eternal_pauper_pf1a_v1;
 pub mod eternal_pauper_pf1b_v1;
 /// Pauper field card programs of the eternal catalog (wave Pf1c).
 pub mod eternal_pauper_pf1c_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7a).
+pub mod eternal_cube_c7a_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7b).
+pub mod eternal_cube_c7b_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7c).
+pub mod eternal_cube_c7c_v1;
 /// Premodern card programs of the eternal catalog (wave P1a).
 pub mod eternal_premodern_p1a_v1;
 /// Premodern Enchantress, Replenish, Oath, Landstill, Psychatog and Grow
