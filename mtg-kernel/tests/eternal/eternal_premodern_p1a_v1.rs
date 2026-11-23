@@ -1520,6 +1520,75 @@ fn sylvan_library_draws_two_and_charges_four_life_or_puts_back() {
     assert_eq!(state.players[0].life, 16);
 }
 
+#[test]
+fn sylvan_library_restores_draw_replacements_and_returns_only_the_drawn_card() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        let sylvan = put(&mut state, actor, "Sylvan Library", Zone::Battlefield);
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Draw && !state.stack.is_empty()
+        });
+        let player = &state.players[actor.index()];
+        assert_eq!(player.hand.len(), 1);
+        assert_eq!(player.draws_this_turn, 1);
+        let drawn = player.hand[0];
+        let library_before = player.library.len();
+        let life_before = player.life;
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        let treasures_before = controls(&state, opponent, "Treasure Token").len();
+
+        let option = settle(&mut state).expect("Sylvan Library offers two extra draws");
+        assert!(matches!(option, Decision::ChooseEffectOption { player, .. } if player == actor));
+        act(&mut state, Action::ChooseEffectOption(0));
+        let replacement = settle(&mut state).expect("Dredge competes for the first extra draw");
+        assert!(matches!(
+            &replacement,
+            Decision::ChooseEffectTargets {
+                player, source, legal_targets, can_finish: true, ..
+            } if *player == actor && *source == sylvan && legal_targets.as_slice() == [Target::Object(thug)]
+        ));
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), replacement);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            let selection = settle(branch).expect("Sylvan Library offers the one card drawn");
+            assert!(matches!(
+                selection,
+                Decision::ChooseEffectTargets {
+                    player, legal_targets, can_finish: false, ..
+                } if player == actor && legal_targets == [Target::Object(drawn)]
+            ));
+            act(branch, Action::ChooseEffectTarget(Target::Object(drawn)));
+            settle_with(branch, |_, choice| {
+                assert!(matches!(
+                    choice,
+                    Decision::ChooseEffectTargets {
+                        can_finish: true,
+                        ..
+                    }
+                ));
+                Action::FinishEffectSelection
+            });
+            let player = &branch.players[actor.index()];
+            assert_eq!(player.hand, [thug]);
+            assert_eq!(player.library.len(), library_before - 3);
+            assert_eq!(player.library[0], drawn);
+            assert_eq!(player.draws_this_turn, 1);
+            assert_eq!(player.life, life_before);
+            assert_eq!(
+                controls(branch, opponent, "Treasure Token").len(),
+                treasures_before + 1
+            );
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
 // ---- Creatures ---------------------------------------------------------------------
 
 #[test]
