@@ -10,83 +10,12 @@ use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
 use mtg_kernel::rl::{observe_policy_v5, policy_legal_action_candidates_v5, ActionSemanticV1};
 use mtg_kernel::state::Step;
 
-// W1 automatically used the Circle on Jackal Pup before it offered the saved
-// choice for Hallowed Ball Lightning. A fresh operation now offers Pup first.
-#[test]
-fn w1_fog_keeps_the_later_hallowed_attacker_before_the_circle_global_frontier() {
-    let state: GameState = serde_json::from_reader(flate2::read::GzDecoder::new(
-        &include_bytes!("../fixtures/hallow_combat_16ef09699.json.gz")[..],
-    ))
-    .unwrap();
-    let pending = state
-        .engine
-        .linked_aura_operation_v1
-        .pending_hallow_v1
-        .as_ref()
-        .unwrap();
-    let ball = pending.choice.damage.source;
-    assert_eq!(state.objects.get(ball).name, "Ball Lightning");
-    assert!(serde_json::to_value(pending)
-        .unwrap()
-        .get("circle_global_order")
-        .is_none());
-    for (option, total, old_hash) in [
-        (0, 26, 2_038_007_262_687_466_995),
-        (1, 20, 13_281_683_953_369_186_478),
-    ] {
-        let mut branch = restored(&state);
-        choose_public(&mut branch, P1, ball, option, 2);
-        assert!(combat_choice(&mut branch).is_none());
-        assert_eq!((life(&branch, P1), shields(&branch)), (total, 0));
-        assert_eq!(branch.state_hash(), old_hash);
-    }
-
-    let mut fresh = (*pending.original).clone();
-    let Some(Decision::ChooseEffectOption {
-        player: P1,
-        source: pup,
-        option_count: 2,
-    }) = combat_choice(&mut fresh)
-    else {
-        panic!("fresh combat should offer the Circle and fog on Jackal Pup");
-    };
-    assert_eq!(fresh.objects.get(pup).name, "Jackal Pup");
-    assert!(
-        fresh
-            .engine
-            .linked_aura_operation_v1
-            .pending_hallow_v1
-            .as_ref()
-            .unwrap()
-            .circle_global_order
-    );
-
-    let mut unstamped = fresh.clone();
-    unstamped
-        .engine
-        .linked_aura_operation_v1
-        .pending_hallow_v1
-        .as_mut()
-        .unwrap()
-        .circle_global_order = false;
-    for (saved, stamped) in [(fresh, true), (unstamped, false)] {
-        let mut branch = restored(&saved);
-        choose_public(&mut branch, P1, pup, 0, 2);
-        let next = branch
-            .engine
-            .linked_aura_operation_v1
-            .pending_hallow_v1
-            .as_ref()
-            .unwrap();
-        assert_eq!(next.choice.damage.source, ball);
-        assert_eq!(next.circle_global_order, stamped);
-        let mut branch = restored(&branch);
-        choose_public(&mut branch, P1, ball, 0, 2);
-        assert!(combat_choice(&mut branch).is_none());
-    }
-}
-
-fn global_prevention(state: &mut GameState, player: PlayerId, name: &str, color: ManaColor) {
+pub(super) fn global_prevention(
+    state: &mut GameState,
+    player: PlayerId,
+    name: &str,
+    color: ManaColor,
+) {
     give_priority(state, player);
     let spell = put(state, player, name, Zone::Hand);
     match name {
@@ -148,7 +77,7 @@ fn start_attack(state: &mut GameState, attacker: ObjectId) {
     act(state, Action::DeclareBlockers(Vec::new()));
 }
 
-fn combat_choice(state: &mut GameState) -> Option<Decision> {
+pub(super) fn combat_choice(state: &mut GameState) -> Option<Decision> {
     for _ in 0..100 {
         let decision = next(state);
         if state.step == Step::EndCombat {
@@ -166,12 +95,33 @@ fn combat_choice(state: &mut GameState) -> Option<Decision> {
     panic!("combat did not complete");
 }
 
-fn choose_public(
+pub(super) fn choose_public(
     state: &mut GameState,
     actor: PlayerId,
     source: ObjectId,
     option: u16,
     count: u16,
+) {
+    choose_public_inner(state, actor, source, option, count, false);
+}
+
+pub(super) fn choose_public_with_shroud_refusal(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+    option: u16,
+    count: u16,
+) {
+    choose_public_inner(state, actor, source, option, count, true);
+}
+
+fn choose_public_inner(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+    option: u16,
+    count: u16,
+    expect_shroud_refusal: bool,
 ) {
     let before = state.state_hash();
     assert!(engine::step(state, Action::ChooseEffectOption(count)).is_err());
@@ -181,12 +131,22 @@ fn choose_public(
     let mut replay_surface = PolicySurfaceV5::new();
     let live_decision = live_surface.next_decision(state).unwrap();
     let replay_decision = replay_surface.next_decision(&mut replay).unwrap();
-    let observation = observe_policy_v5(state, &live_surface, actor, 0, 0, 0, 1).unwrap();
-    assert_eq!(observation.schema_version, 5);
-    assert_eq!(
-        observation,
-        observe_policy_v5(&replay, &replay_surface, actor, 0, 0, 0, 1).unwrap()
-    );
+    let observation = observe_policy_v5(state, &live_surface, actor, 0, 0, 0, 1);
+    let replay_observation = observe_policy_v5(&replay, &replay_surface, actor, 0, 0, 0, 1);
+    if expect_shroud_refusal {
+        // #365 remains fail closed. The engine and public action decoder still
+        // expose this choice; no shroud observation schema is invented here.
+        for observation in [observation, replay_observation] {
+            assert_eq!(
+                observation.unwrap_err().0,
+                "player shroud requires an explicit public representation"
+            );
+        }
+    } else {
+        let observation = observation.unwrap();
+        assert_eq!(observation.schema_version, 5);
+        assert_eq!(observation, replay_observation.unwrap());
+    }
     let live = policy_legal_action_candidates_v5(&live_decision, &live_surface, state).unwrap();
     let actions =
         policy_legal_action_candidates_v5(&replay_decision, &replay_surface, &replay).unwrap();

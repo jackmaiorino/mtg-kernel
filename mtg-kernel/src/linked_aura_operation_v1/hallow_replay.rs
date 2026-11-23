@@ -1,4 +1,6 @@
-//! Replay the damage frontier that recorded the open operation.
+//! Reproduce the damage frontier that actually created an open operation.
+//! A versionless capture must reproduce the entire serialized game under one
+//! historical rule set, including earlier answers and packet ordinals.
 use super::{as_recorded, has_pending, replay_general, GameState, HallowCheckpointV1};
 use std::cell::Cell;
 
@@ -7,14 +9,28 @@ pub(super) enum Order {
     HallowOnly,
     CircleGlobal,
     StampedCircleGlobal,
+    SphereOjer,
+    Expanded,
 }
 
 thread_local! {
-    static ORDER: Cell<Order> = const { Cell::new(Order::StampedCircleGlobal) };
+    static ORDER: Cell<Order> = const { Cell::new(Order::Expanded) };
+}
+
+pub(crate) fn legacy_damage_order_v1() -> bool {
+    ORDER.with(|mode| mode.get() != Order::Expanded)
 }
 
 pub(crate) fn legacy_hallow_only_v1() -> bool {
     ORDER.with(|mode| mode.get() == Order::HallowOnly)
+}
+
+pub(crate) fn legacy_sphere_order_v1() -> bool {
+    ORDER.with(|mode| mode.get() == Order::SphereOjer)
+}
+
+pub(super) fn stamp_checkpoint() -> bool {
+    ORDER.with(|mode| mode.get() == Order::Expanded)
 }
 
 pub(super) fn stamp_circle_global() -> bool {
@@ -58,10 +74,13 @@ pub(super) fn recorded_order(
             })
         })
     };
+    if pending.expanded_damage_order {
+        return check(Order::Expanded);
+    }
     if pending.circle_global_order {
         return check(Order::StampedCircleGlobal);
     }
-    // Unstamped W1 saves may share the first menu with later rules, so try
-    // their original frontier first before recognizing unstamped Circle saves.
-    check(Order::HallowOnly).or_else(|_| check(Order::CircleGlobal))
+    check(Order::HallowOnly)
+        .or_else(|_| check(Order::CircleGlobal))
+        .or_else(|_| check(Order::SphereOjer))
 }

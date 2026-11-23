@@ -27,26 +27,30 @@ pub enum OrdinaryV1 {
     },
 }
 
-fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
+pub(crate) fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
     crate::eternal_pauper_e6a_v1::prevents_damage(state, damage)
-        || damage
-            .historical_facts(state)
-            .expect("validated historical source")
-            .map_or_else(
-                || {
-                    crate::engine::damage_is_prevented_by_protection(
-                        state,
-                        damage.source,
-                        damage.target,
-                    )
-                },
-                |facts| match damage.target {
-                    Target::Object(target) => {
-                        crate::source_power_activation_v1::protected(state, facts, target)
-                    }
-                    _ => false,
-                },
-            )
+        || protection_applies(state, damage)
+}
+
+pub(crate) fn protection_applies(state: &GameState, damage: &DamageProposed) -> bool {
+    damage
+        .historical_facts(state)
+        .expect("validated historical source")
+        .map_or_else(
+            || {
+                crate::engine::damage_is_prevented_by_protection(
+                    state,
+                    damage.source,
+                    damage.target,
+                )
+            },
+            |facts| match damage.target {
+                Target::Object(target) => {
+                    crate::source_power_activation_v1::protected(state, facts, target)
+                }
+                _ => false,
+            },
+        )
 }
 
 /// Applied static abilities follow both portions of a split event (CR 614.5).
@@ -81,15 +85,23 @@ impl Packet {
             e9a::statics::applicable_redirects(state, damage)
                 .map(|(position, record)| Redirect { position, record }),
         );
-        if prevention_without_cost(state, damage) {
+        let unpreventable = crate::eternal_prevention_order_v1::cannot_prevent(state);
+        if unpreventable {
+            // Only redirection can admit such a packet. The recipients are
+            // creatures; Nishoba's additional instruction still applies (615.12).
+            options.retain(|effect| matches!(effect, Redirect { .. }));
+        }
+        if !unpreventable && prevention_without_cost(state, damage) {
             options.push(PreventAll);
         }
         if let Target::Object(object) = damage.target {
-            if crate::eternal_premodern_p2c_v1::statics::nishoba_applies(state, damage) {
+            if crate::eternal_premodern_p2c_v1::statics::nishoba_applies(state, damage)
+                && !self.used.contains(&Nishoba(object))
+            {
                 options.push(Nishoba(object));
             }
         }
-        if !state.engine.active_replacements.is_empty() {
+        if !unpreventable && !state.engine.active_replacements.is_empty() {
             let proposed = ProposedEvent::Damage(damage.clone());
             options.extend(
                 state
@@ -144,12 +156,14 @@ impl Packet {
             }
             PreventAll => return,
             Nishoba(_) => {
-                crate::eternal_premodern_p2c_v1::statics::prevent_damage(
+                if crate::eternal_premodern_p2c_v1::statics::prevent_damage(
                     state,
                     &self.damage,
-                    false,
-                );
-                return;
+                    crate::eternal_prevention_order_v1::cannot_prevent(state),
+                ) {
+                    return;
+                }
+                self.used.push(effect);
             }
             Registered(replacement) => {
                 self.damage.touched_by.push(replacement.id);
