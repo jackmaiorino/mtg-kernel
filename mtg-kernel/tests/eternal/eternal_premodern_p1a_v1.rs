@@ -1807,6 +1807,66 @@ fn graveborn_muse_draws_and_drains_per_zombie() {
 }
 
 #[test]
+fn graveborn_muse_restores_competing_draw_replacements_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let muse = put(&mut state, actor, "Graveborn Muse", Zone::Battlefield);
+        put(&mut state, actor, "Withered Wretch", Zone::Battlefield);
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Upkeep && !state.stack.is_empty()
+        });
+        let history_start = state.engine.event_history.len();
+        let life_before = state.players[actor.index()].life;
+        let library_before = state.players[actor.index()].library.len();
+        let prompt = settle(&mut state).expect("Dredge competes for Muse's first draw");
+        assert!(
+            matches!(
+                &prompt,
+                Decision::ChooseEffectTargets {
+                    player, source, legal_targets, can_finish: true, ..
+                } if *player == actor && *source == muse && legal_targets.as_slice() == [Target::Object(thug)]
+            ),
+            "unexpected Muse replacement prompt: {prompt:?}"
+        );
+        assert_eq!(state.players[actor.index()].life, life_before);
+        assert!(controls(&state, opponent, "Treasure Token").is_empty());
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), prompt);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            settled(branch);
+            assert_eq!(zone(branch, thug), Zone::Hand);
+            assert_eq!(
+                branch.players[actor.index()].library.len(),
+                library_before - 4
+            );
+            assert_eq!(branch.players[actor.index()].draws_this_turn, 0);
+            assert_eq!(controls(branch, opponent, "Treasure Token").len(), 1);
+            assert_eq!(branch.players[actor.index()].life, life_before - 2);
+            let life_losses: Vec<_> = branch.engine.event_history[history_start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::LifeLoss { player, amount } if *player == actor => {
+                        Some(*amount)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(life_losses, [2]);
+        }
+        assert_eq!(restored.state_hash(), state.state_hash());
+    }
+}
+
+#[test]
 fn grim_lavamancer_exiles_two_graveyard_cards_to_shoot() {
     let mut state = islands();
     let lavamancer = put(&mut state, P0, "Grim Lavamancer", Zone::Battlefield);
