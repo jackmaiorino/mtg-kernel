@@ -686,6 +686,11 @@ fn prevent_packets(
         steps[item.event] = step
             .checked_add(1)
             .ok_or("Hallow packet step ordinal overflow")?;
+        // Save the public packet identity. Replay reconstructs the live source
+        // loans, which must stay with the packet used to apply the effect.
+        let mut saved_damage = damage.clone();
+        saved_damage.eternal_damage_lki_v1 = None;
+        saved_damage.niv_damage_origin_v1 = None;
         let choice = HallowChoiceV1 {
             cohort: batch.map(|batch| {
                 (
@@ -694,7 +699,7 @@ fn prevent_packets(
                     step,
                 )
             }),
-            damage: damage.clone(),
+            damage: saved_damage,
             source: item.source,
             source_zone: item.source_zone,
             chooser,

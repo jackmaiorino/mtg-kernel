@@ -208,7 +208,11 @@ pub(crate) fn packet_options(
         }
     }
     if !legacy {
-        permanent_v1::coalesce_spent_nishoba(state, &mut options);
+        permanent_v1::coalesce_spent_nishoba(
+            state,
+            &mut options,
+            cannot_prevent_damage(state, &packet.damage),
+        );
         nomads_v1::normalize(state, packet, &mut options, competing_source);
     }
     options
