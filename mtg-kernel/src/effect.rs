@@ -5104,13 +5104,11 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                 }
                 EffectOptionChoicePurpose::Generic => {
                     let pending = continuation.clone();
-                    if let Err(err) =
-                        crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(
-                            state,
-                            &pending,
-                            option_index,
-                        )
-                    {
+                    if let Err(err) = crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(
+                        state,
+                        &pending,
+                        option_index,
+                    ) {
                         if let Some(continuation) = state.engine.pending_effect.as_mut() {
                             continuation.choice = Some(PendingEffectChoice::ChooseOption {
                                 player,
