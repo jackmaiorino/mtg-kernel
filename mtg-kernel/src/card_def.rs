@@ -2612,6 +2612,8 @@ pub enum AltCostCondition {
     /// "If it's your turn" (Mine Collapse, Vintage Cube wave C1c). Appended
     /// for the eternal catalog.
     YourTurnV1,
+    /// Boarding Action may pay its Beam me up cost only from its graveyard.
+    BeamMeUpV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -4173,7 +4175,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x9d7d_dc19_b390_6513;
+        const EXPECTED_ETERNAL: u64 = 0xc5f8_eb1f_61c2_cca4;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

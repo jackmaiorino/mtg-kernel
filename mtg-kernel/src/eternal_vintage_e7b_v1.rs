@@ -892,6 +892,11 @@ pub(crate) fn pending_retrace(state: &GameState, pending: &crate::engine::Pendin
             .source_contract
             .spell_cast_origin
             .is_some_and(|origin| {
+                if origin.origin_zone == Zone::Graveyard
+                    && origin.route == crate::state::SpellCastRouteV4::RetraceV1
+                {
+                    return retrace_permission(state, pending.spell, pending.controller);
+                }
                 origin.origin_zone == Zone::Graveyard
                     && matches!(
                         origin.route,

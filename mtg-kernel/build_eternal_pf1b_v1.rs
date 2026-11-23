@@ -89,8 +89,8 @@ pub(super) fn attachment_for(name: &str) -> &'static str {
 }
 
 /// No Pf1b card has flashback yet.
-pub(super) fn flashback_for(name: &str) -> String {
-    super::build_eternal_pf1c_v1::flashback_for(name)
+pub(super) fn flashback_for(_name: &str) -> String {
+    "None".to_string()
 }
 
 /// No Pf1b card has an alternative cost yet.

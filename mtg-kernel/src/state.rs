@@ -978,6 +978,9 @@ pub enum SpellCastRouteV4 {
     TinybonesExileV72 {
         play_history_index: u64,
     },
+    BeamMeUpV1,
+    SnapcasterFlashbackV1,
+    RetraceV1,
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -6019,6 +6022,7 @@ mod tests {
             convoke_chosen: Vec::new(),
             convoke_finished: false,
             escape_exile_finished_v1: false,
+            graveyard_cost_first_v1: None,
             hand_free_cast_v1: None,
             thornscape_white_kicker_v1: None,
             mandatory_additional_cost: None,
