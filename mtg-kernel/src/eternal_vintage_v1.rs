@@ -1307,6 +1307,13 @@ pub(crate) fn has_type_override(
     if card_type == CardType::Artifact && crate::eternal_cube_c8b_v1::adds_artifact(state, object) {
         return Some(true);
     }
+    // Absorbing Man copy exception: Creature in addition to copied types
+    // (Vintage Cube wave C8c).
+    if card_type == CardType::Creature
+        && crate::eternal_cube_c8c_v1::is_absorbing_copy(state, object)
+    {
+        return Some(true);
+    }
     let eternal = state.eternal_v1.as_ref()?;
     let vintage = &eternal.vintage;
     if vintage.karn_animated.is_empty() && vintage.robots.is_empty() && vintage.copies.is_empty() {

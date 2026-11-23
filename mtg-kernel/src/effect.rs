@@ -14584,6 +14584,8 @@ fn drive_resumable_in_departure_scope_v1(
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::SearchLibraryToBattlefieldTapped {
                     player,
@@ -14642,6 +14644,8 @@ fn drive_resumable_in_departure_scope_v1(
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::DiscardRevealedHandCard {
                     player,
@@ -15023,6 +15027,8 @@ fn drive_resumable_in_departure_scope_v1(
                     if fiend_artisan_v1::selected(state, &continuation.resolving_item) {
                         fiend_artisan_v1::finish(state, &continuation.resolving_item);
                     }
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::SearchLibraryToHandMany {
                     player,
@@ -15095,6 +15101,8 @@ fn drive_resumable_in_departure_scope_v1(
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::PayGenericDrawV1 {
                     amount,
@@ -28742,6 +28750,11 @@ impl std::hash::Hash for EternalDamageLkiV1 {
 impl EternalDamageLkiV1 {
     pub(crate) fn for_minsc(proof: crate::eternal_vintage_e7b_v1::minsc::DamageLoanV1) -> Self {
         Self(EternalDamageOriginV1::Historical(proof.facts()))
+    }
+
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+    pub(crate) fn for_c8c(facts: crate::event::HistoricalDamageSourceV1) -> Self {
+        Self(EternalDamageOriginV1::Historical(facts))
     }
 
     pub(crate) fn source(self) -> ObjectId {

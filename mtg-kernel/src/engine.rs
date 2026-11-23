@@ -2486,7 +2486,8 @@ fn validate_physical_spell_cast_origin(
                 && ((from_graveyard && !free_graveyard)
                     || paid_exile
                     || item.v4.x_value == 0
-                    || announces_additional_cost_count(def))
+                    || announces_additional_cost_count(def)
+                    || (item.kicked && kicker_has_x(def)))
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
                     || (is_pending_placeholder
                         && resolution_cast_v1::form_allowed(
@@ -2661,7 +2662,9 @@ fn validate_physical_spell_cast_origin(
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
-                    || ((item.v4.x_value == 0 || announces_additional_cost_count(def))
+                    || ((item.v4.x_value == 0
+                        || announces_additional_cost_count(def)
+                        || (item.kicked && kicker_has_x(def)))
                         && !(cast_method == CastMethodV4::Omen
                             && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
                         && (matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)
@@ -6515,6 +6518,17 @@ fn activation_total_mana_cost(
     source: ObjectId,
     state: &GameState,
 ) -> Option<Cost> {
+    activation_total_mana_cost_with_x(printed, components, player, source, state, 0)
+}
+
+fn activation_total_mana_cost_with_x(
+    printed: Option<&Cost>,
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    x_value: u8,
+) -> Option<Cost> {
     // Anointed Peacekeeper: abilities of sources with the chosen name cost
     // {2} more to activate. Gloom: abilities of white enchantments cost {3}
     // more (eternal wave P3b).
@@ -6540,6 +6554,13 @@ fn activation_total_mana_cost(
     // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
     // less, never below one mana.
     let total = crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, total);
+    // Zirda, the Dawnwaker (eternal wave C8c): non-mana activated abilities
+    // you activate cost {2} less, never below one mana.
+    #[cfg(feature = "eternal-fixtures")]
+    let total =
+        crate::eternal_cube_c8c_v1::reduce_nonmana_activation(state, player, total, x_value);
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let _ = x_value;
     // Invasion Submersible's waterbend taps pay part of that total; the rest
     // is this ability's mana (wave S1q).
     #[cfg(feature = "eternal-fixtures")]
@@ -6556,12 +6577,23 @@ pub(crate) fn activation_mana_payment(
     source: ObjectId,
     state: &GameState,
 ) -> Option<Cost> {
-    activation_total_mana_cost(
+    activation_mana_payment_with_x(components, 0, player, source, state)
+}
+
+fn activation_mana_payment_with_x(
+    components: &[CostComponent],
+    x_value: u8,
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Option<Cost> {
+    activation_total_mana_cost_with_x(
         activation_mana_cost(components),
         components,
         player,
         source,
         state,
+        x_value,
     )
 }
 
@@ -7104,7 +7136,7 @@ fn can_pay_activation_components_with_x(
     if has_unblocked_attacker_return_cost(components) {
         return !unblocked_attacker_return_candidates(player, state, &[]).is_empty();
     }
-    if let Some(cost) = activation_mana_payment(components, player, source, state) {
+    if let Some(cost) = activation_mana_payment_with_x(components, x_value, player, source, state) {
         let excluded = if components
             .iter()
             .any(|component| matches!(component, CostComponent::Tap))
@@ -8002,7 +8034,8 @@ fn pay_cost_components_spending_mana(
     // partially paying life/discard-adjacent components before failing.
     // Use the original slice for ability-specific reductions: concretizing
     // loyalty X above must not erase the printed cost slice's identity.
-    let mana_cost = activation_mana_payment(printed_components, player, source, state);
+    let mana_cost =
+        activation_mana_payment_with_x(printed_components, x_value, player, source, state);
     let mana_plan = mana_cost.map(|cost| {
         mana::plan_activation_mana_v1(&cost, x_value, player, state, source, &reserved)
     });
@@ -11210,15 +11243,27 @@ fn announces_additional_cost_count(def: &card_def::CardDef) -> bool {
         || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()
 }
 
+/// Whether `def` has an X kicker cost ("Kicker {X}. X can't be 0." --
+/// Thieving Skydiver, Vintage Cube wave C8c).
+fn kicker_has_x(def: &card_def::CardDef) -> bool {
+    cfg!(feature = "eternal-fixtures") && def.kicker_cost.is_some_and(|cost| cost.x_count > 0)
+}
+
+fn kicker_min_x(def: &card_def::CardDef, kicked: bool) -> u16 {
+    u16::from(kicked && kicker_has_x(def))
+}
+
 /// Records the pay-or-skip answer of a hand cast under a free-cast
 /// permission. Skipping the mana cost makes X zero, except Sickening
-/// Dreams' X, which counts an additional cost's discards, and a replicate,
-/// multikicker or splice count, which counts additional cost payments.
+/// Dreams' X, which counts an additional cost's discards, a replicate,
+/// multikicker or splice count, which counts additional cost payments, and
+/// an X kicker cost (Thieving Skydiver, wave C8c).
 fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
     let discard_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
         crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
             || announces_additional_cost_count(def)
+            || kicker_has_x(def)
     });
     let pending = state
         .engine
@@ -11247,7 +11292,7 @@ fn free_cast_projection_quote(
             crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(&pending.targets_chosen),
         )
     } else {
-        0
+        kicker_min_x(def, kicked)
     };
     pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, x, &projected).is_some()
 }
@@ -16921,10 +16966,13 @@ pub(crate) fn validate_pending_cast(
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
     // Replicate's, multikicker's and splice's payment counts are announced
     // and validated like X, and so is Sickening Dreams' "discard X cards",
-    // even for a free cast.
+    // even for a free cast. Thieving Skydiver's "Kicker {X}. X can't be 0."
+    // likewise announces X unless kicker was declined.
     let replicate = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
         || announces_additional_cost_count(def);
+    let kicker_x_active = kicker_has_x(def) && pending.kicked != Some(false);
     let expected_seed_x: Option<u8> = if !replicate
+        && !kicker_x_active
         && (resolution_cast_v1::free_cast(state, pending.spell)
             || (def.cost.x_count == 0
                 && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
@@ -16934,12 +16982,18 @@ pub(crate) fn validate_pending_cast(
         None
     };
     if let Some(cost) = selected_cost {
-        if cost.x_count == 0 && !replicate {
+        if cost.x_count == 0 && !replicate && !kicker_x_active {
             if pending.selected_x_v59() != Some(0) {
                 return Err("non-X cast carries a noncanonical X stage".to_string());
             }
-        } else if cost.x_count > max_supported_x_symbols() || (replicate && cost.x_count != 0) {
+        } else if cost.x_count > max_supported_x_symbols()
+            || ((replicate || kicker_x_active) && cost.x_count != 0)
+        {
             return Err("pending cast has an unsupported number of X symbols".to_string());
+        } else if kicker_x_active && pending.kicked.is_none() {
+            if pending.selected_x_v59().is_some() {
+                return Err("pending cast chose X before choosing kicker".to_string());
+            }
         } else if let Some(x_value) = pending.selected_x_v59() {
             let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
             if pending_cast_quote_v1(
@@ -17419,7 +17473,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         } else {
             CastMethodV4::Normal
         };
-        let payable = pending_cast_quote_v1(def, &pending, method, true, 0, state).is_some();
+        let payable =
+            pending_cast_quote_v1(def, &pending, method, true, kicker_min_x(def, true), state)
+                .is_some();
         if payable
             && def.kicked_target_spec.is_some()
             && !kicker_targets_complete(state, def, &pending, false)
@@ -17454,7 +17510,11 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 .v4
                 .variable_targeting_kicked = Some(false);
         }
-        state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
+        let pending_mut = state.engine.pending_cast.as_mut().unwrap();
+        pending_mut.kicked = Some(false);
+        if kicker_has_x(def) && pending_mut.selected_x_v59().is_none() {
+            pending_mut.set_selected_x_v59(0);
+        }
         return drain_pending_cast_or_decide(state);
     }
 
@@ -17616,8 +17676,15 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             free_cast_projection_quote(def, &paying, kicked, state)
         };
         let free = !overload
-            && pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, kicked, 0, state)
-                .is_some();
+            && pending_cast_quote_v1(
+                def,
+                &pending,
+                CastMethodV4::Normal,
+                kicked,
+                kicker_min_x(def, kicked),
+                state,
+            )
+            .is_some();
         let choice = match (pay, free) {
             (true, true) => {
                 return Some(Decision::ChooseEffectOption {
@@ -24915,6 +24982,12 @@ pub fn effective_supertypes(state: &GameState, id: ObjectId) -> &'static [card_d
     if let Some(supertypes) = crate::eternal_pauper_e8b_v1::ring_bearer_supertypes(state, id) {
         return supertypes;
     }
+    // Absorbing Man copy exception: Legendary in addition to copied supertypes
+    // (Vintage Cube wave C8c).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(supertypes) = crate::eternal_cube_c8c_v1::absorbing_copy_supertypes(state, id) {
+        return supertypes;
+    }
     let object = state.objects.get(id);
     let def = &card_def::CARD_DEFS[object.card_def as usize];
     if object.v4.face_down_v1.is_some()
@@ -25048,10 +25121,21 @@ fn checked_base_power_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>,
             None
         }
     };
+    let absorbing_power = || -> Option<i32> {
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            crate::eternal_cube_c8c_v1::absorbing_copy_base_pt(state, id).map(|(power, _)| power)
+        }
+        #[cfg(not(feature = "eternal-fixtures"))]
+        {
+            None
+        }
+    };
     let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(power, _)| i32::from(power))
-        .or_else(c8b_copy_power)
         .or_else(|| obj.v4.face_down_v1.map(|_| 2))
+        .or_else(c8b_copy_power)
+        .or_else(absorbing_power)
         .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.0))
         .or_else(characteristic_power);
     let base = match base {
@@ -25090,11 +25174,16 @@ fn checked_base_toughness_v1(state: &GameState, id: ObjectId) -> Result<Option<i
     let obj = state.objects.get(id);
     let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(_, toughness)| i32::from(toughness))
+        .or_else(|| obj.v4.face_down_v1.map(|_| 2))
         .or_else(|| {
             #[cfg(feature = "eternal-fixtures")]
             {
                 crate::eternal_cube_c8b_v1::copy_base_power_toughness(state, id)
                     .map(|(_, toughness)| i32::from(toughness))
+                    .or_else(|| {
+                        crate::eternal_cube_c8c_v1::absorbing_copy_base_pt(state, id)
+                            .map(|(_, toughness)| toughness)
+                    })
             }
             #[cfg(not(feature = "eternal-fixtures"))]
             {
@@ -25105,7 +25194,6 @@ fn checked_base_toughness_v1(state: &GameState, id: ObjectId) -> Result<Option<i
     #[cfg(feature = "standard-magezero-fixtures")]
     let base =
         base.or_else(|| crate::standard_statics_v1::characteristic_defining_toughness(state, id));
-    let base = base.or_else(|| obj.v4.face_down_v1.map(|_| 2));
     let base = match base {
         Some(value) => Some(value),
         None => consuming_aberration_base_v1(state, id)?,
@@ -25403,6 +25491,13 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         .map_or((def, obj.v4.face_index), |definition| (definition, 0));
     let printed_active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
     if printed_active && kw == Keywords::HASTE && obj.v4.copied_end_step_sacrifices_v1 != 0 {
+        return true;
+    }
+    if cfg!(feature = "eternal-fixtures")
+        && printed_active
+        && kw == Keywords::VIGILANCE
+        && crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+    {
         return true;
     }
     let bestow_mask = if cfg!(feature = "eternal-fixtures") {
@@ -27747,7 +27842,9 @@ pub(crate) fn step_without_linked_aura_v1(
             } else {
                 CastMethodV4::Normal
             };
-            if pending_cast_quote_v1(def, &pending, method, true, 0, state).is_none() {
+            if pending_cast_quote_v1(def, &pending, method, true, kicker_min_x(def, true), state)
+                .is_none()
+            {
                 return Err("the kicker choice is no longer payable".to_string());
             }
             if def.kicked_target_spec.is_some() && !kicker_targets_complete(state, def, &pending, kicked) {
@@ -27759,12 +27856,15 @@ pub(crate) fn step_without_linked_aura_v1(
                 }
                 state.objects.get_mut(pending.spell).v4.variable_targeting_kicked = Some(kicked);
             }
-            state
+            let pending_mut = state
                 .engine
                 .pending_cast
                 .as_mut()
-                .expect("validated cast remains pending")
-                .kicked = Some(kicked);
+                .expect("validated cast remains pending");
+            pending_mut.kicked = Some(kicked);
+            if !kicked && kicker_has_x(def) && pending_mut.selected_x_v59().is_none() {
+                pending_mut.set_selected_x_v59(0);
+            }
             Ok(())
         }
         Action::ChooseSpellMode(mode) => {
@@ -31119,6 +31219,7 @@ fn materialize_begin_cast_with_quote_v1(
         // Sickening Dreams' "discard X cards" likewise announces X.
         x_value: if !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
             && !announces_additional_cost_count(def)
+            && !kicker_has_x(def)
             && (without_mana_cost
                 || citadel_cast
                 || (def.cost.x_count == 0

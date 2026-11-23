@@ -6131,7 +6131,8 @@ fn materialize_event_v1(
                         || crate::eternal_vintage_v1::active_copy(state, z.object)
                         || crate::eternal_legacy_e7a_v1::active_copy(state, z.object)
                         || (cfg!(feature = "eternal-fixtures")
-                            && crate::eternal_cube_c8b_v1::active_copy(state, z.object)))
+                            && (crate::eternal_cube_c8b_v1::active_copy(state, z.object)
+                                || crate::eternal_cube_c8c_v1::active_copy(state, z.object))))
                 {
                     let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                         source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -6227,9 +6228,11 @@ fn materialize_event_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
                     crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_cube_c8b_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6269,9 +6272,11 @@ fn materialize_event_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
                     crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_cube_c8b_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -7460,7 +7465,10 @@ fn commit_batch_survivors_native(
     crate::source_power_activation_v1::bombardment::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
+    {
+        crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
+        crate::eternal_cube_c8c_v1::before_batch_departures(state, &survivors);
+    }
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is

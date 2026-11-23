@@ -645,6 +645,11 @@ fn eternal_trigger(t: crate::eternal_cards_v1::EternalTriggerV1) -> Result<Value
         E::C8bV1(v) => json!({"C8bV1": match v {
             crate::eternal_cube_c8b_v1::C8bTriggerV1::VaultbornEntersV1 => "VaultbornEntersV1",
         }}),
+        E::C8cV1(v) => json!({"C8cV1": match v {
+            crate::eternal_cube_c8c_v1::C8cTriggerV1::CardsPutIntoLibraryFromAnywhereV1 => {
+                json!("CardsPutIntoLibraryFromAnywhereV1")
+            }
+        }}),
         _ => return Err(unsupported()),
     })
 }

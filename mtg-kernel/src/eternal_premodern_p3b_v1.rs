@@ -356,6 +356,9 @@ fn haunting_echoes_resolve(ctx: &ExecCtx, state: &mut GameState) {
     exile_all(state, &matching);
     if state.shuffle_library(player).is_err() {
         halt(state, ctx.source);
+    } else if player == ctx.controller {
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c8c_v1::note_library_searched(state, player);
     }
 }
 
