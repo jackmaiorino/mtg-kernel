@@ -80,6 +80,7 @@ fn episode(learner_seat: u8) -> ExpandedEpisodeV1 {
         reset: None,
         opening: None,
         mulligan_modes: None,
+        priority_windows: None,
     }
 }
 

@@ -859,6 +859,7 @@ fn collect_v1(
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
         })
         .collect();
     let collection = execute_v1(ExpandedTrainingCommandV1::Collect {

@@ -304,6 +304,7 @@ fn episodes(lists: &[ExpandedDeckListV1], seeds: usize) -> Vec<ExpandedEpisodeV1
                             PauperMulliganModeV1::Learned,
                             PauperMulliganModeV1::Learned,
                         ]),
+                        priority_windows: None,
                     });
                 }
             }

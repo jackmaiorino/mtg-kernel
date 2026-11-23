@@ -161,6 +161,7 @@ fn iterations_v1(
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        priority_windows: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 })

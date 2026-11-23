@@ -386,6 +386,7 @@ mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),

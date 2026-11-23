@@ -2570,6 +2570,7 @@ mod tests {
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        priority_windows: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -4137,6 +4138,7 @@ mod tests {
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        priority_windows: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 }],

@@ -448,6 +448,7 @@ pub fn episode_v1(
         reset: None,
         opening: None,
         mulligan_modes: None,
+        priority_windows: None,
     })
 }
 

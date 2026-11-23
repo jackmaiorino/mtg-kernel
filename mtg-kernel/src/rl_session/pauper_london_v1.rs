@@ -23,6 +23,8 @@ mod flat_v7_tests;
 // Binds the Pauper registry (its parity fixture), so the appended-registry
 // builds leave it out.
 #[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
+mod action_windows_tests;
+#[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
 mod flat_v8_tests;
 #[cfg(test)]
 mod tests;
@@ -176,12 +178,44 @@ impl FastActorSessionV1 {
         starting_player: PlayerId,
         modes: [PauperMulliganModeV1; 2],
     ) -> Result<Self, RlSessionError> {
+        Self::reset_pauper_london_windows_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            modes,
+            [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    /// `reset_pauper_london_v1` with each seat's priority-window rule
+    /// (`HarnessSurfaceV2::set_action_window_seats_v1`), set before the first
+    /// advance. Both `HarnessV2` is that reset exactly.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_pauper_london_windows_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        modes: [PauperMulliganModeV1; 2],
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, mut state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
             Some(starting_player),
         )?;
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        let mut surface = PolicySurfaceV5::new_for_session();
+        surface
+            .set_action_window_seats_v1(windows)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = FastActorSessionV1 {
             deck_ids,
@@ -190,7 +224,7 @@ impl FastActorSessionV1 {
             max_physical_decisions,
             max_policy_steps,
             state,
-            surface: PolicySurfaceV5::new_for_session(),
+            surface,
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,
