@@ -260,3 +260,30 @@ fn both_seats_harness_v2_is_the_plain_reset() {
         }
     }
 }
+
+/// A session rebuilt around another session's state (the W1 information-set
+/// import) keeps that session's rules: they are session configuration, like
+/// its contract mode, and the import's fresh surface would otherwise pass
+/// the windows a rule hands its seat. A session without rules imports as
+/// before.
+#[test]
+fn an_infoset_import_keeps_the_templates_rules() {
+    let rules = [
+        SeatPriorityWindowsV1::ActionWindowsV1,
+        SeatPriorityWindowsV1::ActionWindowsEndStepV1,
+    ];
+    for windows in [rules, [SeatPriorityWindowsV1::HarnessV2; 2]] {
+        let live = session(
+            false,
+            ["Burn", "Faeries"],
+            0x5eed_0d00,
+            PlayerId::P0,
+            windows,
+        );
+        let imported = FastActorSessionV1::import_infoset_v1(&live, live.game_state().clone(), 0);
+        assert_eq!(
+            imported.surface.harness_surface().action_window_seats_v1(),
+            windows
+        );
+    }
+}

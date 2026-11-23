@@ -5595,6 +5595,14 @@ impl FastActorSessionV1 {
         context: Option<crate::policy_surface_v5::SurfaceContextV1>,
     ) -> FastActorSessionV1 {
         let mut surface = PolicySurfaceV5::new_for_session();
+        // The template's per-seat priority-window rules are session
+        // configuration, like its contract mode: without them the import
+        // would pass a window the template's rule hands its seat. Both seats
+        // `HarnessV2` (every session without the episode field) changes
+        // nothing here.
+        surface
+            .set_action_window_seats_v1(template.surface.harness_surface().action_window_seats_v1())
+            .expect("a fresh session surface accepts any priority-window rules");
         // The decision marks (lead ruling 7 (a)) carry over when the state
         // continues the template's committed stream (a fixture's edited
         // restart); otherwise they start empty.
