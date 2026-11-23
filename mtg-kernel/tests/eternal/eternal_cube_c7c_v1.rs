@@ -1222,7 +1222,10 @@ fn woodfall_primus_etb_destroys_noncreature_permanent_and_excludes_creatures() {
     let enchantment = put(&mut state, P1, "Seal of Cleansing", Zone::Battlefield);
     let land = put(&mut state, P1, "Plains", Zone::Battlefield);
     let walker = put(&mut state, P1, "Wrenn and Six", Zone::Hand);
-    event::propose_and_commit(&mut state, ProposedEvent::zone_change(walker, Zone::Battlefield));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(walker, Zone::Battlefield),
+    );
     assert_eq!(loyalty(&state, walker), Some(3));
     let primus = put(&mut state, P0, "Woodfall Primus", Zone::Hand);
     pool(
