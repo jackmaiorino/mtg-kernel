@@ -21552,6 +21552,9 @@ pub use chandra_v74::{ChandraDecisionV74, ChandraSessionV74, ChandraSnapshotV74}
 mod eternal_actor_v1;
 pub(crate) mod kaito_v75;
 mod limited_return_v1;
+// Birchlore Rangers is in the eternal catalog only.
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod priority_windows_two_object_tests;
 pub use eternal_actor_v1::{EternalActorDecisionV1, EternalActorSessionV1, EternalActorSnapshotV1};
 #[cfg(feature = "limited-fdn-fixtures")]
 mod rules_only_v1;

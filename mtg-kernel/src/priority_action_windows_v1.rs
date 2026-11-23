@@ -16,7 +16,9 @@
 //!
 //! The mana test searches the activations autopay does not make (the engine's
 //! own autopay source list decides), each run by the engine on a cloned
-//! state.
+//! state. A printed cost of tapping two permanents (Birchlore Rangers) is
+//! activated with each pair that can pay it, as the legal-action menu lists
+//! it.
 //!
 //! Hand-blind: every test reads only the acting player's own legal options as
 //! the rules engine lists them. Nothing here is a judgment about what is
@@ -210,17 +212,49 @@ fn activations_v1(
                 .iter()
                 .any(|(_, blockers)| blockers.contains(&id));
         let source = (state.objects.get(id).card_def, in_combat.then_some(id));
-        let choices = engine::available_mana_ability_choices(player, id, state);
+        let mut choices = engine::available_mana_ability_choices(player, id, state);
+        // The engine reads the one-choice action only from a source that
+        // lists exactly one color, whichever of its abilities adds it.
+        let single_choice = choices.len() == 1;
+        // A printed cost of tapping two permanents (`ManaAbilityCostDef::
+        // TapTwoControlledPermanentsWithSubtypeV1`, Birchlore Rangers): each
+        // printed color with each unordered pair that can pay, exactly as
+        // `rl::for_each_mana_action` lists them. No other action activates
+        // that ability, and autopay never pays it, so none is skipped. What
+        // is left of `choices` is the source's granted tap mana, which takes
+        // the one-object path below.
+        if let Some(candidates) = engine::two_object_mana_cost_candidates(state, player, id) {
+            let pair_choices = engine::two_object_mana_cost_choices(state, player, id);
+            for &choice in pair_choices.as_slice() {
+                for (index, &first) in candidates.iter().enumerate() {
+                    for &second in &candidates[index + 1..] {
+                        let key = (source, choice, [Some(first), Some(second)]);
+                        if !seen_keys.contains(&key) {
+                            seen_keys.push(key);
+                            out.push(ManaActivationV1 {
+                                action: Action::ActivateManaAbilityWithTwoCostTargetsV1(
+                                    id,
+                                    choice,
+                                    [first, second],
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            let granted = engine::granted_tap_mana_choices(state, id);
+            choices.retain(|color| granted.contains(color));
+        }
         for &choice in &choices {
             let targets = engine::mana_ability_cost_targets_for_choice(player, id, choice, state);
             if !all_sources && targets.is_empty() && autopay.contains(&(id, choice)) {
                 continue;
             }
             if targets.is_empty() {
-                let key = (source, choice, None);
+                let key = (source, choice, [None, None]);
                 if !seen_keys.contains(&key) {
                     seen_keys.push(key);
-                    let action = if choices.len() == 1 {
+                    let action = if single_choice {
                         Action::ActivateManaAbility(id)
                     } else {
                         Action::ActivateManaAbilityChoice(id, choice)
@@ -229,7 +263,7 @@ fn activations_v1(
                 }
             } else {
                 for &target in &targets {
-                    let key = (source, choice, Some(target));
+                    let key = (source, choice, [Some(target), None]);
                     if !seen_keys.contains(&key) {
                         seen_keys.push(key);
                         out.push(ManaActivationV1 {
@@ -249,7 +283,8 @@ fn activations_v1(
 /// ability for `player`? Each step is the engine's own: the activation is
 /// applied with `engine::step` to a clone of the state and the next decision
 /// is computed with `engine::advance_until_decision`. Sources of the same card
-/// that are neither attacking nor blocking are grouped by color and cost-target object.
+/// that are neither attacking nor blocking are grouped by color and cost-target object
+/// (for a two-object cost, by color and the pair of objects tapped).
 /// Attackers and blockers are tried individually. States already seen are
 /// skipped. Past [`MANA_TEST_ACTIVATION_CAP_V1`]
 /// activations the answer is "enables" (the window is offered).
@@ -779,5 +814,132 @@ mod tests {
             assert_eq!(test.hand_only_sources, 1, "{test:?}");
             assert!(test.activations <= 5, "{test:?}");
         }
+    }
+
+    /// Birchlore Rangers and one more Elf, both summoning-sick (neither
+    /// payment of the Rangers' cost is the tap symbol), and `hand` in P0's
+    /// hand, in P0's upkeep. Nothing else makes mana: no land, and the other
+    /// Elf cannot tap for its own ability.
+    #[cfg(feature = "eternal-fixtures")]
+    fn rangers_in_upkeep(hand: &[&str]) -> (GameState, ObjectId, ObjectId) {
+        let mut state = game();
+        for name in hand {
+            put(&mut state, PlayerId::P0, name, Zone::Hand);
+        }
+        let ranger = put(
+            &mut state,
+            PlayerId::P0,
+            "Birchlore Rangers",
+            Zone::Battlefield,
+        );
+        let elf = put(
+            &mut state,
+            PlayerId::P0,
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        for id in [ranger, elf] {
+            state.objects.get_mut(id).summoning_sick = true;
+        }
+        at(&mut state, Step::Upkeep, PlayerId::P0, PlayerId::P0);
+        (state, ranger, elf)
+    }
+
+    /// Main only: a printed cost of tapping two permanents (Birchlore
+    /// Rangers, "Tap two untapped Elves you control: Add one mana of any
+    /// color") has its own action, `ActivateManaAbilityWithTwoCostTargetsV1`.
+    /// A search that lists only one-object activations never makes it (the
+    /// engine refuses each), so a window whose only line starts with it was
+    /// passed. The pair is searched, the window is offered, and the ability
+    /// pays for the spell in that window.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn a_two_object_mana_cost_is_searched_offered_and_pays_in_the_window() {
+        use crate::mana::ManaColor;
+        use crate::surface::SurfaceAction;
+
+        let (mut state, ranger, elf) = rangers_in_upkeep(&["Lightning Bolt"]);
+        let bolt = state.players[0].hand[0];
+        let Decision::CastSpellOrPass {
+            player,
+            castable_spells,
+            mana_abilities,
+            activatable_abilities,
+            ..
+        } = engine::advance_until_decision(&mut state)
+        else {
+            panic!("expected P0's upkeep priority");
+        };
+        assert_eq!(player, PlayerId::P0);
+        assert!(castable_spells.is_empty() && activatable_abilities.is_empty());
+        assert_eq!(mana_abilities, vec![ranger]);
+
+        // One pair, each printed color once: red pays the Bolt.
+        let test = mana_enables_action_v1(&state, PlayerId::P0, &mana_abilities, false);
+        assert!(test.enables, "{test:?}");
+        assert!(!test.cap_reached, "{test:?}");
+        assert!((1..=5).contains(&test.activations), "{test:?}");
+        assert_eq!(test.hand_only_sources, 1, "{test:?}");
+
+        // The engine refuses the one-object actions for this ability: only
+        // the pair action can have enabled the Bolt.
+        for action in [
+            Action::ActivateManaAbility(ranger),
+            Action::ActivateManaAbilityChoice(ranger, ManaColor::R),
+        ] {
+            assert!(engine::step(&mut state.clone(), action).is_err());
+        }
+
+        // The action seat is handed the upkeep window HarnessV2 passes.
+        let mut ruled = surface(P0_ACTS);
+        let decision = ruled.next_decision(&mut state);
+        assert_eq!(asked(&decision, Step::Upkeep, &state), Some(PlayerId::P0));
+        assert_eq!(ruled.engine_window_v1(), Some(SuppressionReason::StepGated));
+        assert!(ruled.suppressions().is_empty());
+
+        // In that window the ability taps both Elves for red...
+        let mut pair = [ranger, elf];
+        pair.sort();
+        let pay = Action::ActivateManaAbilityWithTwoCostTargetsV1(ranger, ManaColor::R, pair);
+        ruled.apply(&mut state, SurfaceAction::Action(pay)).unwrap();
+        assert!(state.objects.get(ranger).tapped && state.objects.get(elf).tapped);
+        assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 1);
+        assert!(state.stack.is_empty());
+
+        // ...and the seat keeps the window, now with the Bolt to cast.
+        let decision = ruled.next_decision(&mut state);
+        assert_eq!(asked(&decision, Step::Upkeep, &state), Some(PlayerId::P0));
+        assert_eq!(ruled.engine_window_v1(), Some(SuppressionReason::StepGated));
+        let SurfaceDecision::Decision(Decision::CastSpellOrPass {
+            castable_spells, ..
+        }) = &decision
+        else {
+            panic!("expected P0's upkeep priority, got {decision:?}");
+        };
+        assert_eq!(castable_spells.as_slice(), [bolt]);
+
+        // Today's surface passes the same upkeep window.
+        let (mut state, _, _) = rangers_in_upkeep(&["Lightning Bolt"]);
+        let mut plain = HarnessSurfaceV2::new();
+        let decision = plain.next_decision(&mut state);
+        assert_eq!(asked(&decision, Step::Upkeep, &state), None);
+        assert_eq!(plain.suppressions()[0].reason, SuppressionReason::StepGated);
+    }
+
+    /// The pair search is a test, not a blanket offer: with nothing the mana
+    /// could pay for, every pair and color is tried once, the answer is no,
+    /// and the upkeep window is passed for the action seat.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn a_two_object_mana_cost_that_enables_nothing_is_not_offered() {
+        let (mut state, ranger, _) = rangers_in_upkeep(&[]);
+        let test = mana_enables_action_v1(&state, PlayerId::P0, &[ranger], false);
+        assert!(!test.enables, "{test:?}");
+        assert!(!test.cap_reached, "{test:?}");
+        assert!((1..=5).contains(&test.activations), "{test:?}");
+        let mut ruled = surface(P0_ACTS);
+        let decision = ruled.next_decision(&mut state);
+        assert_eq!(asked(&decision, Step::Upkeep, &state), None);
+        assert_eq!(ruled.suppressions()[0].reason, SuppressionReason::StepGated);
     }
 }
