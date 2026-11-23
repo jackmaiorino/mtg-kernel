@@ -1152,6 +1152,49 @@ fn after_update_for_test_v1(hook: impl FnMut(usize) + 'static) {
     AFTER_UPDATE_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
 }
 
+/// Test-only: what a driver on this thread does instead of printing an
+/// iteration's stdout line, given the iteration's index and the line. A hook
+/// that panics stands for `println!` failing, which panics.
+#[cfg(test)]
+type StdoutForTestV1 = Box<dyn FnMut(usize, &str)>;
+
+#[cfg(test)]
+thread_local! {
+    static STDOUT_FOR_TEST_V1: std::cell::RefCell<Option<StdoutForTestV1>> =
+        const { std::cell::RefCell::new(None) };
+    static AFTER_ADMISSION_FOR_TEST_V1: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only: every driver on this thread gives its iterations' stdout lines
+/// to `hook` instead of printing them (`StdoutForTestV1`).
+#[cfg(test)]
+fn stdout_for_test_v1(hook: impl FnMut(usize, &str) + 'static) {
+    STDOUT_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+/// Test-only: the next driver on this thread calls `hook` once, right after
+/// its admission checks and before its first write.
+#[cfg(test)]
+fn after_admission_for_test_v1(hook: impl FnOnce() + 'static) {
+    AFTER_ADMISSION_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+/// Prints iteration `index`'s stdout line.
+fn print_iteration_line_v1(index: usize, line: &str) {
+    #[cfg(test)]
+    {
+        let taken = STDOUT_FOR_TEST_V1.with(|slot| slot.borrow_mut().take());
+        if let Some(mut hook) = taken {
+            hook(index, line);
+            STDOUT_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(hook));
+            return;
+        }
+    }
+    let _ = index;
+    println!("{line}");
+}
+
 fn publish(
     directory: &Path,
     name: &str,
@@ -1948,8 +1991,14 @@ pub fn run_native_expanded_training_v1(
     config.validate_v1()?;
     config.update_backend.require_compiled_v1()?;
     // `update_tail_overlap_v1`: a run whose chain ledger carries a stop value
-    // stays serial; the key is refused here, before any work.
+    // stays serial, and the diagnostic captures cannot be held; the key is
+    // refused here, before any work.
     update_tail_overlap_v1::refuse_ledger_stop_v1(config)?;
+    update_tail_overlap_v1::refuse_captures_v1(config)?;
+    #[cfg(test)]
+    if let Some(hook) = AFTER_ADMISSION_FOR_TEST_V1.with(|slot| slot.borrow_mut().take()) {
+        hook();
+    }
     // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
     // run is admitted before its first pinned read: a run without resident
     // reads is refused in a process that has them on instead of silently
@@ -2053,6 +2102,14 @@ pub fn run_native_expanded_training_v1(
         .map(ChainLedgerOptionsV1::stop_at_usec_v1)
         .transpose()?
         .flatten();
+    // `update_tail_overlap_v1`: a stop value put in the ledger source since
+    // admission is refused here, before any iteration.
+    if config.update_tail_overlap_v1 {
+        check(
+            recovered_stop_at_usec.is_none(),
+            update_tail_overlap_v1::LEDGER_STOP_REFUSAL_V1,
+        )?;
+    }
     let mut missing_seen = false;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
@@ -2531,9 +2588,9 @@ pub fn run_native_expanded_training_v1(
         {
             stopped_at_ledger = true;
         }
-        println!(
-            "{}",
-            json!({"completed_iteration":index,"adam_step":current_identity.adam_step,
+        print_iteration_line_v1(
+            index,
+            &json!({"completed_iteration":index,"adam_step":current_identity.adam_step,
             "checkpoint":current.checkpoint,
             "scheduler_timing":{"schema":"phase1-scheduler-wall/v1",
                 "scope":"newly_completed_iteration_excludes_initialization_and_completed_prefix_validation",
@@ -2543,12 +2600,14 @@ pub fn run_native_expanded_training_v1(
                 "collection_validation_seconds":collection_validation_seconds,
                 "update_validation_seconds":update_validation_seconds,
                 "cpu_utilization_claim":false}})
+            .to_string(),
         );
         // `update_tail_overlap_v1`: this update is committed (its
         // `complete.json` is durable and its line printed), so the next
-        // iteration's collection, if this update started one, writes its
-        // held output and may write files from here on. A ledger stop is
-        // refused with the setting, so the loop goes on to that iteration.
+        // iteration's collection, if this update started one, may write
+        // from here on; its held output is written once its directory is
+        // made. A ledger stop is refused with the setting, so the loop goes
+        // on to that iteration.
         if let Some(next) = prefetch.as_ref().filter(|_| !stopped_at_ledger) {
             next.committed_v1();
         }

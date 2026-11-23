@@ -24,10 +24,15 @@
 //!   Until then the collection plays its games in memory and leaves no trace:
 //!   it creates no directory and writes no file (the write gate of
 //!   `phase1_parallel_collection`), and its stderr lines and panic messages
-//!   are held in memory (`held_output_v1`), to be written in their order when
-//!   the gate opens. So nothing of an iteration exists before the iteration
-//!   before it is committed, and every state a crash or a failure leaves is
-//!   one a run without the setting can leave.
+//!   are held in memory (`held_output_v1`), to be written in their order once
+//!   the gate is open and the iteration's directory has been made new for
+//!   the collection (dropped when it could not be: the driver then runs the
+//!   iteration itself and prints its own lines). So nothing of an iteration
+//!   exists before the iteration before it is committed, and every state a
+//!   crash or a failure leaves is one a run without the setting can leave.
+//!   The opt-in diagnostic captures, which write their files at once from
+//!   the failing game, cannot be held, so the setting is refused while any is
+//!   on ([`CAPTURE_VARIABLES_V1`]).
 //! - The order of commits. The driver joins the collection's thread at the
 //!   top of the next iteration, after the commit, and only then validates the
 //!   collection and runs the next update: an update never starts before the
@@ -47,7 +52,8 @@
 //!   a run has no collection beside it and reads exactly as without the
 //!   setting. A chain ledger stop is decided on the readings, so a run whose
 //!   ledger carries a stop value is refused ([`LEDGER_STOP_REFUSAL_V1`]): at
-//!   admission, before any work, and at every boundary, before its receipt.
+//!   admission, before any work, at the driver's startup read of the stop
+//!   value, before any iteration, and at every boundary, before its receipt.
 //!   A ledger-stopped run stays serial.
 //!
 //! The one difference a failure can show: when an update fails after its
@@ -79,6 +85,43 @@ pub(super) const LEDGER_STOP_REFUSAL_V1: &str =
     "update_tail_overlap_v1 is refused when the chain ledger carries a stop value \
      (stop_at_usec): a ledger-stopped run stays serial";
 
+/// The opt-in diagnostic captures a collection can write: each writes the
+/// file its environment variable names at once, from the game that fails,
+/// outside every write gate. A speculative collection's capture would outlive
+/// the collection's abandonment, so the setting is refused while any of them
+/// is set ([`refuse_captures_v1`]).
+pub(super) const CAPTURE_VARIABLES_V1: [&str; 5] = [
+    "MTG_KERNEL_FAST_ACTOR_REJECTION_CAPTURE",
+    "MTG_KERNEL_V3_ACTION_ERROR_CAPTURE",
+    "MTG_KERNEL_V3_SCORING_ERROR_CAPTURE",
+    "MTG_V4_SEARCH_FAILURE_STATE",
+    "MTG_V4_SEARCH_BOUNDARY_FAILURE_STATE",
+];
+
+/// The refusal of the setting while the capture variable `variable` is set.
+pub(super) fn capture_refusal_v1(variable: &str) -> String {
+    format!(
+        "update_tail_overlap_v1 is refused while the diagnostic capture variable {variable} \
+         is set: a speculative collection would write its capture outside the write gate"
+    )
+}
+
+/// Refuses the setting, before any work, while any capture variable of
+/// [`CAPTURE_VARIABLES_V1`] is set in the process environment (with any
+/// value: each capture is on whenever its variable is present).
+pub(super) fn refuse_captures_v1(config: &NativeExpandedTrainingRunV1) -> Result<(), String> {
+    if !config.update_tail_overlap_v1 {
+        return Ok(());
+    }
+    match CAPTURE_VARIABLES_V1
+        .iter()
+        .find(|variable| std::env::var_os(variable).is_some())
+    {
+        Some(variable) => Err(capture_refusal_v1(variable)),
+        None => Ok(()),
+    }
+}
+
 /// The collection's model load and dispatch run on this thread (its games
 /// run on the collection's own workers), where without the setting they run
 /// on the driver's thread: at least that thread's stack on every system.
@@ -105,6 +148,18 @@ thread_local! {
     /// drivers start goes, instead of stderr.
     static RECORDER_FOR_TEST_V1: std::cell::RefCell<Option<held_output_v1::RecorderV1>> =
         const { std::cell::RefCell::new(None) };
+    /// Test-only: told the iteration of every collection whose gate this
+    /// thread's drivers open, as it opens.
+    static GATE_OPENED_FOR_TEST_V1: std::cell::RefCell<Option<Box<dyn FnMut(usize)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only: `hook` is told the iteration of every collection whose gate a
+/// driver on this thread opens from now on, as it opens: before the
+/// collection can see it open.
+#[cfg(test)]
+pub(super) fn gate_opened_for_test_v1(hook: impl FnMut(usize) + 'static) {
+    GATE_OPENED_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
 }
 
 /// Test-only: how many collections the drivers run on this thread took from
@@ -181,7 +236,8 @@ struct GateStateV1 {
 struct SharedV1 {
     state: Mutex<GateStateV1>,
     changed: Condvar,
-    /// The collection's stderr lines and panic messages until its commit.
+    /// The collection's stderr lines and panic messages until its first
+    /// admitted write has made its directory (`collect_v1`).
     held: Arc<HeldOutputV1>,
 }
 
@@ -299,11 +355,22 @@ impl PrefetchV1 {
         self.index
     }
 
-    /// The finished update is committed: the collection's held output is
-    /// written, in its order, and then the collection may write.
+    /// The finished update is committed: the collection may write. Its held
+    /// output is written (or dropped) by its first admitted write, once the
+    /// iteration's directory is known to be its own (`collect_v1`).
     pub(super) fn committed_v1(&self) {
-        self.shared.held.release_v1();
-        self.shared.set_v1(GateV1::Open);
+        let mut state = self.shared.lock_v1();
+        state.gate = GateV1::Open;
+        // Test-only: told while the lock is held, so before the collection
+        // can see the gate open.
+        #[cfg(test)]
+        GATE_OPENED_FOR_TEST_V1.with(|slot| {
+            if let Some(hook) = slot.borrow_mut().as_mut() {
+                hook(self.index);
+            }
+        });
+        drop(state);
+        self.shared.changed.notify_all();
     }
 
     /// Waits for the collection, once the finished update is committed. The
@@ -325,9 +392,15 @@ impl PrefetchV1 {
             // dropping this handle abandons one.
             Ok(Ok(None)) => Err("the collection prefetch was abandoned".into()),
             Ok(Err(error)) => Err(error),
-            // As a panic of the collection on the driver's own thread (its
-            // message went through the held output).
-            Err(panic) => std::panic::resume_unwind(panic),
+            // As a panic of the collection on the driver's own thread. Its
+            // message went to the held output, which a panic before the
+            // collection's first admitted write leaves held: the update is
+            // committed, so it is written now (nothing changes when the
+            // output was already written or dropped).
+            Err(panic) => {
+                self.shared.held.release_v1();
+                std::panic::resume_unwind(panic)
+            }
         }
     }
 }
@@ -368,15 +441,29 @@ fn collect_v1(
     };
     // Asked before every write of the collection: the first admitted one
     // makes the driver's steps, once, and an abandoned collection writes no
-    // more.
+    // more. The held output is written only once the iteration's directory
+    // and first attempt are the collection's own, and dropped otherwise: when
+    // the directory was not new the driver runs the iteration itself and
+    // prints its own lines, and when a step failed the driver returns its
+    // error, as without the setting, before any collection prints. Both are
+    // no-ops after the first time.
     let gate = || {
         if !shared.admit_v1() {
             return Err("the collection prefetch was abandoned".to_owned());
         }
         match opened.get_or_init(&open) {
-            OpenedV1::Published => Ok(()),
-            OpenedV1::NotNew => Err("the iteration directory is not new".to_owned()),
-            OpenedV1::Failed(error) => Err(error.clone()),
+            OpenedV1::Published => {
+                shared.held.release_v1();
+                Ok(())
+            }
+            OpenedV1::NotNew => {
+                shared.held.discard_v1();
+                Err("the iteration directory is not new".to_owned())
+            }
+            OpenedV1::Failed(error) => {
+                shared.held.discard_v1();
+                Err(error.clone())
+            }
         }
     };
     let collected = execute_collection_gated_v1(command, &gate);
