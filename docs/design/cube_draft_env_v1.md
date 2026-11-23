@@ -48,14 +48,17 @@ No result depends on hash-map order, time or thread scheduling.
 2. **Spells:** nonland cards inside the pair (colourless included), in pick order, up to 23.
    If that gives fewer than 22, off-colour nonland cards are added in pick order until
    there are 22.
-3. **Nonbasic lands:** up to 3 from the pool, in pick order. Each must make a pair colour
-   or no coloured mana at all.
+3. **Nonbasic lands:** up to 3 from the pool, in pick order. Each must make or fetch a pair
+   colour, or neither make nor fetch any colour. A fetchland's colours are the basic land
+   types its library search can find, read from its ability's `LibraryCardFilter`, so an
+   off-colour fetchland is left out.
 4. **Basics:** basics of the pair fill the deck to 40. They are split by the pair's coloured
-   symbols in the chosen spells' costs, using largest remainder with ties to the first
-   colour.
+   symbols in the chosen spells' costs (both halves of a split card), using largest
+   remainder with ties to the first colour; with no such symbols, half each.
 
 `Deck::validate` checks that the deck has exactly 40 cards, that every card is from the
-pool or a basic land, and that no non-basic card appears more than once.
+pool or a basic land, that no non-basic card appears more than once, and that each row's
+id and name agree. Counts are added with overflow checks.
 `Deck::to_session_json` gives the reset's `{"cards": [{"name", "count"}]}` shape.
 
 ## Pod
@@ -73,7 +76,7 @@ Each `GameRecord` holds the seats, the decision count and the end. The end is on
 - any other terminal reply (for example a session cap);
 - a session error;
 - the driver cap;
-- an engine panic.
+- an engine panic, with the decisions made before it.
 
 A game that ends any of these ways is recorded; none of them stops the pod.
 
@@ -91,7 +94,7 @@ cargo test --release -p mtg-kernel --features eternal-fixtures --test eternal_in
 cargo run --release -p mtg-kernel --features eternal-fixtures --example cube_draft_timing_v1 -- --seed 20261122 --drafts 100 --pods 1
 ```
 
-The test plays two games. The timing example runs on a single thread and prints one JSON
+The test plays two games; its other pod checks stop each game at the first decision. The timing example runs on a single thread and prints one JSON
 line with:
 
 - drafts (draft plus deck build) per core-second;

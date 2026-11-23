@@ -16,10 +16,11 @@
 //! deck-building rule ([`StatedRuleDeckBuilder`]) in this module are test
 //! fixtures and reference baselines only.
 
-use crate::card_def::{card_id_by_name, CardDef, CARD_DEFS};
+use crate::card_def::{card_id_by_name, CardDef, Subtype, CARD_DEFS};
+use crate::effect::{EffectOp, LibraryCardFilter};
 use crate::limited_session_v1::LimitedJsonlServerV1;
 use crate::mana::{ManaColor, Pip};
-use crate::state::SplitMix64;
+use crate::state::{SplitMix64, Zone};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -218,14 +219,27 @@ fn def(id: u16) -> &'static CardDef {
     &CARD_DEFS[usize::from(id)]
 }
 
+/// The mana symbols printed on a card: its mana cost and, for a split card
+/// or an adventure, the cost of its second half.
+fn printed_pips(def: &'static CardDef) -> impl Iterator<Item = Pip> {
+    def.cost
+        .pips
+        .iter()
+        .chain(def.adventure.iter().flat_map(|half| half.cost.pips.iter()))
+        .copied()
+}
+
 /// The colour mask of a card (bit `i`: [`COLOUR_ORDER`]`[i]`): its colour
-/// data together with the colours of its mana cost symbols. Zero for a
-/// colourless card.
+/// data together with the colours of its mana symbols (both halves of a
+/// split card or adventure). Zero for a colourless card.
 pub fn card_colour_bits(id: u16) -> u8 {
     let def = def(id);
-    let mut bits = def.colors.iter().fold(0, |bits, color| bits | colour_bit(*color));
-    for pip in def.cost.pips {
-        bits |= pip_bits(*pip);
+    let mut bits = def
+        .colors
+        .iter()
+        .fold(0, |bits, color| bits | colour_bit(*color));
+    for pip in printed_pips(def) {
+        bits |= pip_bits(pip);
     }
     bits
 }
@@ -236,7 +250,11 @@ pub fn card_colour_bits(id: u16) -> u8 {
 pub fn land_mana_bits(id: u16) -> u8 {
     let def = def(id);
     let mut bits = 0u8;
-    for color in def.mana_ability_choices.iter().chain(def.produces_mana.iter()) {
+    for color in def
+        .mana_ability_choices
+        .iter()
+        .chain(def.produces_mana.iter())
+    {
         bits |= colour_bit(*color);
     }
     for ability in def.additional_mana_abilities {
@@ -253,6 +271,79 @@ pub fn land_mana_bits(id: u16) -> u8 {
         bits |= ALL_COLOURS;
     }
     bits
+}
+
+/// The colour of a basic land type, as a colour mask; zero for any other
+/// subtype.
+fn basic_land_type_bit(subtype: Subtype) -> u8 {
+    match subtype {
+        Subtype::Plains => 1,
+        Subtype::Island => 2,
+        Subtype::Swamp => 4,
+        Subtype::Mountain => 8,
+        Subtype::Forest => 16,
+        _ => 0,
+    }
+}
+
+fn basic_land_types_bits(subtypes: &[Subtype]) -> u8 {
+    subtypes
+        .iter()
+        .fold(0, |bits, subtype| bits | basic_land_type_bit(*subtype))
+}
+
+/// The colours of the basic land types a library search filter can find.
+/// A filter that can find any basic land counts as every colour; a filter
+/// that names no basic land type counts as none.
+fn search_filter_bits(filter: LibraryCardFilter) -> u8 {
+    match filter {
+        LibraryCardFilter::LandWithSubtype(subtype)
+        | LibraryCardFilter::CardWithSubtypeV1(subtype) => basic_land_type_bit(subtype),
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => basic_land_types_bits(&subtypes),
+        LibraryCardFilter::BasicLandWithAnySubtype(subtypes) => basic_land_types_bits(&subtypes),
+        LibraryCardFilter::BasicLand
+        | LibraryCardFilter::BasicLandOrGate
+        | LibraryCardFilter::AnyLand
+        | LibraryCardFilter::LandWithBasicLandType => ALL_COLOURS,
+        _ => 0,
+    }
+}
+
+/// The colours of the lands an effect can search for and put onto the
+/// battlefield, through sequences and conditionals.
+fn effect_fetch_bits(effect: &EffectOp) -> u8 {
+    match effect {
+        EffectOp::SearchLibraryCardsToDestination { filter, .. } => search_filter_bits(*filter),
+        EffectOp::SearchLibraryToBattlefieldTapped { filter, .. } => search_filter_bits(*filter),
+        EffectOp::Sequence(effects) => effects
+            .iter()
+            .fold(0, |bits, effect| bits | effect_fetch_bits(effect)),
+        EffectOp::Conditional { then, else_, .. } => {
+            effect_fetch_bits(then) | effect_fetch_bits(else_)
+        }
+        _ => 0,
+    }
+}
+
+/// The colours a land can fetch: the basic land types the library searches
+/// of its battlefield abilities can find, read from the abilities' effects
+/// ([`LibraryCardFilter`]), never from card names. A fetchland for "a Swamp
+/// or Mountain card" is black and red; one for "a basic land card" is every
+/// colour.
+pub fn land_fetch_bits(id: u16) -> u8 {
+    def(id)
+        .activated_abilities
+        .iter()
+        .filter(|ability| ability.activation_zone == Zone::Battlefield)
+        .fold(0, |bits, ability| {
+            bits | effect_fetch_bits(&(ability.effect)())
+        })
+}
+
+/// The colours a land supplies: those it produces ([`land_mana_bits`]) and
+/// those it can fetch ([`land_fetch_bits`]).
+pub fn land_colour_bits(id: u16) -> u8 {
+    land_mana_bits(id) | land_fetch_bits(id)
 }
 
 /// The two colours with the highest counts, ties broken in [`COLOUR_ORDER`].
@@ -558,9 +649,7 @@ pub fn run_draft(
     pickers: &mut [Box<dyn DraftPicker>; SEATS],
 ) -> Result<DraftRecord, CubeDraftError> {
     let opened = generate_packs(pool, draft_seed)?;
-    let mut pools: Vec<Vec<u16>> = (0..SEATS)
-        .map(|_| Vec::with_capacity(POOL_CARDS))
-        .collect();
+    let mut pools: Vec<Vec<u16>> = (0..SEATS).map(|_| Vec::with_capacity(POOL_CARDS)).collect();
     let mut picks = Vec::with_capacity(DRAFTED_CARDS);
     for (round, round_packs) in opened.iter().enumerate() {
         let mut in_hand: Vec<Vec<u16>> = round_packs.clone();
@@ -633,9 +722,17 @@ impl Deck {
         });
     }
 
-    /// Total cards.
+    /// Total cards, or `None` if the total overflows `u32`.
+    pub fn checked_card_count(&self) -> Option<u32> {
+        self.entries
+            .iter()
+            .try_fold(0u32, |total, entry| total.checked_add(entry.count))
+    }
+
+    /// Total cards, saturating at `u32::MAX` (an overflowing deck never
+    /// wraps around to a valid size).
     pub fn card_count(&self) -> u32 {
-        self.entries.iter().map(|entry| entry.count).sum()
+        self.checked_card_count().unwrap_or(u32::MAX)
     }
 
     /// Every card id, one per copy, in row order.
@@ -658,14 +755,19 @@ impl Deck {
 
     /// Checks the deck against the pool it was built from: exactly 40
     /// cards, only pool cards and basic lands, each non-basic card at most
-    /// once, no empty rows.
+    /// once, no empty rows, every row's id and name naming one registry
+    /// card. Counts are added with overflow checks.
     pub fn validate(&self, pool: &[u16]) -> Result<(), CubeDraftError> {
         let basics = basic_land_ids()?;
         let in_pool: BTreeSet<u16> = pool.iter().copied().collect();
-        let mut copies: BTreeMap<u16, u32> = BTreeMap::new();
+        let mut nonbasics: BTreeSet<u16> = BTreeSet::new();
+        let mut count = 0u32;
         for entry in &self.entries {
             if entry.count == 0 {
-                return Err(CubeDraftError::Deck(format!("zero copies of {:?}", entry.name)));
+                return Err(CubeDraftError::Deck(format!(
+                    "zero copies of {:?}",
+                    entry.name
+                )));
             }
             if usize::from(entry.id) >= CARD_DEFS.len() || def(entry.id).name != entry.name {
                 return Err(CubeDraftError::Deck(format!(
@@ -673,22 +775,23 @@ impl Deck {
                     entry.name, entry.id
                 )));
             }
+            count = count.checked_add(entry.count).ok_or_else(count_overflow)?;
             if basics.contains(&entry.id) {
                 continue;
             }
             if !in_pool.contains(&entry.id) {
-                return Err(CubeDraftError::Deck(format!("{:?} is not in the pool", entry.name)));
+                return Err(CubeDraftError::Deck(format!(
+                    "{:?} is not in the pool",
+                    entry.name
+                )));
             }
-            let total = copies.entry(entry.id).or_default();
-            *total += entry.count;
-            if *total > 1 {
+            if entry.count > 1 || !nonbasics.insert(entry.id) {
                 return Err(CubeDraftError::Deck(format!(
                     "{:?} appears more than once",
                     entry.name
                 )));
             }
         }
-        let count = self.card_count();
         if count != DECK_CARDS {
             return Err(CubeDraftError::Deck(format!(
                 "{count} cards, a deck has exactly {DECK_CARDS}"
@@ -698,11 +801,16 @@ impl Deck {
     }
 }
 
+fn count_overflow() -> CubeDraftError {
+    CubeDraftError::Deck("the card count overflows u32".to_owned())
+}
+
 /// Registry ids of the five basic lands, in [`COLOUR_ORDER`].
 pub fn basic_land_ids() -> Result<[u16; 5], CubeDraftError> {
     let mut ids = [0u16; 5];
     for (slot, name) in ids.iter_mut().zip(BASIC_LAND_NAMES) {
-        *slot = card_id_by_name(name).ok_or_else(|| CubeDraftError::UnknownCard(name.to_owned()))?;
+        *slot =
+            card_id_by_name(name).ok_or_else(|| CubeDraftError::UnknownCard(name.to_owned()))?;
     }
     Ok(ids)
 }
@@ -727,14 +835,17 @@ pub fn build_deck(builder: &mut dyn DeckBuilder, pool: &[u16]) -> Result<Deck, C
 /// 2. Spells: nonland cards whose colours lie within the pair (colourless
 ///    included), in pick order, up to 23; if fewer than 22, off-colour
 ///    nonland cards in pick order until 22.
-/// 3. Up to 3 nonbasic pool lands, in pick order, that produce at least one
-///    of the pair's colours or produce no coloured mana (colourless utility
-///    lands; [`land_mana_bits`] is zero).
+/// 3. Up to 3 nonbasic pool lands, in pick order, that produce or fetch at
+///    least one of the pair's colours, or that neither produce nor fetch
+///    any colour (colourless utility lands; [`land_colour_bits`] is zero).
+///    A fetchland supplies the colours of the basic land types its search
+///    can find ([`land_fetch_bits`]), so an off-colour fetchland is left
+///    out.
 /// 4. Basics of the two colours to reach 40, split in proportion to the
-///    pair's coloured mana symbols in the chosen spells' costs (a hybrid
-///    symbol counts for each pair colour it shows), by largest remainder
-///    with ties to the first colour; with no such symbols, half each, the
-///    odd basic to the first colour.
+///    pair's coloured mana symbols in the chosen spells' costs (both halves
+///    of a split card or adventure; a hybrid symbol counts for each pair
+///    colour it shows), by largest remainder with ties to the first colour;
+///    with no such symbols, half each, the odd basic to the first colour.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StatedRuleDeckBuilder;
 
@@ -753,7 +864,11 @@ impl StatedRuleDeckBuilder {
         let basics = basic_land_ids()?;
         let [first, second] = Self::colour_pair(pool);
         let pair: u8 = (1 << first) | (1 << second);
-        let nonland: Vec<u16> = pool.iter().copied().filter(|&id| !def(id).is_land).collect();
+        let nonland: Vec<u16> = pool
+            .iter()
+            .copied()
+            .filter(|&id| !def(id).is_land)
+            .collect();
         let mut spells: Vec<u16> = nonland
             .iter()
             .copied()
@@ -775,8 +890,8 @@ impl StatedRuleDeckBuilder {
             .copied()
             .filter(|&id| def(id).is_land && !basics.contains(&id))
             .filter(|&id| {
-                let produced = land_mana_bits(id);
-                produced & pair != 0 || produced == 0
+                let supplied = land_colour_bits(id);
+                supplied & pair != 0 || supplied == 0
             })
             .take(NONBASIC_LANDS_MAX)
             .collect();
@@ -785,8 +900,8 @@ impl StatedRuleDeckBuilder {
             .ok_or_else(|| CubeDraftError::Deck("more than 40 spells and lands".to_owned()))?;
         let mut symbols = [0usize; 2];
         for &id in &spells {
-            for pip in def(id).cost.pips {
-                let bits = pip_bits(*pip);
+            for pip in printed_pips(def(id)) {
+                let bits = pip_bits(pip);
                 if bits & (1 << first) != 0 {
                     symbols[0] += 1;
                 }
@@ -859,9 +974,10 @@ pub fn build_stated_rule_decks(record: &DraftRecord) -> Result<[Deck; SEATS], Cu
         .iter()
         .map(|pool| StatedRuleDeckBuilder.try_build(pool))
         .collect::<Result<Vec<Deck>, CubeDraftError>>()?;
+    let count = decks.len();
     decks
         .try_into()
-        .map_err(|decks: Vec<Deck>| CubeDraftError::Deck(format!("{} pools, not {SEATS}", decks.len())))
+        .map_err(|_| CubeDraftError::Deck(format!("{count} pools, not {SEATS}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -1034,26 +1150,39 @@ fn play_pod_game_unchecked(
         env_seed,
         action_seed,
     };
-    let played = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        drive_game(&setup, caps)
-    }));
-    let (decisions, end) = match played {
-        Ok(result) => result,
-        Err(payload) => {
-            let message = payload
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| payload.downcast_ref::<&str>().map(|text| (*text).to_owned()))
-                .unwrap_or_else(|| "panic".to_owned());
-            (0, GameEnd::Panic { message })
-        }
-    };
+    let (decisions, end) = catch_game_panic(|decisions| drive_game(&setup, caps, decisions));
     GameRecord {
         game,
         seats,
         env_seed,
         decisions,
         end,
+    }
+}
+
+/// Runs one game's `play`, which counts its decisions in the counter it is
+/// given, and records an unwinding panic as [`GameEnd::Panic`] with the
+/// decisions made before it, instead of propagating it. Returns the
+/// decision count and the end.
+pub fn catch_game_panic(play: impl FnOnce(&mut u64) -> GameEnd) -> (u64, GameEnd) {
+    let mut decisions = 0u64;
+    let played = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| play(&mut decisions)));
+    let end = match played {
+        Ok(end) => end,
+        Err(payload) => GameEnd::Panic {
+            message: panic_message(&*payload),
+        },
+    };
+    (decisions, end)
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else {
+        "panic".to_owned()
     }
 }
 
@@ -1102,7 +1231,7 @@ fn terminal_end(terminal: &Value, seats: [usize; 2]) -> GameEnd {
     }
 }
 
-fn drive_game(setup: &GameSetup<'_>, caps: &GameCaps) -> (u64, GameEnd) {
+fn drive_game(setup: &GameSetup<'_>, caps: &GameCaps, decisions: &mut u64) -> GameEnd {
     let mut rng = SplitMix64::seed(setup.action_seed);
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
     let mut request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "reset",
@@ -1112,48 +1241,45 @@ fn drive_game(setup: &GameSetup<'_>, caps: &GameCaps) -> (u64, GameEnd) {
         "max_physical_decisions": caps.max_physical_decisions,
         "max_policy_steps": caps.max_policy_steps})
     .to_string();
-    let mut decisions = 0u64;
     loop {
         let raw = server.handle_line(&request);
         let reply: Value = match serde_json::from_str(&raw) {
             Ok(reply) => reply,
             Err(error) => {
-                let end = GameEnd::SessionError {
+                return GameEnd::SessionError {
                     code: "unparseable_reply".to_owned(),
                     message: error.to_string(),
                 };
-                return (decisions, end);
             }
         };
         match reply["response_type"].as_str() {
             Some("error") => {
-                let end = GameEnd::SessionError {
+                return GameEnd::SessionError {
                     code: text(&reply["error"]["code"]),
                     message: text(&reply["error"]["message"]),
                 };
-                return (decisions, end);
             }
-            Some("terminal") => return (decisions, terminal_end(&reply["terminal"], setup.seats)),
+            Some("terminal") => return terminal_end(&reply["terminal"], setup.seats),
             _ => {}
         }
         let decision = &reply["decision"];
         let actions = match decision["legal_actions"].as_array() {
             Some(actions) if !actions.is_empty() => actions,
             _ => {
-                let end = GameEnd::SessionError {
+                return GameEnd::SessionError {
                     code: "no_legal_actions".to_owned(),
                     message: format!("decision without legal actions: {}", reply["response_type"]),
                 };
-                return (decisions, end);
             }
         };
-        if decisions >= caps.max_decisions {
-            return (decisions, GameEnd::DecisionCap);
+        if *decisions >= caps.max_decisions {
+            return GameEnd::DecisionCap;
         }
         let action = &actions[uniform_index(&mut rng, actions.len())];
-        decisions += 1;
+        *decisions += 1;
+        let step = *decisions;
         request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "step",
-            "request_id": format!("step-{decisions}"),
+            "request_id": format!("step-{step}"),
             "episode_id": decision["episode_id"], "expected_step": decision["step"],
             "selected_index": action["selected_index"],
             "selected_action_id": action["stable_id"]})
