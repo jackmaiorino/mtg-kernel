@@ -1423,8 +1423,7 @@ fn empty_c8b_state_hashes_zero_bytes_and_skips_serde() {
     );
     let mut h_empty = std::collections::hash_map::DefaultHasher::new();
     C8bStateV1::default().hash(&mut h_empty);
-    let mut h_zero = std::collections::hash_map::DefaultHasher::new();
-    ().hash(&mut h_zero);
+    let h_zero = std::collections::hash_map::DefaultHasher::new();
     assert_eq!(
         h_empty.finish(),
         h_zero.finish(),
