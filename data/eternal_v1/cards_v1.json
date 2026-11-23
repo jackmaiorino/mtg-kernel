@@ -38161,7 +38161,7 @@
    ],
    "supertypes": [],
    "power": 0,
-   "toughness": 0,
+   "toughness": 1,
    "is_land": false,
    "produces_mana": [],
    "decks": [

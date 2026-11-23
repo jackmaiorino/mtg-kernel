@@ -570,6 +570,21 @@ fn pyrogoyf_cda_counts_distinct_card_types_across_both_graveyards_in_all_zones()
     let mut empty = plains();
     let goyf = put(&mut empty, P0, "Pyrogoyf", Zone::Battlefield);
     assert_eq!(power_toughness(&empty, goyf), (0, 1));
+
+    // Dress Down (Layer 6 ability removal): Pyrogoyf loses its CDA and becomes
+    // 0/1 (surviving SBAs) even with multiple card types in graveyards.
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(dress, Zone::Battlefield),
+    );
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, in_play),
+        Zone::Battlefield,
+        "Pyrogoyf becomes 0/1 under Dress Down and survives SBAs"
+    );
+    assert_eq!(power_toughness(&state, in_play), (0, 1));
 }
 
 #[test]
@@ -1351,6 +1366,7 @@ fn zirda_companion_validation_and_special_action() {
         "Barrowgoyf",
         "Urza's Saga",
         "Sanctum Lurker",
+        "Avatar of Burgeoning Echoes",
         "Witch Enchanter",
         "Boggart Trawler",
         "Tamiyo, Inquisitive Student",
@@ -1511,6 +1527,21 @@ fn zirda_reduces_nonmana_activated_abilities_across_zones_and_skips_mana_abiliti
         !activatable(&mut state, opp_monolith, 0),
         "opponent's Zirda does not reduce your abilities"
     );
+
+    // 7. Special actions (Foretell's {2} from hand) are NOT activated abilities
+    //    and must NOT be reduced by Zirda (CR 702.143a).
+    let mut state = plains();
+    put(&mut state, P0, "Zirda, the Dawnwaker", Zone::Battlefield);
+    let fireball = put(&mut state, P0, "Delayed Blast Fireball", Zone::Hand);
+    pool(&mut state, P0, &[], 1);
+    assert!(
+        !activatable(&mut state, fireball, 0),
+        "Zirda must NOT reduce Foretell's {{2}} special action"
+    );
+    pool(&mut state, P0, &[], 1);
+    assert!(activatable(&mut state, fireball, 0));
+    act(&mut state, Action::ActivateAbility(fireball, 0));
+    assert_eq!(zone(&state, fireball), Zone::Exile);
 }
 
 #[test]
@@ -1608,6 +1639,10 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
     assert_eq!(engine::effective_name(&state, ab_man), "Absorbing Man");
     assert_eq!(power_toughness(&state, ab_man), (4, 4));
     assert!(keyword(&state, ab_man, Keywords::VIGILANCE));
+    assert!(
+        engine::effective_keywords(&state, ab_man, Keywords::VIGILANCE).has(Keywords::VIGILANCE),
+        "effective_keywords must match has_effective_keyword for Absorbing Man Vigilance"
+    );
     assert!(engine::effective_supertypes(&state, ab_man).contains(&Supertype::Legendary));
     assert!(engine::object_has_type(&state, ab_man, CardType::Artifact));
     assert!(engine::object_has_type(&state, ab_man, CardType::Creature));
@@ -1670,6 +1705,10 @@ fn absorbing_man_copies_artifact_enchantment_or_land_with_exceptions_and_reverts
     );
     assert_eq!(power_toughness(&state, ab_man), (4, 4));
     assert!(keyword(&state, ab_man, Keywords::VIGILANCE));
+    assert!(
+        engine::effective_keywords(&state, ab_man, Keywords::VIGILANCE).has(Keywords::VIGILANCE),
+        "effective_keywords must match has_effective_keyword for Absorbing Man Vigilance"
+    );
 
     // 2. Copies non-Aura Enchantment (Goblin Bombardment): gains its activated
     //    ability, and leaving the battlefield reverts it to Absorbing Man.

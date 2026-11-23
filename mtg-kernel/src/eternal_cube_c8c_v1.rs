@@ -60,8 +60,8 @@
 pub mod targets;
 
 use crate::card_def::{
-    card_id_by_name, mana_colors_mask, CardDef, CardType, DynamicValueDef, Keywords, Subtype,
-    Supertype, TargetSpec, CARD_DEFS,
+    card_id_by_name, mana_colors_mask, CardDef, CardType, CostComponent, DynamicValueDef, Keywords,
+    Subtype, Supertype, TargetSpec, CARD_DEFS,
 };
 use crate::effect::{
     EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, PlayerRef,
@@ -132,6 +132,8 @@ pub struct AbsorbingCopyV1 {
     pub orig_subtype_ids: Vec<u16>,
     pub orig_face_index: u8,
     pub orig_ward_generic: u16,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub added_artifact: bool,
 }
 
 /// Per-game state owned by wave C8c, kept inside
@@ -582,6 +584,12 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     if definition_name(state, id)? != PYROGOYF {
         return None;
     }
+    let object = state.objects.try_get(id)?;
+    if object.zone == Zone::Battlefield
+        && !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
+        return None;
+    }
     let cards = [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
@@ -810,12 +818,13 @@ fn is_permanent_card(card: &CardDef) -> bool {
 }
 
 fn permanent_has_activated_ability(card: &CardDef) -> bool {
-    // Sanctum Lurker stores the [+2] ability it grants to planeswalkers in
-    // `activated_abilities`; Urza's Saga gains its mana and Construct
-    // abilities from chapters I and II rather than having them on the card.
+    // Sanctum Lurker and Avatar of Burgeoning Echoes store the loyalty
+    // abilities they grant to planeswalkers in `activated_abilities`;
+    // Urza's Saga gains its mana and Construct abilities from chapters I
+    // and II rather than having them on the card.
     if matches!(
         card.name,
-        crate::eternal_cube_c7c_v1::SANCTUM_LURKER | "Urza's Saga"
+        crate::eternal_cube_c7c_v1::SANCTUM_LURKER | "Avatar of Burgeoning Echoes" | "Urza's Saga"
     ) {
         return false;
     }
@@ -867,19 +876,59 @@ pub(crate) fn zirda_companion_condition_met(deck: &[u16]) -> bool {
     })
 }
 
+fn is_special_or_mana_activation(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+) -> bool {
+    if crate::eternal_lurrus_v1::is_companion_source(state, source) {
+        return true;
+    }
+    let Some(live) = state.objects.try_get(source) else {
+        return false;
+    };
+    let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
+        return false;
+    };
+    def.activated_abilities
+        .iter()
+        .enumerate()
+        .any(|(idx, ability)| {
+            let Ok(index) = u8::try_from(idx) else {
+                return false;
+            };
+            ability.activation_zone == live.zone
+                && ability.cost == components
+                && (crate::eternal_pauper_e6a_v1::is_foretell_action(state, source, index)
+                    || crate::eternal_legacy_e7a_v1::is_special_activation(state, source, index)
+                    || crate::eternal_legacy_e8a_v1::statics::is_special_activation(
+                        state, source, index,
+                    )
+                    || (!ability.is_loyalty_ability()
+                        && matches!(ability.target_spec, TargetSpec::None)
+                        && matches!((ability.effect)(), EffectOp::AddMana { .. })))
+        })
+}
+
 /// Zirda, the Dawnwaker: "Abilities you activate that aren't mana abilities
 /// cost {2} less to activate. This effect can't reduce the mana in that cost
 /// to less than one mana." Applies to non-mana activated abilities activated
 /// by `player` in any zone (battlefield, hand, graveyard, exile), reducing
 /// generic mana (including concrete X mana) by up to 2 per active Zirda while
 /// never reducing total mana (colored/hybrid pips plus generic) below 1.
+/// Skips special actions (Foretell, Companion, Suspend) and mana abilities
+/// housed in `activated_abilities`.
 pub(crate) fn reduce_nonmana_activation(
     state: &GameState,
     player: PlayerId,
+    source: ObjectId,
+    components: &[CostComponent],
     cost: Cost,
     x_value: u8,
 ) -> Cost {
-    if !cfg!(feature = "eternal-fixtures") {
+    if !cfg!(feature = "eternal-fixtures")
+        || is_special_or_mana_activation(state, source, components)
+    {
         return cost;
     }
     let zirdas = active_permanents(state, ZIRDA, Some(player)).count();
@@ -971,14 +1020,29 @@ fn absorbing_copy_index(state: &GameState, object: ObjectId) -> Option<usize> {
 }
 
 /// Whether `object` is currently on the battlefield under Absorbing Man's
-/// copy effect.
+/// copy effect (not overwritten by a newer temporary Saheeli copy).
 pub(crate) fn is_absorbing_copy(state: &GameState, object: ObjectId) -> bool {
-    cfg!(feature = "eternal-fixtures") && absorbing_copy_index(state, object).is_some()
+    cfg!(feature = "eternal-fixtures")
+        && absorbing_copy_index(state, object).is_some()
+        && !crate::eternal_cube_c8b_v1::has_saheeli_copy(state, object)
+}
+
+/// Whether `object` is an Absorbing Man copy that inherited a Layer 1 added
+/// Artifact type from its copied target (e.g., Vaultborn Tyrant artifact
+/// token, Saheeli -2 copy, or Phyrexian Metamorph).
+pub(crate) fn absorbing_copy_adds_artifact(state: &GameState, object: ObjectId) -> bool {
+    if !is_absorbing_copy(state, object) {
+        return false;
+    }
+    let Some(index) = absorbing_copy_index(state, object) else {
+        return false;
+    };
+    read_state(state).is_some_and(|c8c| c8c.absorbing_copies[index].added_artifact)
 }
 
 /// Alias used by `event.rs` departure handling.
 pub(crate) fn active_copy(state: &GameState, object: ObjectId) -> bool {
-    is_absorbing_copy(state, object)
+    cfg!(feature = "eternal-fixtures") && absorbing_copy_index(state, object).is_some()
 }
 
 /// Absorbing Man copy exception: base power and toughness are 4/4.
@@ -1028,6 +1092,9 @@ fn become_absorbing_copy(
     let copied_face = target_live.v4.face_index;
     let copied_card = &CARD_DEFS[usize::from(copied_def)];
     let copied_color_mask = mana_colors_mask(copied_card.colors_for_face(copied_face));
+    let copied_adds_artifact = crate::eternal_cube_c8b_v1::adds_artifact(state, target)
+        || crate::eternal_vintage_v1::active_copy(state, target)
+        || absorbing_copy_adds_artifact(state, target);
     let mut copied_subtypes: Vec<u16> = copied_card
         .subtypes_for_face(copied_face)
         .iter()
@@ -1040,6 +1107,9 @@ fn become_absorbing_copy(
                 .map(|subtype| subtype.stable_id()),
         );
     }
+    copied_subtypes.extend(crate::eternal_cube_c8b_v1::copy_added_subtypes(
+        state, target,
+    ));
     copied_subtypes.push(Subtype::Human.stable_id());
     copied_subtypes.push(Subtype::Villain.stable_id());
     copied_subtypes.sort_unstable();
@@ -1050,7 +1120,9 @@ fn become_absorbing_copy(
     let own_def = state.objects.get(host).card_def;
     let existing = absorbing_copy_index(state, host);
     if let Some(index) = existing {
-        c8c_state(state).absorbing_copies[index].until_turn_of = until_turn_of;
+        let entry = &mut c8c_state(state).absorbing_copies[index];
+        entry.until_turn_of = until_turn_of;
+        entry.added_artifact = copied_adds_artifact;
     } else {
         let live = state.objects.get_mut(host);
         let record = AbsorbingCopyV1 {
@@ -1062,6 +1134,7 @@ fn become_absorbing_copy(
             orig_subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
             orig_face_index: live.v4.face_index,
             orig_ward_generic: live.v4.ward_generic,
+            added_artifact: copied_adds_artifact,
         };
         c8c_state(state).absorbing_copies.push(record);
     }
@@ -1123,24 +1196,26 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     let Some(c8c) = read_state(state) else {
         return;
     };
-    if c8c.absorbing_copies.is_empty() {
+    if c8c.is_empty() {
         return;
     }
-    let expiring: Vec<AbsorbingCopyV1> = {
-        let copies = &mut c8c_state(state).absorbing_copies;
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < copies.len() {
-            if copies[i].until_turn_of == player {
-                out.push(copies.remove(i));
-            } else {
-                i += 1;
+    if !c8c.absorbing_copies.is_empty() {
+        let expiring: Vec<AbsorbingCopyV1> = {
+            let copies = &mut c8c_state(state).absorbing_copies;
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < copies.len() {
+                if copies[i].until_turn_of == player {
+                    out.push(copies.remove(i));
+                } else {
+                    i += 1;
+                }
             }
+            out
+        };
+        for record in expiring {
+            restore_absorbing_copy(state, record);
         }
-        out
-    };
-    for record in expiring {
-        restore_absorbing_copy(state, record);
     }
     prune(state);
 }

@@ -6243,10 +6243,13 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield {
                     crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
                     crate::eternal_cube_c8c_v1::note_departure(state, z.object);
-                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
-                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
-                    crate::eternal_cube_c8b_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
                     crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
+                        state, z.object,
+                    );
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6287,10 +6290,13 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield {
                     crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
                     crate::eternal_cube_c8c_v1::note_departure(state, z.object);
-                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
-                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
-                    crate::eternal_cube_c8b_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
                     crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
+                        state, z.object,
+                    );
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }

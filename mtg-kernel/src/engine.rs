@@ -6685,8 +6685,9 @@ fn activation_total_mana_cost_with_x(
     // Zirda, the Dawnwaker (eternal wave C8c): non-mana activated abilities
     // you activate cost {2} less, never below one mana.
     #[cfg(feature = "eternal-fixtures")]
-    let total =
-        crate::eternal_cube_c8c_v1::reduce_nonmana_activation(state, player, total, x_value);
+    let total = crate::eternal_cube_c8c_v1::reduce_nonmana_activation(
+        state, player, source, components, total, x_value,
+    );
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = x_value;
     // Invasion Submersible's waterbend taps pay part of that total; the rest
@@ -25363,6 +25364,19 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
         return definition.has_type(card_type);
     }
+    // Layer 1 copy-added types (Vintage Cube waves C8b/C8c): Vaultborn Tyrant
+    // artifact token copies, Saheeli -2 copies, and Absorbing Man's Creature
+    // exception sit below Layer 4 type-setters such as Oko.
+    #[cfg(feature = "eternal-fixtures")]
+    if (card_type == CardType::Artifact
+        && (crate::eternal_cube_c8b_v1::adds_artifact(state, id)
+            || crate::eternal_cube_c8c_v1::absorbing_copy_adds_artifact(state, id)))
+        || (card_type == CardType::Creature
+            && (crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+                || crate::eternal_cube_c8b_v1::adds_creature(state, id)))
+    {
+        return true;
+    }
     state.objects.try_get(id).is_some_and(|object| {
         card_def::CARD_DEFS
             .get(object.card_def as usize)
@@ -25548,10 +25562,12 @@ pub fn effective_supertypes(state: &GameState, id: ObjectId) -> &'static [card_d
     if let Some(supertypes) = crate::eternal_pauper_e8b_v1::ring_bearer_supertypes(state, id) {
         return supertypes;
     }
-    // Absorbing Man copy exception: Legendary in addition to copied supertypes
-    // (Vintage Cube wave C8c).
+    // Absorbing Man copy exception (and C8b copies of it): Legendary in
+    // addition to copied supertypes (Vintage Cube waves C8b/C8c).
     #[cfg(feature = "eternal-fixtures")]
-    if let Some(supertypes) = crate::eternal_cube_c8c_v1::absorbing_copy_supertypes(state, id) {
+    if let Some(supertypes) = crate::eternal_cube_c8c_v1::absorbing_copy_supertypes(state, id)
+        .or_else(|| crate::eternal_cube_c8b_v1::copy_supertypes(state, id))
+    {
         return supertypes;
     }
     let object = state.objects.get(id);
@@ -26062,7 +26078,8 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if cfg!(feature = "eternal-fixtures")
         && printed_active
         && kw == Keywords::VIGILANCE
-        && crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+        && (crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+            || crate::eternal_cube_c8b_v1::adds_vigilance(state, id))
     {
         return true;
     }
@@ -26389,6 +26406,14 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
     let printed_active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
     if printed_active && obj.v4.copied_end_step_sacrifices_v1 != 0 {
         found = found | Keywords::HASTE;
+    }
+    if cfg!(feature = "eternal-fixtures")
+        && printed_active
+        && asks(Keywords::VIGILANCE)
+        && (crate::eternal_cube_c8c_v1::is_absorbing_copy(state, id)
+            || crate::eternal_cube_c8b_v1::adds_vigilance(state, id))
+    {
+        found = found | Keywords::VIGILANCE;
     }
     let bestowed = if cfg!(feature = "eternal-fixtures") {
         Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0 | Keywords::FLYING.0 | Keywords::HASTE.0)
