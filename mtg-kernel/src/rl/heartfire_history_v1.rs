@@ -247,7 +247,7 @@ fn build_history_parts(
             false,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
-        exile_play_permissions: exile_play_permissions_public_v2(state)?,
+        exile_play_permissions: exile_play_permissions_public_v2(state, acting_player)?,
         engine_context: engine_context_v2(state, acting_player, (false, false, false))?,
         surface_context: surface_context_v2(state, surface, acting_player)?,
     };

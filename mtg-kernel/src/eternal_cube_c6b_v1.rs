@@ -326,17 +326,7 @@ pub fn nontoken_death_copy() -> EffectOp {
 }
 
 pub fn fanatic_entry() -> EffectOp {
-    EffectOp::Conditional {
-        cond: crate::effect::EffectCond::TargetIsLegalForAbility {
-            index: 0,
-            spec: fanatic_target(),
-        },
-        then: Box::new(EffectOp::Sequence(vec![
-            EffectOp::ReturnTargetPermanentToBattlefield { target_index: 0 },
-            c6b(C6bOpV1::FanaticReturnedLifelinkV1),
-        ])),
-        else_: Box::new(EffectOp::Sequence(Vec::new())),
-    }
+    crate::eternal_cube_c7a_v1::fanatic_entry()
 }
 
 fn fanatic_target() -> TargetSpec {

@@ -471,8 +471,12 @@ pub(crate) fn answer_discard(state: &mut GameState, chosen: Vec<ObjectId>) -> Re
         return Err("ordinary cleanup discard answer changed".into());
     }
     state.engine.pending_discard = None;
-    for id in chosen {
-        commit_discarded_card(state, id);
+    if cfg!(feature = "eternal-fixtures") {
+        commit_discarded_cards(state, &chosen);
+    } else {
+        for id in chosen {
+            commit_discarded_card(state, id);
+        }
     }
     state
         .engine

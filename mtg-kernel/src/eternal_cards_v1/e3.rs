@@ -333,6 +333,8 @@ pub enum E3ChoiceKindV1 {
     Pf1aV1(crate::eternal_pauper_pf1a_v1::Pf1aChoiceV1),
     /// A Pauper field wave Pf1b choice (`eternal_pauper_pf1b_v1`).
     Pf1bV1(crate::eternal_pauper_pf1b_v1::Pf1bChoiceV1),
+    /// A Vintage Cube wave C7a choice (`eternal_cube_c7a_v1`).
+    C7aV1(crate::eternal_cube_c7a_v1::C7aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -443,6 +445,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::Pf1bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C7aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -531,6 +536,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C6bV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
             E3ChoiceKindV1::Pf1aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::Pf1bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C7aV1(kind) => kind.public_purpose(),
         }
     }
 
@@ -575,6 +581,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::P2cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::Pf1bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C7aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -989,6 +996,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::Pf1bV1(kind) => crate::eternal_pauper_pf1b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C7aV1(kind) => crate::eternal_cube_c7a_v1::finish_selection(
             state,
             continuation,
             choice,

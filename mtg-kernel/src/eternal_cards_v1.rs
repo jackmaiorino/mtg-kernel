@@ -362,6 +362,15 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_pauper_pf1c_v1::Pf1cStateV1::is_empty"
     )]
     pub pf1c: crate::eternal_pauper_pf1c_v1::Pf1cStateV1,
+    /// Vintage Cube wave C7a's state: concealed exile grants, Scarlett's
+    /// blocking ban, Fanatic entry staging, Malcolm's chorus counters and
+    /// free graveyard casts, and Chandra's paid exile casts and emblems
+    /// (`eternal_cube_c7a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c7a_v1::C7aStateV1::is_empty"
+    )]
+    pub c7a: crate::eternal_cube_c7a_v1::C7aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -865,6 +874,10 @@ impl EternalOpV1 {
                 )
             )
             || matches!(self, EternalOpV1::P1aV1(op) if op.draws())
+            || matches!(
+                self,
+                EternalOpV1::E8bV1(crate::eternal_pauper_e8b_v1::E8bOpV1::RingLootV1)
+            )
     }
 }
 
@@ -2072,6 +2085,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_premodern_p1a_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_sideboard_s1c_v1::statics::blocker_allowed(state, blocker)
         && crate::eternal_sideboard_s1e_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_cube_c7a_v1::blocker_allowed(state, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -2155,6 +2169,10 @@ pub(crate) fn apply_entry_counters(
     object: ObjectId,
     input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
 ) {
+    // Metamorphosis Fanatic's entry-time Metamorph copy and lifelink counter
+    // (Vintage Cube wave C7a). Runs first so copied definitions inherit their
+    // own entry counters and lore counters.
+    crate::eternal_cube_c7a_v1::apply_entry_counters(state, object, input);
     crate::eternal_vintage_e7b_v1::statics::apply_entry_counters(state, object, input);
     crate::eternal_legacy_e8a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_legacy_e9a_v1::statics::apply_entry_counters(state, object, input);
@@ -2431,6 +2449,7 @@ pub(crate) fn delayed_triggers(
     // (Vintage Cube wave C5c).
     triggers.extend(crate::eternal_cube_c5c_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c6c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c7a_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2589,6 +2608,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1q_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1a_v1::begin_turn(state, player);
     crate::eternal_cube_c6c_v1::begin_turn(state, player);
+    crate::eternal_cube_c7a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2849,6 +2869,7 @@ pub(crate) fn exiled_instead_of_graveyard(
         return true;
     }
     !item.is_copy
+        && !crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, item.source)
         && item
             .v4
             .source_contract

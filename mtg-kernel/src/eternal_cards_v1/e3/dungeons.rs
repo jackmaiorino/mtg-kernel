@@ -869,6 +869,10 @@ pub(crate) fn resolution_cast_card(
         E3ChoiceKindV1::E5aV1(kind) => {
             return crate::eternal_e5a_v1::choices::resolution_cast_card(kind, choice, selected)
         }
+        // Malcolm's free graveyard cast and Chandra's paid exile cast.
+        E3ChoiceKindV1::C7aV1(_) => {
+            return crate::eternal_cube_c7a_v1::resolution_cast_card(choice, selected);
+        }
         _ => return None,
     }
     selected
@@ -891,6 +895,11 @@ pub(crate) fn validate_resolution_cast(
 ) -> Result<(), String> {
     if let E3ChoiceKindV1::E5bV1(_) = choice.kind {
         return crate::eternal_legacy_e5b_v1::validate_resolution_cast(
+            suspended, choice, selected, permission,
+        );
+    }
+    if let E3ChoiceKindV1::C7aV1(_) = choice.kind {
+        return crate::eternal_cube_c7a_v1::validate_resolution_cast(
             suspended, choice, selected, permission,
         );
     }

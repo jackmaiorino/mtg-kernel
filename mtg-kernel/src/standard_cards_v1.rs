@@ -4852,13 +4852,19 @@ pub(crate) fn discard_chosen(
     player: PlayerId,
     cards: &[EffectObjectBinding],
 ) -> u32 {
-    let present = hand_candidates(state, player)
+    let ids = hand_candidates(state, player)
         .into_iter()
         .filter(|binding| cards.contains(binding))
-        .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Graveyard))
+        .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    let count = present.len() as u32;
+    let count = ids.len() as u32;
     if count != 0 {
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c7a_v1::note_discards(state, &ids);
+        let present = ids
+            .into_iter()
+            .map(|object| ProposedEvent::zone_change(object, Zone::Graveyard))
+            .collect::<Vec<_>>();
         event::propose_and_commit_batch(state, present);
     }
     count

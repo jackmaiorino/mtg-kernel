@@ -25288,7 +25288,7 @@
   },
     {
    "name": "Hullbreacher",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}",
    "mana_value": 3,
    "colors": [
@@ -35878,7 +35878,7 @@
   },
   {
    "name": "Headliner Scarlett",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{3}{R}",
    "mana_value": 4,
    "colors": [
@@ -35908,7 +35908,7 @@
   },
   {
    "name": "Gandalf, Goblins' Bane",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -36119,7 +36119,7 @@
   },
   {
    "name": "Metamorphosis Fanatic",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{4}{B}{B}",
    "mana_value": 6,
    "colors": [
@@ -37228,7 +37228,7 @@
   },
   {
    "name": "Inti, Seneschal of the Sun",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -37258,7 +37258,7 @@
   },
   {
    "name": "Malcolm, Alluring Scoundrel",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -37288,7 +37288,7 @@
   },
   {
    "name": "Chandra, Torch of Defiance",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "starting_loyalty": 4,
    "mana_cost": "{2}{R}{R}",
    "mana_value": 4,
