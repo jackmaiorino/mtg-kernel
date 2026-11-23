@@ -383,7 +383,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         WAN_SHI_TONG_LIBRARIAN => &WAN_SHI_TONG_LIBRARIAN_TRIGGERS,
         THIEVING_SKYDIVER => &THIEVING_SKYDIVER_TRIGGERS,
         ABSORBING_MAN => &ABSORBING_MAN_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_cube_c9a_v1::triggers_for(name),
     }
 }
 
