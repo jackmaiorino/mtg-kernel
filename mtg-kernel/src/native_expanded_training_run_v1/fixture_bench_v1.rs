@@ -207,6 +207,7 @@ fn config_v1(
         chain_ledger: None,
         // Strict rereads, the default; resident reads (#592) are opt-in.
         verified_reads: Default::default(),
+        trajectory_format: Default::default(),
         output_directory,
     }
 }

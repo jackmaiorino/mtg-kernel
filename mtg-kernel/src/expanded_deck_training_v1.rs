@@ -144,6 +144,8 @@ pub(crate) mod opponent_cache_diagnostics_v1;
 pub(crate) mod pool_fixture_v1;
 pub mod portable_chain_v1;
 pub mod record_envelope_v1;
+pub mod trajectory_container_v1;
+pub use trajectory_container_v1::TrajectoryRecordFormatV1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
@@ -1963,9 +1965,9 @@ fn floats(values: &[u32]) -> Vec<f32> {
     values.iter().map(|x| f32::from_bits(*x)).collect()
 }
 impl TensorBitsV1 {
-    /// No tensor at all: an unscored V3 forced singleton records none.
-    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    fn empty() -> Self {
+    /// Empty tensor (used for unscored forced singletons or omitted opponent
+    /// tensors under `TrajectoryRecordFormatV1::BinaryZstd1LearnerOnly`).
+    pub(super) fn empty_v1() -> Self {
         Self {
             state: Vec::new(),
             object_features: Vec::new(),
@@ -1984,8 +1986,7 @@ impl TensorBitsV1 {
         }
     }
 
-    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty_v1(&self) -> bool {
         self.state.is_empty()
             && self.object_features.is_empty()
             && self.object_card_ids.is_empty()
@@ -2000,6 +2001,17 @@ impl TensorBitsV1 {
             && self.action_ref_action_indices.is_empty()
             && self.action_ref_node_indices.is_empty()
             && self.pairing_node_indices.is_empty()
+    }
+
+    /// No tensor at all: an unscored V3 forced singleton records none.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn empty() -> Self {
+        Self::empty_v1()
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn is_empty(&self) -> bool {
+        self.is_empty_v1()
     }
 
     /// Generic over the shared inner tensor, not `NativeFlatDecisionTensorV3`
@@ -2189,6 +2201,11 @@ struct ExpandedTrajectoryV1 {
     /// update authenticates every entry against the collection's record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     search_played: Option<Vec<SearchPlayedRowV1>>,
+    /// True when opponent decisions retain action/logit/value metadata but omit
+    /// `TensorBitsV1` (`TrajectoryRecordFormatV1::BinaryZstd1LearnerOnly`).
+    /// Absent when false, preserving all legacy JSON bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    opponent_tensors_omitted: bool,
 }
 
 /// One learner row the search played (`w5-xact-v1`).
@@ -3795,9 +3812,20 @@ fn collect_episode(
 fn collect_episode_hooked_v1(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
+    opponent: Option<&mut LoadedOpponentV1>,
+    episode: &ExpandedEpisodeV1,
+    hook: Option<&mut ex1_collect_v1::Ex1EpisodeHookV1>,
+) -> Result<ExpandedTrajectoryV1, CollectEpisodeErrorV1> {
+    collect_episode_hooked_with_options_v1(policy, learner, opponent, episode, hook, false)
+}
+
+fn collect_episode_hooked_with_options_v1(
+    policy: &mut FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
     mut opponent: Option<&mut LoadedOpponentV1>,
     episode: &ExpandedEpisodeV1,
     mut hook: Option<&mut ex1_collect_v1::Ex1EpisodeHookV1>,
+    omit_opponent_tensors: bool,
 ) -> Result<ExpandedTrajectoryV1, CollectEpisodeErrorV1> {
     let configs = episode.configurations()?;
     ensure(
@@ -3888,6 +3916,7 @@ fn collect_episode_hooked_v1(
                     input_contract,
                     opening_record: session.pauper_opening_record_v1().cloned(),
                     search_played: (!search_played.is_empty()).then_some(search_played),
+                    opponent_tensors_omitted: omit_opponent_tensors,
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -3914,6 +3943,8 @@ fn collect_episode_hooked_v1(
                     Some(hook) if hook.hooks_v1(&d) => Some(hook.before_select_v1(&session, d)?),
                     _ => None,
                 };
+                let record_tensor =
+                    !(omit_opponent_tensors && seat(d.acting_player) != episode.learner_seat);
                 let (selected, scores, tensor_bits) = if acting.feature_identity_v1().generation
                     == FreshLineageGenerationV1::V4
                 {
@@ -3925,7 +3956,9 @@ fn collect_episode_hooked_v1(
                             .transpose()?,
                     )?;
                     // FlatV8 rows also record their pairing relation.
-                    let bits = if acting.feature_identity_v1().feature_contract_digest
+                    let bits = if !record_tensor {
+                        TensorBitsV1::empty_v1()
+                    } else if acting.feature_identity_v1().feature_contract_digest
                         == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
                     {
                         TensorBitsV1::from_tensor_v8(
@@ -3939,7 +3972,12 @@ fn collect_episode_hooked_v1(
                 } else {
                     let (selected, scores, tensor) =
                         acting.select_with_training_tensor_v3(&session)?;
-                    (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                    let bits = if !record_tensor {
+                        TensorBitsV1::empty_v1()
+                    } else {
+                        TensorBitsV1::from_tensor(&tensor.common)
+                    };
+                    (selected, scores, bits)
                 };
                 let logits = bits(&scores.logits);
                 let played = match (hook.as_deref_mut(), pending) {
@@ -4230,11 +4268,34 @@ type TolerantCollectionV1 = (
 fn collect_episode_tolerant_v1(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
+    opponent: Option<&mut LoadedOpponentV1>,
+    episode: &ExpandedEpisodeV1,
+    slot: usize,
+    max_non_natural_episode_fraction: f32,
+    ex1: Option<&ex1_collect_v1::Ex1CollectOptionsV1>,
+) -> Result<TolerantCollectionV1, (String, Vec<NonNaturalLedgerEntryV1>)> {
+    collect_episode_tolerant_with_options_v1(
+        policy,
+        learner,
+        opponent,
+        episode,
+        slot,
+        max_non_natural_episode_fraction,
+        ex1,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_episode_tolerant_with_options_v1(
+    policy: &mut FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
     mut opponent: Option<&mut LoadedOpponentV1>,
     episode: &ExpandedEpisodeV1,
     slot: usize,
     max_non_natural_episode_fraction: f32,
     ex1: Option<&ex1_collect_v1::Ex1CollectOptionsV1>,
+    omit_opponent_tensors: bool,
 ) -> Result<TolerantCollectionV1, (String, Vec<NonNaturalLedgerEntryV1>)> {
     let mut ledger = Vec::new();
     let mut attempt_episode = episode.clone();
@@ -4249,12 +4310,13 @@ fn collect_episode_tolerant_v1(
             .transpose()
             .map_err(|error| (error, std::mem::take(&mut ledger)))?;
         let reborrowed_opponent = opponent.as_deref_mut();
-        let outcome = collect_episode_hooked_v1(
+        let outcome = collect_episode_hooked_with_options_v1(
             policy,
             learner,
             reborrowed_opponent,
             &attempt_episode,
             hook.as_mut(),
+            omit_opponent_tensors,
         );
         let outcome = match outcome {
             Ok(trajectory) if seed_is_forced_non_natural_for_test_v1(attempt_episode.seed) => Err(
@@ -4401,11 +4463,33 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     // and have no no-state-digest conversion, so their updates, replays and
     // checkpoints are admitted here like V4's.
     let contract = trajectory_contract_v1(t)?;
+    if t.opponent_tensors_omitted {
+        for row in &t.decisions {
+            let is_learner = row.actor == t.episode.learner_seat;
+            ensure(
+                row.tensor.is_empty_v1() != is_learner,
+                "learner-only trajectory violates seat tensor presence",
+            )?;
+        }
+    }
     if contract.input_contract_digest_v1().is_some() {
-        no_state_digest_v1::check_trajectory_rows_v1(
-            &t.decisions,
-            contract.action_digest_off_v1(),
-        )?;
+        if t.opponent_tensors_omitted {
+            let learner_rows: Vec<DecisionRecordV1> = t
+                .decisions
+                .iter()
+                .filter(|row| row.actor == t.episode.learner_seat)
+                .cloned()
+                .collect();
+            no_state_digest_v1::check_trajectory_rows_v1(
+                &learner_rows,
+                contract.action_digest_off_v1(),
+            )?;
+        } else {
+            no_state_digest_v1::check_trajectory_rows_v1(
+                &t.decisions,
+                contract.action_digest_off_v1(),
+            )?;
+        }
     }
     // W5: a row the search played replays the learner's own draw; the
     // update authenticates the played action against q.
@@ -4793,6 +4877,13 @@ fn replay_learner_groups_v1<'a>(
     let mut groups = Vec::new();
     let mut group = Vec::new();
     visit_serial_replay_rows_v1(t, learner, opponent, |generation, acting, row| {
+        if t.opponent_tensors_omitted && row.actor != t.episode.learner_seat {
+            ensure(
+                row.tensor.is_empty_v1(),
+                "learner-only trajectory carries unexpected opponent tensor",
+            )?;
+            return Ok::<_, String>(());
+        }
         let common = row.tensor.tensor();
         let stage = if row.actor == t.episode.learner_seat {
             S_UPDATE_REPLAY_LEARNER_ROW_V1
@@ -4923,6 +5014,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// existing command keeps its bytes and publishes plain JSON.
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
+        /// The opt-in trajectory container format (`trajectory_container_v1`);
+        /// omitted for the default (`json`), preserving existing command bytes.
+        #[serde(default, skip_serializing_if = "TrajectoryRecordFormatV1::is_json")]
+        trajectory_format: TrajectoryRecordFormatV1,
         output_directory: PathBuf,
     },
     Update {
@@ -5540,6 +5635,7 @@ fn execute_command_v1(
             training_math,
             ex1,
             record_envelope,
+            trajectory_format,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
@@ -5550,6 +5646,7 @@ fn execute_command_v1(
             training_math,
             ex1,
             record_envelope,
+            trajectory_format,
             output_directory,
             carried_collect,
         )
@@ -9538,6 +9635,7 @@ pub(crate) mod tests {
             input_contract: None,
             opening_record: None,
             search_played: None,
+            opponent_tensors_omitted: false,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,

@@ -108,6 +108,9 @@ class Host:
     transport: str = "shell"
     # Agent mode over an ordinary login (proofs only): format string with {req}, see AgentTransport.
     agent_wrap: str = ""
+    # Opt-in streaming shard fetch compression: "" / "none" (raw tar, default) or "gzip1"
+    # (streaming gzip level 1 over the ssh pipe, decoded with an extracted-byte cap).
+    fetch_compression: str = ""
 
 
 def _absolute(path: str) -> bool:
@@ -130,6 +133,8 @@ def load_hosts(path: Path) -> dict:
             raise ValueError(f"{host.name}: transport is shell, or agent for an ssh host")
         if host.prune_pushed and host.transport != "agent":
             raise ValueError(f"{host.name}: remote retention (prune_pushed) needs the agent transport")
+        if host.fetch_compression not in ("", "none", "gzip1"):
+            raise ValueError(f"{host.name}: fetch_compression must be none or gzip1")
         if host.workers < 2 or host.weight <= 0:
             raise ValueError(f"{host.name}: workers >= 2 and weight > 0 required")
         if not (_absolute(host.collector) and _absolute(host.scratch)):
@@ -525,9 +530,11 @@ class Transport:
             shutil.copytree(remote, local)
             return
         local.mkdir(parents=True)
-        tar = subprocess.Popen(self._ssh([f"tar -C {shlex.quote(remote)} -cf - ."]),
+        tar_flag = "-czf" if self.host.fetch_compression == "gzip1" else "-cf"
+        unpack_flag = "-xzf" if self.host.fetch_compression == "gzip1" else "-xf"
+        tar = subprocess.Popen(self._ssh([f"tar -C {shlex.quote(remote)} {tar_flag} - ."]),
                                stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
-        unpack = subprocess.Popen(["tar", "-C", str(local), "-xf", "-"], stdin=tar.stdout,
+        unpack = subprocess.Popen(["tar", "-C", str(local), unpack_flag, "-"], stdin=tar.stdout,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         tar.stdout.close()
         deadline = time.time() + FETCH_SECONDS
@@ -902,6 +909,8 @@ AGENT_OPS = ("pin_status", "push", "put_shard", "run_shard", "fetch_shard", "rem
 AGENT_ARGS = {"pin_status": {"pins"}, "push": {"path", "sha256"}, "put_shard": {"tag"},
               "run_shard": {"tag", "collector_sha256", "seconds"}, "fetch_shard": {"tag"},
               "remove_shard": {"tag"}, "remove_pin": {"path", "sha256"}}
+AGENT_OPTIONAL_ARGS = {"fetch_shard": {"compression"}}
+FETCH_COMPRESSIONS = ("none", "gzip1")
 AGENT_SANDBOXES = ("landlock", "none")
 EXECUTORS = ("direct", "spool")
 SPOOL_EXECUTOR_KEYS = {"kind", "heartbeat_seconds", "stop_grace_seconds", "watchdog_grace_seconds", "stop_file",
@@ -1095,8 +1104,11 @@ def decode_request(text) -> tuple[str, dict]:
         raise AgentRefusal("request is not a pooled-collect-agent-request/v1 object")
     if request["op"] not in AGENT_OPS:
         raise AgentRefusal(f"operation not served: {str(request['op'])[:40]!r}")
-    if set(request["args"]) != AGENT_ARGS[request["op"]]:
-        raise AgentRefusal(f"{request['op']} takes exactly {sorted(AGENT_ARGS[request['op']])}")
+    required = AGENT_ARGS[request["op"]]
+    optional = AGENT_OPTIONAL_ARGS.get(request["op"], set())
+    keys = set(request["args"])
+    if not (required <= keys <= required | optional):
+        raise AgentRefusal(f"{request['op']} takes exactly {sorted(required)}")
     return request["op"], request["args"]
 
 
@@ -2047,7 +2059,20 @@ def _spool_active(config: dict, tag: str) -> bool:
     return os.path.lexists(files["request"]) or os.path.lexists(files["running"]) or not _agent_gone(files["lock"])
 
 
-def _spool_fetch(config: dict, tag: str, stdout) -> None:
+def _fetch_compression_arg(args: dict) -> str:
+    compression = args.get("compression", "none")
+    if not isinstance(compression, str) or compression not in FETCH_COMPRESSIONS:
+        raise AgentRefusal(f"unsupported fetch_shard compression: {str(compression)[:40]!r}")
+    return compression
+
+
+def _open_fetch_archive(stdout, compression: str):
+    if compression == "gzip1":
+        return tarfile.open(fileobj=stdout, mode="w|gz", compresslevel=1)
+    return tarfile.open(fileobj=stdout, mode="w|")
+
+
+def _spool_fetch(config: dict, tag: str, stdout, compression: str = "none") -> None:
     """fetch_shard with the spool executor: opens `<tag>/out` first (no symlink at either level) and only then
     checks that no job of the tag is submitted, claimed or waited on, so the directory it tars is one no
     collector writes any more; members are opened relative to it."""
@@ -2070,7 +2095,7 @@ def _spool_fetch(config: dict, tag: str, stdout) -> None:
     try:
         if _spool_active(config, tag):
             raise AgentRefusal("a job of this tag is active: its output is not complete")
-        with tarfile.open(fileobj=stdout, mode="w|") as archive:
+        with _open_fetch_archive(stdout, compression) as archive:
             for name in sorted(os.listdir(out_fd)):
                 if not _portable_name(name):
                     raise AgentRefusal(f"unexpected name in shard output: {name[:80]!r}")
@@ -2900,9 +2925,10 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                         _spool_release(admitted)
     elif op == "fetch_shard":
         tag = _tag_arg(args)
+        compression = _fetch_compression_arg(args)
         _no_more_input(stdin)
         if config.get("executor", {}).get("kind") == "spool":
-            _spool_fetch(config, tag, stdout)
+            _spool_fetch(config, tag, stdout, compression=compression)
             return
         directory = os.path.join(scratch, tag, "out")
         for level in (os.path.dirname(directory), directory):
@@ -2912,7 +2938,7 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                 raise AgentRefusal("no shard output for this tag") from None
             if not stat.S_ISDIR(info.st_mode):
                 raise AgentRefusal("shard output is not a directory")
-        with tarfile.open(fileobj=stdout, mode="w|") as archive:
+        with _open_fetch_archive(stdout, compression) as archive:
             for name in sorted(os.listdir(directory)):
                 member = os.path.join(directory, name)
                 if not _portable_name(name):
@@ -2982,22 +3008,37 @@ def agent_main(config_path: str, environ, stdin, stdout, stderr) -> int:
             signal.signal(signal.SIGALRM, alarm)
 
 
-def _extract_shard_archive(archive_path: Path, local: Path) -> None:
+def _extract_shard_archive(archive_path: Path, local: Path, *, compression: str = "none",
+                           max_bytes: int = AGENT_FETCH_BYTES) -> None:
     """Writes a fetched shard archive's members into `local`: portable plain names only (no Windows
     device or trailing-dot alias), regular files only, no duplicates, each created exclusively and
-    checked to be a regular file once open. Nothing else is accepted."""
+    checked to be a regular file once open, with total extracted bytes bounded by `max_bytes`.
+    Nothing else is accepted."""
+    if compression not in FETCH_COMPRESSIONS:
+        raise RuntimeError(f"unsupported shard archive compression: {compression!r}")
+    mode = "r:gz" if compression == "gzip1" else "r:"
     seen = set()
-    with tarfile.open(archive_path, mode="r:") as archive:
+    extracted = 0
+    with tarfile.open(archive_path, mode=mode) as archive:
         for member in archive:
             if not member.isreg() or not _portable_name(member.name) or member.name.upper() in seen:
                 raise RuntimeError(f"unexpected entry in a shard archive: {member.name[:80]!r}")
+            if member.size < 0 or extracted + member.size > max_bytes:
+                raise RuntimeError(f"shard archive exceeded its extracted output bound ({max_bytes} bytes)")
             seen.add(member.name.upper())  # case-insensitive learner filesystems: one name, one file
             source = archive.extractfile(member)
             fd = os.open(local / member.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
             with os.fdopen(fd, "wb") as handle:
                 if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
                     raise RuntimeError(f"shard archive entry is not a regular file here: {member.name[:80]!r}")
-                shutil.copyfileobj(source, handle)
+                while True:
+                    chunk = source.read(1 << 16)
+                    if not chunk:
+                        break
+                    extracted += len(chunk)
+                    if extracted > max_bytes:
+                        raise RuntimeError(f"shard archive exceeded its extracted output bound ({max_bytes} bytes)")
+                    handle.write(chunk)
 
 
 def _bounded_process(argv: list, what: str, seconds: float, out_cap: int, stdin=None, payload=None,
@@ -3121,16 +3162,20 @@ class AgentTransport:
         if local.exists():
             shutil.rmtree(local)
         local.mkdir(parents=True)
+        compression = "gzip1" if self.host.fetch_compression == "gzip1" else "none"
+        fetch_args = {"tag": self._tag(remote)}
+        if compression != "none":
+            fetch_args["compression"] = compression
         with tempfile.TemporaryDirectory() as temporary:
-            archive_path = Path(temporary) / "shard.tar"
+            archive_path = Path(temporary) / ("shard.tar.gz" if compression == "gzip1" else "shard.tar")
             try:
                 with open(archive_path, "wb") as sink:
-                    code, _, err = _bounded_process(self._argv("fetch_shard", tag=self._tag(remote)),
+                    code, _, err = _bounded_process(self._argv("fetch_shard", **fetch_args),
                                                     f"{self.host.name}: fetch of {remote}", FETCH_SECONDS,
                                                     AGENT_FETCH_BYTES, sink=sink)
                 if code != 0:
                     raise RuntimeError(f"{self.host.name}: agent fetch_shard: {err.decode(errors='replace')[-400:]}")
-                _extract_shard_archive(archive_path, local)
+                _extract_shard_archive(archive_path, local, compression=compression)
             except BaseException:
                 shutil.rmtree(local, ignore_errors=True)
                 raise
