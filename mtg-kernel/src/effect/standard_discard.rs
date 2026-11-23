@@ -85,8 +85,13 @@ pub(super) fn finish(
     }
     // Selection order also specifies graveyard order when it matters. Madness
     // is the same replacement/trigger path used by ordinary discard costs.
-    for card in selected {
-        crate::engine::commit_discarded_card(state, card.object);
+    if cfg!(feature = "eternal-fixtures") {
+        let ids: Vec<_> = selected.iter().map(|card| card.object).collect();
+        crate::engine::commit_discarded_cards(state, &ids);
+    } else {
+        for card in selected {
+            crate::engine::commit_discarded_card(state, card.object);
+        }
     }
     if !selected.is_empty() {
         pending.frames.push(EffectFrame::Program {
@@ -135,6 +140,7 @@ pub(super) fn random_exile(
                 .push(crate::engine::PlayPermission {
                     object: card,
                     without_mana_cost: Default::default(),
+                    any_mana_type: Default::default(),
                     holder: player,
                     zone_change_generation: live.zone_change_count,
                     play_or_cast,

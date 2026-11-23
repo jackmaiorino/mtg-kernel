@@ -227,7 +227,7 @@ pub(super) fn payment(
         let (pips, generic) = remaining_cost;
         if i == chosen.len() {
             let spell = selected(state, p)?;
-            return mana::plan_spell_mana_total_with_restrictions_v1_typed_v60(
+            return mana::plan_spell_mana_total_with_restrictions_with_grant_v72(
                 &pips,
                 generic,
                 p.controller,
@@ -238,6 +238,10 @@ pub(super) fn payment(
                 spell.legendary_spell,
                 &spell.spell_subtypes,
                 spell.all_creature_types_v60,
+                spell.tinybones_mana_v72.as_ref(),
+                spell.any_mana_type,
+                spell.types.contains(&CardType::Artifact),
+                spell.colorless_eldrazi,
             );
         }
         let colors = if improvises(state, p) {

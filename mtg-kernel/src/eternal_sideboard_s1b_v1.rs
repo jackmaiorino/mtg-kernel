@@ -947,15 +947,9 @@ fn run_tourach_discard(ctx: &ExecCtx, state: &mut GameState) {
     let Some(Target::Player(player)) = ctx.targets.first().copied() else {
         return;
     };
-    for _ in 0..2 {
-        match state.random_hand_card_v1(player) {
-            Ok(Some(card)) => crate::engine::commit_discarded_card(state, card),
-            Ok(None) => break,
-            Err(_) => {
-                halt(state, ctx.source);
-                return;
-            }
-        }
+    match state.random_hand_cards_v1(player, 2) {
+        Ok(cards) => crate::engine::commit_discarded_cards(state, &cards),
+        Err(_) => halt(state, ctx.source),
     }
 }
 

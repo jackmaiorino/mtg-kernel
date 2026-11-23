@@ -2424,9 +2424,9 @@ const FANATIC: &str = "Metamorphosis Fanatic";
 
 #[test]
 fn fanatic_is_partial_until_a_returned_metamorph_offers_its_copy_choice() {
-    assert_eq!(def(FANATIC).capability, CardCapability::Partial);
+    assert_eq!(def(FANATIC).capability, CardCapability::Full);
     assert!(def(FANATIC).is_executable());
-    assert!(!def(FANATIC).has_full_support());
+    assert!(def(FANATIC).has_full_support());
 }
 
 fn cast_fanatic(state: &mut GameState) -> ObjectId {
@@ -2438,7 +2438,6 @@ fn cast_fanatic(state: &mut GameState) -> ObjectId {
 }
 
 #[test]
-#[ignore = "Fanatic is Partial: a returned Phyrexian Metamorph gets no copy choice"]
 fn fanatic_returning_metamorph_offers_copy_before_entry_and_replays() {
     let mut state = plains();
     for name in ["Phyrexian Metamorph", "Wall of Blossoms"] {

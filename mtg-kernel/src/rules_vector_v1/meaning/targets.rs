@@ -808,6 +808,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::PermanentCardInOwnGraveyardThisTurnV1 => ObjF::Permanent,
         S::TappedCreatureV1 => creature(),
         S::UpToTwoLandsV1 => typed(CardType::Land),
+        S::OpponentPlaneswalkerV1 => typed(CardType::Planeswalker),
+        S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => ObjF::NonlandPermanent,
     }
 }
 
@@ -941,6 +943,10 @@ pub(super) fn standard_target_origin(
         S::PermanentCardInOwnGraveyardThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::TappedCreatureV1 => (Some(ZoneF::Battlefield), None),
         S::UpToTwoLandsV1 => (Some(ZoneF::Battlefield), None),
+        S::OpponentPlaneswalkerV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => {
+            (Some(ZoneF::Graveyard), Some(RelF::You))
+        }
     }
 }
 
@@ -1467,6 +1473,13 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Land), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             out.target(TargetAtom::UpTo);
+        }
+        S::OpponentPlaneswalkerV1 => {
+            object(out, typed(CardType::Planeswalker), relation, zone);
+        }
+        S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => {
+            object(out, ObjF::NonlandPermanent, relation, zone);
+            out.atoms.push(Atom::Opaque);
         }
     }
 }

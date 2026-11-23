@@ -78,8 +78,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Ivora, Insatiable Heir" => "etb:create_blood_token:1;deals_combat_damage_to_player:create_blood_token:1;controller_discards_card:source_plus_one_counter:1",
         "Gau, Feral Youth" => "attacks:source_plus_one_counter:1;each_end_step:if_card_left_your_graveyard_this_turn:damage_each_opponent_source_power",
         "Laelia, the Blade Reforged" => "haste;attacks:impulse_top_one_end_of_turn;one_or_more_cards_exiled_from_your_library_or_graveyard:source_plus_one_counter:1",
-        "Headliner Scarlett" => "partial:private_face_down_play_permission_projection_missing;printed:haste;etb:target_players_creatures_cannot_block_this_turn;your_upkeep:exile_top_one_face_down:controller_may_look_and_play_this_turn",
-        "Gandalf, Goblins' Bane" => "partial:private_face_down_play_permission_projection_missing:unbounded_wizard_conditional_permission_missing;printed:cast_noncreature:source_plus1_plus1_until_end_of_turn:damage_each_opponent:1;adventure:flameshape:1r:sorcery:look_top_two:exile_face_down:may_play_while_exiled_if_you_control_wizard",
         "Fallen Shinobi" => "ninjutsu:2ub;combat_damage_player:that_player_exiles_top_two:controller_may_play_this_turn_without_mana_cost",
         "Generous Plunderer" => "menace;your_upkeep:may_create_treasure:when_you_do:target_opponent_creates_tapped_treasure;attacks:damage_defending_player_equal_artifacts_they_control",
         "Gut, True Soul Zealot" => "controller_attacks:may_sacrifice_another_creature_or_artifact:if_paid:create_black_4_1_skeleton_menace_tapped_attacking;choose_a_background",

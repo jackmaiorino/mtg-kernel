@@ -540,6 +540,17 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         // The Mightstone and Weakstone: "{T}: Add {C}{C}." The runtime turns
         // the two mana into restricted units (`eternal_cube_c3c_v1`).
         "Relic of Sauron" | "The Mightstone and Weakstone" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
+        // Orcish Lumberjack (Vintage Cube wave C7b): "{T}, Sacrifice a Forest:
+        // Add three mana in any combination of {R} and/or {G}." Primary makes
+        // RRR or GGG; mixed RRG/RGG bundles are in `additional_mana_abilities_for`.
+        "Orcish Lumberjack" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(Subtype::Forest), amount: ManaAbilityAmountDef::Fixed(3), controller_damage: 0, max_activations_per_turn: None })",
+        // Urza, Lord High Artificer (Vintage Cube wave C7b): "Tap an untapped
+        // artifact you control: Add {U}."
+        "Urza, Lord High Artificer" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapUntappedControlledArtifactV1, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        // Vivi Ornitier (Vintage Cube wave C7b): "{0}: Add X mana in any
+        // combination of {U} and/or {R}, where X is Vivi Ornitier's power.
+        // Activate only during your turn and only once each turn."
+        "Vivi Ornitier" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::NoneOwnTurnOnlyV1, amount: ManaAbilityAmountDef::SourcePowerAnyCombinationV1(&[ManaColor::U, ManaColor::R]), controller_damage: 0, max_activations_per_turn: Some(1) })",
         _ => super::build_eternal_vintage_v1::mana_ability_def_for(name),
     }
 }

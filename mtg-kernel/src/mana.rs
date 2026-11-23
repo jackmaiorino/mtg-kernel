@@ -731,6 +731,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1_typed_v60(
         None,
         false,
         false,
+        false,
     )
 }
 
@@ -747,6 +748,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
     spell_subtypes: &[u16],
     all_creature_types: bool,
     grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>,
+    any_type_mana: bool,
     artifact_spell: bool,
     colorless_eldrazi_spell: bool,
 ) -> Option<PaymentPlan> {
@@ -793,7 +795,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
         mana_life_budget,
         Some(generic),
         None,
-        PipManaPolicyV72::for_spell(state, grant),
+        PipManaPolicyV72::for_spell(state, grant, any_type_mana),
     ) {
         return None;
     }
@@ -916,6 +918,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
         false,
         false,
         false,
+        false,
     )
 }
 
@@ -934,6 +937,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
     spell_subtypes: &[u16],
     all_creature_types: bool,
     grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>,
+    any_type_mana: bool,
     artifact_spell: bool,
     colorless_eldrazi_spell: bool,
     improvise: bool,
@@ -1037,7 +1041,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
         (life - i64::from(additional_life)).max(0),
         Some(generic),
         Some(&source_choices),
-        PipManaPolicyV72::for_spell(state, grant),
+        PipManaPolicyV72::for_spell(state, grant, any_type_mana),
     ) {
         return None;
     }
@@ -1581,13 +1585,15 @@ impl PipManaPolicyV72 {
         }
     }
 
-    /// A spell's permission: Tinybones's grant spends mana as though it were
-    /// mana of any type, which includes any color.
+    /// A spell's permission: Tinybones's grant or a permission-scoped
+    /// `any_mana_type` grant spends mana as though it were mana of any type,
+    /// which includes any color and colorless.
     fn for_spell(
         state: &GameState,
         grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>,
+        any_type_mana: bool,
     ) -> Self {
-        if grant.is_some() {
+        if grant.is_some() || any_type_mana {
             Self::AnyType
         } else {
             Self::for_state(state)

@@ -1382,3 +1382,59 @@ fn underworld_breach_escapes_nonland_cards_and_is_sacrificed_at_the_end_step() {
     pass_until(&mut state, |state| zone(state, breach) == Zone::Graveyard);
     assert_eq!(state.step, Step::End);
 }
+
+#[test]
+fn underworld_breach_pays_escape_and_optional_kicker_together() {
+    for (red, kick) in [(1, false), (2, false), (2, true)] {
+        let mut state = islands();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let bushwhacker = put(&mut state, P0, "Goblin Bushwhacker", Zone::Graveyard);
+        for _ in 0..2 {
+            put(&mut state, P0, "Island", Zone::Graveyard);
+        }
+        pool(&mut state, P0, &[ManaColor::R; 2][..red], 0);
+        assert!(!castable(&mut state, bushwhacker));
+        put(&mut state, P0, "Island", Zone::Graveyard);
+        cast(&mut state, bushwhacker, &[]);
+        let mut offered = false;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseKicker { spell, .. } => {
+                assert_eq!(spell, bushwhacker);
+                offered = true;
+                Action::ChooseKicker(kick)
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(offered, red == 2);
+        assert_eq!(zone(&state, bushwhacker), Zone::Battlefield);
+        assert_eq!(state.exile.len(), 3);
+        assert_eq!(
+            mana(&state, P0, ManaColor::R),
+            red as u8 - 1 - u8::from(kick)
+        );
+        assert_eq!(
+            engine::effective_power(&state, bushwhacker),
+            1 + i32::from(kick)
+        );
+    }
+}
+
+#[test]
+fn underworld_breach_can_escape_when_only_the_kicked_spell_has_a_target() {
+    let mut state = islands();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let target = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let thirst = put(&mut state, P0, "Bloodchief's Thirst", Zone::Graveyard);
+    for _ in 0..3 {
+        put(&mut state, P0, "Island", Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    assert!(!castable(&mut state, thirst));
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, thirst, &[Target::Object(target)]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, target), Zone::Graveyard);
+    assert_eq!(zone(&state, thirst), Zone::Graveyard);
+    assert_eq!(state.exile.len(), 3);
+    assert_eq!(mana(&state, P0, ManaColor::B), 0);
+}

@@ -1674,6 +1674,7 @@ jobs:
           uv run --no-sync python -m unittest discover -v -s tools/sd1/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/native_fixture_bench/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/checkpoint_codec_bench/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'
 
       # A partial retry keeps the build job's artifact from the prior attempt;
       # take the newest attempt.

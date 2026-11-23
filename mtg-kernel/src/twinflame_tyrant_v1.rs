@@ -163,7 +163,8 @@ pub(crate) fn validate_commuting_damage(
             e,
             crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
         )
-    });
+    }) || (cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage));
     if !cannot_prevent
         && state.engine.active_replacements.iter().any(|r| {
             matches!(r.kind, ReplacementEffectKind::PreventNextDamage { .. })

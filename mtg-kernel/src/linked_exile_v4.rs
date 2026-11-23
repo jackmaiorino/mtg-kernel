@@ -8,7 +8,10 @@ use crate::state::{GameObject, GameState, LinkedExileRecordV4, ObjectLinkV4, Zon
 fn fiend_or_journey(record: &LinkedExileRecordV4) -> bool {
     CARD_DEFS
         .get(usize::from(record.source.card_def))
-        .is_some_and(|def| matches!(def.name, "Mesmeric Fiend" | "Journey to Nowhere"))
+        .is_some_and(|def| {
+            matches!(def.name, "Mesmeric Fiend" | "Journey to Nowhere")
+                || (cfg!(feature = "eternal-fixtures") && def.name == "Tidehollow Sculler")
+        })
 }
 
 pub(crate) struct Departure {
