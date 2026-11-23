@@ -2250,7 +2250,13 @@ pub(crate) fn target_contract_matches_live(
             spell_copy_origin,
             ..
         } => state.objects.try_get(object).is_some_and(|live| {
-            live.card_def == card_def
+            (live.card_def == card_def
+                || crate::standard_cards_v1::had_card_def(
+                    state,
+                    object,
+                    zone_change_count,
+                    card_def,
+                ))
                 && live.owner == owner
                 && live.zone == zone
                 && live.zone_change_count == zone_change_count
@@ -2287,7 +2293,13 @@ fn target_contracts_are_structurally_valid(
                         zone_change_count,
                         spell_copy_origin,
                     } => state.objects.try_get(object).is_some_and(|live| {
-                        live.card_def == card_def
+                        (live.card_def == card_def
+                            || crate::standard_cards_v1::had_card_def(
+                                state,
+                                object,
+                                zone_change_count,
+                                card_def,
+                            ))
                             && live.owner == owner
                             && live.controller == controller
                             && live.zone == zone
@@ -18786,7 +18798,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, pending) {
+    if let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, &pending) {
         if !pending.optional_additional_cost_selection_finished {
             let candidates = match collect_evidence_candidates_excluding(
                 pending.controller,
@@ -20214,6 +20226,7 @@ pub(crate) fn validate_pending_trigger(
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | crate::eternal_sideboard_s1o_v1::EOWYN_TARGET
                     | crate::eternal_cube_c7c_v1::SCALELORD_TARGET
+                    | crate::eternal_cube_c8c_v1::SKYDIVER_TARGET
             ) {
             completable_next_targets_for_controller_and_source(
                 expected,

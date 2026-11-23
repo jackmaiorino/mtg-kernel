@@ -494,7 +494,10 @@ fn is_companion_action(action: &Value) -> bool {
         && s["source"]["card_db_id"].as_u64().is_some_and(|id| {
             matches!(
                 CARD_DEFS[id as usize].name,
-                "Lurrus of the Dream-Den" | "Yorion, Sky Nomad"
+                "Lurrus of the Dream-Den"
+                    | "Yorion, Sky Nomad"
+                    | "Lutri, the Spellchaser"
+                    | "Zirda, the Dawnwaker"
             )
         })
 }

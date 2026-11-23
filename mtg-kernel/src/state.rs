@@ -1409,6 +1409,12 @@ fn stack_target_contract_shape(
             && stack_item_id.0 <= state.engine.next_stack_item_id
             && state.objects.try_get(source).is_some_and(|live| {
                 (live.card_def == card_def
+                    || crate::standard_cards_v1::had_card_def(
+                        state,
+                        source,
+                        source_zone_change_count,
+                        card_def,
+                    )
                     || historical_storm && live.zone_change_count > source_zone_change_count)
                     && live.owner == owner
                     && live.zone_change_count >= source_zone_change_count
@@ -1631,6 +1637,7 @@ fn stack_target_contract_shape(
     };
     state.objects.try_get(object).is_some_and(|live| {
         (live.card_def == card_def
+            || crate::standard_cards_v1::had_card_def(state, object, zone_change_count, card_def)
             || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin

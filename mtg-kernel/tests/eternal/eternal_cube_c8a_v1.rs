@@ -937,6 +937,7 @@ fn revealing_eye_decline_all_lands_shroud_fizzle_and_hullbreacher_hook() {
     ));
     act(&mut state, Action::Pass);
     choose_target(&mut state, Target::Player(P1));
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
     // Now P1 gains shroud while Revealing Eye's trigger is on the stack.
     put(&mut state, P1, "True Believer", Zone::Battlefield);
     settled(&mut state);
@@ -1308,7 +1309,13 @@ fn jennifer_walters_blocks_opponent_spells_on_both_faces_and_transforms_sorcery_
 
     // Dress Down suppresses the static ability.
     let mut suppressed = state.clone();
-    put(&mut suppressed, P1, "Dress Down", Zone::Battlefield);
+    let dress = put(&mut suppressed, P1, "Dress Down", Zone::Hand);
+    propose_and_commit(
+        &mut suppressed,
+        ProposedEvent::zone_change(dress, Zone::Battlefield),
+    );
+    settled(&mut suppressed);
+    suppressed.priority_player = P1;
     assert!(castable(&mut suppressed, bolt));
 
     // P1 CAN cast spells on P1's own turn.
@@ -1682,7 +1689,12 @@ fn emeritus_of_abundance_enters_prepared_regrowth_targets_own_gy_and_respects_dr
 
     // Dress Down suppresses "enters prepared".
     let mut suppressed = plains();
-    put(&mut suppressed, P1, "Dress Down", Zone::Battlefield);
+    let dress = put(&mut suppressed, P1, "Dress Down", Zone::Hand);
+    propose_and_commit(
+        &mut suppressed,
+        ProposedEvent::zone_change(dress, Zone::Battlefield),
+    );
+    settled(&mut suppressed);
     let em2 = put(&mut suppressed, P0, "Emeritus of Abundance", Zone::Hand);
     pool(&mut suppressed, P0, &[ManaColor::G], 2);
     cast(&mut suppressed, em2, &[]);
