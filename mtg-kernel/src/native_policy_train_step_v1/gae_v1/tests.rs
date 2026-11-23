@@ -2646,7 +2646,7 @@ mod card_semantics_e1_tests {
         let keep = Some(
             crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1::scalar(2.5),
         );
-        state.set_london_keep_offset_v1(keep.clone());
+        state.set_london_keep_offset_v1(keep);
         let digest = state.state_sha256_v1().unwrap();
         let before = state_bits(&state);
         let fixture = Fixture::capture(state.model_v1());
