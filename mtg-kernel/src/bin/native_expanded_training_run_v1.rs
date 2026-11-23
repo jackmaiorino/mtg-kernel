@@ -52,6 +52,18 @@ fn run() -> Result<(), String> {
             .join()
             .map_err(|_| "pooled collection thread panicked".to_owned())?;
     }
+    if first.as_deref() == Some(std::ffi::OsStr::new("--fixed-tree-diagnostic")) {
+        // The fixed-tree backward's measurement of one existing update
+        // (`fixed_tree_diagnostic_v1`): read-only, it trains and publishes
+        // nothing. On its own thread with the update's stack needs.
+        return std::thread::Builder::new()
+            .name("fixed-tree-diagnostic".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(fixed_tree_diagnostic_mode_v1)
+            .map_err(|error| error.to_string())?
+            .join()
+            .map_err(|_| "fixed-tree diagnostic thread panicked".to_owned())?;
+    }
     let usage = concat!(
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
         "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
@@ -286,6 +298,93 @@ fn pooled_collection_mode_v1() -> Result<(), String> {
     println!(
         "{}",
         serde_json::to_string(&receipt).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+/// `--fixed-tree-diagnostic UPDATE_COMMAND.json [--threads N] [--repeats N]
+/// [--relative-floor X]`: measures the learner step of one completed
+/// iteration's update (the `update-command.json` its attempt directory
+/// holds, with the checkpoint and trajectories it pins still in place) under
+/// the sequential order and under the fixed tree, and prints one JSON
+/// document (`expanded_deck_training_v1::fixed_tree_diagnostic_v1`). It
+/// reads the command's inputs and writes nothing.
+fn fixed_tree_diagnostic_mode_v1() -> Result<(), String> {
+    use mtg_kernel::expanded_deck_training_v1::fixed_tree_diagnostic_v1::{
+        diagnose_fixed_tree_v1, FixedTreeDiagnosticOptionsV1,
+    };
+    use mtg_kernel::expanded_deck_training_v1::ExpandedTrainingCommandV1;
+    let usage = "usage: native_expanded_training_run_v1 --fixed-tree-diagnostic \
+                 ABS_UPDATE_COMMAND.json [--threads N] [--repeats N] [--relative-floor X]";
+    let mut args = std::env::args_os().skip(2);
+    let path = PathBuf::from(args.next().ok_or(usage)?);
+    let mut options = FixedTreeDiagnosticOptionsV1::default();
+    let mut seen = [false; 3];
+    while let Some(flag) = args.next() {
+        let value = args
+            .next()
+            .and_then(|value| value.into_string().ok())
+            .ok_or_else(|| format!("missing option value; {usage}"))?;
+        let (index, name) = match flag.to_str() {
+            Some("--threads") => (0, "--threads"),
+            Some("--repeats") => (1, "--repeats"),
+            Some("--relative-floor") => (2, "--relative-floor"),
+            _ => return Err(format!("unknown option; {usage}")),
+        };
+        if std::mem::replace(&mut seen[index], true) {
+            return Err(format!("{name} given twice; {usage}"));
+        }
+        match index {
+            0 => {
+                options.threads = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|error| format!("{name}: {error}"))?,
+                );
+            }
+            1 => {
+                options.repeats = value
+                    .parse::<usize>()
+                    .map_err(|error| format!("{name}: {error}"))?;
+            }
+            _ => {
+                options.relative_floor = value
+                    .parse::<f64>()
+                    .map_err(|error| format!("{name}: {error}"))?;
+            }
+        }
+    }
+    options.validate_v1()?;
+    if !path.is_absolute() {
+        return Err("absolute update command path required".into());
+    }
+    let file = std::fs::File::open(&path).map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_VALIDATION_CONFIG_BYTES as u64 {
+        return Err("update command exceeds 16 MiB or is not a regular file".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_VALIDATION_CONFIG_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_VALIDATION_CONFIG_BYTES {
+        return Err("update command exceeds 16 MiB".into());
+    }
+    let command: ExpandedTrainingCommandV1 =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let mut result = diagnose_fixed_tree_v1(command, options)?;
+    result["update_command_sha256"] = serde_json::json!(format!("{:x}", Sha256::digest(&bytes)));
+    result["runtime"] = serde_json::json!({
+        "engine_commit": env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+        "tracked_tree_sha256": env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
+        "target_arch": std::env::consts::ARCH,
+        "target_os": std::env::consts::OS,
+        "available_parallelism": std::thread::available_parallelism()
+            .map_or(0, |count| count.get()),
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&result).map_err(|error| error.to_string())?
     );
     Ok(())
 }

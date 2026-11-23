@@ -8,6 +8,7 @@ pub mod e_supported_teacher_v1;
 pub mod ex1_collect_v1;
 pub mod ex1_update_v1;
 pub mod exploration_probe_v1;
+pub mod fixed_tree_diagnostic_v1;
 pub mod no_state_digest_v1;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub mod own_registration;
@@ -4377,6 +4378,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -4406,6 +4408,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -5111,6 +5114,7 @@ fn execute_update_v1(
         training_math,
         record_format,
         record_envelope,
+        None,
     )
 }
 
@@ -5138,6 +5142,10 @@ fn execute_update_inner_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    // The fixed-tree diagnostic (`fixed_tree_diagnostic_v1`): `None` for
+    // every update. With it nothing is trained or published; the learner
+    // step is measured on copies of the loaded state instead.
+    diagnostic: Option<&fixed_tree_diagnostic_v1::FixedTreeDiagnosticOptionsV1>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -5224,11 +5232,17 @@ fn execute_update_inner_v1(
             && value_coefficient > 0.0,
         "invalid optimizer configuration",
     )?;
+    // The diagnostic reads a completed update's command, whose output
+    // exists, and neither reads nor writes that directory.
     ensure(
-        !output_directory.exists(),
+        diagnostic.is_some() || !output_directory.exists(),
         "output directory already exists",
     )?;
     if source.s_learner.is_some() {
+        ensure(
+            diagnostic.is_none(),
+            "the fixed-tree diagnostic covers the net-8 learner only",
+        )?;
         // The S update writes its own records; it takes no envelope.
         ensure(
             record_envelope.is_none(),
@@ -5819,6 +5833,43 @@ fn execute_update_inner_v1(
         }
         _ => None,
     };
+    // The fixed-tree diagnostic: this update's learner step measured both
+    // ways on copies of the state, in place of training and publication.
+    if let Some(options) = diagnostic {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "the fixed-tree diagnostic covers the plain CPU GAE update only",
+        )?;
+        let gae = gae_targets
+            .as_ref()
+            .ok_or("the fixed-tree diagnostic found no GAE targets")?;
+        return fixed_tree_diagnostic_v1::measure_v1(
+            options,
+            &state,
+            generation,
+            &groups,
+            &gae.value_targets,
+            &gae.advantages,
+            value_coefficient,
+            learning_rate,
+            fixed_tree_diagnostic_v1::PreparedBatchV1 {
+                episodes: episodes.len(),
+                before_state_sha256: before,
+                preparation_workers,
+                input_read_seconds,
+                behavior_replay_seconds,
+            },
+        );
+    }
     let learner_started = std::time::Instant::now();
     // In-memory diagnostics are opt-in and never enter model/checkpoint bits.
     let profile_gae = std::env::var_os("MTG_KERNEL_PROFILE_GAE_V1").is_some();
