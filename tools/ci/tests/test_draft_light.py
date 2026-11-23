@@ -1,5 +1,8 @@
 """A draft pull request runs only the light set; marking it ready runs the full pull request set."""
 import re
+import shlex
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,6 +21,30 @@ def condition(body):
 
 
 class DraftLightTests(unittest.TestCase):
+    def test_changed_path_gates_keep_both_names_of_a_rename(self):
+        commands = re.findall(r"^ +(?:files|CHANGED_FILES)=\$\((git diff [^)]+)\)$",
+                              jobs()["detect-changes"], re.MULTILINE)
+        self.assertEqual(len(commands), 2)
+        before, after = "before.txt", "after.txt"
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch)
+
+            def git(*args):
+                git_options = ["-c", "user.name=CI fixture", "-c", "user.email=fixture@example.invalid",
+                               "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={repo / 'no-hooks'}",
+                               "-c", "diff.renames=true"]
+                return subprocess.check_output(["git", *git_options, *args], cwd=repo, text=True)
+
+            git("init", "--quiet")
+            (repo / before).write_text("example\n", encoding="utf-8")
+            git("add", before)
+            git("commit", "--quiet", "-m", "Add example")
+            git("mv", before, after)
+            git("commit", "--quiet", "-m", "Rename example")
+            for command in commands:
+                with self.subTest(command=command):
+                    self.assertCountEqual(git(*shlex.split(command)[1:]).splitlines(), [before, after])
+
     def test_marking_a_draft_ready_starts_a_run(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("    types: [opened, synchronize, reopened, ready_for_review]\n", text)
@@ -49,7 +76,7 @@ class DraftLightTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && "
                       "github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') "
-                      "&& '-draft' || '' }}\n", text)
+                      "&& '-draft' || '' }}", text)
         self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", text)
 
     def test_a_dispatch_runs_only_the_complement_of_a_ready_pull_request(self):

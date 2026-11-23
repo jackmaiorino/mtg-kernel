@@ -30,8 +30,7 @@ use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{
-    AbilitySourceContractV4, GameState, ObjectLinkV4, SpellCastRouteV4, StackItemKind, Step,
-    Target, Zone,
+    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, Step, Target, Zone,
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
@@ -1106,7 +1105,7 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
                 casts.retain(|cast| cast.object != spell);
                 casts.push(link);
             }
-            Some(PHLAGE) if origin.route == SpellCastRouteV4::GraveyardEscape => {
+            Some(PHLAGE) if origin.route.is_escape() => {
                 let casts = &mut e5b_state(state).escaped_casts;
                 casts.retain(|cast| cast.object != spell);
                 casts.push(link);

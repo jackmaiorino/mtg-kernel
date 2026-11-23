@@ -1083,6 +1083,7 @@ pub(super) fn apply_grant(
     {
         let permission = crate::engine::PlayPermission {
             without_mana_cost: Default::default(),
+            any_mana_type: Default::default(),
             object: chosen.object,
             holder: p.ctx.controller,
             zone_change_generation: chosen.expected_zone_change_count,

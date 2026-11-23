@@ -1,7 +1,6 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C6c
 //! (eight planeswalkers). Wave C6b's tables fall through to these, and
-//! this module is the tail of the recipe chains: its own
-//! defaults are the chains' base values. Runtime programs live in
+//! these fall through to wave Pf1a's (`build_eternal_pf1a_v1.rs`). Runtime programs live in
 //! `src/eternal_cube_c6c_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
 
@@ -145,7 +144,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Teferi, Hero of Dominaria" => &TEFERI,
         "The Wandering Emperor" => &EMPEROR,
         "Garruk, Curse Breaker" => &GARRUK,
-        _ => &[],
+        _ => super::build_eternal_pf1a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -160,35 +159,35 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_cube_c6c_v1::jace",
         }),
-        _ => None,
+        _ => super::build_eternal_pf1a_v1::special_for(name),
     }
 }
 
 /// No C6c card has kicker yet.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_pf1a_v1::kicker_cost_for(name)
 }
 
 /// No C6c card is an Aura or an Equipment yet.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_pf1a_v1::attachment_for(name)
 }
 
 /// No C6c card has flashback yet.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_pf1a_v1::flashback_for(name)
 }
 
 /// No C6c card has an alternative cost yet.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_pf1a_v1::alt_cost_for(name)
 }
 
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "The Wandering Emperor" => &["Keywords::FLASH"],
         "Garruk Beast Token" => &["Keywords::TRAMPLE"],
-        _ => &[],
+        _ => super::build_eternal_pf1a_v1::keywords_for(name),
     }
 }
 
@@ -201,6 +200,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Teferi, Hero of Dominaria" => "loyalty_start:4;plus1:draw1_then_next_end_step_untap_up_to_two_lands;minus3:target_nonland_permanent_owner_library_third_from_top;minus8:persistent_emblem_whenever_you_draw_exile_target_opponent_permanent",
         "The Wandering Emperor" => "loyalty_start:3;flash;static:loyalty_at_instant_timing_only_if_this_incarnation_entered_this_turn;plus1:up_to_one_target_creature_plus1_counter_and_first_strike_until_end_of_turn;minus1:create_2_2_white_samurai_vigilance;minus2:exile_target_tapped_creature_then_gain2_life",
         "Garruk, Curse Breaker" => "loyalty_start:5;trigger:controlled_creature_enters_with_effective_power_at_least4_draw1;plus2:untap_up_to_two_target_lands;minus3:create_4_4_green_beast_trample;minus4:until_your_next_turn_whenever_one_or_more_creatures_attack_an_opponent_those_creatures_get_plus2_plus2_and_trample_until_end_of_turn",
-        _ => "none",
+        _ => super::build_eternal_pf1a_v1::trigger_recipe_for(name),
     }
 }

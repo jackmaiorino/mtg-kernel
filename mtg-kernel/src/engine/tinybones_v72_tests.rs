@@ -587,6 +587,7 @@ fn independent_permission_operand_keeps_any_type_matching_and_native_abort_resto
         turn(&mut s, p.opponent());
         s.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: FreeCastV1(false),
+            any_mana_type: Default::default(),
             object: card,
             holder: p,
             zone_change_generation: generation,
@@ -733,6 +734,7 @@ fn paid_stash_independent_permission_native_abort_rebinds_restore_and_own_turn_r
         // own-turn permission. The following cast announcement is genuine.
         s.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: FreeCastV1(false),
+            any_mana_type: Default::default(),
             object: card,
             holder: p,
             zone_change_generation: original_generation,

@@ -1680,24 +1680,20 @@ pub(crate) mod statics {
         }
     }
 
-    /// Circles of Protection. Whether a shield prevents `damage`; the shield
-    /// is used up.
-    pub(crate) fn consume_circle_shield(state: &mut GameState, damage: &DamageProposed) -> bool {
+    fn circle_damage_binding(
+        state: &GameState,
+        damage: &DamageProposed,
+    ) -> Option<(PlayerId, ObjectLinkV4, u8, TurnV1)> {
         let Target::Player(player) = damage.target else {
-            return false;
+            return None;
         };
         if damage.amount <= 0 {
-            return false;
+            return None;
         }
-        let Some(s1d) = read_state(state) else {
-            return false;
-        };
-        if s1d.cop_shields.is_empty() {
-            return false;
+        if read_state(state)?.cop_shields.is_empty() {
+            return None;
         }
-        let Ok(historical) = damage.historical_facts(state) else {
-            return false;
-        };
+        let historical = damage.historical_facts(state).ok()?;
         let (source, color_mask) = if let Some(facts) = historical {
             (
                 ObjectLinkV4 {
@@ -1711,9 +1707,7 @@ pub(crate) mod statics {
             // damage, as it last existed (wave P3g).
             (record.source, record.color_mask)
         } else {
-            let Some(live) = state.objects.try_get(damage.source) else {
-                return false;
-            };
+            let live = state.objects.try_get(damage.source)?;
             (
                 ObjectLinkV4 {
                     object: damage.source,
@@ -1722,22 +1716,68 @@ pub(crate) mod statics {
                 crate::engine::object_color_mask(state, damage.source),
             )
         };
-        // CR 609.7b: losing the Circle's color does not spend the shield.
-        // Historical damage uses the exact published source incarnation and
-        // its damage-time LKI.
+        Some((player, source, color_mask, TurnV1::now(state)))
+    }
+
+    /// Every currently matching shield in its established order. Source/LKI,
+    /// entry aliases and color checks are shared with ordinary consumption.
+    pub(crate) fn matching_circle_shields<'a>(
+        state: &'a GameState,
+        damage: &DamageProposed,
+    ) -> impl Iterator<Item = (usize, CopShieldV1)> + 'a {
+        let binding = circle_damage_binding(state, damage);
+        read_state(state)
+            .into_iter()
+            .flat_map(|s1d| s1d.cop_shields.iter().enumerate())
+            .filter_map(move |(position, shield)| {
+                let (player, source, color_mask, now) = binding?;
+                (shield.turn == now
+                    && shield.player == player
+                    && color_mask & shield.color.mask() != 0
+                    && (shield.source == source
+                        || circle_copy_entry_matches(state, shield.source, source)
+                        || shield.spell.is_some_and(|spell| {
+                            spell.permanent == Some(source)
+                                && circle_entry_matches(state, shield.source, spell)
+                        })))
+                .then_some((position, *shield))
+            })
+    }
+
+    /// The first Circle shield matching this damage packet, without using it up.
+    pub(crate) fn circle_shield_position(
+        state: &GameState,
+        damage: &DamageProposed,
+    ) -> Option<usize> {
+        matching_circle_shields(state, damage)
+            .next()
+            .map(|(position, _)| position)
+    }
+
+    pub(crate) fn has_live_circle_shield(state: &GameState) -> bool {
         let now = TurnV1::now(state);
-        let position = s1d.cop_shields.iter().position(|shield| {
-            shield.turn == now
-                && shield.player == player
-                && color_mask & shield.color.mask() != 0
-                && (shield.source == source
-                    || circle_copy_entry_matches(state, shield.source, source)
-                    || shield.spell.is_some_and(|spell| {
-                        spell.permanent == Some(source)
-                            && circle_entry_matches(state, shield.source, spell)
-                    }))
-        });
-        let Some(position) = position else {
+        read_state(state).is_some_and(|s1d| s1d.cop_shields.iter().any(|shield| shield.turn == now))
+    }
+
+    pub(crate) fn consume_selected_circle_shield(
+        state: &mut GameState,
+        damage: &DamageProposed,
+        position: usize,
+        expected: CopShieldV1,
+    ) -> bool {
+        if !matching_circle_shields(state, damage)
+            .any(|candidate| candidate == (position, expected))
+        {
+            return false;
+        }
+        s1d_state(state).cop_shields.remove(position);
+        true
+    }
+
+    /// Circles of Protection. Whether a shield prevents `damage`; the shield
+    /// is used up.
+    pub(crate) fn consume_circle_shield(state: &mut GameState, damage: &DamageProposed) -> bool {
+        let Some(position) = circle_shield_position(state, damage) else {
             return false;
         };
         s1d_state(state).cop_shields.remove(position);

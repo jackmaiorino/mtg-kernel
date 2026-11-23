@@ -1330,22 +1330,30 @@ pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> boo
     if crate::eternal_premodern_p3e_v1::prevents_damage(state, damage) {
         return true;
     }
-    let Some(e6a) = read_state(state) else {
-        return false;
-    };
-    if e6a.fogs.is_empty() {
-        return false;
-    }
+    global_prevents_damage(state, damage)
+}
+
+fn active_global_fogs(state: &GameState) -> impl Iterator<Item = &FogV1> {
     let turn = state.turn_key_v1();
-    e6a.fogs.iter().any(|fog| {
-        fog.turn == turn
-            && fog.active_player == state.active_player
-            && match fog.kind {
-                FogKindV1::CombatDamageV1 => damage.is_combat,
-                FogKindV1::DamageByCreaturesV1 => {
-                    crate::eternal_vintage_v1::source_is_creature(state, damage.source)
-                }
-            }
+    let active = state.active_player;
+    read_state(state)
+        .into_iter()
+        .flat_map(|e6a| e6a.fogs.iter())
+        .filter(move |fog| fog.turn == turn && fog.active_player == active)
+}
+
+pub(crate) fn has_active_global_fog(state: &GameState) -> bool {
+    active_global_fogs(state).next().is_some()
+}
+
+/// These global fogs remain applicable to every portion of this source's
+/// damage; choosing one does not consume any finite prevention resource.
+pub(crate) fn global_prevents_damage(state: &GameState, damage: &DamageProposed) -> bool {
+    active_global_fogs(state).any(|fog| match fog.kind {
+        FogKindV1::CombatDamageV1 => damage.is_combat,
+        FogKindV1::DamageByCreaturesV1 => {
+            crate::eternal_vintage_v1::source_is_creature(state, damage.source)
+        }
     })
 }
 
@@ -1462,6 +1470,7 @@ pub(crate) fn foretell(
     }
     let permission = crate::engine::PlayPermission {
         without_mana_cost: crate::engine::FreeCastV1::default(),
+        any_mana_type: Default::default(),
         object: source,
         holder: player,
         zone_change_generation: link.zone_change_count,

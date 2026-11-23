@@ -1952,12 +1952,29 @@ fn label_common(
                         ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
                             return Err(Error::UnsupportedPrompt);
                         }
+                        ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_) => {
+                            format!(
+                                "Tap {source_name} and sacrifice {}",
+                                handles
+                                    .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
+                            )
+                        }
+                        ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
+                            format!(
+                                "Tap {}",
+                                handles
+                                    .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
+                            )
+                        }
+                        ManaAbilityCostDef::NoneOwnTurnOnlyV1 => String::new(),
                     };
                     if !matches!(
                         ability.cost,
                         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
                             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
                             | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_)
+                            | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
+                            | ManaAbilityCostDef::TapUntappedControlledArtifactV1
                     ) && cost_target.is_some()
                     {
                         return Err(Error::UnsupportedPrompt);

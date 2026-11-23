@@ -264,6 +264,12 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
         // not make (Relic of Sauron's pairs); its condition is
         // `standard_lands_v1::fields`.
         "Fanatic of Rhonas" | "Fanatic of Rhonas Eternalized Token" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::C], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::G, ManaColor::G, ManaColor::G, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Orcish Lumberjack (Vintage Cube wave C7b): the two mixed triples of
+        // "{T}, Sacrifice a Forest: Add three mana in any combination of {R}
+        // and/or {G}" (the primary ability makes RRR or GGG). Each triple is a
+        // fixed bundle identified by a color it does not produce: {W} is
+        // {R}{R}{G} and {U} is {R}{G}{G}.
+        "Orcish Lumberjack" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(Subtype::Forest), amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::R, ManaColor::R, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }, AdditionalManaAbilityDef { colors: &[ManaColor::U], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(Subtype::Forest), amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::R, ManaColor::G, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }]",
         _ => super::build_eternal_e7a_v1::additional_mana_abilities_for(name),
     }
 }
