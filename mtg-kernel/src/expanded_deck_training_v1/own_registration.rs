@@ -97,6 +97,20 @@ impl Trajectory {
     }
 }
 
+/// The episode's configurations under this trainer's exact 60/15 contract:
+/// its registration rows (`own_registration_v1`) bound an exact 60-card
+/// mainboard, so an episode with a deck format is refused at admission,
+/// before any game, rather than at its first registration context.
+pub(super) fn registration_configurations_v1(
+    episode: &ExpandedEpisodeV1,
+) -> Result<[DeckConfigurationV1; 2], String> {
+    ensure(
+        episode.deck_format.is_none(),
+        "deck_format is refused by own registration (its rows bound an exact 60-card mainboard)",
+    )?;
+    episode.configurations()
+}
+
 fn collect(
     policy: &mut OwnRegistrationPlayPolicyV1,
     episode: &ExpandedEpisodeV1,
@@ -105,7 +119,7 @@ fn collect(
     mode: RegistrationModeV1,
     projection_enabled: bool,
 ) -> Result<Trajectory, String> {
-    let configs = episode.configurations()?;
+    let configs = registration_configurations_v1(episode)?;
     // A single immutable selected configuration supplies each actor's context
     // for the entire game, including reset suffixes and postboard games.
     let contexts = [
@@ -290,7 +304,7 @@ pub(super) fn collect_parallel(
     )?;
     let mut ids = BTreeSet::new();
     for episode in episodes {
-        episode.configurations()?;
+        registration_configurations_v1(episode)?;
         ensure(
             ids.insert(&episode.id),
             "registration collection repeats an external episode id",
@@ -412,7 +426,21 @@ mod tests {
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         }
+    }
+
+    #[test]
+    fn registration_admission_refuses_a_deck_format() {
+        let plain = episode("deck-format-plain", 0);
+        assert!(registration_configurations_v1(&plain).is_ok());
+        let mut limited = plain.clone();
+        limited.deck_format = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        // The episode itself is admitted under the format; this trainer
+        // refuses it before any game.
+        assert!(limited.configurations().is_ok());
+        let error = registration_configurations_v1(&limited).unwrap_err();
+        assert!(error.contains("deck_format"), "{error}");
     }
 
     /// Synthetic metadata/grouping only. These inherited fixture rows are
@@ -498,7 +526,7 @@ mod tests {
                 }
                 _ => {
                     let config = deck("Burn")
-                        .validated()
+                        .validated(None)
                         .unwrap()
                         .registered_configuration()
                         .clone();
@@ -582,7 +610,7 @@ mod tests {
         let selected = &mut first.selected[0];
         std::mem::swap(&mut selected.sideboard[0], &mut selected.mainboard[0]);
         let selected = first.configurations().unwrap();
-        let registered = first.registered[0].validated().unwrap();
+        let registered = first.registered[0].validated(None).unwrap();
         assert_ne!(
             selected[0].mainboard_sha256_v1(),
             registered.registered_configuration().mainboard_sha256_v1()

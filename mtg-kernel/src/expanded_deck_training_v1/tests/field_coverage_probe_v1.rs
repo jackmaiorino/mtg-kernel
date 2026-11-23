@@ -306,6 +306,7 @@ fn episodes(lists: &[ExpandedDeckListV1], seeds: usize) -> Vec<ExpandedEpisodeV1
                         ]),
                         priority_windows: None,
                         london_keep_offset: None,
+                        deck_format: None,
                     });
                 }
             }
