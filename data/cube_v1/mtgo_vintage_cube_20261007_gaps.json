@@ -4,17 +4,17 @@
  "effective": "2026-10-07",
  "cards": 540,
  "card_status": {
-  "full": 523,
+  "full": 540,
   "partial": 0,
   "fdn_only": 0,
-  "missing": 17
+  "missing": 0
  },
  "groups": {
   "White": {
-   "full": 56,
+   "full": 59,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 3
+   "missing": 0
   },
   "Blue": {
    "full": 80,
@@ -23,34 +23,34 @@
    "missing": 0
   },
   "Black": {
-   "full": 65,
+   "full": 66,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 1
+   "missing": 0
   },
   "Red": {
-   "full": 63,
+   "full": 66,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 3
+   "missing": 0
   },
   "Green": {
-   "full": 53,
+   "full": 56,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 3
+   "missing": 0
   },
   "Azorius": {
-   "full": 13,
+   "full": 14,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 1
+   "missing": 0
   },
   "Boros": {
-   "full": 10,
+   "full": 11,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 1
+   "missing": 0
   },
   "Dimir": {
    "full": 12,
@@ -59,10 +59,10 @@
    "missing": 0
   },
   "Golgari": {
-   "full": 13,
+   "full": 14,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 1
+   "missing": 0
   },
   "Gruul": {
    "full": 13,
@@ -89,16 +89,16 @@
    "missing": 0
   },
   "Selesnya": {
-   "full": 10,
+   "full": 11,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 1
+   "missing": 0
   },
   "Simic": {
-   "full": 12,
+   "full": 14,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 2
+   "missing": 0
   },
   "Multicolor": {
    "full": 20,
@@ -107,31 +107,13 @@
    "missing": 0
   },
   "Colorless": {
-   "full": 68,
+   "full": 69,
    "partial": 0,
    "fdn_only": 0,
-   "missing": 1
+   "missing": 0
   }
  },
  "partial": [],
  "fdn_only": [],
- "missing": [
-  "Aang, Swift Savior",
-  "Badgermole Cub",
-  "Batroc the Leaper",
-  "Blightsteel Colossus",
-  "Crabomination",
-  "Elspeth, Storm Slayer",
-  "Fear of Missing Out",
-  "Figure of Destiny",
-  "Figure of Fable",
-  "Grist, the Hunger Tide",
-  "Hexdrinker",
-  "Nadu, Winged Wisdom",
-  "Nissa, Who Shakes the World",
-  "Serra Paragon",
-  "Swift Reconfiguration",
-  "Tamiyo, Collector of Tales",
-  "Through the Breach"
- ]
+ "missing": []
 }
