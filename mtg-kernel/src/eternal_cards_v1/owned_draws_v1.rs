@@ -785,7 +785,10 @@ pub(crate) fn begin(
                 .ok_or("Curie draw lost its original source base power")?
         }
         (InstructionV1::Minsc { sacrifice }, SourceV1::Ability(_)) => {
-            minsc::damage_once(state, pending, sacrifice)?
+            let Some(total) = minsc::damage_once(state, pending, sacrifice)? else {
+                return Ok(());
+            };
+            total
         }
         _ => instruction.count(state, &pending.ctx),
     };
