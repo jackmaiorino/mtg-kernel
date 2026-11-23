@@ -1880,6 +1880,8 @@ fn departed_minsc_damage_keeps_the_soul_scar_and_hallow_choices_after_restore() 
     pass_until(&mut state, |state| zone(state, minsc) == Zone::Hand);
     assert_eq!(state.stack.last().unwrap().source, minsc);
 
+    let hand_before_draw = state.players[P0.index()].hand.len();
+    let library_before_draw = state.players[P0.index()].library.len();
     let choice = settle(&mut state);
     assert!(matches!(
         &choice,
@@ -1906,8 +1908,14 @@ fn departed_minsc_damage_keeps_the_soul_scar_and_hallow_choices_after_restore() 
         let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
         assert_eq!(settle(&mut restored), choice);
         for branch in [&mut live, &mut restored] {
+            let actor = &branch.players[P0.index()];
+            assert_eq!(actor.hand.len(), hand_before_draw);
+            assert_eq!(actor.library.len(), library_before_draw);
             act(branch, Action::ChooseEffectOption(option as u16));
             settled(branch);
+            let actor = &branch.players[P0.index()];
+            assert_eq!(actor.hand.len(), hand_before_draw + 1);
+            assert_eq!(actor.library.len() + 1, library_before_draw);
             assert_eq!(zone(branch, minsc), Zone::Hand);
             let creature = branch.objects.get(victim);
             assert_eq!((creature.zone, creature.damage), (Zone::Battlefield, 0));
