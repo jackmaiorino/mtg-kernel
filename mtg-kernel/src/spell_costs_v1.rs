@@ -151,6 +151,7 @@ pub(super) struct SpellComponentChoicesV1 {
 
 pub(super) struct SelectedSpellManaCostsV1 {
     granted_flashback_v1: bool,
+    breach_escape: bool,
     tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
     /// Whether the last component group is retrace's land discard
     /// (Wrenn and Six's emblem), added after any definition-owned groups.
@@ -208,7 +209,14 @@ impl SelectedSpellManaCostsV1 {
         {
             return None;
         }
-        super::compound_cast_cost_v1::Costs::new(def, method, self.retrace, mode, x)
+        super::compound_cast_cost_v1::Costs::new(
+            def,
+            method,
+            self.retrace,
+            self.breach_escape,
+            mode,
+            x,
+        )
     }
 
     /// Assign the pending cast's one interactive object family to the original
@@ -226,7 +234,7 @@ impl SelectedSpellManaCostsV1 {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
             CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
             CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
-            CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
+            CastMethodV4::Escape => Some(escape_cost_v1(definition, self.breach_escape)?),
             _ => None,
         };
         // A card with a choice between additional costs (#715) has one of two
@@ -734,7 +742,24 @@ pub(super) fn selected_spell_mana_costs_v1(
     player: PlayerId,
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
+    selected_spell_mana_costs_with_escape(
+        definition, method, kicked, mode, targets, player, state, false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn selected_spell_mana_costs_with_escape(
+    definition: &card_def::CardDef,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    targets: &[Target],
+    player: PlayerId,
+    state: &GameState,
+    breach_escape: bool,
+) -> Option<SelectedSpellManaCostsV1> {
     let mut selected = SelectedSpellManaCostsV1 {
+        breach_escape,
         granted_flashback_v1: false,
         tinybones_mana_v72: None,
         retrace: false,
@@ -795,7 +820,7 @@ pub(super) fn selected_spell_mana_costs_v1(
             }
         }
         CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
-        CastMethodV4::Escape => selected.components(escape_cost_v1(definition)?),
+        CastMethodV4::Escape => selected.components(escape_cost_v1(definition, breach_escape)?),
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
         CastMethodV4::Plotted => {
             definition.plot_cost?;
@@ -956,7 +981,13 @@ fn flashback_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostCom
 /// A definition's escape cost: printed, or the one Underworld Breach grants
 /// a nonland card. Whether a card has a granted escape is checked where the
 /// cast is offered.
-pub(super) fn escape_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostComponent]> {
+pub(super) fn escape_cost_v1(
+    definition: &card_def::CardDef,
+    breach: bool,
+) -> Option<&'static [CostComponent]> {
+    if breach {
+        return crate::eternal_lurrus_v1::granted_escape_cost(definition);
+    }
     definition
         .escape
         .as_ref()
@@ -1013,7 +1044,7 @@ fn selected_spell_mana_costs_for_source_grant_v1(
             return None;
         }
     }
-    let mut selected = selected_spell_mana_costs_v1(
+    let mut selected = selected_spell_mana_costs_with_escape(
         definition,
         if granted {
             CastMethodV4::Normal
@@ -1025,6 +1056,7 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         targets,
         player,
         state,
+        grant == Some(super::sphinx_lore_cast_v1::CostGrant::Breach),
     )?;
     if state.engine.pending_cast.as_ref().is_some_and(|pending| {
         pending.spell == source
@@ -1466,7 +1498,11 @@ fn selected_spell_quote_branch_grant_v1(
         .as_ref()
         .filter(|p| p.spell == source);
     let order = pending.and_then(|p| p.graveyard_cost_first_v1);
-    if let Some(costs) = super::compound_cast_cost_v1::Costs::optional_escape(definition, method) {
+    if let Some(costs) = super::compound_cast_cost_v1::Costs::optional_escape(
+        definition,
+        method,
+        selected.breach_escape,
+    ) {
         let choice = pending.and_then(|p| p.optional_additional_cost_paid);
         if choice.is_none()
             || pending.is_some_and(super::compound_cast_cost_v1::Costs::ordered_optional)
