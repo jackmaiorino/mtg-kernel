@@ -43,6 +43,8 @@ TRAINER_TAIL_SOURCE_V1 = "78415f8eb0a081d70f00ef970166fd457a08998b"
 TRAINER_TAIL_LEAN_SOURCE_V1 = "553018fe4cafd58d352b0121d5b1ad16da1cc8c5"
 # The followed-trainer branch on the release line (this guard branch only).
 FOLLOW_SOURCE_V1 = "46f7ecfec16dd0483f14865ff5a1af37fe6c3420"
+# The card semantics e1 trainer branch on the release line, PR 888 (this guard branch only).
+CARD_SEMANTICS_E1_SOURCE_V1 = "bcb575a10563df30c31f6b651d27c06fa26b9a86"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -67,6 +69,7 @@ SOURCES = (
     TRAINER_TAIL_SOURCE_V1,
     TRAINER_TAIL_LEAN_SOURCE_V1,
     FOLLOW_SOURCE_V1,
+    CARD_SEMANTICS_E1_SOURCE_V1,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
