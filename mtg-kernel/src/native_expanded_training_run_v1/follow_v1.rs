@@ -115,7 +115,10 @@ pub enum FollowErrorV1 {
 /// `initial_source.checkpoint`, and that checkpoint the pin (path and
 /// SHA-256) of the run's last output checkpoint, which is the check the chain
 /// driver makes before it builds the next config (`chains.next_source`). A
-/// run with resident reads is never continued (module documentation).
+/// run with resident reads is never continued (module documentation). Under
+/// `collection_policy_lag_v1` the lag carry may change too and must be the
+/// previous result's `collection_policy_lag_next_behaviour_v1`, so a lag-1
+/// chain is never continued without its lag.
 pub fn check_continuation_v1(
     previous: &NativeExpandedTrainingRunV1,
     previous_result: &Value,
@@ -137,10 +140,27 @@ pub fn check_continuation_v1(
     expected.output_directory = next.output_directory.clone();
     expected.iterations = next.iterations.clone();
     expected.initial_source.checkpoint = next.initial_source.checkpoint.clone();
+    expected.collection_policy_lag_carry_v1 = next.collection_policy_lag_carry_v1.clone();
     check(
         serde_json::to_vec(&expected).map_err(err)? == serde_json::to_vec(next).map_err(err)?,
         "the next config changes a field other than output_directory, iterations and the initial checkpoint",
     )?;
+    // A lag-1 chain continues with its lag: the carry is the source the
+    // previous run's next batch is played on (`collection_policy_lag_v1`).
+    if next.collection_policy_lag_v1 == 1 {
+        let carry = next
+            .collection_policy_lag_carry_v1
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(err)?;
+        check(
+            carry.is_some()
+                && carry.as_ref()
+                    == previous_result.get("collection_policy_lag_next_behaviour_v1"),
+            "the next config's collection_policy_lag_carry_v1 is not the previous run's next behaviour",
+        )?;
+    }
     let checkpoint = next
         .initial_source
         .checkpoint

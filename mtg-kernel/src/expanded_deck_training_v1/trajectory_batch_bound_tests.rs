@@ -35,6 +35,7 @@ fn prepared(
     output_directory: PathBuf,
 ) -> ExpandedTrainingCommandV1 {
     ExpandedTrainingCommandV1::UpdatePrepared {
+        collection_policy_lag_v1: None,
         source: source.clone(),
         trajectories: trajectories.to_vec(),
         learning_rate: 0.0001,
@@ -226,6 +227,7 @@ fn an_update_just_over_the_default_batch_bound_runs_when_the_key_allows_it() {
             training_math,
             record_format,
             record_envelope,
+            collection_policy_lag_v1,
             output_directory,
         } => execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
             preparation_workers: 1,
@@ -242,6 +244,7 @@ fn an_update_just_over_the_default_batch_bound_runs_when_the_key_allows_it() {
             training_math,
             record_format,
             record_envelope,
+            collection_policy_lag_v1,
             output_directory,
         }),
         _ => unreachable!(),

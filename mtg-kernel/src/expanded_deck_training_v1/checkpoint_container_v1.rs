@@ -493,6 +493,7 @@ pub(crate) fn with_tensors_v1<T, U>(
         archive_distillation,
         training_math,
         input_contract,
+        collection_policy_lag_v1,
     } = saved;
     ExpandedCheckpointV1 {
         schema: schema.clone(),
@@ -522,6 +523,7 @@ pub(crate) fn with_tensors_v1<T, U>(
         archive_distillation: archive_distillation.clone(),
         training_math: *training_math,
         input_contract: input_contract.clone(),
+        collection_policy_lag_v1: collection_policy_lag_v1.clone(),
     }
 }
 

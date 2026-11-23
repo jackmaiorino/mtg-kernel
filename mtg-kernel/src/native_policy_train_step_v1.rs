@@ -1316,6 +1316,12 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     PregameAnnouncementStep {
         code: &'static str,
     },
+    /// `collection_policy_lag_v1` refusal: a set gradient point on anything
+    /// but the plain CPU GAE step, or one that is not a parameter set of this
+    /// state's architecture, gauge anchor and input contract.
+    CollectionPolicyLag {
+        code: &'static str,
+    },
     EmptyBatch,
     EmptyPhysicalDecision {
         group_index: usize,
@@ -1624,7 +1630,7 @@ impl<T> std::fmt::Debug for MemoizedDigestV1<T> {
 }
 
 mod live_train_state_v1 {
-    use super::{MemoizedDigestV1, NetDimsV1, TrainingMathV1};
+    use super::{MemoizedDigestV1, NativeNamedParameterV1, NetDimsV1, TrainingMathV1};
 
     /// Complete live model and Adam optimizer fields of one architecture.
     /// Wrapped inside [`NativePolicyValueTrainStateDimsV1`] without `DerefMut`
@@ -1670,6 +1676,14 @@ mod live_train_state_v1 {
         /// What the last scaled step did, for the update receipt; taken by the
         /// update. Not part of the state digest, snapshot or checkpoint.
         pub(super) pregame_announcement_step_record: Option<super::PregameAnnouncementStepRecordV1>,
+        /// The parameters the next GAE step evaluates its forward, loss,
+        /// bit check and backward at (`collection_policy_lag_v1`: the
+        /// parameters a lagged batch was played on), while its Adam step
+        /// moves this state's own parameters and moments. Set by the update
+        /// for one step and taken by it; not part of the state digest,
+        /// snapshot or checkpoint. None (the default) is every existing step,
+        /// bit for bit.
+        pub(super) gradient_point: Option<Vec<NativeNamedParameterV1>>,
         /// Test-only: workers dirty their own MXCSR before verifying it.
         #[cfg(test)]
         pub(super) dirty_worker_mxcsr_for_test: bool,
@@ -1747,6 +1761,14 @@ mod live_train_state_v1 {
             &mut self,
         ) -> &mut Option<super::PregameAnnouncementStepRecordV1> {
             &mut self.fields.pregame_announcement_step_record
+        }
+
+        /// The next GAE step's gradient point, outside the state digest and
+        /// snapshot (set for one step and taken by it).
+        pub(super) fn gradient_point_mut_dims_v1(
+            &mut self,
+        ) -> &mut Option<Vec<NativeNamedParameterV1>> {
+            &mut self.fields.gradient_point
         }
 
         pub(super) fn set_no_state_digest_columns_dims_v1(
@@ -1955,6 +1977,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             priority_pass_offset: None,
             pregame_announcement_step_scale: None,
             pregame_announcement_step_record: None,
+            gradient_point: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         });
@@ -1993,6 +2016,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             priority_pass_offset: None,
             pregame_announcement_step_scale: None,
             pregame_announcement_step_record: None,
+            gradient_point: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         });
@@ -2054,17 +2078,38 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         self.pregame_announcement_step_record_mut_dims_v1().take()
     }
 
+    /// Sets (or clears) the gradient point of the next GAE step
+    /// (`collection_policy_lag_v1`): the parameters its forward, loss, bit
+    /// check and backward evaluate at, while its Adam step moves this state's
+    /// own parameters and moments. Only the plain CPU GAE step reads it; every
+    /// other learner path refuses a set point.
+    pub(crate) fn set_gradient_point_v1(&mut self, point: Option<Vec<NativeNamedParameterV1>>) {
+        *self.gradient_point_mut_dims_v1() = point;
+    }
+
+    /// Whether a gradient point is set and not yet taken by a GAE step.
+    pub(crate) fn gradient_point_pending_v1(&self) -> bool {
+        self.gradient_point.is_some()
+    }
+
     /// Refuses a learner path that is not the plain CPU GAE step while a London
     /// keep offset is set, and clears the setting either way: the offset lives
     /// for one plain GAE step only (`london_keep_offset_v1`). The pregame
     /// announcement step scale lives the same way and is refused and cleared
-    /// here too (`pregame_announcement_step_v1`), and so is the priority pass
-    /// offset (`priority_pass_offset_v1`).
+    /// here too (`pregame_announcement_step_v1`), and so are the priority pass
+    /// offset (`priority_pass_offset_v1`) and the gradient point
+    /// (`collection_policy_lag_v1`).
     pub(crate) fn require_no_london_keep_offset_v1(
         &mut self,
     ) -> Result<(), NativePolicyTrainErrorV1> {
         let scale = self.pregame_announcement_step_scale_mut_dims_v1().take();
         let pass_offset = self.priority_pass_offset_mut_dims_v1().take();
+        if self.gradient_point_mut_dims_v1().take().is_some() {
+            self.london_keep_offset_mut_dims_v1().take();
+            return Err(NativePolicyTrainErrorV1::CollectionPolicyLag {
+                code: "collection-policy-lag-requires-plain-gae",
+            });
+        }
         if self.london_keep_offset_mut_dims_v1().take().is_some() {
             Err(NativePolicyTrainErrorV1::LondonKeepOffset {
                 code: "london-keep-offset-requires-plain-gae",
@@ -2409,6 +2454,7 @@ impl NativePolicyValueTrainStateV1 {
             priority_pass_offset: None,
             pregame_announcement_step_scale: None,
             pregame_announcement_step_record: None,
+            gradient_point: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         });

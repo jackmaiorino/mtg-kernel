@@ -393,6 +393,7 @@ mod tests {
         let trajectories: Vec<PinnedFileV1> =
             serde_json::from_value(collection["trajectories"].clone()).unwrap();
         let update = execute_v1(ExpandedTrainingCommandV1::Update {
+            collection_policy_lag_v1: None,
             source: source.clone(),
             trajectories,
             learning_rate: 0.0001,

@@ -110,6 +110,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         let trajectories: Vec<PinnedFileV1> =
             serde_json::from_value(collected["trajectories"].clone()).unwrap();
         let updated = execute_v1(ExpandedTrainingCommandV1::Update {
+            collection_policy_lag_v1: None,
             line_b: None,
             source: source.clone(),
             trajectories,

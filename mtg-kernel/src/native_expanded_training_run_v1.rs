@@ -24,12 +24,13 @@ use crate::expanded_deck_training_v1::soft_q_teacher_v1::{
 };
 use crate::expanded_deck_training_v1::verified_bytes_cache_v1;
 use crate::expanded_deck_training_v1::{
-    execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_bound_v1,
-    load_expanded_update_inference_v1, take_collection_fields_v1, CollectionSamplerV1,
-    CollectionTrajectoryFieldsV1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
-    ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
-    ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1, UpdateBackwardExecutionV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+    checkpoint_collection_policy_lag_v1, execute_v1, line_b_frozen_sha256_v1,
+    load_expanded_inference_bound_v1, load_expanded_update_inference_v1, take_collection_fields_v1,
+    CollectionPolicyLagUpdateV1, CollectionSamplerV1, CollectionTrajectoryFieldsV1,
+    ExpandedEpisodeV1, ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
+    ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1,
+    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -523,7 +524,26 @@ pub struct NativeExpandedTrainingRunV1 {
     /// config and receipt is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_ledger: Option<ChainLedgerOptionsV1>,
+    /// The lag-1 collection recipe (docs/design/collection_policy_lag_v1.md):
+    /// 1 plays every batch after a run's first on the parameters the previous
+    /// update started from, and collects it while that update runs. A recipe
+    /// option: it changes what is learned. Absent or 0 is today's recipe and
+    /// is never serialized, so every existing config keeps its wire bytes and
+    /// its run identity.
+    #[serde(default, skip_serializing_if = "is_today_collection_policy")]
+    pub collection_policy_lag_v1: u8,
+    /// A lag-1 continuation's carry: the source the previous run's last
+    /// update started from, on which this run's first batch is played (the
+    /// previous result's `collection_policy_lag_next_behaviour_v1`). It must
+    /// be the update input the initial checkpoint records. Absent for a start
+    /// or a fork, whose first batch is played on the initial source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_policy_lag_carry_v1: Option<ExpandedModelSourceV1>,
     pub output_directory: PathBuf,
+}
+
+fn is_today_collection_policy(lag: &u8) -> bool {
+    *lag == 0
 }
 
 fn is_zero_non_natural_fraction(value: &f32) -> bool {
@@ -922,6 +942,60 @@ impl NativeExpandedTrainingRunV1 {
                     _ => {}
                 }
             }
+        }
+        self.validate_collection_policy_lag_v1()
+    }
+
+    /// `collection_policy_lag_v1` (docs/design/collection_policy_lag_v1.md):
+    /// 0 or 1; the lag covers the plain CPU GAE update only; a batch is
+    /// collected while the previous update runs, so a completed-iteration
+    /// opponent must be at least two iterations old; a carry needs the lag and
+    /// an initial checkpoint.
+    fn validate_collection_policy_lag_v1(&self) -> Result<(), String> {
+        check(
+            self.collection_policy_lag_v1 <= 1,
+            "collection_policy_lag_v1 must be 0 or 1",
+        )?;
+        if self.collection_policy_lag_v1 == 1 {
+            check(
+                self.update_backend.is_cpu()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    )
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()
+                    && self.initial_source.s_learner.is_none(),
+                "collection_policy_lag_v1 requires the plain CPU GAE update, without line (b), \
+                 E, SQ1, search targets, EX1 or an S learner",
+            )?;
+            for (index, iteration) in self.iterations.iter().enumerate() {
+                for scheduled in &iteration.episodes {
+                    if let ExpandedOpponentAssignmentV1::CompletedIteration { index: completed } =
+                        scheduled.opponent
+                    {
+                        check(
+                            completed + 2 <= index,
+                            "under collection_policy_lag_v1 a completed_iteration opponent must \
+                             be at least two iterations old",
+                        )?;
+                    }
+                }
+            }
+        }
+        if let Some(carry) = &self.collection_policy_lag_carry_v1 {
+            check(
+                self.collection_policy_lag_v1 == 1,
+                "collection_policy_lag_carry_v1 requires collection_policy_lag_v1",
+            )?;
+            check(
+                self.initial_source.checkpoint.is_some(),
+                "collection_policy_lag_carry_v1 requires an initial checkpoint",
+            )?;
+            validate_source_paths(carry)?;
         }
         Ok(())
     }
@@ -1460,11 +1534,18 @@ fn validate_update(
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
     loss_selection: &ExpandedLossSelectionV1,
+    collection_policy_lag: Option<&Value>,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     check(
         document.get("input_contract") == input_contract,
         "update no-state-digest contract differs from the run's",
+    )?;
+    // Under `collection_policy_lag_v1` the update records the behaviour its
+    // batch was played on; without it, nothing.
+    check(
+        document.get("collection_policy_lag_v1") == collection_policy_lag,
+        "update collection_policy_lag_v1 behaviour differs from the iteration's",
     )?;
     validate_e_supported_update(&document, e_supported)?;
     validate_soft_q_update(&document, soft_q)?;
@@ -1702,8 +1783,14 @@ fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &
     if config.max_trajectory_batch_mebibytes != DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES {
         document["max_trajectory_batch_mebibytes"] = json!(config.max_trajectory_batch_mebibytes);
     }
+    if config.collection_policy_lag_v1 != 0 {
+        document["collection_policy_lag_v1"] = json!(config.collection_policy_lag_v1);
+    }
 }
 
+/// An iteration's update command under today's recipe (the run loop builds
+/// every command through [`behaviour_update_command_v1`]).
+#[cfg(test)]
 fn update_command(
     config: &NativeExpandedTrainingRunV1,
     index: usize,
@@ -1711,6 +1798,22 @@ fn update_command(
     trajectories: Vec<PinnedFileV1>,
     output_directory: PathBuf,
 ) -> ExpandedTrainingCommandV1 {
+    behaviour_update_command_v1(config, index, source, trajectories, output_directory, None)
+}
+
+/// An iteration's update command; `behaviour` is the source its batch was
+/// played on under `collection_policy_lag_v1` (None without it).
+fn behaviour_update_command_v1(
+    config: &NativeExpandedTrainingRunV1,
+    index: usize,
+    source: &ExpandedModelSourceV1,
+    trajectories: Vec<PinnedFileV1>,
+    output_directory: PathBuf,
+    behaviour: Option<&ExpandedModelSourceV1>,
+) -> ExpandedTrainingCommandV1 {
+    let collection_policy_lag_v1 = behaviour.map(|behaviour| CollectionPolicyLagUpdateV1 {
+        behaviour: behaviour.clone(),
+    });
     if let Some(options) = &config.soft_q {
         ExpandedTrainingCommandV1::SoftQUpdate {
             source: source.clone(),
@@ -1743,6 +1846,7 @@ fn update_command(
             loss_selection: config.loss_selection,
             training_math: config.training_math,
             record_format: config.record_format,
+            collection_policy_lag_v1,
             output_directory,
         }
     } else {
@@ -1761,6 +1865,7 @@ fn update_command(
             training_math: config.training_math,
             record_format: config.record_format,
             record_envelope: config.record_envelope,
+            collection_policy_lag_v1,
             output_directory,
         }
     }
@@ -1866,6 +1971,183 @@ fn execute_collection_v1(command: ExpandedTrainingCommandV1, attempt: &Path) -> 
         attempt.join("collect/collection.json").is_file(),
         "external collector published no collection",
     )
+}
+
+/// A batch's behaviour under `collection_policy_lag_v1`: the source it is
+/// played on and that source's validated identity.
+type BehaviourV1 = (ExpandedModelSourceV1, ExpandedInferenceIdentityV1);
+
+/// The behaviour of a run's next batch under `collection_policy_lag_v1`
+/// (docs/design/collection_policy_lag_v1.md), from committed state only: the
+/// source the previous completed update started from (`previous`); for the
+/// run's first batch, a continuation's carry, or the initial source itself
+/// after a start or a fork.
+fn lagged_behaviour_v1(
+    previous: Option<&BehaviourV1>,
+    carry: Option<&BehaviourV1>,
+    current: &ExpandedModelSourceV1,
+    current_identity: &ExpandedInferenceIdentityV1,
+) -> BehaviourV1 {
+    previous
+        .or(carry)
+        .cloned()
+        .unwrap_or_else(|| (current.clone(), current_identity.clone()))
+}
+
+/// What an iteration's update and receipt record under
+/// `collection_policy_lag_v1`: the behaviour its batch was played on.
+fn lag_member_v1((source, identity): &BehaviourV1) -> Value {
+    json!({"lag": 1, "behaviour": source, "behaviour_state_sha256": identity.state_sha256})
+}
+
+/// A continuation's carry (`collection_policy_lag_carry_v1`), validated: it
+/// is exactly the update input the initial checkpoint records, one Adam step
+/// before the initial state.
+fn load_lag_carry_v1(
+    config: &NativeExpandedTrainingRunV1,
+    carry: &ExpandedModelSourceV1,
+    initial_identity: &ExpandedInferenceIdentityV1,
+) -> Result<BehaviourV1, String> {
+    let pin = config
+        .initial_source
+        .checkpoint
+        .as_ref()
+        .ok_or("collection_policy_lag_carry_v1 requires an initial checkpoint")?;
+    let record = checkpoint_collection_policy_lag_v1(pin)?;
+    let (_, identity) = load_expanded_inference_bound_v1(carry, config.training_math)?;
+    check(
+        record.is_some_and(|record| {
+            record.lag == 1
+                && record.input == *carry
+                && record.input_state_sha256 == identity.state_sha256
+        }) && identity.adam_step.checked_add(1) == Some(initial_identity.adam_step),
+        "collection_policy_lag_carry_v1 is not the update input the initial checkpoint records",
+    )?;
+    Ok((carry.clone(), identity))
+}
+
+/// The stack of the thread that collects the next batch beside an update
+/// (`collection_policy_lag_v1`); a serial collection plays its games on it.
+const LAGGED_COLLECTION_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// The next batch's collection, running beside the current update under
+/// `collection_policy_lag_v1`. Dropping it waits for the collection, so no
+/// collector outlives its run or the run's lock.
+struct InFlightCollectionV1 {
+    handle: Option<std::thread::JoinHandle<(Result<(), String>, f64)>>,
+}
+
+impl InFlightCollectionV1 {
+    /// Waits for the collection: its outcome and its wall seconds.
+    fn join_v1(mut self) -> (Result<(), String>, f64) {
+        match self.handle.take() {
+            Some(handle) => handle
+                .join()
+                .unwrap_or_else(|_| (Err("the next batch's collection panicked".into()), 0.0)),
+            None => (Ok(()), 0.0),
+        }
+    }
+}
+
+impl Drop for InFlightCollectionV1 {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// An iteration directory's attempts, by number, as the run loop reads them.
+fn attempt_directories_v1(directory: &Path) -> Result<Vec<(usize, PathBuf)>, String> {
+    let mut attempts = Vec::new();
+    for entry in fs::read_dir(directory).map_err(err)? {
+        let entry = entry.map_err(err)?;
+        if let Some(number) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.strip_prefix("attempt-"))
+            .and_then(|number| number.parse::<usize>().ok())
+        {
+            check(
+                entry.file_type().map_err(err)?.is_dir(),
+                "attempt path is not a directory",
+            )?;
+            attempts.push((number, entry.path()));
+        }
+    }
+    attempts.sort_by_key(|entry| entry.0);
+    Ok(attempts)
+}
+
+/// Starts iteration `index`'s collection beside the update before it
+/// (`collection_policy_lag_v1`): its batch is played on that update's input,
+/// `behaviour`, which the update does not change. The collection is an
+/// ordinary attempt of iteration `index`, published as the run loop publishes
+/// one, which the loop's pass over the iteration validates and reuses.
+/// Nothing starts when an attempt of the iteration already holds a published
+/// collection.
+fn start_next_collection_v1(
+    config: &NativeExpandedTrainingRunV1,
+    root: &Path,
+    iterations_root: &Path,
+    index: usize,
+    behaviour: &ExpandedModelSourceV1,
+    history: &[ExpandedModelSourceV1],
+) -> Result<Option<InFlightCollectionV1>, String> {
+    let directory = iterations_root.join(format!("{index:06}"));
+    fs::create_dir_all(&directory).map_err(err)?;
+    let attempts = attempt_directories_v1(&directory)?;
+    if attempts
+        .iter()
+        .any(|(_, attempt)| attempt.join("collect/collection.json").exists())
+    {
+        return Ok(None);
+    }
+    let episodes = resolve_episodes(config, index, behaviour, history)?;
+    let number = attempts.last().map_or(Ok(0usize), |entry| {
+        entry.0.checked_add(1).ok_or("attempt overflow")
+    })?;
+    let attempt = directory.join(format!("attempt-{number:06}"));
+    fs::create_dir(&attempt).map_err(err)?;
+    if !attempts.is_empty() {
+        let mut log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(root.join("restarts.log"))
+            .map_err(err)?;
+        writeln!(log, "iteration {index}: restart incomplete phase in attempt {number} from the same input state").map_err(err)?;
+        log.sync_all().map_err(err)?;
+    }
+    let command = collection_command(config, index, behaviour, &episodes, attempt.join("collect"));
+    publish(&attempt, "collect-command.json", &command)?;
+    let handle = std::thread::Builder::new()
+        .name("lagged-collection".into())
+        .stack_size(LAGGED_COLLECTION_STACK_BYTES)
+        .spawn(move || {
+            let started = Instant::now();
+            let result = execute_collection_v1(command, &attempt);
+            (result, started.elapsed().as_secs_f64())
+        })
+        .map_err(err)?;
+    Ok(Some(InFlightCollectionV1 {
+        handle: Some(handle),
+    }))
+}
+
+/// Under `collection_policy_lag_v1`, the attempt whose published collection
+/// the iteration reuses holds that collection's update too: the last attempt,
+/// when the reused collection is its own and it has begun no update.
+fn lagged_update_attempt_v1(
+    attempts: &[(usize, PathBuf)],
+    collection: Option<&PinnedFileV1>,
+) -> Option<PathBuf> {
+    let (_, last) = attempts.last()?;
+    let collection = collection?;
+    (collection.path == last.join("collect/collection.json")
+        && !last.join("update-input.json").exists()
+        && !last.join("update-command.json").exists()
+        && !last.join("update").exists())
+    .then(|| last.clone())
 }
 
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
@@ -1979,6 +2261,21 @@ pub fn run_native_expanded_training_v1(
         .map(ChainLedgerOptionsV1::stop_at_usec_v1)
         .transpose()?
         .flatten();
+    // `collection_policy_lag_v1` (docs/design/collection_policy_lag_v1.md):
+    // a continuation's carry, checked against the initial checkpoint; the
+    // source the last completed update started from; the next batch's
+    // collection while it runs beside an update (declared after the run lock,
+    // so any return waits for it before the lock is released); and that
+    // collection's outcome, reported only if the run goes on to its batch.
+    let lag = config.collection_policy_lag_v1 == 1;
+    let carry = config
+        .collection_policy_lag_carry_v1
+        .as_ref()
+        .map(|carry| load_lag_carry_v1(config, carry, &current_identity))
+        .transpose()?;
+    let mut previous: Option<BehaviourV1> = None;
+    let mut in_flight: Option<InFlightCollectionV1> = None;
+    let mut next_collection_failure: Option<String> = None;
     let mut missing_seen = false;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
@@ -2004,7 +2301,24 @@ pub fn run_native_expanded_training_v1(
                 "search-target run stopped before its next iteration",
             )?;
         }
-        let episodes = resolve_episodes(config, index, &current, &history)?;
+        // The source this iteration's batch is played on: the iteration's own
+        // source, or under `collection_policy_lag_v1` the source the previous
+        // update started from (its `current` opponents play it too).
+        let behaviour = lag.then(|| {
+            lagged_behaviour_v1(
+                previous.as_ref(),
+                carry.as_ref(),
+                &current,
+                &current_identity,
+            )
+        });
+        let (played, played_identity) = behaviour
+            .as_ref()
+            .map_or((&current, &current_identity), |(source, identity)| {
+                (source, identity)
+            });
+        let lag_member = behaviour.as_ref().map(lag_member_v1);
+        let episodes = resolve_episodes(config, index, played, &history)?;
         let episode_digest = identity(&episodes)?;
         let e_options = config
             .e_supported
@@ -2019,15 +2333,16 @@ pub fn run_native_expanded_training_v1(
             check(
                 receipt["iteration"] == index
                     && receipt["source"] == value(&current)?
-                    && receipt["episodes_sha256"] == episode_digest,
+                    && receipt["episodes_sha256"] == episode_digest
+                    && receipt.get("collection_policy_lag_v1") == lag_member.as_ref(),
                 "completed iteration schedule differs",
             )?;
             let collection = parse_pin(&receipt, "collection")?;
             let trajectories = validate_collection(
                 &collection,
-                &current,
+                played,
                 &episodes,
-                &current_identity,
+                played_identity,
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
@@ -2055,6 +2370,7 @@ pub fn run_native_expanded_training_v1(
                 config.training_math,
                 input_contract.as_ref(),
                 &config.loss_selection,
+                lag_member.as_ref(),
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -2068,6 +2384,9 @@ pub fn run_native_expanded_training_v1(
             ) {
                 stopped_at_ledger = usec >= stop;
             }
+            if lag {
+                previous = Some((current.clone(), current_identity.clone()));
+            }
             current = next;
             current_identity = after;
             history.push(current.clone());
@@ -2076,6 +2395,11 @@ pub fn run_native_expanded_training_v1(
         }
         if stopped_at_ledger || max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
             break;
+        }
+        // A next-batch collection that failed beside the previous update fails
+        // the run here, where its batch is needed, as a failed collection does.
+        if let Some(failure) = next_collection_failure.take() {
+            return Err(failure);
         }
         // Invocation telemetry stays outside immutable iteration receipts. It
         // measures wall time, including verification, and never claims CPU use.
@@ -2109,29 +2433,36 @@ pub fn run_native_expanded_training_v1(
         // Only a collection fully validated in this invocation may reuse its
         // parsed schedule checks. Its bytes are still reverified after update.
         let mut validated_trajectories = None;
+        // Under `collection_policy_lag_v1` the batch was usually collected
+        // beside the previous update: the collection validated here is the
+        // one the update reuses, without a second validation.
+        let mut scanned_trajectories: Option<(PinnedFileV1, Vec<PinnedFileV1>)> = None;
         for (_, attempt) in &attempts {
             let saved_command = attempt.join("collect-command.json");
             if !saved_command.exists() {
                 continue;
             }
             let collect_command =
-                collection_command(config, index, &current, &episodes, attempt.join("collect"));
+                collection_command(config, index, played, &episodes, attempt.join("collect"));
             check_saved_collect_command(&saved_command, &collect_command)?;
             let path = attempt.join("collect/collection.json");
             if path.exists() {
                 let candidate = pin(&path)?;
                 let started = Instant::now();
-                validate_collection(
+                let scanned = validate_collection(
                     &candidate,
-                    &current,
+                    played,
                     &episodes,
-                    &current_identity,
+                    played_identity,
                     config.collection_sampler,
                     config.training_math,
                     input_contract.as_ref(),
                     config.trajectory_batch_bytes_v1(),
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
+                if lag {
+                    scanned_trajectories = Some((candidate.clone(), scanned));
+                }
                 collection_pin = Some(candidate);
             }
             let path = attempt.join("update/update.json");
@@ -2145,9 +2476,9 @@ pub fn run_native_expanded_training_v1(
                 let started = Instant::now();
                 let trajectories = validate_collection(
                     &referenced_collection,
-                    &current,
+                    played,
                     &episodes,
-                    &current_identity,
+                    played_identity,
                     config.collection_sampler,
                     config.training_math,
                     input_contract.as_ref(),
@@ -2179,6 +2510,7 @@ pub fn run_native_expanded_training_v1(
                     config.training_math,
                     input_contract.as_ref(),
                     &config.loss_selection,
+                    lag_member.as_ref(),
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -2188,41 +2520,63 @@ pub fn run_native_expanded_training_v1(
             }
         }
         if update_pin.is_none() {
-            let number = attempts.last().map_or(Ok(0usize), |entry| {
-                entry.0.checked_add(1).ok_or("attempt overflow")
-            })?;
-            let attempt = directory.join(format!("attempt-{number:06}"));
-            fs::create_dir(&attempt).map_err(err)?;
-            if !attempts.is_empty() {
-                let mut log = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(root.join("restarts.log"))
-                    .map_err(err)?;
-                writeln!(log, "iteration {index}: restart incomplete phase in attempt {number} from the same input state").map_err(err)?;
-                log.sync_all().map_err(err)?;
-            }
-            let collect_command =
-                collection_command(config, index, &current, &episodes, attempt.join("collect"));
-            publish(&attempt, "collect-command.json", &collect_command)?;
-            if collection_pin.is_none() {
-                let started = Instant::now();
-                execute_collection_v1(collect_command, &attempt)?;
-                collection_execution_seconds += started.elapsed().as_secs_f64();
-                collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
-            }
+            // Under `collection_policy_lag_v1` a collection published beside
+            // the previous update is its attempt's collect phase, and this
+            // update follows it in that attempt.
+            let reused = if lag {
+                lagged_update_attempt_v1(&attempts, collection_pin.as_ref())
+            } else {
+                None
+            };
+            let attempt = match reused {
+                Some(attempt) => attempt,
+                None => {
+                    let number = attempts.last().map_or(Ok(0usize), |entry| {
+                        entry.0.checked_add(1).ok_or("attempt overflow")
+                    })?;
+                    let attempt = directory.join(format!("attempt-{number:06}"));
+                    fs::create_dir(&attempt).map_err(err)?;
+                    if !attempts.is_empty() {
+                        let mut log = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(root.join("restarts.log"))
+                            .map_err(err)?;
+                        writeln!(log, "iteration {index}: restart incomplete phase in attempt {number} from the same input state").map_err(err)?;
+                        log.sync_all().map_err(err)?;
+                    }
+                    let collect_command = collection_command(
+                        config,
+                        index,
+                        played,
+                        &episodes,
+                        attempt.join("collect"),
+                    );
+                    publish(&attempt, "collect-command.json", &collect_command)?;
+                    if collection_pin.is_none() {
+                        let started = Instant::now();
+                        execute_collection_v1(collect_command, &attempt)?;
+                        collection_execution_seconds += started.elapsed().as_secs_f64();
+                        collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
+                    }
+                    attempt
+                }
+            };
             let collection = collection_pin.as_ref().unwrap();
             let started = Instant::now();
-            let trajectories = validate_collection(
-                collection,
-                &current,
-                &episodes,
-                &current_identity,
-                config.collection_sampler,
-                config.training_math,
-                input_contract.as_ref(),
-                config.trajectory_batch_bytes_v1(),
-            )?;
+            let trajectories = match scanned_trajectories.take() {
+                Some((scanned, trajectories)) if &scanned == collection => trajectories,
+                _ => validate_collection(
+                    collection,
+                    played,
+                    &episodes,
+                    played_identity,
+                    config.collection_sampler,
+                    config.training_math,
+                    input_contract.as_ref(),
+                    config.trajectory_batch_bytes_v1(),
+                )?,
+            };
             collection_validation_seconds += started.elapsed().as_secs_f64();
             validated_trajectories = Some(trajectories.clone());
             publish(
@@ -2249,15 +2603,33 @@ pub fn run_native_expanded_training_v1(
                     targets: options.options_v1(index, options.wait_for_packet_v1(index)?),
                     output_directory: attempt.join("update"),
                 },
-                (None, None) => update_command(
+                (None, None) => behaviour_update_command_v1(
                     config,
                     index,
                     &current,
                     trajectories,
                     attempt.join("update"),
+                    behaviour.as_ref().map(|(source, _)| source),
                 ),
             };
             publish(&attempt, "update-command.json", &update_command)?;
+            // `collection_policy_lag_v1`: the next batch is played on this
+            // update's input, which the update does not change, so it is
+            // collected while the update runs. A known stop (the invocation's
+            // iteration limit) starts none.
+            if lag
+                && index + 1 < config.iterations.len()
+                && max_new_iterations.is_none_or(|limit| newly_completed + 1 < limit)
+            {
+                in_flight = start_next_collection_v1(
+                    config,
+                    root,
+                    &iterations_root,
+                    index + 1,
+                    &current,
+                    &history,
+                )?;
+            }
             let started = Instant::now();
             execute_v1(update_command)?;
             update_execution_seconds += started.elapsed().as_secs_f64();
@@ -2274,9 +2646,9 @@ pub fn run_native_expanded_training_v1(
         } else {
             validate_collection(
                 &collection,
-                &current,
+                played,
                 &episodes,
-                &current_identity,
+                played_identity,
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
@@ -2306,11 +2678,15 @@ pub fn run_native_expanded_training_v1(
             config.training_math,
             input_contract.as_ref(),
             &config.loss_selection,
+            lag_member.as_ref(),
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
             "output_identity":after});
+        if let Some(member) = &lag_member {
+            receipt["collection_policy_lag_v1"] = member.clone();
+        }
         if config.record_process_cpu {
             receipt["driver_process_cpu_seconds"] =
                 json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
@@ -2339,6 +2715,9 @@ pub fn run_native_expanded_training_v1(
                 "available":sq["available"]});
         }
         receipts.push(publish(&directory, "complete.json", &receipt)?);
+        if lag {
+            previous = Some((current.clone(), current_identity.clone()));
+        }
         current = next;
         current_identity = after;
         history.push(current.clone());
@@ -2350,9 +2729,14 @@ pub fn run_native_expanded_training_v1(
         {
             stopped_at_ledger = true;
         }
-        println!(
-            "{}",
-            json!({"completed_iteration":index,"adam_step":current_identity.adam_step,
+        // The next batch's collection, if one ran beside this update: its
+        // failure is reported only if the run goes on to that batch.
+        let next_collection_seconds = in_flight.take().map(|flight| {
+            let (outcome, seconds) = flight.join_v1();
+            next_collection_failure = outcome.err();
+            seconds
+        });
+        let mut line = json!({"completed_iteration":index,"adam_step":current_identity.adam_step,
             "checkpoint":current.checkpoint,
             "scheduler_timing":{"schema":"phase1-scheduler-wall/v1",
                 "scope":"newly_completed_iteration_excludes_initialization_and_completed_prefix_validation",
@@ -2361,8 +2745,12 @@ pub fn run_native_expanded_training_v1(
                 "update_execution_seconds":update_execution_seconds,
                 "collection_validation_seconds":collection_validation_seconds,
                 "update_validation_seconds":update_validation_seconds,
-                "cpu_utilization_claim":false}})
-        );
+                "cpu_utilization_claim":false}});
+        if let Some(seconds) = next_collection_seconds {
+            // Wall time of the next batch's collection beside this update.
+            line["scheduler_timing"]["next_collection_execution_seconds"] = json!(seconds);
+        }
+        println!("{line}");
     }
     let complete = receipts.len() == config.iterations.len();
     let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
@@ -2372,6 +2760,16 @@ pub fn run_native_expanded_training_v1(
     config.update_backend.record_run_execution_v1(&mut result);
     record_loss_selection_execution(config, &mut result);
     record_collection_execution(config, &mut result);
+    if lag {
+        // The source the next batch is played on: a continuation's carry.
+        let (next_behaviour, _) = lagged_behaviour_v1(
+            previous.as_ref(),
+            carry.as_ref(),
+            &current,
+            &current_identity,
+        );
+        result["collection_policy_lag_next_behaviour_v1"] = value(&next_behaviour)?;
+    }
     let final_path = root.join("completion.json");
     if complete {
         if final_path.exists() {
@@ -2388,6 +2786,8 @@ pub fn run_native_expanded_training_v1(
             "completion exists for an incomplete prefix",
         )?;
     }
+    // Every next-batch collection was waited for at its iteration's end.
+    drop(in_flight);
     drop(lock);
     Ok(result)
 }
@@ -2401,6 +2801,7 @@ mod verified_pin_tests;
 mod tests {
     use super::*;
 
+    mod collection_policy_lag_tests;
     mod follow_tests;
     /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
     /// the same on every system. Native236 and CI39598628050 observe this CPU
@@ -2567,6 +2968,8 @@ mod tests {
             ex1: None,
             record_process_cpu: false,
             chain_ledger: None,
+            collection_policy_lag_v1: 0,
+            collection_policy_lag_carry_v1: None,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -3865,6 +4268,8 @@ mod tests {
             ex1: None,
             record_process_cpu: false,
             chain_ledger: None,
+            collection_policy_lag_v1: 0,
+            collection_policy_lag_carry_v1: None,
             output_directory: root.join("run"),
         }
     }

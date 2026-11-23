@@ -918,3 +918,72 @@ fn borrowed_decode_borrows_aligned_sections_and_copies_unaligned_slices() {
         .filter(|tensor| !tensor.values.is_empty())
         .all(|tensor| !tensor.is_borrowed_v1()));
 }
+
+/// A `collection_policy_lag_v1` checkpoint: the record is metadata in the
+/// container's document, the container decodes and exports to the v1 JSON
+/// bytes, the writer's gate decides as it does without the record, and the
+/// record reads back from the metadata of either format. Without the record
+/// a checkpoint's bytes name no lag.
+#[test]
+fn a_collection_policy_lag_record_round_trips_in_both_formats() {
+    use crate::expanded_deck_training_v1::{
+        checkpoint_collection_policy_lag_v1, CollectionPolicyLagRecordV1, ExpandedModelSourceV1,
+        PinnedFileV1,
+    };
+    let plain = fixture_v1();
+    let source = |checkpoint: serde_json::Value| -> ExpandedModelSourceV1 {
+        serde_json::from_value(serde_json::json!({
+            "play_import": {"path": "/lag/import.json", "sha256": "a".repeat(64)},
+            "feature_transfer": {"expected_feature_contract_digest": "contract",
+                "expected_feature_encoding_digest": "encoding"},
+            "checkpoint": checkpoint,
+        }))
+        .unwrap()
+    };
+    let mut lagged = plain.clone();
+    lagged.collection_policy_lag_v1 = Some(CollectionPolicyLagRecordV1 {
+        lag: 1,
+        input: source(serde_json::json!({"path": "/lag/input.json", "sha256": "b".repeat(64)})),
+        input_state_sha256: "c".repeat(64),
+        behaviour: source(serde_json::Value::Null),
+        behaviour_state_sha256: "d".repeat(64),
+    });
+    let plain_v1 = json_v1(&plain);
+    assert!(!String::from_utf8_lossy(&plain_v1).contains("collection_policy_lag_v1"));
+    let v1 = json_v1(&lagged);
+    assert!(String::from_utf8_lossy(&v1).contains("\"collection_policy_lag_v1\""));
+    let container = encode_v1(&lagged).unwrap();
+    assert_eq!(json_v1(&decode_v1(&container).unwrap()), v1);
+    assert_eq!(export_v1(&container).unwrap(), v1);
+    assert_eq!(
+        admit_writer_v1(&lagged).is_ok(),
+        admit_writer_v1(&plain).is_ok()
+    );
+    let directory =
+        std::env::temp_dir().join(format!("container-lag-record-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    for (name, bytes, expected) in [
+        ("lagged-v1.json", &v1, &lagged.collection_policy_lag_v1),
+        (
+            "lagged-v2.json",
+            &container,
+            &lagged.collection_policy_lag_v1,
+        ),
+        ("plain-v1.json", &plain_v1, &None),
+    ] {
+        let path = directory.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let sha256 = <sha2::Sha256 as sha2::Digest>::digest(bytes.as_slice())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let pin = PinnedFileV1 { path, sha256 };
+        assert_eq!(
+            &checkpoint_collection_policy_lag_v1(&pin).unwrap(),
+            expected,
+            "{name}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}

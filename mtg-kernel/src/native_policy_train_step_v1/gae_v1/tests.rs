@@ -3149,3 +3149,144 @@ fn priority_pass_offset_is_refused_off_the_plain_gae_loss_and_with_bad_marks() {
         assert_eq!(state_bits(&bad), state_bits(&base));
     }
 }
+
+/// `collection_policy_lag_v1`'s gradient point: the step's forward, bit check
+/// and backward evaluate at the point, and its Adam step moves the state's own
+/// parameters and moments. A batch recorded at the point fails the bit check
+/// at the state's own parameters and passes with the point set; the gradient,
+/// loss and gauge are those of a plain step taken at the point; the new state
+/// is Adam's from the state's own parameters and moments with that gradient; a
+/// point equal to the state's own parameters is the plain step bit for bit;
+/// the point lives one step; any other learner path refuses it; and a point
+/// under another gauge anchor is refused.
+#[test]
+fn a_gradient_point_differentiates_there_and_steps_the_state() {
+    let base = model();
+    let targets = [0.25, -0.1];
+    let advantages = [0.2, -0.3];
+    // The point: the base parameters, which played the batch.
+    let behaviour = NativePolicyValueTrainStateV1::new_v1(base.clone()).unwrap();
+    let fixture = Fixture::capture(behaviour.model_v1());
+    let steps = fixture.substeps();
+    let batch = groups(&steps);
+    // The state the step moves: one plain step past the point, so its
+    // parameters and moments differ from the point's.
+    let mut state = behaviour.clone();
+    state
+        .train_step_gae_feature_transfer_v3(&batch, &[0.3, -0.2], &[0.15, -0.4], VC, LR)
+        .unwrap();
+    assert_ne!(state_bits(&state), state_bits(&behaviour));
+
+    // Without the point the recorded rows are not the state's own outputs.
+    let mut unpointed = state.clone();
+    assert!(matches!(
+        unpointed.train_step_gae_feature_transfer_v3(&batch, &targets, &advantages, VC, LR),
+        Err(NativePolicyTrainErrorV1::RecomputedLogitBitsMismatch { .. })
+            | Err(NativePolicyTrainErrorV1::RecomputedValueBitsMismatch { .. })
+    ));
+    assert_eq!(state_bits(&unpointed), state_bits(&state));
+
+    // With it, the step differentiates at the point ...
+    let mut pointed = state.clone();
+    pointed.set_gradient_point_v1(Some(behaviour.model_v1().parameter_snapshot_v1()));
+    let lagged = pointed
+        .train_step_gae_feature_transfer_v3(&batch, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert!(!pointed.gradient_point_pending_v1());
+    let mut at_point = behaviour.clone();
+    let reference = at_point
+        .train_step_gae_feature_transfer_v3(&batch, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(lagged.gradients, reference.gradients);
+    assert_eq!(lagged.loss.to_bits(), reference.loss.to_bits());
+    assert_eq!(lagged.policy_sum.to_bits(), reference.policy_sum.to_bits());
+    assert_eq!(lagged.value_sum.to_bits(), reference.value_sum.to_bits());
+    assert_eq!(lagged.selected_outputs, reference.selected_outputs);
+    assert_eq!(
+        lagged.scorer_bias_gauge.raw_gradient_residual.to_bits(),
+        reference.scorer_bias_gauge.raw_gradient_residual.to_bits()
+    );
+    assert_eq!(lagged.adam_step, state.adam_step_v1() + 1);
+    // ... and Adam moves the state's own parameters and moments.
+    let gradients: Vec<Vec<f32>> = reference
+        .gradients
+        .iter()
+        .map(|gradient| gradient.values.clone())
+        .collect();
+    let (mut parameters, mut first, mut second) = adam_update(
+        &state.model_v1().parameter_snapshot_v1(),
+        &gradients,
+        &state.first_moments,
+        &state.second_moments,
+        state.adam_step_v1() + 1,
+        LR,
+        TrainingMathV1::PlatformLibm,
+    )
+    .unwrap();
+    parameters[SCORER_SECOND_BIAS].values[0] = f32::from_bits(state.scorer_bias_anchor_bits);
+    first[SCORER_SECOND_BIAS][0] = 0.0;
+    second[SCORER_SECOND_BIAS][0] = 0.0;
+    let mut expected = Vec::new();
+    for parameter in &parameters {
+        expected.extend(parameter.values.iter().map(|value| value.to_bits()));
+    }
+    for values in first.iter().chain(&second) {
+        expected.extend(values.iter().map(|value| value.to_bits()));
+    }
+    assert_eq!(
+        state_bits(&pointed),
+        (
+            state.adam_step_v1() + 1,
+            state.scorer_bias_anchor_bits,
+            expected
+        )
+    );
+    // The step at the point itself moved the point's state instead.
+    assert_ne!(state_bits(&pointed), state_bits(&at_point));
+
+    // A point equal to the state's own parameters is the plain step.
+    let own_fixture = Fixture::capture(state.model_v1());
+    let own_steps = own_fixture.substeps();
+    let own_batch = groups(&own_steps);
+    let mut own = state.clone();
+    own.set_gradient_point_v1(Some(state.model_v1().parameter_snapshot_v1()));
+    let mut plain = state.clone();
+    assert_eq!(
+        own.train_step_gae_feature_transfer_v3(&own_batch, &targets, &advantages, VC, LR)
+            .unwrap(),
+        plain
+            .train_step_gae_feature_transfer_v3(&own_batch, &targets, &advantages, VC, LR)
+            .unwrap()
+    );
+    assert_eq!(state_bits(&own), state_bits(&plain));
+
+    // Any other learner path refuses a set point and clears it.
+    let mut refused = state.clone();
+    refused.set_gradient_point_v1(Some(behaviour.model_v1().parameter_snapshot_v1()));
+    assert_eq!(
+        refused
+            .train_step_feature_transfer_v3(&batch, VC, LR)
+            .unwrap_err(),
+        NativePolicyTrainErrorV1::CollectionPolicyLag {
+            code: "collection-policy-lag-requires-plain-gae"
+        }
+    );
+    assert!(!refused.gradient_point_pending_v1());
+    assert_eq!(state_bits(&refused), state_bits(&state));
+
+    // A point under another gauge anchor is refused before any work.
+    let mut anchored = state.clone();
+    let mut point = behaviour.model_v1().parameter_snapshot_v1();
+    point[SCORER_SECOND_BIAS].values[0] += 1.0;
+    anchored.set_gradient_point_v1(Some(point));
+    assert_eq!(
+        anchored
+            .train_step_gae_feature_transfer_v3(&batch, &targets, &advantages, VC, LR)
+            .unwrap_err(),
+        NativePolicyTrainErrorV1::CollectionPolicyLag {
+            code: "collection-policy-lag-gradient-point-anchor-differs"
+        }
+    );
+    assert!(!anchored.gradient_point_pending_v1());
+    assert_eq!(state_bits(&anchored), state_bits(&state));
+}

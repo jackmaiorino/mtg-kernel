@@ -727,6 +727,24 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // outlives the next step (`pregame_announcement_step_v1`).
         let announcement_scale = self.pregame_announcement_step_scale_mut_dims_v1().take();
         *self.pregame_announcement_step_record_mut_dims_v1() = None;
+        // The gradient point of this step (`collection_policy_lag_v1`): the
+        // parameters a lagged batch was played on, or None (every existing
+        // step), taken the same way.
+        let gradient_point = self.gradient_point_mut_dims_v1().take();
+        if gradient_point.is_some() {
+            // Only the plain GAE objective, on the CPU backward.
+            if line_b.is_some() || exploration.is_some() || imitation {
+                return Err(NativePolicyTrainErrorV1::CollectionPolicyLag {
+                    code: "collection-policy-lag-requires-plain-gae",
+                });
+            }
+            #[cfg(feature = "gpu-exact-v1")]
+            if crate::gpu_exact_v1::learner_installed_v1() {
+                return Err(NativePolicyTrainErrorV1::CollectionPolicyLag {
+                    code: "collection-policy-lag-requires-cpu-backward",
+                });
+            }
+        }
         if announcement_scale.is_some() {
             // Only the plain GAE objective on a backward that routes the
             // second gradient buffer, under the arithmetic the gates cover.
@@ -841,11 +859,33 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             &self.second_moments,
             self.scorer_bias_anchor_bits,
         )?;
+        // A gradient point is a parameter set of this architecture, under this
+        // state's gauge anchor and input contract.
+        if let Some(point) = &gradient_point {
+            validate_parameter_manifest_dims_v1::<D>(point)?;
+            if point[SCORER_SECOND_BIAS].values[0].to_bits() != self.scorer_bias_anchor_bits {
+                return Err(NativePolicyTrainErrorV1::CollectionPolicyLag {
+                    code: "collection-policy-lag-gradient-point-anchor-differs",
+                });
+            }
+            if let Some(columns) = &self.no_state_digest_columns {
+                check_no_state_digest_state_dims_v1::<D>(
+                    columns,
+                    point,
+                    &self.first_moments,
+                    &self.second_moments,
+                )?;
+            }
+        }
+        // The forward, loss, bit check and backward evaluate at `point`; the
+        // Adam step below moves `parameters`. Without a gradient point they
+        // are the same parameters, as before.
+        let point = gradient_point.as_ref().unwrap_or(&parameters);
         phase_recorder.finish_v1(setup_timer);
         let forward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
-        let input_major = InputMajorWeightsV1::of_dims_v1::<D>(&parameters);
+        let input_major = InputMajorWeightsV1::of_dims_v1::<D>(point);
         let mut precomputed_tapes = precompute_encoded_forward_tapes_dims_v1::<D>(
-            &parameters,
+            point,
             &input_major,
             input_config,
             groups,
@@ -924,7 +964,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         .next()
                         .expect("one precomputed forward tape per substep")?,
                     None => Box::new(forward_with_tape_input_major_dims_v1::<D>(
-                        &parameters,
+                        point,
                         Some(&input_major),
                         input_config,
                         **encoded,
@@ -1139,7 +1179,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             Some(scale) if announcement_marks.iter().any(|mark| *mark) => {
                 let (mut announcement_gradients, announcement_gauge) =
                     pregame_announcement_step_v1::announcement_backward_dims_v1::<D>(
-                        &parameters,
+                        point,
                         &group_tapes,
                         &announcement_marks,
                         group_count,
@@ -1178,7 +1218,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let gpu = match backward_execution {
             BackwardExecutionV1::Sequential if beta == 0.0 && policy_mask.is_none() => {
                 gpu_exact_backward_v1::gpu_exact_backward_dims_v1::<D>(
-                    &parameters,
+                    point,
                     &group_tapes,
                     groups,
                     group_count,
@@ -1196,7 +1236,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             _ if gpu.is_some() => gpu,
             BackwardExecutionV1::Sequential if beta == 0.0 => {
                 exact_parallel_backward_v1::exact_parallel_backward_dims_v1::<D>(
-                    &parameters,
+                    point,
                     &group_tapes,
                     backward_part,
                     group_count,
@@ -1218,7 +1258,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 // Hidden-width weights accumulate transposed, with the exact
                 // parallel backward's kernels and the reference's bits.
                 let mut gradients =
-                    accumulate_transposed_v1::sequential_gradients_dims_v1::<D>(&parameters);
+                    accumulate_transposed_v1::sequential_gradients_dims_v1::<D>(point);
                 let mut sink =
                     accumulate_transposed_v1::AccumulateTransposedV1::new_v1(&mut gradients);
                 let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
@@ -1293,7 +1333,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                             d_joint_log_probability,
                         )?;
                         reverse_decision_into_dims_v1::<D>(
-                            &parameters,
+                            point,
                             &mut sink,
                             &selected.tape,
                             &reverse_workspace.d_logits,
@@ -1318,11 +1358,11 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                     observe_scorer_bias_gauge_v1(&group_tapes, &coefficients, math)?;
                 let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
                 let gradients = fixed_partition_backward_gradients_dims_v1::<D>(
-                    &parameters,
+                    point,
                     &group_tapes,
                     &coefficients,
                     worker_limit,
-                    parameters
+                    point
                         .iter()
                         .map(|parameter| vec![0.0; parameter.values.len()])
                         .collect::<Vec<_>>(),

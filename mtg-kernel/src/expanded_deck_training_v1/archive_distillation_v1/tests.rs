@@ -2153,6 +2153,7 @@ fn world_v1(label: &str) -> WorldV1 {
         root.join("parent-collect"),
     );
     let update = execute_v1(ExpandedTrainingCommandV1::Update {
+        collection_policy_lag_v1: None,
         source: parent.clone(),
         trajectories,
         learning_rate: 0.0001,
@@ -2995,6 +2996,8 @@ fn retention_run_config_v1(
         ex1: None,
         record_process_cpu: false,
         chain_ledger: None,
+        collection_policy_lag_v1: 0,
+        collection_policy_lag_carry_v1: None,
         output_directory: root.join("run"),
     }
 }

@@ -1163,6 +1163,9 @@ pub(crate) mod crash_points_for_test_v1 {
     struct PlanV1 {
         root: PathBuf,
         crash: Option<(usize, CrashPointV1)>,
+        /// A planned publication named by its final path instead of its
+        /// number (`with_crash_at_path_v1`).
+        crash_path: Option<(PathBuf, CrashPointV1)>,
         started: usize,
         target: Option<PathBuf>,
         crashed: bool,
@@ -1180,10 +1183,32 @@ pub(crate) mod crash_points_for_test_v1 {
         crash: Option<(usize, CrashPointV1)>,
         body: impl FnOnce() -> R,
     ) -> (R, usize, bool) {
+        with_plan_v1(root, crash, None, body)
+    }
+
+    /// [`with_crash_point_v1`] with the planned publication named by its
+    /// final path: for a run whose threads interleave their publications, so
+    /// that a number names no fixed publication.
+    pub(crate) fn with_crash_at_path_v1<R>(
+        root: &Path,
+        path: &Path,
+        point: CrashPointV1,
+        body: impl FnOnce() -> R,
+    ) -> (R, usize, bool) {
+        with_plan_v1(root, None, Some((path.to_path_buf(), point)), body)
+    }
+
+    fn with_plan_v1<R>(
+        root: &Path,
+        crash: Option<(usize, CrashPointV1)>,
+        crash_path: Option<(PathBuf, CrashPointV1)>,
+        body: impl FnOnce() -> R,
+    ) -> (R, usize, bool) {
         let _armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
         *PLAN.lock().unwrap_or_else(PoisonError::into_inner) = Some(PlanV1 {
             root: root.to_path_buf(),
             crash,
+            crash_path,
             started: 0,
             target: None,
             crashed: false,
@@ -1218,13 +1243,22 @@ pub(crate) mod crash_points_for_test_v1 {
             return Err(crash_v1("injected crash: the process is gone"));
         }
         if boundary == PublicationBoundaryV1::ParentValidated {
-            if plan.crash.is_some_and(|(index, _)| index == plan.started) {
+            if plan.crash.is_some_and(|(index, _)| index == plan.started)
+                || plan
+                    .crash_path
+                    .as_ref()
+                    .is_some_and(|(path, _)| path.as_path() == final_path)
+            {
                 plan.target = Some(final_path.to_path_buf());
             }
             plan.started += 1;
             return Ok(());
         }
-        let Some((_, point)) = plan.crash else {
+        let Some(point) = plan
+            .crash
+            .map(|(_, point)| point)
+            .or_else(|| plan.crash_path.as_ref().map(|(_, point)| *point))
+        else {
             return Ok(());
         };
         let stops_here = match point {

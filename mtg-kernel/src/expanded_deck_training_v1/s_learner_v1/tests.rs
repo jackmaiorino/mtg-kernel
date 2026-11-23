@@ -171,6 +171,7 @@ fn update(
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     execute_v1(ExpandedTrainingCommandV1::Update {
+        collection_policy_lag_v1: None,
         source: source.clone(),
         trajectories,
         learning_rate: 1.0e-3,
@@ -540,6 +541,8 @@ fn run_config(
         ex1: None,
         record_process_cpu: false,
         chain_ledger: None,
+        collection_policy_lag_v1: 0,
+        collection_policy_lag_carry_v1: None,
         output_directory,
     }
 }
@@ -611,6 +614,7 @@ fn s_learner_refusals_v1() {
     .contains("GAE loss"));
     assert!(refused(gae(), CheckpointRecordFormatV1::V2, "v2").contains("record format v2"));
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        collection_policy_lag_v1: None,
         source: s.clone(),
         trajectories: fake.clone(),
         learning_rate: 1.0e-3,

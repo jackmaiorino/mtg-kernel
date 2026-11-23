@@ -1636,6 +1636,51 @@ pub(crate) fn line_b_frozen_sha256_v1(source: &ExpandedModelSourceV1) -> Result<
     Ok(hex(&mask.frozen_sha256_v1(&snapshot)))
 }
 
+/// `collection_policy_lag_v1` (docs/design/collection_policy_lag_v1.md) for
+/// one update: its batch was played on `behaviour`, which is the update's own
+/// source for the first batch after a start or a fork and otherwise the
+/// source the previous update started from. The update binds, replays and
+/// differentiates the batch at `behaviour` and applies that gradient through
+/// Adam to its source's state. Absent from every other update command, which
+/// keeps its bytes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectionPolicyLagUpdateV1 {
+    pub behaviour: ExpandedModelSourceV1,
+}
+
+/// What a checkpoint written by a `collection_policy_lag_v1` update records:
+/// the update's input (the next batch's behaviour) and the behaviour its own
+/// batch was played on, each with its state digest. A reference, never the
+/// lagged parameters themselves; absent from every other checkpoint, which
+/// keeps its bytes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CollectionPolicyLagRecordV1 {
+    pub(crate) lag: u8,
+    pub(crate) input: ExpandedModelSourceV1,
+    pub(crate) input_state_sha256: String,
+    pub(crate) behaviour: ExpandedModelSourceV1,
+    pub(crate) behaviour_state_sha256: String,
+}
+
+/// A checkpoint's `collection_policy_lag_v1` member alone.
+#[derive(Deserialize)]
+struct CheckpointCollectionPolicyLagProbeV1 {
+    #[serde(default)]
+    collection_policy_lag_v1: Option<CollectionPolicyLagRecordV1>,
+}
+
+/// The `collection_policy_lag_v1` record of a pinned checkpoint (v1 JSON or
+/// container, read from its metadata only), or None for every other
+/// checkpoint.
+pub(crate) fn checkpoint_collection_policy_lag_v1(
+    pin: &PinnedFileV1,
+) -> Result<Option<CollectionPolicyLagRecordV1>, String> {
+    read_checkpoint_metadata_v1::<CheckpointCollectionPolicyLagProbeV1>(pin)
+        .map(|probe| probe.collection_policy_lag_v1)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExpandedTrajectoryV1 {
@@ -1907,6 +1952,12 @@ pub(crate) struct ExpandedCheckpointV1<T = ParameterBitsV1> {
         deserialize_with = "no_state_digest_v1::deserialize_present_input_contract_v1"
     )]
     input_contract: Option<no_state_digest_v1::InputContractRecordV1>,
+    /// The `collection_policy_lag_v1` update that wrote these parameters:
+    /// its input and its batch's behaviour (`CollectionPolicyLagRecordV1`).
+    /// Absent for every other update, so every existing checkpoint keeps its
+    /// bytes. Metadata only: the state digest does not cover it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    collection_policy_lag_v1: Option<CollectionPolicyLagRecordV1>,
 }
 
 /// Whole-pair V3-or-V4 admission: a stored trajectory/checkpoint's
@@ -4019,6 +4070,11 @@ pub enum ExpandedTrainingCommandV1 {
         /// written before the default switch keeps its bytes.
         #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
         record_format: CheckpointRecordFormatV1,
+        /// The source this update's batch was played on
+        /// (`collection_policy_lag_v1`); omitted when absent, so every
+        /// existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collection_policy_lag_v1: Option<CollectionPolicyLagUpdateV1>,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -4077,6 +4133,11 @@ pub enum ExpandedTrainingCommandV1 {
         /// existing command keeps its bytes and publishes the plain record.
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
+        /// The source this update's batch was played on
+        /// (`collection_policy_lag_v1`); omitted when absent, so every
+        /// existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collection_policy_lag_v1: Option<CollectionPolicyLagUpdateV1>,
         output_directory: PathBuf,
     },
     /// Separate E policy supervision, full Adam and unchanged sampler.
@@ -4258,6 +4319,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -4285,6 +4347,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
@@ -4314,6 +4377,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -4343,6 +4407,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -4630,6 +4695,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             line_b,
             training_math,
             record_format,
+            collection_policy_lag_v1,
             output_directory,
         } => execute_update_v1(
             source,
@@ -4649,6 +4715,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             training_math,
             record_format,
             RecordEnvelopeV1::None,
+            collection_policy_lag_v1,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -4665,6 +4732,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             training_math,
             record_format,
             record_envelope,
+            collection_policy_lag_v1,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
@@ -4694,6 +4762,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 training_math,
                 record_format,
                 record_envelope,
+                collection_policy_lag_v1,
             )
         }
     }
@@ -5000,6 +5069,76 @@ fn terminal_pregame_targets_of_values_v1(
     })
 }
 
+/// A lagged batch's behaviour (`collection_policy_lag_v1`): its inference
+/// policy and seat identity, to bind and replay the batch, and its parameters,
+/// the update's gradient point.
+struct LaggedBehaviourV1 {
+    policy: FrozenPlayPolicyV1,
+    learner: ExpandedSeatBehaviorV1,
+    gradient_point: Vec<NativeNamedParameterV1>,
+}
+
+/// Loads `behaviour` for an update of `source` whose batch it played. It must
+/// share the source's import, feature identity, input contract and math, and
+/// be exactly the input the source checkpoint records for the update that
+/// wrote it, one Adam step before it: a lag of one, along the lineage.
+fn load_lagged_behaviour_v1(
+    behaviour: &ExpandedModelSourceV1,
+    source: &ExpandedModelSourceV1,
+    policy: &FrozenPlayPolicyV1,
+    state: &NativePolicyValueTrainStateV1,
+    training_math: TrainingMathV1,
+) -> Result<LaggedBehaviourV1, String> {
+    let (mut behaviour_policy, mut behaviour_state, transfer) =
+        initialize_with_transfer_context(behaviour)?;
+    ensure(
+        transfer.is_none(),
+        "collection_policy_lag_v1 is not available to registry-transfer sources",
+    )?;
+    bind_training_math_v1(
+        behaviour,
+        transfer.as_ref(),
+        training_math,
+        &mut behaviour_policy,
+        &mut behaviour_state,
+    )?;
+    ensure(
+        behaviour_policy.identity_v1() == policy.identity_v1()
+            && behaviour_policy.feature_identity_v1() == policy.feature_identity_v1()
+            && no_state_digest_v1::policy_contract_record_v1(&behaviour_policy)?
+                == no_state_digest_v1::policy_contract_record_v1(policy)?,
+        "collection_policy_lag_v1 behaviour has another import, feature identity or input contract than the source",
+    )?;
+    let behaviour_sha256 = hex(&behaviour_state.state_sha256_v1().map_err(err)?);
+    let pin = source
+        .checkpoint
+        .as_ref()
+        .ok_or("a lagged batch needs a source checkpoint")?;
+    let record = checkpoint_collection_policy_lag_v1(pin)?;
+    ensure(
+        record.as_ref().is_some_and(|record| {
+            record.lag == 1
+                && record.input == *behaviour
+                && record.input_state_sha256 == behaviour_sha256
+        }) && behaviour_state.adam_step_v1().checked_add(1) == Some(state.adam_step_v1()),
+        "collection_policy_lag_v1 behaviour is not the input of the update that wrote the source checkpoint",
+    )?;
+    let learner = ExpandedSeatBehaviorV1 {
+        source: behaviour.clone(),
+        identity: inference_identity_with_state_sha256_v1(
+            behaviour,
+            &behaviour_policy,
+            &behaviour_state,
+            behaviour_sha256,
+        ),
+    };
+    Ok(LaggedBehaviourV1 {
+        gradient_point: behaviour_state.model_v1().parameter_snapshot_v1(),
+        policy: behaviour_policy,
+        learner,
+    })
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps the existing explicit input contract"
@@ -5022,6 +5161,7 @@ fn execute_update_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    collection_policy_lag: Option<CollectionPolicyLagUpdateV1>,
 ) -> Result<Value, String> {
     execute_update_inner_v1(
         source,
@@ -5043,6 +5183,7 @@ fn execute_update_v1(
         training_math,
         record_format,
         record_envelope,
+        collection_policy_lag,
     )
 }
 
@@ -5070,6 +5211,7 @@ fn execute_update_inner_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    collection_policy_lag: Option<CollectionPolicyLagUpdateV1>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -5081,6 +5223,25 @@ fn execute_update_inner_v1(
         line_b.is_some(),
         e_supported.is_some() || soft_q.is_some() || search_targets.is_some() || ex1.is_some(),
     )?;
+    // `collection_policy_lag_v1` covers the plain CPU GAE update only
+    // (docs/design/collection_policy_lag_v1.md); any other update refuses a
+    // behaviour before any work.
+    if collection_policy_lag.is_some() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none()
+                && source.s_learner.is_none(),
+            "collection_policy_lag_v1 requires the plain CPU GAE update",
+        )?;
+    }
     if let Some(options) = &ex1 {
         options.validate_v1()?;
         ensure(
@@ -5296,6 +5457,25 @@ fn execute_update_inner_v1(
         source: source.clone(),
         identity: inference_identity_with_state_sha256_v1(&source, &policy, &state, before.clone()),
     };
+    // `collection_policy_lag_v1`: the batch was played on its behaviour. A
+    // behaviour equal to the source is the first batch after a start or a
+    // fork, and this update is then today's, bit for bit. Any other behaviour
+    // must be the input the source checkpoint records; the batch is bound to
+    // it, replayed on it and differentiated at it (the gradient point), and
+    // Adam moves the source's state.
+    let mut lagged = match &collection_policy_lag {
+        Some(options) if options.behaviour != source => Some(load_lagged_behaviour_v1(
+            &options.behaviour,
+            &source,
+            &policy,
+            &state,
+            training_math,
+        )?),
+        _ => None,
+    };
+    let behaviour_learner = lagged.as_ref().map_or(&learner, |lagged| &lagged.learner);
+    let behaviour_policy = lagged.as_ref().map_or(&policy, |lagged| &lagged.policy);
+    let behaviour_state_sha256 = behaviour_learner.identity.state_sha256.clone();
     let mut ids = BTreeSet::new();
     let mut hashes = BTreeSet::new();
     let mut total_bytes = 0u64;
@@ -5407,7 +5587,7 @@ fn execute_update_inner_v1(
             "duplicate episode id",
         )?;
         ensure(
-            episode.behavior_state_sha256 == before,
+            episode.behavior_state_sha256 == behaviour_learner.identity.state_sha256,
             "stale trajectory: behavior optimizer/model state differs",
         )?;
         ensure(
@@ -5438,12 +5618,16 @@ fn execute_update_inner_v1(
     let input_read_seconds = update_started.elapsed().as_secs_f64();
     let replay_started = std::time::Instant::now();
     // Recompute all actor-visible rows, including opponent decisions,
-    // before constructing learner groups. No private state is decoded.
+    // before constructing learner groups. No private state is decoded. The
+    // learner seat is bound to and replayed on the batch's behaviour: the
+    // source itself except for a lagged batch (`collection_policy_lag_v1`).
     let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
         // Every CPU learner step below derives each learner row's outputs
         // again with its tape forward and refuses a bit that differs from
         // the stored row, so those rows may replay through the row cache.
-        // The CUDA steps compare within a tolerance and keep the reference.
+        // (A lagged batch's step evaluates at the behaviour's parameters, so
+        // this holds for it too.) The CUDA steps compare within a tolerance
+        // and keep the reference.
         let row_cache = if update_backend.is_cpu() {
             ordered_update_preparation::ReplayRowCacheV1::LearnerRows
         } else {
@@ -5451,8 +5635,8 @@ fn execute_update_inner_v1(
         };
         let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
             &episodes,
-            &policy,
-            &learner,
+            behaviour_policy,
+            behaviour_learner,
             workers,
             max_prepared_tensor_mebibytes,
             ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
@@ -5472,13 +5656,13 @@ fn execute_update_inner_v1(
                 .transpose()?;
             validate_actual_behaviors_v1(
                 episode,
-                &learner,
+                behaviour_learner,
                 opponent.as_ref().map(|o| &o.behavior),
             )?;
             tensor_groups.extend(replay_learner_groups_v1(
                 episode_ordinal,
                 episode,
-                &policy,
+                behaviour_policy,
                 opponent.as_ref().map(|o| &o.policy),
             )?);
         }
@@ -5728,6 +5912,9 @@ fn execute_update_inner_v1(
         }
         _ => None,
     };
+    // A lagged batch's step evaluates at its behaviour's parameters; the
+    // behaviour's policy is no longer needed once the batch is replayed.
+    state.set_gradient_point_v1(lagged.take().map(|lagged| lagged.gradient_point));
     let learner_started = std::time::Instant::now();
     // In-memory diagnostics are opt-in and never enter model/checkpoint bits.
     let profile_gae = std::env::var_os("MTG_KERNEL_PROFILE_GAE_V1").is_some();
@@ -6139,6 +6326,11 @@ fn execute_update_inner_v1(
     gae_phase_recorder
         .finish_update_v1(u64::try_from(learner_elapsed.as_nanos()).unwrap_or(u64::MAX));
     let learner_update_seconds = learner_elapsed.as_secs_f64();
+    // The plain GAE step takes the gradient point; any other step refuses it.
+    ensure(
+        !state.gradient_point_pending_v1(),
+        "the collection_policy_lag_v1 gradient point did not reach the plain GAE step",
+    )?;
     // Restore every frozen tensor and its moments before any publication;
     // from_snapshot_v1 revalidates the manifest and the canonical gauge.
     let frozen_tensor_sha256 = match masked_before {
@@ -6355,6 +6547,17 @@ fn execute_update_inner_v1(
         archive_distillation: None,
         training_math,
         input_contract: input_contract.clone(),
+        // The next batch's behaviour is this update's input; recorded with
+        // this batch's behaviour, so a continuation can be checked against it.
+        collection_policy_lag_v1: collection_policy_lag.as_ref().map(|options| {
+            CollectionPolicyLagRecordV1 {
+                lag: 1,
+                input: source.clone(),
+                input_state_sha256: before.clone(),
+                behaviour: options.behaviour.clone(),
+                behaviour_state_sha256: behaviour_state_sha256.clone(),
+            }
+        }),
     };
     // The default (`Auto`) resolves here, on the checkpoint itself, so the
     // choice cannot disagree with the scope gate; an explicit v2 outside the
@@ -6429,6 +6632,12 @@ fn execute_update_inner_v1(
     training_math.record_v1(&mut result);
     if let Some(record) = &input_contract {
         result["input_contract"] = json!(record);
+    }
+    // Present only under `collection_policy_lag_v1`: what the batch was
+    // played on (`source` and `before_state_sha256` stay the update's input).
+    if let Some(options) = &collection_policy_lag {
+        result["collection_policy_lag_v1"] = json!({"lag": 1, "behaviour": options.behaviour,
+            "behaviour_state_sha256": behaviour_state_sha256});
     }
     if let Some(frozen) = frozen_tensor_sha256 {
         // The update's scorer-bias gauge (the step refuses a residual beyond
@@ -8147,6 +8356,7 @@ pub(crate) mod tests {
             archive_distillation: None,
             training_math: TrainingMathV1::PlatformLibm,
             input_contract: None,
+            collection_policy_lag_v1: None,
         };
         (policy, model, saved)
     }
@@ -11515,6 +11725,7 @@ pub(crate) mod tests {
             let trajectories: Vec<PinnedFileV1> =
                 serde_json::from_value(collect_result["trajectories"].clone()).unwrap();
             let update_result = execute_v1(ExpandedTrainingCommandV1::Update {
+                collection_policy_lag_v1: None,
                 line_b: None,
                 source: source.clone(),
                 trajectories,
@@ -11896,6 +12107,7 @@ pub(crate) mod tests {
         };
         let update = |trajectories, math, name: &str| {
             execute_v1(ExpandedTrainingCommandV1::Update {
+                collection_policy_lag_v1: None,
                 line_b: None,
                 source: source.clone(),
                 trajectories,
@@ -12330,6 +12542,7 @@ pub(crate) mod tests {
                 })
                 .unwrap();
                 let receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+                    collection_policy_lag_v1: None,
                     source: source.clone(),
                     trajectories: serde_json::from_value(collected["trajectories"].clone())
                         .unwrap(),
@@ -13097,6 +13310,7 @@ pub(crate) mod tests {
         };
         let update = |label: &str, teacher: Option<LineBTeacherOptionsV1>| {
             execute_v1(ExpandedTrainingCommandV1::Update {
+                collection_policy_lag_v1: None,
                 source: source.clone(),
                 trajectories: trajectories.clone(),
                 learning_rate: 0.0003,
@@ -13569,6 +13783,7 @@ pub(crate) mod tests {
             selection_transition_cap: 128,
         };
         let ordinary = execute_v1(ExpandedTrainingCommandV1::Update {
+            collection_policy_lag_v1: None,
             source: source.clone(),
             trajectories: trajectories.clone(),
             learning_rate: 0.0001,

@@ -128,6 +128,7 @@ fn checkpoint_of(
         archive_distillation: None,
         training_math: TrainingMathV1::PlatformLibm,
         input_contract,
+        collection_policy_lag_v1: None,
     }
 }
 
@@ -1561,6 +1562,8 @@ fn run_config(
         ex1: None,
         record_process_cpu: false,
         chain_ledger: None,
+        collection_policy_lag_v1: 0,
+        collection_policy_lag_carry_v1: None,
         output_directory,
     }
 }
@@ -1602,6 +1605,7 @@ fn converted_run_end_to_end_v1() {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(collection["trajectories"].clone()).unwrap();
     let update = execute_v1(ExpandedTrainingCommandV1::Update {
+        collection_policy_lag_v1: None,
         source: base.clone(),
         trajectories: trajectories.clone(),
         learning_rate: 0.0003,
@@ -1797,6 +1801,7 @@ fn converted_run_end_to_end_v1() {
 
     // Only the ordinary CPU update: an auxiliary (line (b)) update is refused.
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        collection_policy_lag_v1: None,
         source: converted.clone(),
         trajectories: vec![PinnedFileV1 {
             path: root.join("unused.json"),

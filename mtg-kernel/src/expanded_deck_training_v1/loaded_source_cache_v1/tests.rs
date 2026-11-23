@@ -130,6 +130,7 @@ fn write_checkpoint(
         archive_distillation: None,
         training_math: TrainingMathV1::PlatformLibm,
         input_contract: None,
+        collection_policy_lag_v1: None,
     };
     let directory = root.join("update-0000");
     fs::create_dir_all(&directory).unwrap();

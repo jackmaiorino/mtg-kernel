@@ -705,6 +705,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
     let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
     let (_, behavior, _) = replay_fixture(&mut policy, None, 0, &[0]);
     let command = ExpandedTrainingCommandV1::Update {
+        collection_policy_lag_v1: None,
         line_b: None,
         source: behavior.source.clone(),
         trajectories: vec![],
@@ -730,6 +731,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
             .unwrap()
     );
     let explicit = ExpandedTrainingCommandV1::UpdatePrepared {
+        collection_policy_lag_v1: None,
         line_b: None,
         source: behavior.source,
         trajectories: vec![],
