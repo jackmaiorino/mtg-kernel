@@ -370,6 +370,15 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c7b_v1::C7bStateV1::is_empty"
     )]
     pub c7b: crate::eternal_cube_c7b_v1::C7bStateV1,
+    /// Vintage Cube wave C7c's state: per-color cast mana, The Wondrous
+    /// Wasp's ability removals, Woodfall Primus's persist entry counters, and
+    /// Guardian Scalelord's backup-granted attack triggers
+    /// (`eternal_cube_c7c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c7c_v1::C7cStateV1::is_empty"
+    )]
+    pub c7c: crate::eternal_cube_c7c_v1::C7cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -455,6 +464,8 @@ pub enum EternalTriggerV1 {
     C5bV1(crate::eternal_cube_c5b_v1::C5bTriggerV1),
     /// Vintage Cube wave C6a's graveyard and exile conditions.
     C6aV1(crate::eternal_cube_c6a_v1::C6aTriggerV1),
+    /// Vintage Cube wave C7c's per-color cast mana and Persist conditions.
+    C7cV1(crate::eternal_cube_c7c_v1::C7cTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -784,6 +795,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 }
                 EternalTriggerV1::C5bV1(condition) => {
                     crate::eternal_cube_c5b_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::C7cV1(condition) => {
+                    crate::eternal_cube_c7c_v1::arrival_condition(condition)
                 }
                 _ => false,
             },
@@ -1343,6 +1357,11 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     }
     // Legolas's Quick Reflexes' trigger, granted to any creature (wave E9a).
     if let Some(spec) = crate::eternal_legacy_e9a_v1::granted_trigger_target_spec(effect) {
+        return Some(spec);
+    }
+    // Guardian Scalelord's Backup 1 attack trigger, granted to any creature
+    // (Vintage Cube wave C7c).
+    if let Some(spec) = crate::eternal_cube_c7c_v1::granted_trigger_target_spec(effect) {
         return Some(spec);
     }
     match name {
@@ -2178,6 +2197,8 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_cube_c2a_v1::apply_entry(state, object);
     // Baloth Prime's six stun counters (Vintage Cube wave C5a).
     crate::eternal_cube_c5a_v1::apply_entry(state, object, input);
+    // Woodfall Primus's Persist -1/-1 entry counter (Vintage Cube wave C7c).
+    crate::eternal_cube_c7c_v1::apply_entry_counters(state, object, input);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -2441,6 +2462,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c5c_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c6c_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c7b_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c7c_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2487,6 +2509,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     if crate::eternal_legacy_e7a_v1::granted_trigger_effect(effect)
         || crate::eternal_pauper_e8b_v1::granted_trigger_effect(effect)
         || crate::eternal_legacy_e9a_v1::granted_trigger_effect(effect)
+        || crate::eternal_cube_c7c_v1::granted_trigger_effect(effect)
     {
         return true;
     }
@@ -2599,6 +2622,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1q_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1a_v1::begin_turn(state, player);
     crate::eternal_cube_c6c_v1::begin_turn(state, player);
+    crate::eternal_cube_c7c_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2714,6 +2738,13 @@ pub(crate) fn trigger_matches(
             condition, events, index, source, state,
         );
     }
+    // Wave C7c's conditions check their own source (Persist matches a card
+    // that just moved to the graveyard).
+    if let EternalTriggerV1::C7cV1(condition) = condition {
+        return crate::eternal_cube_c7c_v1::trigger_matches(
+            condition, events, index, source, state,
+        );
+    }
     let Some(name) = definition_name(state, source) else {
         return false;
     };
@@ -2741,7 +2772,8 @@ pub(crate) fn trigger_matches(
         | EternalTriggerV1::E7bV1(_)
         | EternalTriggerV1::E8aV1(_)
         | EternalTriggerV1::C4bV1(_)
-        | EternalTriggerV1::C5bV1(_) => false,
+        | EternalTriggerV1::C5bV1(_)
+        | EternalTriggerV1::C7cV1(_) => false,
         EternalTriggerV1::E7aV1(condition) => {
             crate::eternal_legacy_e7a_v1::trigger_matches(condition, events, index, source, state)
         }

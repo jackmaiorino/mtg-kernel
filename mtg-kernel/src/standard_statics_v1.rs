@@ -191,9 +191,10 @@ pub(crate) fn reads_counter_lki(card_def: u16) -> bool {
                 | "Blast Zone"
         )
     ) || (cfg!(feature = "eternal-fixtures")
-        && CARD_DEFS
-            .get(card_def as usize)
-            .is_some_and(|def| crate::eternal_legacy_e8a_v1::statics::reads_counter_lki(def.name)))
+        && CARD_DEFS.get(card_def as usize).is_some_and(|def| {
+            crate::eternal_legacy_e8a_v1::statics::reads_counter_lki(def.name)
+                || crate::eternal_cube_c7c_v1::reads_counter_lki(def.name)
+        }))
 }
 
 /// Generic ward costs other permanents grant `id`, one entry per granting

@@ -346,6 +346,7 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         S::TappedCreatureV1 => Single,
         S::UpToTwoLandsV1 => SharedRoster,
         S::OpponentPlaneswalkerV1 => Single,
+        S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => NoPermanentSlot,
     }
 }
 

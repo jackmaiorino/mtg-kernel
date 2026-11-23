@@ -12706,9 +12706,14 @@ fn loyalty_ability_activated_this_turn(state: &GameState, source: ObjectId) -> b
     object.v4.ability_uses_this_turn.iter().any(|entry| {
         entry.ability_kind == AbilityKindV4::Activated
             && entry.uses > 0
-            && abilities
+            && (abilities
                 .get(usize::from(entry.ability_index))
                 .is_some_and(card_def::ActivatedAbilityDef::is_loyalty_ability)
+                || (cfg!(feature = "eternal-fixtures")
+                    && (entry.ability_index
+                        == u16::from(crate::eternal_cube_c7c_v1::LURKER_GRANTED_INDEX)
+                        || (usize::from(entry.ability_index) == abilities.len()
+                            && object_has_type(state, source, CardType::Planeswalker)))))
     })
 }
 
@@ -13748,6 +13753,22 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         {
                             out.push((id, index));
                         }
+                    }
+                }
+                // Sanctum Lurker (Vintage Cube wave C7c): its controller's
+                // planeswalkers have a [+2] loyalty ability at dedicated
+                // index `LURKER_GRANTED_INDEX`.
+                #[cfg(feature = "eternal-fixtures")]
+                if let Some(granted) = crate::eternal_cube_c7c_v1::granted_lurker_ability(state, id)
+                {
+                    if !crate::standard_cards_v1::activations_locked(state, id)
+                        && (sorcery_speed_timing_ok(player, state)
+                            || crate::eternal_cube_c6c_v1::emperor_instant_loyalty(state, id))
+                        && !loyalty_ability_activated_this_turn(state, id)
+                        && can_pay_activation_components(granted.cost, player, id, state)
+                        && activation_target_prefix_can_complete(id, &granted, &[], state)
+                    {
+                        out.push((id, crate::eternal_cube_c7c_v1::LURKER_GRANTED_INDEX));
                     }
                 }
                 // Rain of Filth (eternal wave E8a): its lands have
@@ -19136,6 +19157,7 @@ pub(crate) fn validate_pending_trigger(
                     | TargetSpec::UpToOneOtherControlledPermanent
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | crate::eternal_sideboard_s1o_v1::EOWYN_TARGET
+                    | crate::eternal_cube_c7c_v1::SCALELORD_TARGET
             ) {
             completable_next_targets_for_controller_and_source(
                 expected,
@@ -25881,6 +25903,12 @@ pub(crate) fn resolved_activated_ability(
         return Some(*ability);
     }
     #[cfg(feature = "eternal-fixtures")]
+    if ability_index == crate::eternal_cube_c7c_v1::LURKER_GRANTED_INDEX {
+        if let Some(granted) = crate::eternal_cube_c7c_v1::granted_lurker_ability(state, source) {
+            return Some(granted);
+        }
+    }
+    #[cfg(feature = "eternal-fixtures")]
     if usize::from(ability_index) == def.activated_abilities.len() {
         if let Some(retained) = crate::eternal_legacy_e7a_v1::retained_stage_ability(state, source)
         {
@@ -25998,6 +26026,16 @@ fn resolved_stack_activated_ability(
                 ability_index,
             )
         {
+            return Ok(granted);
+        }
+    }
+    // Sanctum Lurker's granted loyalty ability (Vintage Cube wave C7c).
+    #[cfg(feature = "eternal-fixtures")]
+    if granted_by.is_none() {
+        if let Some(granted) = crate::eternal_cube_c7c_v1::granted_lurker_ability_on_stack(
+            host_contract,
+            ability_index,
+        ) {
             return Ok(granted);
         }
     }
@@ -29856,7 +29894,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                 // Glimmer Lens counts every declared attacker.
                 || crate::eternal_cube_c4c_v1::observes_attacks(state)
                 // Okoye watches the creature her trigger chose.
-                || crate::eternal_cube_c4b_v1::observes_attacks(state)));
+                || crate::eternal_cube_c4b_v1::observes_attacks(state)
+                // Guardian Scalelord's Backup 1 grants an attack trigger.
+                || crate::eternal_cube_c7c_v1::observes_attacks(state)));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if cfg!(all(
@@ -31100,6 +31140,8 @@ fn finalize_owned_cast(
     let colored_mana_spent = payment.spends_colored_mana(state, pending.controller);
     #[cfg(feature = "eternal-fixtures")]
     let colors_spent = payment.colors_spent(state, pending.controller);
+    #[cfg(feature = "eternal-fixtures")]
+    let mana_by_color = payment.mana_by_color(state, pending.controller);
     // Arena of Glory: a creature spell paid with its exerted mana gains
     // haste.
     #[cfg(feature = "eternal-fixtures")]
@@ -31145,6 +31187,8 @@ fn finalize_owned_cast(
     muldrotha_v1::record_cast(state, &pending)?;
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_lurrus_v1::note_colors_spent(state, pending.spell, colors_spent);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c7c_v1::note_mana_by_color(state, pending.spell, mana_by_color);
     // Lurrus of the Dream-Den's permission is used once the cast is paid.
     #[cfg(feature = "eternal-fixtures")]
     if pending.origin_zone == Zone::Graveyard && cast_method == CastMethodV4::Normal {

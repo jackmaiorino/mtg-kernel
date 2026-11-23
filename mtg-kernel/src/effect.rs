@@ -8021,8 +8021,14 @@ pub(crate) fn validated_definition_owned_root_effect(
                     .iter()
                     .any(|chapter| chapter() == *root)
             });
+        let is_eternal_delayed = cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::delayed_effect_matches(
+                crate::card_def::CARD_DEFS[card_def as usize].name,
+                &root,
+            );
         if crate::standard_creature_choices_v1::trigger_target_spec(card_def, &root).is_none()
             && !is_saga_chapter
+            && !is_eternal_delayed
             && !crate::trigger::triggers_for(card_def)
                 .iter()
                 .any(|trigger| {
@@ -19129,6 +19135,8 @@ pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKin
         "Deep-Cavern Bat" => Some(LinkedHandExileKind::UntilSourceLeaves),
         #[cfg(feature = "eternal-fixtures")]
         "Thought-Knot Seer" => Some(LinkedHandExileKind::ExiledV1),
+        #[cfg(feature = "eternal-fixtures")]
+        "Tidehollow Sculler" => Some(LinkedHandExileKind::ReturnTrigger),
         _ => None,
     }
 }

@@ -190,6 +190,9 @@ fn c7b(op: C7bOpV1) -> EffectOp {
 const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {
     TriggeredAbilityDef {
         condition,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
         face_index: 0,
         effect,
     }
