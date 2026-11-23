@@ -35,7 +35,7 @@ jobs:
   build:
     # Build artifacts only. Native qualification runs separately on an admitted host.
     if: >-
-      github.repository == 'jackmaiorino/mtg-kernel' &&
+      (github.repository == 'jackmaiorino/mtg-kernel' || github.repository == 'mtg-kernel/mtg-kernel') &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
