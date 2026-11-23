@@ -3805,6 +3805,7 @@ pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16
     #[cfg(feature = "eternal-fixtures")]
     if let Some(value) =
         crate::eternal_premodern_p1a_v1::statics::split_spell_mana_value(state, item)
+            .or_else(|| crate::eternal_cube_c8a_v1::modal_back_face_stack_mana_value(state, item))
     {
         return value;
     }
@@ -19362,9 +19363,13 @@ fn log_final_targeting_events(
         crate::faebloom_trick_v43::record_target_input(state, stack_item_id, targeted_event)?;
     }
     // "Becomes the target" triggers of players and permanents (Cephalid
-    // Illusionist, Loki, God of Mischief; eternal wave E9a).
+    // Illusionist, Loki, God of Mischief; eternal wave E9a; Bonecrusher
+    // Giant; Vintage Cube wave C8a).
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_legacy_e9a_v1::note_targeting(state, item);
+    {
+        crate::eternal_legacy_e9a_v1::note_targeting(state, item);
+        crate::eternal_cube_c8a_v1::note_targeting(state, item);
+    }
     // A copy is neither cast nor put on the stack by its controller's
     // announcement, so retargeting one never commits a crime.
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -24659,9 +24664,11 @@ fn unpainted_object_color_mask(state: &GameState, id: ObjectId) -> u8 {
         return 0;
     }
     // Wild Mongrel's chosen color; a split card's half on the stack
-    // (eternal wave P1a).
+    // (eternal wave P1a); modal DFC back-face cast (Vintage Cube wave C8a).
     #[cfg(feature = "eternal-fixtures")]
-    if let Some(mask) = crate::eternal_premodern_p1a_v1::statics::color_override(state, id) {
+    if let Some(mask) = crate::eternal_premodern_p1a_v1::statics::color_override(state, id)
+        .or_else(|| crate::eternal_cube_c8a_v1::color_override(state, id))
+    {
         return mask;
     }
     if let Some(object) = state.objects.try_get(id) {
@@ -30021,7 +30028,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                 // Okoye watches the creature her trigger chose.
                 || crate::eternal_cube_c4b_v1::observes_attacks(state)
                 // Guardian Scalelord's Backup 1 grants an attack trigger.
-                || crate::eternal_cube_c7c_v1::observes_attacks(state)));
+                || crate::eternal_cube_c7c_v1::observes_attacks(state)
+                // Emeritus of Abundance's intervening-if 8-land attack trigger.
+                || crate::eternal_cube_c8a_v1::observes_attacks(state)));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if cfg!(all(

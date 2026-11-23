@@ -335,6 +335,8 @@ pub enum E3ChoiceKindV1 {
     Pf1bV1(crate::eternal_pauper_pf1b_v1::Pf1bChoiceV1),
     /// A Vintage Cube wave C7a choice (`eternal_cube_c7a_v1`).
     C7aV1(crate::eternal_cube_c7a_v1::C7aChoiceV1),
+    /// A Vintage Cube wave C8a choice (`eternal_cube_c8a_v1`).
+    C8aV1(crate::eternal_cube_c8a_v1::C8aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -448,6 +450,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C7aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C8aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -537,6 +542,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::Pf1aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::Pf1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C7aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C8aV1(kind) => kind.public_purpose(),
         }
     }
 
@@ -582,6 +588,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::P1aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::Pf1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C7aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C8aV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -1003,6 +1010,13 @@ pub(crate) fn finish_selection(
             bindings,
         ),
         E3ChoiceKindV1::C7aV1(kind) => crate::eternal_cube_c7a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C8aV1(kind) => crate::eternal_cube_c8a_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -1913,14 +1927,20 @@ pub(crate) fn play_land_back_face(state: &mut GameState, player: PlayerId, card:
     }
 }
 
-/// The mana value of a permanent showing a modal double-faced card's land
-/// face, which has no mana cost. `None` for every other object.
+/// The mana value of a permanent showing a modal double-faced card's back
+/// face (0 for land faces, 6 for The Sensational She-Hulk). `None` for every
+/// other object.
 pub(crate) fn back_face_mana_value(state: &GameState, object: ObjectId) -> Option<u16> {
     let live = state.objects.try_get(object)?;
-    (live.zone == Zone::Battlefield
-        && live.v4.face_index == 1
-        && has_land_back_face(CARD_DEFS.get(live.card_def as usize)?.name))
-    .then_some(0)
+    if live.zone != Zone::Battlefield || live.v4.face_index != 1 {
+        return None;
+    }
+    let name = CARD_DEFS.get(live.card_def as usize)?.name;
+    if has_land_back_face(name) {
+        Some(0)
+    } else {
+        crate::eternal_cube_c8a_v1::back_face_mana_value(name)
+    }
 }
 
 // ---- Cavern of Souls -------------------------------------------------------------
@@ -2924,17 +2944,19 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     }
 }
 
-/// Fungi Cavern's -4/-0 on `object`, until its holder's next turn.
+/// Fungi Cavern's -4/-0 and Jace, Telepath Unbound's -2/-0 on `object`, until
+/// their holders' next turns.
 pub(crate) fn power_modifier(state: &GameState, object: ObjectId) -> i32 {
+    let c8a_mod = crate::eternal_cube_c8a_v1::power_modifier(state, object);
     let Some(e3) = e3(state) else {
-        return 0;
+        return c8a_mod;
     };
     if !state
         .objects
         .try_get(object)
         .is_some_and(|live| live.zone == Zone::Battlefield)
     {
-        return 0;
+        return c8a_mod;
     }
     let entry = link(state, object);
     let count = e3
@@ -2942,7 +2964,7 @@ pub(crate) fn power_modifier(state: &GameState, object: ObjectId) -> i32 {
         .iter()
         .filter(|effect| effect.object == entry)
         .count();
-    -4 * i32::try_from(count).unwrap_or(i32::MAX / 4)
+    (-4 * i32::try_from(count).unwrap_or(i32::MAX / 4)).saturating_add(c8a_mod)
 }
 
 /// Twisted Caverns: `object` can't attack until its holder's next turn.

@@ -37733,7 +37733,7 @@
   },
   {
    "name": "Bonecrusher Giant",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -37755,12 +37755,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "adventure",
+    "direct_damage",
+    "damage_cant_be_prevented",
+    "targeted_trigger"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BonecrusherGiant.java"
   },
   {
    "name": "Concealing Curtains",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
@@ -37782,12 +37787,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "defender",
+    "transform",
+    "menace",
+    "hand_disruption",
+    "draw_card"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/ConcealingCurtains.java"
   },
   {
    "name": "Jace, Vryn's Prodigy",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -37811,13 +37822,24 @@
     "vintage-cube"
    ],
    "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/j/JaceVrynsProdigy.java"
+   "complexity": "complex",
+   "mechanics": [
+    "tap_ability",
+    "draw_card",
+    "discard",
+    "transform",
+    "planeswalker",
+    "loyalty_abilities",
+    "graveyard_casting",
+    "emblem",
+    "mill"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/j/JaceVrynsProdigy.java",
+   "starting_loyalty": 5
   },
   {
    "name": "Jennifer Walters",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -37842,12 +37864,20 @@
     "vintage-cube"
    ],
    "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": []
+   "complexity": "complex",
+   "mechanics": [
+    "spell_restriction",
+    "transform",
+    "modal_dfc",
+    "reach",
+    "trample",
+    "damage_trigger",
+    "direct_damage"
+   ]
   },
   {
    "name": "Emeritus of Abundance",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -37870,11 +37900,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "vigilance",
+    "prepared",
+    "attack_trigger"
+   ]
   },
   {
    "name": "Emeritus of Ideation",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{U}{U}",
    "mana_value": 5,
    "colors": [
@@ -37897,7 +37931,13 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "flying",
+    "ward",
+    "prepared",
+    "attack_trigger",
+    "exile_graveyard"
+   ]
   },
   {
    "name": "Phantasmal Image",
@@ -38278,7 +38318,7 @@
   },
   {
    "name": "Regrowth",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [

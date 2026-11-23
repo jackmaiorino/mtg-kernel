@@ -6048,6 +6048,10 @@ fn materialize_event_v1(
             } else {
                 crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
             }
+            #[cfg(feature = "eternal-fixtures")]
+            if !mode.is_scene() {
+                crate::eternal_cube_c8a_v1::note_damage_dealt(state, d.target, d.amount);
+            }
             CommittedEvent::Damage {
                 source: d.source,
                 target: d.target,
@@ -6062,6 +6066,8 @@ fn materialize_event_v1(
             crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8a_v1::adjust_zone_change(state, &mut z);
             // Dauthi Voidwalker exiles instead, with a void counter.
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_e9b_v1::replace_zone_change(state, &mut z, !mode.is_scene());

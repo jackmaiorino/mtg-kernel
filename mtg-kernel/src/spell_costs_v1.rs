@@ -1365,6 +1365,13 @@ fn selected_spell_quote_branch_grant_v1(
     // Sneak and disturb: the costs each card may be cast for.
     #[cfg(feature = "eternal-fixtures")]
     if !crate::eternal_pauper_e6b_v1::quote_allowed(state, definition, source, origin_zone, method)
+        || !crate::eternal_cube_c8a_v1::quote_allowed(
+            state,
+            definition,
+            source,
+            origin_zone,
+            method,
+        )
     {
         return None;
     }

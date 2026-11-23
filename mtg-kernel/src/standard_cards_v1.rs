@@ -488,6 +488,8 @@ pub enum StandardTargetV1 {
     /// Guardian Scalelord: a nonland permanent card in your graveyard with
     /// mana value at most the attacking creature's power.
     NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1,
+    /// Regrowth (Vintage Cube wave C8a): "target card from your graveyard".
+    CardInOwnGraveyardV1,
 }
 
 impl StandardTargetV1 {
@@ -705,6 +707,7 @@ impl StandardTargetV1 {
                 | Self::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
                 | Self::CreatureCardInAGraveyardV1
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
+                | Self::CardInOwnGraveyardV1
         ) || crate::eternal_sideboard_s1d_v1::targets::in_graveyard(self)
             || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
             || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
@@ -1450,6 +1453,12 @@ pub(crate) fn target_matches(
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
+    if target == StandardTargetV1::CardInOwnGraveyardV1 {
+        return live.zone == Zone::Graveyard
+            && live.owner == controller
+            && !live.v4.is_token
+            && live.spell_copy_origin.is_none();
+    }
     if target == StandardTargetV1::ArtifactThenArtifactCardInItsControllersGraveyardV1 {
         return match live.zone {
             Zone::Battlefield => crate::engine::object_has_type(state, object, CardType::Artifact),
@@ -1703,7 +1712,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::OpponentPlaneswalkerV1 => {
             live.controller == controller.opponent() && has(CardType::Planeswalker)
         }
-        StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => false,
+        StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1
+        | StandardTargetV1::CardInOwnGraveyardV1 => false,
     }
 }
 
@@ -4718,6 +4728,12 @@ pub(crate) fn graveyard_cast_granted_without_retrace(
                     zone_change_count,
                 )
                 || crate::eternal_legacy_e8a_v1::statics::hogaak_permission(
+                    state,
+                    object,
+                    holder,
+                    zone_change_count,
+                )
+                || crate::eternal_cube_c8a_v1::jace_graveyard_permission(
                     state,
                     object,
                     holder,

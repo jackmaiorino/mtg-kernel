@@ -685,6 +685,11 @@ fn selected_spell_name(def: &CardDef, method: CastMethodV4) -> Option<&'static s
             Some(crate::card_def::AltCostCondition::DisturbV1) => {
                 return def.transform_face.as_ref().map(|back| back.name);
             }
+            Some(crate::card_def::AltCostCondition::Always)
+                if def.name == crate::eternal_cube_c8a_v1::JENNIFER_WALTERS =>
+            {
+                return def.transform_face.as_ref().map(|back| back.name);
+            }
             _ => {}
         }
     }

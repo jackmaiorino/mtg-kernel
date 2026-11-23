@@ -388,6 +388,15 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c7c_v1::C7cStateV1::is_empty"
     )]
     pub c7c: crate::eternal_cube_c7c_v1::C7cStateV1,
+    /// Vintage Cube wave C8a's state: Bonecrusher Giant spell-target triggers,
+    /// Jace, Telepath Unbound power debuffs, graveyard cast permissions and
+    /// emblems, and The Sensational She-Hulk damage triggers and once-per-turn
+    /// usage (`eternal_cube_c8a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c8a_v1::C8aStateV1::is_empty"
+    )]
+    pub c8a: crate::eternal_cube_c8a_v1::C8aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -2509,6 +2518,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c7a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c7b_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c7c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c8a_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2673,6 +2683,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_cube_c6c_v1::begin_turn(state, player);
     crate::eternal_cube_c7a_v1::begin_turn(state, player);
     crate::eternal_cube_c7c_v1::begin_turn(state, player);
+    crate::eternal_cube_c8a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2937,6 +2948,7 @@ pub(crate) fn exiled_instead_of_graveyard(
     // Burning Wish exiles itself.
     if crate::eternal_pauper_e6a_v1::rebounds_on_departure(state, item)
         || crate::eternal_legacy_e7a_v1::exiles_on_departure(state, item)
+        || crate::eternal_cube_c8a_v1::exiles_on_departure(state, item)
     {
         return true;
     }
