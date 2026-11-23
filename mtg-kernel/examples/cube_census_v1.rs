@@ -131,7 +131,12 @@ fn mix(parts: &[u64]) -> u64 {
 }
 
 /// Two decks of `size` cards: `(ids, names with counts)` per seat.
-fn deal_decks(pool: &Pool, seed: u64, game: u64, size: usize) -> [(Vec<u16>, Vec<(String, u32)>); 2] {
+fn deal_decks(
+    pool: &Pool,
+    seed: u64,
+    game: u64,
+    size: usize,
+) -> [(Vec<u16>, Vec<(String, u32)>); 2] {
     let (spell_count, land_count) = if size == 40 { (23, 2) } else { (36, 4) };
     let mut rng = SplitMix64::seed(mix(&[seed, game, 1]));
     let mut taken_spells = vec![false; pool.spells.len()];
@@ -183,7 +188,13 @@ fn deck_json(rows: &[(String, u32)]) -> Value {
 
 fn names(rows: &[(String, u32)]) -> Vec<String> {
     rows.iter()
-        .map(|(name, count)| if *count == 1 { name.clone() } else { format!("{count} {name}") })
+        .map(|(name, count)| {
+            if *count == 1 {
+                name.clone()
+            } else {
+                format!("{count} {name}")
+            }
+        })
         .collect()
 }
 
@@ -225,7 +236,12 @@ fn play_jsonl40(pool: &Pool, seed: u64, game: u64, caps: &Caps) -> Value {
     .to_string();
     let mut trace = caps.trace.as_ref().map(|path| {
         let mut file = std::fs::File::create_new(path).expect("fresh --trace file");
-        writeln!(file, "{}", json!({"game": game, "decks": [names(&decks[0].1), names(&decks[1].1)]})).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"game": game, "decks": [names(&decks[0].1), names(&decks[1].1)]})
+        )
+        .unwrap();
         file
     });
     let started = Instant::now();
@@ -284,11 +300,21 @@ fn play_jsonl40(pool: &Pool, seed: u64, game: u64, caps: &Caps) -> Value {
             by_seat[0] += 1;
         }
         *kinds
-            .entry(action["semantic"]["action_kind"].as_str().unwrap_or("?").to_owned())
+            .entry(
+                action["semantic"]["action_kind"]
+                    .as_str()
+                    .unwrap_or("?")
+                    .to_owned(),
+            )
             .or_default() += 1;
         if let Some(file) = trace.as_mut() {
-            writeln!(file, "{}", json!({"n": decisions, "legal": count, "action": brief(action),
-                "semantic": action["semantic"]})).unwrap();
+            writeln!(
+                file,
+                "{}",
+                json!({"n": decisions, "legal": count, "action": brief(action),
+                "semantic": action["semantic"]})
+            )
+            .unwrap();
             file.flush().unwrap();
         }
         recent.push(brief(action));
@@ -326,7 +352,7 @@ fn play_fast60(pool: &Pool, seed: u64, game: u64, caps: &Caps) -> Value {
         game, env_seed, 65536, 131072,
         ["cube-smoke-0".to_owned(), "cube-smoke-1".to_owned()],
         [decks[0].0.clone(), decks[1].0.clone()],
-        if game % 2 == 0 { PlayerId::P0 } else { PlayerId::P1 },
+        if game.is_multiple_of(2) { PlayerId::P0 } else { PlayerId::P1 },
     );
     let mut session = match reset {
         Ok(session) => session,
@@ -416,8 +442,15 @@ fn play_actor60(snapshot: &Value, model: &ModelV2, seed: u64, game: u64, caps: &
         mix(&[seed, game, 2]),
         (65536, 131072),
         [first.to_owned(), second.to_owned()],
-        [snapshot_mainboard(snapshot, first), snapshot_mainboard(snapshot, second)],
-        if (game / 9) % 2 == 0 { PlayerId::P0 } else { PlayerId::P1 },
+        [
+            snapshot_mainboard(snapshot, first),
+            snapshot_mainboard(snapshot, second),
+        ],
+        if (game / 9).is_multiple_of(2) {
+            PlayerId::P0
+        } else {
+            PlayerId::P1
+        },
     );
     let mut session = match reset {
         Ok(session) => session,
@@ -488,7 +521,11 @@ fn play_actor60(snapshot: &Value, model: &ModelV2, seed: u64, game: u64, caps: &
         legal_sum += count;
         legal_max = legal_max.max(count);
         // Sample from the softmax of the untrained logits.
-        let top = scored.logits.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let top = scored
+            .logits
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
         let weights: Vec<f64> = scored.logits.iter().map(|l| (l - top).exp()).collect();
         let total: f64 = weights.iter().sum();
         let mut point = (rng.next_u64() >> 11) as f64 / (1u64 << 53) as f64 * total;
@@ -591,7 +628,12 @@ fn structure(pool: &Pool) -> Vec<Value> {
         }
         let id = index as u16;
         let mut modes = Vec::new();
-        for mode in def.mode2.iter().chain(def.mode3.iter()).chain(def.additional_modes) {
+        for mode in def
+            .mode2
+            .iter()
+            .chain(def.mode3.iter())
+            .chain(def.additional_modes)
+        {
             modes.push(json!({"target": format!("{:?}", mode.target_spec),
                 "effect": format!("{:?}", (mode.effect)())}));
         }
@@ -637,7 +679,10 @@ fn structure(pool: &Pool) -> Vec<Value> {
             ("animation", def.animation.is_some()),
             ("enters_tapped", def.enters_battlefield_tapped),
             ("loyalty", def.starting_loyalty.is_some()),
-            ("mana_ability", (def.mana_ability)().is_some() || def.mana_ability_def.is_some()),
+            (
+                "mana_ability",
+                (def.mana_ability)().is_some() || def.mana_ability_def.is_some(),
+            ),
         ] {
             if on {
                 present.push(name);
@@ -660,7 +705,10 @@ fn structure(pool: &Pool) -> Vec<Value> {
 }
 
 fn arg(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|at| args.get(at + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|at| args.get(at + 1))
+        .cloned()
 }
 
 fn main() {
@@ -677,6 +725,17 @@ fn main() {
         max_seconds: arg(&args, "--max-seconds").map_or(300.0, |v| v.parse().unwrap()),
         trace: arg(&args, "--trace"),
     };
+    assert!(
+        caps.trace.is_none() || (games <= 1 && workers == 1),
+        "--trace records one game on one worker"
+    );
+    assert!(
+        matches!(
+            mode.as_str(),
+            "jsonl40" | "fast60" | "actor60" | "census" | "structure"
+        ),
+        "unknown --mode {mode}"
+    );
     let pool = load_pool(&cube, &gaps);
     if mode == "census" {
         println!("{}", census(&pool));
@@ -689,7 +748,10 @@ fn main() {
         for row in &rows {
             writeln!(file, "{row}").unwrap();
         }
-        println!("{}", json!({"mode": "structure", "rows": rows.len(), "out": path}));
+        println!(
+            "{}",
+            json!({"mode": "structure", "rows": rows.len(), "out": path})
+        );
         return;
     }
     let snapshot: Option<Value> = arg(&args, "--snapshot")
@@ -715,16 +777,21 @@ fn main() {
                         break;
                     }
                     let t0 = Instant::now();
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        match mode.as_str() {
-                            "jsonl40" => play_jsonl40(pool, seed, game, caps),
-                            "fast60" => play_fast60(pool, seed, game, caps),
-                            "actor60" => {
-                                play_actor60(snapshot.as_ref().expect("--snapshot"), model, seed, game, caps)
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            match mode.as_str() {
+                                "jsonl40" => play_jsonl40(pool, seed, game, caps),
+                                "fast60" => play_fast60(pool, seed, game, caps),
+                                "actor60" => play_actor60(
+                                    snapshot.as_ref().expect("--snapshot"),
+                                    model,
+                                    seed,
+                                    game,
+                                    caps,
+                                ),
+                                other => panic!("unknown mode {other}"),
                             }
-                            other => panic!("unknown mode {other}"),
-                        }
-                    }));
+                        }));
                     let mut row = match result {
                         Ok(row) => row,
                         Err(payload) => {
@@ -742,8 +809,12 @@ fn main() {
                         }
                     };
                     row["worker"] = json!(worker);
-                    let mut file = out.lock().unwrap();
-                    writeln!(file, "{row}").unwrap();
+                    // One write per receipt, so a worker that dies mid-run never leaves half a line.
+                    let line = format!(
+                        "{row}
+"
+                    );
+                    out.lock().unwrap().write_all(line.as_bytes()).unwrap();
                 })
                 .unwrap();
         }

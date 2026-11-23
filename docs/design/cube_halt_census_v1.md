@@ -2,7 +2,7 @@
 
 How often a 40-card Vintage Cube game fails to end naturally on the kernel, by cause, with a replayable game for each cause. Part of #710. Measurement only: no engine change.
 
-**Setup.** Main at `f7bc11ddd`, `eternal-fixtures` build, card database `9d7ddc19b3906513`. The driver is `mtg-kernel/examples/cube_census_v1.rs`. Each game deals two random 40-card decks from the cube cards the gap record does not list: two colours per seat, 23 nonland cards drawn inside those colours (colourless allowed), 2 nonbasic lands and 15 basics, and no card in both decks. The games run through the custom-deck JSON session at schema 5, uniform over the legal menu, with seed 20261122 for games 0 to 239,999. They ran in 12 separate worker processes, so a process death costs one game.
+**Setup.** Main at `f7bc11ddd`, `eternal-fixtures` build, card database `9d7ddc19b3906513`. The driver is `mtg-kernel/examples/cube_census_v1.rs`. Each game deals two random 40-card decks from the cube cards the gap record does not list: two colours per seat, 23 nonland cards drawn inside those colours (colourless allowed), 2 nonbasic lands drawn from all cube lands regardless of colour, and 15 basics split 8 and 7 between the two colours. No cube card is in both decks; basics can be. The games run through the custom-deck JSON session at schema 5, uniform over the legal menu, with seed 20261122 for games 0 to 239,999. They ran in 12 separate worker processes, so a process death costs one game.
 
 Natural 226,265 (94.28%); not natural 13,735 (5.72%). 4,183 games per core-hour (12 worker processes).
 
