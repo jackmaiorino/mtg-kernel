@@ -93,7 +93,7 @@ const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> Trigg
 
 /// Uktabi Orangutan: "When Uktabi Orangutan enters, destroy target
 /// artifact."
-fn orangutan_destroy() -> EffectOp {
+pub(crate) fn orangutan_destroy() -> EffectOp {
     EffectOp::DestroyObject {
         object: ObjectRef::Target(0),
     }

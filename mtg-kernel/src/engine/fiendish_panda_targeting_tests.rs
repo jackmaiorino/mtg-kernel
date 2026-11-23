@@ -6,6 +6,7 @@ fn source_for(state: &GameState, source: ObjectId) -> TargetingSource {
     let object = state.objects.get(source);
     TargetingSource {
         dungeon_colors: None,
+        full_text_departure: None,
         types_override: None,
         object: source,
         card_def: object.card_def,
