@@ -169,6 +169,16 @@ EVERY_POOL = {"vars.MTG_CI_WINDOWS_RUNNER": json.dumps(WINDOWS_POOL), "vars.MTG_
               "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL), "vars.MTG_CI_LINUX_GROUPS": '["eternal", "workspace-targets"]'}
 
 
+# Jobs on MTG_CI_DETECT_RUNNER: light, generic jobs whose runner does not depend on the matrix.
+LIGHT_JOBS = ("detect-changes", "rust-tests")
+DETECT_POOL = ["self-hosted", "fleet-mac-linux"]
+LIGHT = {"vars.MTG_CI_DETECT_RUNNER": json.dumps(DETECT_POOL), "vars.MTG_CI_SELF_HOSTED_ACTORS": ALLOWED}
+
+
+def by(actor, triggering=None, **context):
+    return {"github.actor": actor, "github.triggering_actor": triggering or actor, **context}
+
+
 class EvaluatorTests(unittest.TestCase):
     def test_operators_follow_github_semantics(self):
         self.assertEqual(evaluate("a == 'x' && fromJSON(b) || c", a="X", b='["p", "q"]', c="hosted"), ["p", "q"])
@@ -178,6 +188,16 @@ class EvaluatorTests(unittest.TestCase):
         self.assertFalse(evaluate("contains(fromJSON(list || '[]'), item)", item="k"))
         with self.assertRaises(ValueError):
             evaluate("a ? b : c")
+
+    def test_and_or_short_circuit_and_string_functions(self):
+        self.assertEqual(evaluate("a && fromJSON(b) || 'hosted'", b="not json"), "hosted")
+        with self.assertRaises(ValueError):
+            evaluate("a && fromJSON(b) || 'hosted'", a="x", b="not json")
+        self.assertTrue(evaluate("startsWith(a, '[') && endsWith(a, ']') && contains(a, format('\"{0}\"', b))",
+                                 a='["Who"]', b="who"))
+        self.assertFalse(evaluate("startsWith(a, '[')"))
+        self.assertTrue(evaluate("contains(fromJSON(a), b)", a='["Who"]', b="wHO"))
+        self.assertFalse(evaluate("contains(fromJSON(a), b)", a='[{"who": true}, ["who"]]', b="who"))
 
 
 class RoutingTests(unittest.TestCase):
@@ -190,12 +210,14 @@ class RoutingTests(unittest.TestCase):
         return evaluate(self.groups, **{"matrix.os": system, "matrix.group": group, **context})
 
     def test_every_expression_that_reads_a_setting_is_found(self):
-        self.assertEqual(sorted(self.expressions), ["limited-build", "python-env-build", "python-tests",
-                                                    "rust-limited-groups", "rust-test-groups"])
+        self.assertEqual(sorted(self.expressions), ["detect-changes", "limited-build", "python-env-build", "python-tests",
+                                                    "rust-limited-groups", "rust-test-groups", "rust-tests"])
 
     def test_a_fork_pull_request_always_runs_on_hosted_runners(self):
         fork = event(head="someone/fork", **EVERY_POOL)
         for name, expression in self.expressions.items():
+            if name in LIGHT_JOBS:
+                continue
             for system in ("ubuntu-24.04", "windows-2025"):
                 for group in ("eternal", "workspace-targets", "standard"):
                     with self.subTest(job=name, system=system, group=group):
@@ -226,8 +248,10 @@ class RoutingTests(unittest.TestCase):
             for name, expression in self.expressions.items():
                 for system in ("ubuntu-24.04", "windows-2025"):
                     with self.subTest(job=name, system=system, event=untrusted["github.event_name"]):
+                        expected = "ubuntu-24.04" if name in LIGHT_JOBS else system
                         self.assertEqual(evaluate(expression, **{"matrix.os": system, "matrix.group": "eternal",
-                                                                 **untrusted, **EVERY_POOL}), system)
+                                                                 "vars.MTG_CI_DETECT_RUNNER": json.dumps(DETECT_POOL),
+                                                                 **EVERY_POOL, **untrusted}), expected)
 
     def test_a_non_string_member_never_admits_a_coerced_name(self):
         # Array contains() compares loosely (true == '1', null == '0', 100 == '1e2'); the rejoin check refuses any
@@ -358,6 +382,102 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **EVERY_POOL,
                                     **{"inputs.windows_runner": '"windows-2025"'}), "windows-2025")
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event()), "windows-2025")
+
+
+class LightJobRoutingTests(unittest.TestCase):
+    """detect-changes and the rust-tests gate: self-hosted only for a listed actor's trusted event."""
+
+    @classmethod
+    def setUpClass(cls):
+        expressions = runs_on_expressions()
+        cls.light = {name: expressions[name] for name in LIGHT_JOBS}
+
+    def assertRoutes(self, expected, **context):
+        for name, expression in self.light.items():
+            for system in ("ubuntu-24.04", "windows-2025"):
+                with self.subTest(job=name, system=system):
+                    self.assertEqual(evaluate(expression, **{"matrix.os": system, **context}), expected)
+
+    def test_both_jobs_share_one_expression(self):
+        self.assertEqual(len(set(self.light.values())), 1)
+        self.assertNotIn("repository_owner", self.light["detect-changes"])
+
+    def test_unset_variable_keeps_the_hosted_runner(self):
+        for trusted in (event(), event("push"), event("workflow_dispatch")):
+            with self.subTest(event=trusted["github.event_name"]):
+                self.assertRoutes("ubuntu-24.04", **{**trusted, **by(OWNER)})
+                self.assertRoutes("ubuntu-24.04", **{**trusted, **by(OWNER), **EVERY_POOL,
+                                                     "vars.MTG_CI_SELF_HOSTED_ACTORS": LIGHT["vars.MTG_CI_SELF_HOSTED_ACTORS"]})
+                self.assertRoutes("ubuntu-24.04", **{**trusted, **by(OWNER), **LIGHT, "vars.MTG_CI_DETECT_RUNNER": ""})
+
+    def test_a_listed_actor_runs_on_the_named_runner(self):
+        for trusted in (event(), event("push"), event("workflow_dispatch")):
+            for actor in (OWNER, "helper", "MAINTAINER"):
+                with self.subTest(event=trusted["github.event_name"], actor=actor):
+                    self.assertRoutes(DETECT_POOL, **{**trusted, **by(actor), **LIGHT})
+
+    def test_an_unlisted_actor_stays_hosted(self):
+        for actor, triggering in (("someone", None), ("maintaine", None), ("maintainer2", None), ("", None),
+                                  (OWNER, "someone"), ("someone", OWNER)):
+            with self.subTest(actor=actor, triggering=triggering):
+                self.assertRoutes("ubuntu-24.04", **{**event(), **by(actor, triggering), **LIGHT})
+                self.assertRoutes("ubuntu-24.04", **{**event("push"), **by(actor, triggering), **LIGHT})
+
+    def test_a_fork_pull_request_stays_hosted_even_for_a_listed_actor(self):
+        self.assertRoutes("ubuntu-24.04", **{**event(head="someone/fork"), **by(OWNER), **LIGHT})
+        self.assertRoutes("ubuntu-24.04", **{**event(head="someone/fork"), **by("someone"), **LIGHT})
+
+    def test_an_empty_or_unbracketed_list_admits_nobody_without_an_error(self):
+        # A bare JSON string would make contains() a substring test, so the value must be bracketed.
+        for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
+                      f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]', f'["{OWNER}","helper"]',
+                      f'["{OWNER}" , "helper"]', f'["{OWNER}",  "helper"]'):
+            with self.subTest(value=value):
+                self.assertRoutes("ubuntu-24.04", **{**event(), **by(OWNER), **LIGHT,
+                                                     "vars.MTG_CI_SELF_HOSTED_ACTORS": value})
+
+    def test_a_non_string_member_never_admits_a_coerced_name(self):
+        # Array contains() compares loosely: true == '1', null == '0', 100 == '1e2'. The rejoin check refuses
+        # any list with a non-string member, so such a list admits nobody (GitHub's parser also reads [010]
+        # as [8]; a number never survives the rejoin either way).
+        for value, actor in ((f'["{OWNER}", true]', "1"), (f'["{OWNER}", null]', "0"), (f'["{OWNER}", 100]', "1e2"),
+                             (f'["{OWNER}", 8]', "8"), (f'["{OWNER}", ["1"]]', "1")):
+            with self.subTest(value=value):
+                listed = {**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value}
+                self.assertTrue(evaluate("contains(fromJSON(list), name)", list=value, name=actor) or "[" in value[2:])
+                self.assertRoutes("ubuntu-24.04", **{**event(), **by(OWNER, actor), **listed})
+                self.assertRoutes("ubuntu-24.04", **{**event(), **by(OWNER), **listed})
+
+    def test_only_the_exact_list_form_admits(self):
+        for value in (f'["{OWNER}"]', f'["{OWNER}", "helper"]', f'["helper", "{OWNER}"]', f'["{OWNER.upper()}"]'):
+            with self.subTest(value=value):
+                self.assertRoutes(DETECT_POOL, **{**event(), **by(OWNER), **LIGHT,
+                                                  "vars.MTG_CI_SELF_HOSTED_ACTORS": value})
+
+    def test_a_bracketed_invalid_list_fails_closed(self):
+        # GitHub fails the job when fromJSON cannot parse: the job never reaches a self-hosted runner. A fork
+        # pull request or an unset runner variable never parses the list, so stays hosted. (Any other event,
+        # listed or not, parses it and fails closed.)
+        for value in (f"[{OWNER}]", f'["{OWNER}" garbage]'):
+            with self.subTest(value=value):
+                bad = {**LIGHT, "vars.MTG_CI_SELF_HOSTED_ACTORS": value}
+                for expression in self.light.values():
+                    with self.assertRaises(ValueError):
+                        evaluate(expression, **{**event(), **by(OWNER), **bad})
+                self.assertRoutes("ubuntu-24.04", **{**event(head="someone/fork"), **by(OWNER), **bad})
+                self.assertRoutes("ubuntu-24.04", **{**event(), **by(OWNER), **bad, "vars.MTG_CI_DETECT_RUNNER": ""})
+
+    def test_other_routing_variables_do_not_move_the_light_jobs(self):
+        self.assertRoutes("ubuntu-24.04", **{**event("push"), **by(OWNER), **EVERY_POOL})
+
+
+class DetectStepTests(unittest.TestCase):
+    def test_the_group_set_step_works_without_the_github_cli(self):
+        block = job_block("detect-changes", "rust-quality")
+        self.assertIn("if command -v gh > /dev/null 2>&1; then", block)
+        self.assertIn("python3 tools/ci/pr_lookup.py open-pr-head", block)
+        self.assertIn('python3 tools/ci/pr_lookup.py pr-files "$1"', block)
+        self.assertEqual(block.count("gh api"), 2)
 
 
 def job_block(name, following):

@@ -1249,11 +1249,7 @@ pub(crate) fn drive(
         }
         E9bOpV1::DenialMayDrawV1 { player } => {
             // The countered spell's controller chooses and draws.
-            let who = if *player == controller {
-                PlayerRef::Controller
-            } else {
-                PlayerRef::Opponent
-            };
+            let who = denial_drawer(controller, *player);
             push_frame(
                 continuation,
                 EffectOp::Choice {
@@ -1721,6 +1717,7 @@ pub(crate) fn finish_selection(
                 .is_some_and(|def| def.has_type(CardType::Land));
             let permission = crate::engine::PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1(!land),
+                any_mana_type: Default::default(),
                 object: card.object,
                 holder: choice.player,
                 zone_change_generation: live.zone_change_count,
@@ -1905,6 +1902,14 @@ fn denial_triggers(state: &mut GameState) {
             false,
         );
         queue_trigger(state, source, record.controller, draw_one(), false);
+    }
+}
+
+pub(crate) fn denial_drawer(controller: PlayerId, drawer: PlayerId) -> PlayerRef {
+    if drawer == controller {
+        PlayerRef::Controller
+    } else {
+        PlayerRef::Opponent
     }
 }
 

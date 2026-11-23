@@ -5209,13 +5209,14 @@ fn validate_batch_commit_execution(
     let capture = batch_capture_at(state, commit.capture, &answer.before.path)?;
     validate_multiplier_batch_gains(state, capture, &commit.outcomes, previous_index, index)
 }
-fn cannot_prevent(state: &GameState) -> bool {
+fn cannot_prevent(state: &GameState, damage: &DamageProposed) -> bool {
     state.engine.until_end_of_turn.iter().any(|e| {
         matches!(
             e,
             crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
         )
-    })
+    }) || (cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
 }
 pub(crate) fn applicable(state: &GameState, damage: &DamageProposed) -> Vec<PreventionV1> {
     applicable_after(state, damage, &Default::default())
@@ -5235,7 +5236,7 @@ fn applicable_after(
         return Vec::new();
     }
     let mut options = Vec::new();
-    if !cannot_prevent(state) {
+    if !cannot_prevent(state, damage) {
         if let Target::Object(target) = damage.target {
             if !damage.is_combat {
                 options.extend(

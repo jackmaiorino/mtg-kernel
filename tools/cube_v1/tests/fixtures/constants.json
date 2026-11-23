@@ -1,0 +1,8 @@
+{
+  "deck_size": 10,
+  "colours_per_seat": 2,
+  "nonland_spells": 5,
+  "nonbasic_lands": 2,
+  "basic_split": "even_first_colour_extra",
+  "pairs_per_update": 4
+}

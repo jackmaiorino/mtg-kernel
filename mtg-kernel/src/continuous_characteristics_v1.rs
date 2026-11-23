@@ -119,6 +119,12 @@ fn removal_timestamp_with(
         } else {
             None
         })
+        .chain(if cfg!(feature = "eternal-fixtures") {
+            // The Wondrous Wasp's target (Vintage Cube wave C7c).
+            crate::eternal_cube_c7c_v1::removal_timestamp(state, host)
+        } else {
+            None
+        })
         .max()
 }
 

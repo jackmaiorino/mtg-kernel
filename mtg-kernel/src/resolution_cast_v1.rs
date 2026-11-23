@@ -72,8 +72,17 @@ pub(super) fn free_cast_for(state: &GameState, source: ObjectId, controller: Pla
         }
         Zone::Stack => object.v4.spell_cast_origin.is_some_and(|origin| {
             // Mad Wizard's Lair casts a hand card for free during a
-            // resolution.
-            (origin.origin_zone == Zone::Exile
+            // resolution; Malcolm casts the discarded graveyard card for free;
+            // Chandra, Torch of Defiance pays the exiled card's mana cost.
+            let paid_exile = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Exile
+                && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, source);
+            let free_graveyard = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Graveyard
+                && matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })
+                && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, source);
+            ((origin.origin_zone == Zone::Exile && !paid_exile)
+                || free_graveyard
                 || (cfg!(feature = "eternal-fixtures")
                     && origin.origin_zone == Zone::Hand
                     && matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })))
@@ -133,6 +142,11 @@ fn live(state: &GameState, binding: EffectObjectBinding) -> bool {
 /// Whether `source` is being cast, or announced, from its owner's graveyard
 /// under a resolving instruction that pays its costs (Bilbo).
 pub(super) fn graveyard_resolution_cast(state: &GameState, source: ObjectId) -> bool {
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, source)
+    {
+        return false;
+    }
     let Some(object) = state.objects.try_get(source) else {
         return false;
     };
@@ -269,7 +283,10 @@ pub(super) fn form_completable(
 ) -> bool {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let room = crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Normal).is_some();
-    if room && pending.cast_mode.is_none() {
+    let chandra_alt = cfg!(feature = "eternal-fixtures")
+        && def.alt_cost.is_some()
+        && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, pending.spell);
+    if (room || chandra_alt) && pending.cast_mode.is_none() {
         return [CastMode::Normal, CastMode::Alternative]
             .into_iter()
             .any(|mode| {
@@ -287,7 +304,7 @@ pub(super) fn form_completable(
             (CastMethodV4::Omen, types, Keywords::NONE)
         } else if form == 1 && supported_bestow(def).is_some() {
             return false;
-        } else if room && pending.cast_mode == Some(CastMode::Alternative) {
+        } else if (room || chandra_alt) && pending.cast_mode == Some(CastMode::Alternative) {
             (CastMethodV4::Alternative, def.types, def.keywords)
         } else {
             (CastMethodV4::Normal, def.types, def.keywords)
@@ -817,6 +834,7 @@ mod tests {
             play_or_cast: PlayOrCast::Cast,
             expiry: PlayPermissionExpiry::EndOfTurn,
             without_mana_cost: FreeCastV1(true),
+            any_mana_type: Default::default(),
         });
     }
     fn bind(state: &GameState, source: ObjectId) -> EffectObjectBinding {

@@ -52,8 +52,8 @@ use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1, StandardTriggerV1};
 use crate::state::{
-    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, SpellCastRouteV4,
-    StackItemKind, Step, Target, Zone,
+    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, StackItemKind, Step, Target,
+    Zone,
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
@@ -115,9 +115,14 @@ pub struct E7bStateV1 {
     /// Wrenn and Six emblems each player has.
     #[serde(default, skip_serializing_if = "no_emblems")]
     pub wrenn_emblems: [u8; 2],
-    /// The player whose draw-step draw waits for their dredge choice.
+    /// The player whose draw-step draw waits for their dredge or competing
+    /// replacement choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dredge_draw: Option<PlayerId>,
+    /// Remaining draws in the active draw step when a replacement choice
+    /// suspends a multi-draw turn-based draw (e.g. Quantum Riddler).
+    #[serde(default, skip_serializing_if = "OptionalRemainingV1::is_none")]
+    pub draw_step_remaining: OptionalRemainingV1,
     /// Spells whose control Commandeer changed, with the player who cast
     /// them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -138,6 +143,27 @@ pub struct E7bStateV1 {
 
 fn no_emblems(emblems: &[u8; 2]) -> bool {
     emblems[0] == 0 && emblems[1] == 0
+}
+
+/// Optional remaining draw-step draw count that hashes zero bytes when `None`,
+/// preserving every existing snapshot and state hash outside multi-draw turn
+/// draws (Quantum Riddler).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OptionalRemainingV1(pub Option<u32>);
+
+impl OptionalRemainingV1 {
+    pub(crate) fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl std::hash::Hash for OptionalRemainingV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(remaining) = self.0 {
+            remaining.hash(state);
+        }
+    }
 }
 
 impl E7bStateV1 {
@@ -396,6 +422,9 @@ const ENROOT: &str = "Enroot";
 /// Vintage Cube wave C4b's prepare creature and its spell.
 const POMPOUS_BATTLEMAGE: &str = "Pompous Battlemage";
 const IMPROVISED_ACT: &str = "Improvised Act";
+/// Pauper field wave Pf1b's prepare creature and its spell.
+const ELITE_INTERCEPTOR: &str = "Elite Interceptor";
+const REJOINDER: &str = "Rejoinder";
 const CREEPING_CHILL: &str = "Creeping Chill";
 const DACK_FAYDEN: &str = "Dack Fayden";
 const GOLGARI_GRAVE_TROLL: &str = "Golgari Grave-Troll";
@@ -889,6 +918,11 @@ pub(crate) fn pending_retrace(state: &GameState, pending: &crate::engine::Pendin
             .source_contract
             .spell_cast_origin
             .is_some_and(|origin| {
+                if origin.origin_zone == Zone::Graveyard
+                    && origin.route == crate::state::SpellCastRouteV4::RetraceV1
+                {
+                    return retrace_permission(state, pending.spell, pending.controller);
+                }
                 origin.origin_zone == Zone::Graveyard
                     && matches!(
                         origin.route,
@@ -1707,6 +1741,7 @@ fn ragavan(state: &mut GameState, ctx: &ExecCtx) {
         .exile_play_permissions
         .push(crate::engine::PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1(false),
+            any_mana_type: Default::default(),
             object: top,
             holder: ctx.controller,
             zone_change_generation,
@@ -1752,6 +1787,7 @@ fn golos(state: &mut GameState, player: PlayerId) {
             .exile_play_permissions
             .push(crate::engine::PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1(true),
+                any_mana_type: Default::default(),
                 object: card,
                 holder: player,
                 zone_change_generation,
@@ -2429,11 +2465,7 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
                         casts.push(link);
                     }
                 }
-                Some(URO)
-                    if cast_origin.is_some_and(|origin| {
-                        origin.route == SpellCastRouteV4::GraveyardEscape
-                    }) =>
-                {
+                Some(URO) if cast_origin.is_some_and(|origin| origin.route.is_escape()) => {
                     let casts = &mut e7b_state(state).escaped_casts;
                     if !casts.contains(&link) {
                         casts.push(link);
@@ -2569,7 +2601,7 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                 .is_some_and(|live| live.zone == Zone::Battlefield)
                 && matches!(
                     definition_name(state, object),
-                    Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+                    Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE | ELITE_INTERCEPTOR)
                 )
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
             {
@@ -2613,7 +2645,7 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
         // its abilities (Dress Down) does not enter prepared.
         if matches!(
             definition_name(state, object),
-            Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+            Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE | ELITE_INTERCEPTOR)
         ) && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
         {
             prepare(state, object);
@@ -2640,10 +2672,10 @@ fn prepare(state: &mut GameState, creature: ObjectId) {
         return;
     }
     let controller = state.objects.get(creature).controller;
-    let printing = if definition_name(state, creature) == Some(POMPOUS_BATTLEMAGE) {
-        IMPROVISED_ACT
-    } else {
-        ENROOT
+    let printing = match definition_name(state, creature) {
+        Some(POMPOUS_BATTLEMAGE) => IMPROVISED_ACT,
+        Some(ELITE_INTERCEPTOR) => REJOINDER,
+        _ => ENROOT,
     };
     let card_def = token_id(printing);
     let copy = state.objects.push(crate::state::GameObject {
@@ -2744,6 +2776,7 @@ fn maintain_prepared(state: &mut GameState) {
                     // grant for a turn that never comes.
                     permissions.push(crate::engine::PlayPermission {
                         without_mana_cost: crate::engine::FreeCastV1::default(),
+                        any_mana_type: Default::default(),
                         object: copy,
                         holder,
                         zone_change_generation: generation,

@@ -64,6 +64,14 @@ class TableTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(command.replace("cd python/tools/tests && ", "").split(" && ")[-1], joined)
 
+    def test_every_tools_dir_has_a_command_in_tools_commands(self):
+        for name in ci_scope.TOOLS_DIRS:
+            with self.subTest(tool=name):
+                self.assertTrue(
+                    any(re.search(rf"-s tools/{re.escape(name)}(?:/|\s)", command) for command in ci_scope.TOOLS_COMMANDS),
+                    f"tools/{name} is in TOOLS_DIRS but missing from TOOLS_COMMANDS",
+                )
+
     def test_the_trainer_record_names_every_bit_identity_row_and_the_merge_condition(self):
         record = ci_scope.trainer_record()
         for row in ci_scope.BIT_IDENTITY_ROWS:
@@ -82,6 +90,7 @@ class ScopeTests(unittest.TestCase):
                                      "python/tools/nine_deck_public_panel_v1.py", "tools/ex1/target_ref.py"):
             self.assertEqual(self.scope(read_by_python_tests), "python")
         self.assertEqual(self.scope("tools/stage4a/report.py"), "tools")
+        self.assertEqual(self.scope("tools/cube_v1/deal.py"), "tools")
         self.assertEqual(self.scope("tools/reach/plan.py"), "python")          # its tests are in python/tests
         self.assertEqual(self.scope("python/tests/test_x.py", "python/tools/foo.py"), "python")
         self.assertEqual(self.scope("mtg-kernel/src/native_expanded_training_run_v1.rs",

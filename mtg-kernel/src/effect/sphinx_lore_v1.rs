@@ -507,12 +507,6 @@ pub(crate) fn active_grants(state: &GameState, id: ObjectId, player: PlayerId) -
         })
         .collect()
 }
-pub(crate) fn granted_route(state: &GameState, id: ObjectId) -> Option<u64> {
-    match state.objects.try_get(id)?.v4.spell_cast_origin?.route {
-        SpellCastRouteV4::SphinxLoreFlashbackV1 { installation, .. } => Some(installation),
-        _ => None,
-    }
-}
 pub(crate) fn validate_cast_grant(
     state: &GameState,
     id: ObjectId,
