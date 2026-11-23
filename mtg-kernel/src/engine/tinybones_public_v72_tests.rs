@@ -179,5 +179,37 @@ fn genuine_foreign_paid_play_and_real_suppression_keep_printed_cost_and_current_
     }
 }
 
+#[test]
+fn deferred_resolution_play_tinybones_trigger_stays_held_and_validates_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (mut s, tiny, card) = setup(p, "Think Twice");
+        activate_to_discard(&mut s, p, tiny, card);
+        act(&mut s, Action::Discard(vec![card]));
+        let deferred = s.engine.pending_triggers.split_off(0);
+        assert_eq!(deferred.len(), 1);
+        s.standard_v1
+            .get_or_insert_with(Default::default)
+            .resolution_play = Some(crate::engine::resolution_cast_v1::ResolutionPlayV1 {
+            parent: crate::ids::StackItemId(99),
+            parent_index: 0,
+            suspended: None,
+            permission: None,
+            deferred_triggers: deferred,
+            kicked_source: None,
+            authorization: None,
+        });
+        validate_state(&s).unwrap();
+        let restored = restore(&s);
+        validate_state(&restored).unwrap();
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let f = capture(&restored, viewer);
+            assert!(f
+                .triggers
+                .iter()
+                .any(|t| t.stage == facts::StageV72::Held && t.native_position == Some(0)));
+        }
+    }
+}
+
 #[path = "tinybones_roster_v72_tests.rs"]
 mod roster;

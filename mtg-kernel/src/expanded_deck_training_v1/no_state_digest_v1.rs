@@ -1031,7 +1031,7 @@ fn continue_state_v1(
 
 /// The stored bits of a checkpoint's W, m and v digest columns are +0.0 and
 /// its state encoder bias has no -0.0.
-fn check_saved_columns_v1<T: CheckpointTensorV1>(
+pub(super) fn check_saved_columns_v1<T: CheckpointTensorV1>(
     saved: &ExpandedCheckpointV1<T>,
 ) -> Result<(), String> {
     for (list, what) in [

@@ -308,6 +308,7 @@ pub(crate) fn held(state: &GameState) -> Vec<&crate::trigger::PendingTrigger> {
                 .iter()
                 .flat_map(|p| p.waiting_triggers()),
         )
+        .chain(crate::rl::dredge_waiting_triggers(state))
         .chain(
             state
                 .standard_v1

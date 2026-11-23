@@ -548,7 +548,7 @@ pub(super) fn after_discard(
     };
     let index = push(state, JournalV72::Discarded(record));
     for (observer, source) in observers.into_iter().enumerate() {
-        state.engine.pending_triggers.push(PendingTrigger {
+        let pending = PendingTrigger {
             controller: source.controller,
             source: source.source,
             source_contract: Some(source),
@@ -565,7 +565,15 @@ pub(super) fn after_discard(
             placement_ordered: false,
             optional_additional_cost_paid: None,
             paid_cost_refs: vec![],
-        });
+        };
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state) {
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, vec![pending]);
+        } else {
+            state.engine.pending_triggers.push(pending);
+        }
+        #[cfg(not(feature = "eternal-fixtures"))]
+        state.engine.pending_triggers.push(pending);
     }
 }
 fn discard(state: &GameState, index: u64) -> Result<&DiscardV72, String> {
@@ -1205,10 +1213,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             JournalV72::Discarded(_) => {
                 let d = discard(state, at as u64)?;
                 for observer in 0..d.observers.len() {
-                    let pending = state
-                        .engine
-                        .pending_triggers
-                        .iter()
+                    let pending = crate::optional_trigger_public_v1::held(state)
+                        .into_iter()
                         .filter(|p| {
                             p.effect
                                 == EffectOp::TinybonesStashV72 {
@@ -1527,7 +1533,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for p in &state.engine.pending_triggers {
+    for p in crate::optional_trigger_public_v1::held(state) {
         if let EffectOp::TinybonesStashV72 {
             discard: index,
             observer,

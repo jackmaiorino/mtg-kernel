@@ -929,6 +929,13 @@ impl EternalOpV1 {
     pub(crate) fn drives_in_resumable(&self) -> bool {
         self.contains_player_choice()
             || owned_draws_v1::recognizes(self)
+            || matches!(
+                self,
+                EternalOpV1::E5aV1(
+                    crate::eternal_e5a_v1::E5aOpV1::ExileGraveyardTargetsAfterDrawV1 { .. }
+                        | crate::eternal_e5a_v1::E5aOpV1::ExileCreatureAfterDrawV1 { .. }
+                )
+            )
             || matches!(self, EternalOpV1::OwnedDrawCompletedV1 { .. } | EternalOpV1::EnterRoomV1 { .. })
             || matches!(self, EternalOpV1::DelayedUpkeepDrawV1)
             || matches!(self, EternalOpV1::E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1::EchoOfEonsV1))
@@ -1914,16 +1921,34 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if live.zone != Zone::Battlefield
                 || live.zone_change_count != contract.zone_change_count
                 || live.v4.face_index != 0
-                || CARD_DEFS[live.card_def as usize].transform_face.is_none()
+                || CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_none_or(|def| def.transform_face.is_none())
             {
                 return;
             }
             let owner = live.owner;
+            let Some(exile_generation) = live.zone_change_count.checked_add(1) else {
+                return;
+            };
             event::propose_and_commit(
                 state,
                 ProposedEvent::zone_change(contract.source, Zone::Exile),
             );
-            if state.objects.get(contract.source).zone == Zone::Exile {
+            // Leaving the battlefield may clear a copied definition. Only this
+            // exile incarnation, with a permanent back face, can return (712.11a).
+            if state.engine.halted.is_none()
+                && state
+                    .objects
+                    .try_get(contract.source)
+                    .is_some_and(|exiled| {
+                        exiled.zone == Zone::Exile
+                            && exiled.zone_change_count == exile_generation
+                            && exiled.owner == owner
+                            && !exiled.v4.is_token
+                            && event::battlefield_back_face_v1(exiled.card_def).is_some()
+                    })
+            {
                 event::propose_and_commit(
                     state,
                     ProposedEvent::transformed_battlefield_return(contract.source, 1, owner),
