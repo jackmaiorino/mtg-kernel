@@ -2259,3 +2259,190 @@ fn london_keep_offset_is_refused_by_the_other_update_entry_points() {
     assert_eq!(helper.require_no_london_keep_offset_v1(), Err(expected));
     assert_eq!(helper.london_keep_offset_v1(), None);
 }
+
+/// Every other form of the GAE step refuses a set offset from inside the
+/// shared GAE core: line (b), off-batch rows (TP1 Stage B, EX1 and W5), the
+/// recovery loss and the imitation seam. Each refusal clears the setting and
+/// leaves the state unchanged.
+#[test]
+fn london_keep_offset_is_refused_by_every_other_form_of_the_gae_step() {
+    use crate::line_b_teacher_target_v1::LineBDivergenceV1;
+    use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let expected = NativePolicyTrainErrorV1::LondonKeepOffset {
+        code: "london-keep-offset-requires-plain-gae",
+    };
+    let armed = || {
+        let mut state = base.clone();
+        state.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+        state
+    };
+    let refused =
+        |state: &NativePolicyValueTrainStateV1, error: NativePolicyTrainErrorV1, form: &str| {
+            assert_eq!(error, expected, "{form}");
+            assert_eq!(state.london_keep_offset_v1(), None, "{form}");
+            assert_eq!(state_bits(state), state_bits(&base), "{form}");
+        };
+    // Line (b), with roots in the batch.
+    let target = line_b_target(&fixture);
+    let line_b = line_b_input(
+        LineBDivergenceV1::Forward,
+        0.7,
+        [Some(target.clone()), Some(target.clone())],
+    );
+    let mut state = armed();
+    let config = state.model.feature_transfer_config_v3();
+    let error = state
+        .train_step_gae_line_b_v1(
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            config,
+            &line_b,
+        )
+        .unwrap_err();
+    refused(&state, error, "line (b)");
+    // Off-batch rows.
+    let external = archive_distillation_v1::ExternalAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 0.7,
+        denominator: 2,
+        cap: None,
+        step_telemetry: false,
+        policy_mask: Vec::new(),
+        rows: (0..2)
+            .map(|_| archive_distillation_v1::ExternalAuxiliaryRowV1 {
+                encoded: encoded_decision_view_v3(&fixture.tensors[1]),
+                target: &target,
+            })
+            .collect(),
+    };
+    let mut state = armed();
+    let error = state
+        .train_step_gae_external_auxiliary_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &external,
+        )
+        .unwrap_err();
+    refused(&state, error, "off-batch rows");
+    // The recovery loss.
+    let mut state = armed();
+    let error = state
+        .train_step_gae_recovery_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            0.01,
+            1,
+            false,
+        )
+        .unwrap_err();
+    refused(&state, error, "recovery");
+    // The imitation seam.
+    let mut state = armed();
+    let error = state
+        .train_step_terminal_winner_imitation_v4(&groups, LR, 1)
+        .unwrap_err();
+    refused(&state, error, "imitation");
+}
+
+/// Each CPU entry point that calls the shared helper refuses a set offset
+/// before it reads its inputs, clears the setting and leaves the state
+/// unchanged: the E-supported and soft-target (SQ1) steps, the
+/// archive-distillation auxiliary-only step and retained imitation.
+#[test]
+fn london_keep_offset_is_refused_by_each_cpu_entry_that_calls_the_shared_helper() {
+    use crate::native_policy_train_step_v1::{ESupportedPolicyInputV1, SoftTargetPolicyInputV1};
+    use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let expected = NativePolicyTrainErrorV1::LondonKeepOffset {
+        code: "london-keep-offset-requires-plain-gae",
+    };
+    let armed = || {
+        let mut state = base.clone();
+        state.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+        state
+    };
+    let untouched = |state: &NativePolicyValueTrainStateV1, entry: &str| {
+        assert_eq!(state.london_keep_offset_v1(), None, "{entry}");
+        assert_eq!(state_bits(state), state_bits(&base), "{entry}");
+    };
+    // E-supported.
+    let mut state = armed();
+    let error = state
+        .train_step_gae_e_supported_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &ESupportedPolicyInputV1 {
+                scheduled: 0,
+                rows: vec![],
+                treatment: true,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error, expected, "E-supported");
+    untouched(&state, "E-supported");
+    // Soft targets (SQ1).
+    let mut state = armed();
+    let error = state
+        .train_step_gae_soft_targets_v1(
+            FreshLineageGenerationV1::V3,
+            &groups,
+            &LINE_B_TARGETS,
+            &LINE_B_ADVANTAGES,
+            VC,
+            LR,
+            None,
+            &SoftTargetPolicyInputV1 {
+                scheduled: 1,
+                rows: vec![],
+                coefficient: 0.5,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error, expected, "soft targets");
+    untouched(&state, "soft targets");
+    // Archive distillation's auxiliary-only step.
+    let mut state = armed();
+    let error = state
+        .train_step_auxiliary_only_v1(FreshLineageGenerationV1::V3, LR, &[])
+        .unwrap_err();
+    assert_eq!(error, expected, "archive distillation");
+    untouched(&state, "archive distillation");
+    // Retained imitation reports its refusals as text. A positive beta keeps
+    // the call off the imitation seam, whose core would refuse the offset
+    // with the same code: without this entry's own refusal the error is the
+    // empty retention set's.
+    let mut state = armed();
+    let error = state
+        .train_step_retained_imitation_v4(&groups, &[], 0.5, LR, 1)
+        .unwrap_err();
+    assert!(
+        error.contains("london-keep-offset-requires-plain-gae"),
+        "{error}"
+    );
+    untouched(&state, "retained imitation");
+}

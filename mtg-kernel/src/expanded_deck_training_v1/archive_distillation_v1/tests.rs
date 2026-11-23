@@ -3284,3 +3284,84 @@ fn retention_trace_reads_a_real_gae_run() {
     assert!(error.contains("fresh"), "{error}");
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A run under the terminal pregame advantage formed its pregame rows' credit
+/// from the terminal result, which the retention trace does not recompute, so
+/// the trace refuses the run by name before it reads a receipt. A manifest
+/// written by hand is enough: the same manifest without the key passes that
+/// check and stops at the next read.
+#[test]
+fn the_retention_trace_refuses_a_run_under_the_terminal_pregame_advantage() {
+    let root = temp_root("retention-trace-terminal");
+    let trace = |name: &str, pregame_advantage: Option<&str>| {
+        let mut loss = json!({"kind": "gae_advantage_value_v1", "gamma": 1.0,
+            "lambda": 0.9, "entropy_coefficient": 0.0});
+        if let Some(mode) = pregame_advantage {
+            loss["pregame_advantage"] = json!(mode);
+        }
+        let manifest = json!({"schema": "mtg-kernel-native-expanded-training-run/v1",
+            "config": {"loss_selection": loss}});
+        let directory = root.join(name);
+        fs::create_dir_all(&directory).unwrap();
+        execute_v1(ExpandedTrainingCommandV1::LineRetentionTrace {
+            run: write_pinned(&directory.join("run.json"), &manifest),
+            completion: write_pinned(&directory.join("completion.json"), &json!({})),
+            output_directory: directory.join("trace"),
+        })
+    };
+    let error = trace("terminal", Some("terminal_v1")).unwrap_err();
+    assert!(
+        error.contains("not the terminal pregame advantage"),
+        "{error}"
+    );
+    // The default mode gets past that check (this manifest then lacks the
+    // value coefficient), so the mode is what was refused.
+    let error = trace("default", None).unwrap_err();
+    assert!(!error.contains("pregame advantage"), "{error}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A trajectory collected under a London keep offset is not the parent's own
+/// ordinary play (its announcements were drawn from the offset policy), so it
+/// is refused as an anchor or offer trajectory. The same trajectory without
+/// the offset is admitted, with or without a London opening.
+#[test]
+fn a_parent_trajectory_with_a_london_keep_offset_is_refused() {
+    use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+    use crate::rl_session::pauper_london_v1::{
+        PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningSeatRecordV1, PauperOpeningV1,
+    };
+    let root = temp_root("parent-offset");
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+    let (mut trajectory, _, _) =
+        crate::expanded_deck_training_v1::tests::replay_fixture(&mut policy, None, 0, &[0, 1]);
+    let state_sha256 = trajectory.behavior_state_sha256.clone();
+    let read = |trajectory: &ExpandedTrajectoryV1, name: &str| {
+        let pin = write_pinned(&root.join(name), trajectory);
+        read_parent_trajectory_v1(&pin, &policy, &state_sha256, &mut BTreeSet::new())
+    };
+    read(&trajectory, "ordinary.json").unwrap();
+    // The fixture's rows are all in-game, so relabelling its episode as a
+    // London one leaves the trajectory valid.
+    trajectory.episode.opening = Some(PauperOpeningV1::LondonV1);
+    trajectory.episode.mulligan_modes = Some([PauperMulliganModeV1::Learned; 2]);
+    let seat = PauperOpeningSeatRecordV1 {
+        mode: PauperMulliganModeV1::Learned,
+        mulligans_taken: 0,
+        kept_hand_size: 7,
+        exposed_pregame_decisions: 1,
+        forced_zero_card_keep: false,
+    };
+    trajectory.opening_record = Some(PauperOpeningRecordV1 {
+        opening: PauperOpeningV1::LondonV1,
+        seats: [seat.clone(), seat],
+    });
+    read(&trajectory, "london.json").unwrap();
+    trajectory.episode.london_keep_offset = Some(LondonKeepOffsetV1::Scalar(6.5));
+    let error = read(&trajectory, "london-offset.json").unwrap_err();
+    assert!(
+        error.contains("not the parent's own ordinary play"),
+        "{error}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

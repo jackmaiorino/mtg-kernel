@@ -4526,6 +4526,116 @@ mod tests {
         }
     }
 
+    /// The update's own refusals of the two London modes, on real batches:
+    /// a keep offset trains only under the GAE loss, and the terminal pregame
+    /// advantage needs a London opening on every episode and no auxiliary
+    /// term.
+    #[test]
+    fn the_update_refuses_the_london_modes_outside_the_plain_cpu_gae_update() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::{
+            execute_v1, CheckpointRecordFormatV1, OptimizerMaskV1, PregameAdvantageV1,
+        };
+        // A keep offset under the terminal-reinforce loss: the first update
+        // refuses the batch its own collection wrote.
+        let (_offset_root, offset) = london_v7_config_v1(
+            "lv-offset-terminal-loss",
+            ExpandedLossSelectionV1::TerminalReinforceValueV3,
+            Some(LondonKeepOffsetV1::Scalar(6.5)),
+        );
+        let error = run_native_expanded_training_v1(&offset, None).unwrap_err();
+        assert!(
+            error.contains("london_keep_offset trains only on the plain CPU GAE update"),
+            "{error}"
+        );
+        // The terminal mode on episodes without a London opening.
+        let (_keep_seven_root, keep_seven) = real_two_iteration_config_v1(
+            "terminal-keep-seven",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        let error = run_native_expanded_training_v1(&keep_seven, None).unwrap_err();
+        assert!(
+            error.contains(
+                "the terminal pregame advantage requires a London opening on every episode"
+            ),
+            "{error}"
+        );
+        // The terminal mode beside an auxiliary option (line (b)'s head-only
+        // mask), on the first batch of a completed default run.
+        let (_default_root, default) = real_two_iteration_config_v1(
+            "terminal-line-b",
+            gae_loss_v1(PregameAdvantageV1::Gae),
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        let result = run_native_expanded_training_v1(&default, None).unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(iteration_update_v1(&result, 0)["trajectories"].clone())
+                .unwrap();
+        let error = execute_v1(ExpandedTrainingCommandV1::Update {
+            source: default.initial_source.clone(),
+            trajectories,
+            learning_rate: default.learning_rate,
+            value_coefficient: default.value_coefficient,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            loss_selection: gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            line_b: Some(LineBUpdateOptionsV1 {
+                optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+                teacher: None,
+            }),
+            training_math: TrainingMathV1::PlatformLibm,
+            record_format: CheckpointRecordFormatV1::V1,
+            output_directory: default.output_directory.join("refused-terminal-line-b"),
+        })
+        .unwrap_err();
+        assert!(
+            error
+                .contains("the terminal pregame advantage trains only on the plain CPU GAE update"),
+            "{error}"
+        );
+    }
+
+    /// The London modes on the run's parallel path: parallel collection
+    /// (whose collectors hand the trajectory they serialized to the run's
+    /// collection validation and to the update) and a prepared update reach
+    /// the serial run's states, with the per-count offset and the terminal
+    /// pregame advantage both on.
+    #[test]
+    fn london_modes_reach_the_serial_states_through_parallel_collection_and_a_prepared_update() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let vector = LondonKeepOffsetV1::PerCount([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5]);
+        let (_serial_root, serial) = london_v7_config_v1(
+            "lv-serial",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        let (_prepared_root, mut prepared) = london_v7_config_v1(
+            "lv-prepared",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        prepared.collection_workers = 2;
+        prepared.preparation_workers = 2;
+        prepared.validate_v1().unwrap();
+        let serial_result = run_native_expanded_training_v1(&serial, None).unwrap();
+        let prepared_result = run_native_expanded_training_v1(&prepared, None).unwrap();
+        for index in 0..2 {
+            let serial_update = iteration_update_v1(&serial_result, index);
+            let prepared_update = iteration_update_v1(&prepared_result, index);
+            assert_eq!(
+                prepared_update["after_state_sha256"], serial_update["after_state_sha256"],
+                "update {index}"
+            );
+            assert_eq!(
+                prepared_update["pregame_advantage"], serial_update["pregame_advantage"],
+                "update {index}"
+            );
+            assert!(prepared_update.get("update_preparation").is_some());
+        }
+    }
+
     #[test]
     fn loss_selection_reaches_a_real_two_iteration_cpu_run_receipt() {
         let (_root, config) = real_two_iteration_config_v1(

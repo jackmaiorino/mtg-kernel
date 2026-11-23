@@ -207,6 +207,82 @@ fn s_learner_end_to_end_v1() {
         identity.model.weights_sha256
     );
 
+    // The London keep offset and the terminal pregame advantage are the
+    // net-8 update's, and S refuses both.
+    {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        use crate::rl_session::pauper_london_v1::{
+            PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningSeatRecordV1, PauperOpeningV1,
+        };
+        // Serial collection refuses offset episodes before anything loads.
+        let mut london = episode("s-london-offset", 2_026_110_303, None);
+        london.opening = Some(PauperOpeningV1::LondonV1);
+        london.mulligan_modes = Some([PauperMulliganModeV1::Learned; 2]);
+        london.london_keep_offset = Some(LondonKeepOffsetV1::Scalar(6.5));
+        let error = collect(&s, vec![london], root.join("refused-offset-collect")).unwrap_err();
+        assert!(
+            error.contains("an S learner collection refuses the London keep offset"),
+            "{error}"
+        );
+        // The update refuses an offset-carrying trajectory. S plays no London
+        // game, so a collected trajectory is relabelled as one (its rows are
+        // all in-game, so it still validates); nothing else in it changes.
+        let mut relabelled: super::super::ExpandedTrajectoryV1 =
+            read_pinned(&trajectories[0]).unwrap();
+        relabelled.episode.opening = Some(PauperOpeningV1::LondonV1);
+        relabelled.episode.mulligan_modes = Some([PauperMulliganModeV1::Learned; 2]);
+        relabelled.episode.london_keep_offset = Some(LondonKeepOffsetV1::Scalar(6.5));
+        let seat = PauperOpeningSeatRecordV1 {
+            mode: PauperMulliganModeV1::Learned,
+            mulligans_taken: 0,
+            kept_hand_size: 7,
+            exposed_pregame_decisions: 1,
+            forced_zero_card_keep: false,
+        };
+        relabelled.opening_record = Some(PauperOpeningRecordV1 {
+            opening: PauperOpeningV1::LondonV1,
+            seats: [seat.clone(), seat],
+        });
+        let bytes = serde_json::to_vec(&relabelled).unwrap();
+        let path = root.join("relabelled-london-offset.json");
+        fs::write(&path, &bytes).unwrap();
+        let pin = PinnedFileV1 {
+            path,
+            sha256: sha(&bytes),
+        };
+        let error = update(
+            &s,
+            vec![pin],
+            gae(),
+            CheckpointRecordFormatV1::V1,
+            root.join("refused-offset-update"),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("an S learner update refuses the London keep offset"),
+            "{error}"
+        );
+        // The update refuses the terminal mode before it reads anything.
+        let error = update(
+            &s,
+            trajectories.clone(),
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+                pregame_advantage: PregameAdvantageV1::TerminalV1,
+            },
+            CheckpointRecordFormatV1::V1,
+            root.join("refused-terminal-update"),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("an S learner refuses the terminal pregame advantage"),
+            "{error}"
+        );
+    }
+
     let updated = update(
         &s,
         trajectories.clone(),
