@@ -9,7 +9,7 @@ use crate::native_expanded_training_run_v1::follow_v1::{
 };
 
 /// Documents that carry timing telemetry, or the digest of one.
-const TIMED: [&str; 5] = [
+pub(super) const TIMED: [&str; 5] = [
     "collection.json",
     "update.json",
     "update-input.json",
@@ -53,7 +53,7 @@ fn chain_base_v1(label: &str) -> (NativeExpandedTrainingRunV1, PathBuf) {
 
 /// Runs `config` on a new thread, which starts with empty thread-local
 /// loaded-source entries (the test build's cache), as a new process would.
-fn fresh_run_v1(config: &NativeExpandedTrainingRunV1) -> Result<Value, String> {
+pub(super) fn fresh_run_v1(config: &NativeExpandedTrainingRunV1) -> Result<Value, String> {
     let config = config.clone();
     std::thread::spawn(move || run_native_expanded_training_v1(&config, None))
         .join()
@@ -116,7 +116,7 @@ const TELEMETRY_KEYS: [&str; 6] = [
 /// A timed document without its telemetry: every key ending in `_seconds` or
 /// named in `TELEMETRY_KEYS` removed, and the digest of every pin to a timed
 /// document (whose bytes carry telemetry) removed.
-fn without_telemetry_v1(value: &Value) -> Value {
+pub(super) fn without_telemetry_v1(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             let pin_to_timed = map.len() == 2
@@ -231,7 +231,8 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
         assert!(!error.is_empty(), "{what}");
     };
     type ChangeV1 = (&'static str, fn(&mut NativeExpandedTrainingRunV1));
-    let changes: [ChangeV1; 14] = [
+    let changes: [ChangeV1; 15] = [
+        ("update tail overlap", |c| c.update_tail_overlap_v1 = true),
         ("learning rate", |c| c.learning_rate *= 2.0),
         ("value coefficient", |c| c.value_coefficient *= 2.0),
         ("collection workers", |c| c.collection_workers = 3),

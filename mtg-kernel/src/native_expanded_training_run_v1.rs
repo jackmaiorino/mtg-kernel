@@ -431,6 +431,18 @@ pub struct NativeExpandedTrainingRunV1 {
     /// same; it moves less memory traffic per update.
     #[serde(default, skip_serializing_if = "VerifiedReadsV1::is_reread")]
     pub verified_reads: VerifiedReadsV1,
+    /// Config-driven; absent means false, which is never serialized, so every
+    /// existing config keeps its wire bytes and its run identity. `true`
+    /// starts each next iteration's collection as soon as the finished
+    /// update's checkpoint bytes exist in memory, while that update's
+    /// checkpoint, receipts and revalidation are still being written and
+    /// checked (`update_tail_overlap_v1`). Every state and every published
+    /// byte is the same, and so are the order of commits and every stop; it
+    /// only takes that writing off the path to the next games. Parallel
+    /// collection and prepared CPU updates of ordinary runs only; it has no
+    /// effect with an external collector (`--collect-external`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub update_tail_overlap_v1: bool,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
     /// existing config, its wire bytes, and its run identity byte-identical.
     /// See `ExpandedLossSelectionV1`.
@@ -657,6 +669,23 @@ impl NativeExpandedTrainingRunV1 {
                     && self.ex1.is_none()
                     && self.initial_source.s_learner.is_none()),
             "record_envelope requires parallel collection and a prepared CPU update, without              line (b), E, SQ1, search targets, EX1 or an S learner",
+        )?;
+        // The overlap hands over between the parallel collection and the
+        // prepared update of ordinary CPU runs; every other path keeps its
+        // serial order.
+        check(
+            !self.update_tail_overlap_v1
+                || (self.collection_workers > 1
+                    && self.preparation_workers > 1
+                    && self.update_backend.is_cpu()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()
+                    && self.initial_source.s_learner.is_none()),
+            "update_tail_overlap_v1 requires parallel collection and a prepared CPU update, \
+             without line (b), E, SQ1, search targets, EX1 or an S learner",
         )?;
         if !self.training_math.is_platform_libm() {
             check(
@@ -1086,11 +1115,31 @@ fn read_pin_bounded_bytes_in_v1(
     )?;
     Ok(bytes)
 }
+#[cfg(test)]
+thread_local! {
+    /// Test-only: the receipt name whose next publication by this thread
+    /// fails, once.
+    static FAIL_PUBLISH_FOR_TEST_V1: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Test-only: the next `publish` of `name` on this thread fails before it
+/// writes anything, as a receipt that cannot be written does.
+#[cfg(test)]
+fn fail_next_publish_for_test_v1(name: &'static str) {
+    FAIL_PUBLISH_FOR_TEST_V1.with(|armed| armed.set(Some(name)));
+}
+
 fn publish(
     directory: &Path,
     name: &str,
     document: &impl Serialize,
 ) -> Result<PinnedFileV1, String> {
+    #[cfg(test)]
+    if FAIL_PUBLISH_FOR_TEST_V1.with(std::cell::Cell::get) == Some(name) {
+        FAIL_PUBLISH_FOR_TEST_V1.with(|armed| armed.set(None));
+        return Err(format!("injected failure: {name} is not published"));
+    }
     let bytes = serde_json::to_vec(document).map_err(err)?;
     check(
         bytes.len() as u64 <= SMALL_CAP,
@@ -1995,6 +2044,13 @@ pub fn run_native_expanded_training_v1(
         !root.join("completion.json").exists() || !missing_seen,
         "run completion exists with a missing iteration prefix",
     )?;
+    // `update_tail_overlap_v1`: the next iteration's collection, started by
+    // the running update's handoff. An external collector reads the durable
+    // checkpoint from disk, so with one every iteration keeps its serial
+    // order. Declared after the run lock: on every way out, the collection's
+    // thread is joined before the lock is released.
+    let overlap = config.update_tail_overlap_v1 && EXTERNAL_COLLECTOR_V1.get().is_none();
+    let mut prefetch: Option<update_tail_overlap_v1::PrefetchV1> = None;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
         let complete_path = directory.join("complete.json");
@@ -2084,23 +2140,35 @@ pub fn run_native_expanded_training_v1(
         let mut update_validation_seconds = 0.0;
         let mut collection_execution_seconds = 0.0;
         let mut update_execution_seconds = 0.0;
-        fs::create_dir_all(&directory).map_err(err)?;
+        // `update_tail_overlap_v1`: this iteration's collection, when the
+        // update before it started one. The previous iteration is committed,
+        // so its thread is joined here. It made this iteration's directory and
+        // first attempt itself, new, in this invocation: there is no earlier
+        // attempt to look for. Without one the iteration starts here as ever.
+        let prefetched = match prefetch.take() {
+            Some(started) if started.index_v1() == index => started.join_v1()?,
+            // Another iteration's (never the case): dropped, so abandoned.
+            _ => None,
+        };
         // Reuse a fully published phase. A checkpoint without update.json is
         // an incomplete attempt and never becomes the next learner source.
         let mut attempts = Vec::new();
-        for entry in fs::read_dir(&directory).map_err(err)? {
-            let entry = entry.map_err(err)?;
-            if let Some(number) = entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.strip_prefix("attempt-"))
-                .and_then(|number| number.parse::<usize>().ok())
-            {
-                check(
-                    entry.file_type().map_err(err)?.is_dir(),
-                    "attempt path is not a directory",
-                )?;
-                attempts.push((number, entry.path()));
+        if prefetched.is_none() {
+            fs::create_dir_all(&directory).map_err(err)?;
+            for entry in fs::read_dir(&directory).map_err(err)? {
+                let entry = entry.map_err(err)?;
+                if let Some(number) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.strip_prefix("attempt-"))
+                    .and_then(|number| number.parse::<usize>().ok())
+                {
+                    check(
+                        entry.file_type().map_err(err)?.is_dir(),
+                        "attempt path is not a directory",
+                    )?;
+                    attempts.push((number, entry.path()));
+                }
             }
         }
         attempts.sort_by_key(|entry| entry.0);
@@ -2187,30 +2255,42 @@ pub fn run_native_expanded_training_v1(
                 break;
             }
         }
+        // `update_tail_overlap_v1`: this update's boundary readings, when its
+        // handoff took them.
+        let mut boundary: Option<update_tail_overlap_v1::BoundaryV1> = None;
         if update_pin.is_none() {
-            let number = attempts.last().map_or(Ok(0usize), |entry| {
-                entry.0.checked_add(1).ok_or("attempt overflow")
-            })?;
-            let attempt = directory.join(format!("attempt-{number:06}"));
-            fs::create_dir(&attempt).map_err(err)?;
-            if !attempts.is_empty() {
-                let mut log = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(root.join("restarts.log"))
-                    .map_err(err)?;
-                writeln!(log, "iteration {index}: restart incomplete phase in attempt {number} from the same input state").map_err(err)?;
-                log.sync_all().map_err(err)?;
-            }
-            let collect_command =
-                collection_command(config, index, &current, &episodes, attempt.join("collect"));
-            publish(&attempt, "collect-command.json", &collect_command)?;
-            if collection_pin.is_none() {
-                let started = Instant::now();
-                execute_collection_v1(collect_command, &attempt)?;
-                collection_execution_seconds += started.elapsed().as_secs_f64();
+            let attempt = if let Some((attempt, seconds)) = prefetched {
+                // `update_tail_overlap_v1`: the collection ran in this
+                // iteration's first attempt, whose command it published.
+                collection_execution_seconds += seconds;
                 collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
-            }
+                attempt
+            } else {
+                let number = attempts.last().map_or(Ok(0usize), |entry| {
+                    entry.0.checked_add(1).ok_or("attempt overflow")
+                })?;
+                let attempt = directory.join(format!("attempt-{number:06}"));
+                fs::create_dir(&attempt).map_err(err)?;
+                if !attempts.is_empty() {
+                    let mut log = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(root.join("restarts.log"))
+                        .map_err(err)?;
+                    writeln!(log, "iteration {index}: restart incomplete phase in attempt {number} from the same input state").map_err(err)?;
+                    log.sync_all().map_err(err)?;
+                }
+                let collect_command =
+                    collection_command(config, index, &current, &episodes, attempt.join("collect"));
+                publish(&attempt, "collect-command.json", &collect_command)?;
+                if collection_pin.is_none() {
+                    let started = Instant::now();
+                    execute_collection_v1(collect_command, &attempt)?;
+                    collection_execution_seconds += started.elapsed().as_secs_f64();
+                    collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
+                }
+                attempt
+            };
             let collection = collection_pin.as_ref().unwrap();
             let started = Instant::now();
             let trajectories = validate_collection(
@@ -2259,7 +2339,67 @@ pub fn run_native_expanded_training_v1(
             };
             publish(&attempt, "update-command.json", &update_command)?;
             let started = Instant::now();
-            execute_v1(update_command)?;
+            if overlap {
+                // Called by the update once its new checkpoint's bytes exist
+                // in memory, before their first byte is written.
+                let mut handoff = |checkpoint: &PinnedFileV1| {
+                    // This boundary's readings, before any game of the next
+                    // iteration is played. The run goes on to that iteration
+                    // by the loop's own rule, from these readings.
+                    let sampled = update_tail_overlap_v1::BoundaryV1::read_v1(config);
+                    let next_index = index + 1;
+                    // The loop's own test at the next iteration, where this
+                    // update counts as completed.
+                    let at_limit =
+                        max_new_iterations.is_some_and(|limit| newly_completed + 1 >= limit);
+                    let goes_on =
+                        next_index < config.iterations.len() && !at_limit && sampled.continues_v1();
+                    boundary = Some(sampled);
+                    if !goes_on {
+                        return;
+                    }
+                    // The source and the history the loop holds once this
+                    // update is committed.
+                    let next = ExpandedModelSourceV1 {
+                        checkpoint: Some(checkpoint.clone()),
+                        ..current.clone()
+                    };
+                    let mut next_history = history.clone();
+                    next_history.push(next.clone());
+                    // A schedule that does not resolve is the next
+                    // iteration's own error, there, as without the setting.
+                    let Ok(next_episodes) =
+                        resolve_episodes(config, next_index, &next, &next_history)
+                    else {
+                        return;
+                    };
+                    let next_directory = iterations_root.join(format!("{next_index:06}"));
+                    let next_command = collection_command(
+                        config,
+                        next_index,
+                        &next,
+                        &next_episodes,
+                        next_directory
+                            .join(update_tail_overlap_v1::FIRST_ATTEMPT_V1)
+                            .join("collect"),
+                    );
+                    prefetch = update_tail_overlap_v1::PrefetchV1::start_v1(
+                        next_index,
+                        next_directory,
+                        next_command,
+                    );
+                };
+                crate::expanded_deck_training_v1::execute_with_handoff_v1(
+                    update_command,
+                    Some(&mut handoff),
+                )?;
+                // `update.json` is durable: the next collection may write.
+                if let Some(next) = &prefetch {
+                    next.durable_v1();
+                }
+            } else {
+                execute_v1(update_command)?;
+            }
             update_execution_seconds += started.elapsed().as_secs_f64();
             update_pin = Some(pin(&attempt.join("update/update.json"))?);
         }
@@ -2311,15 +2451,27 @@ pub fn run_native_expanded_training_v1(
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
             "output_identity":after});
-        if config.record_process_cpu {
-            receipt["driver_process_cpu_seconds"] =
-                json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
-        }
-        let ledger = config
-            .chain_ledger
-            .as_ref()
-            .map(ChainLedgerOptionsV1::read_v1)
-            .transpose()?;
+        let ledger = match boundary {
+            // `update_tail_overlap_v1`: read at this update's handoff, in the
+            // same order and with the same errors as below.
+            Some(sampled) => {
+                if let Some(seconds) = sampled.process_cpu? {
+                    receipt["driver_process_cpu_seconds"] = json!(seconds);
+                }
+                sampled.ledger?
+            }
+            None => {
+                if config.record_process_cpu {
+                    receipt["driver_process_cpu_seconds"] =
+                        json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
+                }
+                config
+                    .chain_ledger
+                    .as_ref()
+                    .map(ChainLedgerOptionsV1::read_v1)
+                    .transpose()?
+            }
+        };
         if let Some(reading) = &ledger {
             receipt["chain_ledger"] = reading.record.clone();
         }
@@ -2364,6 +2516,10 @@ pub fn run_native_expanded_training_v1(
                 "cpu_utilization_claim":false}})
         );
     }
+    // No collection is started for an iteration the loop does not run, so
+    // none is left here; one that were is abandoned and joined before the
+    // completion below and before the lock is released.
+    drop(prefetch);
     let complete = receipts.len() == config.iterations.len();
     let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
         "planned_iterations":config.iterations.len(),"iterations":receipts,"source":current,
@@ -2393,6 +2549,7 @@ pub fn run_native_expanded_training_v1(
 }
 
 pub mod follow_v1;
+mod update_tail_overlap_v1;
 
 #[cfg(test)]
 mod verified_pin_tests;
@@ -2402,6 +2559,7 @@ mod tests {
     use super::*;
 
     mod follow_tests;
+    mod update_tail_overlap_tests;
     /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
     /// the same on every system. Native236 and CI39598628050 observe this CPU
     /// regression state after the CR 117.3c/117.5 caster-priority correction.
@@ -2547,6 +2705,7 @@ mod tests {
             record_format: Default::default(),
             record_envelope: Default::default(),
             verified_reads: Default::default(),
+            update_tail_overlap_v1: false,
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -3845,6 +4004,7 @@ mod tests {
             record_format: Default::default(),
             record_envelope: Default::default(),
             verified_reads: Default::default(),
+            update_tail_overlap_v1: false,
             learning_rate: 0.0003,
             value_coefficient: 0.5,
             update_backend,
