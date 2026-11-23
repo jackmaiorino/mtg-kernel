@@ -207,9 +207,9 @@ fn priority(state: &mut GameState) -> (Vec<ObjectId>, Vec<(ObjectId, u8)>, Vec<O
         Decision::CastSpellOrPass {
             castable_spells,
             activatable_abilities,
-            playable_lands,
+            land_drops,
             ..
-        } => (castable_spells, activatable_abilities, playable_lands),
+        } => (castable_spells, activatable_abilities, land_drops),
         other => panic!("expected priority, got {other:?}"),
     }
 }
