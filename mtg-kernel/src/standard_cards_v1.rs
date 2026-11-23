@@ -482,6 +482,9 @@ pub enum StandardTargetV1 {
     TappedCreatureV1,
     /// Zero, one or two distinct lands, controlled by either player.
     UpToTwoLandsV1,
+    /// Guardian Scalelord: a nonland permanent card in your graveyard with
+    /// mana value at most the attacking creature's power.
+    NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1,
 }
 
 impl StandardTargetV1 {
@@ -706,6 +709,7 @@ impl StandardTargetV1 {
             || crate::eternal_premodern_p3h_v1::targets::in_graveyard(self)
             || crate::eternal_sideboard_s1o_v1::targets::in_graveyard(self)
             || crate::eternal_cube_c6b_v1::targets::owns(self)
+            || crate::eternal_cube_c7c_v1::targets::owns(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -1099,6 +1103,11 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
+    if let Some(targets) = crate::eternal_cube_c7c_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1430,6 +1439,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c7c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1683,6 +1697,7 @@ pub(crate) fn target_matches(
         StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1 => false,
         StandardTargetV1::TappedCreatureV1 => live.tapped && has(CardType::Creature),
         StandardTargetV1::UpToTwoLandsV1 => has(CardType::Land),
+        StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => false,
     }
 }
 

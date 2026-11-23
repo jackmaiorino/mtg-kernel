@@ -11502,7 +11502,9 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
                             && !matches!(
                                 definition.name,
                                 "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
-                            ))
+                            )
+                            && !(cfg!(feature = "eternal-fixtures")
+                                && definition.name == "Tidehollow Sculler"))
                 })
         {
             return Err(RlContractError(
@@ -11517,6 +11519,9 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
         })?;
         let source_matches = match definition.name {
             "Mesmeric Fiend" | "Journey to Nowhere" => {
+                crate::engine::source_card_def_matches(state, record.source, source.card_def)
+            }
+            "Tidehollow Sculler" if cfg!(feature = "eternal-fixtures") => {
                 crate::engine::source_card_def_matches(state, record.source, source.card_def)
             }
             _ => source.card_def == record.source.card_def,

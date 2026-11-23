@@ -1769,6 +1769,30 @@ impl PreparedSpellPaymentV1 {
         .count() as u8
     }
 
+    /// Count of mana of each color (indexed by `ManaColor::pool_index`) spent
+    /// by this payment: tapped sources' consumed units, pool units, and
+    /// restricted-pool units (Vibrance, Wistfulness).
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn mana_by_color(&self, state: &GameState, player: PlayerId) -> [u8; 6] {
+        let plan = &self.mana.mana;
+        let mut counts = plan.pool_used;
+        for &(_, color) in &plan.taps {
+            let slot = &mut counts[color.pool_index()];
+            *slot = slot.saturating_add(1);
+        }
+        for &index in &plan.restricted_pool_used {
+            if let Some(unit) = state.players[player.index()]
+                .restricted_mana_pool
+                .0
+                .get(index)
+            {
+                let slot = &mut counts[unit.color.pool_index()];
+                *slot = slot.saturating_add(1);
+            }
+        }
+        counts
+    }
+
     fn commit_optional(&self, state: &mut GameState) {
         match self.optional_kind {
             Some(super::OptionalAdditionalCostDef::CollectEvidence { .. }) => {

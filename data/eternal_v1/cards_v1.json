@@ -37530,7 +37530,7 @@
   },
   {
    "name": "Vibrance",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{R/G}{R/G}",
    "mana_value": 5,
    "colors": [
@@ -37559,7 +37559,7 @@
   },
   {
    "name": "Wistfulness",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{G/U}{G/U}",
    "mana_value": 5,
    "colors": [
@@ -37588,7 +37588,7 @@
   },
   {
    "name": "Tidehollow Sculler",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}{B}",
    "mana_value": 2,
    "colors": [
@@ -37617,7 +37617,7 @@
   },
   {
    "name": "The Wondrous Wasp",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -37646,7 +37646,7 @@
   },
   {
    "name": "Woodfall Primus",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{5}{G}{G}{G}",
    "mana_value": 8,
    "colors": [
@@ -37674,7 +37674,7 @@
   },
   {
    "name": "Sanctum Lurker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}",
    "mana_value": 3,
    "colors": [
@@ -37700,7 +37700,7 @@
   },
   {
    "name": "Guardian Scalelord",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{4}{W}",
    "mana_value": 5,
    "colors": [
