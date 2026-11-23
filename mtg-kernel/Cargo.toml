@@ -179,6 +179,10 @@ name = "cuda_flat_training_capacity_v1"
 required-features = ["cuda-flat-training-capacity-v1"]
 
 [[example]]
+name = "cube_draft_timing_v1"
+required-features = ["eternal-fixtures"]
+
+[[example]]
 name = "gpu_infer_microbench_v1"
 required-features = ["gpu-exact-v1"]
 

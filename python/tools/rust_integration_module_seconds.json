@@ -2,6 +2,7 @@
  "note": "Seconds per module from the hosted eternal-integration job of run 44294372212 (2026-11-18), one game after another. The modules eternal_bo3_v1, eternal_catalog_v1, eternal_cube_c1a_v1, eternal_cube_c1b_v1, eternal_cube_c1c_v1, eternal_cube_c4c_v1, eternal_sideboard_s1o_flagbearers_v1, eternal_sideboard_s1q_v1 now play their games on worker threads; their values are those seconds scaled by the Mac Studio ratio of four threads to one, estimates until a hosted run measures them.",
  "eternal_integration": {
   "bonder_owned_draws_v1": 1,
+  "cube_draft_v1": 5,
   "eternal_bo3_v1": 378,
   "eternal_catalog_v1": 238,
   "eternal_cube_c1a_v1": 38,
