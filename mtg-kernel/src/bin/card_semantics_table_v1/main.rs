@@ -293,7 +293,14 @@ fn require_checks(failures: &[String]) -> Result<(), String> {
 
 /// The writer's lock file, inside the table's staging directory. It is never
 /// a tracked data file, so locking it blocks no reader.
-const LOCK_FILE: &str = "writer.lock";
+///
+/// The file is permanent: no writer deletes it, so the path names one file
+/// for good and every writer that opens it contends for the same lock. (A
+/// lock file that is unlinked on release can be locked, already dead, by a
+/// writer that opened it earlier, while a later writer locks its replacement.)
+/// The name falls under the repository's `*.tmp` ignore rule, so the file
+/// that stays behind is never an untracked change.
+const LOCK_FILE: &str = "writer.lock.tmp";
 /// The dump saved before publication; it survives only a failed rollback or
 /// an interrupted publication, and then it is the only copy of the old dump.
 const PREVIOUS_DUMP_FILE: &str = "previous.txt";
@@ -314,13 +321,9 @@ fn with_cleanup_errors<T>(result: Result<T, String>, cleanup: Vec<String>) -> Re
     }
 }
 
-/// Runs `body` holding the writer lock of one table. The lock is taken before
-/// the committed prior is read and held through publication and cleanup.
-fn with_writer_lock<T>(
-    repo: &Path,
-    table_rel: &str,
-    body: impl FnOnce() -> Result<T, String>,
-) -> Result<T, String> {
+/// Opens one table's writer lock file without locking it, creating the file
+/// and its staging directory on the first write. The file is never truncated.
+fn open_writer_lock(repo: &Path, table_rel: &str) -> Result<(PathBuf, std::fs::File), String> {
     use std::fs;
     let stage = staging_dir(repo, table_rel);
     fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
@@ -332,36 +335,38 @@ fn with_writer_lock<T>(
         .truncate(false)
         .open(&lock_path)
         .map_err(|e| format!("{}: {e}", lock_path.display()))?;
+    Ok((lock_path, lock))
+}
+
+/// Takes the exclusive lock on an opened writer lock file and runs `body`
+/// holding it. However long ago the file was opened, it is still the file at
+/// its path, because no writer removes it.
+fn run_locked<T>(
+    lock_path: &Path,
+    lock: std::fs::File,
+    body: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
     if let Err(e) = lock.try_lock() {
         return Err(format!(
             "cannot lock {} for regeneration (another writer holds it): {e}",
             lock_path.display()
         ));
     }
-    // A writer that finished between our open and our lock removed the file
-    // we hold; refuse rather than share the table with a later writer.
-    let result = if lock_path.is_file() {
-        body()
-    } else {
-        Err(format!(
-            "{} was removed while it was being locked; rerun",
-            lock_path.display()
-        ))
-    };
-    let mut cleanup = Vec::new();
-    match fs::remove_file(&lock_path) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => cleanup.push(format!("{}: {e}", lock_path.display())),
-    }
+    let result = body();
+    // Closing the file releases the lock. The file and its directory stay.
     drop(lock);
-    match fs::remove_dir(&stage) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
-        Err(e) => cleanup.push(format!("{}: {e}", stage.display())),
-    }
-    with_cleanup_errors(result, cleanup)
+    result
+}
+
+/// Runs `body` holding the writer lock of one table. The lock is taken before
+/// the committed prior is read and held through publication and cleanup.
+fn with_writer_lock<T>(
+    repo: &Path,
+    table_rel: &str,
+    body: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let (lock_path, lock) = open_writer_lock(repo, table_rel)?;
+    run_locked(&lock_path, lock, body)
 }
 
 /// Regenerates one table under its writer lock: `produce` reads the committed
@@ -394,7 +399,7 @@ fn write_outputs_at(
 }
 
 // Publish the canonical JSON last. A failed rename leaves the previous JSON
-// intact; restore its companion dump before releasing the staging directory.
+// intact; restore its companion dump before removing the staged files.
 // No fsync or directory sync: outputs are tracked in git; --check detects a mismatched pair.
 // The caller holds the writer lock (`with_writer_lock`).
 fn publish_staged(
@@ -460,6 +465,7 @@ fn publish_staged(
         Ok(())
     })();
     // Attempt every step; only the generator's own staged files are removed.
+    // The staging directory stays: it holds the permanent writer lock.
     let mut cleanup = Vec::new();
     let mut owned = vec![&next_table, &next_dump];
     if !preserve_old_dump {
@@ -471,11 +477,6 @@ fn publish_staged(
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => cleanup.push(at(file, e)),
         }
-    }
-    match fs::remove_dir(&stage) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
-        Err(e) => cleanup.push(at(&stage, e)),
     }
     with_cleanup_errors(result, cleanup)
 }
@@ -619,12 +620,22 @@ mod tests {
         })
     }
 
+    /// Another writer holding the Pauper table's lock, opened as a writer
+    /// opens it.
     fn hold_lock(repo: &Path) -> std::fs::File {
-        let stage = staging_dir(repo, table::TABLE_PATH);
-        std::fs::create_dir_all(&stage).unwrap();
-        let lock = std::fs::File::create(stage.join(LOCK_FILE)).unwrap();
+        let (_, lock) = open_writer_lock(repo, table::TABLE_PATH).unwrap();
         lock.try_lock().unwrap();
         lock
+    }
+
+    /// The names in a table's staging directory, sorted.
+    fn staged(repo: &Path, table_rel: &str) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(staging_dir(repo, table_rel))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
     }
 
     #[test]
@@ -634,7 +645,7 @@ mod tests {
         std::fs::write(temp.join(table::DUMP_PATH), "original").unwrap();
         assert!(locked_write(&temp, &generated("new table", "new dump")).is_err());
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "original");
-        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -646,17 +657,17 @@ mod tests {
         assert!(!error.contains("could not restore"), "{error}");
         assert!(!temp.join(table::DUMP_PATH).exists());
         assert!(temp.join(table::TABLE_PATH).is_dir());
-        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
     #[test]
-    fn successful_write_removes_an_empty_staging_directory() {
+    fn successful_write_leaves_only_the_writer_lock_in_staging() {
         let temp = scratch_repo("fresh");
         locked_write(&temp, &generated("new table", "new dump")).unwrap();
         assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "new table");
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
-        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -691,7 +702,7 @@ mod tests {
         assert_eq!(renames, 2);
         assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "new table");
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
-        assert!(!stage.exists());
+        assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -726,8 +737,11 @@ mod tests {
         assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "old table");
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
         assert_eq!(std::fs::read_to_string(&previous).unwrap(), "old dump");
-        assert!(!stage.join("table.json").exists());
-        assert!(!stage.join(LOCK_FILE).exists());
+        // The staged table is gone; the retained dump and the lock file stay.
+        assert_eq!(
+            staged(&temp, table::TABLE_PATH),
+            [PREVIOUS_DUMP_FILE, LOCK_FILE]
+        );
 
         // A retry, even one whose own staging would fail, never overwrites or
         // deletes the retained dump and names it.
@@ -742,23 +756,87 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_errors_are_reported_beside_the_primary_error_and_every_step_runs() {
+    fn cleanup_continues_past_a_failed_first_step_and_keeps_the_primary_error() {
         let temp = scratch_repo("cleanup-errors");
         let stage = staging_dir(&temp, table::TABLE_PATH);
-        // A non-empty directory where the staged dump goes: writing it fails
-        // (the primary error) and removing it fails (a cleanup error).
-        std::fs::create_dir_all(stage.join("dump.txt")).unwrap();
-        std::fs::write(stage.join("dump.txt").join("keep"), "x").unwrap();
+        // A non-empty directory where the staged table goes. The staged table
+        // is the first file written and the first file cleanup removes, so
+        // writing it fails (the primary error) and so does the first cleanup
+        // step.
+        let blocked = stage.join("table.json");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::write(blocked.join("keep"), "x").unwrap();
+        // A staged dump left by an interrupted run: a later cleanup step.
+        std::fs::write(stage.join("dump.txt"), "interrupted").unwrap();
+        let write_error = std::fs::write(&blocked, "probe").unwrap_err();
+        let remove_error = std::fs::remove_file(&blocked).unwrap_err();
+
         let error = locked_write(&temp, &generated("new table", "new dump")).unwrap_err();
-        let (primary, cleanup) = error
-            .split_once("; cleanup also failed: ")
-            .unwrap_or_else(|| panic!("no cleanup error beside the primary one: {error}"));
-        assert!(primary.contains("dump.txt"), "{error}");
-        assert!(cleanup.contains("dump.txt"), "{error}");
-        // The staged table was still removed after the failing step.
-        assert!(!stage.join("table.json").exists());
+        // The primary error is kept, with the cleanup error beside it.
+        assert_eq!(
+            error,
+            format!(
+                "{path}: {write_error}; cleanup also failed: {path}: {remove_error}",
+                path = blocked.display()
+            )
+        );
+        // Cleanup went on after its first step failed: the later staged file
+        // is gone, and only the entry that could not be removed is left.
+        assert!(!stage.join("dump.txt").exists());
+        assert_eq!(staged(&temp, table::TABLE_PATH), ["table.json", LOCK_FILE]);
+        assert!(blocked.join("keep").is_file());
         assert!(!temp.join(table::TABLE_PATH).exists());
         assert!(!temp.join(table::DUMP_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn publication_error_survives_a_failed_first_cleanup_step_and_later_files_are_removed() {
+        let temp = scratch_repo("cleanup-later-files");
+        std::fs::write(temp.join(table::TABLE_PATH), "old table").unwrap();
+        std::fs::write(temp.join(table::DUMP_PATH), "old dump").unwrap();
+        let stage = staging_dir(&temp, table::TABLE_PATH);
+        let blocked = stage.join("table.json");
+        let mut renames = 0;
+        let error = with_writer_lock(&temp, table::TABLE_PATH, || {
+            publish_staged(
+                &temp,
+                table::TABLE_PATH,
+                table::DUMP_PATH,
+                &generated("new table", "new dump"),
+                |_from: &Path, _to: &Path| {
+                    renames += 1;
+                    // Everything is staged by the first rename.
+                    for name in ["table.json", "dump.txt", PREVIOUS_DUMP_FILE] {
+                        assert!(stage.join(name).is_file(), "{name} is not staged");
+                    }
+                    // The staged table, the first file cleanup removes, turns
+                    // into a non-empty directory that cannot be removed, and
+                    // publication fails (the primary error).
+                    std::fs::remove_file(&blocked).unwrap();
+                    std::fs::create_dir(&blocked).unwrap();
+                    std::fs::write(blocked.join("keep"), "x").unwrap();
+                    Err(io::Error::other("injected rename failure"))
+                },
+            )
+        })
+        .unwrap_err();
+        assert_eq!(renames, 1);
+        let remove_error = std::fs::remove_file(&blocked).unwrap_err();
+        // The primary error is kept, with the cleanup error beside it.
+        assert_eq!(
+            error,
+            format!(
+                "{}: injected rename failure; cleanup also failed: {}: {remove_error}",
+                temp.join(table::DUMP_PATH).display(),
+                blocked.display()
+            )
+        );
+        // Cleanup went on after its first step failed: the staged dump and
+        // the saved previous dump are gone, and nothing was published.
+        assert_eq!(staged(&temp, table::TABLE_PATH), ["table.json", LOCK_FILE]);
+        assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "old table");
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "old dump");
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -789,11 +867,7 @@ mod tests {
             std::fs::read_to_string(stage.join("local.txt")).unwrap(),
             "local work"
         );
-        let left: Vec<_> = std::fs::read_dir(&stage)
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        assert_eq!(left, vec![std::ffi::OsString::from("local.txt")]);
+        assert_eq!(staged(&temp, table::TABLE_PATH), ["local.txt", LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -820,7 +894,7 @@ mod tests {
             std::fs::read_to_string(stage.join("local.txt")).unwrap(),
             "local work"
         );
-        assert_eq!(std::fs::read_dir(stage).unwrap().count(), 1);
+        assert_eq!(staged(&temp, table::TABLE_PATH), ["local.txt", LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -852,8 +926,71 @@ mod tests {
         })
         .unwrap();
         assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "new table");
-        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn lock_file_is_not_replaced_between_a_writers_open_and_lock() {
+        let temp = scratch_repo("lock-identity");
+        let stage = staging_dir(&temp, table::TABLE_PATH);
+        let lock_path = stage.join(LOCK_FILE);
+        // Mark the lock file: a replacement would not carry the mark.
+        std::fs::create_dir_all(&stage).unwrap();
+        std::fs::write(&lock_path, "the first lock file").unwrap();
+
+        // Writer B opens the lock file while writer A holds it, and is
+        // delayed before it locks. A publishes and releases.
+        let mut delayed = None;
+        with_writer_lock(&temp, table::TABLE_PATH, || {
+            delayed = Some(open_writer_lock(&temp, table::TABLE_PATH)?);
+            write_outputs_at(
+                &temp,
+                table::TABLE_PATH,
+                table::DUMP_PATH,
+                &generated("table a", "dump a"),
+            )
+        })
+        .unwrap();
+        let (delayed_path, delayed_lock) = delayed.unwrap();
+        assert_eq!(delayed_path, lock_path);
+        // A left the lock file alone: the path still names the file B opened.
+        assert_eq!(
+            std::fs::read_to_string(&lock_path).unwrap(),
+            "the first lock file"
+        );
+
+        // Writer C starts and takes the lock. B then locks what it opened:
+        // that is the file C holds, so B is refused and does not run.
+        let held = hold_lock(&temp);
+        let mut ran = false;
+        let error = run_locked(&delayed_path, delayed_lock, || {
+            ran = true;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.contains("cannot lock"), "{error}");
+        assert!(!ran, "two writers held the writer lock at once");
+        drop(held);
+        assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "table a");
+        assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn permanent_writer_lock_is_covered_by_a_repository_ignore_rule() {
+        // The lock file outlives every run, and builds record whether the
+        // work tree has untracked files, so its name has to be an ignored one.
+        let ignore = read(&repo_root(), ".gitignore").unwrap();
+        let extension = Path::new(LOCK_FILE)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .expect("the lock file name has an extension");
+        let rule = format!("*.{extension}");
+        assert!(
+            ignore.lines().any(|line| line.trim() == rule),
+            ".gitignore has no {rule} rule to cover {LOCK_FILE}"
+        );
     }
 
     #[test]
@@ -1207,7 +1344,7 @@ mod tests {
             );
         }
         // Nothing was staged: only the writer lock was taken, and released.
-        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -1228,7 +1365,7 @@ mod tests {
                 std::fs::read(original.join(table::DUMP_PATH)).unwrap(),
                 std::fs::read(temp.join(table::DUMP_PATH)).unwrap()
             );
-            assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+            assert_eq!(staged(&temp, table::TABLE_PATH), [LOCK_FILE]);
         }
         std::fs::remove_dir_all(temp).unwrap();
     }
@@ -1264,7 +1401,7 @@ mod tests {
         assert!(err.contains("Pauper vocabulary"), "{err}");
         assert_eq!(read(&temp, table::CUBE_TABLE_PATH).unwrap(), sentinel_table);
         assert_eq!(read(&temp, table::CUBE_DUMP_PATH).unwrap(), "sentinel dump");
-        assert!(!staging_dir(&temp, table::CUBE_TABLE_PATH).exists());
+        assert_eq!(staged(&temp, table::CUBE_TABLE_PATH), [LOCK_FILE]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
