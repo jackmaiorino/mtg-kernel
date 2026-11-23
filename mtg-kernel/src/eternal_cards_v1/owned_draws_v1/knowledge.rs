@@ -319,15 +319,11 @@ fn graveyard_count_at(state: &GameState, boundary: usize) -> Option<u32> {
         } = event
         {
             if from != to && named(*object) {
-                if *to == Zone::Graveyard {
-                    if !cards.remove(object) {
-                        return None;
-                    }
+                if *to == Zone::Graveyard && !cards.remove(object) {
+                    return None;
                 }
-                if *from == Zone::Graveyard {
-                    if !cards.insert(*object) {
-                        return None;
-                    }
+                if *from == Zone::Graveyard && !cards.insert(*object) {
+                    return None;
                 }
             }
         }
