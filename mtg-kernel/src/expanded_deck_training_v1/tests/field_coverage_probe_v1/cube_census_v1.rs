@@ -63,9 +63,9 @@ use crate::rl_session::FastActorDecisionV1;
 
 /// THE T1 SWITCH. The episode's deck format (T1's `deck_format` field).
 /// `None` writes no key, so today every dealt game stops at the 60-card
-/// admission check as a `configuration_refusal`. Once T1 lands, set this to
-/// `Some("limited40-v1")`, and remove the census test's `#[ignore]`.
-const CUBE_DECK_FORMAT: Option<&str> = None;
+/// admission check as a `configuration_refusal`. T1 has landed beside it: dealt
+/// games now carry `limited40-v1`.
+const CUBE_DECK_FORMAT: Option<&str> = Some("limited40-v1");
 
 #[cfg(feature = "eternal-fixtures")]
 const CUBE_LIST: &str = "data/cube_v1/mtgo_vintage_cube_20261007.json";
@@ -940,7 +940,6 @@ fn card_names(ids: &[u16]) -> Vec<&'static str> {
 
 #[test]
 #[cfg(feature = "eternal-fixtures")]
-#[ignore = "needs T1's episode deck_format: set CUBE_DECK_FORMAT, then run with --ignored"]
 fn cube_coverage_census_v1() {
     let env_u64 = |name: &str| {
         std::env::var(name).ok().map(|v| {
