@@ -915,7 +915,7 @@ pub(crate) fn quote_allowed(
         live.owner,
         zone_change_count,
     ) || crate::eternal_e5a_v1::permissions::will_permission(state, source, live.owner)
-        || crate::muldrotha_v1::allowed(state, source, live.owner)
+        || crate::engine::muldrotha_v1::allowed(state, source, live.owner)
 }
 
 // ---- Execution ----------------------------------------------------------------------

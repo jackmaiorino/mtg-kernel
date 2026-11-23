@@ -322,7 +322,7 @@ pub(super) fn permissions(
     }
     out
 }
-pub(super) fn allowed(state: &GameState, card: ObjectId, player: PlayerId) -> bool {
+pub(crate) fn allowed(state: &GameState, card: ObjectId, player: PlayerId) -> bool {
     !permissions(state, card, player).is_empty()
 }
 fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
