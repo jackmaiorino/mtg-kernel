@@ -37941,7 +37941,7 @@
   },
   {
    "name": "Phantasmal Image",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -37963,12 +37963,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "clone",
+    "enters_as_copy",
+    "becomes_target_sacrifice"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/p/PhantasmalImage.java"
   },
   {
    "name": "Superior Spider-Man",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}{B}",
    "mana_value": 4,
    "colors": [
@@ -37995,12 +37999,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "clone",
+    "enters_as_copy",
+    "graveyard_exile"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SuperiorSpiderMan.java"
   },
   {
    "name": "Vaultborn Tyrant",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{5}{G}{G}",
    "mana_value": 7,
    "colors": [
@@ -38022,12 +38030,20 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "trample",
+    "etb_trigger",
+    "life_gain",
+    "draw_card",
+    "dies_trigger",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/v/VaultbornTyrant.java"
   },
   {
    "name": "Saheeli, Sublime Artificer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{1}{U/R}{U/R}",
    "mana_value": 3,
    "colors": [
@@ -38052,12 +38068,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "cast_trigger",
+    "token_creation",
+    "activated_ability",
+    "copy"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SaheeliSublimeArtificer.java"
   },
   {
    "name": "Springheart Nantuko",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [
@@ -38081,12 +38103,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "bestow",
+    "landfall",
+    "token_creation",
+    "copy"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SpringheartNantuko.java"
   },
   {
    "name": "Detective's Phoenix",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -38109,7 +38136,13 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "bestow",
+    "collect_evidence",
+    "flying",
+    "haste",
+    "graveyard_cast"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/d/DetectivesPhoenix.java"
   },
   {
@@ -38343,7 +38376,7 @@
   },
   {
    "name": "Green Insect Token",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [

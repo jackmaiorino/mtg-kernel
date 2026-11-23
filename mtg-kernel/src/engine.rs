@@ -2628,21 +2628,26 @@ fn validate_physical_spell_cast_origin(
             holder,
             permission_zone_change_count,
         } => {
+            let graveyard_bestow = cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c8b_v1::is_graveyard_bestow_card(def.name)
+                && (cast_method == CastMethodV4::Bestow
+                    || (is_pending_placeholder && cast_method == CastMethodV4::Normal));
             origin.origin_zone == Zone::Graveyard
                 && source.owner == caster
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
-                && (matches!(
-                    cast_method,
-                    CastMethodV4::Normal | CastMethodV4::Alternative
-                ) || (cast_method == CastMethodV4::Omen
-                    && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)))
-                && crate::standard_cards_v1::graveyard_cast_granted(
-                    state,
-                    item.source,
-                    holder,
-                    permission_zone_change_count,
-                )
+                && (graveyard_bestow
+                    || ((matches!(
+                        cast_method,
+                        CastMethodV4::Normal | CastMethodV4::Alternative
+                    ) || (cast_method == CastMethodV4::Omen
+                        && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name)))
+                        && crate::standard_cards_v1::graveyard_cast_granted(
+                            state,
+                            item.source,
+                            holder,
+                            permission_zone_change_count,
+                        )))
         }
         SpellCastRouteV4::ExilePermission {
             holder,
@@ -8369,6 +8374,14 @@ fn collect_evidence_candidates(
     player: PlayerId,
     state: &GameState,
 ) -> Result<Vec<EffectObjectBinding>, String> {
+    collect_evidence_candidates_excluding(player, None, state)
+}
+
+fn collect_evidence_candidates_excluding(
+    player: PlayerId,
+    exclude: Option<ObjectId>,
+    state: &GameState,
+) -> Result<Vec<EffectObjectBinding>, String> {
     let graveyard = &state.players[player.index()].graveyard;
     let mut seen = Vec::with_capacity(graveyard.len());
     let mut candidates = Vec::with_capacity(graveyard.len());
@@ -8377,6 +8390,9 @@ fn collect_evidence_candidates(
             return Err("Collect Evidence graveyard index contains a duplicate".to_string());
         }
         seen.push(object_id);
+        if exclude == Some(object_id) {
+            continue;
+        }
         let object = state
             .objects
             .try_get(object_id)
@@ -8513,21 +8529,56 @@ fn optional_additional_cost_is_payable(
     }
 }
 
+pub(crate) fn pending_collect_evidence_minimum(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+) -> Option<u16> {
+    if let Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }) =
+        def.optional_additional_cost
+    {
+        return (pending.optional_additional_cost_paid == Some(true)).then_some(minimum_mana_value);
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if pending.mode_chosen == Some(1) && supported_bestow(def).is_some() {
+        return crate::eternal_cube_c8b_v1::bestow_collect_evidence_minimum(def.name);
+    }
+    None
+}
+
+fn bestow_collect_evidence_payable(
+    def: &card_def::CardDef,
+    player: PlayerId,
+    exclude: Option<ObjectId>,
+    state: &GameState,
+) -> bool {
+    if !cfg!(feature = "eternal-fixtures") {
+        return true;
+    }
+    let Some(minimum_mana_value) =
+        crate::eternal_cube_c8b_v1::bestow_collect_evidence_minimum(def.name)
+    else {
+        return true;
+    };
+    collect_evidence_candidates_excluding(player, exclude, state)
+        .and_then(|candidates| collect_evidence_mana_value(state, &candidates))
+        .is_ok_and(|sum| sum >= u32::from(minimum_mana_value))
+}
+
 fn optional_additional_cost_selection_is_complete(
     pending: &PendingCast,
     def: &card_def::CardDef,
     state: &GameState,
 ) -> Result<bool, String> {
+    if let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, pending) {
+        return Ok(pending.optional_additional_cost_selection_finished
+            && collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?
+                >= u32::from(minimum_mana_value));
+    }
     match (
         def.optional_additional_cost,
         pending.optional_additional_cost_paid,
     ) {
         (None, Some(false)) | (Some(_), Some(false)) => Ok(true),
-        (Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }), Some(true)) => {
-            Ok(pending.optional_additional_cost_selection_finished
-                && collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?
-                    >= u32::from(minimum_mana_value))
-        }
         (
             Some(OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)),
             Some(true),
@@ -10614,11 +10665,14 @@ pub(crate) fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenD
 
 fn supported_bestow(def: &card_def::CardDef) -> Option<&card_def::BestowDef> {
     let bestow = def.bestow.as_ref()?;
+    let x_ok = (def.cost.x_count == 1 && bestow.cost.x_count == 1)
+        || (cfg!(feature = "eternal-fixtures")
+            && def.cost.x_count == 0
+            && bestow.cost.x_count == 0);
     (def.types.contains(&CardType::Creature)
         && def.types.contains(&CardType::Enchantment)
         && bestow.target_spec == TargetSpec::Creature
-        && def.cost.x_count == 1
-        && bestow.cost.x_count == 1
+        && x_ok
         && def.alt_cost.is_none()
         && def.kicker_cost.is_none()
         && def.additional_cost.is_none()
@@ -10902,10 +10956,21 @@ fn viable_pending_spell_forms(
         {
             if form == 0
                 && pending.origin_zone == Zone::Graveyard
-                && supported_adventure(def).is_some()
+                && (supported_adventure(def).is_some() || supported_bestow(def).is_some())
                 && !pending_has_graveyard_creature_permission(pending, state)
                 && !(cfg!(feature = "eternal-fixtures")
                     && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, pending.spell))
+            {
+                continue;
+            }
+            if form == 1
+                && method == CastMethodV4::Bestow
+                && !bestow_collect_evidence_payable(
+                    def,
+                    pending.controller,
+                    Some(pending.spell),
+                    state,
+                )
             {
                 continue;
             }
@@ -11091,11 +11156,7 @@ fn pending_cast_quote_v1(
     } else {
         method
     };
-    let reserved_graveyard = if pending.optional_additional_cost_paid == Some(true)
-        && matches!(
-            def.optional_additional_cost,
-            Some(OptionalAdditionalCostDef::CollectEvidence { .. })
-        ) {
+    let reserved_graveyard = if pending_collect_evidence_minimum(def, pending).is_some() {
         pending
             .optional_additional_cost_chosen
             .iter()
@@ -11777,10 +11838,14 @@ fn is_castable_now(
             };
             let bestow_ok = || {
                 supported_bestow(def).is_some_and(|bestow| {
+                    let graveyard_bestow = cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_cube_c8b_v1::graveyard_bestow_allowed(state, id, player);
                     (matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                        || graveyard_bestow
                         || muldrotha_v1::permissions(state, id, player)
                             .iter()
                             .any(|p| p.permanent_type == CardType::Enchantment))
+                        && bestow_collect_evidence_payable(def, player, Some(id), state)
                         && cast_form_timing_ok(
                             &[CardType::Enchantment],
                             Keywords::NONE,
@@ -11898,6 +11963,9 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             None => {
                 granted_graveyard_cast_method_v1(player, id, state).is_some()
                     || (greatwurm_cast_v1::allowed(state, id, player)
+                        && is_castable_now(player, id, CastMethodV4::Normal, state))
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_cube_c8b_v1::graveyard_bestow_allowed(state, id, player)
                         && is_castable_now(player, id, CastMethodV4::Normal, state))
             }
         };
@@ -15042,9 +15110,12 @@ fn collect_and_queue_triggers(state: &mut GameState) {
         return;
     }
     // Echoing Deeps' entry copy is chosen before the triggers of the land it
-    // copies see it enter (eternal wave E9a).
+    // copies see it enter (eternal wave E9a). Phantasmal Image and Superior
+    // Spider-Man defer triggers and SBAs the same way (Vintage Cube wave C8b).
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_legacy_e9a_v1::statics::defer_triggers(state) {
+    if crate::eternal_legacy_e9a_v1::statics::defer_triggers(state)
+        || crate::eternal_cube_c8b_v1::defer_triggers(state)
+    {
         return;
     }
     let resolving_discard = state
@@ -15123,11 +15194,7 @@ fn remaining_cast_payment_is_payable(
         .iter()
         .map(Vec::as_slice)
         .collect::<Vec<_>>();
-    let reserved_graveyard = if pending.optional_additional_cost_paid == Some(true)
-        && matches!(
-            def.optional_additional_cost,
-            Some(OptionalAdditionalCostDef::CollectEvidence { .. })
-        ) {
+    let reserved_graveyard = if pending_collect_evidence_minimum(def, pending).is_some() {
         pending
             .optional_additional_cost_chosen
             .iter()
@@ -16490,8 +16557,14 @@ pub(crate) fn validate_pending_cast(
                             origin.origin_zone_change_count,
                         )
                     });
+            let has_graveyard_bestow = cfg!(feature = "eternal-fixtures")
+                && pending.origin_zone == Zone::Graveyard
+                && source.owner == pending.controller
+                && crate::eternal_cube_c8b_v1::is_graveyard_bestow_card(def.name)
+                && pending.mode_chosen != Some(0);
             if pending.origin_zone != Zone::Hand
                 && !has_graveyard_permission
+                && !has_graveyard_bestow
                 && !pending.source_contract.spell_cast_origin.is_some_and(|origin|
                     matches!(origin.route, SpellCastRouteV4::MuldrothaGraveyardV1 { .. })
                         && muldrotha_v1::validate_contract(state, pending.source_contract).is_ok())
@@ -16752,83 +16825,96 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast kicker stage is malformed".to_string());
     }
 
-    match (
-        def.optional_additional_cost,
-        pending.optional_additional_cost_paid,
-    ) {
-        (None, Some(false)) => {
-            if !pending.optional_additional_cost_chosen.is_empty()
-                || pending.optional_additional_cost_selection_finished
-            {
+    if let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, pending) {
+        let expected_paid = def.optional_additional_cost.is_some();
+        if pending.optional_additional_cost_paid != Some(expected_paid) {
+            return Err("pending cast optional additional-cost state is noncanonical".to_string());
+        }
+        let candidates =
+            collect_evidence_candidates_excluding(pending.controller, Some(pending.spell), state)?;
+        if !selected_bindings_are_unique_subset(
+            &pending.optional_additional_cost_chosen,
+            &candidates,
+        ) || pending
+            .optional_additional_cost_chosen
+            .iter()
+            .any(|binding| !optional_cost_binding_is_live(state, *binding))
+        {
+            return Err(
+                "Collect Evidence selection is not a unique live graveyard subset".to_string(),
+            );
+        }
+        let selected_sum =
+            collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?;
+        let remaining = candidates
+            .iter()
+            .copied()
+            .filter(|binding| !pending.optional_additional_cost_chosen.contains(binding))
+            .collect::<Vec<_>>();
+        let remaining_sum = collect_evidence_mana_value(state, &remaining)?;
+        if selected_sum
+            .checked_add(remaining_sum)
+            .is_none_or(|total| total < u32::from(minimum_mana_value))
+        {
+            return Err("Collect Evidence selection can no longer meet its minimum".to_string());
+        }
+        if pending.optional_additional_cost_selection_finished
+            && selected_sum < u32::from(minimum_mana_value)
+        {
+            return Err("Collect Evidence finished below its minimum mana value".to_string());
+        }
+    } else {
+        match (
+            def.optional_additional_cost,
+            pending.optional_additional_cost_paid,
+        ) {
+            (None, Some(false)) => {
+                if !pending.optional_additional_cost_chosen.is_empty()
+                    || pending.optional_additional_cost_selection_finished
+                {
+                    return Err(
+                        "cast without an optional additional cost carries payment state"
+                            .to_string(),
+                    );
+                }
+            }
+            (Some(_), None) | (Some(_), Some(false)) => {
+                if !pending.optional_additional_cost_chosen.is_empty()
+                    || pending.optional_additional_cost_selection_finished
+                {
+                    return Err(
+                        "unpaid optional additional cost carries payment objects".to_string()
+                    );
+                }
+            }
+            (
+                Some(
+                    kind @ (OptionalAdditionalCostDef::Bargain
+                    | OptionalAdditionalCostDef::Casualty(_)),
+                ),
+                Some(true),
+            ) => {
+                let candidates = bargain_candidates(kind, pending.controller, state)?;
+                if pending.optional_additional_cost_selection_finished
+                    || pending.optional_additional_cost_chosen.len() > 1
+                    || !selected_bindings_are_unique_subset(
+                        &pending.optional_additional_cost_chosen,
+                        &candidates,
+                    )
+                    || pending
+                        .optional_additional_cost_chosen
+                        .iter()
+                        .any(|binding| !optional_cost_binding_is_live(state, *binding))
+                {
+                    return Err("Bargain selection is not one live eligible permanent".to_string());
+                }
+            }
+            _ => {
                 return Err(
-                    "cast without an optional additional cost carries payment state".to_string(),
-                );
-            }
-        }
-        (Some(_), None) | (Some(_), Some(false)) => {
-            if !pending.optional_additional_cost_chosen.is_empty()
-                || pending.optional_additional_cost_selection_finished
-            {
-                return Err("unpaid optional additional cost carries payment objects".to_string());
-            }
-        }
-        (Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }), Some(true)) => {
-            let candidates = collect_evidence_candidates(pending.controller, state)?;
-            if !selected_bindings_are_unique_subset(
-                &pending.optional_additional_cost_chosen,
-                &candidates,
-            ) || pending
-                .optional_additional_cost_chosen
-                .iter()
-                .any(|binding| !optional_cost_binding_is_live(state, *binding))
-            {
-                return Err(
-                    "Collect Evidence selection is not a unique live graveyard subset".to_string(),
-                );
-            }
-            let selected_sum =
-                collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?;
-            let remaining = candidates
-                .iter()
-                .copied()
-                .filter(|binding| !pending.optional_additional_cost_chosen.contains(binding))
-                .collect::<Vec<_>>();
-            let remaining_sum = collect_evidence_mana_value(state, &remaining)?;
-            if selected_sum
-                .checked_add(remaining_sum)
-                .is_none_or(|total| total < u32::from(minimum_mana_value))
-            {
-                return Err("Collect Evidence selection can no longer meet its minimum".to_string());
-            }
-            if pending.optional_additional_cost_selection_finished
-                && selected_sum < u32::from(minimum_mana_value)
-            {
-                return Err("Collect Evidence finished below its minimum mana value".to_string());
-            }
-        }
-        (
-            Some(
-                kind
-                @ (OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)),
-            ),
-            Some(true),
-        ) => {
-            let candidates = bargain_candidates(kind, pending.controller, state)?;
-            if pending.optional_additional_cost_selection_finished
-                || pending.optional_additional_cost_chosen.len() > 1
-                || !selected_bindings_are_unique_subset(
-                    &pending.optional_additional_cost_chosen,
-                    &candidates,
+                    "pending cast optional additional-cost state is noncanonical".to_string(),
                 )
-                || pending
-                    .optional_additional_cost_chosen
-                    .iter()
-                    .any(|binding| !optional_cost_binding_is_live(state, *binding))
-            {
-                return Err("Bargain selection is not one live eligible permanent".to_string());
             }
         }
-        _ => return Err("pending cast optional additional-cost state is noncanonical".to_string()),
     }
 
     let selected_cost =
@@ -17817,84 +17903,86 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if pending.optional_additional_cost_paid == Some(true) {
+    if let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, pending) {
+        if !pending.optional_additional_cost_selection_finished {
+            let candidates = match collect_evidence_candidates_excluding(
+                pending.controller,
+                Some(pending.spell),
+                state,
+            ) {
+                Ok(candidates) => candidates,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        pending.spell,
+                    ));
+                    return None;
+                }
+            };
+            let remaining = candidates
+                .iter()
+                .copied()
+                .filter(|binding| !pending.optional_additional_cost_chosen.contains(binding))
+                .collect::<Vec<_>>();
+            let selected_sum = match collect_evidence_mana_value(
+                state,
+                &pending.optional_additional_cost_chosen,
+            ) {
+                Ok(sum) => sum,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        pending.spell,
+                    ));
+                    return None;
+                }
+            };
+            if selected_sum < u32::from(minimum_mana_value) && remaining.len() == 1 {
+                state
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .expect("validated cast remains pending")
+                    .optional_additional_cost_chosen
+                    .push(remaining[0]);
+                return drain_pending_cast_or_decide(state);
+            }
+            if remaining.is_empty() && selected_sum < u32::from(minimum_mana_value) {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.spell,
+                ));
+                return None;
+            }
+            let max_targets = match u16::try_from(candidates.len()) {
+                Ok(count) => count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        pending.spell,
+                    ));
+                    return None;
+                }
+            };
+            return Some(Decision::ChooseEffectTargets {
+                player: pending.controller,
+                source: pending.spell,
+                selected_count: pending.optional_additional_cost_chosen.len() as u16,
+                min_targets: 1,
+                max_targets,
+                legal_targets: remaining
+                    .into_iter()
+                    .map(|binding| Target::Object(binding.object))
+                    .collect(),
+                can_finish: selected_sum >= u32::from(minimum_mana_value),
+            });
+        }
+    } else if pending.optional_additional_cost_paid == Some(true) {
         match def
             .optional_additional_cost
             .expect("a paid optional additional cost remains definition-owned")
         {
-            OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value } => {
-                if !pending.optional_additional_cost_selection_finished {
-                    let candidates = match collect_evidence_candidates(pending.controller, state) {
-                        Ok(candidates) => candidates,
-                        Err(_) => {
-                            state.engine.halted = Some((
-                                UnsupportedMechanic::InvalidEffectContinuation,
-                                pending.spell,
-                            ));
-                            return None;
-                        }
-                    };
-                    let remaining = candidates
-                        .iter()
-                        .copied()
-                        .filter(|binding| {
-                            !pending.optional_additional_cost_chosen.contains(binding)
-                        })
-                        .collect::<Vec<_>>();
-                    let selected_sum = match collect_evidence_mana_value(
-                        state,
-                        &pending.optional_additional_cost_chosen,
-                    ) {
-                        Ok(sum) => sum,
-                        Err(_) => {
-                            state.engine.halted = Some((
-                                UnsupportedMechanic::InvalidEffectContinuation,
-                                pending.spell,
-                            ));
-                            return None;
-                        }
-                    };
-                    if selected_sum < u32::from(minimum_mana_value) && remaining.len() == 1 {
-                        state
-                            .engine
-                            .pending_cast
-                            .as_mut()
-                            .expect("validated cast remains pending")
-                            .optional_additional_cost_chosen
-                            .push(remaining[0]);
-                        return drain_pending_cast_or_decide(state);
-                    }
-                    if remaining.is_empty() && selected_sum < u32::from(minimum_mana_value) {
-                        state.engine.halted = Some((
-                            UnsupportedMechanic::InvalidEffectContinuation,
-                            pending.spell,
-                        ));
-                        return None;
-                    }
-                    let max_targets = match u16::try_from(candidates.len()) {
-                        Ok(count) => count,
-                        Err(_) => {
-                            state.engine.halted = Some((
-                                UnsupportedMechanic::InvalidEffectContinuation,
-                                pending.spell,
-                            ));
-                            return None;
-                        }
-                    };
-                    return Some(Decision::ChooseEffectTargets {
-                        player: pending.controller,
-                        source: pending.spell,
-                        selected_count: pending.optional_additional_cost_chosen.len() as u16,
-                        min_targets: 1,
-                        max_targets,
-                        legal_targets: remaining
-                            .into_iter()
-                            .map(|binding| Target::Object(binding.object))
-                            .collect(),
-                        can_finish: selected_sum >= u32::from(minimum_mana_value),
-                    });
-                }
-            }
+            OptionalAdditionalCostDef::CollectEvidence { .. } => {}
             kind
             @ (OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)) => {
                 if pending.optional_additional_cost_chosen.is_empty() {
@@ -19364,11 +19452,12 @@ fn log_final_targeting_events(
     }
     // "Becomes the target" triggers of players and permanents (Cephalid
     // Illusionist, Loki, God of Mischief; eternal wave E9a; Bonecrusher
-    // Giant; Vintage Cube wave C8a).
+    // Giant, Vintage Cube wave C8a; Phantasmal Image, Vintage Cube wave C8b).
     #[cfg(feature = "eternal-fixtures")]
     {
         crate::eternal_legacy_e9a_v1::note_targeting(state, item);
         crate::eternal_cube_c8a_v1::note_targeting(state, item);
+        crate::eternal_cube_c8b_v1::note_targeting(state, item);
     }
     // A copy is neither cast nor put on the stack by its controller's
     // announcement, so retargeting one never commits a crime.
@@ -24096,10 +24185,13 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
 /// the turn can stage the discard first without copying the expiration work.
 fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
     crate::standard_cards_v1::cleanup(state);
-    // Necromancy's cleanup sacrifice and Shifting Woodland's copy ending
-    // (Vintage Cube wave C5c).
+    // Necromancy's cleanup sacrifice, Shifting Woodland's copy ending (wave
+    // C5c), and Saheeli's until-end-of-turn copy ending (wave C8b).
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_cube_c5c_v1::begin_cleanup(state);
+    {
+        crate::eternal_cube_c5c_v1::begin_cleanup(state);
+        crate::eternal_cube_c8b_v1::begin_cleanup(state);
+    }
     for player in &mut state.players {
         player.poison_prevention_v1.0 = false;
     }
@@ -24494,11 +24586,15 @@ fn valid_bestow_attachment_host(state: &GameState, aura: ObjectId) -> Option<Obj
     let host = state.objects.try_get(link.object)?;
     let host_definition = card_def::CARD_DEFS.get(host.card_def as usize)?;
     let host_is_attached_bestow = host_definition.bestow.is_some() && host.v4.attached_to.is_some();
+    let host_is_creature = host_definition
+        .types_for_face(host.v4.face_index)
+        .contains(&CardType::Creature)
+        || (cfg!(feature = "eternal-fixtures")
+            && host_definition.bestow.is_none()
+            && object_has_type(state, link.object, CardType::Creature));
     (host.zone == Zone::Battlefield
         && host.zone_change_count == link.zone_change_count
-        && host_definition
-            .types_for_face(host.v4.face_index)
-            .contains(&CardType::Creature)
+        && host_is_creature
         && !host_is_attached_bestow
         && host.attachments.contains(&aura))
     .then_some(link.object)
@@ -24514,7 +24610,24 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i128 {
                 .iter()
                 .copied()
                 .filter(|&aura| valid_bestow_attachment_host(state, aura) == Some(host))
-                .map(|aura| i128::from(state.objects.get(aura).counters.plus1_plus1))
+                .map(|aura| {
+                    #[cfg(feature = "eternal-fixtures")]
+                    if let Some(fixed) =
+                        crate::eternal_cube_c8b_v1::bestow_host_pt_bonus(state, aura)
+                    {
+                        return fixed;
+                    }
+                    let live = state.objects.get(aura);
+                    if card_def::CARD_DEFS[live.card_def as usize]
+                        .bestow
+                        .as_ref()
+                        .is_some_and(|bestow| bestow.cost.x_count > 0)
+                    {
+                        i128::from(live.counters.plus1_plus1)
+                    } else {
+                        0
+                    }
+                })
                 .sum()
         })
         .unwrap_or(0)
@@ -24924,8 +25037,20 @@ fn checked_base_power_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>,
             None
         }
     };
+    let c8b_copy_power = || -> Option<i32> {
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            crate::eternal_cube_c8b_v1::copy_base_power_toughness(state, id)
+                .map(|(power, _)| i32::from(power))
+        }
+        #[cfg(not(feature = "eternal-fixtures"))]
+        {
+            None
+        }
+    };
     let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(power, _)| i32::from(power))
+        .or_else(c8b_copy_power)
         .or_else(|| obj.v4.face_down_v1.map(|_| 2))
         .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.0))
         .or_else(characteristic_power);
@@ -24965,6 +25090,17 @@ fn checked_base_toughness_v1(state: &GameState, id: ObjectId) -> Result<Option<i
     let obj = state.objects.get(id);
     let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(_, toughness)| i32::from(toughness))
+        .or_else(|| {
+            #[cfg(feature = "eternal-fixtures")]
+            {
+                crate::eternal_cube_c8b_v1::copy_base_power_toughness(state, id)
+                    .map(|(_, toughness)| i32::from(toughness))
+            }
+            #[cfg(not(feature = "eternal-fixtures"))]
+            {
+                None
+            }
+        })
         .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.1));
     #[cfg(feature = "standard-magezero-fixtures")]
     let base =
@@ -25269,17 +25405,27 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if printed_active && kw == Keywords::HASTE && obj.v4.copied_end_step_sacrifices_v1 != 0 {
         return true;
     }
-    if (kw == Keywords::REACH || kw == Keywords::TRAMPLE)
+    let bestow_mask = if cfg!(feature = "eternal-fixtures") {
+        Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0 | Keywords::FLYING.0 | Keywords::HASTE.0)
+    } else {
+        Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0)
+    };
+    if bestow_mask.has(kw)
         && obj.attachments.iter().copied().any(|aura| {
             valid_bestow_attachment_host(state, aura) == Some(id)
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, aura)
                 && crate::continuous_characteristics_v1::grant_survives(
                     state,
                     id,
                     state.objects.get(aura).v4.layer_timestamp.unwrap_or(0),
                 )
-                && card_def::CARD_DEFS[state.objects.get(aura).card_def as usize]
-                    .keywords
-                    .has(kw)
+                && Keywords(
+                    card_def::CARD_DEFS[state.objects.get(aura).card_def as usize]
+                        .keywords
+                        .0
+                        & bestow_mask.0,
+                )
+                .has(kw)
         })
     {
         return true;
@@ -25583,10 +25729,15 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
     if printed_active && obj.v4.copied_end_step_sacrifices_v1 != 0 {
         found = found | Keywords::HASTE;
     }
-    let bestowed = Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0);
+    let bestowed = if cfg!(feature = "eternal-fixtures") {
+        Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0 | Keywords::FLYING.0 | Keywords::HASTE.0)
+    } else {
+        Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0)
+    };
     if wanted.has(bestowed) {
         for aura in obj.attachments.iter().copied() {
             if valid_bestow_attachment_host(state, aura) == Some(id)
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, aura)
                 && crate::continuous_characteristics_v1::grant_survives(
                     state,
                     id,
@@ -26985,6 +27136,11 @@ fn pending_cast_action_stage(
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
+    if pending_collect_evidence_minimum(def, pending).is_some()
+        && !pending.optional_additional_cost_selection_finished
+    {
+        return Ok(PendingCastActionStage::ChooseCollectEvidenceCard);
+    }
     if pending.optional_additional_cost_paid == Some(true) {
         match def
             .optional_additional_cost
@@ -27965,7 +28121,8 @@ fn apply_choose_collect_evidence_target(
     let Target::Object(object_id) = target else {
         return Err("Collect Evidence requires a graveyard card".to_string());
     };
-    let candidates = collect_evidence_candidates(pending.controller, state)?;
+    let candidates =
+        collect_evidence_candidates_excluding(pending.controller, Some(pending.spell), state)?;
     let binding = candidates
         .into_iter()
         .find(|binding| {
@@ -27994,9 +28151,7 @@ fn finish_optional_cast_or_collect_evidence(state: &mut GameState) -> Result<(),
         == PendingCastActionStage::ChooseCollectEvidenceCard
     {
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-        let Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }) =
-            def.optional_additional_cost
-        else {
+        let Some(minimum_mana_value) = pending_collect_evidence_minimum(def, &pending) else {
             return Err("Collect Evidence finish lost its definition".to_string());
         };
         let selected_sum =
@@ -30671,6 +30826,12 @@ fn materialize_begin_cast_with_quote_v1(
         && unambiguous_graveyard_cast_method(def).is_none())
     .then(|| granted_graveyard_cast_method_v1(player, spell_id, state))
     .flatten();
+    let graveyard_bestow = cfg!(feature = "eternal-fixtures")
+        && forced_cast_method.is_none()
+        && muldrotha_announcement.is_none()
+        && origin_zone == Zone::Graveyard
+        && crate::eternal_cube_c8b_v1::graveyard_bestow_allowed(state, spell_id, player)
+        && is_castable_now(player, spell_id, CastMethodV4::Normal, state);
     let graveyard_permission = (forced_cast_method.is_none()
         && origin_zone == Zone::Graveyard
         && unambiguous_graveyard_cast_method(def).is_none()
@@ -30678,7 +30839,7 @@ fn materialize_begin_cast_with_quote_v1(
     .then(|| graveyard_permission_zone_change_count(player, spell_id, state))
     .flatten();
     #[cfg(feature = "eternal-fixtures")]
-    if granted_method == Some(CastMethodV4::Escape) {
+    if granted_method == Some(CastMethodV4::Escape) && !graveyard_bestow {
         crate::eternal_lurrus_v1::note_breach_escape(state, spell_id, origin_zone_change_count);
     }
     let cast_method = forced_cast_method.unwrap_or_else(|| {
@@ -30687,6 +30848,7 @@ fn materialize_begin_cast_with_quote_v1(
         } else if muldrotha_announcement.is_some()
             || graveyard_permission.is_some()
             || graveyard_adventure.is_some()
+            || graveyard_bestow
             || greatwurm_choice.is_some()
         {
             CastMethodV4::Normal
@@ -30747,6 +30909,7 @@ fn materialize_begin_cast_with_quote_v1(
                 SpellCastRouteV4::GraveyardPermissionV1 {
                     holder: player,
                     permission_zone_change_count: graveyard_permission
+                        .or_else(|| graveyard_bestow.then_some(origin_zone_change_count))
                         .expect("an ordinary graveyard cast was offered through an exact grant"),
                 }
             }

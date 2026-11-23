@@ -811,6 +811,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::OpponentPlaneswalkerV1 => typed(CardType::Planeswalker),
         S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => ObjF::NonlandPermanent,
         S::CardInOwnGraveyardV1 => ObjF::AnyCard,
+        S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => ObjF::Permanent,
     }
 }
 
@@ -947,6 +948,9 @@ pub(super) fn standard_target_origin(
         S::OpponentPlaneswalkerV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
         S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1
         | S::CardInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => {
+            (Some(ZoneF::Battlefield), Some(RelF::You))
+        }
     }
 }
 
@@ -1483,6 +1487,10 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         }
         S::CardInOwnGraveyardV1 => {
             object(out, ObjF::AnyCard, relation, zone);
+        }
+        S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => {
+            object(out, ObjF::Permanent, relation, zone);
+            out.target(TargetAtom::MultipleTargets);
         }
     }
 }
