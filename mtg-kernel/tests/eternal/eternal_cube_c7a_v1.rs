@@ -1494,6 +1494,234 @@ impl C7aEvents {
 }
 
 #[test]
+fn malcolm_free_casts_x_spell_and_alt_cost_spell_without_halting() {
+    let mut state = game(&["Plains"; 20]);
+    let malcolm = put(
+        &mut state,
+        P0,
+        "Malcolm, Alluring Scoundrel",
+        Zone::Battlefield,
+    );
+    let ballista = put(&mut state, P0, "Walking Ballista", Zone::Hand);
+    let solitude = put(&mut state, P0, "Solitude", Zone::Hand);
+    let white_card = put(&mut state, P0, "Swords to Plowshares", Zone::Hand);
+
+    // Hits 1..=3: build to 3 chorus counters while keeping Ballista and Solitude in hand.
+    for expected in 1..=3_u32 {
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![malcolm]));
+        run_until(
+            &mut state,
+            |s| s.step == Step::Main2 && s.stack.is_empty() && s.engine.pending_triggers.is_empty(),
+            |_, decision| match decision {
+                Decision::ChooseEffectTargets { legal_targets, .. } => {
+                    let pick = legal_targets
+                        .iter()
+                        .copied()
+                        .find(|t| {
+                            *t != Target::Object(ballista)
+                                && *t != Target::Object(solitude)
+                                && *t != Target::Object(white_card)
+                        })
+                        .unwrap_or(legal_targets[0]);
+                    Some(Action::ChooseEffectTarget(pick))
+                }
+                _ => None,
+            },
+        );
+        assert_eq!(chorus_counters(&state, malcolm), expected);
+        pass_until(&mut state, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        pass_until(&mut state, |s| {
+            s.active_player == P0 && s.step == Step::Main1
+        });
+    }
+
+    // Hit 4: discard Walking Ballista ({X}{X}) -> free cast resolves with X=0 without halting.
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![malcolm]));
+    pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+    act(&mut state, Action::DeclareBlockers(Vec::new()));
+    pass_until(&mut state, |s| s.step == Step::CombatDamage);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(ballista)),
+    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets {
+            can_finish: true,
+            ref legal_targets,
+            ..
+        }) if legal_targets == &[Target::Object(ballista)]
+    ));
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(ballista)),
+    );
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, ballista),
+        Zone::Graveyard,
+        "Walking Ballista cast free with X=0 enters as 0/0 and dies to SBA without halting"
+    );
+
+    // Hit 5: discard Solitude (which has Evoke alt cost, and a white card in hand) ->
+    // free cast MUST NOT prompt ChooseCastMode or Evoke-sacrifice it!
+    pass_until(&mut state, |s| {
+        s.active_player == P1 && s.step == Step::Main1
+    });
+    pass_until(&mut state, |s| {
+        s.active_player == P0 && s.step == Step::DeclareAttackers
+    });
+    act(&mut state, Action::DeclareAttackers(vec![malcolm]));
+    pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+    act(&mut state, Action::DeclareBlockers(Vec::new()));
+    pass_until(&mut state, |s| s.step == Step::CombatDamage);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(solitude)),
+    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets {
+            can_finish: true,
+            ref legal_targets,
+            ..
+        }) if legal_targets == &[Target::Object(solitude)]
+    ));
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(solitude)),
+    );
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => {
+            panic!("Malcolm free cast must not prompt ChooseCastMode for an alt-cost spell")
+        }
+        Decision::ChooseTargets {
+            can_finish: true, ..
+        } => Action::FinishEffectSelection,
+        other => first_answer(other),
+    });
+    assert_eq!(
+        zone(&state, solitude),
+        Zone::Battlefield,
+        "Solitude cast free via Malcolm enters normally and stays on the battlefield"
+    );
+    assert_eq!(zone(&state, white_card), Zone::Hand);
+}
+
+#[test]
+fn gandalf_flameshape_exiles_two_simultaneously_for_laelia() {
+    let mut state = game(&["Plains"; 10]);
+    let laelia = put(
+        &mut state,
+        P0,
+        "Laelia, the Blade Reforged",
+        Zone::Battlefield,
+    );
+    let gandalf = put(&mut state, P0, "Gandalf, Goblins' Bane", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast_mode(&mut state, gandalf, 1, &[]);
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(laelia).counters.plus1_plus1,
+        1,
+        "Flameshape exiles the top two cards in one event, triggering Laelia once"
+    );
+}
+
+#[test]
+fn inti_triggers_once_for_kicked_tourach_random_discard() {
+    let mut state = game(&["Plains"; 10]);
+    put(
+        &mut state,
+        P1,
+        "Inti, Seneschal of the Sun",
+        Zone::Battlefield,
+    );
+    put(&mut state, P1, "Mountain", Zone::Hand);
+    put(&mut state, P1, "Plains", Zone::Hand);
+    put(&mut state, P1, "Forest", Zone::Hand);
+    let tourach = put(&mut state, P0, "Tourach, Dread Cantor", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B, ManaColor::B],
+        0,
+    );
+    cast(&mut state, tourach, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseKicker { .. } => Action::ChooseKicker(true),
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Player(P1)) =>
+        {
+            Action::ChooseTarget(Target::Player(P1))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(state.players[1].hand.len(), 1, "two discarded at random");
+    assert_eq!(
+        state.objects.get(tourach).counters.plus1_plus1,
+        2,
+        "Tourach still gets two +1/+1 counters for two discarded cards"
+    );
+    assert_eq!(
+        state.exile.len(),
+        1,
+        "Tourach discards both cards as one batch, triggering Inti once"
+    );
+}
+
+#[test]
+fn metamorphosis_fanatic_metamorph_copy_runs_before_entry_tapped_checks() {
+    let mut state = plains();
+    put(&mut state, P1, "Archon of Emeria", Zone::Battlefield);
+    let seat = put(&mut state, P0, "Seat of the Synod", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Graveyard);
+    let fanatic = put(&mut state, P0, "Metamorphosis Fanatic", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 4);
+    cast(&mut state, fanatic, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    act(&mut state, Action::ChooseTarget(Target::Object(metamorph)));
+    let copy_choice = settle(&mut state).expect("Metamorph offers copy choice");
+    assert!(matches!(
+        copy_choice,
+        Decision::ChooseEffectTargets {
+            ref legal_targets, ..
+        } if legal_targets.contains(&Target::Object(seat))
+    ));
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(seat)));
+    settled(&mut state);
+    assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+    assert_eq!(
+        state.objects.get(metamorph).card_def,
+        id("Seat of the Synod")
+    );
+    assert!(
+        state.objects.get(metamorph).tapped,
+        "Archon of Emeria sees Metamorph entering as a nonbasic land and taps it"
+    );
+    assert_eq!(
+        state.objects.get(metamorph).v4.lifelink_keyword_counters,
+        1,
+        "Metamorphosis Fanatic still puts a lifelink counter on it"
+    );
+}
+
+#[test]
 fn c7a_decks_finish_and_replay_through_public_sessions_both_seats() {
     let grixis = deck(&[
         ("Volcanic Island", 12),

@@ -30787,12 +30787,16 @@ fn materialize_begin_cast_with_quote_v1(
         crate::eternal_e5a_v1::permissions::note_library_cast(state, player, spell_id);
     }
     // Bilbo (graveyard) and Chandra, Torch of Defiance (exile) pay costs,
-    // X included; every other resolving instruction casts for free.
+    // X included; every other resolving instruction (including Malcolm's
+    // graveyard cast) casts for free.
     let without_mana_cost = omniscience_cast_v1::free_choice(omniscience_choice)
         || resolution_permission.is_some_and(|permission| {
-            permission.card.expected_zone != Zone::Graveyard
-                && !(cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, spell_id))
+            let malcolm_free = cfg!(feature = "eternal-fixtures")
+                && permission.card.expected_zone == Zone::Graveyard
+                && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, spell_id);
+            let chandra_paid = cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, spell_id);
+            (permission.card.expected_zone != Zone::Graveyard || malcolm_free) && !chandra_paid
         })
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
     // Omniscience and Aluren: a hand cast may skip its mana cost. Aluren's

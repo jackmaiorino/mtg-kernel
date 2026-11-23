@@ -1643,6 +1643,85 @@ fn guardian_scalelord_reanimates_nonland_permanent_types_and_checks_power_on_res
 
 // ---- Public Sessions -----------------------------------------------------------
 
+#[test]
+fn the_wondrous_wasp_sting_persists_when_target_phases_out_and_ends_when_wasp_phases_out() {
+    // 1. Target phases out and phases back in while Wasp remains on the battlefield:
+    //    the target never left the battlefield (CR 702.26d), so Wasp's sting still applies.
+    let mut state = plains();
+    let hawk = put(&mut state, P1, "Sage of the Skies", Zone::Battlefield);
+    let wasp = put(&mut state, P0, "The Wondrous Wasp", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, wasp, &[]);
+    settle_choosing(&mut state, hawk);
+    assert!(!keyword(&state, hawk, Keywords::FLYING));
+    assert!(!keyword(&state, hawk, Keywords::LIFELINK));
+
+    let gates = put(&mut state, P0, "Talon Gates of Madara", Zone::Hand);
+    pool(&mut state, P0, &[], 4);
+    activate(&mut state, gates, 0, &[]);
+    settle_choosing(&mut state, hawk);
+    assert!(
+        !state.players[1].battlefield.contains(&hawk),
+        "Sage of the Skies phased out"
+    );
+
+    // Advance to P1's Main1 so Sage of the Skies phases back in on P1's untap step.
+    pass_until(&mut state, |s| {
+        s.active_player == P1 && s.step == Step::Main1
+    });
+    assert!(
+        state.players[1].battlefield.contains(&hawk),
+        "Sage of the Skies phased back in"
+    );
+    assert!(
+        !keyword(&state, hawk, Keywords::FLYING),
+        "Wasp sting must survive the target phasing out and back in"
+    );
+    assert!(!keyword(&state, hawk, Keywords::LIFELINK));
+
+    // Killing Wasp now restores Flying and Lifelink immediately.
+    pass_until(&mut state, |s| {
+        s.active_player == P0 && s.step == Step::Main1
+    });
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Object(wasp)]);
+    settled(&mut state);
+    assert!(keyword(&state, hawk, Keywords::FLYING));
+    assert!(keyword(&state, hawk, Keywords::LIFELINK));
+
+    // 2. Wasp itself phases out (CR 702.26d): "for as long as The Wondrous Wasp
+    //    remains on the battlefield" ends immediately and stays ended after Wasp phases in.
+    let mut wasp_phased = plains();
+    let hawk2 = put(&mut wasp_phased, P1, "Sage of the Skies", Zone::Battlefield);
+    let wasp2 = put(&mut wasp_phased, P0, "The Wondrous Wasp", Zone::Hand);
+    pool(&mut wasp_phased, P0, &[ManaColor::U], 1);
+    cast(&mut wasp_phased, wasp2, &[]);
+    settle_choosing(&mut wasp_phased, hawk2);
+    assert!(!keyword(&wasp_phased, hawk2, Keywords::FLYING));
+
+    let gates2 = put(&mut wasp_phased, P0, "Talon Gates of Madara", Zone::Hand);
+    pool(&mut wasp_phased, P0, &[], 4);
+    activate(&mut wasp_phased, gates2, 0, &[]);
+    settle_choosing(&mut wasp_phased, wasp2);
+    assert!(!wasp_phased.players[0].battlefield.contains(&wasp2));
+    assert!(
+        keyword(&wasp_phased, hawk2, Keywords::FLYING),
+        "phasing out Wasp ends its for-as-long-as duration"
+    );
+    pass_until(&mut wasp_phased, |s| {
+        s.active_player == P1 && s.step == Step::Main1
+    });
+    pass_until(&mut wasp_phased, |s| {
+        s.active_player == P0 && s.step == Step::Main1
+    });
+    assert!(wasp_phased.players[0].battlefield.contains(&wasp2));
+    assert!(
+        keyword(&wasp_phased, hawk2, Keywords::FLYING),
+        "expired duration stays ended after Wasp phases back in"
+    );
+}
+
 #[derive(Default)]
 struct C7cEvents {
     casts: [usize; C7C_CARDS.len()],

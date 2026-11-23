@@ -358,15 +358,26 @@ fn exile_top_face_down_playable(
     expiry: PlayPermissionExpiry,
     flameshape: bool,
 ) {
-    for _ in 0..count {
-        let Some(&card) = state.players[player.index()].library.first() else {
-            break;
-        };
-        let history_start = state.engine.event_history.len();
-        state.reveal_meaning_v3.set_concealed_exile(Some(card));
-        event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Exile));
-        state.reveal_meaning_v3.set_concealed_exile(None);
-        if state.engine.halted.is_some() || state.objects.get(card).zone != Zone::Exile {
+    let cards: Vec<ObjectId> = state.players[player.index()]
+        .library
+        .iter()
+        .copied()
+        .take(count)
+        .collect();
+    if cards.is_empty() {
+        return;
+    }
+    let history_start = state.engine.event_history.len();
+    let batch = cards
+        .iter()
+        .map(|&card| ProposedEvent::zone_change(card, Zone::Exile))
+        .collect();
+    event::propose_and_commit_batch(state, batch);
+    if state.engine.halted.is_some() {
+        return;
+    }
+    for card in cards {
+        if state.objects.get(card).zone != Zone::Exile {
             continue;
         }
         let link = live_link(state, card);
@@ -669,24 +680,21 @@ pub(crate) fn restore_aborted_concealed_exile(state: &mut GameState, card: Objec
     }
 }
 
-/// Applies Metamorphosis Fanatic's entry-time Metamorph copy and lifelink
-/// counter during `apply_entry_counters`, before entry observers, copied entry
-/// counters/lore, and ETB triggers run.
-pub(crate) fn apply_entry_counters(
-    state: &mut GameState,
-    object: ObjectId,
-    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
-) {
+/// Applies Metamorphosis Fanatic's entry-time Phyrexian Metamorph copy
+/// modification as the permanent enters the battlefield, before entry-tapped
+/// checks (including Authority of the Consuls and Blood Moon), copied entry
+/// counters, and ETB triggers run. Returns `true` when the copied definition
+/// has a printed enters-tapped rule.
+pub(crate) fn apply_pending_metamorph_entry_copy(state: &mut GameState, object: ObjectId) -> bool {
     let Some(live) = state.objects.try_get(object) else {
-        return;
+        return false;
     };
     if live.zone != Zone::Battlefield {
-        return;
+        return false;
     }
     let Some(prev_gen) = live.zone_change_count.checked_sub(1) else {
-        return;
+        return false;
     };
-    let controller = live.controller;
     let expected = ObjectLinkV4 {
         object,
         zone_change_count: prev_gen,
@@ -706,9 +714,34 @@ pub(crate) fn apply_entry_counters(
             None
         }
     });
-    if let Some(copied_def) = copied_def {
-        crate::eternal_vintage_v1::apply_metamorph_entry_copy(state, object, copied_def);
+    let Some(copied_def) = copied_def else {
+        return false;
+    };
+    crate::eternal_vintage_v1::apply_metamorph_entry_copy(state, object, copied_def);
+    CARD_DEFS[copied_def as usize].enters_battlefield_tapped
+}
+
+/// Applies Metamorphosis Fanatic's entry-time lifelink counter during
+/// `apply_entry_counters`, respecting counter replacement effects.
+pub(crate) fn apply_entry_counters(
+    state: &mut GameState,
+    object: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
+    let Some(live) = state.objects.try_get(object) else {
+        return;
+    };
+    if live.zone != Zone::Battlefield {
+        return;
     }
+    let Some(prev_gen) = live.zone_change_count.checked_sub(1) else {
+        return;
+    };
+    let controller = live.controller;
+    let expected = ObjectLinkV4 {
+        object,
+        zone_change_count: prev_gen,
+    };
     let add_lifelink = state.eternal_v1.as_mut().is_some_and(|eternal| {
         if eternal.c7a.pending_lifelink_entry == Some(expected) {
             eternal.c7a.pending_lifelink_entry = None;

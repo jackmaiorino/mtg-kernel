@@ -768,18 +768,21 @@ fn run_questing_beast_damage(ctx: &ExecCtx, state: &mut GameState, amount: i32) 
     if amount <= 0 {
         return;
     }
-    let Some(Target::Object(planeswalker)) = ctx.targets.first().copied() else {
+    let Some(Target::Object(_)) = ctx.targets.first().copied() else {
         return;
     };
-    if !ctx.target_incarnation_matches(0, state) {
-        return;
-    }
-    let Some(live) = state.objects.try_get(planeswalker) else {
+    let Some(source) = ctx.ability_source_contract else {
         return;
     };
-    if live.zone != Zone::Battlefield
-        || live.controller != ctx.controller.opponent()
-        || !crate::engine::object_has_type(state, planeswalker, CardType::Planeswalker)
+    if !ctx.target_incarnation_matches(0, state)
+        || !crate::engine::effect_target_is_legal_from_ability_source(
+            state,
+            source,
+            ctx.controller,
+            TargetSpec::StandardV1(StandardTargetV1::OpponentPlaneswalkerV1),
+            &ctx.targets,
+            0,
+        )
     {
         return;
     }
@@ -797,18 +800,24 @@ fn run_palace_jailer_exile(ctx: &ExecCtx, state: &mut GameState) {
     let Some(Target::Object(victim)) = ctx.targets.first().copied() else {
         return;
     };
-    if !ctx.target_incarnation_matches(0, state) {
+    let Some(source) = ctx.ability_source_contract else {
+        return;
+    };
+    if !ctx.target_incarnation_matches(0, state)
+        || !crate::engine::effect_target_is_legal_from_ability_source(
+            state,
+            source,
+            ctx.controller,
+            TargetSpec::OpponentControlledCreature,
+            &ctx.targets,
+            0,
+        )
+    {
         return;
     }
     let Some(live) = state.objects.try_get(victim) else {
         return;
     };
-    if live.zone != Zone::Battlefield
-        || live.controller != ctx.controller.opponent()
-        || !crate::engine::object_has_type(state, victim, CardType::Creature)
-    {
-        return;
-    }
     let is_token = live.v4.is_token;
     event::propose_and_commit(state, ProposedEvent::zone_change(victim, Zone::Exile));
     if is_token {
@@ -859,24 +868,30 @@ pub(crate) fn drive(
         C7bOpV1::BlackWidowTriggerV1 => {
             let controller = continuation.ctx.controller;
             let defender = controller.opponent();
-            let mut prefix = Vec::new();
             let mut nonland = None;
-            for &card in &state.players[defender.index()].library {
-                prefix.push(card);
-                let def = &CARD_DEFS[usize::from(state.objects.get(card).card_def)];
+            let limit = state.players[defender.index()].library.len();
+            for _ in 0..limit {
+                let Some(&card) = state.players[defender.index()].library.first() else {
+                    break;
+                };
+                event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Exile));
+                if state.engine.halted.is_some() {
+                    return Ok(true);
+                }
+                let Some(live) = state.objects.try_get(card) else {
+                    break;
+                };
+                if live.zone != Zone::Exile {
+                    if state.players[defender.index()].library.first() == Some(&card) {
+                        break;
+                    }
+                    continue;
+                }
+                let def = &CARD_DEFS[usize::from(live.card_def)];
                 if !def.is_land {
                     nonland = Some(card);
                     break;
                 }
-            }
-            if !prefix.is_empty() {
-                event::propose_and_commit_batch(
-                    state,
-                    prefix
-                        .iter()
-                        .map(|&card| ProposedEvent::zone_change(card, Zone::Exile))
-                        .collect(),
-                );
             }
             let castable_exiled = nonland.and_then(|card| {
                 let live = state.objects.try_get(card)?;

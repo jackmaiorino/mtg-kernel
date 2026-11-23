@@ -8694,6 +8694,12 @@ fn materialize_zone_change_v1(
         // the battlefield, under the controller it entered under. A Moon
         // effect that already applies removes its printed entry rule (an
         // entry tapped for another reason stays tapped).
+        #[cfg(feature = "eternal-fixtures")]
+        let copied_entry_tapped = entering_face_down.is_none()
+            && crate::eternal_cube_c7a_v1::apply_pending_metamorph_entry_copy(state, id);
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let copied_entry_tapped = false;
+        let printed_entry_tapped = printed_entry_tapped || copied_entry_tapped;
         let controller = state.objects.get(id).controller;
         if printed_entry_tapped
             && !force_battlefield_tapped

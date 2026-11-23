@@ -955,8 +955,10 @@ fn prune(state: &mut GameState) {
         .iter()
         .copied()
         .filter(|entry| {
-            link_live_in(state, entry.wasp, Zone::Battlefield)
-                && link_live_in(state, entry.target, Zone::Battlefield)
+            let target_present = link_live_in(state, entry.target, Zone::Battlefield)
+                || (link_live_in(state, entry.target, Zone::Command)
+                    && crate::eternal_e5a_v1::phasing::phased_out(state, entry.target.object));
+            link_live_in(state, entry.wasp, Zone::Battlefield) && target_present
         })
         .collect::<Vec<_>>();
     let backups = c7c

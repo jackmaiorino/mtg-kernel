@@ -1647,6 +1647,203 @@ fn palace_jailer_exiles_even_if_opponent_already_monarch_and_releases_on_later_m
         .is_none_or(|e| e.c7b.jailer_exiles.is_empty()));
 }
 
+#[test]
+fn questing_beast_bypasses_crystal_prevention_multi_shield_without_halting() {
+    let mut state = plains();
+    let beast = put(&mut state, P0, "Questing Beast", Zone::Battlefield);
+    let blocker = put(&mut state, P1, "Ravenous Baloth", Zone::Battlefield);
+    // Attach two distinct prevention replacements to the blocker so
+    // `crystal_prevention_v1::needs_choice` would halt if `cannot_prevent`
+    // ignored Questing Beast's combat-damage override.
+    state.engine.next_replacement_id += 1;
+    let id1 = state.engine.next_replacement_id;
+    state
+        .engine
+        .active_replacements
+        .push(event::ActiveReplacement {
+            id: id1,
+            source: blocker,
+            kind: event::ReplacementEffectKind::PreventNextDamage {
+                target: Target::Object(blocker),
+                remaining: 2,
+            },
+        });
+    state.engine.next_replacement_id += 1;
+    let id2 = state.engine.next_replacement_id;
+    state
+        .engine
+        .active_replacements
+        .push(event::ActiveReplacement {
+            id: id2,
+            source: blocker,
+            kind: event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+                color: ManaColor::G,
+                turn: state.turn,
+                active_player: state.active_player,
+            },
+        });
+    attack_with(&mut state, vec![beast], |_, decision| {
+        matches!(decision, Decision::DeclareBlockers { .. })
+            .then_some(Action::DeclareBlockers(vec![(blocker, beast)]))
+    });
+    assert_eq!(
+        zone(&state, blocker),
+        Zone::Graveyard,
+        "Questing Beast deals lethal combat damage through multiple prevention shields without halting"
+    );
+}
+
+#[test]
+fn questing_beast_and_palace_jailer_recheck_target_legality_on_resolution() {
+    // 1. Questing Beast planeswalker trigger fizzles if the planeswalker gains Hexproof in response.
+    let mut qb = plains();
+    let beast = put(&mut qb, P0, "Questing Beast", Zone::Battlefield);
+    let jace = enter(&mut qb, P1, "Jace, the Mind Sculptor");
+    let safekeeping = put(&mut qb, P1, "Tamiyo's Safekeeping", Zone::Hand);
+    put(&mut qb, P1, "Forest", Zone::Battlefield);
+    assert_eq!(loyalty(&qb, jace), Some(3));
+    pass_until(&mut qb, |s| s.step == Step::DeclareAttackers);
+    act(&mut qb, Action::DeclareAttackers(vec![beast]));
+    run_until(
+        &mut qb,
+        |s| !s.stack.is_empty(),
+        |_, decision| {
+            if let Decision::ChooseTargets { legal_targets, .. } = decision {
+                assert_eq!(legal_targets, &vec![Target::Object(jace)]);
+                return Some(Action::ChooseTarget(Target::Object(jace)));
+            }
+            None
+        },
+    );
+    // Pass P0 priority so P1 responds with Tamiyo's Safekeeping targeting Jace.
+    let mut responded = false;
+    run_until(
+        &mut qb,
+        |s| s.stack.is_empty() && s.engine.pending_triggers.is_empty(),
+        |_, decision| match decision {
+            Decision::CastSpellOrPass {
+                player: P1,
+                castable_spells,
+                ..
+            } if !responded && castable_spells.contains(&safekeeping) => {
+                responded = true;
+                Some(Action::CastSpell(safekeeping))
+            }
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(jace)) =>
+            {
+                Some(Action::ChooseTarget(Target::Object(jace)))
+            }
+            _ => None,
+        },
+    );
+    assert!(
+        responded,
+        "P1 cast Tamiyo's Safekeeping in response to Questing Beast trigger"
+    );
+    assert_eq!(
+        loyalty(&qb, jace),
+        Some(3),
+        "Questing Beast planeswalker trigger fizzles when target gains Hexproof"
+    );
+
+    // 2. Palace Jailer exile trigger fizzles if target creature gains Hexproof in response.
+    let mut pj = plains();
+    let victim = put(&mut pj, P1, "Wild Mongrel", Zone::Battlefield);
+    let veil = put(&mut pj, P1, "Snakeskin Veil", Zone::Hand);
+    put(&mut pj, P1, "Forest", Zone::Battlefield);
+    let jailer = put(&mut pj, P0, "Palace Jailer", Zone::Hand);
+    pool(&mut pj, P0, &[ManaColor::W, ManaColor::W], 2);
+    cast(&mut pj, jailer, &[]);
+    let mut cast_veil = false;
+    for _ in 0..200 {
+        match next(&mut pj) {
+            Decision::OrderTriggers { pending, .. } => {
+                act(&mut pj, Action::OrderTriggers((0..pending.len()).collect()));
+            }
+            Decision::ChooseTargets {
+                player: P0,
+                legal_targets,
+                ..
+            } if legal_targets.contains(&Target::Object(victim)) => {
+                act(&mut pj, Action::ChooseTarget(Target::Object(victim)));
+            }
+            Decision::CastSpellOrPass {
+                player: P1,
+                castable_spells,
+                ..
+            } if !cast_veil
+                && !pj.stack.is_empty()
+                && zone(&pj, jailer) == Zone::Battlefield
+                && castable_spells.contains(&veil) =>
+            {
+                cast_veil = true;
+                act(&mut pj, Action::CastSpell(veil));
+            }
+            Decision::ChooseTargets {
+                player: P1,
+                legal_targets,
+                ..
+            } if legal_targets.contains(&Target::Object(victim)) => {
+                act(&mut pj, Action::ChooseTarget(Target::Object(victim)));
+            }
+            Decision::CastSpellOrPass { .. }
+                if pj.stack.is_empty() && pj.engine.pending_triggers.is_empty() =>
+            {
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut pj, Action::Pass),
+            other => {
+                let action = first_answer(other);
+                act(&mut pj, action);
+            }
+        }
+    }
+    assert!(
+        cast_veil,
+        "P1 cast Snakeskin Veil in response to Palace Jailer ETB"
+    );
+    assert_eq!(
+        zone(&pj, victim),
+        Zone::Battlefield,
+        "Palace Jailer exile trigger fizzles when target gains Hexproof"
+    );
+    assert!(pj
+        .eternal_v1
+        .as_ref()
+        .is_none_or(|e| e.c7b.jailer_exiles.is_empty()));
+}
+
+#[test]
+fn black_widow_exiles_sequentially_for_opponents_laelia() {
+    let mut state = game_with_libraries(
+        &["Plains"; 10],
+        &["Plains", "Forest", "Wild Mongrel", "Mountain"],
+    );
+    let widow = put(&mut state, P0, "Black Widow, Super Spy", Zone::Battlefield);
+    let laelia = put(
+        &mut state,
+        P1,
+        "Laelia, the Blade Reforged",
+        Zone::Battlefield,
+    );
+    attack_with(&mut state, vec![widow], |_, decision| {
+        matches!(
+            decision,
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        )
+        .then_some(Action::ChooseEffectOption(0))
+    });
+    assert_eq!(
+        state.objects.get(laelia).counters.plus1_plus1,
+        3,
+        "Black Widow exiles 2 lands then 1 nonland one at a time, triggering Laelia 3 times"
+    );
+}
+
 // ---- Public sessions -----------------------------------------------------------
 
 #[test]
