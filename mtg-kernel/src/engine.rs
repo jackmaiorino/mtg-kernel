@@ -17765,14 +17765,15 @@ pub(crate) fn validate_pending_cast(
             let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
             #[cfg(feature = "eternal-fixtures")]
             if let Some(cap) = crate::eternal_cube_c9b_v1::serra_paragon_x_cap(
-                state,
-                pending.controller,
+                def,
                 pending.spell,
                 pending.origin_zone,
-                def,
-                cost,
+                pending.controller,
+                pending.source_contract.zone_change_count.saturating_sub(1),
+                method,
+                state,
             ) {
-                if x_value > cap {
+                if x_value > u16::from(cap) {
                     return Err(
                         "pending cast chose X above Serra Paragon's mana value 3 cap".to_string(),
                     );

@@ -4784,7 +4784,12 @@ fn commit_with_entry_batch_and_source_color(
     // batch replacement ordering.
     #[cfg(feature = "eternal-fixtures")]
     let graveyard_redirected = match &event {
-        ProposedEvent::ZoneChange(change) if change.to_zone == Zone::Graveyard => {
+        ProposedEvent::ZoneChange(change)
+            if change.to_zone == Zone::Graveyard
+                && state.objects.try_get(change.object).is_some_and(|live| {
+                    crate::eternal_cube_c9a_v1::is_blightsteel(live.card_def)
+                }) =>
+        {
             let mut probe = change.clone();
             crate::standard_keywords_v1::unearth_exile_instead(state, &mut probe);
             crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut probe);
