@@ -323,6 +323,11 @@ pub fn companion_condition_met(companion: u16, deck: &[u16]) -> Option<bool> {
                     .is_some_and(|card| card.is_land || seen.insert(card.name))
             }))
         }
+        // Zirda, the Dawnwaker (wave C8c): "Each permanent card in your
+        // starting deck has an activated ability."
+        "Zirda, the Dawnwaker" => Some(crate::eternal_cube_c8c_v1::zirda_companion_condition_met(
+            deck,
+        )),
         _ => None,
     }
 }

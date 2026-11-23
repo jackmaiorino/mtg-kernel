@@ -4850,6 +4850,8 @@ fn object_name_for(name: &str) -> &str {
         "Baloth Beast Token" => "Beast Token",
         "Gingerbrute Token" => "Gingerbrute",
         "Fanatic of Rhonas Eternalized Token" => "Fanatic of Rhonas",
+        // Vintage Cube wave C8c: the printed name of Wan Shi Tong's Spirit token.
+        "Wan Shi Tong Spirit Token" => "Spirit Token",
         _ => build_standard_v1::object_name_for(name)
             .or_else(|| build_eternal_lurrus_v1::object_name_for(name))
             .unwrap_or(name),

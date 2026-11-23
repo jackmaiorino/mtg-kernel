@@ -388,6 +388,15 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c7c_v1::C7cStateV1::is_empty"
     )]
     pub c7c: crate::eternal_cube_c7c_v1::C7cStateV1,
+    /// Vintage Cube wave C8c's state: Pyrogoyf LKI, Elite Spellbinder exile
+    /// tax, Librarian/Skydiver cast X, Librarian opponent-search triggers,
+    /// Zirda can't-block marks, and Absorbing Man copy records
+    /// (`eternal_cube_c8c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c8c_v1::C8cStateV1::is_empty"
+    )]
+    pub c8c: crate::eternal_cube_c8c_v1::C8cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -475,6 +484,8 @@ pub enum EternalTriggerV1 {
     C6aV1(crate::eternal_cube_c6a_v1::C6aTriggerV1),
     /// Vintage Cube wave C7c's per-color cast mana and Persist conditions.
     C7cV1(crate::eternal_cube_c7c_v1::C7cTriggerV1),
+    /// Vintage Cube wave C8c's card-to-library trigger condition.
+    C8cV1(crate::eternal_cube_c8c_v1::C8cTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -2141,6 +2152,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_sideboard_s1e_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_cube_c7a_v1::blocker_allowed(state, blocker)
         && crate::eternal_cube_c7b_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_cube_c8c_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -2168,6 +2180,10 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
         return Some(value);
     }
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
+    // Pyrogoyf (Vintage Cube wave C8c): power = card types in all graveyards.
+    if let Some(value) = crate::eternal_cube_c8c_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
     // Seize the Storm's Elemental token sets both stats.
@@ -2203,6 +2219,10 @@ pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId)
     }
     // Barrowgoyf's toughness is its power plus 1.
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_toughness(state, id) {
+        return Some(value);
+    }
+    // Pyrogoyf's toughness is its power plus 1 (Vintage Cube wave C8c).
+    if let Some(value) = crate::eternal_cube_c8c_v1::characteristic_defining_toughness(state, id) {
         return Some(value);
     }
     if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
@@ -2509,6 +2529,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c7a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c7b_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c7c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c8c_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2673,6 +2694,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_cube_c6c_v1::begin_turn(state, player);
     crate::eternal_cube_c7a_v1::begin_turn(state, player);
     crate::eternal_cube_c7c_v1::begin_turn(state, player);
+    crate::eternal_cube_c8c_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2838,6 +2860,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::C6aV1(condition) => {
             crate::eternal_cube_c6a_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::C8cV1(condition) => {
+            crate::eternal_cube_c8c_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {

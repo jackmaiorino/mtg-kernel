@@ -1562,6 +1562,8 @@ pub(crate) fn drive(
                 .collect::<Vec<_>>();
             if cards.is_empty() {
                 shuffle(state, controller)?;
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c8c_v1::note_library_searched(state, controller);
                 return Ok(false);
             }
             offer(
@@ -1740,6 +1742,8 @@ pub(crate) fn finish_selection(
                 put_onto_battlefield(state, card.object, player, false);
             }
             shuffle(state, player)?;
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8c_v1::note_library_searched(state, player);
             Ok(false)
         }
         E9aChoiceV1::InquisitionDiscardV1 => {

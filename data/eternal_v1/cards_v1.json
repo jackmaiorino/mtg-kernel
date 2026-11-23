@@ -38074,7 +38074,7 @@
   },
   {
    "name": "Pyrogoyf",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{R}",
    "mana_value": 4,
    "colors": [
@@ -38096,12 +38096,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "characteristic_defining",
+    "etb_trigger",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/p/Pyrogoyf.java"
   },
   {
    "name": "Elite Spellbinder",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}",
    "mana_value": 3,
    "colors": [
@@ -38124,12 +38128,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "hand_exile",
+    "cast_from_exile",
+    "cost_increase"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/e/EliteSpellbinder.java"
   },
   {
    "name": "Wan Shi Tong, All-Knowing",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{U}{U}",
    "mana_value": 5,
    "colors": [
@@ -38154,12 +38164,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "library_tuck",
+    "triggered_ability",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WanShiTongAllKnowing.java"
   },
   {
    "name": "Wan Shi Tong, Librarian",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{U}{U}",
    "mana_value": 2,
    "colors": [
@@ -38184,12 +38200,20 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flash",
+    "flying",
+    "vigilance",
+    "etb_trigger",
+    "counters",
+    "card_draw",
+    "triggered_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WanShiTongLibrarian.java"
   },
   {
    "name": "Thieving Skydiver",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -38212,12 +38236,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "kicker",
+    "flying",
+    "etb_trigger",
+    "control_change",
+    "equipment"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/ThievingSkydiver.java"
   },
   {
    "name": "Zirda, the Dawnwaker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R/W}{R/W}",
    "mana_value": 3,
    "colors": [
@@ -38243,12 +38273,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "companion",
+    "cost_reduction",
+    "activated_ability",
+    "cant_block"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/z/ZirdaTheDawnwaker.java"
   },
   {
    "name": "Absorbing Man",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}{U}",
    "mana_value": 3,
    "colors": [
@@ -38274,7 +38309,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "vigilance",
+    "triggered_ability",
+    "copy"
+   ]
   },
   {
    "name": "Regrowth",
@@ -38331,7 +38370,7 @@
   },
   {
    "name": "Wan Shi Tong Spirit Token",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -38350,7 +38389,8 @@
    "sideboard_only": false,
    "complexity": "simple",
    "mechanics": [
-    "token_creation"
+    "token_creation",
+    "blocking_restriction"
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritToken.java",
    "is_token": true

@@ -642,7 +642,10 @@ fn library_cards(
 fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     state
         .shuffle_library(player)
-        .map_err(|error| format!("{error:?}"))
+        .map_err(|error| format!("{error:?}"))?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
+    Ok(())
 }
 
 /// Puts `card` onto the battlefield under `controller`'s control.

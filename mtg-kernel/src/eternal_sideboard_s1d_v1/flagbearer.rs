@@ -41,6 +41,7 @@ use crate::eternal_cube_c1c_v1::targets::C1cTargetV1;
 use crate::eternal_cube_c2c_v1::targets::C2cTargetV1;
 use crate::eternal_cube_c4a_v1::targets::C4aTargetV1;
 use crate::eternal_cube_c4c_v1::targets::C4cTargetV1;
+use crate::eternal_cube_c8c_v1::targets::C8cTargetV1;
 use crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1;
 use crate::eternal_sideboard_s1o_v1::targets::S1oTargetV1;
 use crate::eternal_sideboard_s1q_v1::targets::S1qTargetV1;
@@ -216,6 +217,10 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         },
         S::C4cV1(filter) => match filter {
             C4cTargetV1::ControlledTokenV1 => Single,
+        },
+        S::C8cV1(filter) => match filter {
+            C8cTargetV1::SkydiverArtifactV1
+            | C8cTargetV1::UpToOneArtifactNonAuraEnchantmentOrLandV1 => Single,
         },
         S::S1oV1(filter) => match filter {
             // Eowyn, Fearless Knight's enters trigger: "target creature an

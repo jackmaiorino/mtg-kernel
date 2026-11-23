@@ -488,6 +488,8 @@ pub enum StandardTargetV1 {
     /// Guardian Scalelord: a nonland permanent card in your graveyard with
     /// mana value at most the attacking creature's power.
     NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1,
+    /// A filter of eternal wave C8c (`eternal_cube_c8c_v1::targets`).
+    C8cV1(crate::eternal_cube_c8c_v1::targets::C8cTargetV1),
 }
 
 impl StandardTargetV1 {
@@ -560,6 +562,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_sideboard_s1q_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c8c_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -762,6 +767,7 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || crate::eternal_cube_c2c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c4c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c4a_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c8c_v1::targets::zone_allows(target, zone)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
         || (matches!(
             target,
@@ -1111,6 +1117,11 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) = crate::eternal_cube_c8c_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1447,6 +1458,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c8c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1704,6 +1720,8 @@ pub(crate) fn target_matches(
             live.controller == controller.opponent() && has(CardType::Planeswalker)
         }
         StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => false,
+        // Answered by `eternal_cube_c8c_v1::targets` above.
+        StandardTargetV1::C8cV1(_) => false,
     }
 }
 
@@ -3723,6 +3741,10 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
         if let Some(minimum) = crate::eternal_cube_c1b_v1::minimum_x(def.name, targets) {
             return minimum;
         }
+        // Thieving Skydiver: "Kicker {X}. X can't be 0."
+        if let Some(minimum) = crate::eternal_cube_c8c_v1::minimum_x(def.name, state) {
+            return minimum;
+        }
         // "Exile X cards from your graveyard" (wave P1a): X is the number
         // of cards the cast chose to exile. Sickening Shoal's alternative
         // cost (wave S1e): X is the exiled card's mana value.
@@ -5524,9 +5546,20 @@ pub(crate) fn archived_copy_printing(
     let mut permanent = state
         .eternal_v1
         .iter()
-        .flat_map(|e| &e.e7a.copies)
-        .filter(|copy| copy.host == host);
-    let saved = permanent.next().map(|copy| copy.card_def);
+        .flat_map(|e| {
+            e.e7a
+                .copies
+                .iter()
+                .map(|copy| (copy.host, copy.card_def))
+                .chain(
+                    e.c8c
+                        .absorbing_copies
+                        .iter()
+                        .map(|copy| (copy.host, copy.orig_card_def)),
+                )
+        })
+        .filter(|(copy_host, _)| *copy_host == host);
+    let saved = permanent.next().map(|(_, card_def)| card_def);
     if permanent.next().is_some() || matches!((aegis, saved), (Some(a), Some(b)) if a != b) {
         return None;
     }
