@@ -550,12 +550,12 @@ fn brain_freeze_escape_via_underworld_breach_and_yawgmoths_will_resolve_storm_co
 fn hullbreacher_competes_with_jace_on_audited_eternal_draw_leaves() {
     // Ice half of Fire // Ice (P1aOpV1::IceV1) on empty library with Jace + Hullbreacher.
     let mut state = game(&[]);
-    let jace = put(
+    let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+    mtg_kernel::event::propose_and_commit(
         &mut state,
-        P0,
-        "Jace, Wielder of Mysteries",
-        Zone::Battlefield,
+        mtg_kernel::event::ProposedEvent::zone_change(jace, Zone::Battlefield),
     );
+    assert_eq!(loyalty(&state, jace), Some(4));
     put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
     let target = put(&mut state, P1, "Plains", Zone::Battlefield);
     let fire_ice = put(&mut state, P0, "Fire // Ice", Zone::Hand);
@@ -842,14 +842,14 @@ fn metamorphosis_fanatic_entry_time_lifelink_counter_and_metamorph_copy_self() {
     cast(&mut state, fanatic, &[]);
     settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::Object(bowmasters)) =>
-        {
-            Action::ChooseTarget(Target::Object(bowmasters))
-        }
-        Decision::ChooseTargets { legal_targets, .. }
             if legal_targets.contains(&Target::Player(P1)) =>
         {
             Action::ChooseTarget(Target::Player(P1))
+        }
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(bowmasters)) =>
+        {
+            Action::ChooseTarget(Target::Object(bowmasters))
         }
         other => first_answer(other),
     });
@@ -1187,6 +1187,7 @@ fn malcolm_chorus_counters_free_graveyard_cast_and_edge_cases() {
     act(&mut state, Action::DeclareAttackers(vec![malcolm]));
     pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
     act(&mut state, Action::DeclareBlockers(Vec::new()));
+    pass_until(&mut state, |s| s.step == Step::CombatDamage);
     let discard_choice = settle(&mut state).expect("Malcolm asks which card to discard");
     assert!(matches!(
         discard_choice,
@@ -1389,6 +1390,7 @@ fn chandra_torch_of_defiance_mana_minus_three_and_emblem() {
 
     // +1: Add {R}{R} (uses the stack as a loyalty ability).
     activate(&mut state, chandra, 1, &[]);
+    let _ = next(&mut state);
     assert_eq!(state.stack.len(), 1);
     assert_eq!(
         mana(&state, P0, ManaColor::R),

@@ -62,7 +62,9 @@ fn gandalf_stays_partial_until_hidden_wizard_conditional_permissions_are_support
 #[test]
 fn black_widow_stays_out_until_spell_scoped_any_type_spending_is_supported() {
     let name = "Black Widow, Super Spy";
-    assert!(card_id_by_name(name).is_none());
+    let card = def(name);
+    assert_eq!(card.capability, CardCapability::Full);
+    assert!(card.is_executable());
     assert!(!C6A_CARDS.contains(&name));
 }
 
