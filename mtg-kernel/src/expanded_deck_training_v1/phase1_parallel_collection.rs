@@ -157,8 +157,10 @@ where
 
 /// What a gated collection asks before each of its filesystem writes
 /// ([`collect_parallel_gated_v1`]): `Ok` admits the write, an error ends the
-/// collection with that error and without the write. It is called from the
-/// collection's workers, several at once.
+/// collection with that error and without the write. It is asked once per
+/// write (each trajectory, each EX1 record, the non-natural ledger and the
+/// receipt) and once more after the games, and from the collection's
+/// workers, several at once.
 pub(crate) type CollectionWriteGateV1<'a> = &'a (dyn Fn() -> Result<(), String> + Sync);
 
 /// A collection's output directory, its first filesystem write.
@@ -233,10 +235,11 @@ pub(super) fn collect_parallel_v1(
 }
 
 /// [`collect_parallel_v1`]. With `write_gate`, the collection asks it before
-/// each filesystem write ([`OutputDirectoryV1`]) and writes nothing it has
-/// not admitted; the games, the published bytes and the receipt are the same.
-/// A refused write ends the collection with the gate's own error, whichever
-/// worker met it.
+/// each filesystem write, the creation of its directory included
+/// ([`OutputDirectoryV1`]), and writes nothing it has not admitted; the
+/// games, the published bytes and the receipt are the same. A refused write
+/// ends the collection with the gate's own error, whichever worker met it,
+/// and nothing is written after it.
 #[allow(
     clippy::too_many_arguments,
     reason = "the collection command's fields, plus EX1's hook and the write gate"
@@ -409,6 +412,7 @@ pub(super) fn collect_parallel_gated_v1(
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record
                 .map(|record| {
+                    output.admit_v1()?;
                     publish_json(&output_directory, &format!("ex1-{index:04}.json"), &record)
                 })
                 .transpose()?;
@@ -416,10 +420,10 @@ pub(super) fn collect_parallel_gated_v1(
         },
         trajectory_parse_ahead_v1::start_helper_v1,
     );
-    // Gated: the writes below wait for the gate as the workers' did, and the
-    // directory exists from here on, as it does ungated, also when no worker
-    // published. A refused gate ends the collection here, with the gate's own
-    // error rather than a worker's wrapping of it and without another write.
+    // Gated: the directory exists from here on, as it does ungated, also when
+    // no worker published. A refused gate ends the collection here, with the
+    // gate's own error rather than a worker's wrapping of it. Each write
+    // below asks again, so a gate refused meanwhile stops the next one.
     output.admit_v1()?;
     let mut ledger_entries = ledger
         .into_inner()
@@ -432,6 +436,7 @@ pub(super) fn collect_parallel_gated_v1(
             schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
             entries: ledger_entries,
         };
+        output.admit_v1()?;
         Some(publish_json(
             &output_directory,
             "non-natural.json",
@@ -482,6 +487,7 @@ pub(super) fn collect_parallel_gated_v1(
         let episodes: Vec<PinnedFileV1> = ex1_outputs.into_iter().flatten().collect();
         result["ex1"] = json!({"options":options,"episodes":episodes});
     }
+    output.admit_v1()?;
     publish_json(&output_directory, "collection.json", &result)?;
     Ok(result)
 }
@@ -770,6 +776,109 @@ mod tests {
                 assert_eq!(parse(bytes), parse(&ungated_files[name]));
             } else {
                 assert!(bytes == &ungated_files[name], "{name} differs");
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `command`, a parallel collection, into `output` with the tolerant
+    /// ledger on (`max_non_natural_episode_fraction` 0.5), so that it also
+    /// publishes `non-natural.json`.
+    fn tolerant_into_v1(
+        command: &ExpandedTrainingCommandV1,
+        output: PathBuf,
+    ) -> ExpandedTrainingCommandV1 {
+        let ExpandedTrainingCommandV1::CollectParallel {
+            source,
+            episodes,
+            workers,
+            collection_sampler,
+            training_math,
+            ex1,
+            record_envelope,
+            shard,
+            ..
+        } = command.clone()
+        else {
+            panic!("a parallel collection");
+        };
+        ExpandedTrainingCommandV1::CollectParallel {
+            source,
+            episodes,
+            workers,
+            max_non_natural_episode_fraction: 0.5,
+            collection_sampler,
+            training_math,
+            ex1,
+            record_envelope,
+            shard,
+            output_directory: output,
+        }
+    }
+
+    /// The write gate asks before every write, and nothing is written after
+    /// it refuses (`update_tail_overlap_v1`). A five-game tolerant collection
+    /// on two workers asks once per trajectory, once after its games, once
+    /// for its non-natural ledger and once for its receipt: eight asks for
+    /// seven files. A gate that admits the first `admitted` asks and refuses
+    /// every later one leaves exactly the files of the admitted writes: no
+    /// directory without an admitted ask, `admitted` trajectories up to five,
+    /// the ledger only once seven asks are admitted and the receipt only once
+    /// all eight are. Every refusal ends the collection with the gate's own
+    /// error, wherever it falls: mid-way through the games, after them, or
+    /// between the ledger and the receipt.
+    #[test]
+    fn a_gated_collection_asks_before_every_write_and_writes_nothing_after_a_refusal() {
+        let (root, command) = parallel_collection_command_for_test_v1("write-gate-refusal");
+        for admitted in 0..=8usize {
+            let output = root.join(format!("collect-{admitted}"));
+            let asked = AtomicUsize::new(0);
+            let gate = || -> Result<(), String> {
+                if asked.fetch_add(1, Ordering::SeqCst) < admitted {
+                    Ok(())
+                } else {
+                    Err("the gate refused".to_string())
+                }
+            };
+            let result =
+                execute_collection_gated_v1(tolerant_into_v1(&command, output.clone()), &gate);
+            let mut names: Vec<String> = if output.exists() {
+                fs::read_dir(&output)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            names.sort();
+            let trajectories = names
+                .iter()
+                .filter(|name| name.starts_with("episode-"))
+                .count();
+            let ledger = names.iter().any(|name| name == "non-natural.json");
+            let receipt = names.iter().any(|name| name == "collection.json");
+            assert_eq!(output.exists(), admitted >= 1, "{admitted}: {names:?}");
+            assert_eq!(trajectories, admitted.min(5), "{admitted}: {names:?}");
+            assert_eq!(ledger, admitted >= 7, "{admitted}: {names:?}");
+            assert_eq!(receipt, admitted >= 8, "{admitted}: {names:?}");
+            assert_eq!(
+                names.len(),
+                trajectories + usize::from(ledger) + usize::from(receipt),
+                "{admitted}: a file no admitted ask stands for: {names:?}"
+            );
+            if admitted < 8 {
+                assert_eq!(
+                    result.unwrap_err(),
+                    "the gate refused",
+                    "{admitted}: the collection's error is not the gate's"
+                );
+            } else {
+                assert_eq!(result.unwrap()["trajectories"].as_array().unwrap().len(), 5);
+                assert_eq!(
+                    asked.load(Ordering::SeqCst),
+                    names.len() + 1,
+                    "one ask for every write and one after the games"
+                );
             }
         }
         fs::remove_dir_all(root).unwrap();
