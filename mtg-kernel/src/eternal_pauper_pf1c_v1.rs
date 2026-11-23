@@ -124,6 +124,8 @@ pub struct HallowShieldV1 {
 
 /// Private exact effective damage packet. Choosing a beneficiary applies one
 /// of the equivalent full-prevention shields, without targeting that player.
+/// General complete-prevention ordering reuses the same private binding with
+/// no beneficiaries; that choice can never award Hallow life.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HallowChoiceV1 {
     /// Original batch, event and replacement-step ordinals. Private
@@ -561,7 +563,9 @@ fn covered_packet(
         return None;
     }
     let (source, source_zone) = damage_source_incarnation(state, damage)?;
-    if hallow_beneficiaries(state, source, source_zone).is_empty() {
+    if hallow_beneficiaries(state, source, source_zone).is_empty()
+        && !crate::eternal_prevention_order_v1::eligible(state, damage)
+    {
         return None;
     }
     Some(HallowPacketV1 {
@@ -611,11 +615,16 @@ fn prevent_packets(
         let chooser =
             packet_chooser(state, damage).ok_or("Hallow packet has no affected player")?;
         let beneficiaries = hallow_beneficiaries(state, item.source, item.source_zone);
-        if beneficiaries.is_empty() {
-            return Err("Hallow frontier lost its source-bound shield".into());
-        }
-        let circle = circles::circle_shield_position(state, damage)
+        let complete_prevention = beneficiaries.is_empty();
+        let circle = (!complete_prevention)
+            .then(|| circles::circle_shield_position(state, damage))
+            .flatten()
             .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
+        let ordinary = if complete_prevention {
+            crate::eternal_prevention_order_v1::packet_options(state, &item.packet)
+        } else {
+            item.packet.options(state)
+        };
         let step = steps[item.event];
         steps[item.event] = step
             .checked_add(1)
@@ -634,10 +643,16 @@ fn prevent_packets(
             chooser,
             beneficiaries,
             circle,
-            ordinary: item.packet.options(state),
+            ordinary,
         };
-        let selected = if choice.count() == 1 {
-            HallowPreventionV1::Hallow(choice.beneficiaries[0])
+        let selected = if choice.count() == 0 {
+            return Err("covered frontier lost every complete prevention".into());
+        } else if choice.count() == 1 {
+            if complete_prevention {
+                HallowPreventionV1::Ordinary(0)
+            } else {
+                HallowPreventionV1::Hallow(choice.beneficiaries[0])
+            }
         } else {
             if choice.count() > usize::from(u16::MAX) {
                 return Err("Hallow replacement options exceed the native decision width".into());
@@ -763,6 +778,11 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
 /// per controller (simultaneous damage prevented at once is one gain), in
 /// the order the damage was prevented. Free when nothing is owed.
 pub(crate) fn gain_hallow_life(state: &mut GameState) {
+    // Direct Event/Batch wrappers may return a public saved checkpoint. Its
+    // original operation, not this already-returned wrapper, owns the gain.
+    if crate::linked_aura_operation_v1::has_pending(state) {
+        return;
+    }
     let owed = match state.eternal_v1.as_mut() {
         Some(eternal) if !eternal.pf1c.hallow_life_owed.is_empty() => {
             std::mem::take(&mut eternal.pf1c.hallow_life_owed)

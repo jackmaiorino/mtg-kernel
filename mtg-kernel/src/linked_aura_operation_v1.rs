@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::hash::{Hash, Hasher};
 
+mod hallow_replay;
+pub(crate) use hallow_replay::legacy_hallow_only_v1;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationV1 {
     Step(Action),
@@ -152,6 +155,9 @@ pub enum GeneralChoiceV36 {
 /// entry-card consumer or changing the public target-selection vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HallowCheckpointV1 {
+    /// Keep the current Circle/global frontier through every answer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub circle_global_order: bool,
     pub original: Box<GameState>,
     pub operation: OperationV1,
     pub answers: Vec<GeneralAnswerV36>,
@@ -930,10 +936,16 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
         OperationV1::Advance => Ok(Some(crate::engine::advance_without_linked_aura_v1(state))),
         OperationV1::Event(event) => {
             crate::event::propose_without_linked_aura_v1(state, event.clone());
+            // A direct public Event has no enclosing Advance/Effect tail to
+            // finish prevention after its last saved answer is resumed.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
             Ok(None)
         }
         OperationV1::Batch(events) => {
             crate::event::batch_without_linked_aura_v1(state, events.clone());
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
             Ok(None)
         }
         OperationV1::Effect { op, ctx } => {
@@ -1107,7 +1119,8 @@ pub(crate) fn prepare_hallow_batch(
     state: &mut GameState,
     events: &mut Vec<ProposedEvent>,
 ) -> Result<bool, String> {
-    if !crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
+    if !(crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
+        || crate::eternal_prevention_order_v1::may_need_choice(state))
         || !events
             .iter()
             .any(|event| matches!(event, ProposedEvent::Damage(_)))
@@ -1134,6 +1147,9 @@ pub(crate) fn prepare_hallow_batch(
 }
 
 fn potential_operation(state: &GameState) -> bool {
+    if crate::eternal_prevention_order_v1::may_need_choice(state) {
+        return true;
+    }
     if crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state) {
         return true;
     }
@@ -1475,6 +1491,7 @@ fn replay_general_input_v1(
         if let GeneralChoiceV36::HallowV1 { choice } = choice {
             checkpoint.engine.linked_aura_operation_v1.pending_hallow_v1 =
                 Some(Box::new(HallowCheckpointV1 {
+                    circle_global_order: hallow_replay::stamp_circle_global(),
                     original: Box::new(original.clone()),
                     operation: operation.clone(),
                     answers: answers.to_vec(),
@@ -1871,9 +1888,7 @@ pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids
     }
 }
 
-/// Complete checkpoint reconstruction authenticates source incarnation,
-/// owner, menu, already committed choices, actual journal and operation tail.
-pub fn validate(state: &GameState) -> Result<(), String> {
+fn validate_checkpoint_owners(state: &GameState) -> Result<(), String> {
     let owners = usize::from(
         state
             .engine
@@ -1906,21 +1921,15 @@ pub fn validate(state: &GameState) -> Result<(), String> {
     if owners > 1 || (owners != 0 && locally_owned(state)) {
         return Err("entry checkpoint has multiple or synchronous owners".into());
     }
+    Ok(())
+}
+
+/// Complete checkpoint reconstruction authenticates source incarnation,
+/// owner, menu, already committed choices, actual journal and operation tail.
+pub fn validate(state: &GameState) -> Result<(), String> {
+    validate_checkpoint_owners(state)?;
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
-        return as_recorded(|| {
-            let (expected, _) = replay_general(
-                &pending.original,
-                &pending.operation,
-                &pending.answers,
-                pending.used_banner,
-            )?;
-            if expected != *state || !has_pending(&expected) {
-                return Err(
-                    "Hallow checkpoint changed its original operation or beneficiary menu".into(),
-                );
-            }
-            Ok(())
-        });
+        return hallow_replay::recorded_order(state, pending).map(|_| ());
     }
     if let Some(pending) = &state
         .engine
@@ -2214,7 +2223,8 @@ fn decision(state: &GameState) -> Result<Decision, String> {
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
-        validate(state)?;
+        validate_checkpoint_owners(state)?;
+        let order = hallow_replay::recorded_order(state, pending)?;
         let prevention = match action {
             Action::ChooseEffectTarget(Target::Player(beneficiary)) if !pending.choice.mixed() => {
                 HallowPreventionV1::Hallow(beneficiary)
@@ -2233,12 +2243,14 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
             choice: pending.choice.clone(),
             prevention,
         });
-        let (next, _) = replay_general(
-            &pending.original,
-            &pending.operation,
-            &answers,
-            pending.used_banner,
-        )?;
+        let (next, _) = order.with(|| {
+            replay_general(
+                &pending.original,
+                &pending.operation,
+                &answers,
+                pending.used_banner,
+            )
+        })?;
         *state = next;
         return Ok(());
     }

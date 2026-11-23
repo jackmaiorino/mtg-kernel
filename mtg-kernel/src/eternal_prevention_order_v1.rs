@@ -1,0 +1,93 @@
+//! Complete-prevention choices without Hallow. A global fog/color shield and
+//! a Circle can both prevent the packet, but only the Circle is consumed.
+//! Damage that can survive its replacements keeps the existing engine path.
+#![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+
+use crate::eternal_pauper_pf1c_v1::ordinary_damage::{OrdinaryV1, Packet};
+use crate::eternal_sideboard_s1d_v1::statics as circles;
+use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
+use crate::state::GameState;
+
+fn has_color_prevention(state: &GameState) -> bool {
+    state.engine.active_replacements.iter().any(|replacement| {
+        matches!(
+            &replacement.kind,
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { turn, active_player, .. }
+                if *turn == state.turn_key_v1() && *active_player == state.active_player
+        )
+    })
+}
+
+/// This rare state, not every ordinary spell or activation, borrows operation
+/// replay. No matching Circle/global prevention leaves the old path intact.
+pub(crate) fn may_need_choice(state: &GameState) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && !crate::linked_aura_operation_v1::legacy_hallow_only_v1()
+        && !cannot_prevent(state)
+        && circles::has_live_circle_shield(state)
+        && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
+            || has_color_prevention(state))
+}
+
+fn full_prevention(state: &GameState, damage: &DamageProposed) -> bool {
+    if crate::eternal_pauper_e6a_v1::global_prevents_damage(state, damage) {
+        return true;
+    }
+    let event = ProposedEvent::Damage(damage.clone());
+    state.engine.active_replacements.iter().any(|replacement| {
+        matches!(
+            replacement.kind,
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+        ) && !damage.touched_by.contains(&replacement.id)
+            && event::replacement_applies(replacement, &event, state)
+    })
+}
+
+fn cannot_prevent(state: &GameState) -> bool {
+    state.engine.until_end_of_turn.iter().any(|effect| {
+        matches!(
+            effect,
+            crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+        )
+    })
+}
+
+pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
+    !crate::linked_aura_operation_v1::legacy_hallow_only_v1()
+        && damage.amount > 0
+        && circles::circle_shield_position(state, damage).is_some()
+        && !cannot_prevent(state)
+        && full_prevention(state, damage)
+}
+
+/// Re-evaluate all state-bearing replacements after each chosen effect. The
+/// persistent global prevention guarantees that every portion ultimately ends
+/// without damage; finite shields still have their distinct consumption choice.
+pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<OrdinaryV1> {
+    let mut options = Vec::new();
+    for (position, shield) in circles::matching_circle_shields(state, &packet.damage) {
+        if !options.iter().any(|effect| {
+            matches!(effect,
+            OrdinaryV1::Circle { shield: existing, .. } if *existing == shield)
+        }) {
+            options.push(OrdinaryV1::Circle { position, shield });
+        }
+    }
+    for effect in packet.options(state) {
+        let effect = match effect {
+            OrdinaryV1::Registered(ref replacement)
+                if matches!(
+                    replacement.kind,
+                    ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                ) =>
+            {
+                OrdinaryV1::PreventAll
+            }
+            effect => effect,
+        };
+        if !options.contains(&effect) {
+            options.push(effect);
+        }
+    }
+    options
+}

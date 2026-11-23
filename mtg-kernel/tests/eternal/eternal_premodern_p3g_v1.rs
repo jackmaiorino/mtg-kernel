@@ -9,6 +9,8 @@
 mod hallow_circle_v1;
 #[path = "eternal_premodern_p3g_v1/hallow_ordinary_v1.rs"]
 mod hallow_ordinary_v1;
+#[path = "eternal_premodern_p3g_v1/prevention_order_no_hallow_v1.rs"]
+mod prevention_order_no_hallow_v1;
 
 use mtg_kernel::card_def::{
     card_id_by_name, mana_color_mask, CardCapability, CardDef, CardType, CARD_DEFS,
