@@ -337,6 +337,7 @@ fn deferring_preparation_replays_and_counts_only_the_other_rows() {
             &learner,
             workers,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_GROUPS,
             LearnerRowsV1::Defer {
                 other_forwards: &other_forwards,
             },
@@ -735,9 +736,58 @@ fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
         })
         .is_err()
     );
+    // The physical-group bound follows `max_trajectory_batch_mebibytes`:
+    // 65,536 up to the default batch bound, then 128 groups per MiB.
+    assert_eq!(MAX_GROUPS, 65_536);
+    for (mebibytes, groups) in [
+        (1, 65_536),
+        (511, 65_536),
+        (DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES, 65_536),
+        (513, 65_664),
+        (2048, 262_144),
+        (MAX_TRAJECTORY_BATCH_MEBIBYTES, 524_288),
+    ] {
+        assert_eq!(
+            preparation_groups_bound_v1(trajectory_batch_bytes_v1(mebibytes)),
+            groups
+        );
+    }
+    let raised = preparation_groups_bound_v1(trajectory_batch_bytes_v1(2048));
+    let (done, _) =
+        ordered_jobs_bounded_v1(4, MAX_GROUPS + 1, raised, Ok::<usize, String>).unwrap();
+    assert_eq!(done, (0..MAX_GROUPS + 1).collect::<Vec<_>>());
+    assert!(
+        ordered_jobs_bounded_v1(1, raised + 1, raised, |_| -> Result<(), String> {
+            panic!("must not dispatch")
+        })
+        .is_err()
+    );
     let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
     let mut opponent = FrozenPlayPolicyV1::training_fixture_v3();
     let (template, learner, _) = replay_fixture(&mut policy, Some(&mut opponent), 0, &[0]);
+    // `plan_v1` enforces the caller's `max_groups` bound and names it when exceeded.
+    let (two_group_episode, _, _) = replay_fixture(&mut policy, None, 0, &[0, 0]);
+    assert_eq!(
+        plan_v1(
+            std::slice::from_ref(&two_group_episode),
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES * MEBIBYTE,
+            1,
+        )
+        .err()
+        .unwrap(),
+        "preparation exceeds 1 physical groups"
+    );
+    assert_eq!(
+        plan_v1(
+            std::slice::from_ref(&two_group_episode),
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES * MEBIBYTE,
+            2,
+        )
+        .unwrap()
+        .0
+        .len(),
+        2
+    );
     let episodes: Vec<_> = (0..33)
         .map(|index| {
             let mut t = template.clone();
@@ -839,6 +889,8 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
         loss_selection: ExpandedLossSelectionV1::default(),
         preparation_workers: 4,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes:
+            crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
         training_math: TrainingMathV1::PlatformLibm,
         record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
         record_envelope: Default::default(),
@@ -851,6 +903,7 @@ fn phase1_preparation_preserves_legacy_command_wire_and_models_are_sync() {
     assert!(value.get("update_backend").is_none());
     assert!(value.get("update_backward_execution").is_none());
     assert!(value.get("max_prepared_tensor_mebibytes").is_none());
+    assert!(value.get("max_trajectory_batch_mebibytes").is_none());
 }
 
 /// The exact JSON shape a compiled block config must carry to select

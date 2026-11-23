@@ -36,10 +36,10 @@
 //! registry-transfer and registry-evolution shells, the line (b) collection
 //! sampler, and every net-8-only command.
 
-use super::record_envelope_v1::open_v1;
+use super::record_envelope_v1::{self, open_v1};
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
-    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
+    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_bounded_v1,
     replay_learner_groups_v1, validate_actual_behaviors_v1, validate_trajectory,
     CheckpointInputExpectationV1, CheckpointRecordFormatV1, CollectionSamplerV1,
     ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
@@ -556,6 +556,8 @@ pub(super) struct WUpdateInputsV1 {
     pub(super) output_directory: std::path::PathBuf,
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
+    /// The trajectory batch bound in bytes (`max_trajectory_batch_mebibytes`).
+    pub(super) max_batch_bytes: u64,
     pub(super) unsupported: WUnsupportedOptionsV1,
     pub(super) training_math: TrainingMathV1,
     pub(super) record_format: CheckpointRecordFormatV1,
@@ -627,6 +629,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         training_math,
         record_envelope,
         started,
@@ -656,12 +659,15 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
-        ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
     let mut ids = BTreeSet::new();
     for episode in &episodes {
         validate_trajectory(episode)?;
@@ -701,6 +707,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
+            ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
             training_math,
         )?;
         (prepared.groups, Some(prepared.telemetry))
@@ -1007,7 +1014,7 @@ pub fn widen_source_with_rows_v1(
             (metadata.trajectories, "parent-update-inputs")
         }
     };
-    let episodes = read_trajectory_batch_v1(&trajectories, 1)?;
+    let episodes = read_trajectory_batch_bounded_v1(&trajectories, 1, MAX_BATCH_BYTES)?;
     if rows.is_some() {
         for episode in &episodes {
             ensure(

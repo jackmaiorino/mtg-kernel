@@ -191,6 +191,7 @@ fn config_v1(
         preparation_workers: options.preparation_workers,
         max_non_natural_episode_fraction: 0.0,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
         line_b: None,

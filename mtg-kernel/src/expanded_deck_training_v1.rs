@@ -106,7 +106,9 @@ pub(crate) use bootstrapped_advantage_v1::{
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 pub(crate) use ordered_update_preparation::{
-    validate_max_prepared_tensor_mebibytes_v1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    preparation_groups_bound_v1, trajectory_batch_bytes_v1,
+    validate_max_prepared_tensor_mebibytes_v1, validate_max_trajectory_batch_mebibytes_v1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 
 fn default_max_prepared_tensor_mebibytes() -> usize {
@@ -115,6 +117,14 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+}
+
+fn default_max_trajectory_batch_mebibytes() -> usize {
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
+
+fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
 }
 /// The opt-in checkpoint codec benchmark (mtg-kernel#596): measurement only.
 #[cfg(feature = "checkpoint-codec-bench-v1")]
@@ -4712,6 +4722,12 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        /// As `UpdatePrepared`'s; absent means the historical 512.
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
         tape_cap_bytes: usize,
         output_directory: PathBuf,
     },
@@ -4743,6 +4759,15 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        /// Trajectory batch bound for this prepared update in MiB (record
+        /// bytes, decompressed for sealed files); absent means the historical
+        /// 512 (byte-identical wire for every existing command). See
+        /// `ordered_update_preparation`.
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
         /// G115 line (b) options (head-only optimizer mask); omitted when
         /// absent, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4814,6 +4839,11 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
@@ -4970,6 +5000,7 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             Some(teacher),
             None,
@@ -4999,6 +5030,7 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             Some(teacher),
@@ -5028,6 +5060,7 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -5050,6 +5083,7 @@ fn execute_command_v1(
             ex1,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             record_envelope,
             output_directory,
         } => {
@@ -5064,8 +5098,13 @@ fn execute_command_v1(
                     max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
                     "max_prepared_tensor_mebibytes applies to prepared updates only",
                 )?;
+                ensure(
+                    max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                    "max_trajectory_batch_mebibytes applies to prepared updates only",
+                )?;
             }
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
             execute_update_inner_v1(
                 source,
                 trajectories,
@@ -5077,6 +5116,7 @@ fn execute_command_v1(
                 output_directory,
                 preparation_workers,
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 None,
                 None,
                 None,
@@ -5392,6 +5432,7 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             line_b,
             None,
             None,
@@ -5412,6 +5453,7 @@ fn execute_command_v1(
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             line_b,
             training_math,
             record_format,
@@ -5420,6 +5462,13 @@ fn execute_command_v1(
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
+            // As on the run config: one preparation worker keeps the default.
+            ensure(
+                preparation_workers > 1
+                    || max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
+            )?;
             execute_update_v1(
                 source,
                 trajectories,
@@ -5431,6 +5480,7 @@ fn execute_command_v1(
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 line_b,
                 None,
                 None,
@@ -5461,6 +5511,7 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -5482,11 +5533,19 @@ fn execute_command_v1(
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             tape_cap_bytes,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
+            // As on the run config: one preparation worker keeps the default.
+            ensure(
+                preparation_workers > 1
+                    || max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
+            )?;
             execute_update_inner_v1(
                 source,
                 trajectories,
@@ -5498,6 +5557,7 @@ fn execute_command_v1(
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 None,
                 None,
                 None,
@@ -5673,6 +5733,7 @@ fn execute_update_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
@@ -5694,6 +5755,7 @@ fn execute_update_v1(
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         line_b,
         e_supported,
         soft_q,
@@ -5724,6 +5786,7 @@ fn execute_update_inner_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
@@ -5825,6 +5888,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_batch_bytes,
             unsupported: w_learner_v1::WUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
@@ -5852,6 +5916,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_batch_bytes,
             verified_replay,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
@@ -6021,12 +6086,15 @@ fn execute_update_inner_v1(
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
-        ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
     // Rows the search played are authenticated and masked only by a W5
     // update; every other update refuses them.
     ensure(
@@ -6090,6 +6158,7 @@ fn execute_update_inner_v1(
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
+            ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
             training_math,
             row_cache,
         )?;
@@ -6975,6 +7044,14 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
+    // A container's metadata view is its JSON document (`metadata_view_v1`,
+    // sealed or not): kept for the next update's metadata probe of this pin.
+    let metadata_document = match record_format {
+        CheckpointRecordFormatV1::V2 => {
+            Some(checkpoint_container_v1::document_v1(&record)?.to_vec())
+        }
+        CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => None,
+    };
     let checkpoint_pin = publish_json_shared_v1(
         &output_directory,
         "checkpoint.json",
@@ -7040,6 +7117,9 @@ fn execute_update_inner_v1(
         )?;
         (resumed_bytes, restored_load)
     };
+    if let Some(document) = metadata_document {
+        checkpoint_metadata_memo_v1::remember_v1(&checkpoint_pin.sha256, &document);
+    }
     let pending_carried = match (
         want_next_carried && restored_load.transfer.is_none(),
         restored_load.verifiable_kind,
@@ -7213,19 +7293,30 @@ fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+#[cfg(test)]
 fn read_trajectory_batch_v1(
     pins: &[PinnedFileV1],
     workers: usize,
 ) -> Result<Vec<ExpandedTrajectoryV1>, String> {
-    let decoded = ordered_update_preparation::read_trajectories_v1(pins, workers)?;
+    read_trajectory_batch_bounded_v1(pins, workers, MAX_BATCH_BYTES)
+}
+
+/// Reads and parses a trajectory batch within the update's batch bound in bytes
+/// (`max_trajectory_batch_mebibytes`; [`MAX_BATCH_BYTES`] by default).
+fn read_trajectory_batch_bounded_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+    max_batch_bytes: u64,
+) -> Result<Vec<ExpandedTrajectoryV1>, String> {
+    let decoded =
+        ordered_update_preparation::read_trajectories_bounded_v1(pins, workers, max_batch_bytes)?;
     let mut total = 0u64;
     let mut episodes = Vec::with_capacity(decoded.len());
     for (bytes, episode) in decoded {
         total = total.checked_add(bytes).ok_or("batch size overflow")?;
-        ensure(
-            total <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
         episodes.push(episode);
     }
     Ok(episodes)
@@ -7306,8 +7397,81 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
+    // The pinned file's check runs every time; only its view, a pure function
+    // of the checked bytes, may come from the memo.
     let bytes = read_pinned_shared_v1(pin)?;
-    serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
+    if let Some(document) = checkpoint_metadata_memo_v1::lookup_v1(&pin.sha256) {
+        return serde_json::from_slice(&document).map_err(err);
+    }
+    let view = checkpoint_container_v1::metadata_view_v1(&bytes)?;
+    checkpoint_metadata_memo_v1::remember_v1(&pin.sha256, &view);
+    serde_json::from_slice(&view).map_err(err)
+}
+
+/// Metadata views (`checkpoint_container_v1::metadata_view_v1`) of checkpoint
+/// files this process checked, by their pinned SHA-256: a view is a pure
+/// function of the file's bytes, so a probe of the same pin (after the same
+/// file check) parses the remembered view instead of opening the envelope and
+/// container again. Only views up to 1 MiB are kept: a container's JSON
+/// document, not a production v1 JSON checkpoint (about 20 MB, whose view is
+/// the whole file). Invocation-local, never persisted.
+mod checkpoint_metadata_memo_v1 {
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    /// The newest checkpoints a run probes: its current one and the one before.
+    const ENTRIES_V1: usize = 4;
+    /// A view larger than this is a v1 JSON checkpoint's whole file.
+    const MAX_VIEW_BYTES_V1: usize = 1 << 20;
+
+    type EntriesV1 = VecDeque<(String, Arc<Vec<u8>>)>;
+
+    #[cfg(not(test))]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        use std::sync::{Mutex, PoisonError};
+        static ENTRIES: Mutex<EntriesV1> = Mutex::new(VecDeque::new());
+        f(&mut ENTRIES.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Unit tests run in parallel threads: each keeps its own entries.
+    #[cfg(test)]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        thread_local! {
+            static ENTRIES: std::cell::RefCell<EntriesV1> = const {
+                std::cell::RefCell::new(VecDeque::new())
+            };
+        }
+        ENTRIES.with(|entries| f(&mut entries.borrow_mut()))
+    }
+
+    pub(super) fn lookup_v1(sha256: &str) -> Option<Arc<Vec<u8>>> {
+        with_entries_v1(|entries| {
+            let index = entries.iter().position(|(key, _)| key == sha256)?;
+            let entry = entries.remove(index)?;
+            let view = Arc::clone(&entry.1);
+            entries.push_back(entry);
+            Some(view)
+        })
+    }
+
+    pub(super) fn remember_v1(sha256: &str, view: &[u8]) {
+        if view.len() > MAX_VIEW_BYTES_V1 {
+            return;
+        }
+        let view = view.to_vec();
+        with_entries_v1(|entries| {
+            entries.retain(|(key, _)| key != sha256);
+            while entries.len() >= ENTRIES_V1 {
+                entries.pop_front();
+            }
+            entries.push_back((sha256.to_owned(), Arc::new(view)));
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_for_test_v1() {
+        with_entries_v1(VecDeque::clear);
+    }
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
@@ -7755,6 +7919,9 @@ mod registry_evolution_dispatch_tests;
 
 #[cfg(test)]
 mod warm_cuda_timing_tests;
+
+#[cfg(test)]
+mod trajectory_batch_bound_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {

@@ -509,6 +509,7 @@ pub fn update_command_v1(
                 loss_selection: learning.loss_selection,
                 preparation_workers: workers,
                 max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+                max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
                 line_b: None,
                 training_math: TrainingMathV1::PlatformLibm,
                 record_format: CheckpointRecordFormatV1::default(),
@@ -531,6 +532,7 @@ pub fn update_command_v1(
                 loss_selection: learning.loss_selection,
                 preparation_workers: workers,
                 max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+                max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
                 tape_cap_bytes,
                 output_directory,
             }

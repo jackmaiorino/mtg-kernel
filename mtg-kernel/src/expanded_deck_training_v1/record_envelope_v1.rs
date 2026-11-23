@@ -67,42 +67,12 @@ impl RecordEnvelopeV1 {
 
     /// The bytes to publish for a record whose unsealed bytes are `bytes`.
     /// `Zstd1` refuses input that already looks sealed (a record is sealed
-    /// once) and checks that the frame opens to exactly `bytes`.
+    /// once) and checks, in every build and before the frame is returned for
+    /// publication, that the frame opens to exactly `bytes`.
     pub(crate) fn seal_v1(self, bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
         match self {
             Self::None => Ok(Cow::Borrowed(bytes)),
-            Self::Zstd1 => {
-                if is_sealed_v1(bytes) {
-                    return Err("a record envelope seals unsealed record bytes only".into());
-                }
-                let mut compressor =
-                    zstd::bulk::Compressor::new(ZSTD1_LEVEL_V1).map_err(|e| e.to_string())?;
-                compressor
-                    .set_parameter(zstd::stream::raw::CParameter::ChecksumFlag(true))
-                    .map_err(|e| e.to_string())?;
-                compressor
-                    .set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
-                    .map_err(|e| e.to_string())?;
-                // The compressor allocates for the worst case (the bound for
-                // the unsealed length) and returns the frame in that
-                // allocation. The frame is kept for a long time (the
-                // verified-bytes cache and the parse-ahead store share it), so
-                // it is copied into an allocation of its own size and the
-                // large one is freed. (Shrinking in place is not enough: the
-                // allocator may keep a block that is still at least half
-                // used.)
-                let sealed = compressor.compress(bytes).map_err(|e| e.to_string())?;
-                let sealed = if sealed.capacity() > sealed.len() {
-                    sealed.as_slice().to_vec()
-                } else {
-                    sealed
-                };
-                #[cfg(debug_assertions)]
-                if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
-                    return Err("record envelope round trip differs".into());
-                }
-                Ok(Cow::Owned(sealed))
-            }
+            Self::Zstd1 => seal_zstd1_with_v1(bytes, compress_zstd1_v1).map(Cow::Owned),
         }
     }
 
@@ -114,6 +84,48 @@ impl RecordEnvelopeV1 {
             Self::Zstd1 => self.seal_v1(&bytes).map(Cow::into_owned),
         }
     }
+}
+
+fn compress_zstd1_v1(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut compressor =
+        zstd::bulk::Compressor::new(ZSTD1_LEVEL_V1).map_err(|e| e.to_string())?;
+    compressor
+        .set_parameter(zstd::stream::raw::CParameter::ChecksumFlag(true))
+        .map_err(|e| e.to_string())?;
+    compressor
+        .set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
+        .map_err(|e| e.to_string())?;
+    // The compressor allocates for the worst case (the bound for
+    // the unsealed length) and returns the frame in that
+    // allocation. The frame is kept for a long time (the
+    // verified-bytes cache and the parse-ahead store share it), so
+    // it is copied into an allocation of its own size and the
+    // large one is freed. (Shrinking in place is not enough: the
+    // allocator may keep a block that is still at least half
+    // used.)
+    let sealed = compressor.compress(bytes).map_err(|e| e.to_string())?;
+    Ok(if sealed.capacity() > sealed.len() {
+        sealed.as_slice().to_vec()
+    } else {
+        sealed
+    })
+}
+
+/// Runs the `Zstd1` seal checks around `compress`: refuses input that already
+/// looks sealed and verifies, in every build and before the frame is returned
+/// for publication, that the produced frame opens to exactly `bytes`.
+fn seal_zstd1_with_v1(
+    bytes: &[u8],
+    compress: impl FnOnce(&[u8]) -> Result<Vec<u8>, String>,
+) -> Result<Vec<u8>, String> {
+    if is_sealed_v1(bytes) {
+        return Err("a record envelope seals unsealed record bytes only".into());
+    }
+    let sealed = compress(bytes)?;
+    if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
+        return Err("record envelope round trip differs".into());
+    }
+    Ok(sealed)
 }
 
 /// Whether `bytes` start with the zstd frame magic.
@@ -161,6 +173,22 @@ const FRAME_HEADER_MAX_BYTES_V1: usize = 18;
 /// batch-bound error, so both checks read the same.
 pub(crate) const BATCH_BOUND_ERROR_V1: &str =
     "trajectory batch exceeds 512 MiB CPU ingestion bound";
+
+/// The batch-bound error for a bound of `bound` bytes: for the default bound
+/// exactly [`BATCH_BOUND_ERROR_V1`], for a configured whole number of MiB the
+/// same text with that number.
+pub(crate) fn batch_bound_error_v1(bound: u64) -> String {
+    if bound == super::MAX_BATCH_BYTES {
+        BATCH_BOUND_ERROR_V1.into()
+    } else if bound.is_multiple_of(1 << 20) {
+        format!(
+            "trajectory batch exceeds {} MiB CPU ingestion bound",
+            bound >> 20
+        )
+    } else {
+        format!("trajectory batch exceeds {bound}-byte CPU ingestion bound")
+    }
+}
 
 /// What [`admit_batch_v1`] saw of one file: its declared content size when
 /// it was a sealed regular file with a readable frame header, else nothing.
@@ -234,7 +262,7 @@ pub(crate) fn admit_batch_v1<'a>(
         admitted.push(seen);
     }
     if sealed && total > bound {
-        return Err(BATCH_BOUND_ERROR_V1.into());
+        return Err(batch_bound_error_v1(bound));
     }
     Ok(admitted)
 }
@@ -393,7 +421,105 @@ mod tests {
         // their own checks.
         admit_batch_v1([plain.as_path(); 3], 2000).unwrap();
         assert!(admit_batch_v1([plain.as_path(), big.as_path()], (300 << 20) + 999).is_err());
+        // A raised bound (`max_trajectory_batch_mebibytes`) admits the pair
+        // and names itself when exceeded.
+        admit_batch_v1([big.as_path(), big.as_path()], 600 << 20).unwrap();
+        assert_eq!(
+            admit_batch_v1([big.as_path(), big.as_path(), big.as_path()], 600 << 20).unwrap_err(),
+            "trajectory batch exceeds 600 MiB CPU ingestion bound"
+        );
+        assert_eq!(batch_bound_error_v1(bound), BATCH_BOUND_ERROR_V1);
+        assert_eq!(
+            batch_bound_error_v1(1234),
+            "trajectory batch exceeds 1234-byte CPU ingestion bound"
+        );
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn seal_round_trip_check_runs_in_every_build_and_refuses_corrupt_frames() {
+        use syn::visit::{self, Visit};
+
+        let bytes = record();
+        let sealed = seal_zstd1_with_v1(&bytes, compress_zstd1_v1).unwrap();
+        assert_eq!(
+            sealed.as_slice(),
+            RecordEnvelopeV1::Zstd1.seal_v1(&bytes).unwrap().as_ref()
+        );
+        // Input that already looks sealed is refused before compressing.
+        assert_eq!(
+            seal_zstd1_with_v1(&sealed, |_| panic!("must refuse sealed input first")).unwrap_err(),
+            "a record envelope seals unsealed record bytes only"
+        );
+        // A frame opening to different bytes (same length or shorter) fails
+        // the round-trip check in every build, including release builds.
+        let mut altered = bytes.clone();
+        altered[0] ^= 1;
+        assert_eq!(
+            seal_zstd1_with_v1(&bytes, |_| compress_zstd1_v1(&altered)).unwrap_err(),
+            "record envelope round trip differs"
+        );
+        assert_eq!(
+            seal_zstd1_with_v1(&bytes, |_| compress_zstd1_v1(b"{}")).unwrap_err(),
+            "record envelope round trip differs"
+        );
+        // A frame declaring more content than `bytes.len()` fails open_v1.
+        let mut longer = bytes.clone();
+        longer.push(b' ');
+        assert!(seal_zstd1_with_v1(&bytes, |_| compress_zstd1_v1(&longer))
+            .unwrap_err()
+            .contains("size limit"));
+        // A corrupted frame payload fails open_v1 before publication.
+        let mut corrupt = sealed.clone();
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0x40;
+        assert!(seal_zstd1_with_v1(&bytes, |_| Ok(corrupt)).is_err());
+
+        // No non-test item in this module gates any check on `debug_assertions`.
+        fn meta_names_debug_assertions_v1(meta: &syn::Meta) -> bool {
+            match meta {
+                syn::Meta::Path(path) => path.is_ident("debug_assertions"),
+                syn::Meta::NameValue(nv) => nv.path.is_ident("debug_assertions"),
+                syn::Meta::List(list) => {
+                    if list.path.is_ident("debug_assertions") {
+                        return true;
+                    }
+                    list.parse_args_with(
+                        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                    )
+                    .is_ok_and(|nested| nested.iter().any(meta_names_debug_assertions_v1))
+                }
+            }
+        }
+        struct DebugAssertionsCfgFinderV1 {
+            found: bool,
+        }
+        impl<'ast> Visit<'ast> for DebugAssertionsCfgFinderV1 {
+            fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
+                if node.ident == "tests" {
+                    return;
+                }
+                visit::visit_item_mod(self, node);
+            }
+            fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+                if (attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+                    && meta_names_debug_assertions_v1(&attr.meta)
+                {
+                    self.found = true;
+                }
+                visit::visit_attribute(self, attr);
+            }
+        }
+        let has_guard = |source: &str| {
+            let file = syn::parse_file(source).expect("source parses");
+            let mut finder = DebugAssertionsCfgFinderV1 { found: false };
+            finder.visit_file(&file);
+            finder.found
+        };
+        assert!(has_guard("#[cfg(debug_assertions)] fn f() {}"));
+        assert!(has_guard("#[cfg(all(unix, debug_assertions))] fn f() {}"));
+        assert!(has_guard("fn f() { #[cfg(debug_assertions)] if true {} }"));
+        assert!(!has_guard(include_str!("record_envelope_v1.rs")));
     }
 
     #[test]

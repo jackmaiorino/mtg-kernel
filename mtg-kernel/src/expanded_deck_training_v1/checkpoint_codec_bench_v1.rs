@@ -61,7 +61,7 @@ use super::{
     verified_bytes_cache_v1, CollectionSamplerV1, ExpandedCheckpointV1, ExpandedDeckListV1,
     ExpandedEpisodeV1, ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
     ExpandedUpdateBackendV1, PinnedFileV1, UpdateBackwardExecutionV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, MAX_FILE_BYTES,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES, MAX_FILE_BYTES,
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TrainTensorsV1,
@@ -1692,6 +1692,7 @@ fn measure_updates_v1(
                     loss_selection: gae_selection_v1(),
                     preparation_workers: config.preparation_workers,
                     max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                    max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
                     line_b: None,
                     training_math: TrainingMathV1::PlatformLibm,
                     record_format: cell.format,
