@@ -1358,6 +1358,105 @@ fn arcane_denial_counters_and_both_players_draw_at_the_next_upkeep() {
 }
 
 #[test]
+fn copied_arcane_denial_restores_its_delayed_draw_replacements_both_seats() {
+    for caster in [P0, P1] {
+        let drawer = caster.opponent();
+        let mut state = game(&["Plains"; 4]);
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U; 3], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        pass_until(&mut state, |state| {
+            state.active_player == caster && state.step == Step::Main1
+        });
+
+        let chandra = put(&mut state, caster, "Chandra, Hope's Beacon", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::R, ManaColor::R], 4);
+        cast(&mut state, chandra, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, chandra), Zone::Battlefield);
+        put(&mut state, caster, "Hullbreacher", Zone::Battlefield);
+
+        state.priority_player = drawer;
+        let bolt = put(&mut state, drawer, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::R], 0);
+        cast(&mut state, bolt, &[Target::Player(caster)]);
+        act(&mut state, Action::Pass);
+        let denial = put(&mut state, caster, "Arcane Denial", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::U], 1);
+        cast(&mut state, denial, &[Target::Object(bolt)]);
+
+        let retarget = settle(&mut state).expect("Chandra offers the copy's target");
+        assert!(matches!(
+            retarget,
+            Decision::ChooseEffectTargets { player, legal_targets, .. }
+                if player == caster && legal_targets.contains(&Target::Object(bolt))
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(bolt)));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let copy = state
+            .stack
+            .last()
+            .expect("the copied spell stays on the stack");
+        assert!(state.objects.get(copy.source).spell_copy_origin.is_some());
+        assert_eq!(copy.targets, [Target::Object(bolt)]);
+        let copy = copy.source;
+        settled(&mut state);
+        assert_eq!(zone(&state, bolt), Zone::Graveyard);
+        assert_eq!(zone(&state, denial), Zone::Graveyard);
+
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        assert_eq!(state.players[drawer.index()].library.len(), 4);
+        let caster_hand_before = state.players[caster.index()].hand.len();
+        pass_until(&mut state, |state| {
+            state.active_player == drawer && state.step == Step::Upkeep && !state.stack.is_empty()
+        });
+        let option = settle(&mut state).expect("the countered spell's controller may draw");
+        assert!(matches!(
+            option,
+            Decision::ChooseEffectOption { player, source, option_count: 3 }
+                if player == drawer && source == copy
+        ));
+        act(&mut state, Action::ChooseEffectOption(2));
+        let prompt = settle(&mut state).expect("Dredge competes for the first optional draw");
+        assert!(matches!(
+            &prompt,
+            Decision::ChooseEffectTargets {
+                player, source, legal_targets, can_finish: true, ..
+            } if *player == drawer && *source == copy && legal_targets.as_slice() == [Target::Object(thug)]
+        ));
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), prompt);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            let second = settle(branch).expect("Jace competes with Hullbreacher after dredge");
+            assert!(matches!(
+                second,
+                Decision::ChooseEffectTargets {
+                    player, source, legal_targets, can_finish: true, ..
+                } if player == drawer && source == copy && legal_targets == [Target::Object(jace)]
+            ));
+            act(branch, Action::FinishEffectSelection);
+            settled(branch);
+            let player = &branch.players[drawer.index()];
+            assert_eq!(player.hand, [thug]);
+            assert!(player.library.is_empty());
+            assert_eq!(player.draws_this_turn, 0);
+            assert_eq!(
+                branch.players[caster.index()].hand.len(),
+                caster_hand_before + 1
+            );
+            assert_eq!(named(branch, caster, "Treasure Token").len(), 1);
+        }
+        assert_eq!(restored.state_hash(), state.state_hash());
+    }
+}
+
+#[test]
 fn boomerang_basics_draws_only_for_your_own_permanent() {
     let mut state = plains();
     let theirs = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
