@@ -291,71 +291,193 @@ fn require_checks(failures: &[String]) -> Result<(), String> {
     }
 }
 
-// Publish the canonical JSON last. A failed rename leaves the previous JSON
-// intact; restore its companion dump before releasing the staging directory.
+/// The writer's lock file, inside the table's staging directory. It is never
+/// a tracked data file, so locking it blocks no reader.
+const LOCK_FILE: &str = "writer.lock";
+/// The dump saved before publication; it survives only a failed rollback or
+/// an interrupted publication, and then it is the only copy of the old dump.
+const PREVIOUS_DUMP_FILE: &str = "previous.txt";
+
+fn staging_dir(repo: &Path, table_rel: &str) -> PathBuf {
+    repo.join(table_rel).with_extension("staging")
+}
+
+/// Joins cleanup errors to the primary result without hiding it.
+fn with_cleanup_errors<T>(result: Result<T, String>, cleanup: Vec<String>) -> Result<T, String> {
+    if cleanup.is_empty() {
+        return result;
+    }
+    let cleanup = cleanup.join("; ");
+    match result {
+        Ok(_) => Err(format!("cleanup failed: {cleanup}")),
+        Err(e) => Err(format!("{e}; cleanup also failed: {cleanup}")),
+    }
+}
+
+/// Runs `body` holding the writer lock of one table. The lock is taken before
+/// the committed prior is read and held through publication and cleanup.
+fn with_writer_lock<T>(
+    repo: &Path,
+    table_rel: &str,
+    body: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    use std::fs;
+    let stage = staging_dir(repo, table_rel);
+    fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    let lock_path = stage.join(LOCK_FILE);
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| format!("{}: {e}", lock_path.display()))?;
+    if let Err(e) = lock.try_lock() {
+        return Err(format!(
+            "cannot lock {} for regeneration (another writer holds it): {e}",
+            lock_path.display()
+        ));
+    }
+    // A writer that finished between our open and our lock removed the file
+    // we hold; refuse rather than share the table with a later writer.
+    let result = if lock_path.is_file() {
+        body()
+    } else {
+        Err(format!(
+            "{} was removed while it was being locked; rerun",
+            lock_path.display()
+        ))
+    };
+    let mut cleanup = Vec::new();
+    match fs::remove_file(&lock_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => cleanup.push(format!("{}: {e}", lock_path.display())),
+    }
+    drop(lock);
+    match fs::remove_dir(&stage) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+        Err(e) => cleanup.push(format!("{}: {e}", stage.display())),
+    }
+    with_cleanup_errors(result, cleanup)
+}
+
+/// Regenerates one table under its writer lock: `produce` reads the committed
+/// prior and generates; hard failures stop before any output file is opened.
+fn regenerate(
+    repo: &Path,
+    table_rel: &str,
+    dump_rel: &str,
+    produce: impl FnOnce() -> Result<Generated, String>,
+) -> Result<(), String> {
+    with_writer_lock(repo, table_rel, || {
+        let generated = produce()?;
+        print!("{}", generated.report);
+        require_checks(&generated.failures)?;
+        write_outputs_at(repo, table_rel, dump_rel, &generated)
+    })
+}
+
+fn rename_file(from: &Path, to: &Path) -> io::Result<()> {
+    std::fs::rename(from, to)
+}
+
 fn write_outputs_at(
     repo: &Path,
     table_rel: &str,
     dump_rel: &str,
     generated: &Generated,
 ) -> Result<(), String> {
+    publish_staged(repo, table_rel, dump_rel, generated, rename_file)
+}
+
+// Publish the canonical JSON last. A failed rename leaves the previous JSON
+// intact; restore its companion dump before releasing the staging directory.
+// No fsync or directory sync: outputs are tracked in git; --check detects a mismatched pair.
+// The caller holds the writer lock (`with_writer_lock`).
+fn publish_staged(
+    repo: &Path,
+    table_rel: &str,
+    dump_rel: &str,
+    generated: &Generated,
+    mut rename: impl FnMut(&Path, &Path) -> io::Result<()>,
+) -> Result<(), String> {
     use std::fs;
     let table = repo.join(table_rel);
     let dump = repo.join(dump_rel);
-    let stage = table.with_extension("staging");
-    // This generator always has a mapping file. Lock its existing handle so
-    // interruption releases ownership and a retry can reuse leftover staging.
-    let mapping = fs::File::open(repo.join(table::MAPPING_PATH)).map_err(|e| e.to_string())?;
-    mapping
-        .try_lock()
-        .map_err(|e| format!("cannot lock the card semantics mapping for regeneration: {e}"))?;
-    fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    let stage = staging_dir(repo, table_rel);
     let next_table = stage.join("table.json");
     let next_dump = stage.join("dump.txt");
-    let old_dump = stage.join("previous.txt");
-    let mut preserve_stage = false;
-    let result = (|| -> io::Result<()> {
-        fs::write(&next_table, &generated.table_text)?;
-        fs::write(&next_dump, &generated.dump_text)?;
+    let old_dump = stage.join(PREVIOUS_DUMP_FILE);
+    match fs::symlink_metadata(&old_dump) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(format!(
+                "{} holds the dump retained by an earlier failed or interrupted publication; \
+                 reconcile {} and {} with it (restore it as the dump or delete it), then rerun",
+                old_dump.display(),
+                dump.display(),
+                table.display()
+            ));
+        }
+        Err(e) => return Err(format!("{}: {e}", old_dump.display())),
+    }
+    fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    let at = |path: &Path, e: io::Error| format!("{}: {e}", path.display());
+    let mut preserve_old_dump = false;
+    let result = (|| -> Result<(), String> {
+        fs::write(&next_table, &generated.table_text).map_err(|e| at(&next_table, e))?;
+        fs::write(&next_dump, &generated.dump_text).map_err(|e| at(&next_dump, e))?;
         let had_dump = match fs::copy(&dump, &old_dump) {
             Ok(_) => true,
             Err(e) if e.kind() == io::ErrorKind::NotFound => false,
-            Err(e) => return Err(e),
+            Err(e) => return Err(format!("{} -> {}: {e}", dump.display(), old_dump.display())),
         };
-        fs::rename(&next_dump, &dump)?;
-        if let Err(e) = fs::rename(&next_table, &table) {
+        rename(&next_dump, &dump).map_err(|e| at(&dump, e))?;
+        if let Err(e) = rename(&next_table, &table) {
             let rollback = if had_dump {
-                fs::rename(&old_dump, &dump)
+                rename(&old_dump, &dump)
             } else {
                 fs::remove_file(&dump)
             };
             if let Err(rollback_error) = rollback {
-                preserve_stage = true;
-                return Err(io::Error::other(format!(
-                    "{e}; could not restore {}: {rollback_error}; retained {}",
-                    dump.display(),
-                    stage.display()
-                )));
+                preserve_old_dump = had_dump;
+                let retained = if had_dump {
+                    old_dump.display().to_string()
+                } else {
+                    "nothing (no previous dump existed)".to_string()
+                };
+                return Err(format!(
+                    "{}: {e}; could not restore {}: {rollback_error}; retained {retained}",
+                    table.display(),
+                    dump.display()
+                ));
             }
-            return Err(e);
+            return Err(at(&table, e));
         }
         Ok(())
     })();
-    if !preserve_stage {
-        for file in [&next_table, &next_dump, &old_dump] {
-            match fs::remove_file(file) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("{}: {e}", file.display())),
-            }
-        }
-        match fs::remove_dir(&stage) {
+    // Attempt every step; only the generator's own staged files are removed.
+    let mut cleanup = Vec::new();
+    let mut owned = vec![&next_table, &next_dump];
+    if !preserve_old_dump {
+        owned.push(&old_dump);
+    }
+    for file in owned {
+        match fs::remove_file(file) {
             Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
-            Err(e) => return Err(format!("{}: {e}", stage.display())),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => cleanup.push(at(file, e)),
         }
     }
-    result.map_err(|e| e.to_string())
+    match fs::remove_dir(&stage) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+        Err(e) => cleanup.push(at(&stage, e)),
+    }
+    with_cleanup_errors(result, cleanup)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,13 +527,10 @@ fn run_args(repo: &Path, args: &[String]) -> Result<(), String> {
     let cli = parse_args(args)?;
     if cli.cube {
         return match cli.mode {
-            Mode::Write => {
+            Mode::Write => regenerate(repo, table::CUBE_TABLE_PATH, table::CUBE_DUMP_PATH, || {
                 let prior = committed_prior_at(repo, table::CUBE_TABLE_PATH)?;
-                let generated = generate_cube(repo, &prior)?;
-                print!("{}", generated.report);
-                require_checks(&generated.failures)?;
-                write_outputs_at(repo, table::CUBE_TABLE_PATH, table::CUBE_DUMP_PATH, &generated)
-            }
+                generate_cube(repo, &prior)
+            }),
             Mode::Check => {
                 let (report, failures) = check_cube(repo)?;
                 print!("{report}");
@@ -442,13 +561,10 @@ fn run_args(repo: &Path, args: &[String]) -> Result<(), String> {
     }
 
     match cli.mode {
-        Mode::Write => {
+        Mode::Write => regenerate(repo, table::TABLE_PATH, table::DUMP_PATH, || {
             let prior = committed_prior_at(repo, table::TABLE_PATH)?;
-            let generated = generate(repo, &prior)?;
-            print!("{}", generated.report);
-            require_checks(&generated.failures)?;
-            write_outputs_at(repo, table::TABLE_PATH, table::DUMP_PATH, &generated)
-        }
+            generate(repo, &prior)
+        }),
         Mode::Check => {
             let (report, failures) = check(repo)?;
             print!("{report}");
@@ -488,19 +604,196 @@ mod tests {
         temp
     }
 
+    fn generated(table_text: &str, dump_text: &str) -> Generated {
+        Generated {
+            table_text: table_text.into(),
+            dump_text: dump_text.into(),
+            report: String::new(),
+            failures: Vec::new(),
+        }
+    }
+
+    fn locked_write(repo: &Path, generated: &Generated) -> Result<(), String> {
+        with_writer_lock(repo, table::TABLE_PATH, || {
+            write_outputs_at(repo, table::TABLE_PATH, table::DUMP_PATH, generated)
+        })
+    }
+
+    fn hold_lock(repo: &Path) -> std::fs::File {
+        let stage = staging_dir(repo, table::TABLE_PATH);
+        std::fs::create_dir_all(&stage).unwrap();
+        let lock = std::fs::File::create(stage.join(LOCK_FILE)).unwrap();
+        lock.try_lock().unwrap();
+        lock
+    }
+
     #[test]
     fn table_replacement_failure_restores_the_previous_dump() {
         let temp = scratch_repo("restore");
         std::fs::create_dir(temp.join(table::TABLE_PATH)).unwrap();
         std::fs::write(temp.join(table::DUMP_PATH), "original").unwrap();
-        let generated = Generated {
-            table_text: "new table".into(),
-            dump_text: "new dump".into(),
-            report: String::new(),
-            failures: Vec::new(),
-        };
-        assert!(write_outputs_at(&temp, table::TABLE_PATH, table::DUMP_PATH, &generated).is_err());
+        assert!(locked_write(&temp, &generated("new table", "new dump")).is_err());
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "original");
+        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn table_replacement_failure_without_a_previous_dump_removes_the_new_dump() {
+        let temp = scratch_repo("restore-none");
+        std::fs::create_dir(temp.join(table::TABLE_PATH)).unwrap();
+        let error = locked_write(&temp, &generated("new table", "new dump")).unwrap_err();
+        assert!(!error.contains("could not restore"), "{error}");
+        assert!(!temp.join(table::DUMP_PATH).exists());
+        assert!(temp.join(table::TABLE_PATH).is_dir());
+        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn successful_write_removes_an_empty_staging_directory() {
+        let temp = scratch_repo("fresh");
+        locked_write(&temp, &generated("new table", "new dump")).unwrap();
+        assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "new table");
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
+        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn successful_write_replaces_existing_outputs_and_drops_the_saved_dump() {
+        let temp = scratch_repo("replace");
+        std::fs::write(temp.join(table::TABLE_PATH), "old table").unwrap();
+        std::fs::write(temp.join(table::DUMP_PATH), "old dump").unwrap();
+        let stage = staging_dir(&temp, table::TABLE_PATH);
+        let mut renames = 0;
+        with_writer_lock(&temp, table::TABLE_PATH, || {
+            publish_staged(
+                &temp,
+                table::TABLE_PATH,
+                table::DUMP_PATH,
+                &generated("new table", "new dump"),
+                |from: &Path, to: &Path| {
+                    renames += 1;
+                    // The old dump is saved before the first rename, and the
+                    // writer lock is still held during publication.
+                    assert_eq!(
+                        std::fs::read_to_string(stage.join(PREVIOUS_DUMP_FILE)).unwrap(),
+                        "old dump"
+                    );
+                    let nested = with_writer_lock(&temp, table::TABLE_PATH, || Ok(()));
+                    assert!(nested.unwrap_err().contains("cannot lock"));
+                    std::fs::rename(from, to)
+                },
+            )
+        })
+        .unwrap();
+        assert_eq!(renames, 2);
+        assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "new table");
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
+        assert!(!stage.exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn failed_rollback_retains_the_previous_dump_and_a_retry_refuses_to_touch_it() {
+        let temp = scratch_repo("failed-rollback");
+        std::fs::write(temp.join(table::TABLE_PATH), "old table").unwrap();
+        std::fs::write(temp.join(table::DUMP_PATH), "old dump").unwrap();
+        let stage = staging_dir(&temp, table::TABLE_PATH);
+        let previous = stage.join(PREVIOUS_DUMP_FILE);
+        let mut renames = 0;
+        let error = with_writer_lock(&temp, table::TABLE_PATH, || {
+            publish_staged(
+                &temp,
+                table::TABLE_PATH,
+                table::DUMP_PATH,
+                &generated("new table", "new dump"),
+                |from: &Path, to: &Path| {
+                    renames += 1;
+                    if renames == 1 {
+                        std::fs::rename(from, to)
+                    } else {
+                        Err(io::Error::other("injected rename failure"))
+                    }
+                },
+            )
+        })
+        .unwrap_err();
+        assert_eq!(renames, 3, "publish dump, publish table, restore dump");
+        assert!(error.contains("could not restore"), "{error}");
+        assert!(error.contains(PREVIOUS_DUMP_FILE), "{error}");
+        assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "old table");
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
+        assert_eq!(std::fs::read_to_string(&previous).unwrap(), "old dump");
+        assert!(!stage.join("table.json").exists());
+        assert!(!stage.join(LOCK_FILE).exists());
+
+        // A retry, even one whose own staging would fail, never overwrites or
+        // deletes the retained dump and names it.
+        std::fs::create_dir(stage.join("table.json")).unwrap();
+        let retry = locked_write(&temp, &generated("newer table", "newer dump")).unwrap_err();
+        assert!(retry.contains("reconcile"), "{retry}");
+        assert!(retry.contains(&previous.display().to_string()), "{retry}");
+        assert_eq!(std::fs::read_to_string(&previous).unwrap(), "old dump");
+        assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "old table");
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn cleanup_errors_are_reported_beside_the_primary_error_and_every_step_runs() {
+        let temp = scratch_repo("cleanup-errors");
+        let stage = staging_dir(&temp, table::TABLE_PATH);
+        // A non-empty directory where the staged dump goes: writing it fails
+        // (the primary error) and removing it fails (a cleanup error).
+        std::fs::create_dir_all(stage.join("dump.txt")).unwrap();
+        std::fs::write(stage.join("dump.txt").join("keep"), "x").unwrap();
+        let error = locked_write(&temp, &generated("new table", "new dump")).unwrap_err();
+        let (primary, cleanup) = error
+            .split_once("; cleanup also failed: ")
+            .unwrap_or_else(|| panic!("no cleanup error beside the primary one: {error}"));
+        assert!(primary.contains("dump.txt"), "{error}");
+        assert!(cleanup.contains("dump.txt"), "{error}");
+        // The staged table was still removed after the failing step.
+        assert!(!stage.join("table.json").exists());
+        assert!(!temp.join(table::TABLE_PATH).exists());
+        assert!(!temp.join(table::DUMP_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn cleanup_error_after_success_is_reported() {
+        assert_eq!(with_cleanup_errors(Ok(()), Vec::new()), Ok(()));
+        assert_eq!(
+            with_cleanup_errors(Ok(()), vec!["a: busy".into()]),
+            Err::<(), _>("cleanup failed: a: busy".into())
+        );
+        assert_eq!(
+            with_cleanup_errors::<()>(Err("primary".into()), vec!["a".into(), "b".into()]),
+            Err("primary; cleanup also failed: a; b".into())
+        );
+    }
+
+    #[test]
+    fn failed_write_keeps_foreign_staging_files() {
+        let temp = scratch_repo("foreign-failed");
+        let stage = staging_dir(&temp, table::TABLE_PATH);
+        std::fs::create_dir_all(&stage).unwrap();
+        std::fs::write(stage.join("local.txt"), "local work").unwrap();
+        std::fs::create_dir(temp.join(table::TABLE_PATH)).unwrap();
+        std::fs::write(temp.join(table::DUMP_PATH), "original").unwrap();
+        assert!(locked_write(&temp, &generated("new table", "new dump")).is_err());
+        assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "original");
+        assert_eq!(
+            std::fs::read_to_string(stage.join("local.txt")).unwrap(),
+            "local work"
+        );
+        let left: Vec<_> = std::fs::read_dir(&stage)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("local.txt")]);
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -508,29 +801,19 @@ mod tests {
     fn interrupted_staging_is_reused_after_the_writer_releases_its_lock() {
         let temp = scratch_repo("retry");
         let table = temp.join(table::TABLE_PATH);
-        let stage = table.with_extension("staging");
+        let stage = staging_dir(&temp, table::TABLE_PATH);
         std::fs::create_dir(&stage).unwrap();
         std::fs::write(stage.join("table.json"), "interrupted").unwrap();
         std::fs::write(stage.join("local.txt"), "local work").unwrap();
-        let lock = std::fs::File::open(temp.join(table::MAPPING_PATH)).unwrap();
-        lock.try_lock().unwrap();
-        let generated = Generated {
-            table_text: "new table".into(),
-            dump_text: "new dump".into(),
-            report: String::new(),
-            failures: Vec::new(),
-        };
-        assert!(
-            write_outputs_at(&temp, table::TABLE_PATH, table::DUMP_PATH, &generated)
-                .unwrap_err()
-                .contains("cannot lock")
-        );
+        let lock = hold_lock(&temp);
+        let blocked = locked_write(&temp, &generated("new table", "new dump"));
+        assert!(blocked.unwrap_err().contains("cannot lock"));
         assert_eq!(
             std::fs::read_to_string(stage.join("table.json")).unwrap(),
             "interrupted"
         );
         drop(lock);
-        write_outputs_at(&temp, table::TABLE_PATH, table::DUMP_PATH, &generated).unwrap();
+        locked_write(&temp, &generated("new table", "new dump")).unwrap();
         assert_eq!(std::fs::read_to_string(table).unwrap(), "new table");
         assert_eq!(read(&temp, table::DUMP_PATH).unwrap(), "new dump");
         assert_eq!(
@@ -539,6 +822,252 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(stage).unwrap().count(), 1);
         std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn writer_lock_is_a_staging_file_taken_before_the_prior_is_read() {
+        let temp = scratch_repo("lock-order");
+        let lock = hold_lock(&temp);
+        let mut produced = false;
+        let error = regenerate(&temp, table::TABLE_PATH, table::DUMP_PATH, || {
+            produced = true;
+            Ok(generated("new table", "new dump"))
+        })
+        .unwrap_err();
+        assert!(error.contains("cannot lock"), "{error}");
+        assert!(error.contains(LOCK_FILE), "{error}");
+        assert!(!produced, "the prior was read without the writer lock");
+        assert!(!temp.join(table::TABLE_PATH).exists());
+        drop(lock);
+
+        regenerate(&temp, table::TABLE_PATH, table::DUMP_PATH, || {
+            // Held while generating; the tracked mapping input stays readable.
+            let nested = with_writer_lock(&temp, table::TABLE_PATH, || Ok(()));
+            assert!(nested.unwrap_err().contains("cannot lock"));
+            let mapping = std::fs::File::open(temp.join(table::MAPPING_PATH)).unwrap();
+            mapping.try_lock().unwrap();
+            drop(mapping);
+            read(&temp, table::MAPPING_PATH).unwrap();
+            Ok(generated("new table", "new dump"))
+        })
+        .unwrap();
+        assert_eq!(read(&temp, table::TABLE_PATH).unwrap(), "new table");
+        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn only_a_missing_committed_table_is_an_empty_prior() {
+        let temp = scratch_repo("prior");
+        let path = temp.join(table::TABLE_PATH);
+        assert_eq!(committed_prior_at(&temp, table::TABLE_PATH), Ok(Vec::new()));
+        std::fs::write(&path, [0xffu8, 0xfe, 0x00]).unwrap();
+        assert!(committed_prior_at(&temp, table::TABLE_PATH).is_err());
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(committed_prior_at(&temp, table::TABLE_PATH).is_err());
+        std::fs::write(&path, "{\"vocabulary\": 3}").unwrap();
+        assert!(committed_prior_at(&temp, table::TABLE_PATH).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(committed_prior_at(&temp, table::TABLE_PATH).is_err());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn unexpected_arguments_get_the_usage_error() {
+        for argv in [
+            args(&[]),
+            args(&["--write", "--unknown"]),
+            args(&["--check", "extra"]),
+            args(&["--write", "--check"]),
+            args(&["--write", "--write"]),
+            args(&["--cube", "--cube", "--write"]),
+            args(&["--cube", "--write", "--check"]),
+            args(&["--cube", "--unknown"]),
+            args(&["write"]),
+        ] {
+            assert_eq!(parse_args(&argv).unwrap_err(), USAGE, "{argv:?}");
+            assert_eq!(run_args(Path::new("unused"), &argv).unwrap_err(), USAGE);
+        }
+        let write = parse_args(&args(&["--write"])).unwrap();
+        assert!(!write.cube && write.mode == Mode::Write);
+        let check = parse_args(&args(&["--check"])).unwrap();
+        assert!(!check.cube && check.mode == Mode::Check);
+        for (argv, mode) in [
+            (args(&["--cube", "--write"]), Mode::Write),
+            (args(&["--write", "--cube"]), Mode::Write),
+            (args(&["--cube", "--check"]), Mode::Check),
+            (args(&["--check", "--cube"]), Mode::Check),
+        ] {
+            match parse_args(&argv) {
+                Ok(cli) => {
+                    assert!(cfg!(feature = "eternal-fixtures"), "{argv:?}");
+                    assert!(cli.cube && cli.mode == mode, "{argv:?}");
+                }
+                Err(error) => {
+                    assert!(!cfg!(feature = "eternal-fixtures"), "{argv:?}: {error}");
+                    assert_eq!(error, CUBE_FEATURE_ERR);
+                }
+            }
+        }
+    }
+
+    fn tokens(items: &[(&str, extract::TokenKind, i64)]) -> extract::CardTokens {
+        let mut out = extract::CardTokens::default();
+        for &(token, kind, amount) in items {
+            let (count, value) = match kind {
+                extract::TokenKind::Count => (amount, 0),
+                extract::TokenKind::Value => (1, amount),
+            };
+            out.tokens.insert(
+                token.to_string(),
+                extract::Acc {
+                    kind,
+                    count,
+                    value,
+                    via_mapping: false,
+                    direct: true,
+                },
+            );
+        }
+        out
+    }
+
+    #[test]
+    fn regeneration_keeps_a_reordered_prior_and_appends_only_new_tokens() {
+        use super::extract::TokenKind::{Count, Value};
+        let entry = |token: &str, kind: &str| (token.to_string(), kind.to_string());
+        // Shared prefix, then cube-only columns out of sorted order, then a
+        // column no card carries any more.
+        let prior = vec![
+            entry("type:Creature", "count"),
+            entry("kw:FLYING", "count"),
+            entry("z:cube_only", "count"),
+            entry("a:cube_only", "value"),
+            entry("leaf:Retired", "count"),
+        ];
+        let rows = vec![table::CardRow {
+            name: "Fixture".into(),
+            id: 0,
+            tokens: tokens(&[
+                ("type:Creature", Count, 1),
+                ("z:cube_only", Count, 2),
+                ("a:cube_only", Value, 7),
+                ("m:new", Count, 1),
+                ("b:new", Count, 3),
+            ]),
+        }];
+        let built = table::build_from_rows(table::TableBuildInput {
+            pool_path: table::CUBE_POOL_PATH,
+            pool_text: "",
+            mapping_text: "",
+            rows,
+            prior: &prior,
+            pauper_vocabulary: None,
+        })
+        .unwrap();
+        let order: Vec<(&str, &str, usize)> = built
+            .vocabulary
+            .iter()
+            .map(|e| (e.token.as_str(), e.kind, e.carriers))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                ("type:Creature", "count", 1),
+                ("kw:FLYING", "count", 0),
+                ("z:cube_only", "count", 1),
+                ("a:cube_only", "value", 1),
+                ("leaf:Retired", "count", 0),
+                ("b:new", "count", 1),
+                ("m:new", "count", 1),
+            ]
+        );
+        assert_eq!(built.vectors, vec![vec![1, 0, 2, 7, 0, 3, 1]]);
+    }
+
+    #[test]
+    fn no_effect_reasons_state_only_what_the_definition_establishes() {
+        use super::checks::{no_effect_token_reason_for as reason, DefinitionFacts};
+        let mana_creature = DefinitionFacts {
+            creature: true,
+            mana_ability: true,
+            ..DefinitionFacts::default()
+        };
+        assert_eq!(
+            reason(mana_creature),
+            "nonland permanent with only a mana ability in its definition"
+        );
+        // A mana creature with a keyword (a flying mana bird) is not mana-only.
+        let with_keyword = DefinitionFacts {
+            keywords: true,
+            ..mana_creature
+        };
+        let flying = reason(with_keyword);
+        assert!(!flying.contains("only"), "{flying}");
+        assert!(flying.contains("mana ability") && flying.contains("keywords"));
+        for other in [
+            DefinitionFacts {
+                static_rules: true,
+                ..mana_creature
+            },
+            DefinitionFacts {
+                abilities: true,
+                ..mana_creature
+            },
+            DefinitionFacts {
+                attachment: true,
+                ..mana_creature
+            },
+        ] {
+            assert_eq!(reason(other), flying);
+        }
+        let basic = DefinitionFacts {
+            land: true,
+            mana_ability: true,
+            ..DefinitionFacts::default()
+        };
+        assert_eq!(
+            reason(basic),
+            "land with only a mana ability in its definition"
+        );
+        let entry_rule_land = DefinitionFacts {
+            static_rules: true,
+            ..basic
+        };
+        assert!(!reason(entry_rule_land).contains("only"));
+        let no_mana_land = DefinitionFacts {
+            land: true,
+            ..DefinitionFacts::default()
+        };
+        assert_eq!(
+            reason(no_mana_land),
+            "land with no mana ability in its definition"
+        );
+        let vanilla = DefinitionFacts {
+            creature: true,
+            ..DefinitionFacts::default()
+        };
+        let keyword_creature = DefinitionFacts {
+            keywords: true,
+            ..vanilla
+        };
+        assert!(reason(vanilla).starts_with("creature with no keywords"));
+        assert!(reason(keyword_creature).starts_with("creature with keywords"));
+    }
+
+    #[test]
+    fn no_registry_card_with_other_rules_is_reported_as_mana_only() {
+        for (index, def) in mtg_kernel::card_def::CARD_DEFS.iter().enumerate() {
+            let id = u16::try_from(index).unwrap();
+            let has_triggers = !mtg_kernel::trigger::triggers_for(id).is_empty();
+            let facts = checks::DefinitionFacts::of(def, has_triggers);
+            let reason = checks::no_effect_token_reason(id);
+            // Keywords, static rules, attachments and abilities all count.
+            if facts.has_other_rules() {
+                assert!(!reason.contains("only"), "{}: {reason}", def.name);
+            }
+        }
     }
 
     #[test]
@@ -677,6 +1206,30 @@ mod tests {
                 std::fs::read(temp.join(path)).unwrap()
             );
         }
+        // Nothing was staged: only the writer lock was taken, and released.
+        assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[cfg(not(feature = "limited-fdn-fixtures"))]
+    #[test]
+    fn write_fails_on_an_unreadable_committed_table_instead_of_starting_over() {
+        let temp = scratch_repo("unreadable-prior");
+        let original = repo_root();
+        for path in [table::POOL_PATH, table::DUMP_PATH] {
+            std::fs::copy(original.join(path), temp.join(path)).unwrap();
+        }
+        for bytes in [[0xffu8, 0xfe, 0x00].as_slice(), b"{ not json".as_slice()] {
+            std::fs::write(temp.join(table::TABLE_PATH), bytes).unwrap();
+            let error = run_args(&temp, &args(&["--write"])).unwrap_err();
+            assert!(!error.contains("check(s) failed"), "{error}");
+            assert_eq!(std::fs::read(temp.join(table::TABLE_PATH)).unwrap(), bytes);
+            assert_eq!(
+                std::fs::read(original.join(table::DUMP_PATH)).unwrap(),
+                std::fs::read(temp.join(table::DUMP_PATH)).unwrap()
+            );
+            assert!(!staging_dir(&temp, table::TABLE_PATH).exists());
+        }
         std::fs::remove_dir_all(temp).unwrap();
     }
 
@@ -703,20 +1256,69 @@ mod tests {
         for path in [table::CUBE_POOL_PATH, table::TABLE_PATH] {
             std::fs::copy(original.join(path), temp.join(path)).unwrap();
         }
-        let sentinel_table = r#"{"vocabulary":[{"index":0,"token":"wrong:prefix","kind":"count","carriers":0}]}"#;
+        let sentinel_table =
+            r#"{"vocabulary":[{"index":0,"token":"wrong:prefix","kind":"count","carriers":0}]}"#;
         std::fs::write(temp.join(table::CUBE_TABLE_PATH), sentinel_table).unwrap();
         std::fs::write(temp.join(table::CUBE_DUMP_PATH), "sentinel dump").unwrap();
         let err = run_args(&temp, &args(&["--cube", "--write"])).unwrap_err();
         assert!(err.contains("Pauper vocabulary"), "{err}");
-        assert_eq!(
-            read(&temp, table::CUBE_TABLE_PATH).unwrap(),
-            sentinel_table
-        );
-        assert_eq!(
-            read(&temp, table::CUBE_DUMP_PATH).unwrap(),
-            "sentinel dump"
-        );
+        assert_eq!(read(&temp, table::CUBE_TABLE_PATH).unwrap(), sentinel_table);
+        assert_eq!(read(&temp, table::CUBE_DUMP_PATH).unwrap(), "sentinel dump");
+        assert!(!staging_dir(&temp, table::CUBE_TABLE_PATH).exists());
         std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn cube_write_fails_on_a_malformed_committed_cube_table() {
+        let temp = scratch_repo("cube-malformed-prior");
+        let original = repo_root();
+        for path in [table::CUBE_POOL_PATH, table::TABLE_PATH] {
+            std::fs::copy(original.join(path), temp.join(path)).unwrap();
+        }
+        std::fs::write(temp.join(table::CUBE_TABLE_PATH), "{ not json").unwrap();
+        let err = run_args(&temp, &args(&["--cube", "--write"])).unwrap_err();
+        assert!(err.contains("committed table JSON"), "{err}");
+        assert_eq!(read(&temp, table::CUBE_TABLE_PATH).unwrap(), "{ not json");
+        assert!(!temp.join(table::CUBE_DUMP_PATH).exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn cube_regeneration_keeps_a_reordered_prior_and_appends_only_new_tokens() {
+        let repo = repo_root();
+        let pauper =
+            table::try_committed_vocabulary(&read(&repo, table::TABLE_PATH).unwrap()).unwrap();
+        let fresh = generate_cube(&repo, &[]).unwrap();
+        let fresh = table::try_committed_vocabulary(&fresh.table_text).unwrap();
+        let suffix = &fresh[pauper.len()..];
+        assert!(
+            suffix.len() >= 3,
+            "too few cube-only columns: {}",
+            suffix.len()
+        );
+        // A prior that reorders the cube-only columns, keeps a column no card
+        // uses, and lacks one token the cards now carry.
+        let new_token = suffix[0].clone();
+        let mut prior = pauper.clone();
+        prior.extend(suffix[1..].iter().rev().cloned());
+        prior.push(("leaf:RetiredCubeFixture".to_string(), "count".to_string()));
+        let generated = generate_cube(&repo, &prior).unwrap();
+        assert!(generated.failures.is_empty(), "{:#?}", generated.failures);
+        let mut expected = prior.clone();
+        expected.push(new_token);
+        let vocab = table::try_committed_vocabulary(&generated.table_text).unwrap();
+        assert_eq!(vocab, expected);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn mana_creature_with_a_keyword_is_not_reported_as_mana_only() {
+        let id = mtg_kernel::card_def::card_id_by_name("Birds of Paradise").unwrap();
+        let reason = checks::no_effect_token_reason(id);
+        assert!(!reason.contains("only"), "{reason}");
+        assert!(reason.contains("mana ability"), "{reason}");
     }
 
     #[cfg(feature = "eternal-fixtures")]
@@ -739,7 +1341,9 @@ mod tests {
         .unwrap();
         let (_, failures) = check_cube(&temp).unwrap();
         assert!(
-            failures.iter().any(|f| f.contains("card database") && f.contains(CUBE_REGEN_CMD)),
+            failures
+                .iter()
+                .any(|f| f.contains("card database") && f.contains(CUBE_REGEN_CMD)),
             "{failures:#?}"
         );
         std::fs::remove_dir_all(temp).unwrap();

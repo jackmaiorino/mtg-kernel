@@ -513,9 +513,10 @@ fn has_mana_source(def: &CardDef) -> bool {
         || def.mana_ability_includes_chosen_color
 }
 
-fn has_creature_carddef_rules(def: &CardDef) -> bool {
-    def.keywords.0 != 0
-        || def.alt_cost.is_some()
+/// Cost modifiers, entry rules and static rule fields of a definition
+/// (keywords are a separate fact).
+fn has_static_definition_rules(def: &CardDef) -> bool {
+    def.alt_cost.is_some()
         || def.kicker_cost.is_some()
         || def.additional_cost.is_some()
         || def.optional_additional_cost.is_some()
@@ -551,61 +552,123 @@ fn has_creature_carddef_rules(def: &CardDef) -> bool {
         || def.animation.is_some()
 }
 
+/// What a definition establishes about a row with no effect-tree token.
+/// Each reason below states only what these facts establish.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DefinitionFacts {
+    pub partial: bool,
+    pub planeswalker: bool,
+    pub saga: bool,
+    pub transform_face: bool,
+    pub bestow: bool,
+    pub alternate_face: bool,
+    pub land: bool,
+    pub mana_ability: bool,
+    /// Equipment or Aura attachment data.
+    pub attachment: bool,
+    pub creature: bool,
+    pub artifact_or_enchantment: bool,
+    /// At least one printed keyword bit.
+    pub keywords: bool,
+    /// Cost modifiers, entry rules or static rule fields.
+    pub static_rules: bool,
+    /// Activated or triggered abilities, a spell program or spell modes.
+    pub abilities: bool,
+}
+
+impl DefinitionFacts {
+    pub fn of(def: &CardDef, has_triggers: bool) -> Self {
+        Self {
+            partial: def.capability == CardCapability::Partial,
+            planeswalker: def.has_type(CardType::Planeswalker) || def.starting_loyalty.is_some(),
+            saga: def.saga.is_some(),
+            transform_face: def.transform_face.is_some(),
+            bestow: def.bestow.is_some(),
+            alternate_face: def.adventure.is_some() || def.omen.is_some(),
+            land: def.is_land || def.has_type(CardType::Land),
+            mana_ability: has_mana_source(def),
+            attachment: def.equipment.is_some() || def.attachment.is_some(),
+            creature: def.has_type(CardType::Creature),
+            artifact_or_enchantment: def.has_type(CardType::Artifact)
+                || def.has_type(CardType::Enchantment),
+            keywords: def.keywords.0 != 0,
+            static_rules: has_static_definition_rules(def),
+            abilities: !def.activated_abilities.is_empty()
+                || has_triggers
+                || (def.spell_effect)().is_some()
+                || def.mode2.is_some()
+                || def.mode3.is_some()
+                || !def.additional_modes.is_empty(),
+        }
+    }
+
+    /// Whether the definition holds any rule besides its mana abilities.
+    pub fn has_other_rules(self) -> bool {
+        self.keywords || self.static_rules || self.abilities || self.attachment
+    }
+}
+
 /// Classifies a card with no effect-tree token (`leaf:`, `op:`, `cond:`) from
 /// its `CardDef` and triggers alone, never by card name.
 pub fn no_effect_token_reason(id: u16) -> &'static str {
     let def = &CARD_DEFS[usize::from(id)];
-    if def.capability == CardCapability::Partial {
+    no_effect_token_reason_for(DefinitionFacts::of(def, !triggers_for(id).is_empty()))
+}
+
+/// The reason for a row with no effect-tree token. A reason says "only" just
+/// when the definition holds nothing else this classifier checks.
+pub fn no_effect_token_reason_for(facts: DefinitionFacts) -> &'static str {
+    if facts.partial {
         return "partial definition (no walked effect program in CardDef)";
     }
-    if def.has_type(CardType::Planeswalker) || def.starting_loyalty.is_some() {
+    if facts.planeswalker {
         return "planeswalker loyalty abilities not walked";
     }
-    if def.saga.is_some() {
+    if facts.saga {
         return "saga chapter effects not walked";
     }
-    if def.transform_face.is_some() {
+    if facts.transform_face {
         return "transform back face not walked";
     }
-    if def.bestow.is_some() {
+    if facts.bestow {
         return "bestow aura face not walked";
     }
-    if def.adventure.is_some() || def.omen.is_some() {
+    if facts.alternate_face {
         return "alternate spell face with no effect-tree tokens";
     }
-    if def.is_land || def.has_type(CardType::Land) {
-        return if has_mana_source(def) {
-            "land with only a mana ability"
+    if facts.land {
+        return if !facts.mana_ability {
+            "land with no mana ability in its definition"
+        } else if facts.has_other_rules() {
+            "land with a mana ability and other definition rules (keywords, costs, entry, static, attachment or abilities)"
         } else {
-            "land with static or unwalked abilities"
+            "land with only a mana ability in its definition"
         };
     }
-    if has_mana_source(def) {
-        return "nonland permanent with only a mana ability";
-    }
-    if def.equipment.is_some() || def.attachment.is_some() {
-        return "equipment or aura with static bonuses only";
-    }
-    if def.has_type(CardType::Creature) {
-        return if has_creature_carddef_rules(def) {
-            "creature with keywords, cost modifiers, or static flags only"
+    if facts.mana_ability {
+        return if facts.has_other_rules() {
+            "nonland permanent with a mana ability and other definition rules (keywords, costs, entry, static, attachment or abilities)"
         } else {
-            "vanilla body or engine-side creature rules only (no keywords or CardDef abilities)"
+            "nonland permanent with only a mana ability in its definition"
         };
     }
-    if def.has_type(CardType::Artifact) || def.has_type(CardType::Enchantment) {
-        return "noncreature permanent with engine-side or static rules only";
+    if facts.attachment {
+        return "equipment or aura with no walked effect";
     }
-    if (def.spell_effect)().is_none()
-        && def.mode2.is_none()
-        && def.mode3.is_none()
-        && def.additional_modes.is_empty()
-        && def.activated_abilities.is_empty()
-        && triggers_for(id).is_empty()
-    {
-        "spell with no effect program in CardDef"
-    } else {
+    if facts.creature {
+        return if facts.keywords || facts.static_rules || facts.abilities {
+            "creature with keywords, costs, entry, static rules or abilities in its definition and no walked effect"
+        } else {
+            "creature with no keywords, costs, entry, static rules or abilities in its definition"
+        };
+    }
+    if facts.artifact_or_enchantment {
+        return "noncreature artifact or enchantment with no walked effect";
+    }
+    if facts.abilities {
         "empty effect program"
+    } else {
+        "spell with no effect program in CardDef"
     }
 }
 

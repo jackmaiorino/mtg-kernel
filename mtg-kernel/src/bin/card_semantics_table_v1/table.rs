@@ -171,10 +171,7 @@ pub fn rows(names: &[String], mapping: Option<&Mapping>) -> Vec<CardRow> {
 /// Resolves cube list cards that have an executable definition (`Full` or
 /// `Partial`), appends the five basic lands, and lists missing/no-effect
 /// cube cards separately.
-pub fn select_cube_rows(
-    cube_names: &[String],
-    mapping: &Mapping,
-) -> Result<CubeSelection, String> {
+pub fn select_cube_rows(cube_names: &[String], mapping: &Mapping) -> Result<CubeSelection, String> {
     let mut rows = Vec::new();
     let mut before_mapping = Vec::new();
     let mut not_implemented = Vec::new();
