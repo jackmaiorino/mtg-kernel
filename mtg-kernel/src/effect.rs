@@ -25355,7 +25355,10 @@ fn execute_in_departure_scope_v1(
             }
         }
         EffectOp::DealDamageToTargetEqualToChosenCostCreaturePower { target } => {
-            let [reference] = ctx.paid_cost_refs.as_slice() else {
+            // Other receipts belong to the cast permission. Only the explicitly
+            // chosen or revealed creature carries a power binding.
+            let mut chosen = ctx.paid_cost_refs.iter().filter(|r| r.power_lki.is_some());
+            let (Some(reference), None) = (chosen.next(), chosen.next()) else {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

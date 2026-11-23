@@ -1244,32 +1244,32 @@ fn kruphixs_insight_asks_for_the_rests_graveyard_order_only_when_the_profile_doe
         state.engine.runtime_rules.auto_unobservable_graveyard_order = automatic;
         let library = state.players[0].library.clone();
         let rancor = library[0];
-        let rest = library[1..6].to_vec();
+        let mut expected_order = library[1..6].to_vec();
+        if !automatic {
+            expected_order.reverse();
+        }
+        let already_buried = put(&mut state, P0, "Forest", Zone::Graveyard);
         let insight = put(&mut state, P0, "Kruphix's Insight", Zone::Hand);
         pool(&mut state, P0, &[ManaColor::G], 2);
         cast(&mut state, insight, &[]);
-        let mut order_prompts = 0;
-        let mut ordered: Vec<ObjectId> = Vec::new();
+        let mut order_answers = 0;
         settle_with(&mut state, |_, decision| match decision {
             Decision::ChooseEffectTargets {
                 legal_targets,
+                selected_count,
                 min_targets,
                 max_targets,
                 can_finish,
                 ..
             } if min_targets == max_targets && min_targets >= 2 => {
-                if ordered.is_empty() {
-                    order_prompts += 1;
-                    assert_eq!(usize::from(min_targets), rest.len());
-                }
-                if can_finish {
-                    return Action::FinishEffectSelection;
-                }
-                // Choose them in reverse of the offered order.
-                let target = *legal_targets.last().unwrap();
-                if let Target::Object(object) = target {
-                    ordered.push(object);
-                }
+                assert!(!automatic, "the profile orders them");
+                assert!(!can_finish);
+                assert_eq!(usize::from(max_targets), expected_order.len());
+                assert_eq!(usize::from(selected_count), order_answers);
+                assert_eq!(legal_targets.len(), expected_order.len() - order_answers);
+                let target = Target::Object(expected_order[order_answers]);
+                assert!(legal_targets.contains(&target));
+                order_answers += 1;
                 Action::ChooseEffectTarget(target)
             }
             Decision::ChooseEffectTargets {
@@ -1288,30 +1288,23 @@ fn kruphixs_insight_asks_for_the_rests_graveyard_order_only_when_the_profile_doe
             other => first_answer(other),
         });
         assert!(hand_contains(&state, P0, rancor), "automatic {automatic}");
-        for card in &rest {
-            assert_eq!(
-                zone(&state, *card),
-                Zone::Graveyard,
-                "automatic {automatic}"
-            );
-        }
-        assert_eq!(graveyard_len(&state, P0), 6, "the rest and the spell");
         if automatic {
-            assert_eq!(order_prompts, 0, "the profile orders them");
-            assert!(ordered.is_empty());
+            assert_eq!(order_answers, 0, "the profile orders them");
         } else {
-            assert_eq!(order_prompts, 1, "the owner orders them");
-            // The owner picks all but the last card; the forced final card
-            // auto-completes the exact-count ordered selection.
-            let mut chosen = ordered.clone();
-            chosen.sort();
-            chosen.dedup();
-            assert_eq!(chosen.len(), rest.len() - 1, "each explicit pick once");
-            assert!(
-                chosen.iter().all(|card| rest.contains(card)),
-                "only the rest is ordered"
-            );
+            // The final card has one legal position, so the engine places it.
+            assert_eq!(order_answers, expected_order.len() - 1);
         }
+        // Graveyards run from oldest to newest. The spell reaches the top
+        // after the ordered batch resolves.
+        let expected_graveyard: Vec<_> = [already_buried]
+            .into_iter()
+            .chain(expected_order)
+            .chain([insight])
+            .collect();
+        assert_eq!(
+            state.players[0].graveyard, expected_graveyard,
+            "automatic {automatic}"
+        );
     }
 }
 

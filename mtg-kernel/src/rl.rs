@@ -6265,12 +6265,13 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             let definition = CARD_DEFS
                 .get(pending.source_contract.card_def as usize)
                 .ok_or_else(|| RlContractError("Escape source definition is absent".into()))?;
-            let escape = definition
-                .escape
-                .as_ref()
-                .ok_or_else(|| RlContractError("Escape cost definition is absent".into()))?;
+            let escape = if pending.source_contract.breach_escape() {
+                crate::eternal_lurrus_v1::granted_escape_cost(definition)
+            } else {
+                definition.escape.as_ref().map(|escape| escape.cost)
+            }
+            .ok_or_else(|| RlContractError("Escape cost definition is absent".into()))?;
             let required_count = escape
-                .cost
                 .iter()
                 .find_map(|component| match component {
                     crate::card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(count) => {

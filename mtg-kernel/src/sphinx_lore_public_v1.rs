@@ -149,6 +149,10 @@ pub enum RouteV1 {
     PrintedFlashback,
     Escape,
     Granted { grant: u32 },
+    Snapcaster,
+    BeamMeUp,
+    Breach,
+    Retrace,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CostV1 {
@@ -157,6 +161,12 @@ pub enum CostV1 {
     SacrificeLands(u8),
     PayLife(u8),
     ExileOtherOwnGraveyardCards(u8),
+    DiscardLand(u8),
+    SacrificeControlled(u8, card_def::PermanentFilter),
+    TapControlled(u8, card_def::PermanentFilterDef),
+    ReturnControlled(card_def::PermanentFilterDef),
+    ExileGraveyardX { blue_only: bool },
+    ExileGraveyardCardTypes(u8),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -286,7 +296,27 @@ pub(crate) fn costs(values: &[CostComponent]) -> Result<Vec<CostV1>, String> {
                 CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                     CostV1::ExileOtherOwnGraveyardCards(*n)
                 }
-                _ => return Err("Sphinx route has an unrepresented printed cost component".into()),
+                CostComponent::SacrificeControlled { count, filter } => {
+                    CostV1::SacrificeControlled(*count, *filter)
+                }
+                CostComponent::TapUntappedControlledPermanent(filter) => {
+                    CostV1::TapControlled(1, *filter)
+                }
+                CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                    CostV1::TapControlled(*count, *filter)
+                }
+                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                    CostV1::ReturnControlled(*filter)
+                }
+                CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => {
+                    CostV1::ExileGraveyardX {
+                        blue_only: *blue_only,
+                    }
+                }
+                CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(count) => {
+                    CostV1::ExileGraveyardCardTypes(*count)
+                }
+                _ => return Err("unrepresented graveyard casting cost component".into()),
             })
         })
         .collect()
@@ -321,6 +351,27 @@ pub(crate) fn options(
                             .ok_or("Sphinx printed escape absent")?
                             .cost,
                     )?,
+                ),
+                casting::RouteV1::Snapcaster => {
+                    (RouteV1::Snapcaster, vec![CostV1::Mana(d.cost.into())])
+                }
+                casting::RouteV1::BeamMeUp => (
+                    RouteV1::BeamMeUp,
+                    costs(
+                        crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d)
+                            .ok_or("Beam me up cost absent")?,
+                    )?,
+                ),
+                casting::RouteV1::Breach => (
+                    RouteV1::Breach,
+                    costs(
+                        crate::eternal_lurrus_v1::granted_escape_cost(d)
+                            .ok_or("Breach cost absent")?,
+                    )?,
+                ),
+                casting::RouteV1::Retrace => (
+                    RouteV1::Retrace,
+                    vec![CostV1::Mana(d.cost.into()), CostV1::DiscardLand(1)],
                 ),
                 casting::RouteV1::Granted { installation } => (
                     RouteV1::Granted {
