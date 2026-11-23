@@ -502,6 +502,7 @@ fn c9a_printed_characteristics_and_empty_state_isolation() {
     assert_eq!(aang.activated_abilities.len(), 9);
     let back = aang
         .transform_face
+        .as_ref()
         .expect("Aang has back face Aang and La, Ocean's Fury");
     assert_eq!(back.name, "Aang and La, Ocean's Fury");
     assert_eq!(back.power, Some(5));
