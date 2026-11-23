@@ -264,7 +264,7 @@ RULES_NOTE = ("Engine rules and card changes that alter play are never bit-ident
 TOOLS_COMMANDS = [f"uv run --no-sync python -m unittest discover -v -s tools/{name}/{sub} -p 'test_*.py'"
                   for name, sub in (("search_experiment", "tests"), ("stage4a", "tests"), ("t1_diagnosis", ""),
                                     ("sd1", "tests"), ("native_fixture_bench", "tests"),
-                                    ("checkpoint_codec_bench", "tests"))]
+                                    ("checkpoint_codec_bench", "tests"), ("cube_v1", "tests"))]
 TOOLS_COMMANDS = [c.replace("/ -p", " -p") for c in TOOLS_COMMANDS]
 
 

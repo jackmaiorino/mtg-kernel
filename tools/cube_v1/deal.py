@@ -1,5 +1,8 @@
 """Deal deterministic pairs of cube decks and emit episodes in training run-config shape.
 
+Within an episode no non-basic card appears in both decks; basic lands are exempt
+(both decks may hold copies of the same basic land type).
+
 Usage:
   deal.py --pool POOL.json --constants CONSTANTS.json --namespace NS --run RUN
           --update-start U0 --update-end U1 [--base BASE.json]
@@ -31,7 +34,8 @@ REQUIRED_CONSTANT_KEYS = frozenset(
 )
 ACCEPTED_BASIC_SPLITS = ("even_first_colour_extra",)
 MAX_CARD_ID = (1 << 16) - 1
-MAX_EPISODE_ID_LEN = 128
+MAX_EPISODE_ID_BYTES = 128
+MAX_EPISODE_ID_LEN = MAX_EPISODE_ID_BYTES
 MAX_PHYSICAL_DECISIONS_DEFAULT = 100_000
 MAX_POLICY_STEPS_DEFAULT = 200_070
 MAX_PHYSICAL_DECISIONS_LIMIT = 100_000
@@ -208,7 +212,11 @@ def deal_pair(
     update: int,
     pair_index: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Deal two decks with disjoint nonbasic (cube) cards for one (namespace, run, update, pair_index)."""
+    """Deal two decks for one (namespace, run, update, pair_index).
+
+    Within an episode no non-basic card appears in both decks; basic lands are
+    exempt (both decks may hold copies of the same basic land type).
+    """
     pair_seed = seed(["cube_deal_v1", namespace, run, update, pair_index])
     key_prefix = ["cube_deal_v1", namespace, run, update, pair_index, pair_seed]
 
@@ -312,6 +320,26 @@ def _validate_run_params(
         raise ValueError(f"max_policy_steps must be in [1, {MAX_POLICY_STEPS_LIMIT}], got {max_policy_steps!r}")
 
 
+def format_episode_id(namespace: str, run: str, update: int, slot: int, learner_seat: int) -> str:
+    """Format an unambiguous episode id within Rust's 128-byte UTF-8 limit.
+
+    Uses UTF-8 byte-length prefixes for `namespace` and `run` so arbitrary strings
+    never collide across different `(namespace, run, update, slot, learner_seat)` tuples.
+    """
+    try:
+        ns_bytes = namespace.encode("utf-8")
+        run_bytes = run.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"namespace and run must be valid UTF-8 strings: {exc}") from exc
+    episode_id = f"{len(ns_bytes)}:{namespace}/{len(run_bytes)}:{run}/u{update}/j{slot}/s{learner_seat}"
+    byte_len = len(episode_id.encode("utf-8"))
+    if byte_len > MAX_EPISODE_ID_BYTES:
+        raise ValueError(
+            f"episode id exceeds {MAX_EPISODE_ID_BYTES} UTF-8 bytes ({byte_len} bytes): {episode_id!r}"
+        )
+    return episode_id
+
+
 def _make_episode_entry(
     namespace: str,
     run: str,
@@ -323,9 +351,7 @@ def _make_episode_entry(
     max_policy_steps: int,
     extra_episode_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    episode_id = f"{namespace}-{run}-u{update}-j{slot}-s{learner_seat}"
-    if len(episode_id) > MAX_EPISODE_ID_LEN:
-        raise ValueError(f"episode id exceeds {MAX_EPISODE_ID_LEN} characters: {episode_id!r}")
+    episode_id = format_episode_id(namespace, run, update, slot, learner_seat)
     episode: dict[str, Any] = {
         "id": episode_id,
         "seed": seed([namespace, run, update, slot]),
@@ -339,7 +365,13 @@ def _make_episode_entry(
     }
     if extra_episode_fields:
         for key, value in extra_episode_fields.items():
-            episode[key] = copy.deepcopy(value)
+            if key == "mulligan_modes":
+                if not isinstance(value, list) or len(value) != 2:
+                    raise ValueError(f"mulligan_modes must be a 2-element list, got {value!r}")
+                modes = copy.deepcopy(value)
+                episode[key] = [modes[1], modes[0]] if learner_seat == 1 else modes
+            else:
+                episode[key] = copy.deepcopy(value)
     return {
         "episode": episode,
         "opponent": {"kind": "current"},
@@ -362,6 +394,15 @@ def _extract_base_episode_template(base: dict[str, Any]) -> tuple[int, int, dict
             for opt_key in ("runtime_rules", "opening", "mulligan_modes"):
                 if opt_key in template and template[opt_key] is not None:
                     extra[opt_key] = template[opt_key]
+            if "mulligan_modes" in extra:
+                modes = extra["mulligan_modes"]
+                if not isinstance(modes, list) or len(modes) != 2:
+                    raise ValueError(f"base episode mulligan_modes must be a 2-element list, got {modes!r}")
+                template_seat = template.get("learner_seat", 0)
+                if not (_is_int(template_seat) and template_seat in (0, 1)):
+                    raise ValueError(f"base episode learner_seat must be 0 or 1, got {template_seat!r}")
+                # Store in learner-at-seat-0 order so seat-swapped episodes swap modes with decks.
+                extra["mulligan_modes"] = [modes[1], modes[0]] if template_seat == 1 else list(modes)
     return max_phys, max_steps, extra
 
 
@@ -378,7 +419,11 @@ def build_schedule(
     max_physical_decisions: int | None = None,
     max_policy_steps: int | None = None,
 ) -> dict[str, Any]:
-    """Deal episodes across [update_start, update_end) in run-config iterations shape."""
+    """Deal episodes across [update_start, update_end) in run-config iterations shape.
+
+    Within each episode, no non-basic card appears in both decks; basic lands are
+    exempt (both decks may hold copies of the same basic land type).
+    """
     pool_state = validate_pool(pool_doc)
     constants = validate_constants(constants_doc)
 

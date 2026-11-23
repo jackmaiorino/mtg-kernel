@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -30,6 +33,21 @@ def _read_fixture(name: str) -> object:
 
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class CiRegistrationTests(unittest.TestCase):
+    def test_cube_v1_registered_in_ci_tools_scope_commands(self):
+        ci_scope_path = CUBE_V1_DIR.parent / "ci" / "ci_scope.py"
+        spec = importlib.util.spec_from_file_location("ci_scope", ci_scope_path)
+        self.assertIsNotNone(spec)
+        assert spec is not None and spec.loader is not None
+        ci_scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ci_scope)
+
+        self.assertIn("cube_v1", ci_scope.TOOLS_DIRS)
+        self.assertEqual(ci_scope.scope_of_files(["tools/cube_v1/deal.py"]), "tools")
+        expected = "uv run --no-sync python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'"
+        self.assertIn(expected, ci_scope.TOOLS_COMMANDS)
 
 
 class PoolTests(unittest.TestCase):
@@ -204,13 +222,53 @@ class DealGuaranteeTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_guarantee_byte_identical_determinism(self):
+        def _run_subprocess(script: str, args: list[str], hash_seed: str) -> None:
+            env = os.environ.copy()
+            env["PYTHONHASHSEED"] = hash_seed
+            proc = subprocess.run(
+                [sys.executable, str(CUBE_V1_DIR / script), *args],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"{script} (PYTHONHASHSEED={hash_seed}) failed: {proc.stderr}",
+            )
+
+        pool_a = self.tmp_path / "pool_a.json"
+        pool_b = self.tmp_path / "pool_b.json"
+        for out_path, hash_seed in ((pool_a, "1"), (pool_b, "42")):
+            _run_subprocess(
+                "pool.py",
+                [
+                    "--cube-list",
+                    str(FIXTURES_DIR / "cube_list.json"),
+                    "--gaps",
+                    str(FIXTURES_DIR / "gaps.json"),
+                    "--id-export",
+                    str(FIXTURES_DIR / "id_export.json"),
+                    "--fence",
+                    str(FIXTURES_DIR / "fence.json"),
+                    "--carddb-hash",
+                    "1234567890abcdef",
+                    "--out",
+                    str(out_path),
+                ],
+                hash_seed,
+            )
+        self.assertEqual(pool_a.read_bytes(), pool_b.read_bytes())
+
         out_a = self.tmp_path / "run_a.json"
         out_b = self.tmp_path / "run_b.json"
-        for out_path in (out_a, out_b):
-            rc = deal.main(
+        for pool_in, out_path, hash_seed in ((pool_a, out_a, "1"), (pool_b, out_b, "42")):
+            _run_subprocess(
+                "deal.py",
                 [
                     "--pool",
-                    str(self.pool_path),
+                    str(pool_in),
                     "--constants",
                     str(self.constants_path),
                     "--namespace",
@@ -223,17 +281,18 @@ class DealGuaranteeTests(unittest.TestCase):
                     "3",
                     "--out",
                     str(out_path),
-                ]
+                ],
+                hash_seed,
             )
-            self.assertEqual(rc, 0)
         self.assertEqual(out_a.read_bytes(), out_b.read_bytes())
 
         # Sanity check that changing run changes output bytes.
         out_c = self.tmp_path / "run_c.json"
-        rc = deal.main(
+        _run_subprocess(
+            "deal.py",
             [
                 "--pool",
-                str(self.pool_path),
+                str(pool_a),
                 "--constants",
                 str(self.constants_path),
                 "--namespace",
@@ -246,9 +305,9 @@ class DealGuaranteeTests(unittest.TestCase):
                 "3",
                 "--out",
                 str(out_c),
-            ]
+            ],
+            "1",
         )
-        self.assertEqual(rc, 0)
         self.assertNotEqual(out_a.read_bytes(), out_c.read_bytes())
 
     def test_guarantee_no_fenced_card_appears(self):
@@ -297,27 +356,62 @@ class DealGuaranteeTests(unittest.TestCase):
         }
         self.assertTrue(fenced_ids.issubset(seen_unfenced))
 
-    def test_guarantee_within_episode_no_cube_card_appears_in_both_decks(self):
-        schedule = deal.build_schedule_from_paths(
-            self.pool_path,
-            self.constants_path,
-            namespace="train",
-            run="disjoint-check",
-            update_start=0,
-            update_end=8,
-        )
-        for iteration in schedule["iterations"]:
-            for entry in iteration["episodes"]:
-                ep = entry["episode"]
-                deck0 = ep["registered"][0]["mainboard"]
-                deck1 = ep["registered"][1]["mainboard"]
-                nonbasic0 = [cid for cid in deck0 if cid not in self.basic_ids]
-                nonbasic1 = [cid for cid in deck1 if cid not in self.basic_ids]
-                # Singleton within each deck.
-                self.assertEqual(len(nonbasic0), len(set(nonbasic0)))
-                self.assertEqual(len(nonbasic1), len(set(nonbasic1)))
-                # Disjoint across the two decks of the episode.
-                self.assertEqual(set(nonbasic0) & set(nonbasic1), set())
+    def test_guarantee_within_episode_no_nonbasic_card_appears_in_both_decks(self):
+        # Basic lands are explicitly exempt (both decks may hold copies of the same basic
+        # land type); verify nothing other than the five basic lands is exempt.
+        export_doc = _read_fixture("id_export.json")
+        five_basic_ids = {
+            c["card_id"] for c in export_doc["cards"] if c["name"] in pool.BASIC_COLORS
+        }
+        self.assertEqual(len(five_basic_ids), 5)
+        self.assertEqual(self.basic_ids, five_basic_ids)
+
+        three_color_constants = {
+            "deck_size": 12,
+            "colours_per_seat": 3,
+            "nonland_spells": 5,
+            "nonbasic_lands": 2,
+            "basic_split": "even_first_colour_extra",
+            "pairs_per_update": 4,
+        }
+        for run_name, constants, expect_shared_basics in (
+            ("disjoint-2c", self.constants_doc, False),
+            ("disjoint-3c", three_color_constants, True),
+        ):
+            schedule = deal.build_schedule(
+                self.pool_doc,
+                constants,
+                namespace="train",
+                run=run_name,
+                update_start=0,
+                update_end=8,
+            )
+            expected_nonbasics = constants["nonland_spells"] + constants["nonbasic_lands"]
+            shared_basics_seen = False
+            for iteration in schedule["iterations"]:
+                for entry in iteration["episodes"]:
+                    ep = entry["episode"]
+                    for key in ("registered", "selected"):
+                        deck0 = ep[key][0]["mainboard"]
+                        deck1 = ep[key][1]["mainboard"]
+                        overlap = set(deck0) & set(deck1)
+                        if overlap:
+                            shared_basics_seen = True
+                        # Only the five basic lands may overlap across the two decks.
+                        self.assertTrue(
+                            overlap.issubset(five_basic_ids),
+                            f"non-basic card(s) appeared in both decks of {ep['id']} ({key}): "
+                            f"{sorted(overlap - five_basic_ids)}",
+                        )
+                        # Non-basic cards remain singleton within each deck and match expected count.
+                        nonbasic0 = [cid for cid in deck0 if cid not in five_basic_ids]
+                        nonbasic1 = [cid for cid in deck1 if cid not in five_basic_ids]
+                        self.assertEqual(len(nonbasic0), expected_nonbasics)
+                        self.assertEqual(len(nonbasic1), expected_nonbasics)
+                        self.assertEqual(len(nonbasic0), len(set(nonbasic0)))
+                        self.assertEqual(len(nonbasic1), len(set(nonbasic1)))
+            if expect_shared_basics:
+                self.assertTrue(shared_basics_seen)
 
     def test_guarantee_exact_deck_size_and_composition_and_basic_split(self):
         # Test multiple constant sets (no hard-coded 40 or 2).
@@ -421,6 +515,72 @@ class DealGuaranteeTests(unittest.TestCase):
         self.assertEqual(train_ids & heldout_ids, set())
         self.assertEqual(train_seeds & heldout_seeds, set())
 
+    def test_episode_ids_never_collide_across_namespace_run_boundaries(self):
+        pairs = [
+            (("train", "cube-r1"), ("train-cube", "r1")),
+            (("a/1:b", "c"), ("a", "b/1:c")),
+            (("a:b", "c"), ("a", "b:c")),
+        ]
+        for (ns_a, run_a), (ns_b, run_b) in pairs:
+            with self.subTest(a=(ns_a, run_a), b=(ns_b, run_b)):
+                sched_a = deal.build_schedule(
+                    self.pool_doc,
+                    self.constants_doc,
+                    namespace=ns_a,
+                    run=run_a,
+                    update_start=0,
+                    update_end=3,
+                )
+                sched_b = deal.build_schedule(
+                    self.pool_doc,
+                    self.constants_doc,
+                    namespace=ns_b,
+                    run=run_b,
+                    update_start=0,
+                    update_end=3,
+                )
+                ids_a = {e["episode"]["id"] for it in sched_a["iterations"] for e in it["episodes"]}
+                ids_b = {e["episode"]["id"] for it in sched_b["iterations"] for e in it["episodes"]}
+                seeds_a = {e["episode"]["seed"] for it in sched_a["iterations"] for e in it["episodes"]}
+                seeds_b = {e["episode"]["seed"] for it in sched_b["iterations"] for e in it["episodes"]}
+                self.assertEqual(ids_a & ids_b, set())
+                self.assertEqual(seeds_a & seeds_b, set())
+
+    def test_episode_id_length_limit_counts_utf8_bytes(self):
+        # "\u00e9" is 1 Python character and 2 UTF-8 bytes.
+        # "110:" (4) + 55*2 (110) + "/2:r1" (5) + "/u0/j0/s0" (9) = 128 UTF-8 bytes (73 chars).
+        ns_exact = "\u00e9" * 55
+        ok_id = deal.format_episode_id(ns_exact, "r1", 0, 0, 0)
+        self.assertEqual(len(ok_id), 73)
+        self.assertEqual(len(ok_id.encode("utf-8")), 128)
+        sched_ok = deal.build_schedule(
+            self.pool_doc,
+            self.constants_doc,
+            namespace=ns_exact,
+            run="r1",
+            update_start=0,
+            update_end=1,
+        )
+        for entry in sched_ok["iterations"][0]["episodes"]:
+            self.assertLessEqual(len(entry["episode"]["id"].encode("utf-8")), 128)
+
+        # 56 copies -> 74 Python characters (<= 128) but 130 UTF-8 bytes (> 128): must be rejected.
+        ns_too_long = "\u00e9" * 56
+        raw_candidate = f"{len(ns_too_long.encode('utf-8'))}:{ns_too_long}/2:r1/u0/j0/s0"
+        self.assertLessEqual(len(raw_candidate), 128)
+        self.assertGreater(len(raw_candidate.encode("utf-8")), 128)
+        with self.assertRaisesRegex(ValueError, "UTF-8 bytes"):
+            deal.format_episode_id(ns_too_long, "r1", 0, 0, 0)
+        with self.assertRaisesRegex(ValueError, "UTF-8 bytes"):
+            deal.build_schedule(
+                self.pool_doc,
+                self.constants_doc,
+                namespace=ns_too_long,
+                run="r1",
+                update_start=0,
+                update_end=1,
+            )
+
     def test_both_seat_orders_and_qual_seed_parity_and_run_config_shape(self):
         schedule = deal.build_schedule_from_paths(
             self.pool_path,
@@ -502,6 +662,8 @@ class DealGuaranteeTests(unittest.TestCase):
                                 "max_physical_decisions": 4000,
                                 "max_policy_steps": 40000,
                                 "runtime_rules": "resolution-boundary-v1",
+                                "opening": "london-v1",
+                                "mulligan_modes": ["learned", "keep_seven"],
                             },
                             "opponent": {"kind": "current"},
                         }
@@ -512,6 +674,7 @@ class DealGuaranteeTests(unittest.TestCase):
             "value_coefficient": 0.5,
             "output_directory": "out/cube",
         }
+        base_snapshot = copy.deepcopy(base)
         stamped = deal.build_schedule(
             self.pool_doc,
             self.constants_doc,
@@ -521,12 +684,44 @@ class DealGuaranteeTests(unittest.TestCase):
             update_end=2,
             base_config=base,
         )
+        self.assertEqual(base, base_snapshot)
         self.assertEqual(set(stamped.keys()), set(base.keys()))
         self.assertEqual(len(stamped["iterations"]), 2)
-        ep0 = stamped["iterations"][0]["episodes"][0]["episode"]
-        self.assertEqual(ep0["max_physical_decisions"], 4000)
-        self.assertEqual(ep0["max_policy_steps"], 40000)
-        self.assertEqual(ep0["runtime_rules"], "resolution-boundary-v1")
+        for iteration in stamped["iterations"]:
+            episodes = iteration["episodes"]
+            for p in range(self.constants_doc["pairs_per_update"]):
+                ep0 = episodes[2 * p]["episode"]
+                ep1 = episodes[2 * p + 1]["episode"]
+                self.assertEqual(ep0["max_physical_decisions"], 4000)
+                self.assertEqual(ep0["max_policy_steps"], 40000)
+                self.assertEqual(ep0["runtime_rules"], "resolution-boundary-v1")
+                self.assertEqual(ep0["opening"], "london-v1")
+                self.assertEqual(ep1["opening"], "london-v1")
+                self.assertEqual(ep0["learner_seat"], 0)
+                self.assertEqual(ep1["learner_seat"], 1)
+                # Asymmetric mulligan_modes swap with the decks so learner_seat stays "learned".
+                self.assertEqual(ep0["mulligan_modes"], ["learned", "keep_seven"])
+                self.assertEqual(ep1["mulligan_modes"], ["keep_seven", "learned"])
+                self.assertEqual(ep0["mulligan_modes"][ep0["learner_seat"]], "learned")
+                self.assertEqual(ep1["mulligan_modes"][ep1["learner_seat"]], "learned")
+
+        # Also verify stamping when the base template itself has learner_seat=1.
+        base_seat1 = copy.deepcopy(base)
+        base_seat1["iterations"][0]["episodes"][0]["episode"]["learner_seat"] = 1
+        base_seat1["iterations"][0]["episodes"][0]["episode"]["mulligan_modes"] = ["keep_seven", "learned"]
+        stamped_seat1 = deal.build_schedule(
+            self.pool_doc,
+            self.constants_doc,
+            namespace="train",
+            run="base-test-s1",
+            update_start=0,
+            update_end=1,
+            base_config=base_seat1,
+        )
+        ep0_s1 = stamped_seat1["iterations"][0]["episodes"][0]["episode"]
+        ep1_s1 = stamped_seat1["iterations"][0]["episodes"][1]["episode"]
+        self.assertEqual(ep0_s1["mulligan_modes"], ["learned", "keep_seven"])
+        self.assertEqual(ep1_s1["mulligan_modes"], ["keep_seven", "learned"])
 
     def test_cli_stdout_and_error_exit(self):
         buf = io.StringIO()
