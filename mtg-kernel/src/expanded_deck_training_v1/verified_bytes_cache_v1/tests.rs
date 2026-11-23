@@ -4,7 +4,9 @@
 use super::super::fresh_initialization_source::read_actual_in_v1;
 use super::super::no_state_digest_v1::holds_bytes_in_v1;
 use super::super::{
-    check_pinned_in_v1, publish_json_bytes_in_v1, read_pinned_bytes_in_v1, sha, PinnedFileV1,
+    check_pinned_in_v1, publish_json_bytes_in_v1, publish_json_shared_in_v1,
+    publish_json_shared_with_handoff_in_v1, read_pinned_bytes_in_v1, read_pinned_shared_in_v1, sha,
+    PinnedFileV1,
 };
 use super::{charge_v1, VerifiedBytesCacheV1};
 use std::fs;
@@ -526,4 +528,151 @@ fn a_run_in_flight_on_another_thread_keeps_resident_reads_off() {
     resident.accept_v1();
     assert!(cache.resident_v1());
     assert!(cache.enter_run_v1(false).is_err());
+}
+
+/// Pending publications (`update_tail_overlap_v1`): the readers give a
+/// pending pin's bytes from memory and do not look at its file, whether the
+/// file is absent or holds other bytes; only that path under that digest is
+/// pending; and once the publisher drops its guard the file is read and
+/// checked as any other.
+#[test]
+fn a_pending_publication_is_read_from_memory_until_its_guard_drops() {
+    use std::sync::Arc;
+    let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    let directory = temp_directory_v1("pending");
+    let bytes = Arc::new(br#"{"pending":"bytes"}"#.to_vec());
+    let pin = PinnedFileV1 {
+        path: directory.join("checkpoint.json"),
+        sha256: sha(&bytes),
+    };
+    let missing = fs::metadata(&pin.path).unwrap_err().to_string();
+    // Not pending: every reader looks at the file, which does not exist.
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(), missing);
+    assert_eq!(check_pinned_in_v1(&cache, &pin).unwrap_err(), missing);
+    assert_eq!(read_pinned_shared_in_v1(&cache, &pin).unwrap_err(), missing);
+    assert!(cache.pending_v1(&pin.path, &pin.sha256).is_none());
+    let pending = cache.begin_pending_v1(&pin.path, &pin.sha256, Arc::clone(&bytes));
+    // Pending: the bytes come from memory though no file exists, and the
+    // shared reader hands out the publisher's own allocation.
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), *bytes);
+    check_pinned_in_v1(&cache, &pin).unwrap();
+    assert!(Arc::ptr_eq(
+        &read_pinned_shared_in_v1(&cache, &pin).unwrap(),
+        &bytes
+    ));
+    // Nothing was hashed, and the memo holds nothing: the pending bytes are
+    // the publisher's, not a verified read.
+    assert_eq!(cache.hashed_for_test_v1(), 0);
+    assert!(cache.held_v1(&pin.path, &pin.sha256).is_none());
+    // Another digest at the path, or the digest at another path, is not that
+    // publication.
+    let other_digest = PinnedFileV1 {
+        path: pin.path.clone(),
+        sha256: sha(b"other"),
+    };
+    assert_eq!(
+        read_pinned_bytes_in_v1(&cache, &other_digest).unwrap_err(),
+        missing
+    );
+    let other_path = PinnedFileV1 {
+        path: directory.join("other.json"),
+        sha256: pin.sha256.clone(),
+    };
+    assert!(check_pinned_in_v1(&cache, &other_path).is_err());
+    // A file being written at the path (here: other bytes of the same
+    // length) is not looked at while the pin is pending.
+    let mut partial = bytes.as_ref().clone();
+    partial[2] ^= 1;
+    fs::write(&pin.path, &partial).unwrap();
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), *bytes);
+    check_pinned_in_v1(&cache, &pin).unwrap();
+    assert_eq!(cache.hashed_for_test_v1(), 0);
+    // Resident reads do not change that.
+    cache.enable_resident_for_test_v1();
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), *bytes);
+    drop(pending);
+    // The publication has returned: the file is read and checked again.
+    assert!(cache.pending_v1(&pin.path, &pin.sha256).is_none());
+    assert_eq!(
+        read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
+        "input file SHA differs"
+    );
+    fs::write(&pin.path, bytes.as_slice()).unwrap();
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), *bytes);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A publication with a handoff (`update_tail_overlap_v1`) is the plain
+/// publication with its pin known first: the handoff is called once, with
+/// the pin the publication returns, before anything is written and while the
+/// pin already reads from memory; afterwards the file holds the bytes, the
+/// memo holds them as after a plain publication, and nothing is pending,
+/// also when the publication fails.
+#[test]
+fn a_publication_with_a_handoff_hands_over_its_pin_before_its_first_write() {
+    use std::sync::Arc;
+    let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    let directory = temp_directory_v1("handoff");
+    let bytes = Arc::new(br#"{"checkpoint":"bytes"}"#.to_vec());
+    let mut handed = Vec::new();
+    let pin = publish_json_shared_with_handoff_in_v1(
+        &cache,
+        &directory,
+        "checkpoint.json",
+        &bytes,
+        &mut |pin: &PinnedFileV1| {
+            // No final file and no staging file yet; the pin reads from
+            // memory all the same.
+            let written = fs::read_dir(&directory).unwrap().count();
+            let read = read_pinned_bytes_in_v1(&cache, pin);
+            handed.push((pin.clone(), written, read));
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        handed,
+        vec![(pin.clone(), 0, Ok(bytes.as_ref().clone()))],
+        "one handoff, of the returned pin, before the first write"
+    );
+    assert_eq!(
+        pin,
+        PinnedFileV1 {
+            path: directory.join("checkpoint.json"),
+            sha256: sha(&bytes),
+        }
+    );
+    assert_eq!(fs::read(&pin.path).unwrap(), *bytes);
+    assert!(cache.pending_v1(&pin.path, &pin.sha256).is_none());
+    // The memo holds the publisher's allocation, as after
+    // `publish_json_shared_in_v1`, and the bytes were hashed nowhere else.
+    assert!(Arc::ptr_eq(
+        &cache.held_v1(&pin.path, &pin.sha256).unwrap(),
+        &bytes
+    ));
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), *bytes);
+    assert_eq!(cache.hashed_for_test_v1(), 0);
+    // The same file and pin as the plain publication of the same bytes.
+    let plain_directory = temp_directory_v1("handoff-plain");
+    let plain =
+        publish_json_shared_in_v1(&cache, &plain_directory, "checkpoint.json", &bytes).unwrap();
+    assert_eq!(plain.sha256, pin.sha256);
+    assert_eq!(fs::read(&plain.path).unwrap(), fs::read(&pin.path).unwrap());
+    // A publication that fails (the final name exists) still hands over, as
+    // an update whose checkpoint write fails has, and ends the pending state.
+    let other = Arc::new(br#"{"checkpoint":"other"}"#.to_vec());
+    let mut calls = 0;
+    let failed = publish_json_shared_with_handoff_in_v1(
+        &cache,
+        &directory,
+        "checkpoint.json",
+        &other,
+        &mut |_: &PinnedFileV1| calls += 1,
+    );
+    assert!(failed.is_err());
+    assert_eq!(calls, 1);
+    assert!(cache.pending_v1(&pin.path, &sha(&other)).is_none());
+    assert!(cache.held_v1(&pin.path, &sha(&other)).is_none());
+    assert_eq!(fs::read(&pin.path).unwrap(), *bytes);
+    fs::remove_dir_all(directory).unwrap();
+    fs::remove_dir_all(plain_directory).unwrap();
 }

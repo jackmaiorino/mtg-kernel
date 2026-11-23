@@ -1116,6 +1116,43 @@ pub fn publish_new_bytes_bracketed_v1(
     )
 }
 
+/// [`publish_new_bytes_v1`] (or, with `bracketed`,
+/// [`publish_new_bytes_bracketed_v1`]) for a caller that already computed
+/// `expectation` from these same `bytes` with
+/// [`DurableFileExpectationV1::from_bytes`], because it needed their SHA-256
+/// before the first write. The digest is not computed a second time; the
+/// publication, every readback (each compares the file with `bytes`) and the
+/// receipt are the ones those functions make. An expectation of another
+/// length is refused before any write.
+pub(crate) fn publish_expected_bytes_v1(
+    parent: &ValidatedPublicationParentV1,
+    stage_name: impl AsRef<OsStr>,
+    final_name: impl AsRef<OsStr>,
+    bytes: &[u8],
+    expectation: DurableFileExpectationV1,
+    bracketed: bool,
+) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
+    if u64::try_from(bytes.len()).ok() != Some(expectation.exact_length) {
+        return Err(DurablePublicationErrorV1::new(
+            DurablePublicationErrorKindV1::InputContentMismatch,
+            "borrowed caller bytes do not match the required exact length",
+        ));
+    }
+    publish_verified_bytes_with_hook_v1(
+        parent,
+        stage_name.as_ref(),
+        final_name.as_ref(),
+        bytes,
+        expectation,
+        if bracketed {
+            RecaptureV1::Bracketing
+        } else {
+            RecaptureV1::EveryBoundary
+        },
+        crash_point_hook_v1,
+    )
+}
+
 /// Which content readbacks a publication makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecaptureV1 {

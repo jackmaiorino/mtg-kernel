@@ -47,10 +47,22 @@
 //! process (a segment, a resume, an audit) reads and verifies every file
 //! again. The other process-cache comparisons (`holds_bytes_v1`) and durable
 //! publication follow the same switch. The mode only ever turns on, never off.
+//!
+//! Pending publications (`begin_pending_v1`) serve one more case: a file this
+//! process is publishing right now. Its pin is known before its first byte is
+//! written (the final path and the SHA-256 of the bytes), and a reader of
+//! that pin is given those bytes from memory, with no look at the file, until
+//! the publication has returned. A pin is pending only while its publisher
+//! holds the guard, in either read mode and whatever the budget: it is not a
+//! memo but the only place the bytes exist. Every byte a reader returns still
+//! has the pinned SHA-256, and the publication then proves, byte for byte,
+//! that the file holds exactly them. Only an update whose caller asked for a
+//! handoff registers one (`update_tail_overlap_v1`); no other reader ever
+//! finds a pending pin.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 #[cfg(test)]
@@ -112,10 +124,50 @@ pub(crate) struct VerifiedBytesCacheV1 {
     /// Runs admitted to this cache (`enter_run_v1`); the lock also orders
     /// every change of `resident`.
     runs: Mutex<RunCountsV1>,
+    /// Pending publications (module docs): none, or the one checkpoint an
+    /// update is publishing.
+    pending: Mutex<Vec<PendingV1>>,
+    /// The length of `pending`, so a reader takes no lock while it is empty.
+    pending_count: AtomicUsize,
     /// Digests computed by `digest_matches_v1`, so tests can tell a
     /// comparison from a fallback.
     #[cfg(test)]
     hashed: std::sync::atomic::AtomicUsize,
+}
+
+/// A publication in flight: the pin and the bytes being written under it.
+struct PendingV1 {
+    path: PathBuf,
+    sha256: String,
+    bytes: Arc<Vec<u8>>,
+}
+
+/// A pending publication (`begin_pending_v1`), held by its publisher until
+/// the publication has returned. Dropping it ends the pending state: readers
+/// then read the file, as they read any other.
+pub(crate) struct PendingPublicationV1<'a> {
+    cache: &'a VerifiedBytesCacheV1,
+    path: PathBuf,
+    sha256: String,
+}
+
+impl Drop for PendingPublicationV1<'_> {
+    fn drop(&mut self) {
+        let mut pending = self
+            .cache
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(index) = pending
+            .iter()
+            .position(|entry| entry.sha256 == self.sha256 && entry.path == self.path)
+        {
+            pending.remove(index);
+        }
+        self.cache
+            .pending_count
+            .store(pending.len(), Ordering::Release);
+    }
 }
 
 /// Runs admitted to a cache (`enter_run_v1`).
@@ -186,9 +238,51 @@ impl VerifiedBytesCacheV1 {
             held: Mutex::new(HeldV1::default()),
             resident: AtomicBool::new(false),
             runs: Mutex::new(RunCountsV1::default()),
+            pending: Mutex::new(Vec::new()),
+            pending_count: AtomicUsize::new(0),
             #[cfg(test)]
             hashed: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// Makes `path` under `sha256` pending: the caller is about to publish
+    /// exactly `bytes` there, whose SHA-256 it has computed as `sha256`.
+    /// Until the returned guard is dropped, `pending_v1` gives readers of
+    /// that pin these bytes. The caller keeps the guard until the publication
+    /// has returned, whatever its outcome.
+    pub(crate) fn begin_pending_v1(
+        &self,
+        path: &Path,
+        sha256: &str,
+        bytes: Arc<Vec<u8>>,
+    ) -> PendingPublicationV1<'_> {
+        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+        pending.push(PendingV1 {
+            path: path.to_path_buf(),
+            sha256: sha256.to_owned(),
+            bytes,
+        });
+        self.pending_count.store(pending.len(), Ordering::Release);
+        PendingPublicationV1 {
+            cache: self,
+            path: path.to_path_buf(),
+            sha256: sha256.to_owned(),
+        }
+    }
+
+    /// The bytes of a pending publication of `path` under `sha256`: a reader
+    /// returns them without looking at the file, which may not exist yet.
+    /// `None` for every pin that is not pending, which is read as before.
+    pub(crate) fn pending_v1(&self, path: &Path, sha256: &str) -> Option<Arc<Vec<u8>>> {
+        if self.pending_count.load(Ordering::Acquire) == 0 {
+            return None;
+        }
+        self.pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|entry| entry.sha256 == sha256 && entry.path == path)
+            .map(|entry| Arc::clone(&entry.bytes))
     }
 
     /// Whether `bytes`, just read from `path`, have the SHA-256 `sha256`:

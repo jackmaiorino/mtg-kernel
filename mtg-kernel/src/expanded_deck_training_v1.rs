@@ -4231,6 +4231,19 @@ pub enum ExpandedTrainingCommandV1 {
 }
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
+    execute_with_handoff_v1(command, None)
+}
+
+/// [`execute_v1`]. With `handoff`, a prepared update (`UpdatePrepared`) also
+/// calls it once with its new checkpoint's pin, after its learner step and
+/// before the checkpoint's first byte is written
+/// (`publish_json_shared_with_handoff_v1`); everything the update computes,
+/// checks, publishes and returns is unchanged. Every other command ignores
+/// `handoff`, and an update that fails before its checkpoint never calls it.
+pub(crate) fn execute_with_handoff_v1(
+    command: ExpandedTrainingCommandV1,
+    handoff: Option<UpdateHandoffV1<'_>>,
+) -> Result<Value, String> {
     match command {
         ExpandedTrainingCommandV1::ESupportedUpdate {
             source,
@@ -4258,6 +4271,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -4285,6 +4299,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
@@ -4314,6 +4329,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -4343,6 +4359,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -4649,6 +4666,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             training_math,
             record_format,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -4694,6 +4712,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 training_math,
                 record_format,
                 record_envelope,
+                handoff,
             )
         }
     }
@@ -5022,6 +5041,7 @@ fn execute_update_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    handoff: Option<UpdateHandoffV1<'_>>,
 ) -> Result<Value, String> {
     execute_update_inner_v1(
         source,
@@ -5043,6 +5063,7 @@ fn execute_update_v1(
         training_math,
         record_format,
         record_envelope,
+        handoff,
     )
 }
 
@@ -5070,6 +5091,7 @@ fn execute_update_inner_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    handoff: Option<UpdateHandoffV1<'_>>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -6376,11 +6398,19 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => None,
     };
-    let checkpoint_pin = publish_json_shared_v1(
-        &output_directory,
-        "checkpoint.json",
-        &Arc::new(record_envelope.seal_owned_v1(record)?),
-    )?;
+    let sealed = Arc::new(record_envelope.seal_owned_v1(record)?);
+    let checkpoint_pin = match handoff {
+        None => publish_json_shared_v1(&output_directory, "checkpoint.json", &sealed)?,
+        // The same publication, with the pin handed over before its first
+        // write (`update_tail_overlap_v1`).
+        Some(handoff) => publish_json_shared_with_handoff_v1(
+            &output_directory,
+            "checkpoint.json",
+            &sealed,
+            handoff,
+        )?,
+    };
+    drop(sealed);
     // Readback exercises the real same-format continuation loader.
     let resumed_source = ExpandedModelSourceV1 {
         checkpoint: Some(checkpoint_pin.clone()),
@@ -6732,11 +6762,32 @@ fn read_pinned_shared_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String> {
     read_pinned_shared_in_v1(verified_bytes_cache_v1::global_v1(), pin)
 }
 
+/// The bytes of a pin this process is publishing right now, within the
+/// readers' size bound: a reader returns them in place of the file, which it
+/// does not look at (`verified_bytes_cache_v1`, pending publications).
+/// `None` for every other pin.
+fn pending_pin_bytes_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<Option<Arc<Vec<u8>>>, String> {
+    let Some(bytes) = cache.pending_v1(&pin.path, &pin.sha256) else {
+        return Ok(None);
+    };
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "input is not a bounded regular file",
+    )?;
+    Ok(Some(bytes))
+}
+
 /// `read_pinned_shared_v1` against the verified-bytes cache `cache`.
 fn read_pinned_shared_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
 ) -> Result<Arc<Vec<u8>>, String> {
+    if let Some(pending) = pending_pin_bytes_v1(cache, pin)? {
+        return Ok(pending);
+    }
     if cache.resident_v1() {
         let metadata = fs::metadata(&pin.path).map_err(err)?;
         ensure(
@@ -6762,6 +6813,9 @@ fn check_pinned_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
 ) -> Result<(), String> {
+    if pending_pin_bytes_v1(cache, pin)?.is_some() {
+        return Ok(());
+    }
     if cache.resident_v1() {
         let metadata = fs::metadata(&pin.path).map_err(err)?;
         ensure(
@@ -6783,6 +6837,9 @@ fn read_pinned_bytes_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
 ) -> Result<Vec<u8>, String> {
+    if let Some(pending) = pending_pin_bytes_v1(cache, pin)? {
+        return Ok(pending.as_ref().clone());
+    }
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
@@ -6975,6 +7032,83 @@ fn publish_json_shared_in_v1(
 ) -> Result<PinnedFileV1, String> {
     let pin = publish_json_unrecorded_v1(cache, directory, name, bytes)?;
     cache.record_verified_shared_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
+    Ok(pin)
+}
+
+/// What an update calls once when its caller asked for a handoff
+/// ([`execute_with_handoff_v1`]): its new checkpoint's pin, at the moment the
+/// checkpoint's bytes exist in memory and before its first byte is written.
+pub(crate) type UpdateHandoffV1<'a> = &'a mut dyn FnMut(&PinnedFileV1);
+
+/// `publish_json_shared_v1` for a checkpoint with a handoff: the same
+/// publication, record and pin, with the pin made known first.
+///
+/// `publish_json_shared_v1` computes the bytes' SHA-256 inside the
+/// publication. Here the same digest is computed once, before the first
+/// write, so the pin (the final path and that digest) exists while the file
+/// does not. From there until the publication has returned, readers of the
+/// pin are given these bytes from memory and do not look at the file
+/// (`verified_bytes_cache_v1`, pending publications); `handoff` is called
+/// once with the pin in between. The checks, the publication's boundaries and
+/// readbacks, their errors and their order are `publish_json_unrecorded_v1`'s.
+fn publish_json_shared_with_handoff_v1(
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+    handoff: UpdateHandoffV1<'_>,
+) -> Result<PinnedFileV1, String> {
+    publish_json_shared_with_handoff_in_v1(
+        verified_bytes_cache_v1::global_v1(),
+        directory,
+        name,
+        bytes,
+        handoff,
+    )
+}
+
+/// `publish_json_shared_with_handoff_v1` against the verified-bytes cache
+/// `cache`.
+fn publish_json_shared_with_handoff_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    directory: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+    handoff: UpdateHandoffV1<'_>,
+) -> Result<PinnedFileV1, String> {
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "output exceeds file size limit",
+    )?;
+    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
+    let stage = format!(".{name}.stage");
+    let expectation =
+        crate::durable_publication_v1::DurableFileExpectationV1::from_bytes(bytes).map_err(err)?;
+    let pin = PinnedFileV1 {
+        path: directory.join(name),
+        sha256: hex(&expectation.sha256()),
+    };
+    let pending = cache.begin_pending_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
+    handoff(&pin);
+    // Resident reads also skip the two non-bracketing readbacks, as in
+    // `publish_json_unrecorded_v1`.
+    let receipt = crate::durable_publication_v1::publish_expected_bytes_v1(
+        &parent,
+        stage,
+        name,
+        bytes,
+        expectation,
+        cache.resident_v1(),
+    )
+    .map_err(err)?;
+    // The receipt's digest is the expectation's, which the pin was made from.
+    ensure(
+        hex(&receipt.sha256()) == pin.sha256,
+        "published checkpoint digest differs from its handoff",
+    )?;
+    // Recorded before the pending state ends, so no reader in between falls
+    // back to hashing the file.
+    cache.record_verified_shared_v1(&pin.path, &pin.sha256, Arc::clone(bytes));
+    drop(pending);
     Ok(pin)
 }
 
