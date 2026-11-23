@@ -11863,7 +11863,10 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !selected.is_empty()
                         || (original_graveyard.is_empty()
                             || (original_graveyard.len() == 1
-                                && !state.engine.spellbench_neutral_v1.choices))
+                                && !state
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .neutral_choices_for(*graveyard_player)))
                     {
                         return Err("graveyard exile prompt has a noncanonical shape".to_string());
                     }
@@ -11971,8 +11974,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || !*ordered
                         || !selected.is_empty()
                         || original_candidates.is_empty()
-                        || (original_candidates.len() == 1
-                            && !state.engine.spellbench_neutral_v1.choices)
+                        // Older mixed-seat saves can already contain this singleton prompt.
+                        || (original_candidates.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
                     {
                         return Err(
                             "creature-sacrifice prompt has a noncanonical shape".to_string()
@@ -16248,7 +16251,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 let candidates = creature_sacrifice_bindings(state, player, filter)?;
                 match candidates.as_slice() {
                     [] => {}
-                    [chosen] if !state.engine.spellbench_neutral_v1.choices => {
+                    [chosen] if !state.engine.spellbench_neutral_v1.neutral_choices_for(player) => {
                         let chosen = *chosen;
                         let expected_remaining_frames = continuation.frames.clone();
                         let frame = EffectFrame::SacrificeChosenCreature {
@@ -24842,6 +24845,115 @@ mod tests {
     use super::*;
     use crate::event::CommittedEvent;
     use crate::ids::PlayerId;
+
+    #[cfg(not(any(
+        feature = "eternal-fixtures",
+        feature = "limited-fdn-fixtures",
+        feature = "standard-magezero-fixtures"
+    )))]
+    #[test]
+    fn singleton_effects_follow_the_chooser_instead_of_the_controller() {
+        use crate::engine::{self, Action, Decision};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+        for chooser in [PlayerId::P0, PlayerId::P1] {
+            let controller = chooser.opponent();
+            for (neutral, trainer) in [
+                (false, None),
+                (true, None),
+                (true, Some(chooser)),
+                (true, Some(controller)),
+            ] {
+                for (name, source_zone, candidate_zone, destination) in [
+                    (
+                        "Relic of Progenitus",
+                        Zone::Battlefield,
+                        Zone::Graveyard,
+                        Zone::Exile,
+                    ),
+                    (
+                        "Extract a Confession",
+                        Zone::Hand,
+                        Zone::Battlefield,
+                        Zone::Graveyard,
+                    ),
+                ] {
+                    let mut state = ready_state_for(controller);
+                    state.engine.spellbench_neutral_v1.choices = neutral;
+                    if let Some(trainer) = trainer {
+                        state.engine.spellbench_neutral_v1.trainer_choice_seats[trainer.index()] =
+                            true;
+                    }
+                    state.players[controller.index()].mana_pool[ManaColor::B.pool_index()] = 2;
+                    let source = put(&mut state, controller, name, source_zone);
+                    let candidate = put(&mut state, chooser, "Elvish Mystic", candidate_zone);
+                    let action = if source_zone == Zone::Battlefield {
+                        Action::ActivateAbility(source, 0)
+                    } else {
+                        Action::CastSpell(source)
+                    };
+                    engine::step(&mut state, action).unwrap();
+
+                    let mut prompted = false;
+                    for _ in 0..8 {
+                        let action = match engine::advance_until_decision(&mut state) {
+                            Decision::ChooseTargets { player, spell, .. } => {
+                                assert_eq!((player, spell), (controller, source));
+                                Action::ChooseTarget(Target::Player(chooser))
+                            }
+                            Decision::ChooseEffectTargets {
+                                player,
+                                source: prompt_source,
+                                legal_targets,
+                                ..
+                            } => {
+                                assert_eq!((player, prompt_source), (chooser, source));
+                                assert_eq!(legal_targets, [Target::Object(candidate)]);
+                                assert!(!prompted);
+                                prompted = true;
+                                let mut reclassified = state.clone();
+                                let seats = &mut reclassified
+                                    .engine
+                                    .spellbench_neutral_v1
+                                    .trainer_choice_seats;
+                                seats[chooser.index()] = true;
+                                seats[controller.index()] = false;
+                                // A prompt emitted before per-seat routing must still be answerable
+                                // after loading a game whose chooser has the trainer profile.
+                                validate_pending_effect_choice(&reclassified).unwrap();
+                                let mut restored: GameState = serde_json::from_slice(
+                                    &serde_json::to_vec(&reclassified).unwrap(),
+                                )
+                                .unwrap();
+                                assert!(matches!(engine::advance_until_decision(&mut restored),
+                                    Decision::ChooseEffectTargets { player, .. } if player == chooser));
+                                engine::step(
+                                    &mut restored,
+                                    Action::ChooseEffectTarget(Target::Object(candidate)),
+                                )
+                                .unwrap();
+                                Action::ChooseEffectTarget(Target::Object(candidate))
+                            }
+                            Decision::CastSpellOrPass { .. }
+                                if state.objects.get(candidate).zone == destination =>
+                            {
+                                break
+                            }
+                            Decision::CastSpellOrPass { .. } => Action::Pass,
+                            other => panic!("unexpected {name} decision {other:?}"),
+                        };
+                        engine::step(&mut state, action).unwrap();
+                    }
+                    assert_eq!(state.objects.get(candidate).zone, destination);
+                    assert_eq!(
+                        prompted,
+                        name == "Extract a Confession" && neutral && trainer != Some(chooser),
+                        "{name}, chooser {chooser:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn trainer_choice_seat_fiend_uses_trigger_controller_not_hand_owner() {

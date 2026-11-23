@@ -217,7 +217,9 @@ enum SpellbenchRequestV1 {
         priority_windows: Option<[SeatPriorityWindowsV1; 2]>,
         /// Private human London reset only: name the bot's native seat
         /// ("p0" or "p1") to use ordinary trainer choice presentation at
-        /// supported choices. Omitted or empty retains the neutral surface.
+        /// supported choices. The bot is the only seat with an action-window
+        /// rule, or the seat opposite the person's engine windows when both
+        /// use harness-v2. Omitted or empty retains the neutral surface.
         #[serde(default)]
         trainer_choice_seats: Vec<String>,
     },
@@ -1082,16 +1084,27 @@ impl SpellbenchBridgeServerV1 {
             [] => [false; 2],
             [seat] if self.london_human && self.options.private_v2_support => {
                 let index = match seat.as_str() {
-                    "p0" if !window_seats[0] => 0,
-                    "p1" if !window_seats[1] => 1,
+                    "p0" => 0,
+                    "p1" => 1,
                     _ => {
                         return error_response_value_v1(
                             Some(request_id),
                             "malformed_request",
-                            "trainer_choice_seats must name p0 or p1 without engine windows",
+                            "trainer_choice_seats must name p0 or p1",
                         );
                     }
                 };
+                let other = 1 - index;
+                if window_seats[index]
+                    || !action_windows[other].is_harness_v2()
+                    || (action_windows[index].is_harness_v2() && !window_seats[other])
+                {
+                    return error_response_value_v1(
+                        Some(request_id),
+                        "malformed_request",
+                        "trainer_choice_seats must match the bot identified by the priority or engine windows",
+                    );
+                }
                 let mut seats = [false; 2];
                 seats[index] = true;
                 seats
@@ -2394,6 +2407,9 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
             Ok(Some((instance, item))) => {
                 support["announcing_activation"] = json!({"instance": instance, "item": item})
             }
+            // A trainer seat allocates the stack item after choosing targets.
+            Ok(None)
+                if state.engine.spellbench_neutral_v1.trainer_choice_seats[actor_id.index()] => {}
             _ => support["projection_error"] = json!("invalid pending activation announcement"),
         }
         support["target_bounds"] = json!({"minimum": crate::engine::target_min_count(pending.target_spec),
@@ -3368,6 +3384,51 @@ mod tests {
     }
 
     #[test]
+    fn trainer_choice_reset_requires_the_windows_to_identify_the_same_bot() {
+        let seats = ["p0", "p1"];
+        for bot in 0..2 {
+            let person = 1 - bot;
+            for (bot_rule, person_rule, person_has_engine_windows, accepted) in [
+                ("action-windows-v1", "harness-v2", false, true),
+                ("action-windows-end-step-v1", "harness-v2", true, true),
+                ("harness-v2", "harness-v2", true, true),
+                ("harness-v2", "action-windows-v1", false, false),
+                ("harness-v2", "action-windows-end-step-v1", false, false),
+                ("action-windows-v1", "action-windows-v1", false, false),
+                ("harness-v2", "harness-v2", false, false),
+            ] {
+                let mut server = SpellbenchBridgeServerV1::with_pauper_london_human_v1(
+                    SpellbenchEngineIdentityV1::with_source_revision(None),
+                );
+                let mut request = parse_line(&reset_line("reset", "g-trainer", 7));
+                let mut rules = ["harness-v2"; 2];
+                rules[bot] = bot_rule;
+                rules[person] = person_rule;
+                request["priority_windows"] = json!(rules);
+                request["trainer_choice_seats"] = json!([seats[bot]]);
+                if person_has_engine_windows {
+                    request["engine_window_seats"] = json!([seats[person]]);
+                }
+                let reply = parse_line(&server.handle_line(&request.to_string()));
+                if accepted {
+                    assert_eq!(reply["response_type"], "decision", "{reply}");
+                    let game = server.game.as_ref().unwrap();
+                    let selected = game
+                        .session
+                        .game_state()
+                        .engine
+                        .spellbench_neutral_v1
+                        .trainer_choice_seats;
+                    assert_eq!(selected, [bot == 0, bot == 1]);
+                } else {
+                    assert_eq!(reply["error"]["code"], "malformed_request", "{reply}");
+                    assert!(server.game.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn trainer_choice_reset_omission_and_empty_keep_the_same_neutral_bot_surface() {
         let mut omitted = SpellbenchBridgeServerV1::with_pauper_london_human_v1(
             SpellbenchEngineIdentityV1::with_source_revision(None),
@@ -3418,6 +3479,7 @@ mod tests {
         );
         let mut reset = parse_line(&reset_line("reset", "g-trainer", 7));
         reset["trainer_choice_seats"] = json!(["p1"]);
+        reset["engine_window_seats"] = json!(["p0"]);
         let reply = parse_line(&server.handle_line(&reset.to_string()));
         assert_eq!(reply["response_type"], "decision", "{reply}");
         assert!(reply["extensions"]["x_kernel_flat_v7"].is_object());
@@ -3493,6 +3555,62 @@ mod tests {
                 assert!(matches!(next, Decision::CastSpellOrPass { .. }), "{next:?}");
                 assert_eq!(state.players[seat.index()].hand.len(), 4);
             }
+        }
+    }
+
+    #[test]
+    fn pending_activation_support_uses_the_controllers_choice_profile() {
+        use crate::engine::{step, Action};
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::rl_session::FastActorSessionV1;
+        use crate::state::{GameState, Step, Zone};
+
+        let controller = PlayerId::P0;
+        let cards = ["Makeshift Munitions", "Elvish Mystic", "Forest"]
+            .map(|name| crate::card_def::card_id_by_name(name).unwrap());
+        for trainer in [false, true] {
+            let mut state = GameState::new_from_libraries(
+                &cards,
+                &cards,
+                |id| crate::card_def::CARD_DEFS[id as usize].name.to_string(),
+                7,
+            );
+            state.engine.spellbench_neutral_v1.choices = true;
+            state.engine.spellbench_neutral_v1.trainer_choice_seats = [trainer, !trainer];
+            state.step = Step::Main1;
+            state.active_player = controller;
+            state.priority_player = controller;
+            state.players[controller.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+            let library = state.players[controller.index()].library.clone();
+            let source = *library
+                .iter()
+                .find(|&&id| state.objects.get(id).card_def == cards[0])
+                .unwrap();
+            for id in library {
+                propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(id, Zone::Battlefield),
+                );
+            }
+            step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+            let fast = FastActorSessionV1::from_v3_fixture_state(state);
+            let mut server = flat_v4_server();
+            server.handle_line(&flat_v4_reset("g-activation", "Burn", 7));
+            let game = server.game.as_mut().unwrap();
+            game.session = RlEpisodeSessionV1::from_fast_session_for_test(&fast);
+            let support = private_v2_support(game);
+            assert!(support.get("projection_error").is_none(), "{support}");
+            assert_eq!(
+                support["target_bounds"],
+                json!({"minimum":1,"maximum":1,"selected_count":0,"slot":0})
+            );
+            assert_eq!(support["cost_selected_count"], 0);
+            assert_eq!(
+                support["announcing_activation"]["instance"].is_string(),
+                !trainer
+            );
         }
     }
 
