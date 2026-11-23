@@ -2969,6 +2969,225 @@ mod tests {
         );
     }
 
+    /// A non-default `max_trajectory_batch_mebibytes` (513 MiB, so 65,664
+    /// physical groups) through the run driver. The `Ex1Update` it issues
+    /// carries the key and runs on a batch one byte over the default batch
+    /// bound; each of the driver's five `validate_collection` calls admits
+    /// that batch; and each of its three `validate_update` calls admits a
+    /// recovered receipt of 65,600 physical groups. With the historical
+    /// 512 MiB or 65,536 at any of them the run fails there: the last block
+    /// shows those bounds refusing this batch and this receipt. The chain
+    /// and first game are those of
+    /// `w5_ex1_prepared_and_sealed_run_matches_serial_states`.
+    #[test]
+    fn run_driver_forwards_max_trajectory_batch_mebibytes_to_ex1_and_recovery() {
+        use crate::expanded_deck_training_v1::{execute_v1, RecordEnvelopeV1};
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        };
+        let (root, mut config) = real_two_iteration_config_v1(
+            "batch-bound-ex1-recovery",
+            gae,
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        // One update of two games: two files hold more than the default
+        // batch bound, each within one file's own 512 MiB.
+        config.iterations.truncate(1);
+        let mut second = config.iterations[0].episodes[0].clone();
+        second.episode.id = "batch-bound-ex1-recovery-iter-0-second".into();
+        second.episode.seed += 1_000;
+        config.iterations[0].episodes.push(second);
+        config.preparation_workers = 2;
+        config.max_trajectory_batch_mebibytes = 513;
+        config.ex1 = Some(Ex1RunOptionsV1 {
+            run: "w5/chain-prep-test".into(),
+            update_offset: 0,
+            coefficient: 1.0,
+            cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1::Ratio {
+                kappa: 2.0,
+            },
+            w5: Some(W5RunOptionsV1 {
+                budget: 1_500,
+                key_memo_mib: 512,
+            }),
+        });
+        config.validate_v1().unwrap();
+        let groups_bound = crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+            config.trajectory_batch_bytes_v1(),
+        );
+        assert_eq!(groups_bound, 65_664);
+        let run = || run_native_expanded_training_v1(&config, None).unwrap();
+        let iteration = config.output_directory.join("iterations").join("000000");
+        let attempt = |number: usize| iteration.join(format!("attempt-{number:06}"));
+        let update_command = |number: usize| {
+            read_json(&attempt(number).join("update-command.json"), SMALL_CAP).unwrap()
+        };
+        let update_path = |number: usize| attempt(number).join("update").join("update.json");
+        let forget_completion =
+            || fs::remove_file(config.output_directory.join("completion.json")).unwrap();
+
+        // 1. A fresh run issues `Ex1Update` with the run's key.
+        let initial = run();
+        assert_eq!(initial["complete"], true);
+        let command = update_command(0);
+        assert_eq!(command["mode"], "ex1_update");
+        assert_eq!(command["max_trajectory_batch_mebibytes"], 513);
+        let after = read_json(&update_path(0), SMALL_CAP).unwrap()["after_state_sha256"].clone();
+        assert!(after.is_string());
+        assert_eq!(initial["actual_identity"]["state_sha256"], after);
+
+        // 2. The collected games again, in place, as sealed files whose
+        // records (each game followed by spaces, which parse to the same
+        // game) total one byte over the default batch bound, with the update
+        // removed. The resumed run validates that collection where it reuses
+        // the attempt and again before its update, and its `Ex1Update`
+        // reaches the first update's state.
+        let collection_path = attempt(0).join("collect").join("collection.json");
+        let mut collection = read_json(&collection_path, SMALL_CAP).unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(collection["trajectories"].clone()).unwrap();
+        assert_eq!(trajectories.len(), 2);
+        let games: Vec<Vec<u8>> = trajectories
+            .iter()
+            .map(|pin| fs::read(&pin.path).unwrap())
+            .collect();
+        let played: u64 = games.iter().map(|bytes| bytes.len() as u64).sum();
+        let spaces = ARTIFACT_CAP + 1 - played;
+        let padded: Vec<PinnedFileV1> = trajectories
+            .into_iter()
+            .zip(games)
+            .zip([spaces / 2, spaces - spaces / 2])
+            .map(|((pin, mut bytes), count)| {
+                bytes.resize(bytes.len() + count as usize, b' ');
+                let sealed = RecordEnvelopeV1::Zstd1.seal_owned_v1(bytes).unwrap();
+                fs::write(&pin.path, &sealed).unwrap();
+                PinnedFileV1 {
+                    path: pin.path,
+                    sha256: digest(&sealed),
+                }
+            })
+            .collect();
+        collection["trajectories"] = json!(padded);
+        fs::write(&collection_path, serde_json::to_vec(&collection).unwrap()).unwrap();
+        fs::remove_dir_all(attempt(0).join("update")).unwrap();
+        for name in ["update-input.json", "update-command.json"] {
+            fs::remove_file(attempt(0).join(name)).unwrap();
+        }
+        fs::remove_file(iteration.join("complete.json")).unwrap();
+        forget_completion();
+        let resumed = run();
+        assert_eq!(resumed["complete"], true);
+        let command = update_command(1);
+        assert_eq!(command["mode"], "ex1_update");
+        assert_eq!(command["max_trajectory_batch_mebibytes"], 513);
+        let mut receipt = read_json(&update_path(1), SMALL_CAP).unwrap();
+        assert_eq!(receipt["after_state_sha256"], after);
+
+        // The command the driver issued for that batch, executed directly:
+        // without the key it is refused with the historical error, and with
+        // a lower bound it names that bound.
+        let issued_with_bound = |mebibytes: Option<usize>, name: &str| {
+            let mut issued = update_command(1);
+            let members = issued.as_object_mut().unwrap();
+            match mebibytes {
+                Some(mebibytes) => {
+                    members.insert("max_trajectory_batch_mebibytes".into(), json!(mebibytes))
+                }
+                None => members.remove("max_trajectory_batch_mebibytes"),
+            };
+            members.insert("output_directory".into(), json!(root.join(name)));
+            execute_v1(serde_json::from_value(issued).unwrap())
+        };
+        assert_eq!(
+            issued_with_bound(None, "command-default").unwrap_err(),
+            "trajectory batch exceeds 512 MiB CPU ingestion bound"
+        );
+        assert_eq!(
+            issued_with_bound(Some(1), "command-small").unwrap_err(),
+            "trajectory batch exceeds 1 MiB CPU ingestion bound"
+        );
+
+        // 3. The resumed attempt's receipt with more physical groups than
+        // the historical bound, and the iteration's receipt removed: the next
+        // run recovers the attempt, checking the collection and the update
+        // where it reuses them and again before the iteration's receipt.
+        receipt["update_preparation"]["physical_group_jobs"] = json!(65_600);
+        fs::write(update_path(1), serde_json::to_vec(&receipt).unwrap()).unwrap();
+        fs::remove_file(iteration.join("complete.json")).unwrap();
+        forget_completion();
+        let recovered = run();
+        assert_eq!(recovered["complete"], true);
+        assert_eq!(recovered["actual_identity"]["state_sha256"], after);
+
+        // 4. With the iteration's receipt kept and only the run's completion
+        // removed, the next run recovers the completed iteration from that
+        // receipt, checking the same collection and update there.
+        forget_completion();
+        let recovered = run();
+        assert_eq!(recovered["complete"], true);
+        assert_eq!(recovered["actual_identity"]["state_sha256"], after);
+
+        // The same checks of that collection and that receipt, as the driver
+        // names them, pass at the run's bounds and are refused at the
+        // historical ones.
+        let receipt = read_json(&iteration.join("complete.json"), SMALL_CAP).unwrap();
+        let collection = parse_pin(&receipt, "collection").unwrap();
+        let update = parse_pin(&receipt, "update").unwrap();
+        let episodes = resolve_episodes(&config, 0, &config.initial_source, &[]).unwrap();
+        let before = load_initial_for_run_v1(&config.initial_source, config.training_math, false)
+            .unwrap()
+            .identity;
+        let collection_within = |batch_bytes: u64| {
+            validate_collection(
+                &collection,
+                &config.initial_source,
+                &episodes,
+                &before,
+                config.collection_sampler,
+                config.training_math,
+                None,
+                batch_bytes,
+            )
+        };
+        assert_eq!(
+            collection_within(config.trajectory_batch_bytes_v1()).unwrap(),
+            padded
+        );
+        assert_eq!(
+            collection_within(ARTIFACT_CAP).unwrap_err(),
+            "trajectory batch exceeds 512 MiB CPU ingestion bound"
+        );
+        let update_within = |max_preparation_groups: usize| {
+            validate_update(
+                &update,
+                &config.initial_source,
+                &padded,
+                &before,
+                config.learning_rate,
+                config.value_coefficient,
+                config.update_backend,
+                config.preparation_workers,
+                config.max_prepared_tensor_mebibytes,
+                max_preparation_groups,
+                None,
+                None,
+                None,
+                None,
+                config.ex1.as_ref().map(|options| (options, 0, &collection)),
+                config.training_math,
+                None,
+                &config.loss_selection,
+            )
+        };
+        update_within(groups_bound).unwrap();
+        assert_eq!(
+            update_within(65_536).unwrap_err(),
+            "recovered update preparation differs from run configuration"
+        );
+    }
+
     /// The default record format (`auto`, an absent field) keeps the config's
     /// wire bytes and identity: it is never serialized. An explicit `"v1"` or
     /// `"v2"` is serialized and is a different config.
