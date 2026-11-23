@@ -736,6 +736,10 @@ fn main() {
         ),
         "unknown --mode {mode}"
     );
+    assert!(
+        mode != "actor60" || arg(&args, "--snapshot").is_some(),
+        "--snapshot is required for actor60"
+    );
     let pool = load_pool(&cube, &gaps);
     if mode == "census" {
         println!("{}", census(&pool));
@@ -810,10 +814,7 @@ fn main() {
                     };
                     row["worker"] = json!(worker);
                     // One write per receipt, so a worker that dies mid-run never leaves half a line.
-                    let line = format!(
-                        "{row}
-"
-                    );
+                    let line = format!("{row}\n");
                     out.lock().unwrap().write_all(line.as_bytes()).unwrap();
                 })
                 .unwrap();
