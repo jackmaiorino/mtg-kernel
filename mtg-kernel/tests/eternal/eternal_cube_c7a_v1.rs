@@ -1237,6 +1237,7 @@ fn malcolm_chorus_counters_free_graveyard_cast_and_edge_cases() {
     act(&mut state, Action::DeclareAttackers(vec![malcolm]));
     pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
     act(&mut state, Action::DeclareBlockers(Vec::new()));
+    pass_until(&mut state, |s| s.step == Step::CombatDamage);
     assert!(matches!(
         settle(&mut state),
         Some(Decision::ChooseEffectTargets { .. })
@@ -1276,6 +1277,7 @@ fn malcolm_chorus_counters_free_graveyard_cast_and_edge_cases() {
     act(&mut state, Action::DeclareAttackers(vec![malcolm]));
     pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
     act(&mut state, Action::DeclareBlockers(Vec::new()));
+    pass_until(&mut state, |s| s.step == Step::CombatDamage);
     assert!(matches!(
         settle(&mut state),
         Some(Decision::ChooseEffectTargets { .. })
