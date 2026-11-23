@@ -26890,7 +26890,7 @@ pub(crate) fn gain_control_of_spell_v1(
     let id = state.stack[position].v4.stack_item_id;
     let previous = state.stack[position].controller;
     if previous != player {
-        let denial_before = state.stack[position].clone();
+        let before = state.stack[position].clone();
         crate::eternal_vintage_e7b_v1::note_spell_caster(state, id, previous);
         let item = &mut state.stack[position];
         item.controller = player;
@@ -26898,8 +26898,9 @@ pub(crate) fn gain_control_of_spell_v1(
             contract.controller = player;
         }
         state.objects.get_mut(spell).controller = player;
-        if crate::eternal_cards_v1::owned_draws_v1::denial::record_rebind(state, &denial_before)
-            .is_err()
+        if crate::eternal_cards_v1::owned_draws_v1::denial::record_rebind(state, &before).is_err()
+            || crate::eternal_cards_v1::owned_draws_v1::knowledge::record_rebind(state, &before)
+                .is_err()
         {
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, spell));
             return None;

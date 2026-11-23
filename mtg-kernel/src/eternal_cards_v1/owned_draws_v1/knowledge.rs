@@ -24,6 +24,13 @@ pub enum JournalV1 {
         first_at: usize,
         count: u32,
     },
+    Rebound {
+        paid_at: usize,
+        previous_at: usize,
+        item: StackItemId,
+        source: StackSourceContractV4,
+        stack_sha256: [u8; 32],
+    },
 }
 fn row(state: &GameState, at: usize) -> Option<JournalV1> {
     let CommittedEvent::EternalOwnedDrawV1 { journal } = state.engine.event_history.get(at)? else {
@@ -104,6 +111,119 @@ pub(crate) fn record_cast(state: &mut GameState, item: StackItemId) -> Result<()
     );
     Ok(())
 }
+
+fn matches_controller_binding(
+    item: &StackItem,
+    live: StackSourceContractV4,
+    historical: StackSourceContractV4,
+    stack_sha256: [u8; 32],
+) -> bool {
+    let mut normalized = live;
+    normalized.controller = historical.controller;
+    if normalized != historical {
+        return false;
+    }
+    let mut prior = item.clone();
+    prior.controller = historical.controller;
+    prior.v4.source_contract = Some(historical);
+    digest(&prior) == Some(stack_sha256)
+}
+
+fn binding(
+    state: &GameState,
+    item: &StackItem,
+    live: StackSourceContractV4,
+) -> Option<(usize, usize)> {
+    let id = item.v4.stack_item_id;
+    let mut payments = rows(state).filter_map(|(at, row)| match row {
+        JournalV1::Paid {
+            item: original,
+            source,
+            stack_sha256,
+        } if original == id => Some((at, source, stack_sha256)),
+        _ => None,
+    });
+    let (paid_at, mut bound, hash) = payments.next()?;
+    if payments.next().is_some() || !matches_controller_binding(item, live, bound, hash) {
+        return None;
+    }
+    let mut current_at = paid_at;
+    for (at, entry) in rows(state) {
+        if let JournalV1::Rebound {
+            paid_at: paid,
+            previous_at,
+            item: changed,
+            source: next,
+            stack_sha256,
+        } = entry
+        {
+            if paid != paid_at && changed != id {
+                continue;
+            }
+            if paid != paid_at
+                || changed != id
+                || previous_at != current_at
+                || at <= current_at
+                || next.controller == bound.controller
+                || !matches_controller_binding(item, live, next, stack_sha256)
+            {
+                return None;
+            }
+            bound = next;
+            current_at = at;
+        }
+    }
+    let started_before_binding = state.engine.event_history[..=current_at]
+        .iter()
+        .any(|event| {
+            matches!(event, CommittedEvent::EternalOwnedDrawV1 { journal }
+            if journal.start().is_some_and(|(started, _)| started.item == id))
+        });
+    (bound == live && !started_before_binding).then_some((paid_at, current_at))
+}
+
+/// Rebinds the originally paid row after native spell control changes.
+pub(crate) fn record_rebind(state: &mut GameState, before: &StackItem) -> Result<(), String> {
+    let Some(original) = source(before) else {
+        return Ok(());
+    };
+    let item = before.v4.stack_item_id;
+    if has_started(state, item) {
+        return Err("Knowledge control changed after its draws began".into());
+    }
+    let (paid_at, previous_at) =
+        binding(state, before, original).ok_or("Knowledge control change lost its paid row")?;
+    let live = state
+        .stack
+        .iter()
+        .find(|row| row.v4.stack_item_id == item)
+        .ok_or("Knowledge control change lost its stack item")?;
+    let next = source(live).ok_or("Knowledge control change lost its physical source")?;
+    let mut normalized = live.clone();
+    let mut contract = next;
+    contract.controller = original.controller;
+    normalized.controller = original.controller;
+    normalized.v4.source_contract = Some(contract);
+    if next.controller == original.controller
+        || normalized != *before
+        || StackSourceContractV4::capture(state, live.source, next.cast_method) != next
+    {
+        return Err("Knowledge control change changed more than the controller".into());
+    }
+    let stack_sha256 = digest(live).ok_or("Knowledge control change could not bind its row")?;
+    note(
+        state,
+        JournalV1::Rebound {
+            paid_at,
+            previous_at,
+            item,
+            source: next,
+            stack_sha256,
+        },
+    );
+    Ok(())
+}
+
 pub(super) fn selected(
     state: &GameState,
     pending: &EffectContinuation,
@@ -128,17 +248,8 @@ pub(super) fn selected(
     {
         return None;
     }
-    let mut receipts = rows(state).filter_map(|(at, row)| match row {
-        JournalV1::Paid {
-            item: original,
-            source: original_source,
-            stack_sha256,
-        } if original == item.v4.stack_item_id => Some((at, original_source, stack_sha256)),
-        _ => None,
-    });
-    let (at, original, hash) = receipts.next()?;
-    (receipts.next().is_none() && original == source && digest(item) == Some(hash))
-        .then_some((at, source))
+    let (paid_at, _) = binding(state, item, source)?;
+    Some((paid_at, source))
 }
 pub(super) fn validate_idle(
     state: &GameState,
