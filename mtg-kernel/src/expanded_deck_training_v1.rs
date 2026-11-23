@@ -4756,14 +4756,14 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        tape_cap_bytes: usize,
+        output_directory: PathBuf,
         /// As `UpdatePrepared`'s; absent means the historical 512.
         #[serde(
             default = "default_max_trajectory_batch_mebibytes",
             skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
         )]
         max_trajectory_batch_mebibytes: usize,
-        tape_cap_bytes: usize,
-        output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
     /// sequential reference remain unchanged; backward and Adam are identical.
@@ -4793,15 +4793,6 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
-        /// Trajectory batch bound for this prepared update in MiB (record
-        /// bytes, decompressed for sealed files); absent means the historical
-        /// 512 (byte-identical wire for every existing command). See
-        /// `ordered_update_preparation`.
-        #[serde(
-            default = "default_max_trajectory_batch_mebibytes",
-            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
-        )]
-        max_trajectory_batch_mebibytes: usize,
         /// G115 line (b) options (head-only optimizer mask); omitted when
         /// absent, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4822,6 +4813,15 @@ pub enum ExpandedTrainingCommandV1 {
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
+        /// Trajectory batch bound for this prepared update in MiB (record
+        /// bytes, decompressed for sealed files); absent means the historical
+        /// 512 (byte-identical wire for every existing command). See
+        /// `ordered_update_preparation`.
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
     },
     /// Separate E policy supervision, full Adam and unchanged sampler.
     ESupportedUpdate {
@@ -4873,14 +4873,14 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
+        record_envelope: RecordEnvelopeV1,
+        output_directory: PathBuf,
         #[serde(
             default = "default_max_trajectory_batch_mebibytes",
             skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
         )]
         max_trajectory_batch_mebibytes: usize,
-        #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
-        record_envelope: RecordEnvelopeV1,
-        output_directory: PathBuf,
     },
     /// SQ1's target diagnostic (design section 6.1): construction and
     /// independent assessment censuses at each case's root.
