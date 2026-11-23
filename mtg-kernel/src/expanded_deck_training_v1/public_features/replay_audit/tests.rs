@@ -93,6 +93,7 @@ fn native_audit_admits_flat_v7_and_v8_trajectories_only_against_their_own_identi
     let v4_trajectory = collect(&v4, "v4", 2_026_110_601);
     // One GAE update gives the V8 conversion a trained V4 parent.
     let updated = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         line_b: None,
         source: v4.clone(),
         trajectories: vec![v4_trajectory.clone()],

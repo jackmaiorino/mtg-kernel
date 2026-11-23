@@ -1,0 +1,10 @@
+{
+  "schema": "card_semantics_leaf_mapping/v1",
+  "rules": [
+    "Read only by mtg-kernel/src/bin/card_semantics_table_v1; no rules code reads this file.",
+    "A source is a card-named token the walker would emit: leaf:<EffectOp variant>, trigger:<TriggerCondition variant>, cond:<EffectCond variant> or costpart:<CostComponent variant>.",
+    "An entry replaces the source and its field tokens with the shared tokens the generic definition of the same rules yields (kind, amount, target or player reference).",
+    "Every entry cites what the leaf's implementation does in one line. A leaf whose behaviour has no faithful generic composition is left unmapped and stays its own token."
+  ],
+  "entries": []
+}

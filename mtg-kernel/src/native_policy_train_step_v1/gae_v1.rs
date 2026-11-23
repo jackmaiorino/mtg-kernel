@@ -401,6 +401,70 @@ impl NativePolicyValueTrainStateV1 {
         )
     }
 
+    /// Profile the actual CPU GAE route without changing its arithmetic.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_card_projection_e1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        forward_workers: usize,
+        recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+        semantics: Option<&mut card_projection_e1::CardSemanticsV1>,
+    ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        let Some(semantics) = semantics else {
+            return self.train_step_gae_feature_transfer_profiled_v1(
+                generation,
+                groups,
+                value_targets,
+                advantages,
+                value_coefficient,
+                learning_rate,
+                backward_worker_limit,
+                forward_workers,
+                recorder,
+            );
+        };
+        let config = match generation {
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
+                self.model.feature_transfer_config_v3()
+            }
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
+                self.model.feature_transfer_config_v4()
+            }
+        };
+        // Stage the complete state too: the shared core consumes per-batch
+        // offsets even on errors. A semantics failure must preserve those.
+        let mut candidate = self.clone();
+        let mut candidate_semantics = semantics.clone();
+        let result = candidate
+            .train_step_gae_core_profiled_dims_v1(
+                groups,
+                value_targets,
+                advantages,
+                value_coefficient,
+                learning_rate,
+                backward_worker_limit.map_or(BackwardExecutionV1::Sequential, |worker_limit| {
+                    BackwardExecutionV1::FixedPartitions { worker_limit }
+                }),
+                config,
+                false,
+                None,
+                None,
+                forward_workers,
+                recorder,
+                Some(&mut candidate_semantics),
+            )
+            .map(|(result, _, _)| result)?;
+        *self = candidate;
+        *semantics = candidate_semantics;
+        Ok(result)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn train_step_gae_core_v1(
         &mut self,
@@ -472,6 +536,7 @@ impl NativePolicyValueTrainStateV1 {
             exploration,
             forward_workers,
             phase_recorder,
+            None,
         )
     }
 }
@@ -650,6 +715,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             None,
             forward_workers,
             recorder,
+            None,
         )
         .map(|(result, _, _)| result)
     }
@@ -688,6 +754,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             exploration,
             1,
             &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            None,
         )
     }
 
@@ -706,6 +773,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         exploration: Option<(f32, u64, bool)>,
         forward_workers: usize,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
+        semantics: Option<&mut card_projection_e1::CardSemanticsV1>,
     ) -> Result<
         (
             NativePolicyTrainStepResultV1,
@@ -714,6 +782,20 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         ),
         NativePolicyTrainErrorV1,
     > {
+        if semantics.is_some()
+            && (!is_net8_dims_v1::<D>()
+                || self.model.parameter_snapshot_v1().len() != 33
+                || imitation
+                || line_b.is_some()
+                || exploration.is_some()
+                || self.pregame_announcement_step_scale_mut_dims_v1().is_some())
+        {
+            return Err(card_projection_e1::unsupported_v1());
+        }
+        #[cfg(feature = "gpu-exact-v1")]
+        if semantics.is_some() && crate::gpu_exact_v1::learner_installed_v1() {
+            return Err(card_projection_e1::unsupported_v1());
+        }
         // The London keep offset of this step's batch, or None (every
         // existing step): taken before anything can return, so a step that
         // ends in an error leaves no offset behind. Only the plain GAE
@@ -1367,6 +1449,10 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             .adam_step
             .checked_add(1)
             .ok_or(NativePolicyTrainErrorV1::AdamStepOverflow)?;
+        let semantics_next = semantics
+            .as_ref()
+            .map(|s| s.next_v1(&gradients[CARD_EMBEDDING], learning_rate, math))
+            .transpose()?;
         let (mut next_parameters, mut next_first_moments, mut next_second_moments) =
             match &announcement_step {
                 None => adam_update(
@@ -1427,6 +1513,9 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         phase_recorder.finish_v1(adam_timer);
         let finalization_timer =
             phase_recorder.start_v1(NativeTrainingPhaseV1::FinalizationCloning);
+        if let (Some(old), Some(next)) = (semantics.as_ref(), semantics_next.as_ref()) {
+            old.fold_difference_v1(next, &mut next_parameters[CARD_EMBEDDING].values)?;
+        }
         let mut candidate_model = self.model.clone();
         candidate_model.replace_parameter_snapshot_v1(&next_parameters)?;
         validate_optimizer_state_dims_v1::<D>(
@@ -1474,6 +1563,9 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             next_first_moments,
             next_second_moments,
         );
+        if let (Some(state), Some(next)) = (semantics, semantics_next) {
+            *state = next;
+        }
         phase_recorder.finish_v1(finalization_timer);
         Ok((
             NativePolicyTrainStepResultV1 {
