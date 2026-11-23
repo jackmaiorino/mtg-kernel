@@ -1212,6 +1212,28 @@ pub(crate) fn drive(
             }
             Ok(ring_tempts(state, continuation, path))
         }
+        E8bOpV1::RingLootV1 => {
+            // Frames run last-in first-out: draw 1 (replaceable), then discard 1.
+            continuation
+                .frames
+                .push(crate::effect::EffectFrame::Program {
+                    op: EffectOp::DiscardCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    },
+                    path: path.clone(),
+                });
+            continuation
+                .frames
+                .push(crate::effect::EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    },
+                    path,
+                });
+            Ok(false)
+        }
         other => {
             execute(other, &continuation.ctx, state);
             Ok(false)

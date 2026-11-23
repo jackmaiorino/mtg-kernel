@@ -3020,6 +3020,26 @@ fn refuse_unowned_donated_damage(state: &mut GameState, event: &ProposedEvent) -
     true
 }
 
+/// A covered damage packet still passes the same source/custody and roster
+/// checks before Hallow's cohort can remove it from ordinary replacements.
+pub(crate) fn preflight_hallow_damage_v1(state: &mut GameState, event: &ProposedEvent) -> bool {
+    if let Err(source) = validate_exile_if_dies_replacements(state) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return false;
+    }
+    if !preflight_historical_damage_v1(state, event) {
+        return false;
+    }
+    if let Err(source) = crate::progenitus_v1::plan(state, event, None) {
+        halt_zone_pt_v1(state, source);
+        return false;
+    }
+    true
+}
+
 fn apply_replacements_inner(
     state: &mut GameState,
     mut proposed: ProposedEvent,
@@ -3059,14 +3079,33 @@ fn apply_replacements_inner(
             change.to_zone = Zone::Exile;
         }
     }
-    let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-        && state.engine.until_end_of_turn.iter().any(|effect| {
-            matches!(
-                effect,
-                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-            )
-        });
+    let damage_cannot_be_prevented = match &proposed {
+        ProposedEvent::Damage(damage) => {
+            state.engine.until_end_of_turn.iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                )
+            }) || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+        }
+        _ => false,
+    };
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented {
+            use crate::eternal_prevention_order_v1::DamageResultV1;
+            match crate::eternal_pauper_pf1c_v1::replace_damage(state, damage) {
+                DamageResultV1::Uncovered => {}
+                DamageResultV1::Prevented => return None,
+                DamageResultV1::Residual(damage) => {
+                    if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, &damage) {
+                        return None;
+                    }
+                    return Some(ProposedEvent::Damage(damage));
+                }
+            }
+        }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before
         // the increases, the redirection and every shield.
         #[cfg(feature = "eternal-fixtures")]
@@ -3146,13 +3185,18 @@ fn apply_replacements_inner(
         }
     }
     loop {
-        let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-            && state.engine.until_end_of_turn.iter().any(|effect| {
-                matches!(
-                    effect,
-                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-                )
-            });
+        let damage_cannot_be_prevented = match &proposed {
+            ProposedEvent::Damage(damage) => {
+                state.engine.until_end_of_turn.iter().any(|effect| {
+                    matches!(
+                        effect,
+                        crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                    )
+                }) || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+            }
+            _ => false,
+        };
         let hit = state
             .engine
             .active_replacements
@@ -3171,6 +3215,15 @@ fn apply_replacements_inner(
             .cloned();
 
         let Some(repl) = hit else {
+            // Soul-Scar Mage (Vintage Cube wave C7b): noncombat damage from a
+            // controlled source to an opponent's creature becomes -1/-1
+            // counters instead.
+            #[cfg(feature = "eternal-fixtures")]
+            if let ProposedEvent::Damage(damage) = &proposed {
+                if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage) {
+                    return None;
+                }
+            }
             return Some(proposed);
         };
 
@@ -3694,6 +3747,9 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
         state,
         crate::full_text_v1::DonorCheckSiteV1::CommitTail,
     );
+    // Hallow's life for the damage this event's shield prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
@@ -4098,6 +4154,13 @@ pub(crate) fn propose_and_commit_crystal_life_gain_owned(
 }
 fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
+        return;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if matches!(&event, ProposedEvent::Damage(damage)
+        if crate::eternal_pauper_pf1c_v1::needs_redirect_batch(state, damage))
+    {
+        batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
     // Hullbreacher: an opponent's draw (other than the first of their draw
@@ -6022,6 +6085,16 @@ fn materialize_event_v1(
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;
+            let transformed_entry = match plan_transformed_entry_v1(state, &z) {
+                Ok(face) => face,
+                Err(()) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        z.object,
+                    ));
+                    return None;
+                }
+            };
             if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                 curie_departure = mode.curie_departure(state, z.object);
                 minsc_departure = mode.minsc_departure(state, z.object);
@@ -6223,7 +6296,7 @@ fn materialize_event_v1(
                 z.preserve_known_identity,
                 z.library_insert_visibility,
                 z.force_battlefield_tapped,
-                z.battlefield_face_index,
+                transformed_entry,
                 z.battlefield_controller,
                 (
                     authority_observers,
@@ -6804,6 +6877,9 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         state,
         crate::full_text_v1::DonorCheckSiteV1::BatchTail,
     );
+    // Hallow's life for the damage the batch's shields prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {
@@ -7049,56 +7125,114 @@ fn batch_with_aura_token_hosts_v1(
         ));
         return;
     }
-    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
-    if needs_final_zone_pt_plan_v1(state, &events) {
-        let mut replaced = state.clone();
+    // Hallow-covered and ordinary portions are still one simultaneous damage
+    // batch. Keep Nishoba's once-per-batch receipt across both phases. A closure
+    // makes every early return, including a cloned-world yield/failure, pass
+    // through the matching close on the currently installed world.
+    #[cfg(feature = "eternal-fixtures")]
+    let hallow_nishoba_batch =
+        crate::eternal_pauper_pf1c_v1::batch_has_covered_damage(state, &events)
+            && crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
+    (|| {
         #[cfg(feature = "eternal-fixtures")]
-        let nishoba_batch =
-            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(&mut replaced, &events);
-        let mut survivors = events
-            .into_iter()
-            .filter_map(|event| apply_replacements(&mut replaced, event))
-            .collect::<Vec<_>>();
+        let mut events = events;
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let prepared_damage = crate::eternal_prevention_order_v1::PreparedDamageBatchV1::default();
         #[cfg(feature = "eternal-fixtures")]
-        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(&mut replaced, nishoba_batch);
-        if let Some((_, source)) = replaced.engine.halted {
-            halt_zone_pt_v1(state, source);
-            return;
-        }
-        match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
-            Ok(true) => {}
-            Ok(false) => {
-                *state = replaced;
-                return;
-            }
-            Err(_) => {
-                halt_zone_pt_v1(state, ObjectId(0));
-                return;
-            }
-        }
-        // The plan reads the batch's final destinations.
-        pre_apply_batch_zone_replacements_v1(&mut replaced, &mut survivors);
-        let inputs = survivors
-            .iter()
-            .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
-            .collect::<Vec<_>>();
-        let plan = match FinalZonePtPlanV1::capture(
-            &replaced,
-            &survivors,
-            authority_batch
-                .as_ref()
-                .map(|batch| batch.observers.as_slice()),
-            None,
-            &inputs,
-            &attachments,
-        ) {
-            Ok(plan) => plan,
-            Err(source) => {
+        let prepared_damage =
+            match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &mut events) {
+                Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Suspended) => return,
+                Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Complete(plan)) => plan,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ObjectId(0),
+                    ));
+                    return;
+                }
+            };
+        let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+        if needs_final_zone_pt_plan_v1(state, &events) {
+            let mut replaced = state.clone();
+            #[cfg(feature = "eternal-fixtures")]
+            let nishoba_batch = crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(
+                &mut replaced,
+                &events,
+            );
+            let mut survivors = events
+                .into_iter()
+                .enumerate()
+                .filter_map(|(at, event)| prepared_damage.apply(&mut replaced, at, event))
+                .collect::<Vec<_>>();
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_premodern_p2c_v1::statics::end_damage_batch(
+                &mut replaced,
+                nishoba_batch,
+            );
+            if let Some((_, source)) = replaced.engine.halted {
                 halt_zone_pt_v1(state, source);
                 return;
             }
-        };
-        *state = replaced;
+            match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
+                Ok(true) => {}
+                Ok(false) => {
+                    *state = replaced;
+                    return;
+                }
+                Err(_) => {
+                    halt_zone_pt_v1(state, ObjectId(0));
+                    return;
+                }
+            }
+            // The plan reads the batch's final destinations.
+            pre_apply_batch_zone_replacements_v1(&mut replaced, &mut survivors);
+            let inputs = survivors
+                .iter()
+                .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
+                .collect::<Vec<_>>();
+            let plan = match FinalZonePtPlanV1::capture(
+                &replaced,
+                &survivors,
+                authority_batch
+                    .as_ref()
+                    .map(|batch| batch.observers.as_slice()),
+                None,
+                &inputs,
+                &attachments,
+            ) {
+                Ok(plan) => plan,
+                Err(source) => {
+                    halt_zone_pt_v1(state, source);
+                    return;
+                }
+            };
+            *state = replaced;
+            commit_batch_survivors(
+                state,
+                survivors,
+                authority_batch,
+                EntryBatchCommitContextV1 {
+                    garruk_batch,
+                    arahbo_batch,
+                    attachments,
+                    raid_history_start,
+                    token_input,
+                    token_requests,
+                },
+                Some(plan),
+            );
+            return;
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        let nishoba_batch =
+            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
+        let survivors: Vec<ProposedEvent> = events
+            .into_iter()
+            .enumerate()
+            .filter_map(|(at, event)| prepared_damage.apply(state, at, event))
+            .collect();
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
         commit_batch_survivors(
             state,
             survivors,
@@ -7111,33 +7245,11 @@ fn batch_with_aura_token_hosts_v1(
                 token_input,
                 token_requests,
             },
-            Some(plan),
+            None,
         );
-        return;
-    }
+    })();
     #[cfg(feature = "eternal-fixtures")]
-    let nishoba_batch =
-        crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
-    let survivors: Vec<ProposedEvent> = events
-        .into_iter()
-        .filter_map(|e| apply_replacements(state, e))
-        .collect();
-    #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
-    commit_batch_survivors(
-        state,
-        survivors,
-        authority_batch,
-        EntryBatchCommitContextV1 {
-            garruk_batch,
-            arahbo_batch,
-            attachments,
-            raid_history_start,
-            token_input,
-            token_requests,
-        },
-        None,
-    );
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, hallow_nishoba_batch);
 }
 /// The private owning driver has already finished every replacement choice.
 /// It cannot submit a foreign root, owner, source or recipient packet.
@@ -8342,6 +8454,54 @@ type MaterializedZoneEntryV1<'a> = (
     Option<i32>,
 );
 
+pub(crate) fn battlefield_back_face_v1(
+    definition: u16,
+) -> Option<&'static crate::card_def::TransformFaceDef> {
+    let face = crate::card_def::CARD_DEFS
+        .get(usize::from(definition))?
+        .transform_face
+        .as_ref()?;
+    (!face.types.iter().any(|kind| {
+        matches!(
+            kind,
+            crate::card_def::CardType::Instant | crate::card_def::CardType::Sorcery
+        )
+    }))
+    .then_some(face)
+}
+
+type TransformedEntryV1 = (u16, &'static crate::card_def::TransformFaceDef);
+
+fn plan_transformed_entry_v1(
+    state: &GameState,
+    change: &ZoneChangeProposed,
+) -> Result<Option<TransformedEntryV1>, ()> {
+    if change.to_zone != Zone::Battlefield {
+        return Ok(None);
+    }
+    let face_index = change.battlefield_face_index;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let face_index = face_index.or_else(|| {
+        crate::standard_keywords_v1::enters_transformed_at_night(
+            state,
+            state.objects.get(change.object).card_def,
+        )
+        .then_some(1)
+    });
+    let Some(face_index) = face_index else {
+        return Ok(None);
+    };
+    if face_index != 1 {
+        return Err(());
+    }
+    let definition = crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
+        .map_or(state.objects.get(change.object).card_def, |copy| {
+            copy.copied.card_def
+        });
+    let face = battlefield_back_face_v1(definition).ok_or(())?;
+    Ok(Some((definition, face)))
+}
+
 /// Zone bookkeeping shared by every `MoveObject` effect leaf. "Hand ->
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
@@ -8355,29 +8515,23 @@ fn materialize_zone_change_v1(
     preserve_known_identity: bool,
     library_insert_visibility: LibraryInsertVisibility,
     force_battlefield_tapped: bool,
-    battlefield_face_index: Option<u8>,
+    transformed_entry: Option<TransformedEntryV1>,
     battlefield_controller: Option<PlayerId>,
     entry_context: MaterializedZoneEntryV1<'_>,
 ) {
     let (authority_observers, entering_characteristics, counter_input, requested_revival) =
         entry_context;
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
-    #[cfg(feature = "standard-magezero-fixtures")]
-    let battlefield_face_index = battlefield_face_index.or_else(|| {
-        (to_zone == Zone::Battlefield
-            && crate::standard_keywords_v1::enters_transformed_at_night(
-                state,
-                state.objects.get(id).card_def,
-            ))
-        .then_some(1)
-    });
+
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
     let metamorph_mage_copy = (to_zone == Zone::Battlefield)
         .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
         .flatten();
-    let entry_definition =
-        metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def);
+    let entry_definition = transformed_entry.map_or_else(
+        || metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def),
+        |(definition, _)| definition,
+    );
     let source_face = state.objects.get(id).v4.face_down_v1;
     let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
@@ -8554,15 +8708,8 @@ fn materialize_zone_change_v1(
         obj.counters = Default::default();
         obj.attachments.clear();
         if to_zone == Zone::Battlefield {
-            if let Some(face_index) = battlefield_face_index {
-                let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-                let Some(face) = (face_index == 1)
-                    .then_some(def.transform_face.as_ref())
-                    .flatten()
-                else {
-                    panic!("transformed battlefield return requested an undefined face");
-                };
-                obj.v4.face_index = face_index;
+            if let Some((_, face)) = transformed_entry {
+                obj.v4.face_index = 1;
                 obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
                 obj.v4.effective_subtype_ids = face
                     .subtypes
@@ -8611,6 +8758,12 @@ fn materialize_zone_change_v1(
         // the battlefield, under the controller it entered under. A Moon
         // effect that already applies removes its printed entry rule (an
         // entry tapped for another reason stays tapped).
+        #[cfg(feature = "eternal-fixtures")]
+        let copied_entry_tapped = entering_face_down.is_none()
+            && crate::eternal_cube_c7a_v1::apply_pending_metamorph_entry_copy(state, id);
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let copied_entry_tapped = false;
+        let printed_entry_tapped = printed_entry_tapped || copied_entry_tapped;
         let controller = state.objects.get(id).controller;
         if printed_entry_tapped
             && !force_battlefield_tapped

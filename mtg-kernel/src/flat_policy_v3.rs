@@ -319,6 +319,7 @@ mod tests {
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
             let old = PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1::default(),
+                any_mana_type: Default::default(),
                 object: card,
                 holder: actor,
                 zone_change_generation: state.objects.get(card).zone_change_count,
@@ -357,6 +358,7 @@ mod tests {
             assert_eq!(current_generation, 5);
             state.engine.exile_play_permissions.push(PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1::default(),
+                any_mana_type: Default::default(),
                 zone_change_generation: current_generation,
                 expiry: PlayPermissionExpiry::EndOfTurn,
                 ..old
@@ -365,6 +367,7 @@ mod tests {
             // both; removing stale grants is not deduplication or action pruning.
             state.engine.exile_play_permissions.push(PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1::default(),
+                any_mana_type: Default::default(),
                 zone_change_generation: current_generation,
                 ..old
             });

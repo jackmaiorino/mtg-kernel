@@ -791,7 +791,21 @@ impl FastActorSessionV1 {
         })
     }
 
+    /// The observation the FlatV3 scorer encodes: the raw observation below
+    /// with an unread per-turn attack count omitted
+    /// (`flat_action_v4::attack_count_v1`, #454).
     pub(crate) fn flat_policy_observation_v3(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<ObservationV6, FlatActionDecisionSliceErrorV1> {
+        let mut observation = self.flat_policy_observation_raw_v3(expected)?;
+        super::flat_action_v4::attack_count_v1::omit_unread_attack_count_v1(&mut observation)?;
+        Ok(observation)
+    }
+
+    /// The shared flat entry's observation, unchanged, for every consumer
+    /// that is not a scorer (human adapters, traces, diagnostics).
+    pub(crate) fn flat_policy_observation_raw_v3(
         &self,
         expected: FastActorDecisionV1,
     ) -> Result<ObservationV6, FlatActionDecisionSliceErrorV1> {
@@ -832,7 +846,7 @@ impl FastActorSessionV1 {
         if PlayerSeatV1::from(current.actor) != human_seat {
             return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
         }
-        let observation = self.flat_policy_observation_v3(expected)?;
+        let observation = self.flat_policy_observation_raw_v3(expected)?;
         let actions = current
             .candidates
             .iter()

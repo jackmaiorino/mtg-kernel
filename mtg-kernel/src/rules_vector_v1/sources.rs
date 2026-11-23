@@ -323,6 +323,22 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             // "Activate only as an instant" has no facet.
             out.atoms.push(Atom::Opaque);
         }
+        ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_) => {
+            out.cost(CostAtom::Tap);
+            out.cost(CostAtom::MoveObject {
+                from: ZoneF::Battlefield,
+                to: ZoneF::Graveyard,
+                obj: ObjF::Permanent,
+                amount: AmtF::Unit,
+            });
+        }
+        ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
+            out.cost(CostAtom::TapOthers);
+        }
+        ManaAbilityCostDef::NoneOwnTurnOnlyV1 => {
+            // "Activate only during your turn" has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
     }
     let amount = match amount {
         ManaAbilityAmountDef::Fixed(n) => AmtF::fixed(i64::from(n)),
@@ -349,6 +365,11 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
         ManaAbilityAmountDef::ChargeCountersOnSourceV1 => {
             // The count of counters on the source has no facet in the frozen
             // vocabulary.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
+        ManaAbilityAmountDef::SourcePowerAnyCombinationV1(_) => {
+            // Source power and dynamic color splits have no frozen facet.
             out.atoms.push(Atom::Opaque);
             AmtF::Dynamic
         }

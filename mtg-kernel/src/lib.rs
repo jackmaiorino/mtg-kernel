@@ -206,6 +206,8 @@ pub(crate) mod continuous_source_frame_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
 pub mod creature_types_v60;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_draft_v1;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
 pub mod embercleave_consumer_v1;
@@ -332,6 +334,12 @@ pub mod eternal_cube_c6a_v1;
 pub mod eternal_cube_c6b_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C6c).
 pub mod eternal_cube_c6c_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7a).
+pub mod eternal_cube_c7a_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7b).
+pub mod eternal_cube_c7b_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7c).
+pub mod eternal_cube_c7c_v1;
 /// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
 /// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
 /// Mystic Forge).
@@ -366,6 +374,12 @@ pub mod eternal_pauper_e6b_v1;
 /// Pauper Ruby Storm, Golgari Gardens, Familiars and Jeskai Ephemerate card
 /// programs of the eternal catalog (wave E8b).
 pub mod eternal_pauper_e8b_v1;
+/// Pauper field card programs of the eternal catalog (wave Pf1a).
+pub mod eternal_pauper_pf1a_v1;
+/// Pauper field card programs of the eternal catalog (wave Pf1b).
+pub mod eternal_pauper_pf1b_v1;
+/// Pauper field card programs of the eternal catalog (wave Pf1c).
+pub mod eternal_pauper_pf1c_v1;
 /// Premodern card programs of the eternal catalog (wave P1a).
 pub mod eternal_premodern_p1a_v1;
 /// Premodern Enchantress, Replenish, Oath, Landstill, Psychatog and Grow
@@ -399,6 +413,7 @@ pub mod eternal_premodern_p3f_v1;
 pub mod eternal_premodern_p3g_v1;
 /// Premodern sideboard card programs of the eternal catalog (wave P3h).
 pub mod eternal_premodern_p3h_v1;
+pub(crate) mod eternal_prevention_order_v1;
 /// Legacy sideboard card programs of the eternal catalog (wave S1a).
 pub mod eternal_sideboard_s1a_v1;
 /// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).

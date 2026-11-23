@@ -85,7 +85,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Seasoned Cryomancer" => "etb:draw_two_then_discard_two;reflexive:nonlands_discarded_this_way:tap_up_to_that_many_target_creatures:one_stun_counter_each;graveyard_ability:3uu:exile_self:draw_two",
         "Seasoned Pyromancer" => "etb:discard_two_then_draw_two:create_one_1_1_red_elemental_per_nonland_discarded_this_way;graveyard_ability:3rr:exile_self:create_two_1_1_red_elementals",
         "Sphinx of False Conclusions" => "flash;flying;attacks:draw_one_then_discard_one;dies:if_nontoken:copy_source_original_battlefield_departure_copiable_values:captured_trigger_controller:replacement_batch",
-        "Metamorphosis Fanatic" => "lifelink;etb:return_up_to_one_target_creature_card_from_own_graveyard_to_battlefield:lifelink_counter_on_returned_incarnation;miracle:1b:first_draw_reveal_choice:trigger_pay_then_cast",
+        "Metamorphosis Fanatic" => "lifelink;etb:return_up_to_one_target_creature_card_from_own_graveyard_to_battlefield:as_enters_copy_choice:entry_time_lifelink_counter;miracle:1b:first_draw_reveal_choice:trigger_pay_then_cast",
         "Night Nurse, Healer of Heroes" => "flash;lifelink;etb:return_target_permanent_card_in_own_graveyard_put_there_this_turn:exact_incarnation:to_hand",
         "Six" => "reach;attacks:mill_three:may_put_one_land_from_among_them_into_hand;own_turn:nonland_permanent_cards_in_own_graveyard:retrace:additional_discard_land_cost",
         "Ursine Monstrosity" => "trample;beginning_of_controller_combat:mill_one:choose_random_opponent:source_attacks_that_player_this_combat_if_able:until_eot_indestructible_and_plus_one_plus_one_per_card_type_in_own_graveyard_at_resolution",

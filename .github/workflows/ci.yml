@@ -69,10 +69,24 @@ jobs:
   detect-changes:
     name: Detect changed paths
     timeout-minutes: 10
-    # A few seconds of git work. It stays on a hosted runner: the
-    # self-hosted runners hold every job while their host is reserved for
-    # other work, and the Python shards wait on this job.
-    runs-on: ubuntu-24.04
+    # A few seconds of git work, and every other job waits on it. Hosted
+    # unless MTG_CI_DETECT_RUNNER (JSON runs-on labels) names a self-hosted
+    # Linux runner. Self-hosted only for a trusted event: not a fork pull
+    # request, and both github.actor and github.triggering_actor members of
+    # MTG_CI_SELF_HOSTED_ACTORS, a JSON list of account names written exactly
+    # as ["name1", "name2"] (double quotes, comma and one space). The list
+    # must equal its own strings rejoined in that form, so a value with any
+    # other spacing, quoting or non-string member admits nobody (array
+    # contains() coerces true, null and numbers). A value that starts with [
+    # and ends with ] but that fromJSON rejects fails this job (closed: never
+    # self-hosted), and with it the run, until it is fixed or cleared. Use
+    # only runners that never hold a job for a host reservation (the Mac VM
+    # runners, fleet-mac-linux): the desktop Linux runners do. The steps need bash,
+    # git and python3; gh is optional (see "Choose the group set"). With no
+    # such runner online the job waits (up to GitHub's 24 hour queue limit),
+    # and so does the whole run. Rollback to hosted:
+    #   gh variable set MTG_CI_DETECT_RUNNER -R mtg-kernel/mtg-kernel --body ''
+    runs-on: ${{ vars.MTG_CI_DETECT_RUNNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(vars.MTG_CI_DETECT_RUNNER) || 'ubuntu-24.04' }}
     permissions:
       actions: read
       contents: read
@@ -138,18 +152,30 @@ jobs:
           elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ] && [ -z "$INPUT_SCOPE" ]; then
             # Only an open, ready (not draft) same-repository pull request
             # whose head is this exact commit has a pull request run covering
-            # the rest. Any lookup failure keeps the full set.
-            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0] | "\(.number // "") \(.head.sha // "")"') || pr=
-            read -r pr_number pr_head <<< "$pr"
+            # the rest. Any lookup failure keeps the full set. A self-hosted
+            # runner without the GitHub CLI makes the same two REST calls
+            # with tools/ci/pr_lookup.py.
+            if command -v gh > /dev/null 2>&1; then
+              open_pr() {
+                gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" |
+                  python3 tools/ci/pr_lookup.py ready-pr
+              }
+              pr_files() { gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"; }
+            else
+              open_pr() { python3 tools/ci/pr_lookup.py open-pr-head; }
+              pr_files() { python3 tools/ci/pr_lookup.py pr-files "$1"; }
+            fi
+            pr=$(open_pr) || pr=
+            read -r pr_number pr_head pr_base <<< "$pr"
             echo "open pull request ${pr_number:-none} head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
-            if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
+            if [ -n "$pr_base" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               # Its run covered the whole pull request set only if its files
               # did not narrow it to one scope (tools/ci/ci_scope.py).
-              pr_scope=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files" --jq '.[] | .filename, (.previous_filename // empty)' |
-                python3 tools/ci/ci_scope.py file-scope) || pr_scope=
+              pr_scope=$(pr_files "$pr_number" | python3 tools/ci/ci_scope.py file-scope) || pr_scope=
               echo "its files map to: ${pr_scope:-unknown}"
-              if [ "$pr_scope" = pr ]; then
+              # File listing is live and paginated. Narrow only if the same
+              # PR is still ready with the same head and base after that read.
+              if [ "$pr_scope" = pr ] && rechecked=$(open_pr) && [ "$rechecked" = "$pr" ]; then
                 scope=windows-complement
               fi
             fi
@@ -170,12 +196,13 @@ jobs:
           fi
           # The PR checkout is the synthetic merge commit; HEAD^1 is the
           # base branch tip, so this diff is exactly the PR's file set.
-          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
-          echo "changed files:"; echo "$files"
+          # Keep both paths of a rename and preserve Git's raw path bytes.
+          git diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/ci-changed-paths"
+          echo "changed files:"
           python_relevant=false
           rust_relevant=false
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
+          while IFS= read -r -d '' f; do
+            printf '  %q\n' "$f"
             # Python jobs care about python sources/tools/tests, the data
             # artifacts they validate, workflow changes, and the pinned
             # interpreter/lock config. Top-level tools/** is Python only;
@@ -200,7 +227,7 @@ jobs:
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
             esac
-          done <<< "$files"
+          done < "$RUNNER_TEMP/ci-changed-paths"
           echo "python_relevant=$python_relevant" >> "$GITHUB_OUTPUT"
           echo "rust_relevant=$rust_relevant" >> "$GITHUB_OUTPUT"
           echo "verdict: python_relevant=$python_relevant rust_relevant=$rust_relevant"
@@ -219,8 +246,7 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            CHANGED_FILES=$(git diff --no-renames --name-only HEAD^1 HEAD)
-            export CHANGED_FILES
+            exec < "$RUNNER_TEMP/ci-changed-paths"
           fi
           python3 tools/ci/ci_scope.py choose
 
@@ -1488,7 +1514,8 @@ jobs:
       matrix:
         # Windows-only group sets report only the system they tested.
         os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
-    runs-on: ubuntu-24.04
+    # A gate with no checkout: the same runner rule as detect-changes.
+    runs-on: ${{ vars.MTG_CI_DETECT_RUNNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(vars.MTG_CI_DETECT_RUNNER) || 'ubuntu-24.04' }}
     steps:
       - name: Require every Rust test group
         run: |
@@ -1738,6 +1765,7 @@ jobs:
           uv run --no-sync python -m unittest discover -v -s tools/sd1/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/native_fixture_bench/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/checkpoint_codec_bench/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'
 
       # A partial retry keeps the build job's artifact from the prior attempt;
       # take the newest attempt.
