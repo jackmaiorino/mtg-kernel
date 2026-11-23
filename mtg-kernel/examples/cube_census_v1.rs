@@ -130,13 +130,11 @@ fn mix(parts: &[u64]) -> u64 {
     out
 }
 
+/// One dealt deck: card ids, and names with counts.
+type DealtDeck = (Vec<u16>, Vec<(String, u32)>);
+
 /// Two decks of `size` cards: `(ids, names with counts)` per seat.
-fn deal_decks(
-    pool: &Pool,
-    seed: u64,
-    game: u64,
-    size: usize,
-) -> [(Vec<u16>, Vec<(String, u32)>); 2] {
+fn deal_decks(pool: &Pool, seed: u64, game: u64, size: usize) -> [DealtDeck; 2] {
     let (spell_count, land_count) = if size == 40 { (23, 2) } else { (36, 4) };
     let mut rng = SplitMix64::seed(mix(&[seed, game, 1]));
     let mut taken_spells = vec![false; pool.spells.len()];
