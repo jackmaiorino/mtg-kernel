@@ -414,6 +414,13 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c8c_v1::C8cStateV1::is_empty"
     )]
     pub c8c: crate::eternal_cube_c8c_v1::C8cStateV1,
+    /// Vintage Cube wave C9c's state: Nissa animated lands and emblems, and
+    /// Through the Breach haste and end-step sacrifices (`eternal_cube_c9c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c9c_v1::C9cStateV1::is_empty"
+    )]
+    pub c9c: crate::eternal_cube_c9c_v1::C9cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -2066,9 +2073,11 @@ pub fn card_type_count(state: &GameState, cards: &[ObjectId]) -> usize {
         .filter(|&&card_type| {
             cards.iter().any(|&card| {
                 state.objects.try_get(card).is_some_and(|object| {
-                    CARD_DEFS
-                        .get(object.card_def as usize)
-                        .is_some_and(|def| def.has_type(card_type))
+                    CARD_DEFS.get(object.card_def as usize).is_some_and(|def| {
+                        def.has_type(card_type)
+                            || (card_type == CardType::Creature
+                                && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
+                    })
                 })
             })
         })
@@ -2235,6 +2244,10 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     if let Some(value) = crate::eternal_cube_c8c_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
+    // Grist, the Hunger Tide (Vintage Cube wave C9c): 1/1 Insect creature outside the battlefield.
+    if let Some(value) = crate::eternal_cube_c9c_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
     // Seize the Storm's Elemental token sets both stats.
     if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
         return Some(value);
@@ -2272,6 +2285,10 @@ pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId)
     }
     // Pyrogoyf's toughness is its power plus 1 (Vintage Cube wave C8c).
     if let Some(value) = crate::eternal_cube_c8c_v1::characteristic_defining_toughness(state, id) {
+        return Some(value);
+    }
+    // Grist, the Hunger Tide (Vintage Cube wave C9c): 1/1 outside the battlefield.
+    if let Some(value) = crate::eternal_cube_c9c_v1::characteristic_defining_toughness(state, id) {
         return Some(value);
     }
     if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
@@ -2580,6 +2597,7 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c7c_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c8a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c8c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c9c_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2749,6 +2767,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_cube_c7c_v1::begin_turn(state, player);
     crate::eternal_cube_c8a_v1::begin_turn(state, player);
     crate::eternal_cube_c8c_v1::begin_turn(state, player);
+    crate::eternal_cube_c9c_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

@@ -1555,7 +1555,8 @@ pub(crate) fn drive(
                 .copied()
                 .filter(|&card| {
                     definition(state, card).is_some_and(|def| {
-                        def.has_type(CardType::Creature) && def.mana_value <= maximum
+                        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                            && def.mana_value <= maximum
                     }) && statics::card_has_color(state, card, ManaColor::G)
                 })
                 .map(|card| bind(state, card))
@@ -1750,7 +1751,14 @@ pub(crate) fn finish_selection(
             let Some(card) = chosen else {
                 return Err("Inquisition of Kozilek chooses a card".to_string());
             };
-            if state.objects.get(card.object).zone == Zone::Hand {
+            let live = state.objects.get(card.object);
+            if live.zone == Zone::Hand
+                && !crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                    state,
+                    continuation.ctx.controller,
+                    live.owner,
+                )
+            {
                 crate::engine::commit_discarded_card(state, card.object);
             }
             Ok(false)

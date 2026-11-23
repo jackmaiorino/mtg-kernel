@@ -4177,8 +4177,13 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             return;
         }
     }
-    if matches!(&event,ProposedEvent::CreateToken(t) if !crate::doubling_season_v48::sources(state,t.controller).is_empty())
-    {
+    if matches!(
+        &event,
+        ProposedEvent::CreateToken(t)
+            if !crate::doubling_season_v48::sources(state, t.controller).is_empty()
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::token_doubler_count(state, t.controller) > 0)
+    ) {
         batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
@@ -7075,6 +7080,17 @@ fn batch_with_aura_token_hosts_v1(
             token.initialization_v48.as_mut().unwrap().attached_to = Some(host);
         }
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let events = match crate::eternal_cube_c9c_v1::expand_doubled_tokens(state, events) {
+        Ok(expanded) => expanded,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
     if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
         || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
     {

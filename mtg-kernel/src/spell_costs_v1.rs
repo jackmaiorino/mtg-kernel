@@ -173,6 +173,8 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) improvise: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
+    /// Splice onto Arcane: X packs `(Desperate Rituals, Through the Breaches)`.
+    pub(super) splice: bool,
     /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
     /// restricted mana.
     pub(super) colorless_eldrazi: bool,
@@ -540,22 +542,26 @@ impl SelectedSpellManaCostsV1 {
         if self.convoke && self.delve {
             return None;
         }
-        let replicated = self
-            .replicate
-            .iter()
-            .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)));
+        let extra_costs: Vec<Cost> = if self.splice && cfg!(feature = "eternal-fixtures") {
+            crate::eternal_pauper_e8b_v1::splice_costs_for_code(x)
+        } else {
+            self.replicate
+                .iter()
+                .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)))
+                .collect()
+        };
         let pips = self
             .costs
             .iter()
             .copied()
-            .chain(replicated.clone())
+            .chain(extra_costs.iter().copied())
             .flat_map(|cost| cost.pips.iter().copied())
             .collect::<Vec<_>>();
         let generic = self
             .costs
             .iter()
             .map(|cost| u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x))
-            .chain(replicated.map(|cost| u32::from(cost.generic)))
+            .chain(extra_costs.iter().map(|cost| u32::from(cost.generic)))
             .sum::<u32>()
             .saturating_add(increase)
             .saturating_add(self.own_generic_increase)
@@ -761,6 +767,18 @@ fn selected_spell_mana_costs_with_escape(
     state: &GameState,
     breach_escape: bool,
 ) -> Option<SelectedSpellManaCostsV1> {
+    let grist_cda = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c9c_v1::is_grist_card(definition.name)
+        && method != CastMethodV4::Omen
+        && method != CastMethodV4::Bestow
+        && !(method == CastMethodV4::Alternative
+            && definition
+                .alt_cost
+                .is_some_and(|a| a.condition == card_def::AltCostCondition::DisguiseFromHand));
+    let replicate = crate::eternal_cards_v1::replicate_cost(definition.name)
+        .or_else(|| crate::eternal_cube_c2c_v1::multikicker_cost(definition.name));
+    let splice =
+        replicate.is_none() && crate::eternal_pauper_e8b_v1::splice_cost(definition).is_some();
     let mut selected = SelectedSpellManaCostsV1 {
         breach_escape,
         granted_flashback_v1: false,
@@ -785,18 +803,21 @@ fn selected_spell_mana_costs_with_escape(
             .collect(),
         costs: Vec::new(),
         component_groups: Vec::new(),
-        types: definition.types,
+        types: if grist_cda {
+            &[CardType::Planeswalker, CardType::Creature]
+        } else {
+            definition.types
+        },
         own_generic_reduction: 0,
         own_generic_increase: 0,
         delve: false,
         convoke: false,
         improvise: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
-        // Splice onto Arcane is paid like replicate: once per spliced card.
-        // Multikicker (wave C2c) is paid the same way, once per kick.
-        replicate: crate::eternal_cards_v1::replicate_cost(definition.name)
-            .or_else(|| crate::eternal_cube_c2c_v1::multikicker_cost(definition.name))
-            .or_else(|| crate::eternal_pauper_e8b_v1::splice_cost(definition)),
+        // Multikicker (wave C2c) is paid like replicate, once per kick.
+        // Splice onto Arcane packs (Rituals, Through the Breaches) in `x`.
+        replicate,
+        splice,
         // Painter's Servant colors every spell (eternal wave E9a).
         colorless_eldrazi: definition.colors.is_empty()
             && definition.subtypes.contains(&card_def::Subtype::Eldrazi)
@@ -870,6 +891,11 @@ fn selected_spell_mana_costs_with_escape(
                 .iter()
                 .map(|subtype| subtype.stable_id()),
         );
+    }
+    if grist_cda {
+        selected
+            .spell_subtypes
+            .push(card_def::Subtype::Insect.stable_id());
     }
     selected.spell_subtypes.sort_unstable();
     selected.spell_subtypes.dedup();
@@ -1710,8 +1736,10 @@ fn selected_spell_quote_branch_grant_v1(
             .is_empty()
             && (hand.len() <= discard_count
                 || !hand.iter().any(|object| {
-                    card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
-                        .has_type(CardType::Creature)
+                    let def = &card_def::CARD_DEFS[state.objects.get(*object).card_def as usize];
+                    def.has_type(CardType::Creature)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
                 }))
         {
             return None;

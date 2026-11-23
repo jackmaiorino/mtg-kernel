@@ -339,6 +339,8 @@ pub enum E3ChoiceKindV1 {
     C8aV1(crate::eternal_cube_c8a_v1::C8aChoiceV1),
     /// A Vintage Cube wave C8c choice (`eternal_cube_c8c_v1`).
     C8cV1(crate::eternal_cube_c8c_v1::C8cChoiceV1),
+    /// A Vintage Cube wave C9c choice (`eternal_cube_c9c_v1`).
+    C9cV1(crate::eternal_cube_c9c_v1::C9cChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -458,6 +460,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C8cV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C9cV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -489,6 +494,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::P2aV1(kind) => kind.library_search(),
             E3ChoiceKindV1::P2cV1(kind) => kind.library_search(),
             E3ChoiceKindV1::P1aV1(kind) => kind.library_search(),
+            E3ChoiceKindV1::C9cV1(kind) => kind.library_search(),
             _ => false,
         }
     }
@@ -549,6 +555,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C7aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C8aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C8cV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C9cV1(kind) => kind.public_purpose(),
         }
     }
 
@@ -596,6 +603,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C7aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C8aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C8cV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C9cV1(kind) => out.extend(kind.referenced_bindings()),
             _ => {}
         }
         if let E3ChoiceKindV1::ImprintV1 { mox } = self.kind {
@@ -1037,6 +1045,13 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
+        E3ChoiceKindV1::C9cV1(kind) => crate::eternal_cube_c9c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
     }
 }
 
@@ -1248,6 +1263,13 @@ pub(crate) fn drive(
         }
         EternalOpV1::AnnihilatorV1 { count } => {
             let defender = continuation.ctx.controller.opponent();
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                defender,
+            ) {
+                return Ok(false);
+            }
             let permanents = controlled_permanents(state, defender);
             if permanents.len() <= usize::from(*count) {
                 sacrifice_all(state, defender, &permanents);
@@ -1313,7 +1335,11 @@ pub(crate) fn drive(
                 return Err("Sneak Attack lost its source".to_string());
             };
             let player = continuation.ctx.controller;
-            let cards = hand_bindings(state, player, |def| def.has_type(CardType::Creature));
+            let cards = hand_bindings(
+                state,
+                player,
+                crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def,
+            );
             if cards.is_empty() {
                 return Ok(false);
             }
@@ -1978,7 +2004,7 @@ pub fn cavern_type_options(state: &GameState, player: PlayerId) -> Vec<Subtype> 
         let Some(def) = CARD_DEFS.get(object.card_def as usize) else {
             continue;
         };
-        if !def.has_type(CardType::Creature) {
+        if !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def) {
             continue;
         }
         for &subtype in def.subtypes {
@@ -1987,6 +2013,13 @@ pub fn cavern_type_options(state: &GameState, player: PlayerId) -> Vec<Subtype> 
             {
                 types.push(subtype);
             }
+        }
+        if crate::eternal_cube_c9c_v1::is_grist_card(def.name)
+            && !types
+                .iter()
+                .any(|known| known.same_subtype_as(Subtype::Insect))
+        {
+            types.push(Subtype::Insect);
         }
     }
     types.sort_by_key(|subtype| subtype.stable_id());
@@ -3067,7 +3100,7 @@ fn controls_named(state: &GameState, player: PlayerId, name: &str) -> bool {
 /// without paying their mana costs and as though they had flash." Whether
 /// `card` is such a creature card while an Aluren is on the battlefield.
 pub(crate) fn aluren_flash(state: &GameState, card: ObjectId) -> bool {
-    printed(state, card).has_type(CardType::Creature)
+    crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(printed(state, card))
         && crate::engine::object_mana_value(state, card) <= 3
         && [PlayerId::P0, PlayerId::P1]
             .into_iter()
@@ -3137,7 +3170,7 @@ pub(crate) fn set_free_quote(state: &mut GameState, card: Option<ObjectId>) {
 /// (wave S1f).
 pub(crate) fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
     hand_bindings(state, player, |def| {
-        [
+        ([
             CardType::Artifact,
             CardType::Creature,
             CardType::Enchantment,
@@ -3145,6 +3178,7 @@ pub(crate) fn show_and_tell_cards(state: &GameState, player: PlayerId) -> Vec<Ef
         ]
         .into_iter()
         .any(|card_type| def.has_type(card_type))
+            || crate::eternal_cube_c9c_v1::is_grist_card(def.name))
             && (!def.subtypes.contains(&Subtype::Aura)
                 || crate::eternal_sideboard_s1f_v1::enchants_player(def))
     })
@@ -3471,9 +3505,9 @@ fn raph_and_mikey_attack() -> EffectOp {
 /// rest on the bottom of your library in a random order."
 fn reveal_until_creature_attacking(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     let library = state.players[player.index()].library.clone();
-    let found = library
-        .iter()
-        .position(|&card| printed(state, card).has_type(CardType::Creature));
+    let found = library.iter().position(|&card| {
+        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(printed(state, card))
+    });
     let revealed = found.map_or(library.len(), |index| index + 1);
     reveal_top_to_all(state, player, revealed);
     let rest = library[..found.unwrap_or(library.len())]
@@ -3488,8 +3522,10 @@ fn reveal_until_creature_attacking(state: &mut GameState, player: PlayerId) -> R
         );
         if state.objects.get(creature).zone == Zone::Battlefield {
             state.objects.get_mut(creature).tapped = true;
+            let is_creature = crate::engine::object_has_type(state, creature, CardType::Creature);
             let combat = &mut state.engine.combat;
-            if combat.attackers_declared
+            if is_creature
+                && combat.attackers_declared
                 && state.active_player == player
                 && matches!(
                     state.step,

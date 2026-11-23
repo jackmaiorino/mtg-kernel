@@ -222,6 +222,7 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
             C8cTargetV1::SkydiverArtifactV1
             | C8cTargetV1::UpToOneArtifactNonAuraEnchantmentOrLandV1 => Single,
         },
+        S::C9cV1(_) => Single,
         S::S1oV1(filter) => match filter {
             // Eowyn, Fearless Knight's enters trigger: "target creature an
             // opponent controls with greater power", one slot (and a

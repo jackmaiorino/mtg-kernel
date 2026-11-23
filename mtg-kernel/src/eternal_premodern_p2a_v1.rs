@@ -1092,6 +1092,11 @@ pub(crate) fn drive(
             let Some(player) = legal_player_target(&ctx, state, 0, TargetSpec::AnyPlayer) else {
                 return Ok(false);
             };
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state, controller, player,
+            ) {
+                return Ok(false);
+            }
             let hand = state.players[player.index()]
                 .hand
                 .iter()

@@ -496,6 +496,8 @@ pub enum StandardTargetV1 {
     ControlledArtifactThenAnotherControlledArtifactOrCreatureV1,
     /// A filter of eternal wave C8c (`eternal_cube_c8c_v1::targets`).
     C8cV1(crate::eternal_cube_c8c_v1::targets::C8cTargetV1),
+    /// A filter of eternal wave C9c (`eternal_cube_c9c_v1::targets`).
+    C9cV1(crate::eternal_cube_c9c_v1::targets::C9cTargetV1),
 }
 
 impl StandardTargetV1 {
@@ -571,6 +573,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_cube_c8c_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c9c_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -776,6 +781,7 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || crate::eternal_cube_c4c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c4a_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c8c_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c9c_v1::targets::zone_allows(target, zone)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
         || (matches!(
             target,
@@ -1135,6 +1141,11 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_cube_c9c_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1481,6 +1492,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c9c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1746,7 +1762,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1
         | StandardTargetV1::CardInOwnGraveyardV1
         | StandardTargetV1::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1
-        | StandardTargetV1::C8cV1(_) => false,
+        | StandardTargetV1::C8cV1(_)
+        | StandardTargetV1::C9cV1(_) => false,
     }
 }
 
@@ -2373,7 +2390,10 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 .iter()
                 .copied()
                 .filter(|&id| {
-                    CARD_DEFS[state.objects.get(id).card_def as usize].has_type(CardType::Creature)
+                    let def = &CARD_DEFS[state.objects.get(id).card_def as usize];
+                    def.has_type(CardType::Creature)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
                 })
                 .map(|id| {
                     (
@@ -2681,10 +2701,19 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 resume: crate::engine::DiscardResume::None,
             });
             if let Some(stack_item_id) = ctx.stack_item_id {
-                let standard = state.standard_v1.get_or_insert_with(Default::default);
-                standard
-                    .queued_discards
-                    .push((stack_item_id, ctx.controller.opponent(), *count));
+                let opponent = ctx.controller.opponent();
+                let opponent_blocked = cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                        state,
+                        ctx.controller,
+                        opponent,
+                    );
+                if !opponent_blocked {
+                    let standard = state.standard_v1.get_or_insert_with(Default::default);
+                    standard
+                        .queued_discards
+                        .push((stack_item_id, opponent, *count));
+                }
             }
         }
         StandardOpV1::ControlledCreaturesBecomePhyrexian => {
@@ -2705,7 +2734,10 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
-            if crate::doubling_season_v48::requires_successor(state) {
+            if crate::doubling_season_v48::requires_successor(state)
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::token_doubler_count(state, ctx.controller) > 0)
+            {
                 let live = state.objects.get(object);
                 let (definition, face) = if live.v4.face_down_v1.is_some() {
                     let Some(anonymous) = crate::card_def::card_id_by_name(
@@ -2882,6 +2914,8 @@ pub(crate) fn create_token_copy_without_banner_owner(
     let copied_abilities = event::copiable_token_abilities_v1(state, original).ok()?;
     let copied_nightmare = crate::effect::harvester_v1::copiable_nightmare(state, original).ok()?;
     if crate::doubling_season_v48::requires_successor(state)
+        || (cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cube_c9c_v1::token_doubler_count(state, controller) > 0)
         || copied_abilities != 0
         || copied_nightmare
     {
@@ -3292,7 +3326,11 @@ pub(crate) fn trigger_matches(
                         object: source,
                         zone_change_count: live.zone_change_count,
                     })
-                && CARD_DEFS[exiled.card_def as usize].has_type(CardType::Creature)
+                && (CARD_DEFS[exiled.card_def as usize].has_type(CardType::Creature)
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_cube_c9c_v1::is_grist_card(
+                            CARD_DEFS[exiled.card_def as usize].name,
+                        )))
         }
         StandardTriggerV1::ClassBecomesLevel { level } => matches!(
             events[index],
@@ -5743,7 +5781,11 @@ pub(crate) fn aegis_copy_candidates(
             (card.zone == Zone::Exile
                 && card.v4.exiled_by == Some(source_link)
                 && !card.v4.is_token
-                && CARD_DEFS[card.card_def as usize].has_type(CardType::Creature))
+                && (CARD_DEFS[card.card_def as usize].has_type(CardType::Creature)
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_cube_c9c_v1::is_grist_card(
+                            CARD_DEFS[card.card_def as usize].name,
+                        ))))
             .then_some(EffectObjectBinding {
                 object,
                 expected_zone: Zone::Exile,
@@ -5960,7 +6002,11 @@ fn cauldron_exiled_creature_cards(state: &GameState, player: PlayerId) -> Vec<Ob
                     .v4
                     .exiled_by
                     .is_some_and(|link| cauldrons.contains(&link))
-                && CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+                && (CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_cube_c9c_v1::is_grist_card(
+                            CARD_DEFS[live.card_def as usize].name,
+                        )))
         })
         .collect()
 }
