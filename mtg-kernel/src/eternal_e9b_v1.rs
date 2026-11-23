@@ -1721,6 +1721,7 @@ pub(crate) fn finish_selection(
                 .is_some_and(|def| def.has_type(CardType::Land));
             let permission = crate::engine::PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1(!land),
+                any_mana_type: Default::default(),
                 object: card.object,
                 holder: choice.player,
                 zone_change_generation: live.zone_change_count,

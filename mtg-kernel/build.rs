@@ -4718,6 +4718,8 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
         "Giant's Boulder" | "Prophetic Prism" | "Energy Refractor" => vec![],
         // Dimir Aqueduct's one action identifies the whole {U}{B} bundle.
         "Dimir Aqueduct" => vec!["U"],
+        // Vivi Ornitier's one action opens its {U}/{R} split choice.
+        "Vivi Ornitier" => vec!["U"],
         name if build_eternal_e6b_v1::primary_mana_ability_colors(name).is_some() => {
             build_eternal_e6b_v1::primary_mana_ability_colors(name).unwrap_or_default()
         }

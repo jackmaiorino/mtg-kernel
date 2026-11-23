@@ -3079,13 +3079,18 @@ fn apply_replacements_inner(
             change.to_zone = Zone::Exile;
         }
     }
-    let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-        && state.engine.until_end_of_turn.iter().any(|effect| {
-            matches!(
-                effect,
-                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-            )
-        });
+    let damage_cannot_be_prevented = match &proposed {
+        ProposedEvent::Damage(damage) => {
+            state.engine.until_end_of_turn.iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                )
+            }) || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+        }
+        _ => false,
+    };
     if let ProposedEvent::Damage(damage) = &mut proposed {
         // Only a matching, preventable Hallow packet borrows replacement ordering.
         #[cfg(feature = "eternal-fixtures")]
@@ -3173,13 +3178,18 @@ fn apply_replacements_inner(
         }
     }
     loop {
-        let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-            && state.engine.until_end_of_turn.iter().any(|effect| {
-                matches!(
-                    effect,
-                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-                )
-            });
+        let damage_cannot_be_prevented = match &proposed {
+            ProposedEvent::Damage(damage) => {
+                state.engine.until_end_of_turn.iter().any(|effect| {
+                    matches!(
+                        effect,
+                        crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                    )
+                }) || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+            }
+            _ => false,
+        };
         let hit = state
             .engine
             .active_replacements
@@ -3198,6 +3208,15 @@ fn apply_replacements_inner(
             .cloned();
 
         let Some(repl) = hit else {
+            // Soul-Scar Mage (Vintage Cube wave C7b): noncombat damage from a
+            // controlled source to an opponent's creature becomes -1/-1
+            // counters instead.
+            #[cfg(feature = "eternal-fixtures")]
+            if let ProposedEvent::Damage(damage) = &proposed {
+                if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage) {
+                    return None;
+                }
+            }
             return Some(proposed);
         };
 

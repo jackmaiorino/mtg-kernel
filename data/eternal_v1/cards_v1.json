@@ -37320,7 +37320,7 @@
   },
   {
    "name": "Orcish Lumberjack",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -37350,7 +37350,7 @@
   },
   {
    "name": "Urza, Lord High Artificer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}{U}",
    "mana_value": 4,
    "colors": [
@@ -37382,7 +37382,7 @@
   },
   {
    "name": "Vivi Ornitier",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}{R}",
    "mana_value": 3,
    "colors": [
@@ -37415,7 +37415,7 @@
   },
   {
    "name": "Black Widow, Super Spy",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}",
    "mana_value": 2,
    "colors": [
@@ -37445,7 +37445,7 @@
   },
   {
    "name": "Soul-Scar Mage",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -37473,7 +37473,7 @@
   },
   {
    "name": "Questing Beast",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}{G}",
    "mana_value": 4,
    "colors": [
@@ -37502,7 +37502,7 @@
   },
   {
    "name": "Palace Jailer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}{W}",
    "mana_value": 4,
    "colors": [

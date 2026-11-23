@@ -362,6 +362,14 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_pauper_pf1c_v1::Pf1cStateV1::is_empty"
     )]
     pub pf1c: crate::eternal_pauper_pf1c_v1::Pf1cStateV1,
+    /// Vintage Cube wave C7b's state: Vivi's pending mana combination,
+    /// Questing Beast's combat damage triggers and Palace Jailer's exiles
+    /// (`eternal_cube_c7b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c7b_v1::C7bStateV1::is_empty"
+    )]
+    pub c7b: crate::eternal_cube_c7b_v1::C7bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -2072,6 +2080,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_premodern_p1a_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_sideboard_s1c_v1::statics::blocker_allowed(state, blocker)
         && crate::eternal_sideboard_s1e_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_cube_c7b_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -2431,6 +2440,7 @@ pub(crate) fn delayed_triggers(
     // (Vintage Cube wave C5c).
     triggers.extend(crate::eternal_cube_c5c_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c6c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c7b_v1::delayed_triggers(state, events));
     triggers
 }
 

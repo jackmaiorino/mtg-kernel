@@ -785,6 +785,7 @@ fn runestone_caverns(state: &mut GameState, player: PlayerId) {
         };
         let permission = crate::engine::PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: top,
             holder: player,
             zone_change_generation: exiled.zone_change_count,

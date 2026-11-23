@@ -482,6 +482,9 @@ pub enum StandardTargetV1 {
     TappedCreatureV1,
     /// Zero, one or two distinct lands, controlled by either player.
     UpToTwoLandsV1,
+    /// Questing Beast: "target planeswalker that player controls" (opponent's
+    /// planeswalker in a two-player game). Appended for Vintage Cube wave C7b.
+    OpponentPlaneswalkerV1,
 }
 
 impl StandardTargetV1 {
@@ -1683,6 +1686,9 @@ pub(crate) fn target_matches(
         StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1 => false,
         StandardTargetV1::TappedCreatureV1 => live.tapped && has(CardType::Creature),
         StandardTargetV1::UpToTwoLandsV1 => has(CardType::Land),
+        StandardTargetV1::OpponentPlaneswalkerV1 => {
+            live.controller == controller.opponent() && has(CardType::Planeswalker)
+        }
     }
 }
 
@@ -5378,6 +5384,7 @@ fn exile_top_five_may_cast_one(state: &mut GameState, player: PlayerId) {
             .push(crate::engine::PlayPermission {
                 object: top,
                 without_mana_cost: Default::default(),
+                any_mana_type: Default::default(),
                 holder: player,
                 zone_change_generation: zone_change_count,
                 play_or_cast: crate::engine::PlayOrCast::Cast,

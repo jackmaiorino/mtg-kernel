@@ -345,6 +345,7 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         S::PermanentCardInOwnGraveyardThisTurnV1 => NoPermanentSlot,
         S::TappedCreatureV1 => Single,
         S::UpToTwoLandsV1 => SharedRoster,
+        S::OpponentPlaneswalkerV1 => Single,
     }
 }
 

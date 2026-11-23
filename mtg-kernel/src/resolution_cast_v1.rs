@@ -817,6 +817,7 @@ mod tests {
             play_or_cast: PlayOrCast::Cast,
             expiry: PlayPermissionExpiry::EndOfTurn,
             without_mana_cost: FreeCastV1(true),
+            any_mana_type: Default::default(),
         });
     }
     fn bind(state: &GameState, source: ObjectId) -> EffectObjectBinding {

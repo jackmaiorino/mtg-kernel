@@ -1710,6 +1710,7 @@ fn ragavan(state: &mut GameState, ctx: &ExecCtx) {
         .exile_play_permissions
         .push(crate::engine::PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1(false),
+            any_mana_type: Default::default(),
             object: top,
             holder: ctx.controller,
             zone_change_generation,
@@ -1755,6 +1756,7 @@ fn golos(state: &mut GameState, player: PlayerId) {
             .exile_play_permissions
             .push(crate::engine::PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1(true),
+                any_mana_type: Default::default(),
                 object: card,
                 holder: player,
                 zone_change_generation,
@@ -2747,6 +2749,7 @@ fn maintain_prepared(state: &mut GameState) {
                     // grant for a turn that never comes.
                     permissions.push(crate::engine::PlayPermission {
                         without_mana_cost: crate::engine::FreeCastV1::default(),
+                        any_mana_type: Default::default(),
                         object: copy,
                         holder,
                         zone_change_generation: generation,

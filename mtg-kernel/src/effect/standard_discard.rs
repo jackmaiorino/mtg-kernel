@@ -135,6 +135,7 @@ pub(super) fn random_exile(
                 .push(crate::engine::PlayPermission {
                     object: card,
                     without_mana_cost: Default::default(),
+                    any_mana_type: Default::default(),
                     holder: player,
                     zone_change_generation: live.zone_change_count,
                     play_or_cast,

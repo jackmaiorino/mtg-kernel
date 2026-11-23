@@ -18703,6 +18703,7 @@ fn resume_library_partition_frame(
                                 play_or_cast: crate::engine::PlayOrCast::Cast,
                                 expiry: crate::engine::PlayPermissionExpiry::EndOfTurn,
                                 without_mana_cost: crate::engine::FreeCastV1(true),
+                                any_mana_type: Default::default(),
                             });
                     }
                 }
@@ -22597,6 +22598,7 @@ fn execute_in_departure_scope_v1(
             if warped && exiled.zone == Zone::Exile {
                 let permission = crate::engine::PlayPermission {
                     without_mana_cost: crate::engine::FreeCastV1::default(),
+                    any_mana_type: Default::default(),
                     object: object.object,
                     holder: owner,
                     zone_change_generation: exiled.zone_change_count,
@@ -24740,6 +24742,7 @@ fn execute_in_departure_scope_v1(
                     .exile_play_permissions
                     .push(crate::engine::PlayPermission {
                         without_mana_cost: crate::engine::FreeCastV1::default(),
+                        any_mana_type: Default::default(),
                         object: top,
                         holder: ctx.controller,
                         // Snapshot *after* the exile move above, so this
@@ -25305,8 +25308,14 @@ fn execute_in_departure_scope_v1(
                 return;
             };
             source.controller = ctx.controller;
+            #[cfg(feature = "eternal-fixtures")]
+            let previous = state.monarch;
             state.monarch = Some(ctx.controller);
             state.engine.monarch_source = Some(source);
+            #[cfg(feature = "eternal-fixtures")]
+            if previous != Some(ctx.controller) {
+                crate::eternal_cube_c7b_v1::note_became_monarch(state, ctx.controller);
+            }
         }
         EffectOp::ResolveMonarchTrigger { binding } => {
             if resolve_monarch_trigger(state, *binding).is_err() {

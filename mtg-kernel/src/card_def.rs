@@ -2745,6 +2745,19 @@ pub enum ManaAbilityCostDef {
     /// Tap two untapped controlled permanents of this effective subtype.
     /// Neither payment is the tap symbol, so either creature may be sick.
     TapTwoControlledPermanentsWithSubtypeV1(Subtype),
+    /// "{T}, Sacrifice a Forest" (Orcish Lumberjack): taps the source and
+    /// sacrifices a controlled permanent with this effective subtype.
+    /// Appended for Vintage Cube wave C7b.
+    TapSelfSacrificeControlledWithSubtypeV1(Subtype),
+    /// "Tap an untapped artifact you control" (Urza, Lord High Artificer):
+    /// taps any untapped controlled artifact without the tap symbol, so
+    /// summoning sickness does not restrict either Urza or the artifact.
+    /// Appended for Vintage Cube wave C7b.
+    TapUntappedControlledArtifactV1,
+    /// "{0}: ... Activate only during your turn" (Vivi Ornitier): no tap or
+    /// object cost, payable only while its controller is the active player.
+    /// Appended for Vintage Cube wave C7b.
+    NoneOwnTurnOnlyV1,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -2766,6 +2779,12 @@ pub enum ManaAbilityAmountDef {
     /// Chalice). Appended for the eternal catalog. It reads the source, so
     /// `rich_mana_ability_amount_for_source_v1` evaluates it.
     ChargeCountersOnSourceV1,
+    /// X mana in any combination of the two listed colors, where X is the
+    /// source's effective power clamped at 0 (Vivi Ornitier). The primary
+    /// action color identifies the ability, and when X > 0 the split is
+    /// chosen immediately without using the stack. Appended for Vintage Cube
+    /// wave C7b.
+    SourcePowerAnyCombinationV1(&'static [ManaColor]),
 }
 
 /// A reusable integer derived from current game state. All consumers sample

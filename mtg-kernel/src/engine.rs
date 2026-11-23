@@ -723,6 +723,8 @@ pub enum PlayPermissionExpiry {
 pub struct PlayPermission {
     #[serde(default, skip_serializing_if = "FreeCastV1::is_false")]
     pub without_mana_cost: FreeCastV1,
+    #[serde(default, skip_serializing_if = "AnyManaTypeV1::is_false")]
+    pub any_mana_type: AnyManaTypeV1,
     pub object: ObjectId,
     pub holder: PlayerId,
     pub zone_change_generation: u32,
@@ -743,6 +745,24 @@ impl std::hash::Hash for FreeCastV1 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         if self.0 {
             std::hash::Hash::hash(&"without-mana-cost/v1", h);
+        }
+    }
+}
+
+/// Transparent optional flag for "mana of any type can be spent to cast that
+/// spell"; an absent grant retains historical state hashes and snapshots.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AnyManaTypeV1(pub bool);
+impl AnyManaTypeV1 {
+    pub fn is_false(&self) -> bool {
+        !self.0
+    }
+}
+impl std::hash::Hash for AnyManaTypeV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        if self.0 {
+            std::hash::Hash::hash(&"any-mana-type/v1", h);
         }
     }
 }
@@ -11879,6 +11899,54 @@ pub(crate) fn active_permission_for(
     })
 }
 
+/// Whether casting `source` from exile (or paying for `source` already moved
+/// from exile to the stack through its exile permission) carries an
+/// "any type of mana can be spent to cast that spell" grant.
+pub(crate) fn permission_allows_any_mana_type_v1(
+    state: &GameState,
+    source: ObjectId,
+    player: PlayerId,
+) -> bool {
+    let Some(object) = state.objects.try_get(source) else {
+        return false;
+    };
+    match object.zone {
+        Zone::Exile => active_permission_for(player, source, state)
+            .is_some_and(|perm| perm.play_or_cast == PlayOrCast::Cast && perm.any_mana_type.0),
+        Zone::Stack if object.controller == player => {
+            let Some(origin) = object.v4.spell_cast_origin else {
+                return false;
+            };
+            if origin.origin_zone != Zone::Exile
+                || origin.origin_zone_change_count.checked_add(1) != Some(object.zone_change_count)
+            {
+                return false;
+            }
+            let (SpellCastRouteV4::ExilePermission {
+                holder,
+                permission_zone_change_count,
+            }
+            | SpellCastRouteV4::ExileFreePermission {
+                holder,
+                permission_zone_change_count,
+            }) = origin.route
+            else {
+                return false;
+            };
+            holder == player
+                && permission_zone_change_count == origin.origin_zone_change_count
+                && state.engine.exile_play_permissions.iter().any(|perm| {
+                    perm.object == source
+                        && perm.holder == player
+                        && perm.zone_change_generation == permission_zone_change_count
+                        && perm.play_or_cast == PlayOrCast::Cast
+                        && perm.any_mana_type.0
+                })
+        }
+        _ => false,
+    }
+}
+
 /// Sorcery-speed timing (508.1a's "any time you could cast a sorcery"),
 /// shared by an ordinary sorcery-speed cast (`is_castable_now`), a Plotted
 /// card cast from exile, and Plotting itself (`plot_action_candidates`) --
@@ -12003,7 +12071,21 @@ fn rich_mana_ability_amount(
         ManaAbilityAmountDef::ChargeCountersOnSourceV1 => {
             Err("a charge-counter mana amount needs its source".into())
         }
+        ManaAbilityAmountDef::SourcePowerAnyCombinationV1(_) => {
+            Err("source-power combination mana must use its choice path".into())
+        }
     }
+}
+
+fn fixed_colors_fit_in_pool(mut pool: [u8; 6], colors: &[ManaColor]) -> bool {
+    for &color in colors {
+        let slot = &mut pool[color.pool_index()];
+        let Some(next) = slot.checked_add(1) else {
+            return false;
+        };
+        *slot = next;
+    }
+    true
 }
 
 /// `rich_mana_ability_amount` for an ability of `source`, which also reads the
@@ -12086,6 +12168,15 @@ fn rich_mana_ability_is_payable(
                 .count()
                 == 2
         }
+        ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(subtype) => {
+            !object.tapped
+                && !creature_summoning_sick(state, source, def)
+                && has_sacrificeable_mana_cost_subtype(player, subtype, state)
+        }
+        ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
+            has_untapped_controlled_artifact(player, state)
+        }
+        ManaAbilityCostDef::NoneOwnTurnOnlyV1 => state.active_player == player,
     }
 }
 
@@ -12168,6 +12259,57 @@ pub(crate) fn granted_tap_mana_choices(state: &GameState, source: ObjectId) -> V
         return vec![ManaColor::B];
     }
     colors
+}
+
+fn has_sacrificeable_mana_cost_subtype(
+    player: PlayerId,
+    subtype: card_def::Subtype,
+    state: &GameState,
+) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .any(|candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && has_effective_subtype(state, candidate, subtype)
+        })
+}
+
+fn has_untapped_controlled_artifact(player: PlayerId, state: &GameState) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .any(|candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && object_has_type(state, candidate, CardType::Artifact)
+        })
+}
+
+/// The untapped controlled artifacts `player` may tap for "Tap an untapped
+/// artifact you control" (Urza, Lord High Artificer, Vintage Cube wave C7b).
+fn untapped_controlled_artifacts(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .chain(state.players[player.opponent().index()].battlefield.iter())
+        .copied()
+        .filter(|&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && object_has_type(state, candidate, CardType::Artifact)
+        })
+        .collect()
 }
 
 /// The permanents `player` may sacrifice for "Sacrifice a Goblin" (Skirk
@@ -12416,9 +12558,21 @@ fn available_mana_ability_choices_unreplaced_into(
                     if rich.cost != ManaAbilityCostDef::TapSelf
                         || rich.controller_damage != 0
                         || rich.max_activations_per_turn.is_some()
-                        || !colors.iter().all(|color| {
-                            state.players[player.index()].mana_pool[color.pool_index()] < u8::MAX
-                        })
+                        || !fixed_colors_fit_in_pool(
+                            state.players[player.index()].mana_pool,
+                            colors,
+                        )
+                    {
+                        continue;
+                    }
+                } else if let ManaAbilityAmountDef::SourcePowerAnyCombinationV1(colors) =
+                    rich.amount
+                {
+                    if !cfg!(feature = "eternal-fixtures")
+                        || colors.len() != 2
+                        || !crate::eternal_cube_c7b_v1::combo_mana_available(
+                            state, player, source, colors[0], colors[1],
+                        )
                     {
                         continue;
                     }
@@ -12479,6 +12633,14 @@ fn available_mana_ability_choices_unreplaced_into(
                 state,
             )
         {
+            if let ManaAbilityAmountDef::FixedColorsV1(colors) = additional.ability.amount {
+                if additional.mana_cost.generic == 0
+                    && additional.mana_cost.pips.is_empty()
+                    && !fixed_colors_fit_in_pool(state.players[player.index()].mana_pool, colors)
+                {
+                    continue;
+                }
+            }
             for &color in additional.colors {
                 if out.contains(color) {
                     *out = ManaColorSetV1::new();
@@ -12590,10 +12752,18 @@ pub(crate) fn mana_ability_cost_targets(
     let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return Vec::new();
     };
-    if let Some(ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype)) =
-        definition.mana_ability_def.map(|ability| ability.cost)
+    if let Some(
+        ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(subtype)
+        | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(subtype),
+    ) = definition.mana_ability_def.map(|ability| ability.cost)
     {
         return sacrificeable_mana_cost_subtype(player, subtype, state);
+    }
+    if matches!(
+        definition.mana_ability_def.map(|ability| ability.cost),
+        Some(ManaAbilityCostDef::TapUntappedControlledArtifactV1)
+    ) {
+        return untapped_controlled_artifacts(player, state);
     }
     if !matches!(
         definition.mana_ability_def.map(|ability| ability.cost),
@@ -12737,9 +12907,10 @@ fn damped_rich_mana_ability(
                 crate::bloom_tender_mana_v1::colors(state, player).len() >= 2
             }
             ManaAbilityAmountDef::FixedColorsV1(colors) => colors.len() >= 2,
-            // Damping Sphere's lands only; a charge-counter source is an
-            // artifact.
-            ManaAbilityAmountDef::ChargeCountersOnSourceV1 => false,
+            // Damping Sphere's lands only; a charge-counter or source-power
+            // combination source is not a land.
+            ManaAbilityAmountDef::ChargeCountersOnSourceV1
+            | ManaAbilityAmountDef::SourcePowerAnyCombinationV1(_) => false,
             amount => rich_mana_ability_amount(amount, player, state).is_ok_and(|n| n >= 2),
         }
 }
@@ -12754,6 +12925,7 @@ fn mana_ability_cost_taps_source(cost: ManaAbilityCostDef) -> bool {
             | ManaAbilityCostDef::TapAndSacrificeSelf
             | ManaAbilityCostDef::TapSelfPayLife(_)
             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
+            | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
     )
 }
 
@@ -13052,9 +13224,11 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
             }
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
-            | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
+            | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_)
+            | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
+            | ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
                 let target = cost_target.ok_or_else(|| {
-                    format!("{source} requires another untapped controlled creature as a cost")
+                    format!("{source} requires an additional mana-ability cost target")
                 })?;
                 if !legal_cost_targets.contains(&target) {
                     return Err(format!("{target} is not a legal mana-ability cost target"));
@@ -13096,12 +13270,18 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         } else if let ManaAbilityAmountDef::FixedColorsV1(colors) = rich.amount {
             let tap_and_sacrifice = cfg!(feature = "eternal-fixtures")
                 && rich.cost == ManaAbilityCostDef::TapAndSacrificeSelf;
+            let tap_and_sacrifice_subtype = cfg!(feature = "eternal-fixtures")
+                && matches!(
+                    rich.cost,
+                    ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
+                );
             // A paid filter ability ("{1}, {T}: Add {W}{U}.", Skycloud
             // Expanse) adds its whole bundle after `mana_plan` pays.
             let paid_tap_bundle = cfg!(feature = "eternal-fixtures")
                 && additional.is_some()
                 && rich.cost == ManaAbilityCostDef::TapSelf;
             if (!tap_and_sacrifice
+                && !tap_and_sacrifice_subtype
                 && !paid_tap_bundle
                 && (additional.is_some() || rich.cost != ManaAbilityCostDef::TapSelf))
                 || rich.controller_damage != 0
@@ -13109,17 +13289,28 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
             {
                 return Err("fixed multi-color mana requires its pure primary tap recipe".into());
             }
-            if !colors
-                .iter()
-                .all(|color| state.players[player.index()].mana_pool[color.pool_index()] < u8::MAX)
-            {
+            if !fixed_colors_fit_in_pool(state.players[player.index()].mana_pool, colors) {
                 return Err("mana bundle exceeds the pool capacity".into());
             }
             Some(colors.to_vec())
         } else {
             None
         };
-        let amount = if bundle.is_some() {
+        let combo_choice =
+            if let ManaAbilityAmountDef::SourcePowerAnyCombinationV1(colors) = rich.amount {
+                if !cfg!(feature = "eternal-fixtures") || colors.len() != 2 {
+                    return Err("source-power combination mana requires two colors".into());
+                }
+                if !crate::eternal_cube_c7b_v1::combo_mana_available(
+                    state, player, source, colors[0], colors[1],
+                ) {
+                    return Err("mana combination exceeds the pool capacity".into());
+                }
+                Some((colors[0], colors[1]))
+            } else {
+                None
+            };
+        let amount = if bundle.is_some() || combo_choice.is_some() {
             0
         } else {
             rich_mana_ability_amount_for_source_v1(rich.amount, player, source, state)?
@@ -13217,12 +13408,25 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
             ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_) => {
                 commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
             }
+            ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_) => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+                commit_sacrifice(state, &[cost_target.expect("validated cost target")]);
+            }
+            ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::tap(cost_target.expect("validated cost target")),
+                );
+            }
+            ManaAbilityCostDef::NoneOwnTurnOnlyV1 => {}
         }
         // Damping Sphere: a land tapped for two or more mana produces one {C}
         // instead; its costs and other effects stay (Legacy wave S1g).
         let damps_amount =
             |count: usize| damped && count >= 2 && mana_ability_cost_taps_source(rich.cost);
-        if let Some(colors) = bundle {
+        if let Some((first, second)) = combo_choice {
+            crate::eternal_cube_c7b_v1::begin_combo_mana(state, player, source, first, second);
+        } else if let Some(colors) = bundle {
             let colors = if damps_amount(colors.len()) {
                 vec![ManaColor::C]
             } else {
@@ -13293,11 +13497,14 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c2c_v1::note_mana_ability_used(state, source);
     #[cfg(feature = "eternal-fixtures")]
-    if cost_targets.len() != 2 {
+    if cost_targets.len() != 2 && rich.is_none_or(|r| mana_ability_cost_taps_source(r.cost)) {
         crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
     }
     #[cfg(feature = "eternal-fixtures")]
-    if cost_targets.len() != 2 && state.objects.get(source).tapped {
+    if cost_targets.len() != 2
+        && rich.is_none_or(|r| mana_ability_cost_taps_source(r.cost))
+        && state.objects.get(source).tapped
+    {
         crate::eternal_pauper_e6b_v1::after_tapped_for_mana(state, source);
     }
     if let Some(text) = donated_wall {
@@ -26272,8 +26479,14 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
                 _ => None,
             });
         if let Some((source, player)) = transfer {
+            #[cfg(feature = "eternal-fixtures")]
+            let previous = state.monarch;
             state.monarch = Some(player);
             state.engine.monarch_source = Some(AbilitySourceContractV4::capture(state, source));
+            #[cfg(feature = "eternal-fixtures")]
+            if previous != Some(player) {
+                crate::eternal_cube_c7b_v1::note_became_monarch(state, player);
+            }
         }
     }
     // Psychic Frog's and Forth Eorlingas!'s combat damage triggers.
@@ -26284,6 +26497,8 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
         crate::eternal_vintage_e7b_v1::note_combat_damage(state, &events);
         // Umezawa's Jitte's and Kaldra Compleat's combat damage triggers.
         crate::eternal_cube_c4c_v1::note_combat_damage(state, &events);
+        // Questing Beast's combat damage to opponent trigger (Vintage Cube wave C7b).
+        crate::eternal_cube_c7b_v1::note_combat_damage(state, &events);
     }
     collect_and_queue_triggers(state);
 }
@@ -39290,6 +39505,7 @@ mod tests {
         event::propose_and_commit(&mut success, ProposedEvent::zone_change(bolt, Zone::Exile));
         success.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: success.objects.get(bolt).zone_change_count,
@@ -39350,6 +39566,7 @@ mod tests {
         event::propose_and_commit(&mut aborted, ProposedEvent::zone_change(bolt, Zone::Exile));
         aborted.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: aborted.objects.get(bolt).zone_change_count,
@@ -39945,6 +40162,7 @@ mod tests {
         );
         resolved.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: robbery,
             holder: PlayerId::P0,
             zone_change_generation: resolved.objects.get(robbery).zone_change_count,
@@ -40040,6 +40258,7 @@ mod tests {
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(clue, Zone::Exile));
         state.engine.exile_play_permissions.push(PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: clue,
             holder: PlayerId::P0,
             zone_change_generation: state.objects.get(clue).zone_change_count,

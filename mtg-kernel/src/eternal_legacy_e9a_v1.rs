@@ -1393,6 +1393,7 @@ fn caves_exile_top(ctx: &ExecCtx, state: &mut GameState) {
             without_mana_cost: crate::engine::FreeCastV1(
                 completed && play_or_cast == crate::engine::PlayOrCast::Cast,
             ),
+            any_mana_type: Default::default(),
             object: top,
             holder: player,
             zone_change_generation,
@@ -1775,6 +1776,7 @@ pub(crate) fn finish_selection(
                 .exile_play_permissions
                 .push(crate::engine::PlayPermission {
                     without_mana_cost: crate::engine::FreeCastV1::default(),
+                    any_mana_type: Default::default(),
                     object: card.object,
                     holder,
                     zone_change_generation: card.expected_zone_change_count,

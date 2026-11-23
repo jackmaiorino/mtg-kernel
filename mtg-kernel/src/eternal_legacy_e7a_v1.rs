@@ -1729,6 +1729,7 @@ fn galvanic_relay_effect(ctx: &ExecCtx, state: &mut GameState) {
     let land = CARD_DEFS[live.card_def as usize].is_land;
     let permission = crate::engine::PlayPermission {
         without_mana_cost: crate::engine::FreeCastV1::default(),
+        any_mana_type: Default::default(),
         object: top,
         holder: player,
         zone_change_generation: live.zone_change_count,
