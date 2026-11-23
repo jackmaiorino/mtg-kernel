@@ -27088,15 +27088,7 @@ pub(crate) fn retarget_spell_v1(
     if !spell_retarget_candidates_v1(state, stack_item).contains(&target) {
         return Err(format!("{target:?} is not a legal new target"));
     }
-    let contract = StackTargetContractV4::capture(state, target);
-    let item = state
-        .stack
-        .iter_mut()
-        .find(|item| item.v4.stack_item_id == stack_item)
-        .ok_or("the retargeted spell left the stack")?;
-    item.targets = vec![target];
-    item.v4.target_contracts = vec![contract];
-    log_final_targeting_events(state, stack_item)
+    retarget_spell_targets_v1(state, stack_item, &[target])
 }
 
 /// The spell copy's current targets.
