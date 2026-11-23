@@ -662,15 +662,40 @@ pub(super) fn input_gradient_rows_v1(
     d_input: &mut [f32],
 ) {
     #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: AVX2 support was detected at run time just above.
-        unsafe {
-            input_gradient_rows_avx2_v1(
-                weight, input_dim, output_dim, d_output, first_read, d_input,
-            )
-        };
-        return;
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            // SAFETY: AVX-512F support was detected at run time just above.
+            // Without +fma, each multiply rounds before its add, matching scalar/AVX2 bit for bit.
+            unsafe {
+                input_gradient_rows_avx512_v1(
+                    weight, input_dim, output_dim, d_output, first_read, d_input,
+                )
+            };
+            return;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 support was detected at run time just above.
+            unsafe {
+                input_gradient_rows_avx2_v1(
+                    weight, input_dim, output_dim, d_output, first_read, d_input,
+                )
+            };
+            return;
+        }
     }
+    input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, first_read, d_input);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn input_gradient_rows_avx512_v1(
+    weight: &[f32],
+    input_dim: usize,
+    output_dim: usize,
+    d_output: &[f32],
+    first_read: usize,
+    d_input: &mut [f32],
+) {
     input_gradient_rows_body_v1(weight, input_dim, output_dim, d_output, first_read, d_input);
 }
 
@@ -775,11 +800,27 @@ fn replay_block_v1(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
 
 fn replay_block_dims_v1<D: NetDimsV1>(block: GradientBlockV1<'_>, terms: &[SubstepTermsV1<'_>]) {
     #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: AVX2 support was detected at run time just above.
-        unsafe { replay_block_avx2_dims_v1::<D>(block, terms) };
-        return;
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            // SAFETY: AVX-512F support was detected at run time just above.
+            unsafe { replay_block_avx512_dims_v1::<D>(block, terms) };
+            return;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 support was detected at run time just above.
+            unsafe { replay_block_avx2_dims_v1::<D>(block, terms) };
+            return;
+        }
     }
+    replay_block_body_dims_v1::<D>(block, terms);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn replay_block_avx512_dims_v1<D: NetDimsV1>(
+    block: GradientBlockV1<'_>,
+    terms: &[SubstepTermsV1<'_>],
+) {
     replay_block_body_dims_v1::<D>(block, terms);
 }
 
@@ -981,20 +1022,49 @@ pub(super) fn add_input_major_layer_v1(
     pass_zero_inputs: bool,
 ) {
     #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: AVX2 support was detected at run time just above.
-        unsafe {
-            add_input_major_layer_avx2_v1(
-                hidden,
-                values,
-                input,
-                input_dim,
-                d_output,
-                pass_zero_inputs,
-            )
-        };
-        return;
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            // SAFETY: AVX-512F support was detected at run time just above.
+            unsafe {
+                add_input_major_layer_avx512_v1(
+                    hidden,
+                    values,
+                    input,
+                    input_dim,
+                    d_output,
+                    pass_zero_inputs,
+                )
+            };
+            return;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 support was detected at run time just above.
+            unsafe {
+                add_input_major_layer_avx2_v1(
+                    hidden,
+                    values,
+                    input,
+                    input_dim,
+                    d_output,
+                    pass_zero_inputs,
+                )
+            };
+            return;
+        }
     }
+    add_input_major_layer_body_v1(hidden, values, input, input_dim, d_output, pass_zero_inputs);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn add_input_major_layer_avx512_v1(
+    hidden: usize,
+    values: &mut [f32],
+    input: &[f32],
+    input_dim: usize,
+    d_output: &[f32],
+    pass_zero_inputs: bool,
+) {
     add_input_major_layer_body_v1(hidden, values, input, input_dim, d_output, pass_zero_inputs);
 }
 

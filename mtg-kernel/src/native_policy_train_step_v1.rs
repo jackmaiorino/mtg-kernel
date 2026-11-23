@@ -37,6 +37,7 @@ use crate::native_policy_value_net_v1::v8_inclusion_v1::{
 };
 use crate::native_policy_value_net_v1::{
     accumulate_input_major_row_v1,
+    accumulate_input_major_rows_v1,
     all_finite_and_not_negative_v1,
     all_finite_v1,
     no_negative_zero_or_nan_v1,
@@ -6394,30 +6395,49 @@ fn linear_forward_into_arena_guarded_v1(
         let (input_arena, output_arena) = arena.split_at_mut(output.start);
         let input = input.values_v1(input_arena);
         let output_values = &mut output_arena[..output.len];
-        for row in 0..rows {
-            let input_row = &input[row * input_dim..(row + 1) * input_dim];
-            let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
-            match (input_major, guard) {
-                (Some((weight_t, finite)), None) => {
-                    output_row.copy_from_slice(bias);
-                    accumulate_input_major_row_v1(weight_t, finite, input_row, output_row);
-                }
-                (Some((weight_t, finite)), Some(column)) => {
-                    output_row.copy_from_slice(bias);
-                    let (before, rest) = weight_t.split_at(column * output_dim);
-                    let (guarded, after) = rest.split_at(output_dim);
-                    accumulate_input_major_row_v1(before, finite, &input_row[..column], output_row);
-                    add_nonzero_products_v1(output_row, input_row[column], guarded);
-                    accumulate_input_major_row_v1(
-                        after,
-                        finite,
-                        &input_row[column + 1..],
-                        output_row,
-                    );
-                }
-                (None, None) => linear_forward_ordered_v1(weight, bias, input_row, output_row),
-                (None, Some(column)) => {
-                    linear_forward_guarded_v1(weight, bias, input_row, column, output_row)
+        match (input_major, guard) {
+            (Some((weight_t, finite)), None) => {
+                accumulate_input_major_rows_v1(
+                    weight_t,
+                    finite,
+                    input_dim,
+                    output_dim,
+                    bias,
+                    input,
+                    output_values,
+                );
+            }
+            _ => {
+                for row in 0..rows {
+                    let input_row = &input[row * input_dim..(row + 1) * input_dim];
+                    let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
+                    match (input_major, guard) {
+                        (Some((weight_t, finite)), Some(column)) => {
+                            output_row.copy_from_slice(bias);
+                            let (before, rest) = weight_t.split_at(column * output_dim);
+                            let (guarded, after) = rest.split_at(output_dim);
+                            accumulate_input_major_row_v1(
+                                before,
+                                finite,
+                                &input_row[..column],
+                                output_row,
+                            );
+                            add_nonzero_products_v1(output_row, input_row[column], guarded);
+                            accumulate_input_major_row_v1(
+                                after,
+                                finite,
+                                &input_row[column + 1..],
+                                output_row,
+                            );
+                        }
+                        (None, None) => {
+                            linear_forward_ordered_v1(weight, bias, input_row, output_row)
+                        }
+                        (None, Some(column)) => {
+                            linear_forward_guarded_v1(weight, bias, input_row, column, output_row)
+                        }
+                        (Some(_), None) => unreachable!(),
+                    }
                 }
             }
         }
