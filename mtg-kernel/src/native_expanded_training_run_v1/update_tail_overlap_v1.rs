@@ -35,6 +35,9 @@
 //!   is joined before the error leaves the driver; if the failure came before
 //!   `update.json` was durable, it has written nothing. Its result is dropped
 //!   and no receipt names it.
+//! - Output. The collection's stderr lines and panic messages are held in
+//!   memory (`held_output_v1`) until its gate opens, then written in their
+//!   order; when it is abandoned they are dropped, unwritten.
 //! - Stops. The handoff decides whether a next iteration runs by the rule
 //!   the loop applies after the commit (the invocation limit and the chain
 //!   ledger's stop value), from the ledger reading the receipt then records
@@ -49,6 +52,7 @@ use super::{
     err, publish, ChainLedgerOptionsV1, ChainLedgerReadingV1, NativeExpandedTrainingRunV1,
 };
 use crate::expanded_deck_training_v1::{execute_collection_gated_v1, ExpandedTrainingCommandV1};
+use crate::held_output_v1::{self, HeldOutputV1};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
@@ -186,12 +190,14 @@ enum PrefetchedV1 {
 }
 
 /// The next iteration's collection, running on its own thread from the
-/// finished update's handoff. Dropping it abandons the collection and joins
-/// its thread, so on every way out of the driver (an error, a panic) no
-/// collection outlives the run or writes after it.
+/// finished update's handoff. Dropping it abandons the collection, drops its
+/// held output and joins its thread, so on every way out of the driver (an
+/// error, a panic) no collection outlives the run, writes or prints after it.
 pub(super) struct PrefetchV1 {
     index: usize,
     signal: Arc<TailSignalV1>,
+    /// The collection's stderr lines and panic messages until its gate opens.
+    held: Arc<HeldOutputV1>,
     thread: Option<JoinHandle<Result<Option<PrefetchedV1>, String>>>,
 }
 
@@ -209,14 +215,20 @@ impl PrefetchV1 {
             changed: Condvar::new(),
         });
         let thread_signal = Arc::clone(&signal);
+        let held = HeldOutputV1::new_v1();
+        let thread_held = Arc::clone(&held);
         let thread = std::thread::Builder::new()
             .name(format!("expanded-prefetch-{index}"))
             .stack_size(PREFETCH_STACK_BYTES_V1)
-            .spawn(move || collect_v1(&thread_signal, directory, command))
+            .spawn(move || {
+                let _held = held_output_v1::install_v1(&thread_held);
+                collect_v1(&thread_signal, directory, command)
+            })
             .ok()?;
         Some(Self {
             index,
             signal,
+            held,
             thread: Some(thread),
         })
     }
@@ -226,9 +238,10 @@ impl PrefetchV1 {
         self.index
     }
 
-    /// The finished update's `update.json` is durable: the collection may
-    /// write.
+    /// The finished update's `update.json` is durable: the collection's held
+    /// output is written, in its order, and then the collection may write.
     pub(super) fn durable_v1(&self) {
+        self.held.release_v1();
         self.signal.set_v1(TailV1::Durable);
     }
 
@@ -260,6 +273,7 @@ impl PrefetchV1 {
 impl Drop for PrefetchV1 {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
+            self.held.discard_v1();
             self.signal.set_v1(TailV1::Abandoned);
             let _ = thread.join();
         }

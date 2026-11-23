@@ -172,7 +172,8 @@ fn capture_action_error_v3(
         file.sync_all().map_err(|error| error.to_string())
     })();
     if let Err(error) = result {
-        eprintln!("V3 action error capture failed: {error}");
+        // Held while a speculative collection runs (`held_output_v1`).
+        crate::held_output_v1::line_v1(format!("V3 action error capture failed: {error}"));
     }
 }
 

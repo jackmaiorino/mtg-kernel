@@ -23740,7 +23740,8 @@ fn execute_with_native_row_v1(
                     break; // library ran dry partway through -- not a draw, no loss condition
                 };
                 if std::env::var("REPLAY_DEBUG_IMPULSE").is_ok() {
-                    eprintln!(
+                    // Held while a speculative collection runs (`held_output_v1`).
+                    crate::held_output_v1::line_v1(format!(
                         "IMPULSE_DRAW controller={:?} source={:?} exiling id={} name={:?} turn={} round_step={:?} lib_remaining_before={} hand_size={} priority_round={}",
                         ctx.controller,
                         state.objects.get(ctx.source).name,
@@ -23751,7 +23752,7 @@ fn execute_with_native_row_v1(
                         state.players[ctx.controller.index()].library.len(),
                         state.players[ctx.controller.index()].hand.len(),
                         state.engine.priority_round,
-                    );
+                    ));
                 }
                 event::propose_and_commit(
                     state,

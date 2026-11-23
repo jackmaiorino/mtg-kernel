@@ -36,6 +36,8 @@ struct CollectorV1 {
 /// alive on return. A failed job or panic cancels new dispatch; already active
 /// jobs join before the caller can attempt an update or publish completion.
 /// A worker that finds no job left calls `on_idle` once before it stops.
+/// Every worker runs with the calling thread's held output, if it has one
+/// (`held_output_v1`), so its stderr lines and panic messages are held too.
 pub(super) fn ordered_parallel_jobs_v1<W, T, F, I>(
     contexts: Vec<W>,
     job_count: usize,
@@ -54,6 +56,7 @@ where
     )?;
     let next = AtomicUsize::new(0);
     let cancelled = AtomicBool::new(false);
+    let held = crate::held_output_v1::current_v1();
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(contexts.len());
         let mut failure = None;
@@ -62,10 +65,12 @@ where
             let cancelled = &cancelled;
             let work = &work;
             let on_idle = &on_idle;
+            let held = &held;
             let spawned = thread::Builder::new()
                 .name(format!("expanded-collector-{worker}"))
                 .stack_size(8 * 1024 * 1024)
                 .spawn_scoped(scope, move || {
+                    let _held = held.as_ref().map(crate::held_output_v1::install_v1);
                     // Policy forwards on this thread may use the exact GPU
                     // service when the run installed one (same bits).
                     #[cfg(feature = "gpu-exact-v1")]
@@ -239,7 +244,8 @@ pub(super) fn collect_parallel_v1(
 /// ([`OutputDirectoryV1`]), and writes nothing it has not admitted; the
 /// games, the published bytes and the receipt are the same. A refused write
 /// ends the collection with the gate's own error, whichever worker met it,
-/// and nothing is written after it.
+/// and nothing is written after it. Its stderr lines go through the calling
+/// thread's held output, if it has one (`held_output_v1`).
 #[allow(
     clippy::too_many_arguments,
     reason = "the collection command's fields, plus EX1's hook and the write gate"
@@ -348,12 +354,14 @@ pub(super) fn collect_parallel_gated_v1(
         episodes.len(),
         |collector, index| {
             let episode = &episodes[index];
-            eprintln!(
+            // Held, with every other stderr line of this thread, while the
+            // collection runs ahead of its commit (`held_output_v1`).
+            crate::held_output_v1::line_v1(format!(
                 "collect parallel episode {}/{} {}",
                 index + 1,
                 episodes.len(),
                 episode.id
-            );
+            ));
             // Current-self opponents need a private policy, but not another
             // disk parse and validation of the same learner checkpoint.
             if episode.opponent.as_ref() == Some(&source)

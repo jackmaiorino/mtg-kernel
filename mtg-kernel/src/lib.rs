@@ -265,6 +265,9 @@ pub mod canonical_json_v1;
 // CLI behavior, or latest-pointer semantics.
 pub mod durable_publication_v1;
 pub mod environment_randomization_v2;
+// Stderr lines (and panic messages) of work that runs ahead of the commit it
+// depends on, held in memory until that commit or dropped without it.
+pub(crate) mod held_output_v1;
 // Schema-neutral move-only publication building blocks. Immutable files use a
 // no-replace move; replaceable pointer files use a distinct receipt type.
 pub mod durable_move_publication_v2;
