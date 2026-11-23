@@ -1133,6 +1133,20 @@ impl PolicySurfaceV5 {
         &self.inner
     }
 
+    /// Whether the pending decision is a priority window `HarnessV2` would
+    /// have passed for its seat, and why (see
+    /// `HarnessSurfaceV2::set_engine_window_seats_v1`). A combat scan substep
+    /// is never one. Nothing on this line reads it yet (the human bridge
+    /// reads it on its own line; the priority-window tests of the next
+    /// change do), so the allow is unconditional.
+    #[allow(dead_code)]
+    pub(crate) fn engine_window_v1(&self) -> Option<crate::surface::SuppressionReason> {
+        if self.scan.is_some() || self.hunter_order_v45.is_some() {
+            return None;
+        }
+        self.inner.engine_window_v1()
+    }
+
     pub fn harness_public_context(&self) -> crate::surface_v2::HarnessSurfacePublicContextV2 {
         self.inner.public_context()
     }
@@ -1143,10 +1157,14 @@ impl PolicySurfaceV5 {
 
     #[cfg(test)]
     pub(crate) fn reset_harness_context_for_test(&mut self) {
+        let seats = self.inner.engine_window_seats_v1();
         self.inner = HarnessSurfaceV2::new_with_priority_mode_v1(
             self.inner.priority_mode_v1(),
             self.inner.suppression_audit_mode(),
         );
+        self.inner
+            .set_engine_window_seats_v1(seats)
+            .expect("the rebuilt surface keeps its priority mode");
     }
 
     pub fn discard_unanswered_scan(&mut self) -> Result<(), String> {
