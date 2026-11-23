@@ -96,6 +96,7 @@ QUALITY_COMMANDS = [
 # Modules the train step and training math reference that the filters leave out, each with its reason. A test
 # fails on any referenced module that is neither filtered nor listed here, so a new backend is examined first.
 TRAINING_REFERENCE_EXCLUSIONS = {
+    "card_def": "catalog identity pin for the Arm E card-semantics table; card definitions run the full set",
     "flat_policy_v2": "action-surface contract: decision views and buffers the tests build, not update arithmetic",
     "flat_policy_v3": "action-surface contract: decision encoder and views, not update arithmetic",
     "flat_policy_v4": "action-surface contract: decision encoder and views, not update arithmetic",
