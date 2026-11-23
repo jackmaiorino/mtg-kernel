@@ -996,9 +996,9 @@ pub(crate) fn before_departure(state: &mut GameState, object: ObjectId, to_zone:
     if live.zone != Zone::Battlefield || live.v4.is_token {
         return;
     }
-    if !CARD_DEFS
+    if CARD_DEFS
         .get(usize::from(live.card_def))
-        .is_some_and(|def| def.name == VAULTBORN_TYRANT)
+        .is_none_or(|def| def.name != VAULTBORN_TYRANT)
     {
         return;
     }
@@ -1240,12 +1240,15 @@ fn create_token_copy(
     state: &mut GameState,
     source: ObjectId,
     controller: PlayerId,
-    card_def: u16,
-    face_index: u8,
-    mods: C8bCopyModsV1,
-    copied_end_step_sacrifices_v1: u32,
-    copied_nightmare_v1: bool,
+    values: CapturedCopyValues,
 ) -> bool {
+    let CapturedCopyValues {
+        card_def,
+        face_index,
+        mods,
+        copied_end_step_sacrifices_v1,
+        copied_nightmare_v1,
+    } = values;
     let mut proposal = ProposedEvent::create_token(card_def, controller);
     if let ProposedEvent::CreateToken(token) = &mut proposal {
         token.entry_face_index = (face_index != 0).then_some(face_index);
@@ -1397,11 +1400,13 @@ fn resolve_vaultborn_death_copy(ctx: &ExecCtx, state: &mut GameState) {
         state,
         ctx.source,
         ctx.controller,
-        card_def,
-        face_index,
-        mods,
-        copied_sacrifices,
-        copied_nightmare,
+        CapturedCopyValues {
+            card_def,
+            face_index,
+            mods,
+            copied_end_step_sacrifices_v1: copied_sacrifices,
+            copied_nightmare_v1: copied_nightmare,
+        },
     );
 }
 
@@ -1431,16 +1436,7 @@ pub(crate) fn execute(op: &C8bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let paid = crate::engine::pay_effect_mana(ctx.controller, &[ManaColor::G], 1, state);
             let created = if paid && link_live_in(state, *host, Zone::Battlefield) {
                 if let Some(values) = capture_battlefield_copiable_values(state, host.object) {
-                    create_token_copy(
-                        state,
-                        ctx.source,
-                        ctx.controller,
-                        values.card_def,
-                        values.face_index,
-                        values.mods,
-                        values.copied_end_step_sacrifices_v1,
-                        values.copied_nightmare_v1,
-                    )
+                    create_token_copy(state, ctx.source, ctx.controller, values)
                 } else {
                     false
                 }
