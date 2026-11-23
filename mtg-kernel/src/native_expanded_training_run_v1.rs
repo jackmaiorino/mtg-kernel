@@ -446,6 +446,20 @@ pub struct NativeExpandedTrainingRunV1 {
     /// external collector (`--collect-external`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_tail_overlap_v1: bool,
+    /// Config-driven; absent means false, which is never serialized, so every
+    /// existing config keeps its wire bytes and its run identity. `true`
+    /// (which requires `update_tail_overlap_v1`) keeps the learner's template
+    /// from one collection to the next, so each collection receives its new
+    /// learner by the loader's exact restore of the new checkpoint's bytes and
+    /// checks its fixed opponents beside that restore; and after each
+    /// collection it reads and prepares the update's inputs while the
+    /// collection is validated and `update-input.json` and
+    /// `update-command.json` are published, the update's learner, writes and
+    /// later lines waiting until both are durable (`collection_tail_v1`).
+    /// Every state and every published byte is the same, and so are the order
+    /// and durability of every publication, the errors and the stops.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collection_tail_v1: bool,
     /// Config-driven; default `TerminalReinforceValueV3` keeps every
     /// existing config, its wire bytes, and its run identity byte-identical.
     /// See `ExpandedLossSelectionV1`.
@@ -688,6 +702,12 @@ impl NativeExpandedTrainingRunV1 {
                     && self.ex1.is_none()
                     && self.initial_source.s_learner.is_none()),
             update_tail_overlap_v1::VALIDATION_REFUSAL_V1,
+        )?;
+        // The collection tail builds on the overlap's handover, and so is
+        // admitted exactly where the overlap is.
+        check(
+            !self.collection_tail_v1 || self.update_tail_overlap_v1,
+            collection_tail_v1::VALIDATION_REFUSAL_V1,
         )?;
         if !self.training_math.is_platform_libm() {
             check(
@@ -1130,6 +1150,40 @@ thread_local! {
 #[cfg(test)]
 fn fail_next_publish_for_test_v1(name: &'static str) {
     FAIL_PUBLISH_FOR_TEST_V1.with(|armed| armed.set(Some(name)));
+}
+
+/// Test-only: a failure armed on this thread for the publication of
+/// `update-input.json` or `update-command.json`, taken off this thread for
+/// the collection tail's helper, which publishes them there
+/// (`collection_tail_v1`).
+#[cfg(test)]
+fn take_helper_publish_failure_for_test_v1() -> Option<&'static str> {
+    FAIL_PUBLISH_FOR_TEST_V1.with(|armed| match armed.get() {
+        Some(name @ ("update-input.json" | "update-command.json")) => {
+            armed.set(None);
+            Some(name)
+        }
+        _ => None,
+    })
+}
+
+/// Test-only: an iteration's index, given once its collection is pinned
+/// and before the collection is validated, on this thread.
+#[cfg(test)]
+type AfterCollectionForTestV1 = Box<dyn FnMut(usize)>;
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_COLLECTION_FOR_TEST_V1: std::cell::RefCell<Option<AfterCollectionForTestV1>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only: every driver on this thread calls `hook` with an iteration's
+/// index once that iteration's collection is pinned, before its validation
+/// (`AfterCollectionForTestV1`), with or without `collection_tail_v1`.
+#[cfg(test)]
+fn after_collection_for_test_v1(hook: impl FnMut(usize) + 'static) {
+    AFTER_COLLECTION_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
 }
 
 /// Test-only: an iteration's index, given once its update has returned on
@@ -1919,10 +1973,24 @@ pub fn install_external_collector_v1(program: PathBuf) -> Result<(), String> {
 }
 
 /// Runs an iteration's collection: in this process, or through the installed
-/// external collector, which gets the attempt's published command path.
-fn execute_collection_v1(command: ExpandedTrainingCommandV1, attempt: &Path) -> Result<(), String> {
+/// external collector, which gets the attempt's published command path. With
+/// a persistent collection state (`collection_tail_v1`, which an external
+/// collector turns off), in this process through that state.
+fn execute_collection_v1(
+    command: ExpandedTrainingCommandV1,
+    attempt: &Path,
+    persistent: Option<&crate::expanded_deck_training_v1::PersistentCollectionV1>,
+) -> Result<(), String> {
     let Some(program) = EXTERNAL_COLLECTOR_V1.get() else {
-        return execute_v1(command).map(|_| ());
+        return match persistent {
+            Some(persistent) => crate::expanded_deck_training_v1::execute_collection_with_v1(
+                command,
+                None,
+                Some(persistent),
+            )
+            .map(|_| ()),
+            None => execute_v1(command).map(|_| ()),
+        };
     };
     check(
         matches!(command, ExpandedTrainingCommandV1::CollectParallel { .. }),
@@ -2075,6 +2143,13 @@ pub fn run_native_expanded_training_v1(
     // order. Declared after the run lock: on every way out, the collection's
     // thread is joined before the lock is released.
     let overlap = config.update_tail_overlap_v1 && EXTERNAL_COLLECTOR_V1.get().is_none();
+    // `collection_tail_v1`: the run's persistent collection state (the
+    // learner's template), used by every collection this invocation runs,
+    // and the overlap after each collection. It needs the overlap (an
+    // external collector turns both off).
+    let tail = overlap && config.collection_tail_v1;
+    let persistent =
+        tail.then(|| Arc::new(crate::expanded_deck_training_v1::PersistentCollectionV1::new_v1()));
     let mut prefetch: Option<update_tail_overlap_v1::PrefetchV1> = None;
     for index in 0..config.iterations.len() {
         let directory = iterations_root.join(format!("{index:06}"));
@@ -2307,120 +2382,200 @@ pub fn run_native_expanded_training_v1(
                 publish(&attempt, "collect-command.json", &collect_command)?;
                 if collection_pin.is_none() {
                     let started = Instant::now();
-                    execute_collection_v1(collect_command, &attempt)?;
+                    execute_collection_v1(collect_command, &attempt, persistent.as_deref())?;
                     collection_execution_seconds += started.elapsed().as_secs_f64();
                     collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
                 }
                 attempt
             };
             let collection = collection_pin.as_ref().unwrap();
-            let started = Instant::now();
-            let trajectories = validate_collection(
-                collection,
-                &current,
-                &episodes,
-                &current_identity,
-                config.collection_sampler,
-                config.training_math,
-                input_contract.as_ref(),
-                config.trajectory_batch_bytes_v1(),
-            )?;
-            collection_validation_seconds += started.elapsed().as_secs_f64();
-            validated_trajectories = Some(trajectories.clone());
-            publish(
-                &attempt,
-                "update-input.json",
-                &json!({"collection":collection}),
-            )?;
-            let update_command = match (&config.search_targets, &config.ex1) {
-                (_, Some(options)) => ExpandedTrainingCommandV1::Ex1Update {
-                    source: current.clone(),
-                    trajectories,
-                    learning_rate: config.learning_rate,
-                    value_coefficient: config.value_coefficient,
-                    loss_selection: config.loss_selection,
-                    ex1: options.update_options_v1(index, collection.clone()),
-                    output_directory: attempt.join("update"),
-                },
-                (Some(options), None) => ExpandedTrainingCommandV1::SearchTargetsUpdate {
-                    source: current.clone(),
-                    trajectories,
-                    learning_rate: config.learning_rate,
-                    value_coefficient: config.value_coefficient,
-                    loss_selection: config.loss_selection,
-                    targets: options.options_v1(index, options.wait_for_packet_v1(index)?),
-                    output_directory: attempt.join("update"),
-                },
-                (None, None) => update_command(
-                    config,
-                    index,
-                    &current,
-                    trajectories,
-                    attempt.join("update"),
-                ),
+            #[cfg(test)]
+            AFTER_COLLECTION_FOR_TEST_V1.with(|hook| {
+                if let Some(hook) = hook.borrow_mut().as_mut() {
+                    hook(index);
+                }
+            });
+            // The update: with the overlap's handoff when the run overlaps,
+            // and with the collection tail's learner gate when it is given
+            // one (`collection_tail_v1`, never without the overlap).
+            let mut run_update = |update_command: ExpandedTrainingCommandV1,
+                                  learner_gate: Option<
+                crate::expanded_deck_training_v1::UpdateLearnerGateV1<'_>,
+            >|
+             -> Result<(), String> {
+                if overlap {
+                    // Called by the update once its new checkpoint's bytes
+                    // exist in memory, before their first byte is written.
+                    let mut handoff = |checkpoint: &PinnedFileV1| {
+                        // Whether the run goes on to the next iteration, by the
+                        // tests the loop makes at its top, where this update
+                        // counts as completed: the schedule and the invocation
+                        // limit. Decided here, before any boundary reading (the
+                        // process CPU and the chain ledger are read where they
+                        // are without the setting, after this update is checked),
+                        // so the last update of a run has no collection beside
+                        // it. A ledger stop value is refused with the setting, so
+                        // the ledger never stops a run that overlaps.
+                        let next_index = index + 1;
+                        let at_limit =
+                            max_new_iterations.is_some_and(|limit| newly_completed + 1 >= limit);
+                        if next_index >= config.iterations.len() || at_limit {
+                            return;
+                        }
+                        // The source and the history the loop holds once this
+                        // update is committed.
+                        let next = ExpandedModelSourceV1 {
+                            checkpoint: Some(checkpoint.clone()),
+                            ..current.clone()
+                        };
+                        let mut next_history = history.clone();
+                        next_history.push(next.clone());
+                        // A schedule that does not resolve is the next
+                        // iteration's own error, there, as without the setting.
+                        let Ok(next_episodes) =
+                            resolve_episodes(config, next_index, &next, &next_history)
+                        else {
+                            return;
+                        };
+                        let next_directory = iterations_root.join(format!("{next_index:06}"));
+                        let next_command = collection_command(
+                            config,
+                            next_index,
+                            &next,
+                            &next_episodes,
+                            next_directory
+                                .join(update_tail_overlap_v1::FIRST_ATTEMPT_V1)
+                                .join("collect"),
+                        );
+                        prefetch = update_tail_overlap_v1::PrefetchV1::start_v1(
+                            next_index,
+                            next_directory,
+                            next_command,
+                            persistent.clone(),
+                        );
+                        #[cfg(test)]
+                        if let Some(started) = &prefetch {
+                            update_tail_overlap_v1::held_at_gate_for_test_v1(started);
+                        }
+                    };
+                    crate::expanded_deck_training_v1::execute_with_hooks_v1(
+                        update_command,
+                        Some(&mut handoff),
+                        learner_gate,
+                    )?;
+                } else {
+                    execute_v1(update_command)?;
+                }
+                Ok(())
             };
-            publish(&attempt, "update-command.json", &update_command)?;
-            let started = Instant::now();
-            if overlap {
-                // Called by the update once its new checkpoint's bytes exist
-                // in memory, before their first byte is written.
-                let mut handoff = |checkpoint: &PinnedFileV1| {
-                    // Whether the run goes on to the next iteration, by the
-                    // tests the loop makes at its top, where this update
-                    // counts as completed: the schedule and the invocation
-                    // limit. Decided here, before any boundary reading (the
-                    // process CPU and the chain ledger are read where they
-                    // are without the setting, after this update is checked),
-                    // so the last update of a run has no collection beside
-                    // it. A ledger stop value is refused with the setting, so
-                    // the ledger never stops a run that overlaps.
-                    let next_index = index + 1;
-                    let at_limit =
-                        max_new_iterations.is_some_and(|limit| newly_completed + 1 >= limit);
-                    if next_index >= config.iterations.len() || at_limit {
-                        return;
-                    }
-                    // The source and the history the loop holds once this
-                    // update is committed.
-                    let next = ExpandedModelSourceV1 {
-                        checkpoint: Some(checkpoint.clone()),
-                        ..current.clone()
-                    };
-                    let mut next_history = history.clone();
-                    next_history.push(next.clone());
-                    // A schedule that does not resolve is the next
-                    // iteration's own error, there, as without the setting.
-                    let Ok(next_episodes) =
-                        resolve_episodes(config, next_index, &next, &next_history)
-                    else {
-                        return;
-                    };
-                    let next_directory = iterations_root.join(format!("{next_index:06}"));
-                    let next_command = collection_command(
-                        config,
-                        next_index,
-                        &next,
-                        &next_episodes,
-                        next_directory
-                            .join(update_tail_overlap_v1::FIRST_ATTEMPT_V1)
-                            .join("collect"),
-                    );
-                    prefetch = update_tail_overlap_v1::PrefetchV1::start_v1(
-                        next_index,
-                        next_directory,
-                        next_command,
-                    );
-                    #[cfg(test)]
-                    if let Some(started) = &prefetch {
-                        update_tail_overlap_v1::held_at_gate_for_test_v1(started);
-                    }
-                };
-                crate::expanded_deck_training_v1::execute_with_handoff_v1(
-                    update_command,
-                    Some(&mut handoff),
-                )?;
+            // `collection_tail_v1`: the trajectories the collection's receipt
+            // names, for the update to read and prepare while the helper
+            // validates the collection and publishes the update's documents.
+            let speculative = if tail && config.search_targets.is_none() && config.ex1.is_none() {
+                collection_tail_v1::speculative_trajectories_v1(collection)
             } else {
-                execute_v1(update_command)?;
+                None
+            };
+            let update_started;
+            if let Some(speculative) = speculative {
+                #[cfg(test)]
+                let armed = take_helper_publish_failure_for_test_v1();
+                let speculative_command =
+                    update_command(config, index, &current, speculative, attempt.join("update"));
+                update_started = Instant::now();
+                let committed = collection_tail_v1::run_v1(
+                    || {
+                        #[cfg(test)]
+                        if let Some(name) = armed {
+                            fail_next_publish_for_test_v1(name);
+                        }
+                        // The steps below are the ones without the setting,
+                        // in their order, on the helper's thread.
+                        let started = Instant::now();
+                        let trajectories = validate_collection(
+                            collection,
+                            &current,
+                            &episodes,
+                            &current_identity,
+                            config.collection_sampler,
+                            config.training_math,
+                            input_contract.as_ref(),
+                            config.trajectory_batch_bytes_v1(),
+                        )?;
+                        let validation_seconds = started.elapsed().as_secs_f64();
+                        publish(
+                            &attempt,
+                            "update-input.json",
+                            &json!({"collection":collection}),
+                        )?;
+                        let command = update_command(
+                            config,
+                            index,
+                            &current,
+                            trajectories.clone(),
+                            attempt.join("update"),
+                        );
+                        publish(&attempt, "update-command.json", &command)?;
+                        Ok(collection_tail_v1::CommittedInputV1 {
+                            trajectories,
+                            validation_seconds,
+                            command,
+                        })
+                    },
+                    speculative_command,
+                    &mut run_update,
+                )?;
+                collection_validation_seconds += committed.validation_seconds;
+                validated_trajectories = Some(committed.trajectories);
+            } else {
+                let started = Instant::now();
+                let trajectories = validate_collection(
+                    collection,
+                    &current,
+                    &episodes,
+                    &current_identity,
+                    config.collection_sampler,
+                    config.training_math,
+                    input_contract.as_ref(),
+                    config.trajectory_batch_bytes_v1(),
+                )?;
+                collection_validation_seconds += started.elapsed().as_secs_f64();
+                validated_trajectories = Some(trajectories.clone());
+                publish(
+                    &attempt,
+                    "update-input.json",
+                    &json!({"collection":collection}),
+                )?;
+                let update_command = match (&config.search_targets, &config.ex1) {
+                    (_, Some(options)) => ExpandedTrainingCommandV1::Ex1Update {
+                        source: current.clone(),
+                        trajectories,
+                        learning_rate: config.learning_rate,
+                        value_coefficient: config.value_coefficient,
+                        loss_selection: config.loss_selection,
+                        ex1: options.update_options_v1(index, collection.clone()),
+                        output_directory: attempt.join("update"),
+                    },
+                    (Some(options), None) => ExpandedTrainingCommandV1::SearchTargetsUpdate {
+                        source: current.clone(),
+                        trajectories,
+                        learning_rate: config.learning_rate,
+                        value_coefficient: config.value_coefficient,
+                        loss_selection: config.loss_selection,
+                        targets: options.options_v1(index, options.wait_for_packet_v1(index)?),
+                        output_directory: attempt.join("update"),
+                    },
+                    (None, None) => update_command(
+                        config,
+                        index,
+                        &current,
+                        trajectories,
+                        attempt.join("update"),
+                    ),
+                };
+                publish(&attempt, "update-command.json", &update_command)?;
+                update_started = Instant::now();
+                run_update(update_command, None)?;
             }
             #[cfg(test)]
             AFTER_UPDATE_FOR_TEST_V1.with(|hook| {
@@ -2428,7 +2583,7 @@ pub fn run_native_expanded_training_v1(
                     hook(index);
                 }
             });
-            update_execution_seconds += started.elapsed().as_secs_f64();
+            update_execution_seconds += update_started.elapsed().as_secs_f64();
             update_pin = Some(pin(&attempt.join("update/update.json"))?);
         }
         let collection = collection_pin.unwrap();
@@ -2558,6 +2713,10 @@ pub fn run_native_expanded_training_v1(
     // printed) and joined before the completion below and before the lock is
     // released.
     drop(prefetch);
+    #[cfg(test)]
+    if let Some(persistent) = &persistent {
+        collection_tail_v1::count_restores_for_test_v1(persistent.restored_for_test_v1());
+    }
     let complete = receipts.len() == config.iterations.len();
     let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
         "planned_iterations":config.iterations.len(),"iterations":receipts,"source":current,
@@ -2586,6 +2745,7 @@ pub fn run_native_expanded_training_v1(
     Ok(result)
 }
 
+mod collection_tail_v1;
 pub mod follow_v1;
 mod update_tail_overlap_v1;
 
@@ -2596,6 +2756,7 @@ mod verified_pin_tests;
 mod tests {
     use super::*;
 
+    mod collection_tail_tests;
     mod follow_tests;
     mod update_tail_overlap_tests;
     /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
@@ -2744,6 +2905,7 @@ mod tests {
             record_envelope: Default::default(),
             verified_reads: Default::default(),
             update_tail_overlap_v1: false,
+            collection_tail_v1: false,
             learning_rate: 0.00001,
             value_coefficient: 0.5,
             update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -4043,6 +4205,7 @@ mod tests {
             record_envelope: Default::default(),
             verified_reads: Default::default(),
             update_tail_overlap_v1: false,
+            collection_tail_v1: false,
             learning_rate: 0.0003,
             value_coefficient: 0.5,
             update_backend,

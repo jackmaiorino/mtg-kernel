@@ -1542,6 +1542,7 @@ fn run_config(
         record_envelope: Default::default(),
         verified_reads: Default::default(),
         update_tail_overlap_v1: false,
+        collection_tail_v1: false,
         learning_rate: 0.0003,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -1821,5 +1822,42 @@ fn converted_run_end_to_end_v1() {
         error,
         "the no-state-digest contract admits only the ordinary CPU update"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The restore path of `collection_tail_v1` equals a fresh load for converted
+/// sources: a persistent collection state returns, for a converted run start,
+/// its continuation and a continuation of that, the policy and state of the
+/// full (uncached) load, with and without the per-forward check. A converted
+/// learner restores through the loader's own base template
+/// (`base_cache_v1`), never through a learner template of the state's.
+#[test]
+fn a_persistent_collection_state_loads_converted_learners_as_the_full_load() {
+    on_large_stack(a_persistent_collection_state_loads_converted_learners_as_the_full_load_v1);
+}
+
+fn a_persistent_collection_state_loads_converted_learners_as_the_full_load_v1() {
+    let root = temp_root("persistent-collection");
+    let parent = with_trained_checkpoint(&root, &fresh_source(&root));
+    let (_, converted) = convert(&root, &parent, "conversion");
+    let continuation = with_continuation(&root, &converted, "continuation");
+    let second = with_continuation(&root, &continuation, "second");
+    for check in [false, true] {
+        with_check_for_test_v1(check, || {
+            clear_for_test_v1();
+            let persistent = crate::expanded_deck_training_v1::PersistentCollectionV1::new_v1();
+            for source in [&converted, &continuation, &second] {
+                let full = bypassed_for_test_v1(|| initialize_any_math_v1(source)).unwrap();
+                assert_eq!(full.0.no_state_digest_check_v1(), check);
+                // Twice: the second may be a cache hit, which is exact too.
+                for _ in 0..2 {
+                    let (policy, state, transfer) = persistent.learner_v1(source).unwrap();
+                    assert!(transfer.is_none());
+                    assert_same_converted_load(&(policy, state), &full, source);
+                }
+            }
+            assert_eq!(persistent.restored_for_test_v1(), 0);
+        });
+    }
     fs::remove_dir_all(root).unwrap();
 }

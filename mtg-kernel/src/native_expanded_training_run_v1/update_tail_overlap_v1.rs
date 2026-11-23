@@ -56,7 +56,9 @@
 //! printed.
 
 use super::{check, err, publish, NativeExpandedTrainingRunV1};
-use crate::expanded_deck_training_v1::{execute_collection_gated_v1, ExpandedTrainingCommandV1};
+use crate::expanded_deck_training_v1::{
+    execute_collection_with_v1, ExpandedTrainingCommandV1, PersistentCollectionV1,
+};
 use crate::held_output_v1::{self, HeldOutputV1};
 use std::fs;
 use std::path::PathBuf;
@@ -258,12 +260,15 @@ pub(super) struct PrefetchV1 {
 
 impl PrefetchV1 {
     /// Starts the collection `command` of iteration `index`, whose directory
-    /// `directory` must not exist yet, behind a closed gate. `None` when its
-    /// thread cannot start: the driver then runs the iteration itself.
+    /// `directory` must not exist yet, behind a closed gate, through the
+    /// run's persistent collection state when it has one
+    /// (`collection_tail_v1`). `None` when its thread cannot start: the
+    /// driver then runs the iteration itself.
     pub(super) fn start_v1(
         index: usize,
         directory: PathBuf,
         command: ExpandedTrainingCommandV1,
+        persistent: Option<Arc<PersistentCollectionV1>>,
     ) -> Option<Self> {
         let shared = Arc::new(SharedV1 {
             state: Mutex::new(GateStateV1 {
@@ -284,7 +289,7 @@ impl PrefetchV1 {
                 #[cfg(test)]
                 let _ended = EndedV1(Arc::clone(&thread_shared));
                 let _held = held_output_v1::install_v1(&thread_shared.held);
-                collect_v1(&thread_shared, directory, command)
+                collect_v1(&thread_shared, directory, command, persistent.as_deref())
             })
             .ok()?;
         Some(Self {
@@ -349,6 +354,7 @@ fn collect_v1(
     shared: &SharedV1,
     directory: PathBuf,
     command: ExpandedTrainingCommandV1,
+    persistent: Option<&PersistentCollectionV1>,
 ) -> Result<Option<PrefetchedV1>, String> {
     let started = Instant::now();
     let attempt = directory.join(FIRST_ATTEMPT_V1);
@@ -379,7 +385,7 @@ fn collect_v1(
             OpenedV1::Failed(error) => Err(error.clone()),
         }
     };
-    let collected = execute_collection_gated_v1(command, &gate);
+    let collected = execute_collection_with_v1(command, Some(&gate), persistent);
     // Without the setting the command is published before the collection
     // runs, so it also is when the collection failed before its first write.
     let _ = gate();

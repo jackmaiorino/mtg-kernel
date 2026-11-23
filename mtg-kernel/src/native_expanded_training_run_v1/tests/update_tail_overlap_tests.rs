@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 /// `parallel_two_iteration_config_v1` (two games an iteration, collected and
 /// prepared on two workers, every opponent the current model) with `updates`
 /// iterations, two or more.
-fn overlap_config_v1(label: &str, updates: usize) -> NativeExpandedTrainingRunV1 {
+pub(super) fn overlap_config_v1(label: &str, updates: usize) -> NativeExpandedTrainingRunV1 {
     let mut config = parallel_two_iteration_config_v1(label);
     while config.iterations.len() < updates {
         let index = config.iterations.len();
@@ -66,14 +66,13 @@ fn run_counted_v1(
     .unwrap()
 }
 
-/// A run's plan without the key: the one member an overlapped run's plan
-/// has more.
+/// A run's plan without the keys: the members an overlapped run's plan has
+/// more (`update_tail_overlap_v1`, and `collection_tail_v1` on top of it).
 fn plan_without_key_v1(bytes: &[u8]) -> Value {
     let mut plan: Value = serde_json::from_slice(bytes).unwrap();
-    plan["config"]
-        .as_object_mut()
-        .unwrap()
-        .remove("update_tail_overlap_v1");
+    let config = plan["config"].as_object_mut().unwrap();
+    config.remove("update_tail_overlap_v1");
+    config.remove("collection_tail_v1");
     plan
 }
 
@@ -86,7 +85,7 @@ fn staging_debris_v1(path: &Path) -> bool {
 /// staging debris, the lock, timed documents (equal without their telemetry)
 /// and the plan (equal without the key); with `same_files`, `got` also has
 /// every file of `want`.
-fn assert_same_tree_v1(case: &str, got: &Path, want: &Path, same_files: bool) {
+pub(super) fn assert_same_tree_v1(case: &str, got: &Path, want: &Path, same_files: bool) {
     let wanted = files_under_v1(want);
     let found = files_under_v1(got);
     for (path, bytes) in &found {
@@ -129,7 +128,7 @@ fn assert_same_tree_v1(case: &str, got: &Path, want: &Path, same_files: bool) {
 
 /// The after-state of every iteration of a run result, from its update
 /// records.
-fn after_states_v1(result: &Value) -> Vec<Value> {
+pub(super) fn after_states_v1(result: &Value) -> Vec<Value> {
     (0..result["iterations"].as_array().unwrap().len())
         .map(|index| {
             let update = parse_pin(&iteration_receipt_v1(result, index), "update").unwrap();
@@ -141,7 +140,7 @@ fn after_states_v1(result: &Value) -> Vec<Value> {
 /// What a run's iterations hold apart from the paths they name: each
 /// update's states, step and loss, and each game's decisions (by digest)
 /// and terminal. Read through the result's pins.
-fn run_content_v1(result: &Value) -> Vec<Value> {
+pub(super) fn run_content_v1(result: &Value) -> Vec<Value> {
     (0..result["iterations"].as_array().unwrap().len())
         .map(|index| {
             let receipt = iteration_receipt_v1(result, index);
@@ -164,7 +163,7 @@ fn run_content_v1(result: &Value) -> Vec<Value> {
 }
 
 /// How many iterations of the run in `directory` are committed.
-fn committed_v1(directory: &Path) -> usize {
+pub(super) fn committed_v1(directory: &Path) -> usize {
     let iterations = directory.join("iterations");
     if !iterations.exists() {
         return 0;
@@ -198,13 +197,13 @@ fn update_published_v1(directory: &Path, index: usize) -> bool {
 }
 
 /// Iteration `index`'s directory in the run in `directory`.
-fn iteration_directory_v1(directory: &Path, index: usize) -> PathBuf {
+pub(super) fn iteration_directory_v1(directory: &Path, index: usize) -> PathBuf {
     directory.join("iterations").join(format!("{index:06}"))
 }
 
 /// The root publications of the run in `directory` are counted under: its
 /// canonical path, which exists before the run only up to its parent.
-fn publication_root_v1(directory: &Path) -> PathBuf {
+pub(super) fn publication_root_v1(directory: &Path) -> PathBuf {
     directory
         .parent()
         .unwrap()
@@ -279,6 +278,9 @@ fn held_log_v1(
                 }
                 HeldEventV1::Released { held } => log.released.push(held),
                 HeldEventV1::Discarded { held } => log.discarded.push(held),
+                // Only a collection's opponent check forwards, and its holder
+                // is never recorded.
+                HeldEventV1::Forwarded { .. } => {}
             }
         }));
         if hold {

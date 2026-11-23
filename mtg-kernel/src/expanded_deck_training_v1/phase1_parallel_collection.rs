@@ -208,6 +208,148 @@ impl<'a> OutputDirectoryV1<'a> {
     }
 }
 
+/// What a run's parallel collections keep from one update to the next
+/// (`collection_tail_v1`): the learner's template
+/// (`loaded_source_cache_v1::LearnerTemplateV1`), so each collection receives
+/// its new learner by the loader's restore of the new checkpoint's bytes
+/// instead of loading the import from scratch again.
+///
+/// Nothing else outlives a collection. Its worker threads, their policies
+/// (forks of the restored learner), their opponent caches and every
+/// thread-local cache of the game code start fresh in every collection, as
+/// without the setting, so no worker carries state from one update into the
+/// next. Fixed opponents are loaded once per process already (the process
+/// opponent cache, `ordered_update_preparation`); their boundary check
+/// (`verify_collection_opponent_sources_v1`) runs at every collection, as
+/// without the setting, but beside the learner's restore instead of after it.
+pub(crate) struct PersistentCollectionV1 {
+    template: Mutex<Option<loaded_source_cache_v1::LearnerTemplateV1>>,
+    /// Test-only: learners this state restored from its template (not
+    /// those a loaded-source cache hit served).
+    #[cfg(test)]
+    restored: AtomicUsize,
+}
+
+impl PersistentCollectionV1 {
+    pub(crate) fn new_v1() -> Self {
+        Self {
+            template: Mutex::new(None),
+            #[cfg(test)]
+            restored: AtomicUsize::new(0),
+        }
+    }
+
+    /// Test-only: how many learners this state restored from its template.
+    #[cfg(test)]
+    pub(crate) fn restored_for_test_v1(&self) -> usize {
+        self.restored.load(Ordering::Relaxed)
+    }
+
+    /// `initialize_with_transfer_context(source)`: the loader's read of the
+    /// import, then the template's restore of the checkpoint when the
+    /// template applies (`loaded_source_cache_v1::initialize_with_template_v1`,
+    /// the same policy and state, reads and errors), and the full load
+    /// otherwise. The template is built once, the first time a source with a
+    /// checkpoint needs it, and again only for another import.
+    pub(super) fn learner_v1(
+        &self,
+        source: &ExpandedModelSourceV1,
+    ) -> Result<
+        (
+            FrozenPlayPolicyV1,
+            NativePolicyValueTrainStateV1,
+            Option<TransferContextV1>,
+        ),
+        String,
+    > {
+        let bytes = read_pinned_bytes(&source.play_import)?;
+        // Held for the restore: a run collects one iteration at a time.
+        let mut slot = self
+            .template
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if source.checkpoint.is_some()
+            && !slot.as_ref().is_some_and(|t| t.serves_v1(source, &bytes))
+        {
+            *slot = loaded_source_cache_v1::LearnerTemplateV1::build_v1(source, &bytes);
+        }
+        if let Some(template) = slot.as_ref() {
+            #[cfg(test)]
+            let before = loaded_source_cache_v1::template_restores_for_test_v1();
+            if let Some((policy, state)) =
+                loaded_source_cache_v1::initialize_with_template_v1(template, source, &bytes)?
+            {
+                // Restores only: a loaded-source cache hit is served as the
+                // loader serves it, and is not counted.
+                #[cfg(test)]
+                self.restored.fetch_add(
+                    (loaded_source_cache_v1::template_restores_for_test_v1() - before) as usize,
+                    Ordering::Relaxed,
+                );
+                return Ok((policy, state, None));
+            }
+        }
+        drop(slot);
+        initialize_from_source_bytes_v1(source, &bytes, None)
+    }
+}
+
+/// The opponents' boundary check (`verify_collection_opponent_sources_v1`)
+/// of a collection with a persistent state, on its own thread beside the
+/// learner's restore. Its stderr lines and panic message are held
+/// (`held_output_v1`) and, once it is joined after the learner, written
+/// through the collection's own thread, as if that thread had made them
+/// there; a check never joined (the learner failed first, as a serial
+/// collection fails before it checks) is dropped unheard. Dropping it joins
+/// its thread.
+struct OpponentCheckV1 {
+    held: std::sync::Arc<crate::held_output_v1::HeldOutputV1>,
+    thread: Option<thread::JoinHandle<Result<Vec<ExpandedModelSourceV1>, String>>>,
+}
+
+impl OpponentCheckV1 {
+    /// Starts the check of `episodes`' opponents; `None` when its thread
+    /// cannot start, and the caller checks them itself.
+    fn start_v1(episodes: &[ExpandedEpisodeV1]) -> Option<Self> {
+        let held = crate::held_output_v1::HeldOutputV1::new_v1();
+        let episodes = episodes.to_vec();
+        let thread_held = std::sync::Arc::clone(&held);
+        let thread = thread::Builder::new()
+            .name("expanded-opponent-check".into())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                let _held = crate::held_output_v1::install_v1(&thread_held);
+                verify_collection_opponent_sources_v1(&episodes)
+            })
+            .ok()?;
+        Some(Self {
+            held,
+            thread: Some(thread),
+        })
+    }
+
+    /// The check's result, as a check on this thread returns it: its lines
+    /// written through this thread, and its panic resumed here.
+    fn join_v1(mut self) -> Result<Vec<ExpandedModelSourceV1>, String> {
+        let thread = self.thread.take().ok_or("opponent check already joined")?;
+        let joined = thread.join();
+        self.held.forward_v1();
+        match joined {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+}
+
+impl Drop for OpponentCheckV1 {
+    fn drop(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            self.held.discard_v1();
+            let _ = thread.join();
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the collection command's fields, plus EX1's hook"
@@ -236,6 +378,7 @@ pub(super) fn collect_parallel_v1(
         shard,
         output_directory,
         None,
+        None,
     )
 }
 
@@ -245,10 +388,14 @@ pub(super) fn collect_parallel_v1(
 /// games, the published bytes and the receipt are the same. A refused write
 /// ends the collection with the gate's own error, whichever worker met it,
 /// and nothing is written after it. Its stderr lines go through the calling
-/// thread's held output, if it has one (`held_output_v1`).
+/// thread's held output, if it has one (`held_output_v1`). With `persistent`
+/// (`collection_tail_v1`), the learner comes from that state's template and
+/// the opponents' boundary check runs beside it ([`PersistentCollectionV1`]):
+/// the same learner, the same checks with the same errors in the same order,
+/// and the same games, records and receipt.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the collection command's fields, plus EX1's hook and the write gate"
+    reason = "the collection command's fields, plus EX1's hook, the write gate and the persistent state"
 )]
 pub(super) fn collect_parallel_gated_v1(
     source: ExpandedModelSourceV1,
@@ -262,6 +409,7 @@ pub(super) fn collect_parallel_gated_v1(
     shard: Option<super::pooled_collection_v1::CollectionShardV1>,
     output_directory: PathBuf,
     write_gate: Option<CollectionWriteGateV1<'_>>,
+    persistent: Option<&PersistentCollectionV1>,
 ) -> Result<Value, String> {
     let started = Instant::now();
     validate_collection_workers_v1(workers)?;
@@ -291,11 +439,21 @@ pub(super) fn collect_parallel_gated_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
+    // `collection_tail_v1`: the opponents' boundary check starts beside the
+    // learner's restore. Its result is taken only after the learner, below,
+    // where a collection without the setting makes it, so a learner that
+    // fails still fails first; its thread is joined on every way out.
+    let opponent_check = persistent
+        .filter(|_| source.s_learner.is_none())
+        .and_then(|_| OpponentCheckV1::start_v1(&episodes));
     let (policy, learner, state_hash) = if source.s_learner.is_some() {
         super::refuse_priority_pass_offset_v1(&episodes, "an S learner collection")?;
         super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
-        let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+        let (mut policy, mut state, transfer) = match persistent {
+            Some(persistent) => persistent.learner_v1(&source)?,
+            None => initialize_with_transfer_context(&source)?,
+        };
         bind_training_math_v1(
             &source,
             transfer.as_ref(),
@@ -326,7 +484,10 @@ pub(super) fn collect_parallel_gated_v1(
         (policy, learner, state_hash)
     };
     let input_contract = no_state_digest_v1::policy_contract_record_v1(&policy)?;
-    let verified_sources = verify_collection_opponent_sources_v1(&episodes)?;
+    let verified_sources = match opponent_check {
+        Some(check) => check.join_v1()?,
+        None => verify_collection_opponent_sources_v1(&episodes)?,
+    };
     let worker_count = workers.min(episodes.len());
     let contexts = (0..worker_count)
         .map(|_| {
@@ -786,6 +947,148 @@ mod tests {
                 assert!(bytes == &ungated_files[name], "{name} differs");
             }
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A collection with a persistent state (`collection_tail_v1`) whose
+    /// odd episodes play a fixed opponent: it publishes the plain collection's
+    /// files byte for byte (the receipt apart from its timings), again from
+    /// the same state, and the opponents' boundary check that now runs beside
+    /// the learner fails it exactly as it fails the plain collection, before
+    /// its output directory exists. A learner that fails as well still fails
+    /// first, with its own error.
+    #[test]
+    fn a_persistent_collection_publishes_the_plain_collection_and_fails_like_it() {
+        let (root, command) = parallel_collection_command_for_test_v1("persistent");
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
+        let opponent_descriptor =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("opponent-source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let opponent_path = root.join("opponent-descriptor.json");
+        let opponent_bytes = serde_json::to_vec(&opponent_descriptor).unwrap();
+        fs::write(&opponent_path, &opponent_bytes).unwrap();
+        let ExpandedTrainingCommandV1::CollectParallel {
+            source, episodes, ..
+        } = &command
+        else {
+            unreachable!()
+        };
+        let learner_source = source.clone();
+        let opponent = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: opponent_path.canonicalize().unwrap(),
+                sha256: sha(&opponent_bytes),
+            },
+            ..learner_source.clone()
+        };
+        let mut episodes = episodes.clone();
+        for (index, episode) in episodes.iter_mut().enumerate() {
+            if index % 2 == 1 {
+                episode.opponent = Some(opponent.clone());
+            }
+        }
+        let command = match command {
+            ExpandedTrainingCommandV1::CollectParallel {
+                source,
+                workers,
+                max_non_natural_episode_fraction,
+                collection_sampler,
+                training_math,
+                ex1,
+                record_envelope,
+                shard,
+                output_directory,
+                ..
+            } => ExpandedTrainingCommandV1::CollectParallel {
+                source,
+                episodes,
+                workers,
+                max_non_natural_episode_fraction,
+                collection_sampler,
+                training_math,
+                ex1,
+                record_envelope,
+                shard,
+                output_directory,
+            },
+            _ => unreachable!(),
+        };
+        let output = root.join("collect");
+        let files = |directory: &Path| -> std::collections::BTreeMap<String, Vec<u8>> {
+            fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    (
+                        entry.file_name().to_string_lossy().into_owned(),
+                        fs::read(entry.path()).unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let untimed = |bytes: &[u8]| {
+            let mut receipt: Value = serde_json::from_slice(bytes).unwrap();
+            receipt.as_object_mut().unwrap().retain(|name, _| {
+                !name.ends_with("_seconds") && name.as_str() != "collection_worker_timings"
+            });
+            receipt
+        };
+        let plain = execute_v1(command.clone()).unwrap();
+        let plain_files = files(&output);
+        fs::remove_dir_all(&output).unwrap();
+        let persistent = PersistentCollectionV1::new_v1();
+        for round in 0..2 {
+            let held =
+                execute_collection_with_v1(command.clone(), None, Some(&persistent)).unwrap();
+            assert_eq!(held["trajectories"], plain["trajectories"], "round {round}");
+            let held_files = files(&output);
+            assert_eq!(
+                held_files.keys().collect::<Vec<_>>(),
+                plain_files.keys().collect::<Vec<_>>(),
+                "round {round}"
+            );
+            for (name, bytes) in &held_files {
+                if name == "collection.json" {
+                    assert_eq!(untimed(bytes), untimed(&plain_files[name]), "round {round}");
+                } else {
+                    assert!(bytes == &plain_files[name], "round {round}: {name} differs");
+                }
+            }
+            fs::remove_dir_all(&output).unwrap();
+        }
+        // A changed parameter payload of the opponent fails its boundary
+        // check; then a changed learner import fails the learner first.
+        let corrupt = |path: &Path| -> Vec<u8> {
+            let original = fs::read(path).unwrap();
+            let mut changed = original.clone();
+            changed[original.len() / 2] ^= 1;
+            fs::write(path, changed).unwrap();
+            original
+        };
+        let opponent_payload = opponent_descriptor.parameters.path.clone();
+        let opponent_original = corrupt(&opponent_payload);
+        let plain_error = execute_v1(command.clone()).unwrap_err();
+        assert!(!output.exists(), "{plain_error}");
+        let held_error =
+            execute_collection_with_v1(command.clone(), None, Some(&persistent)).unwrap_err();
+        assert!(!output.exists(), "{held_error}");
+        assert_eq!(held_error, plain_error);
+        // A missing learner import: another error than the opponent's.
+        let learner_import = learner_source.play_import.path.clone();
+        let learner_original = fs::read(&learner_import).unwrap();
+        fs::remove_file(&learner_import).unwrap();
+        let opponent_error = plain_error;
+        let plain_error = execute_v1(command.clone()).unwrap_err();
+        assert_ne!(plain_error, opponent_error);
+        let held_error =
+            execute_collection_with_v1(command.clone(), None, Some(&persistent)).unwrap_err();
+        assert!(!output.exists());
+        assert_eq!(held_error, plain_error);
+        fs::write(&learner_import, learner_original).unwrap();
+        fs::write(&opponent_payload, opponent_original).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 

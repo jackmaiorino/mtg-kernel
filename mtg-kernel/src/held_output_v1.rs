@@ -52,6 +52,9 @@ pub(crate) enum HeldEventV1 {
     Released { held: usize },
     /// The holder was discarded while it held `held` lines.
     Discarded { held: usize },
+    /// The holder handed the `held` lines it held to the calling thread
+    /// (`HeldOutputV1::forward_v1`).
+    Forwarded { held: usize },
 }
 
 /// Test-only: receives a recorded holder's events, on the thread that makes
@@ -154,6 +157,27 @@ impl HeldOutputV1 {
                 self.write_v1(line);
             }
         });
+    }
+
+    /// Hands every held line, in its order, to [`line_v1`] on the calling
+    /// thread (so to that thread's own holder, if it has one, else to
+    /// stderr), and drops every later line: for work done on a helper thread
+    /// on behalf of the calling thread, once that thread has joined it.
+    /// Nothing changes once the holder is released or discarded.
+    pub(crate) fn forward_v1(&self) {
+        let held = self.with_state_v1(|state| match state {
+            StateV1::Holding(lines) => {
+                let held = std::mem::take(lines);
+                #[cfg(test)]
+                self.record_v1(HeldEventV1::Forwarded { held: held.len() });
+                *state = StateV1::Discarded;
+                held
+            }
+            StateV1::Released | StateV1::Discarded => Vec::new(),
+        });
+        for line in held {
+            line_v1(line);
+        }
     }
 
     /// Drops every held line and every later one.
@@ -308,6 +332,75 @@ mod tests {
             *events.lock().unwrap(),
             vec![HeldEventV1::Discarded { held: 1 }]
         );
+    }
+
+    /// Forwarding (a collection's opponent check, `collection_tail_v1`):
+    /// a helper's held lines, its panic message among them, go in their order
+    /// to the holder of the thread that forwards them, which holds them in
+    /// turn, and the helper's later lines are dropped; a released or
+    /// discarded holder forwards nothing.
+    #[test]
+    fn forwarded_lines_go_to_the_forwarding_threads_holder_in_order() {
+        let (helper, helper_events) = recorded_holder_v1();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _installed = install_v1(&helper);
+                    line_v1("first".into());
+                    let _ = std::panic::catch_unwind(|| panic!("checked"));
+                    line_v1("second".into());
+                })
+                .join()
+                .unwrap();
+        });
+        let (parent, parent_events) = recorded_holder_v1();
+        {
+            let _installed = install_v1(&parent);
+            line_v1("before".into());
+            helper.forward_v1();
+            line_v1("after".into());
+        }
+        helper.line_v1("late".into());
+        assert_eq!(
+            *helper_events.lock().unwrap(),
+            vec![HeldEventV1::Forwarded { held: 3 }]
+        );
+        assert!(
+            parent_events.lock().unwrap().is_empty(),
+            "written while held"
+        );
+        parent.release_v1();
+        let events = parent_events.lock().unwrap().clone();
+        assert_eq!(events[0], HeldEventV1::Released { held: 5 });
+        assert_eq!(events[1], written_v1("before"));
+        assert_eq!(events[2], written_v1("first"));
+        match &events[3] {
+            HeldEventV1::Written(text) => {
+                assert!(
+                    text.contains("panicked") && text.contains("checked"),
+                    "{text}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(events[4..], [written_v1("second"), written_v1("after")]);
+        // Released or discarded: nothing is forwarded.
+        for end in [
+            HeldOutputV1::release_v1 as fn(&HeldOutputV1),
+            HeldOutputV1::discard_v1,
+        ] {
+            let (helper, _) = recorded_holder_v1();
+            helper.line_v1("held".into());
+            end(&helper);
+            let (parent, parent_events) = recorded_holder_v1();
+            let _installed = install_v1(&parent);
+            helper.forward_v1();
+            parent.release_v1();
+            assert_eq!(
+                *parent_events.lock().unwrap(),
+                vec![HeldEventV1::Released { held: 0 }]
+            );
+        }
     }
 
     /// A line goes to the holder of the thread that writes it, only while

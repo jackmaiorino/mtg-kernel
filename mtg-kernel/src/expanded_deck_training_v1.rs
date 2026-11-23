@@ -89,6 +89,7 @@ const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 #[cfg(test)]
 mod engine_ceiling_probe_v1;
 mod phase1_parallel_collection;
+pub(crate) use phase1_parallel_collection::PersistentCollectionV1;
 pub mod pooled_collection_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub mod public_features;
@@ -4239,9 +4240,23 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
 /// (`phase1_parallel_collection::collect_parallel_gated_v1`): the same
 /// collection, records and receipt as [`execute_v1`]'s. Any other command is
 /// refused.
+#[cfg(test)]
 pub(crate) fn execute_collection_gated_v1(
     command: ExpandedTrainingCommandV1,
     write_gate: phase1_parallel_collection::CollectionWriteGateV1<'_>,
+) -> Result<Value, String> {
+    execute_collection_with_v1(command, Some(write_gate), None)
+}
+
+/// A parallel collection (`CollectParallel`) with an optional write gate (as
+/// [`execute_collection_gated_v1`]) and an optional persistent state
+/// (`collection_tail_v1`, `phase1_parallel_collection::PersistentCollectionV1`):
+/// the same collection, records and receipt as [`execute_v1`]'s. Any other
+/// command is refused.
+pub(crate) fn execute_collection_with_v1(
+    command: ExpandedTrainingCommandV1,
+    write_gate: Option<phase1_parallel_collection::CollectionWriteGateV1<'_>>,
+    persistent: Option<&PersistentCollectionV1>,
 ) -> Result<Value, String> {
     match command {
         ExpandedTrainingCommandV1::CollectParallel {
@@ -4266,7 +4281,8 @@ pub(crate) fn execute_collection_gated_v1(
             record_envelope,
             shard,
             output_directory,
-            Some(write_gate),
+            write_gate,
+            persistent,
         ),
         _ => Err("only a parallel collection takes a write gate".into()),
     }
@@ -4282,6 +4298,30 @@ pub(crate) fn execute_with_handoff_v1(
     command: ExpandedTrainingCommandV1,
     handoff: Option<UpdateHandoffV1<'_>>,
 ) -> Result<Value, String> {
+    execute_with_hooks_v1(command, handoff, None)
+}
+
+/// [`execute_with_handoff_v1`]. With `learner_gate` (`collection_tail_v1`), a
+/// prepared update (`UpdatePrepared`) also calls it once, after it has read
+/// and checked its inputs and prepared its learner groups and before its
+/// learner step, its first filesystem write and its first stderr line after
+/// the input read: the update goes on only if the gate admits it, and
+/// otherwise returns the gate's error. Any other command asks the gate before
+/// it starts. Everything the update computes, checks, publishes and returns
+/// is unchanged.
+pub(crate) fn execute_with_hooks_v1(
+    command: ExpandedTrainingCommandV1,
+    handoff: Option<UpdateHandoffV1<'_>>,
+    learner_gate: Option<UpdateLearnerGateV1<'_>>,
+) -> Result<Value, String> {
+    let learner_gate = match (&command, learner_gate) {
+        (ExpandedTrainingCommandV1::UpdatePrepared { .. }, gate) => gate,
+        (_, Some(gate)) => {
+            gate()?;
+            None
+        }
+        (_, None) => None,
+    };
     match command {
         ExpandedTrainingCommandV1::ESupportedUpdate {
             source,
@@ -4310,6 +4350,7 @@ pub(crate) fn execute_with_handoff_v1(
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
             None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -4337,6 +4378,7 @@ pub(crate) fn execute_with_handoff_v1(
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
             None,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
@@ -4368,6 +4410,7 @@ pub(crate) fn execute_with_handoff_v1(
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
             None,
+            None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -4397,6 +4440,7 @@ pub(crate) fn execute_with_handoff_v1(
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
             None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
@@ -4705,6 +4749,7 @@ pub(crate) fn execute_with_handoff_v1(
             record_format,
             RecordEnvelopeV1::None,
             None,
+            None,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -4751,6 +4796,7 @@ pub(crate) fn execute_with_handoff_v1(
                 record_format,
                 record_envelope,
                 handoff,
+                learner_gate,
             )
         }
     }
@@ -5080,6 +5126,7 @@ fn execute_update_v1(
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
     handoff: Option<UpdateHandoffV1<'_>>,
+    learner_gate: Option<UpdateLearnerGateV1<'_>>,
 ) -> Result<Value, String> {
     execute_update_inner_v1(
         source,
@@ -5102,6 +5149,7 @@ fn execute_update_v1(
         record_format,
         record_envelope,
         handoff,
+        learner_gate,
     )
 }
 
@@ -5130,6 +5178,7 @@ fn execute_update_inner_v1(
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
     handoff: Option<UpdateHandoffV1<'_>>,
+    learner_gate: Option<UpdateLearnerGateV1<'_>>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
     update_backend.require_compiled_v1()?;
@@ -5207,6 +5256,10 @@ fn execute_update_inner_v1(
             record_envelope.is_none(),
             "a record envelope is not available with an S learner update",
         )?;
+        // It has no learner gate of its own: a gate is asked before it starts.
+        if let Some(gate) = learner_gate {
+            gate()?;
+        }
         return s_learner_v1::execute_s_update_v1(s_learner_v1::SUpdateInputsV1 {
             source,
             trajectories,
@@ -5627,6 +5680,16 @@ fn execute_update_inner_v1(
         .iter()
         .map(|(_, episode_ordinal, _)| *episode_ordinal)
         .collect();
+    #[cfg(test)]
+    if FAIL_BEFORE_LEARNER_FOR_TEST_V1.with(|armed| armed.replace(false)) {
+        return Err("injected failure: the update stops before its learner".into());
+    }
+    // `collection_tail_v1`: the inputs are read and checked and the learner
+    // groups prepared; the learner, every write and every later line wait
+    // for the gate, and a refused gate ends the update with its error.
+    if let Some(gate) = learner_gate {
+        gate()?;
+    }
     eprintln!(
         "native {:?} update: {} episodes, {} learner physical decisions",
         update_backend,
@@ -6625,6 +6688,19 @@ pub(crate) fn arm_crash_point_for_test_v1() {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Test-only: the next update on this thread fails after its inputs are
+    /// read and its learner groups prepared, before its learner gate.
+    static FAIL_BEFORE_LEARNER_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test-only: arms [`FAIL_BEFORE_LEARNER_FOR_TEST_V1`] on this thread.
+#[cfg(test)]
+pub(crate) fn fail_before_learner_for_test_v1() {
+    FAIL_BEFORE_LEARNER_FOR_TEST_V1.with(|armed| armed.set(true));
+}
+
+#[cfg(test)]
 fn take_crash_point_for_test_v1() -> bool {
     CRASH_POINT_FOR_TEST_V1.with(|flag| flag.replace(false))
 }
@@ -7077,6 +7153,11 @@ fn publish_json_shared_in_v1(
 /// ([`execute_with_handoff_v1`]): its new checkpoint's pin, at the moment the
 /// checkpoint's bytes exist in memory and before its first byte is written.
 pub(crate) type UpdateHandoffV1<'a> = &'a mut dyn FnMut(&PinnedFileV1);
+
+/// What a prepared update asks once before its learner step when its caller
+/// gave it a learner gate ([`execute_with_hooks_v1`], `collection_tail_v1`):
+/// `Ok` lets it go on, an error ends it with that error.
+pub(crate) type UpdateLearnerGateV1<'a> = &'a mut dyn FnMut() -> Result<(), String>;
 
 /// `publish_json_shared_v1` for a checkpoint with a handoff: the same
 /// publication, record and pin, with the pin made known first.
