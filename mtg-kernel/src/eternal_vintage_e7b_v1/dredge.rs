@@ -759,6 +759,10 @@ pub(crate) fn defer_draw_step_draw(state: &mut GameState, player: PlayerId) -> b
     true
 }
 
+pub(crate) fn draw_step_pending(state: &GameState) -> bool {
+    read_state(state).is_some_and(|e7b| e7b.dredge_draw.is_some())
+}
+
 /// The pending draw-step replacement choice (dredge or Jace vs Hullbreacher),
 /// if any.
 pub(crate) fn pending_decision(state: &GameState) -> Option<crate::engine::Decision> {

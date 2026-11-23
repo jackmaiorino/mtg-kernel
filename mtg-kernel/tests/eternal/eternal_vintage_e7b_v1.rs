@@ -692,6 +692,59 @@ fn the_draw_step_draw_may_be_dredged() {
 }
 
 #[test]
+fn riddler_draw_step_holds_the_first_dredge_trigger_across_the_second_choice() {
+    let mut state = islands();
+    for _ in 0..2 {
+        put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    }
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let narcomoeba = put(&mut state, P0, "Narcomoeba", Zone::Library);
+
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Draw
+    });
+    assert!(state.players[P0.index()].hand.is_empty());
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, option_count: 3 }
+            if source == imp
+    ));
+    act(&mut state, Action::ChooseEffectOption(1));
+    assert!(hand_contains(&state, P0, imp));
+    assert_eq!(zone(&state, narcomoeba), Zone::Graveyard);
+
+    let second_choice = next(&mut state);
+    assert!(matches!(
+        second_choice,
+        Decision::ChooseEffectOption { player: P0, source, option_count: 2 }
+            if source == thug
+    ));
+    assert!(state.engine.pending_triggers.is_empty());
+    assert!(state.stack.is_empty());
+
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(next(&mut restored), second_choice);
+    assert_eq!(restored.state_hash(), state.state_hash());
+    for branch in [&mut state, &mut restored] {
+        act(branch, Action::ChooseEffectOption(1));
+        assert!(hand_contains(branch, P0, thug));
+        assert_eq!(branch.players[P0.index()].hand.len(), 3);
+        assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            branch.stack.as_slice(),
+            [trigger] if trigger.kind == StackItemKind::TriggeredAbility
+                && trigger.source == narcomoeba && trigger.controller == P0
+        ));
+        assert!(branch.engine.pending_triggers.is_empty());
+        settle_picking(branch, 1, None);
+        assert_eq!(zone(branch, narcomoeba), Zone::Battlefield);
+    }
+    assert_eq!(restored.state_hash(), state.state_hash());
+}
+
+#[test]
 fn golgari_grave_troll_enters_with_counters_and_regenerates() {
     let mut state = islands();
     for name in ["Golgari Thug", "Narcomoeba", "Island"] {

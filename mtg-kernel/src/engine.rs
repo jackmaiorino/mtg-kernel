@@ -15474,7 +15474,12 @@ fn collect_and_queue_triggers(state: &mut GameState) {
         return;
     }
     #[cfg(feature = "eternal-fixtures")]
-    if state.engine.pending_effect.is_some() || state.engine.pending_spell_copy.is_some() {
+    if state.engine.pending_effect.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || crate::eternal_vintage_e7b_v1::dredge::draw_step_pending(state)
+    {
+        // Draw-step replacement choices can suspend the same turn-based draw sequence.
+        // Match events now and wait until the final draw to run SBAs and order triggers.
         let captures = trigger::capture_triggers_without_sba(state);
         if !captures.is_empty()
             || !state.engine.pending_triggers.is_empty()
