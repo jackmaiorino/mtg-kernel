@@ -2251,12 +2251,14 @@ pub(crate) fn target_contract_matches_live(
             ..
         } => state.objects.try_get(object).is_some_and(|live| {
             (live.card_def == card_def
-                || crate::standard_cards_v1::had_card_def(
-                    state,
-                    object,
-                    zone_change_count,
-                    card_def,
-                ))
+                || (cfg!(feature = "eternal-fixtures")
+                    && !crate::standard_cards_v1::active_aegis_copy(state, object)
+                    && crate::standard_cards_v1::had_card_def(
+                        state,
+                        object,
+                        zone_change_count,
+                        card_def,
+                    )))
                 && live.owner == owner
                 && live.zone == zone
                 && live.zone_change_count == zone_change_count
@@ -2294,12 +2296,14 @@ fn target_contracts_are_structurally_valid(
                         spell_copy_origin,
                     } => state.objects.try_get(object).is_some_and(|live| {
                         (live.card_def == card_def
-                            || crate::standard_cards_v1::had_card_def(
-                                state,
-                                object,
-                                zone_change_count,
-                                card_def,
-                            ))
+                            || (cfg!(feature = "eternal-fixtures")
+                                && !crate::standard_cards_v1::active_aegis_copy(state, object)
+                                && crate::standard_cards_v1::had_card_def(
+                                    state,
+                                    object,
+                                    zone_change_count,
+                                    card_def,
+                                )))
                             && live.owner == owner
                             && live.controller == controller
                             && live.zone == zone
