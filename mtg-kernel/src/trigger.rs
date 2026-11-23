@@ -5071,6 +5071,41 @@ fn sba_fixed_point_with_protected_triggers(
             changed = true;
         }
 
+        // 704.5q: if a permanent has both a +1/+1 counter and a -1/-1 counter
+        // on it, N +1/+1 and N -1/-1 counters are removed from it, where N is
+        // the smaller of the number of +1/+1 and -1/-1 counters on it.
+        // Run after lethal/zero-toughness departures so simultaneous deaths
+        // preserve their exact counter LKI (704.8).
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            let cancelling: Vec<(ObjectId, i16)> = state
+                .objects
+                .iter()
+                .filter_map(|(id, obj)| {
+                    if obj.zone == Zone::Battlefield
+                        && obj.counters.plus1_plus1 > 0
+                        && obj.counters.minus1_minus1 > 0
+                    {
+                        i16::try_from(
+                            obj.counters
+                                .plus1_plus1
+                                .min(i32::from(obj.counters.minus1_minus1)),
+                        )
+                        .ok()
+                        .map(|cancel| (id, cancel))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for (id, cancel) in cancelling {
+                let counters = &mut state.objects.get_mut(id).counters;
+                counters.plus1_plus1 -= i32::from(cancel);
+                counters.minus1_minus1 -= cancel;
+                changed = true;
+            }
+        }
+
         changed |= crate::controlled_creature_grants_v1::detach_illegal_nonauras(state);
         #[cfg(feature = "eternal-fixtures")]
         {

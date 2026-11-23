@@ -143,6 +143,9 @@ pub(super) fn saga_for(name: &str) -> &'static str {
 pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         "Powerstone Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        // Jaspera Sentinel (wave Pf1a): "{T}, Tap an untapped creature you
+        // control: Add one mana of any color."
+        "Jaspera Sentinel" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         _ => "None",
     }
 }

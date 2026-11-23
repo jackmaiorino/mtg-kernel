@@ -97,6 +97,9 @@ fn draws(op: &EffectOp) -> bool {
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P3hV1(
             crate::eternal_premodern_p3h_v1::P3hOpV1::DecreeOfPainV1,
         ))) => true,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E8bV1(
+            crate::eternal_pauper_e8b_v1::E8bOpV1::RingLootV1,
+        ))) => true,
         _ => false,
     }
 }
@@ -600,48 +603,127 @@ fn dredge(
 
 // ---- The draw step ------------------------------------------------------------------
 
-/// The draw step's draw: whether `player` may dredge instead, so the draw
-/// waits for their choice (option 0 draws, option N dredges their Nth
-/// dredge card).
+enum DrawStepChoiceV1 {
+    Dredge(Vec<ObjectId>),
+    JaceOrHullbreacher(ObjectId),
+}
+
+fn draw_step_choice(state: &GameState, player: PlayerId) -> Option<DrawStepChoiceV1> {
+    if crate::eternal_cube_c6c_v1::prevents_draw(state, player) {
+        return None;
+    }
+    let cards = dredge_cards(state, player);
+    if !cards.is_empty() {
+        return Some(DrawStepChoiceV1::Dredge(cards));
+    }
+    if !state.players[player.index()].library.is_empty()
+        || crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, player)
+            .is_none()
+    {
+        return None;
+    }
+    let jace = crate::eternal_cards_v1::e3::jace_draw_replacement_source(state, player)?;
+    Some(DrawStepChoiceV1::JaceOrHullbreacher(jace))
+}
+
+fn drive_draw_step_draws(state: &mut GameState, player: PlayerId, mut remaining: u32) {
+    while remaining != 0
+        && state.engine.halted.is_none()
+        && !owned_draws_v1::draw_won_game(state, player)
+    {
+        if draw_step_choice(state, player).is_some() {
+            let e7b = e7b_state(state);
+            e7b.dredge_draw = Some(player);
+            e7b.draw_step_remaining =
+                super::OptionalRemainingV1((remaining > 1).then_some(remaining));
+            return;
+        }
+        event::propose_draw_attempt(state, player);
+        remaining -= 1;
+    }
+}
+
+/// The draw step's draw: whether `player` has (or will reach across extra
+/// draws such as Quantum Riddler's) a dredge or competing draw-replacement
+/// choice, so the draw runs through the resumable turn-draw driver.
 pub(crate) fn defer_draw_step_draw(state: &mut GameState, player: PlayerId) -> bool {
-    if dredge_cards(state, player).is_empty() {
+    if !owned_draw_needs_choice(state, player, 1) {
         return false;
     }
-    e7b_state(state).dredge_draw = Some(player);
+    let total = 1 + event::draw_instruction_extra(state, player, 1);
+    drive_draw_step_draws(state, player, total);
     true
 }
 
-/// The pending draw-step dredge choice, if any.
+/// The pending draw-step replacement choice (dredge or Jace vs Hullbreacher),
+/// if any.
 pub(crate) fn pending_decision(state: &GameState) -> Option<crate::engine::Decision> {
     let player = read_state(state)?.dredge_draw?;
-    let cards = dredge_cards(state, player);
-    Some(crate::engine::Decision::ChooseEffectOption {
-        player,
-        source: cards.first().copied()?,
-        option_count: u16::try_from(cards.len() + 1).ok()?,
-    })
+    match draw_step_choice(state, player)? {
+        DrawStepChoiceV1::Dredge(cards) => Some(crate::engine::Decision::ChooseEffectOption {
+            player,
+            source: cards.first().copied()?,
+            option_count: u16::try_from(cards.len() + 1).ok()?,
+        }),
+        DrawStepChoiceV1::JaceOrHullbreacher(jace) => {
+            Some(crate::engine::Decision::ChooseEffectOption {
+                player,
+                source: jace,
+                option_count: 2,
+            })
+        }
+    }
 }
 
-/// Answers the pending draw-step dredge choice. `Ok(false)` when none is
+/// Answers the pending draw-step replacement choice. `Ok(false)` when none is
 /// pending.
 pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Result<bool, String> {
     let Some(player) = read_state(state).and_then(|e7b| e7b.dredge_draw) else {
         return Ok(false);
     };
-    let cards = dredge_cards(state, player);
-    e7b_state(state).dredge_draw = None;
-    let dredged = match usize::from(option) {
-        0 => false,
-        index => {
-            let card = *cards
-                .get(index - 1)
-                .ok_or("the dredge option is out of range")?;
-            let link = super::live_link(state, card);
-            dredge(state, player, card, link)
-        }
+    let Some(choice) = draw_step_choice(state, player) else {
+        return Err("the draw-step replacement choice is no longer available".into());
     };
-    if !dredged {
-        event::propose_and_commit(state, ProposedEvent::draw(player));
+    let remaining = read_state(state)
+        .and_then(|e7b| e7b.draw_step_remaining.0)
+        .unwrap_or(1);
+    match choice {
+        DrawStepChoiceV1::Dredge(cards) => {
+            let card = match usize::from(option) {
+                0 => None,
+                index => Some(
+                    *cards
+                        .get(index - 1)
+                        .ok_or("the dredge option is out of range")?,
+                ),
+            };
+            let e7b = e7b_state(state);
+            e7b.dredge_draw = None;
+            e7b.draw_step_remaining = super::OptionalRemainingV1(None);
+            let dredged = card.is_some_and(|card| {
+                let link = super::live_link(state, card);
+                dredge(state, player, card, link)
+            });
+            if !dredged {
+                event::propose_draw_attempt(state, player);
+            }
+        }
+        DrawStepChoiceV1::JaceOrHullbreacher(_) => {
+            if option > 1 {
+                return Err("the draw replacement option is out of range".into());
+            }
+            let e7b = e7b_state(state);
+            e7b.dredge_draw = None;
+            e7b.draw_step_remaining = super::OptionalRemainingV1(None);
+            if option == 1 {
+                event::commit(state, ProposedEvent::draw(player));
+            } else {
+                event::propose_draw_attempt(state, player);
+            }
+        }
+    }
+    if remaining > 1 {
+        drive_draw_step_draws(state, player, remaining - 1);
     }
     Ok(true)
 }

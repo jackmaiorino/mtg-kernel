@@ -482,6 +482,12 @@ pub enum StandardTargetV1 {
     TappedCreatureV1,
     /// Zero, one or two distinct lands, controlled by either player.
     UpToTwoLandsV1,
+    /// Questing Beast: "target planeswalker that player controls" (opponent's
+    /// planeswalker in a two-player game). Appended for Vintage Cube wave C7b.
+    OpponentPlaneswalkerV1,
+    /// Guardian Scalelord: a nonland permanent card in your graveyard with
+    /// mana value at most the attacking creature's power.
+    NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1,
 }
 
 impl StandardTargetV1 {
@@ -706,6 +712,7 @@ impl StandardTargetV1 {
             || crate::eternal_premodern_p3h_v1::targets::in_graveyard(self)
             || crate::eternal_sideboard_s1o_v1::targets::in_graveyard(self)
             || crate::eternal_cube_c6b_v1::targets::owns(self)
+            || crate::eternal_cube_c7c_v1::targets::owns(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -1099,6 +1106,11 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
+    if let Some(targets) = crate::eternal_cube_c7c_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1430,6 +1442,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c7c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1683,6 +1700,10 @@ pub(crate) fn target_matches(
         StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1 => false,
         StandardTargetV1::TappedCreatureV1 => live.tapped && has(CardType::Creature),
         StandardTargetV1::UpToTwoLandsV1 => has(CardType::Land),
+        StandardTargetV1::OpponentPlaneswalkerV1 => {
+            live.controller == controller.opponent() && has(CardType::Planeswalker)
+        }
+        StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => false,
     }
 }
 
@@ -3397,15 +3418,22 @@ const OJER_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
 /// less than Ojer Axonil's power to an opponent, that source deals damage
 /// equal to Ojer Axonil's power instead."
 pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
+    let power = applicable_ojers(state, damage)
+        .map(|(_, power)| power)
+        .max();
+    if let Some(power) = power {
+        damage.amount = power;
+    }
+}
+
+fn ojer_source_controller(state: &GameState, damage: &DamageProposed) -> Option<PlayerId> {
     if damage.is_combat || damage.amount <= 0 {
-        return;
+        return None;
     }
     let Target::Player(damaged) = damage.target else {
-        return;
+        return None;
     };
-    let Some(source) = state.objects.try_get(damage.source) else {
-        return;
-    };
+    let source = state.objects.try_get(damage.source)?;
     let controller = damage
         .historical_facts(state)
         .expect("validated historical source")
@@ -3415,25 +3443,44 @@ pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
             & crate::card_def::mana_colors_mask(&[ManaColor::R])
             == 0
     {
-        return;
+        return None;
     }
-    let power = state.players[controller.index()]
+    Some(controller)
+}
+
+fn active_ojers(state: &GameState, controller: PlayerId) -> impl Iterator<Item = ObjectId> + '_ {
+    state.players[controller.index()]
         .battlefield
         .iter()
         .copied()
-        .filter(|&id| {
-            let live = state.objects.get(id);
+        .filter(move |id| {
+            let live = state.objects.get(*id);
             live.v4.face_index == 0
                 && CARD_DEFS[live.card_def as usize].name == OJER
-                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, *id)
         })
-        .map(|id| crate::engine::effective_power(state, id))
-        .max();
-    if let Some(power) = power {
-        if damage.amount < power {
-            damage.amount = power;
-        }
-    }
+}
+
+pub(crate) fn has_active_ojer(state: &GameState, controller: PlayerId) -> bool {
+    active_ojers(state, controller).next().is_some()
+}
+
+pub(crate) fn matching_ojers<'a>(
+    state: &'a GameState,
+    damage: &DamageProposed,
+) -> impl Iterator<Item = (ObjectId, i32)> + 'a {
+    ojer_source_controller(state, damage)
+        .into_iter()
+        .flat_map(move |controller| active_ojers(state, controller))
+        .map(move |id| (id, crate::engine::effective_power(state, id)))
+}
+
+pub(crate) fn applicable_ojers<'a>(
+    state: &'a GameState,
+    damage: &DamageProposed,
+) -> impl Iterator<Item = (ObjectId, i32)> + 'a {
+    let amount = damage.amount;
+    matching_ojers(state, damage).filter(move |(_, power)| amount < *power)
 }
 
 /// Records noncombat damage dealt by red sources for Temple of Power.
@@ -4835,13 +4882,19 @@ pub(crate) fn discard_chosen(
     player: PlayerId,
     cards: &[EffectObjectBinding],
 ) -> u32 {
-    let present = hand_candidates(state, player)
+    let ids = hand_candidates(state, player)
         .into_iter()
         .filter(|binding| cards.contains(binding))
-        .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Graveyard))
+        .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    let count = present.len() as u32;
+    let count = ids.len() as u32;
     if count != 0 {
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c7a_v1::note_discards(state, &ids);
+        let present = ids
+            .into_iter()
+            .map(|object| ProposedEvent::zone_change(object, Zone::Graveyard))
+            .collect::<Vec<_>>();
         event::propose_and_commit_batch(state, present);
     }
     count
@@ -5361,6 +5414,7 @@ fn exile_top_five_may_cast_one(state: &mut GameState, player: PlayerId) {
             .push(crate::engine::PlayPermission {
                 object: top,
                 without_mana_cost: Default::default(),
+                any_mana_type: Default::default(),
                 holder: player,
                 zone_change_generation: zone_change_count,
                 play_or_cast: crate::engine::PlayOrCast::Cast,

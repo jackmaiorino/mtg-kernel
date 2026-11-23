@@ -9,7 +9,7 @@ use mtg_kernel::card_def::{
     Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
-use mtg_kernel::event::{self, ProposedEvent};
+use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
@@ -1248,6 +1248,10 @@ fn carnivorous_cultivator_enters_prepared_and_its_enroot_copy_is_cast_from_exile
         .collect();
     assert_eq!(graveyard, vec!["Island"], "the copy ceased to exist");
     assert!(copies(&state).is_empty(), "no longer prepared");
+    assert!(!state.engine.event_history.iter().any(|event| matches!(
+        event,
+        CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == enroot
+    )));
 
     // Combat damage to a player returns a land card from the graveyard.
     let island = state.players[0].graveyard[0];
@@ -1270,6 +1274,83 @@ fn carnivorous_cultivator_enters_prepared_and_its_enroot_copy_is_cast_from_exile
     settled(&mut state);
     assert_eq!(zone(&state, cultivator), Zone::Graveyard);
     assert!(!state.exile.contains(&enroot), "the copy ceases to exist");
+}
+
+#[test]
+fn sailors_bane_ignores_prepared_spell_copies_in_exile() {
+    let mut state = islands();
+    let cultivator = put(&mut state, P0, "Carnivorous Cultivator", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, cultivator, &[]);
+    settled(&mut state);
+    assert!(state
+        .exile
+        .iter()
+        .any(|&id| name_of(&state, id) == "Enroot"));
+
+    let bane = put(&mut state, P0, "Sailors' Bane", Zone::Hand);
+    put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 5);
+    assert!(
+        !castable(&mut state, bane),
+        "the exiled copy does not reduce the cost"
+    );
+
+    put(&mut state, P0, "Grapeshot", Zone::Exile);
+    assert!(
+        castable(&mut state, bane),
+        "an exiled sorcery card reduces the cost"
+    );
+    cast(&mut state, bane, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, bane), Zone::Battlefield);
+}
+
+#[test]
+fn prepared_spell_copies_cease_when_removed_from_the_stack() {
+    for (response, colors, generic) in [
+        ("Counterspell", [ManaColor::U, ManaColor::U], 0),
+        ("No More Lies", [ManaColor::W, ManaColor::U], 0),
+        ("Mindbreak Trap", [ManaColor::U, ManaColor::U], 2),
+    ] {
+        let mut state = islands();
+        let cultivator = put(&mut state, P0, "Carnivorous Cultivator", Zone::Hand);
+        let response = put(&mut state, P1, response, Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::G], 1);
+        cast(&mut state, cultivator, &[]);
+        settled(&mut state);
+        let enroot = *state
+            .exile
+            .iter()
+            .find(|&&id| name_of(&state, id) == "Enroot")
+            .expect("prepared Enroot copy");
+
+        pool(&mut state, P0, &[ManaColor::G], 0);
+        let library = state.players[0].library.len();
+        cast(&mut state, enroot, &[]);
+        next(&mut state);
+        assert_eq!(state.players[0].spells_cast_this_turn, 2);
+        act(&mut state, Action::Pass);
+        pool(&mut state, P1, &colors, generic);
+        cast(&mut state, response, &[Target::Object(enroot)]);
+        settle_first(&mut state);
+
+        assert_eq!(state.players[0].library.len(), library);
+        assert!(!state.players[0].graveyard.contains(&enroot));
+        assert!(!state.exile.contains(&enroot));
+        assert!(state.stack.is_empty());
+        assert!(state.engine.event_history.iter().any(|event| matches!(
+            event,
+            CommittedEvent::SpellCast { spell, controller: P0 } if *spell == enroot
+        )));
+        assert!(!state.engine.event_history.iter().any(|event| matches!(
+            event,
+            CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == enroot
+        )));
+        let prepare = &state.eternal_v1.as_ref().unwrap().e7b;
+        assert!(prepare.prepared.is_empty());
+        assert!(prepare.prepare_copies.is_empty());
+    }
 }
 
 // ---- Removal and graveyard hate ---------------------------------------------------

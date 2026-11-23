@@ -650,8 +650,12 @@ fn discard(state: &mut GameState, chosen: &[ObjectId]) -> Result<(), String> {
         return Err("end-turn discard answer changed its original hand obligation".into());
     }
     state.engine.pending_discard = None;
-    for &id in chosen {
-        commit_discarded_card(state, id);
+    if cfg!(feature = "eternal-fixtures") {
+        commit_discarded_cards(state, chosen);
+    } else {
+        for &id in chosen {
+            commit_discarded_card(state, id);
+        }
     }
     set_phase(state, PhaseV1::Expiration)
 }

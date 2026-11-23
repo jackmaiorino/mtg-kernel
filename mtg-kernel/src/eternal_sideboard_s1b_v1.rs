@@ -778,6 +778,7 @@ pub(crate) fn spell_cost_reduction(
         live.owner == player
             && !live.v4.is_token
             && !def.is_token
+            && !crate::eternal_vintage_e7b_v1::is_prepare_copy(state, *object)
             && (def.types.contains(&CardType::Instant)
                 || def.types.contains(&CardType::Sorcery)
                 || def.adventure.is_some())
@@ -946,15 +947,9 @@ fn run_tourach_discard(ctx: &ExecCtx, state: &mut GameState) {
     let Some(Target::Player(player)) = ctx.targets.first().copied() else {
         return;
     };
-    for _ in 0..2 {
-        match state.random_hand_card_v1(player) {
-            Ok(Some(card)) => crate::engine::commit_discarded_card(state, card),
-            Ok(None) => break,
-            Err(_) => {
-                halt(state, ctx.source);
-                return;
-            }
-        }
+    match state.random_hand_cards_v1(player, 2) {
+        Ok(cards) => crate::engine::commit_discarded_cards(state, &cards),
+        Err(_) => halt(state, ctx.source),
     }
 }
 

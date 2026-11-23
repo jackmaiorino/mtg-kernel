@@ -510,6 +510,7 @@ mod tests {
                 crate::card_def::CARD_DEFS[usize::from(state.objects.get(exiled).card_def)].is_land;
             state.engine.exile_play_permissions.push(PlayPermission {
                 without_mana_cost: FreeCastV1::default(),
+                any_mana_type: Default::default(),
                 object: exiled,
                 holder: player,
                 zone_change_generation: 1,

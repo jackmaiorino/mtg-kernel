@@ -34,6 +34,11 @@ pub(crate) struct NativeFlatTensorizerV7 {
 }
 
 impl NativeFlatTensorizerV7 {
+    #[cfg(test)]
+    pub(crate) fn canonical_observation_v1(&self) -> &[u8] {
+        self.scratch.canonical_observation_v1()
+    }
+
     /// See `NativeFlatTensorizerV2::set_state_digest_v1`.
     pub(crate) fn set_state_digest_v1(&mut self, on: bool) {
         self.scratch.set_state_digest_v1(on);

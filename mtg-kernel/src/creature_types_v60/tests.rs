@@ -181,6 +181,12 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
         assert_eq!(canonical_native_type(normal), Some(expected));
     }
     for &native in Subtype::CREATURE_TYPES {
+        // Klingon (eternal wave Pf1c) is newer than the pinned 2026-09-25
+        // domain, so it alone has no V60 index.
+        if native == Subtype::Klingon {
+            assert_eq!(canonical_native_type(native), None);
+            continue;
+        }
         assert!(canonical_native_type(native).is_some());
     }
     assert_eq!(
