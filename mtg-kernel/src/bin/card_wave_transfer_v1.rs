@@ -1,11 +1,17 @@
 //! Carries one expanded-deck trainer checkpoint across an appended card wave
 //! into this build (`expanded_deck_training_v1::card_wave_transfer_v1`).
 //! Reads one request JSON path and prints the result JSON. Starts no
-//! training and never modifies its inputs.
+//! training and never modifies its inputs. All logic, including the strict
+//! decoding of the request, lives in the library; this file is only I/O
+//! plumbing.
 
-use mtg_kernel::expanded_deck_training_v1::card_wave_transfer_v1::{
-    run_card_wave_transfer_cli_v1, CardWaveTransferCliRequestV1,
-};
+mtg_kernel::fast_global_allocator!();
+
+use mtg_kernel::expanded_deck_training_v1::card_wave_transfer_v1::run_card_wave_transfer_cli_json_v1;
+use std::io::Read;
+
+/// The library's bound on a request document.
+const MAX_REQUEST_BYTES: u64 = 1024 * 1024;
 
 fn main() {
     if let Err(error) = run() {
@@ -26,9 +32,15 @@ fn run() -> Result<(), String> {
     if args.next().is_some() {
         return Err("expected one request path".into());
     }
-    let bytes = std::fs::read(path).map_err(err)?;
-    let request: CardWaveTransferCliRequestV1 = serde_json::from_slice(&bytes).map_err(err)?;
-    let result = run_card_wave_transfer_cli_v1(&request)?;
+    // One byte past the bound is enough for the library to refuse the
+    // request, so a wrong path never reads a large file whole.
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(err)?
+        .take(MAX_REQUEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(err)?;
+    let result = run_card_wave_transfer_cli_json_v1(&bytes)?;
     println!("{result}");
     Ok(())
 }

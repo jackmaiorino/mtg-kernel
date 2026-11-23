@@ -10,25 +10,42 @@
 //! prefix of the new one, keep every existing bit, initialise appended rows
 //! from SHA-256 of their name and a seed, zero their optimizer moments) but
 //! for any ordinary checkpoint the trainer writes on main: either checkpoint
-//! schema (imported or fresh origin), any of its losses, any feature contract
-//! (V3, V4, FlatV7, FlatV8, no-state-digest) and the net-8 or V8 inclusion
-//! layout, into the registry of whatever build runs the transfer (default or
+//! schema (imported or fresh origin), the terminal, GAE and recovery losses,
+//! every feature contract the trainer's own resolver reads (V3, V4, FlatV7,
+//! FlatV8, no-state-digest) with that contract's model layout (net-8, or the
+//! V8 inclusion net for FlatV8), into the registry of whatever build runs the
+//! transfer (default, `limited-fdn-fixtures`, `standard-magezero-fixtures` or
 //! `eternal-fixtures`).
+//!
+//! Three bindings make the transfer refuse anything that is not that wave:
+//!
+//! - The destination is the running build: its `KERNEL_CARDDB_HASH` and its
+//!   registry files byte for byte, which this module embeds the way
+//!   `build.rs` reads them ([`COMPILED_REGISTRY`]).
+//! - The checkpoint is one the trainer would restore: its feature contract,
+//!   input contract, loss, scalars, tensor layout and state digest pass the
+//!   trainer's own checkpoint checks, not copies of them.
+//! - The source registry is the checkpoint's own: its origin records the
+//!   source card database, the first registry file's bytes and a card count,
+//!   and no row past the source registry holds optimizer state.
 //!
 //! The transfer is a pure function of its inputs: it reads and writes no
 //! file. Its output is an ordinary checkpoint with the same fields as its
 //! source except `card_db_hash`, `state_sha256` and the appended card rows
 //! of the card embedding and its two moments. Nothing else, including the
-//! warm-start provenance (`source_import`), is rewritten. The transfer
-//! record ([`CardWaveTransferRecordV1`]) is a separate document, so the
-//! strict checkpoint reader and every existing checkpoint's bytes are
-//! unchanged.
+//! warm-start provenance (`source_import`), is rewritten, so a model source
+//! resumes the result only once its origin is re-bound to the destination
+//! build, which this module does not do (`docs/CARD-WAVE-TRANSFER.md`,
+//! Limits). The transfer record ([`CardWaveTransferRecordV1`]) is a separate
+//! document, so the strict checkpoint reader and every existing checkpoint's
+//! bytes are unchanged.
 
 use super::*;
 use crate::card_def::CARD_DEFS;
-use crate::native_policy_train_step_v1::native_train_state_parameter_layout_for_count_v1;
 use crate::native_policy_value_net_v1::{CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1};
-use crate::phase1_registry_transfer_v1::{initial_card_row, registry_cards, INITIALIZER};
+use crate::phase1_registry_transfer_v1::{
+    initial_card_row, registry_cards, strict_registry_document, INITIALIZER,
+};
 
 const RECORD_SCHEMA: &str = "mtg-kernel-expanded-card-wave-transfer/v1";
 const CLI_REQUEST_SCHEMA: &str = "mtg-kernel-expanded-card-wave-transfer-cli-request/v1";
@@ -36,11 +53,50 @@ const CLI_RESULT_SCHEMA: &str = "mtg-kernel-expanded-card-wave-transfer-cli-resu
 const REGISTRY_IDENTITY_DOMAIN: &str = "mtg-kernel-card-wave-registry-segments/v1";
 const MAPPING_RULE: &str = "exact-existing-card-record-prefix; card_token=card_db_id+1; appended-rows-initialized-moments-zeroed; all-other-bits-preserved";
 const CARD_EMBEDDING_NAME: &str = "card_embedding.weight";
-/// Registry fields that `build.rs` never reads (its `CardJson` does not
-/// declare them), so they are outside `KERNEL_CARDDB_HASH`. Every other
-/// field, including one this list does not know, must be unchanged.
+/// The registry schema version `build.rs` compiles (its
+/// `EXPECTED_SCHEMA_VERSION`). A registry file of another version is not one
+/// a build of this source reads.
+const REGISTRY_SCHEMA_VERSION: u64 = 2;
+/// Registry fields that `build.rs` never reads: its `CardJson` does not
+/// declare them and admits unknown fields, so they are outside
+/// `KERNEL_CARDDB_HASH`. Every other field must be unchanged. That includes
+/// fields this list does not name, even ones `CardJson` does not declare
+/// either (`object_name`, `scryfall_id` and `oracle_id` of the Foundations
+/// registry): comparing them can only refuse more.
 const METADATA_FIELDS: [&str; 3] = ["complexity", "java_file", "sideboard_only"];
-const MODEL_SHAPE_REFUSAL: &str = "checkpoint model shape differs from the net-8 train-state layout; card-wave transfer never reshapes a model";
+const MODEL_SHAPE_REFUSAL: &str = "checkpoint model shape differs from the train-state layout of its feature contract; card-wave transfer never reshapes a model";
+const MAX_CLI_REQUEST_BYTES: usize = 1024 * 1024;
+
+const PAUPER_REGISTRY: &[u8] = include_bytes!("../../../data/cards_v1.json");
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+const FDN_REGISTRY: &[u8] = include_bytes!("../../../data/limited/fdn_v1/cards_v1.json");
+#[cfg(feature = "standard-magezero-fixtures")]
+const STANDARD_REGISTRY: &[u8] = include_bytes!("../../../data/standard/magezero_v1/cards_v1.json");
+#[cfg(feature = "eternal-fixtures")]
+const ETERNAL_REGISTRY: &[u8] = include_bytes!("../../../data/eternal_v1/cards_v1.json");
+
+/// This build's registry files, byte for byte, in the order `build.rs`
+/// concatenates them into the card id space: the Pauper registry, then under
+/// `limited-fdn-fixtures` the Foundations registry or (under
+/// `standard-magezero-fixtures`) the Standard one in its place, then under
+/// `eternal-fixtures` the eternal registry.
+#[cfg(not(feature = "limited-fdn-fixtures"))]
+const COMPILED_REGISTRY: &[&[u8]] = &[PAUPER_REGISTRY];
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+const COMPILED_REGISTRY: &[&[u8]] = &[PAUPER_REGISTRY, FDN_REGISTRY];
+#[cfg(all(
+    feature = "standard-magezero-fixtures",
+    not(feature = "eternal-fixtures")
+))]
+const COMPILED_REGISTRY: &[&[u8]] = &[PAUPER_REGISTRY, STANDARD_REGISTRY];
+#[cfg(feature = "eternal-fixtures")]
+const COMPILED_REGISTRY: &[&[u8]] = &[PAUPER_REGISTRY, STANDARD_REGISTRY, ETERNAL_REGISTRY];
 
 /// Pins of one transfer. Registry identities are [`registry_identity_v1`]
 /// of each build's registry files in build order, never of one file alone.
@@ -53,6 +109,7 @@ pub struct CardWaveTransferRequestV1 {
     pub source_registry_sha256: String,
     /// Must equal this build's `KERNEL_CARDDB_HASH`.
     pub destination_card_db_hash: String,
+    /// Must be the identity of this build's own registry files.
     pub destination_registry_sha256: String,
     /// The source checkpoint's own feature identity. A transfer never
     /// migrates features, so these are only compared.
@@ -113,6 +170,8 @@ impl CardWaveTransferV1 {
         &self.record
     }
 
+    /// The record's one serialization: what the transfer writes and the only
+    /// bytes [`verify_card_wave_transfer_v1`] accepts for it.
     pub fn record_bytes_v1(&self) -> Result<Vec<u8>, String> {
         let mut bytes = serde_json::to_vec_pretty(&self.record).map_err(err)?;
         bytes.push(b'\n');
@@ -120,16 +179,17 @@ impl CardWaveTransferV1 {
     }
 }
 
-/// The destination a transfer binds: a card-db hash and the card names in
-/// id order. [`transfer_card_wave_checkpoint_v1`] binds the running build.
+/// The registry a transfer binds as its destination: the build's registry
+/// files and its card names in id order. [`transfer_card_wave_checkpoint_v1`]
+/// binds the running build; the card database is always the running build's.
 struct DestinationBindingV1<'a> {
-    card_db_hash: String,
+    segments: Vec<&'a [u8]>,
     names: Vec<&'a str>,
 }
 
 fn compiled_destination_v1() -> DestinationBindingV1<'static> {
     DestinationBindingV1 {
-        card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
+        segments: COMPILED_REGISTRY.to_vec(),
         names: CARD_DEFS.iter().map(|card| card.name).collect(),
     }
 }
@@ -156,17 +216,36 @@ fn has_name_v1(card: &Value, name: &str) -> bool {
     card.get("name").and_then(Value::as_str) == Some(name)
 }
 
-/// The concatenated `cards` of the segments, each read by the existing
-/// strict registry reader (duplicate keys, empty or ambiguous names
-/// refused), with names unique across the whole id space.
-fn concatenated_cards_v1(segments: &[&[u8]]) -> Result<Vec<Value>, String> {
+/// The cards of one build's registry files in id order, and how many of them
+/// its first file holds.
+struct RegistryCardsV1 {
+    cards: Vec<Value>,
+    first_segment_cards: usize,
+}
+
+/// The concatenated `cards` of the segments. Each file is read by the
+/// existing strict registry reader (duplicate keys, empty or ambiguous names
+/// refused) and must be of the schema version `build.rs` compiles; names are
+/// unique across the whole id space.
+fn registry_v1(segments: &[&[u8]]) -> Result<RegistryCardsV1, String> {
     ensure(
         !segments.is_empty(),
         "card-wave transfer requires at least one registry segment",
     )?;
     let mut cards = Vec::new();
-    for segment in segments {
+    let mut first_segment_cards = 0;
+    for (ordinal, segment) in segments.iter().enumerate() {
+        let version = strict_registry_document(segment)?
+            .get("version")
+            .and_then(Value::as_u64);
+        ensure(
+            version == Some(REGISTRY_SCHEMA_VERSION),
+            "registry file is not of the schema version build.rs compiles",
+        )?;
         cards.extend(registry_cards(segment)?);
+        if ordinal == 0 {
+            first_segment_cards = cards.len();
+        }
     }
     ensure(
         cards.len() < CARD_VOCAB_SIZE_V1,
@@ -179,7 +258,10 @@ fn concatenated_cards_v1(segments: &[&[u8]]) -> Result<Vec<Value>, String> {
             "duplicate card name across registry segments",
         )?;
     }
-    Ok(cards)
+    Ok(RegistryCardsV1 {
+        cards,
+        first_segment_cards,
+    })
 }
 
 /// The first field (in sorted order) of two records of one card whose value
@@ -198,8 +280,8 @@ fn changed_covered_field_v1(old: &Value, new: &Value) -> Result<Option<String>, 
 }
 
 /// The appended destination rows, after proving `source` is an exact prefix
-/// of `destination` in every hash-covered field. Refuses, in id order, the
-/// first removed, renamed, reordered or changed row.
+/// of `destination` in every field but [`METADATA_FIELDS`]. Refuses, in id
+/// order, the first removed, renamed, reordered or changed row.
 fn appended_v1<'a>(source: &[Value], destination: &'a [Value]) -> Result<&'a [Value], String> {
     for (id, old) in source.iter().enumerate() {
         let old_name = card_name_v1(old)?;
@@ -221,56 +303,163 @@ fn appended_v1<'a>(source: &[Value], destination: &'a [Value]) -> Result<&'a [Va
         }
         if let Some(field) = changed_covered_field_v1(old, new)? {
             return Err(format!(
-                "card id {id} ({old_name:?}) changed field {field:?}, which the card database hash covers; only appended cards are transferable"
+                "card id {id} ({old_name:?}) changed field {field:?}, which is not a field the card database hash is known to ignore; only appended cards are transferable"
             ));
         }
     }
     Ok(&destination[source.len()..])
 }
 
-/// One checkpoint section as the owned train-state tensors its layout names.
-fn section_v1(
-    tensors: &[ParameterBitsV1],
-    layout: &[(&'static str, &'static [usize])],
-) -> Result<Vec<NativeNamedParameterV1>, String> {
-    ensure(tensors.len() == layout.len(), MODEL_SHAPE_REFUSAL)?;
-    let mut section = Vec::with_capacity(layout.len());
-    for (tensor, &(name, shape)) in tensors.iter().zip(layout) {
+/// The source checkpoint, in either format and sealed or not, through the
+/// trainer's own strict reader, with nothing the transfer would drop:
+///
+/// - an E, soft-Q, search-target or EX1 continuation member, read by the
+///   trainer's own probe, for which an explicit `null` is a member too (the
+///   typed reader takes it for absence);
+/// - a v1 JSON document that is not the canonical serialization of the
+///   checkpoint it parses to (a `null` member, a member of the origin the
+///   reader skips, other spacing), since the destination is that
+///   serialization. A container is canonical by its own structure check.
+fn source_checkpoint_v1(checkpoint_bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
+    let record = record_envelope_v1::open_v1(checkpoint_bytes, MAX_FILE_BYTES)?;
+    let probe: CheckpointESupportedProbeV1 =
+        serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&record)?)
+            .map_err(err)?;
+    ensure(
+        probe.e_supported.is_none()
+            && probe.soft_q.is_none()
+            && probe.search_targets.is_none()
+            && probe.ex1.is_none(),
+        "checkpoint names an E, soft-Q, search-target or EX1 continuation member (an explicit null counts); card-wave transfer refuses it",
+    )?;
+    let saved = checkpoint_container_v1::parse_checkpoint_v1(&record)?;
+    if !checkpoint_container_v1::is_container_v1(&record) {
+        let canonical = serde_json::to_vec(&saved).map_err(err)?;
         ensure(
-            tensor.name == name
-                && tensor.shape == shape
-                && tensor.values.len() == shape.iter().product::<usize>(),
-            MODEL_SHAPE_REFUSAL,
+            canonical.as_slice() == &*record,
+            "v1 JSON source checkpoint is not the canonical serialization of the checkpoint it parses to; card-wave transfer would not keep its bytes",
         )?;
-        section.push(NativeNamedParameterV1 {
-            name,
-            shape: shape.to_vec(),
-            values: floats(&tensor.values),
-        });
     }
-    Ok(section)
+    Ok(saved)
 }
 
-/// The checkpoint's state digest by the native train-state hash, after its
-/// validation (finite values, non-negative second moments, zero padding row
-/// and gauge moments, gauge anchor, Adam step domain).
-fn state_sha256_v1(saved: &ExpandedCheckpointV1) -> Result<String, String> {
-    let layout = native_train_state_parameter_layout_for_count_v1(saved.parameters.len());
-    let snapshot = NativePolicyValueTrainSnapshotV1 {
-        adam_step: saved.adam_step,
-        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
-        parameters: section_v1(&saved.parameters, &layout)?,
-        first_moments: section_v1(&saved.first_moments, &layout)?,
-        second_moments: section_v1(&saved.second_moments, &layout)?,
+/// The checkpoint is an ordinary one of an untransferred origin, without
+/// continuation provenance bound to its own card database.
+fn check_ordinary_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+    let untransferred = matches!(
+        saved.source_import,
+        PlayPolicyOriginV1::Imported(_) | PlayPolicyOriginV1::FreshInitialization(_)
+    );
+    ensure(
+        untransferred && saved.schema == ordinary_checkpoint_schema_v1(&saved.source_import),
+        "card-wave transfer reads only an ordinary expanded-deck checkpoint of an imported or fresh origin, under that origin's checkpoint schema",
+    )?;
+    ensure(
+        saved.registry_transfer.is_none() && saved.archive_distillation.is_none(),
+        "checkpoint carries registry-transfer or archive-distillation provenance bound to its own card database; card-wave transfer refuses it",
+    )
+}
+
+/// The trainer's own checks of a checkpoint record that read no policy, run
+/// against the destination card database the record is about to name: the
+/// feature and input contract (`no_state_digest_v1::resolve_contract_v1`, as
+/// `check_checkpoint_fields_v1` calls it), the stored no-state-digest
+/// columns, and the loss with the scalars it requires
+/// (`check_checkpoint_loss_fields_v1`). The learning rate and value
+/// coefficient are positive and finite, as every update that wrote an
+/// ordinary checkpoint required. Returns whether the contract is FlatV8,
+/// whose model is the V8 inclusion net.
+fn check_trainer_record_v1(
+    saved: &ExpandedCheckpointV1,
+    card_db_hash: &str,
+) -> Result<bool, String> {
+    let resolved = no_state_digest_v1::resolve_contract_v1(
+        &saved.feature_contract_digest,
+        &saved.feature_encoding_digest,
+        card_db_hash,
+        saved.input_contract.as_ref(),
+    )
+    .map_err(|error| {
+        format!("checkpoint feature contract is not one the trainer reads: {error}")
+    })?;
+    if saved.input_contract.is_some() {
+        no_state_digest_v1::check_saved_columns_v1(saved)?;
+    }
+    check_checkpoint_loss_fields_v1(saved)?;
+    for bits in [saved.learning_rate_bits, saved.value_coefficient_bits] {
+        let value = f32::from_bits(bits);
+        ensure(
+            value.is_finite() && value > 0.0,
+            "checkpoint learning rate or value coefficient is not positive and finite",
+        )?;
+    }
+    Ok(resolved.base_contract_digest
+        == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8)
+}
+
+/// The checkpoint's state digest by the trainer's own restore
+/// (`restore_checkpoint_fields_v1`): its sections against the model of its
+/// feature contract (`checkpoint_tensors_v1`: tensor count, names, shapes
+/// and lengths), the native validation and digest of those tensors (finite
+/// values, non-negative second moments, zero padding row and gauge moments,
+/// gauge anchor, Adam step domain), and the train state built from them.
+fn restored_state_sha256_v1(saved: &ExpandedCheckpointV1, flat_v8: bool) -> Result<String, String> {
+    let template = if flat_v8 {
+        NativePolicyValueNetV1::v8_inclusion_template_v1().map_err(err)?
+    } else {
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .map_err(err)?
     };
-    Ok(hex(&snapshot.state_sha256_v1().map_err(err)?))
+    let tensors = checkpoint_tensors_v1(saved, &template)
+        .map_err(|error| format!("{MODEL_SHAPE_REFUSAL}: {error}"))?;
+    let state_sha256 = tensors.state_sha256_v1().map_err(err)?;
+    // The checkpoint's own parameters carry its gauge anchor, which the
+    // restore requires of the model it builds the state on.
+    let model = template
+        .with_parameters_v1(&tensors.parameters)
+        .map_err(err)?;
+    NativePolicyValueTrainStateV1::from_tensors_v1(model, &tensors).map_err(err)?;
+    Ok(hex(&state_sha256))
+}
+
+/// Binds the source checkpoint to the declared source registry through the
+/// origin it records, which every origin the trainer loads stamps from its
+/// own build: that build's card database hash, the SHA-256 of the registry
+/// file it embeds (`data/cards_v1.json`, the first segment) and a card
+/// count. A fresh origin counts the build's whole card id space; an import
+/// counts the cards of that first file, which it was validated against.
+fn bind_source_registry_v1(
+    saved: &ExpandedCheckpointV1,
+    first_segment: &[u8],
+    source: &RegistryCardsV1,
+) -> Result<(), String> {
+    let origin = &saved.source_import;
+    let recorded_cards = match origin {
+        PlayPolicyOriginV1::Imported(_) => source.first_segment_cards,
+        PlayPolicyOriginV1::FreshInitialization(_) => source.cards.len(),
+        PlayPolicyOriginV1::TransferredFreshInitialization(_) => {
+            return Err("checkpoint origin already went through a registry transfer".into())
+        }
+    };
+    ensure(
+        origin.destination_card_db_hash_v1() == saved.card_db_hash,
+        "checkpoint origin records another card database than the checkpoint itself",
+    )?;
+    ensure(
+        origin.destination_registry_sha256_v1() == sha(first_segment),
+        "checkpoint is not bound to the supplied source registry: its origin records another first registry file",
+    )?;
+    ensure(
+        origin.destination_card_count_v1() == recorded_cards,
+        "checkpoint is not bound to the supplied source registry: its origin records another card count",
+    )
 }
 
 /// Transfer a trainer checkpoint across one appended card wave into the
 /// running build. `source_registry` and `destination_registry` are each
 /// build's registry files in build order (Pauper first). The destination
-/// registry's names must be this build's compiled card names in id order,
-/// and `request.destination_card_db_hash` this build's hash.
+/// registry must be this build's own registry files, byte for byte, and
+/// `request.destination_card_db_hash` this build's hash.
 pub fn transfer_card_wave_checkpoint_v1(
     checkpoint_bytes: &[u8],
     source_registry: &[&[u8]],
@@ -293,6 +482,7 @@ fn transfer_to_destination_v1(
     request: &CardWaveTransferRequestV1,
     destination: &DestinationBindingV1<'_>,
 ) -> Result<CardWaveTransferV1, String> {
+    let build_card_db_hash = format!("{KERNEL_CARDDB_HASH:016x}");
     ensure(
         checkpoint_bytes.len() as u64 <= MAX_FILE_BYTES,
         "source checkpoint exceeds the checkpoint size bound",
@@ -310,59 +500,57 @@ fn transfer_to_destination_v1(
         "destination registry identity differs",
     )?;
     ensure(
-        request.destination_card_db_hash == destination.card_db_hash,
+        request.destination_card_db_hash == build_card_db_hash,
         "destination card database is not this build's KERNEL_CARDDB_HASH",
     )?;
     ensure(
         request.source_card_db_hash != request.destination_card_db_hash,
         "source and destination card databases are identical: there is no card wave to transfer, and a transferred checkpoint is never transferred again into its own build",
     )?;
+    // The destination is the build itself: the very bytes it compiled, in
+    // its own files, so no row or field of it is the caller's to supply.
+    ensure(
+        destination_registry.len() == destination.segments.len()
+            && destination_registry
+                .iter()
+                .zip(&destination.segments)
+                .all(|(supplied, compiled)| supplied == compiled),
+        "destination registry is not this build's compiled registry: its files must be the build's own registry files, byte for byte and in build order",
+    )?;
 
-    // The checkpoint, in either format, through the trainer's own strict
-    // reader: an unknown field or tensor encoding refuses here.
-    let mut saved = checkpoint_container_v1::parse_checkpoint_v1(checkpoint_bytes)?;
+    let mut saved = source_checkpoint_v1(checkpoint_bytes)?;
     ensure(
         saved.card_db_hash == request.source_card_db_hash,
         "checkpoint card database differs from the declared source card database",
     )?;
-    ensure(
-        saved.schema == CHECKPOINT_SCHEMA || saved.schema == FRESH_CHECKPOINT_SCHEMA,
-        "card-wave transfer reads only an ordinary expanded-deck checkpoint",
-    )?;
+    check_ordinary_checkpoint_v1(&saved)?;
     ensure(
         saved.feature_contract_digest == request.feature_contract_digest
             && saved.feature_encoding_digest == request.feature_encoding_digest,
         "checkpoint feature contract differs from the request; card-wave transfer never migrates features",
     )?;
-    ensure(
-        saved.registry_transfer.is_none()
-            && saved.archive_distillation.is_none()
-            && saved.e_supported.is_none()
-            && saved.soft_q.is_none()
-            && saved.search_targets.is_none()
-            && saved.ex1.is_none(),
-        "checkpoint carries continuation provenance bound to its own card database (registry transfer, archive distillation, E, soft-Q, search targets or EX1); card-wave transfer refuses it",
-    )?;
+    let flat_v8 = check_trainer_record_v1(&saved, &build_card_db_hash)?;
 
-    let source_cards = concatenated_cards_v1(source_registry)?;
-    let destination_cards = concatenated_cards_v1(destination_registry)?;
+    let source = registry_v1(source_registry)?;
+    let destination_cards = registry_v1(destination_registry)?.cards;
     ensure(
         destination_cards.len() == destination.names.len()
             && destination_cards
                 .iter()
                 .zip(&destination.names)
                 .all(|(card, name)| has_name_v1(card, name)),
-        "destination registry is not this build's compiled card registry (card names or order differ)",
+        "this build's compiled card names differ from its embedded registry",
     )?;
-    let appended = appended_v1(&source_cards, &destination_cards)?;
+    let appended = appended_v1(&source.cards, &destination_cards)?;
     ensure(
         !appended.is_empty(),
         "no card is appended, yet the card database hash changed: a rules or field change of existing cards is not a card wave and is refused",
     )?;
+    bind_source_registry_v1(&saved, source_registry[0], &source)?;
 
     // Validates the whole source state against its recorded digest before
     // any bit changes.
-    let source_state_sha256 = state_sha256_v1(&saved)?;
+    let source_state_sha256 = restored_state_sha256_v1(&saved, flat_v8)?;
     ensure(
         source_state_sha256 == saved.state_sha256,
         "source checkpoint state digest differs",
@@ -372,19 +560,25 @@ fn transfer_to_destination_v1(
             && saved.parameters[0].shape == [CARD_VOCAB_SIZE_V1, CARD_EMBEDDING_DIM_V1],
         MODEL_SHAPE_REFUSAL,
     )?;
+    // No card past the source registry was ever trained: every row from the
+    // first appended one to the end of the table, still unassigned ones
+    // included, holds +0.0 in both moments. A registry declared shorter than
+    // the checkpoint's own would otherwise have its trained rows replaced.
+    let first_unassigned = (source.cards.len() + 1) * CARD_EMBEDDING_DIM_V1;
+    ensure(
+        saved.first_moments[0].values[first_unassigned..]
+            .iter()
+            .chain(&saved.second_moments[0].values[first_unassigned..])
+            .all(|bits| *bits == 0),
+        "an embedding row past the declared source registry holds learned optimizer state; refusing to discard it (the declared source registry is not this checkpoint's)",
+    )?;
 
     let mut appended_cards = Vec::with_capacity(appended.len());
     for (offset, card) in appended.iter().enumerate() {
-        let card_id = source_cards.len() + offset;
+        let card_id = source.cards.len() + offset;
         let name = card_name_v1(card)?;
         let row = card_id + 1;
         let span = row * CARD_EMBEDDING_DIM_V1..(row + 1) * CARD_EMBEDDING_DIM_V1;
-        let first = &saved.first_moments[0].values[span.clone()];
-        let second = &saved.second_moments[0].values[span.clone()];
-        ensure(
-            first.iter().chain(second).all(|bits| *bits == 0),
-            "an appended card's embedding row holds learned optimizer state; refusing to discard it (the declared source registry is not this checkpoint's)",
-        )?;
         let initial = initial_card_row(name, request.initialization_seed);
         let parameters = &mut saved.parameters[0].values[span.clone()];
         for (slot, value) in parameters.iter_mut().zip(initial) {
@@ -398,8 +592,8 @@ fn transfer_to_destination_v1(
             name: name.into(),
         });
     }
-    saved.card_db_hash = request.destination_card_db_hash.clone();
-    let destination_state_sha256 = state_sha256_v1(&saved)?;
+    saved.card_db_hash = build_card_db_hash;
+    let destination_state_sha256 = restored_state_sha256_v1(&saved, flat_v8)?;
     saved.state_sha256 = destination_state_sha256.clone();
     let checkpoint_bytes = serde_json::to_vec(&saved).map_err(err)?;
 
@@ -414,7 +608,7 @@ fn transfer_to_destination_v1(
         initializer: INITIALIZER.into(),
         source_registry_segment_sha256: source_segments,
         destination_registry_segment_sha256: destination_segments,
-        source_card_count: source_cards.len(),
+        source_card_count: source.cards.len(),
         destination_card_count: destination_cards.len(),
         appended_cards,
         checkpoint_schema: saved.schema,
@@ -433,8 +627,8 @@ fn transfer_to_destination_v1(
 }
 
 /// Reproduce a persisted transfer from its preserved inputs and accept it
-/// only if both the record and the destination checkpoint bytes are exactly
-/// what the transfer produces in this build.
+/// only if both the record and the destination checkpoint are, byte for
+/// byte, what the transfer produces in this build.
 pub fn verify_card_wave_transfer_v1(
     record_bytes: &[u8],
     destination_checkpoint_bytes: &[u8],
@@ -454,6 +648,9 @@ pub fn verify_card_wave_transfer_v1(
 }
 
 /// [`verify_card_wave_transfer_v1`] with the reproducing transfer supplied.
+/// The record is read only for its request; what is accepted is the
+/// reproduced record's own bytes, so a record that parses to the same
+/// document from other bytes is refused too.
 fn verify_reproduced_v1(
     record_bytes: &[u8],
     destination_checkpoint_bytes: &[u8],
@@ -469,22 +666,26 @@ fn verify_reproduced_v1(
         "card-wave transfer record schema differs",
     )?;
     let reproduced = reproduce(&record.request)?;
-    let same_checkpoint = reproduced.checkpoint_bytes == destination_checkpoint_bytes;
     ensure(
-        reproduced.record == record && same_checkpoint,
+        reproduced.record_bytes_v1()? == record_bytes
+            && reproduced.checkpoint_bytes == destination_checkpoint_bytes,
         "card-wave transfer record or checkpoint differs from the reproduced transfer",
     )?;
     Ok(reproduced)
 }
 
 /// File-based request of [`run_card_wave_transfer_cli_v1`]. Every path is
-/// absolute; each build's registry files are listed in build order.
+/// absolute; each build's registry files are listed in build order. The
+/// feature digests are the caller's pin of the checkpoint's feature
+/// identity: the command never copies them from the checkpoint it is given.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CardWaveTransferCliRequestV1 {
     pub schema: String,
     pub source_checkpoint: PathBuf,
     pub source_card_db_hash: String,
+    pub feature_contract_digest: String,
+    pub feature_encoding_digest: String,
     pub source_registry: Vec<PathBuf>,
     pub destination_registry: Vec<PathBuf>,
     pub initialization_seed: u64,
@@ -513,9 +714,24 @@ fn read_cli_inputs_v1(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>, String> {
     Ok(files)
 }
 
-/// Reads the inputs, transfers into this build, re-verifies the result from
-/// the same bytes and writes the destination checkpoint and its record to a
-/// fresh directory. Never modifies an input and starts no training.
+/// [`run_card_wave_transfer_cli_v1`] of a request document: at most 1 MiB of
+/// JSON without a repeated object key, decoded strictly.
+pub fn run_card_wave_transfer_cli_json_v1(request: &[u8]) -> Result<Value, String> {
+    ensure(
+        request.len() <= MAX_CLI_REQUEST_BYTES,
+        "card-wave transfer CLI request exceeds 1 MiB",
+    )?;
+    let text = std::str::from_utf8(request).map_err(err)?;
+    crate::rl::parse_strict_json_value(text).map_err(err)?;
+    let request: CardWaveTransferCliRequestV1 = serde_json::from_str(text).map_err(err)?;
+    run_card_wave_transfer_cli_v1(&request)
+}
+
+/// Reads the inputs, transfers into this build and publishes the destination
+/// checkpoint and its record to a fresh directory, then reads both files
+/// back and accepts them only as the reproduced transfer's own bytes
+/// ([`verify_card_wave_transfer_v1`]); files that fail are removed. Never
+/// modifies an input and starts no training.
 pub fn run_card_wave_transfer_cli_v1(
     request: &CardWaveTransferCliRequestV1,
 ) -> Result<Value, String> {
@@ -527,20 +743,24 @@ pub fn run_card_wave_transfer_cli_v1(
         request.output_directory.is_absolute(),
         "card-wave transfer CLI requires an absolute output_directory",
     )?;
+    // Refused before any work; `create_dir` below still decides.
+    ensure(
+        !request.output_directory.exists(),
+        "fresh output directory required: output_directory already exists",
+    )?;
     let checkpoint_bytes = read_cli_input_v1(&request.source_checkpoint)?;
     let source_files = read_cli_inputs_v1(&request.source_registry)?;
     let destination_files = read_cli_inputs_v1(&request.destination_registry)?;
     let source_registry: Vec<&[u8]> = source_files.iter().map(Vec::as_slice).collect();
     let destination_registry: Vec<&[u8]> = destination_files.iter().map(Vec::as_slice).collect();
-    let saved = checkpoint_container_v1::parse_checkpoint_v1(&checkpoint_bytes)?;
     let transfer_request = CardWaveTransferRequestV1 {
         source_checkpoint_sha256: sha(&checkpoint_bytes),
         source_card_db_hash: request.source_card_db_hash.clone(),
         source_registry_sha256: registry_identity_v1(&source_registry),
         destination_card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         destination_registry_sha256: registry_identity_v1(&destination_registry),
-        feature_contract_digest: saved.feature_contract_digest,
-        feature_encoding_digest: saved.feature_encoding_digest,
+        feature_contract_digest: request.feature_contract_digest.clone(),
+        feature_encoding_digest: request.feature_encoding_digest.clone(),
         initialization_seed: request.initialization_seed,
     };
     let transfer = transfer_card_wave_checkpoint_v1(
@@ -550,13 +770,6 @@ pub fn run_card_wave_transfer_cli_v1(
         &transfer_request,
     )?;
     let record_bytes = transfer.record_bytes_v1()?;
-    verify_card_wave_transfer_v1(
-        &record_bytes,
-        transfer.checkpoint_bytes_v1(),
-        &checkpoint_bytes,
-        &source_registry,
-        &destination_registry,
-    )?;
     if let Some(parent) = request.output_directory.parent() {
         fs::create_dir_all(parent).map_err(err)?;
     }
@@ -566,16 +779,32 @@ pub fn run_card_wave_transfer_cli_v1(
             request.output_directory.display()
         )
     })?;
-    let checkpoint = PinnedFileV1 {
-        path: request.output_directory.join("checkpoint.json"),
-        sha256: sha(transfer.checkpoint_bytes_v1()),
-    };
-    let record = PinnedFileV1 {
-        path: request.output_directory.join("transfer-record.json"),
-        sha256: sha(&record_bytes),
-    };
-    fs::write(&checkpoint.path, transfer.checkpoint_bytes_v1()).map_err(err)?;
-    fs::write(&record.path, record_bytes).map_err(err)?;
+    let directory = &request.output_directory;
+    let checkpoint =
+        publish_json_bytes_v1(directory, "checkpoint.json", transfer.checkpoint_bytes_v1())?;
+    let record = publish_json_bytes_v1(directory, "transfer-record.json", &record_bytes)?;
+    // What a later reader finds on disk, reproduced from the inputs.
+    let verified = fs::read(&record.path)
+        .map_err(err)
+        .and_then(|written_record| {
+            let written_checkpoint = fs::read(&checkpoint.path).map_err(err)?;
+            verify_card_wave_transfer_v1(
+                &written_record,
+                &written_checkpoint,
+                &checkpoint_bytes,
+                &source_registry,
+                &destination_registry,
+            )
+        });
+    if let Err(error) = verified {
+        // Only this call's own files, in the directory it created.
+        let _ = fs::remove_file(&checkpoint.path);
+        let _ = fs::remove_file(&record.path);
+        let _ = fs::remove_dir(directory);
+        return Err(format!(
+            "written card-wave transfer failed its replay: {error}"
+        ));
+    }
     Ok(serde_json::json!({
         "schema": CLI_RESULT_SCHEMA,
         "checkpoint": checkpoint,

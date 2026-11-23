@@ -828,16 +828,6 @@ const PAIRING_SECOND_WEIGHT_V1: usize = PARAMETER_TENSOR_COUNT + 2;
 const PAIRING_SECOND_BIAS_V1: usize = PARAMETER_TENSOR_COUNT + 3;
 const V8_ACTION_FIRST_WEIGHT_SHAPE_V1: &[usize] = &[HIDDEN_DIM_V1, V8_ACTION_ENCODER_INPUT_V1];
 
-/// The expected `(name, shape)` of every train-state tensor of a net-8
-/// checkpoint section holding `tensor_count` tensors: the V8 inclusion net's
-/// layout for its tensor count, net-8's otherwise. A read-only view of the
-/// table the train-state validation below uses; it validates nothing itself.
-pub(crate) fn native_train_state_parameter_layout_for_count_v1(
-    tensor_count: usize,
-) -> Vec<(&'static str, &'static [usize])> {
-    parameter_layout_dims_v1::<Net8DimsV1>(tensor_count == V8_PARAMETER_TENSOR_COUNT_V1)
-}
-
 /// The expected `(name, shape)` of every tensor of an architecture: `D`'s
 /// table, or under `D = Net8DimsV1` with `v8` the V8 inclusion net's (net-8's
 /// table with `action_encoder.0.weight` one column wider, then the pairing

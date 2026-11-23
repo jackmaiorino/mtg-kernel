@@ -275,6 +275,17 @@ impl VerifiedRegistryTransferV1 {
     }
 }
 
+/// A registry file's whole document through the strict reader
+/// [`registry_cards`] uses (duplicate object keys refused), for a caller that
+/// reads more of it than its cards.
+pub(crate) fn strict_registry_document(bytes: &[u8]) -> Result<Value, String> {
+    require(
+        bytes.len() <= MAX_INPUT_BYTES,
+        "registry input exceeds size bound",
+    )?;
+    strict_registry_json::read(bytes)
+}
+
 pub(crate) fn registry_cards(bytes: &[u8]) -> Result<Vec<Value>, String> {
     require(
         bytes.len() <= MAX_INPUT_BYTES,
