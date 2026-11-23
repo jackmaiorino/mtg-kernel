@@ -927,7 +927,8 @@ fn the_prepared_command_keeps_its_wire_bytes_at_the_default_bound() {
     }
     assert_eq!(serde_json::to_string(&back).unwrap(), default);
     let raised = serde_json::to_string(&prepared(&source, &[], 2048, "out".into())).unwrap();
-    let member = "\"max_trajectory_batch_mebibytes\":2048,";
+    // The key is the variant's last field (positional compatibility), so it follows a comma.
+    let member = ",\"max_trajectory_batch_mebibytes\":2048";
     assert!(raised.contains(member));
     assert_eq!(raised.replace(member, ""), default);
     let back: ExpandedTrainingCommandV1 = serde_json::from_str(&raised).unwrap();
