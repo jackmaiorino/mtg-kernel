@@ -52,6 +52,7 @@ fn fixture_serial_inputs_v1(
         output_directory,
         preparation_workers: None,
         max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+        max_batch_bytes: MAX_BATCH_BYTES,
         verified_replay: verified_tape_cap.map(|cap| VerifiedReplayOptionsV1::new(cap).unwrap()),
         unsupported: SUnsupportedOptionsV1 {
             line_b: false,
