@@ -10,7 +10,9 @@ and its `update` / `update_prepared` command:
 }
 ```
 
-Run validation requires an absolute table path. The loader opens a regular file,
+Run validation requires an absolute table path. Startup loads the table once and
+passes the validated projection through initial-state admission and recovery.
+The loader opens a regular file,
 checks its size, and caps the read at 64 MiB, including growth during the read.
 It checks the file pin, table schema and compiled `KERNEL_CARDDB_HASH`.
 Token `card_id + 1` reads the corresponding dense row. Missing cards get zero
@@ -59,7 +61,9 @@ remains the ordinary tensor/optimizer digest, as do update before/after receipts
 Enabled `update.json` receipts also record `card_semantics: {"binding":"..."}`;
 flag-off receipts omit the member. Every recovered and completed update checks
 this member against the run, and checks the loaded checkpoint's section presence,
-schema and binding independently. It cannot substitute a flag-off checkpoint,
+schema, binding, weight/moment sizes and finiteness, non-negative second moments,
+and exactly one step of P optimizer age independently. It cannot substitute a
+flag-off checkpoint,
 an enabled checkpoint into an off run, or a different table binding.
 The checkpoint pin and checkpoint integrity digest also bind P. No inference
 arithmetic changes or export requirement for collection. Legacy derived learners
@@ -93,7 +97,9 @@ not already exist. Neither operation changes source files.
   Admission requires an ordinary 33-tensor checkpoint. It refuses archive
   distillation, E-supported, soft-Q, search-target, EX1, exploration, registry
   transfer, input-contract and existing projection sections, and 37-tensor FlatV8.
-  Admission precedes following unsupported sections' external references.
+  Admission precedes following unsupported sections' external references. The
+  source loader also checks transfer context and input contract before creating
+  the output directory, including converted run-start sources.
   `initial_source` has no checkpoint and pins the existing fresh-initialization
   descriptor; its manifest/payload are checked by `fresh_initialization_source`.
   Its identity must equal the checkpoint lineage. Tokens are unique, nonzero
@@ -109,12 +115,16 @@ Tests exercise the flag-on GAE step for central differences of P, post-Adam
 failure with both per-batch offsets set, populated digest-cache invalidation,
 checkpoint resume, and the core's unsupported-path refusals. File fixtures cover
 tool publication/readback, every fork refusal, production loader admission,
-recovery receipt and checkpoint binding, strict null handling, invalid table
-rows/schema and bounded file reads. A real `execute_v1(UpdatePrepared)` test
-compares one and four preparation/forward workers bit for bit, and compares the
-off update with the legacy Update route, including fixed-partition backward at
-one and four workers. Metadata-probe counters guard flag-off load costs. Run
-tests check refusal before collection.
-
-These tests are added but not executed in this worktree. Builds, clippy and CI
-remain with the coordinator; Round 2 changes are intentionally uncommitted.
+recovery receipt/binding and malformed or stale P state, preservation of unlisted
+fork rows and moments, strict null handling, invalid table rows/schema and
+bounded file reads. A real `execute_v1(UpdatePrepared)` test
+uses Affinity/Terror mainboard cards observed in learner decisions, requires
+nonzero P weights and moments, and checks every folded coordinate against the
+flag-off table plus its P delta. It compares one and four preparation/forward
+workers bit for bit, including P and moments, with sequential and fixed-partition
+backward, and compares the off update with the legacy Update route.
+Metadata-probe counters guard flag-off load costs. Run
+tests check refusal before collection, including flag-off converted checkpoints
+with a section. Update and run entry points exercise S-learner, FlatV8,
+announcement scaling, input-contract and registry-transfer refusals; the GAE
+core separately refuses a 37-tensor FlatV8 model.

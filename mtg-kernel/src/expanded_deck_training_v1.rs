@@ -664,6 +664,7 @@ pub(crate) fn load_expanded_update_inference_v1(
         value_coefficient,
         None,
     )
+    .map(|(identity, _)| identity)
 }
 
 pub(crate) fn load_expanded_update_bound_projection_v1(
@@ -671,21 +672,42 @@ pub(crate) fn load_expanded_update_bound_projection_v1(
     trajectories: &[PinnedFileV1],
     learning_rate: f32,
     value_coefficient: f32,
-    binding: Option<&str>,
-) -> Result<ExpandedInferenceIdentityV1, String> {
+    before_projection: Option<&CardSemanticsV1>,
+) -> Result<(ExpandedInferenceIdentityV1, Option<CardSemanticsV1>), String> {
     let inputs = CheckpointInputExpectationV1 {
         trajectories,
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
     };
     if source.s_learner.is_some() {
-        ensure(binding.is_none(), "card semantics refuses S learner")?;
-        return s_learner_v1::load_update_inference_v1(source, &inputs);
+        ensure(
+            before_projection.is_none(),
+            "card semantics refuses S learner",
+        )?;
+        return s_learner_v1::load_update_inference_v1(source, &inputs)
+            .map(|identity| (identity, None));
     }
     let bytes = read_pinned_bytes(&source.play_import)?;
     let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, Some(&inputs))?;
+    let binding = before_projection.map(CardSemanticsV1::binding_v1);
     card_semantics_e1::validate_binding_v1(state.loaded_card_semantics.as_ref(), binding)?;
-    inference_identity_v1(source, &policy, &state)
+    let mut projection = before_projection.cloned();
+    if let Some(projection) = &mut projection {
+        let expected_step = projection
+            .p_step_v1()
+            .checked_add(1)
+            .ok_or("card semantics step overflow")?;
+        let saved = state
+            .loaded_card_semantics
+            .as_ref()
+            .ok_or("missing card semantics section")?;
+        projection.restore_v1(saved)?;
+        ensure(
+            saved.p_step == expected_step,
+            "card semantics update does not advance exactly one P step",
+        )?;
+    }
+    Ok((inference_identity_v1(source, &policy, &state)?, projection))
 }
 
 struct CheckpointInputExpectationV1<'a> {
@@ -5292,12 +5314,7 @@ fn execute_update_inner_v1(
         }
     }
     let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
-    let mut semantics = card_semantics_e1::load_training_v1(
-        &source,
-        card_semantics.as_ref(),
-        saved_semantics.as_ref(),
-    )?;
-    if semantics.is_some() {
+    if card_semantics.is_some() {
         ensure(
             transfer.is_none()
                 && policy.input_contract_v1().is_none()
@@ -5305,6 +5322,12 @@ fn execute_update_inner_v1(
             "card semantics requires an ordinary 33-tensor learner",
         )?;
     }
+
+    let mut semantics = card_semantics_e1::load_training_v1(
+        &source,
+        card_semantics.as_ref(),
+        saved_semantics.as_ref(),
+    )?;
 
     bind_training_math_v1(
         &source,

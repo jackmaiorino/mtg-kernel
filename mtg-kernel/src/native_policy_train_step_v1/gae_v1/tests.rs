@@ -3418,6 +3418,33 @@ mod card_semantics_e1_tests {
     }
 
     #[test]
+    fn projection_core_refuses_flat_v8() {
+        let model = NativePolicyValueNetV1::v8_inclusion_template_v1().unwrap();
+        assert_eq!(model.parameter_snapshot_v1().len(), 37);
+        let config = model.feature_transfer_config_v8();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let mut semantics = CardSemanticsV1::fixture_v1();
+        let error = state
+            .train_step_gae_core_profiled_dims_v1(
+                &[],
+                &[],
+                &[],
+                VC,
+                LR,
+                BackwardExecutionV1::Sequential,
+                config,
+                false,
+                None,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+                Some(&mut semantics),
+            )
+            .unwrap_err();
+        assert_eq!(error, card_projection_e1::unsupported_v1());
+    }
+
+    #[test]
     fn projection_core_refuses_wide_network() {
         let model =
             crate::native_policy_value_net_v1::NativePolicyValueNetWideV1::runner_fixed_wide_v1(

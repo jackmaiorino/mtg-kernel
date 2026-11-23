@@ -544,6 +544,24 @@ fn projection_prepared_update_matches_serial_and_flag_off_legacy_path() {
         .filter(|row| row.actor == trajectory.episode.learner_seat)
         .count();
     assert!(learner_steps > 0);
+    // These cards are mainboard entries in the two checked-in game-one decks,
+    // and occur in actor-visible object rows actually read by the learner.
+    for (deck, card) in [
+        ("Terror", 8),
+        ("Affinity", 58),
+        ("Affinity", 96),
+        ("Terror", 120),
+    ] {
+        assert!(list(deck).mainboard.contains(&card));
+        assert!(
+            trajectory
+                .decisions
+                .iter()
+                .any(|row| row.actor == trajectory.episode.learner_seat
+                    && row.tensor.object_card_ids.contains(&(i64::from(card) + 1))),
+            "card {card} must be read by a learner decision"
+        );
+    }
     let trajectories: Vec<_> = (0..128usize.div_ceil(learner_steps))
         .map(|index| {
             let mut copy = trajectory.clone();
@@ -605,6 +623,12 @@ fn projection_prepared_update_matches_serial_and_flag_off_legacy_path() {
     let fixed_parallel = execute_v1(fixed_parallel).unwrap();
     let workers = crate::native_policy_train_step_v1::take_effective_update_workers_for_test_v1();
     assert!(workers.0 > 1);
+    assert!(
+        fixed_parallel["update_preparation"]["started_workers"]
+            .as_u64()
+            .unwrap()
+            > 1
+    );
     assert_eq!(
         fixed_serial["checkpoint"]["sha256"],
         fixed_parallel["checkpoint"]["sha256"]
@@ -623,6 +647,90 @@ fn projection_prepared_update_matches_serial_and_flag_off_legacy_path() {
     .unwrap();
     assert_eq!(off["checkpoint"]["sha256"], legacy["checkpoint"]["sha256"]);
     assert!(off.get("card_semantics").is_none());
+    let checkpoint = |receipt: &Value| {
+        let pin: PinnedFileV1 = serde_json::from_value(receipt["checkpoint"].clone()).unwrap();
+        read_checkpoint_v1(&pin).unwrap()
+    };
+    for (serial, parallel) in [(&serial, &parallel), (&fixed_serial, &fixed_parallel)] {
+        let a = checkpoint(serial);
+        let b = checkpoint(parallel);
+        // u32 vectors compare P and both moment arrays bit for bit.
+        assert_eq!(a.card_semantics, b.card_semantics);
+        assert_eq!(a.parameters, b.parameters);
+        assert_eq!(a.first_moments, b.first_moments);
+        assert_eq!(a.second_moments, b.second_moments);
+        let p = a.card_semantics.as_ref().unwrap();
+        assert!(p.weight.iter().any(|&v| f32::from_bits(v) != 0.0));
+        assert!(p.first_moments.iter().any(|&v| f32::from_bits(v) != 0.0));
+        assert!(p.second_moments.iter().any(|&v| f32::from_bits(v) > 0.0));
+        assert_eq!(p.p_step, 1);
+    }
+    assert_ne!(serial["after_state_sha256"], off["after_state_sha256"]);
+    let on_saved = checkpoint(&serial);
+    let off_saved = checkpoint(&off);
+    let before_projection = config.load_v1().unwrap();
+    let mut after_projection = before_projection.clone();
+    after_projection
+        .restore_v1(on_saved.card_semantics.as_ref().unwrap())
+        .unwrap();
+    let embedding = on_saved
+        .parameters
+        .iter()
+        .position(|p| p.name == "card_embedding.weight")
+        .unwrap();
+    let on_table = &on_saved.parameters[embedding].values;
+    let off_table = &off_saved.parameters[embedding].values;
+    let mut changed_rows = BTreeSet::new();
+    let mut delta_rows = BTreeSet::new();
+    for token in 0..on_table.len() / 16 {
+        let old = before_projection.pathway.delta_v1(token);
+        let new = after_projection.pathway.delta_v1(token);
+        if new.iter().zip(old).any(|(&n, o)| n - o != 0.0) {
+            delta_rows.insert(token);
+            assert!([9, 59, 97, 121].contains(&token));
+        }
+        if on_table[token * 16..(token + 1) * 16] != off_table[token * 16..(token + 1) * 16] {
+            changed_rows.insert(token);
+        }
+        for k in 0..16 {
+            let delta = new[k] - old[k];
+            let off_bits = off_table[token * 16 + k];
+            let expected = if delta == 0.0 {
+                off_bits
+            } else {
+                (f32::from_bits(off_bits) + delta).to_bits()
+            };
+            assert_eq!(
+                on_table[token * 16 + k],
+                expected,
+                "token {token}, coordinate {k}"
+            );
+        }
+    }
+    assert!(!changed_rows.is_empty());
+    assert_eq!(changed_rows, delta_rows);
+    assert_eq!(on_saved.first_moments, off_saved.first_moments);
+    assert_eq!(on_saved.second_moments, off_saved.second_moments);
+    for i in 0..on_saved.parameters.len() {
+        if i != embedding {
+            assert_eq!(on_saved.parameters[i], off_saved.parameters[i]);
+        }
+    }
+    // A successful flag-off continuation reuses exactly one metadata probe.
+    let resumed = ExpandedModelSourceV1 {
+        checkpoint: Some(serde_json::from_value(off["checkpoint"].clone()).unwrap()),
+        ..source.clone()
+    };
+    let resumed_trajectories = collect(&resumed, "off-resume-collect");
+    take_checkpoint_metadata_reads_for_test_v1();
+    update(
+        &resumed,
+        &resumed_trajectories,
+        CheckpointRecordFormatV1::V1,
+        root.join("off-resume"),
+    )
+    .unwrap();
+    assert_eq!(take_checkpoint_metadata_reads_for_test_v1(), 1);
     for workers in [1, 4] {
         let mut value = serde_json::to_value(command(workers, None, "null")).unwrap();
         value["card_semantics"] = Value::Null;

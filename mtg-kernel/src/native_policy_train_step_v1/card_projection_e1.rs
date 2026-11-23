@@ -144,6 +144,12 @@ impl CardSemanticsConfigV1 {
 }
 
 impl CardSemanticsV1 {
+    pub(crate) fn binding_v1(&self) -> &str {
+        &self.binding
+    }
+    pub(crate) fn p_step_v1(&self) -> u64 {
+        self.p_step
+    }
     pub(crate) fn section_v1(&self) -> CardSemanticsSectionV1 {
         let state = self.pathway.state_bits_v1();
         CardSemanticsSectionV1 {
@@ -319,7 +325,7 @@ mod tests {
             match case {
                 0 => value["schema"] = "wrong".into(),
                 1 => value["cards"][1]["card_id"] = 0.into(),
-                2 => value["cards"][1]["card_id"] = CARD_VOCAB_SIZE_V1.into(),
+                2 => value["cards"][1]["card_id"] = (CARD_VOCAB_SIZE_V1 - 1).into(),
                 3 => value["cards"][0]["vector"][0] = 16_777_217.into(),
                 4 => value["card_count"] = 3.into(),
                 5 => value["cards"][0]["vector"] = serde_json::json!([1]),
