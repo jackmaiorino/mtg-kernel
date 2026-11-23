@@ -245,11 +245,11 @@ fn active_named(state: &GameState, object: ObjectId, name: &str) -> bool {
     })
 }
 
-fn active_permanents(
-    state: &GameState,
+fn active_permanents<'a>(
+    state: &'a GameState,
     name: &'static str,
     controller: Option<PlayerId>,
-) -> impl Iterator<Item = ObjectId> + '_ {
+) -> impl Iterator<Item = ObjectId> + 'a {
     [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(move |seat| state.players[seat.index()].battlefield.iter().copied())
@@ -293,9 +293,7 @@ fn vibrance_green() -> EffectOp {
 
 /// Evoke (702.74a): sacrifice the evoked permanent when it enters.
 fn sacrifice_source() -> EffectOp {
-    EffectOp::SacrificeObject {
-        object: ObjectRef::ThisSource,
-    }
+    EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::SacrificeSourceV1))
 }
 
 /// Wistfulness: "exile target artifact or enchantment an opponent controls."
@@ -813,6 +811,7 @@ pub(crate) fn granted_lurker_ability_on_stack(
     let is_planeswalker_def = def.has_type(CardType::Planeswalker)
         || def
             .transform_face
+            .as_ref()
             .is_some_and(|back| back.types.contains(&CardType::Planeswalker));
     if !is_planeswalker_def {
         return None;
