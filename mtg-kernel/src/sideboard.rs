@@ -16,6 +16,14 @@ pub const REGISTERED_MAINBOARD_SIZE_V1: usize = 60;
 pub const REGISTERED_SIDEBOARD_SIZE_V1: usize = 15;
 pub const REGISTERED_DECK_SIZE_V1: usize =
     REGISTERED_MAINBOARD_SIZE_V1 + REGISTERED_SIDEBOARD_SIZE_V1;
+/// The smallest mainboard `DeckFormatV1::Limited40V1` admits.
+pub const LIMITED40_MIN_MAINBOARD_SIZE_V1: usize = 40;
+/// The largest mainboard `DeckFormatV1::Limited40V1` admits: the Limited
+/// session's own input ceiling (`limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1`).
+pub const LIMITED40_MAX_MAINBOARD_SIZE_V1: usize =
+    crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1;
+/// The largest sideboard `DeckFormatV1::Limited40V1` admits (it may be empty).
+pub const LIMITED40_MAX_SIDEBOARD_SIZE_V1: usize = REGISTERED_SIDEBOARD_SIZE_V1;
 pub const SIDEBOARD_POLICY_SCHEMA_V1: &str = "kernel_pauper_sideboard_policy/v1";
 pub const SIDEBOARD_RECEIPT_SCHEMA_V1: &str = "kernel_sideboard_receipt/v1";
 pub const PAUPER_POOL_SCHEMA_V1: &str = "kernel_pauper_pool/v1";
@@ -36,33 +44,110 @@ pub struct CardCountV1 {
     pub count: u8,
 }
 
+/// An opt-in deck format: an expanded-training episode's `deck_format`.
+/// Absent (`None` wherever a format is taken) is the exact registered 60/15
+/// contract, unchanged. The format changes deck-size admission only: never
+/// the deal, the game or any other check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DeckFormatV1 {
+    /// A Limited deck: at least 40 mainboard cards and a sideboard of 0 to
+    /// 15 cards.
+    #[serde(rename = "limited40-v1")]
+    Limited40V1,
+}
+
+impl DeckFormatV1 {
+    /// The format's serialized name.
+    pub fn name_v1(self) -> &'static str {
+        match self {
+            Self::Limited40V1 => "limited40-v1",
+        }
+    }
+}
+
+/// The mainboard-size refusal for `format`, or None when `len` is admitted.
+/// `None` is the exact 60-card rule.
+pub fn mainboard_size_error_v1(format: Option<DeckFormatV1>, len: usize) -> Option<String> {
+    match format {
+        None => (len != REGISTERED_MAINBOARD_SIZE_V1).then(|| {
+            format!("must contain exactly {REGISTERED_MAINBOARD_SIZE_V1} cards, got {len}")
+        }),
+        Some(format @ DeckFormatV1::Limited40V1) => {
+            (!(LIMITED40_MIN_MAINBOARD_SIZE_V1..=LIMITED40_MAX_MAINBOARD_SIZE_V1).contains(&len))
+                .then(|| {
+                    format!(
+                        "must contain {LIMITED40_MIN_MAINBOARD_SIZE_V1} to {LIMITED40_MAX_MAINBOARD_SIZE_V1} cards under {}, got {len}",
+                        format.name_v1()
+                    )
+                })
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeckConfigurationV1 {
     mainboard: Vec<u16>,
     sideboard: Vec<u16>,
+    /// The size rule this configuration was admitted under; a plan applied
+    /// to it is admitted under the same rule.
+    format: Option<DeckFormatV1>,
 }
 
 impl DeckConfigurationV1 {
     pub fn new_exact_v1(
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+    ) -> Result<Self, SideboardErrorV1> {
+        Self::new_for_format_v1(mainboard, sideboard, None)
+    }
+
+    /// `new_exact_v1` under an opt-in deck format; `None` is exactly
+    /// `new_exact_v1`.
+    pub fn new_for_format_v1(
         mut mainboard: Vec<u16>,
         mut sideboard: Vec<u16>,
+        format: Option<DeckFormatV1>,
     ) -> Result<Self, SideboardErrorV1> {
-        if mainboard.len() != REGISTERED_MAINBOARD_SIZE_V1 {
-            return Err(SideboardErrorV1::WrongMainboardSize {
-                actual: mainboard.len(),
-            });
-        }
-        if sideboard.len() != REGISTERED_SIDEBOARD_SIZE_V1 {
-            return Err(SideboardErrorV1::WrongSideboardSize {
-                actual: sideboard.len(),
-            });
+        match format {
+            None => {
+                if mainboard.len() != REGISTERED_MAINBOARD_SIZE_V1 {
+                    return Err(SideboardErrorV1::WrongMainboardSize {
+                        actual: mainboard.len(),
+                    });
+                }
+                if sideboard.len() != REGISTERED_SIDEBOARD_SIZE_V1 {
+                    return Err(SideboardErrorV1::WrongSideboardSize {
+                        actual: sideboard.len(),
+                    });
+                }
+            }
+            Some(format) => {
+                if mainboard_size_error_v1(Some(format), mainboard.len()).is_some() {
+                    return Err(SideboardErrorV1::FormatMainboardSize {
+                        format,
+                        actual: mainboard.len(),
+                    });
+                }
+                if sideboard.len() > LIMITED40_MAX_SIDEBOARD_SIZE_V1 {
+                    return Err(SideboardErrorV1::FormatSideboardSize {
+                        format,
+                        actual: sideboard.len(),
+                    });
+                }
+            }
         }
         mainboard.sort_unstable();
         sideboard.sort_unstable();
         Ok(Self {
             mainboard,
             sideboard,
+            format,
         })
+    }
+
+    /// The deck format this configuration was admitted under.
+    pub fn format_v1(&self) -> Option<DeckFormatV1> {
+        self.format
     }
 
     pub fn mainboard(&self) -> &[u16] {
@@ -140,7 +225,23 @@ impl RegisteredDeckV1 {
         mainboard: Vec<u16>,
         sideboard: Vec<u16>,
     ) -> Result<Self, SideboardErrorV1> {
-        let deck = Self::new_exact_v1(deck_id, mainboard, sideboard)?;
+        Self::new_executable_for_format_v1(deck_id, mainboard, sideboard, None)
+    }
+
+    /// `new_executable_v1` with the size rule of an opt-in deck format; every
+    /// other check is the same. `None` is exactly `new_executable_v1`.
+    pub fn new_executable_for_format_v1(
+        deck_id: impl Into<String>,
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+        format: Option<DeckFormatV1>,
+    ) -> Result<Self, SideboardErrorV1> {
+        let deck_id = deck_id.into();
+        validate_identifier_v1("deck_id", &deck_id)?;
+        let deck = Self {
+            deck_id,
+            configuration: DeckConfigurationV1::new_for_format_v1(mainboard, sideboard, format)?,
+        };
         deck.validate_executable_v1()?;
         Ok(deck)
     }
@@ -223,9 +324,10 @@ impl RegisteredDeckV1 {
             add_count_v1(&mut mainboard_counts, *row);
         }
 
-        let configuration = DeckConfigurationV1::new_exact_v1(
+        let configuration = DeckConfigurationV1::new_for_format_v1(
             expand_counts_v1(&mainboard_counts),
             expand_counts_v1(&sideboard_counts),
+            self.configuration.format,
         )?;
         if configuration.combined_card_counts_v1() != self.configuration.combined_card_counts_v1() {
             return Err(SideboardErrorV1::RegisteredMultisetChanged);
@@ -726,6 +828,14 @@ pub enum SideboardErrorV1 {
     WrongSideboardSize {
         actual: usize,
     },
+    FormatMainboardSize {
+        format: DeckFormatV1,
+        actual: usize,
+    },
+    FormatSideboardSize {
+        format: DeckFormatV1,
+        actual: usize,
+    },
     InvalidPostboardGameIndex {
         actual: u8,
     },
@@ -843,6 +953,16 @@ impl fmt::Display for SideboardErrorV1 {
             Self::WrongSideboardSize { actual } => write!(
                 formatter,
                 "sideboard must contain exactly {REGISTERED_SIDEBOARD_SIZE_V1} cards, got {actual}"
+            ),
+            Self::FormatMainboardSize { format, actual } => write!(
+                formatter,
+                "mainboard must contain {LIMITED40_MIN_MAINBOARD_SIZE_V1} to {LIMITED40_MAX_MAINBOARD_SIZE_V1} cards under {}, got {actual}",
+                format.name_v1()
+            ),
+            Self::FormatSideboardSize { format, actual } => write!(
+                formatter,
+                "sideboard must contain at most {LIMITED40_MAX_SIDEBOARD_SIZE_V1} cards under {}, got {actual}",
+                format.name_v1()
             ),
             Self::InvalidPostboardGameIndex { actual } => {
                 write!(formatter, "sideboarding is only valid after game 1, got game {actual}")
@@ -1290,5 +1410,231 @@ fn push_card_counts_v1(bytes: &mut Vec<u8>, rows: &[CardCountV1]) {
     for row in rows {
         bytes.extend_from_slice(&row.card_id.to_be_bytes());
         bytes.push(row.count);
+    }
+}
+
+#[cfg(test)]
+mod deck_format_tests {
+    //! `DeckFormatV1`: the absent format is the exact 60/15 rule; the
+    //! Limited format admits 40 or more mainboard cards and a sideboard of 0
+    //! to 15, and changes nothing else.
+
+    use super::*;
+
+    const LIMITED: Option<DeckFormatV1> = Some(DeckFormatV1::Limited40V1);
+
+    fn burn() -> (Vec<u16>, Vec<u16>) {
+        let deck = checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
+        let configuration = deck.registered_configuration();
+        (
+            configuration.mainboard().to_vec(),
+            configuration.sideboard().to_vec(),
+        )
+    }
+
+    fn is_basic(card_id: u16) -> bool {
+        crate::card_def::CARD_DEFS[usize::from(card_id)]
+            .supertypes
+            .contains(&crate::card_def::Supertype::Basic)
+    }
+
+    #[test]
+    fn deck_format_absent_keeps_the_exact_60_15_rule() {
+        let (main, side) = burn();
+        let forty = main[..40].to_vec();
+        let error =
+            RegisteredDeckV1::new_executable_v1("burn40", forty.clone(), Vec::new()).unwrap_err();
+        assert_eq!(error, SideboardErrorV1::WrongMainboardSize { actual: 40 });
+        assert!(
+            error.to_string().contains("must contain exactly 60 cards"),
+            "{error}"
+        );
+        assert_eq!(
+            RegisteredDeckV1::new_executable_for_format_v1("burn40", forty, Vec::new(), None)
+                .unwrap_err(),
+            error
+        );
+        assert_eq!(
+            RegisteredDeckV1::new_executable_for_format_v1(
+                "burn",
+                main.clone(),
+                side[..14].to_vec(),
+                None
+            )
+            .unwrap_err(),
+            SideboardErrorV1::WrongSideboardSize { actual: 14 }
+        );
+        let exact =
+            RegisteredDeckV1::new_executable_v1("burn", main.clone(), side.clone()).unwrap();
+        let spelled =
+            RegisteredDeckV1::new_executable_for_format_v1("burn", main, side, None).unwrap();
+        assert_eq!(spelled, exact);
+        assert_eq!(exact.registered_configuration().format_v1(), None);
+    }
+
+    #[test]
+    fn deck_format_limited40_admits_forty_or_more_cards_and_a_short_sideboard() {
+        let (main, side) = burn();
+        for main_len in [40, 41, 60] {
+            for side_len in [0, 1, 15] {
+                let deck = RegisteredDeckV1::new_executable_for_format_v1(
+                    "burn",
+                    main[..main_len].to_vec(),
+                    side[..side_len].to_vec(),
+                    LIMITED,
+                )
+                .unwrap();
+                let configuration = deck.registered_configuration();
+                assert_eq!(configuration.mainboard().len(), main_len);
+                assert_eq!(configuration.sideboard().len(), side_len);
+                assert_eq!(configuration.format_v1(), LIMITED);
+            }
+        }
+    }
+
+    #[test]
+    fn deck_format_limited40_refuses_39_cards_and_a_16_card_sideboard() {
+        let (main, side) = burn();
+        let error = RegisteredDeckV1::new_executable_for_format_v1(
+            "burn39",
+            main[..39].to_vec(),
+            Vec::new(),
+            LIMITED,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            SideboardErrorV1::FormatMainboardSize {
+                format: DeckFormatV1::Limited40V1,
+                actual: 39
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "mainboard must contain 40 to 10000 cards under limited40-v1, got 39"
+        );
+        assert_eq!(
+            mainboard_size_error_v1(LIMITED, 39).unwrap(),
+            "must contain 40 to 10000 cards under limited40-v1, got 39"
+        );
+        assert!(RegisteredDeckV1::new_executable_for_format_v1(
+            "burn",
+            Vec::new(),
+            Vec::new(),
+            LIMITED
+        )
+        .is_err());
+        let mut sixteen = side.clone();
+        sixteen.push(main[0]);
+        assert_eq!(
+            RegisteredDeckV1::new_executable_for_format_v1(
+                "burn",
+                main[..40].to_vec(),
+                sixteen,
+                LIMITED
+            )
+            .unwrap_err(),
+            SideboardErrorV1::FormatSideboardSize {
+                format: DeckFormatV1::Limited40V1,
+                actual: 16
+            }
+        );
+        assert_eq!(
+            SideboardErrorV1::FormatSideboardSize {
+                format: DeckFormatV1::Limited40V1,
+                actual: 16
+            }
+            .to_string(),
+            "sideboard must contain at most 15 cards under limited40-v1, got 16"
+        );
+        assert!(mainboard_size_error_v1(LIMITED, LIMITED40_MAX_MAINBOARD_SIZE_V1 + 1).is_some());
+        assert_eq!(mainboard_size_error_v1(LIMITED, 40), None);
+        assert_eq!(mainboard_size_error_v1(None, 60), None);
+        assert!(mainboard_size_error_v1(None, 40)
+            .unwrap()
+            .contains("must contain exactly 60 cards"));
+    }
+
+    /// The format is a size rule only: support, token and copy-limit checks
+    /// still apply to a 40-card deck.
+    #[test]
+    fn deck_format_limited40_keeps_every_other_registration_check() {
+        let (main, _) = burn();
+        let basic = *main.iter().find(|&&id| is_basic(id)).unwrap();
+        let nonbasic = *main.iter().find(|&&id| !is_basic(id)).unwrap();
+        let mut five_copies = vec![basic; 35];
+        five_copies.extend([nonbasic; 5]);
+        assert_eq!(
+            RegisteredDeckV1::new_executable_for_format_v1(
+                "five",
+                five_copies,
+                Vec::new(),
+                LIMITED
+            )
+            .unwrap_err(),
+            SideboardErrorV1::NonbasicCopyLimitExceeded {
+                card_id: nonbasic,
+                count: 5
+            }
+        );
+        let mut unknown = main[..40].to_vec();
+        unknown[0] = u16::MAX;
+        assert!(RegisteredDeckV1::new_executable_for_format_v1(
+            "unknown",
+            unknown,
+            Vec::new(),
+            LIMITED
+        )
+        .is_err());
+    }
+
+    /// A plan applied to a Limited registration is admitted under the same
+    /// rule, so its result may keep a 40-card mainboard.
+    #[test]
+    fn deck_format_limited40_plan_keeps_the_registration_format() {
+        let (main, side) = burn();
+        let deck = RegisteredDeckV1::new_executable_for_format_v1(
+            "burn",
+            main[..40].to_vec(),
+            side[..2].to_vec(),
+            LIMITED,
+        )
+        .unwrap();
+        let configuration = deck.registered_configuration();
+        let cards_out = vec![CardCountV1 {
+            card_id: configuration.mainboard()[0],
+            count: 1,
+        }];
+        let cards_in = vec![CardCountV1 {
+            card_id: configuration.sideboard()[0],
+            count: 1,
+        }];
+        let plan = SideboardPlanV1::new_v1("burn", "other", 2, cards_in, cards_out).unwrap();
+        let (after, _) = deck.apply_plan_v1(&plan, "policy", [0; 32]).unwrap();
+        assert_eq!(after.mainboard().len(), 40);
+        assert_eq!(after.sideboard().len(), 2);
+        assert_eq!(after.format_v1(), LIMITED);
+    }
+
+    #[test]
+    fn deck_format_names_only_limited40_v1() {
+        assert_eq!(
+            serde_json::to_value(DeckFormatV1::Limited40V1).unwrap(),
+            serde_json::json!("limited40-v1")
+        );
+        assert_eq!(
+            serde_json::from_value::<DeckFormatV1>(serde_json::json!("limited40-v1")).unwrap(),
+            DeckFormatV1::Limited40V1
+        );
+        assert_eq!(DeckFormatV1::Limited40V1.name_v1(), "limited40-v1");
+        for bad in [
+            "limited40-v2",
+            "Limited40V1",
+            "limited40",
+            "",
+            "constructed60-v1",
+        ] {
+            assert!(serde_json::from_value::<DeckFormatV1>(serde_json::json!(bad)).is_err());
+        }
     }
 }
