@@ -60,12 +60,23 @@ fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
     );
     let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
     assert_eq!(deck.iter().filter(|&&id| id == volrath).count(), 2);
-    assert!(crate::limited_session_v1::CustomDeckV1 {
+    let resolved = crate::limited_session_v1::CustomDeckV1 {
         cards: rows.to_vec(),
-        companion: None
+        companion: None,
     }
     .resolve()
-    .is_err());
+    .unwrap();
+    assert_eq!(resolved, deck.as_slice());
+    assert!(matches!(
+        crate::card_def::preflight_fully_supported_deck(&resolved),
+        Err(
+            crate::card_def::DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                card_def,
+                name: "Volrath's Shapeshifter",
+                ..
+            }
+        ) if card_def == volrath
+    ));
 
     for first in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let first_player = native_seat(first);
