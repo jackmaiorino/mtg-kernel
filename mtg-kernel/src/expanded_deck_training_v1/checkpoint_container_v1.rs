@@ -505,7 +505,10 @@ fn sections_of_v1<T>(saved: &ExpandedCheckpointV1<T>) -> [&[T]; 3] {
 /// arrays empty when it has the section: the container's document.
 fn document_of_v1<T>(saved: &ExpandedCheckpointV1<T>) -> ExpandedCheckpointV1 {
     let mut document = with_tensors_v1(saved, [Vec::new(), Vec::new(), Vec::new()]);
-    document.card_semantics = saved.card_semantics.as_ref().map(hollow_semantics_section_v1);
+    document.card_semantics = saved
+        .card_semantics
+        .as_ref()
+        .map(hollow_semantics_section_v1);
     document
 }
 
