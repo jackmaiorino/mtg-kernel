@@ -7,18 +7,15 @@ a pull request run with website files plus Python, tools or CI tool files schedu
 counted website files as Rust-relevant and ran the Rust set for those). The full matrix still runs on every push to main and
 every tag (and on a dispatch without `scope`, the way release lines are checked) as a monitor, so a scope only
 decides what gates a merge (collab HANDOFFS/20261117/COORD.md, "Standing rule, merges (2026-11-21 07:27 ET)").
-One exception: a dispatch without inputs at the head of a ready same-repository pull request whose own run
-scheduled the whole pull request set (scope pr, Rust-relevant files and no website file, `pr-run`) runs only the
-Windows groups that set leaves out; `full_matrix=true` runs every group anyway.
+One exception: a dispatch without inputs at the head of a ready pull request runs only the Windows complement
+when that pull request's own run at the same commit scheduled the Linux Rust groups (tools/ci/pr_lookup.py pr-run);
+otherwise the full matrix; `full_matrix=true` always forces the full matrix.
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
                               LABELS (JSON list), and NUL-delimited paths on stdin for pull requests;
                               writes checks=<name> to GITHUB_OUTPUT
                               and a summary (with the bit-identity rows for trainer) to GITHUB_STEP_SUMMARY.
-  ci_scope.py file-scope      print the scope of the JSON pages from the GitHub pull request files API on stdin.
-  ci_scope.py pr-run          the same pages on stdin; print whole-set if that pull request's run scheduled the
-                              whole pull request set (scope pr and Rust-relevant files), else partial.
   ci_scope.py relevance       detect-changes step: NUL-delimited pull request paths on stdin and FULL_LABEL;
                               writes python_relevant and rust_relevant to GITHUB_OUTPUT.
   ci_scope.py commands SCOPE  print the shell commands a scope's local run executes, one per line.
@@ -291,7 +288,7 @@ TOOLS_COMMANDS = [c.replace("/ -p", " -p") for c in TOOLS_COMMANDS]
 
 
 # Which job families a pull request's paths make relevant (the only copy: detect-changes' "Classify changed
-# paths" step and the dispatch step's `pr-run` both call relevance()). Python jobs care about python sources, tools
+# paths" step calls relevance()). Python jobs care about python sources, tools
 # and tests, the data artifacts they validate, workflow changes and the pinned interpreter and lock config.
 # Top-level tools/** is Python only; python/tests imports several of its packages, and the lease adapter's tests
 # run in the Python job's lease guard step.
@@ -329,26 +326,6 @@ def relevance(paths: list[str], full_label: bool = False) -> tuple[bool, bool]:
                      if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)), True)
         rust = rust or rule
     return python, rust
-
-
-def pr_run_is_whole_set(paths: list[str]) -> bool:
-    """Whether a ready, unlabelled pull request's run with these files scheduled the whole pull request set:
-    checks all (scope pr) and the Rust jobs (Rust-relevant files). Only then may a dispatch at its head run just
-    the Windows complement: otherwise the pull request run left out Linux Rust, lint and the pull request's Windows
-    groups, which the complement cannot recover. The dispatch step does not see labels: a labelled pull request
-    whose files pass this test gets the complement (right, its run scheduled everything), and one whose files fail
-    it gets the full set although its run scheduled everything (which only costs time).
-
-    Never with a website file. These paths come from GitHub's file list (three-dot, against the merge base), but
-    the pull request run classified the synthetic merge's diff, which can lack files the base already has (a Rust
-    change applied to the base independently). Before the viewer scope a website file alone made that run schedule
-    Rust; now it does not, so a list with a website file could say whole-set for a run without Rust. Refusing the
-    complement whenever a website file is listed makes the dispatch alone cover everything for such changes, never
-    less than before; lists without website files are decided as before. Cost: a hand dispatch on a website plus
-    engine pull request runs the full set instead of the complement."""
-    if any(scope_of(path) == "viewer" for path in paths):
-        return False
-    return scope_of_files(paths) == "pr" and relevance(paths)[1]
 
 
 def scope_of(path: str) -> str | None:
@@ -407,13 +384,12 @@ def markdown() -> str:
            "one scope, a shared file, or a file no rule names run the whole pull request set. Docs and website files "
            "never decide: website files alone (with or without docs) are `viewer`, and with other files those "
            "files decide alone. Website files are relevant to no Rust or Python job, so a pull request with website "
-           "files plus Python, tools or CI tool files schedules no Rust job either. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor "
-           "(one exception: a dispatch without inputs at the head of a ready same-repository pull request whose own "
-           "run scheduled the whole pull request set, scope pr with Rust-relevant files and no website file, runs only "
-           "the Windows groups "
-           "that set leaves out; `full_matrix=true` runs every group anyway): pushes to a line share one concurrency "
-           "group (one running, one waiting, a newer merge replaces the "
-           "waiting one), and a red monitor's report names every merge it covers. `ci:full` on a pull request "
+           "files plus Python, tools or CI tool files schedules no Rust job either. Main pushes, tags and dispatches "
+           "without `scope` run the full matrix as a monitor (one exception: a dispatch without inputs at the head "
+           "of a ready pull request runs only the Windows complement when that pull request's own run at the same "
+           "commit scheduled the Linux Rust groups; otherwise the full matrix; `full_matrix=true` always forces the "
+           "full matrix): pushes to a line share one concurrency group (one running, one waiting, a newer merge "
+           "replaces the waiting one), and a red monitor's report names every merge it covers. `ci:full` on a pull request "
            "forces the whole pull request set (every Rust and Python job, whatever the paths) from the next push, "
            "reopen or ready-for-review event (adding the label starts no run); labels never narrow a run. "
            "`gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one scope on any ref.", "",
@@ -466,25 +442,9 @@ def main(argv: list[str]) -> int:
             return 2
         print("\n".join(lines))
         return 0
-    if command in ("file-scope", "pr-run", "relevance") and len(argv) != 2:
+    if command == "relevance" and len(argv) != 2:
         print(f"{command} takes no arguments", file=sys.stderr)
         return 2
-    if command in ("file-scope", "pr-run"):
-        # pr-run prints whole-set only as its last act after every check passed; the dispatch step treats any
-        # other output, an error or no output as "run the full set".
-        try:
-            paths = pull_request_paths(json.load(sys.stdin.buffer))
-        except ValueError as exc:
-            print(f"Invalid pull request files response: {exc}", file=sys.stderr)
-            return 2
-        if command == "pr-run":
-            python, rust = relevance(paths)
-            print(f"scope {scope_of_files(paths)}, python_relevant={str(python).lower()}, "
-                  f"rust_relevant={str(rust).lower()}", file=sys.stderr)
-            print("whole-set" if pr_run_is_whole_set(paths) else "partial")
-        else:
-            print(scope_of_files(paths))
-        return 0
     if command == "relevance":
         # Both outputs or neither: every Rust job reads a missing rust_relevant as "not relevant" and would skip
         # while this step stayed green. So any error exits non-zero (the detect job goes red), and the two lines

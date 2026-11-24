@@ -212,15 +212,10 @@ NAMES_VIEWER_PATHS = {".github/workflows/viewer.yml", ".github/workflows/ci.yml"
 
 def relevant(path):
     """(python_relevant, rust_relevant) of one unlabelled pull request path (ci_scope.relevance, which the classify
-    step and the dispatch step's pr-run both call)."""
+    step calls)."""
     return ci_scope.relevance([path])
 
 
-# What part of the matrix a job covers in each group set: the pull request set runs Linux and the pull request's
-# Windows groups, the complement only the Windows groups that set leaves out, a draft only Linux lint.
-RUST_SET = {"rust-quality", "rust-test-groups", "limited-build", "rust-limited-groups", "rust-tests",
-            "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory"}
-PYTHON_SET = {"python-env-build", "python-tests"}
 # What part of the matrix a job covers in each group set: the pull request set runs Linux and the pull request's
 # Windows groups, the complement only the Windows groups that set leaves out, a draft only Linux lint. The model
 # sees job-level conditions and the group set, not matrix rows, runner routing or step conditions.
@@ -233,10 +228,10 @@ def coverage(scheduled):
 
 
 class Classifier:
-    """The classifier under test (version "new"); the default dispatch rule of 6df3f3fe0 ("6df", restated: scope pr
-    and Rust-relevant files); or origin/main's before the viewer scope ("main": no viewer rule, docs the only
-    neutral scope, no viewer/* relevance rule, ci:full leaving the relevance flags to the paths, and a default
-    dispatch that complemented every pull request whose scope was pr)."""
+    """The classifier under test (version "new": a default dispatch follows the pull request run's real jobs,
+    tools/ci/pr_lookup.py), or origin/main's before the viewer scope ("main": no viewer rule, docs the only neutral
+    scope, no viewer/* relevance rule, ci:full leaving the relevance flags to the paths, and a default dispatch that
+    complemented every pull request whose file list mapped to scope pr)."""
 
     def __init__(self, version="new"):
         self.version = version
@@ -265,21 +260,22 @@ class Classifier:
         """detect-changes' python_relevant and rust_relevant for a pull request."""
         return self._call(ci_scope.relevance, list(paths), label and self.version != "main")
 
-    def dispatch_group_set(self, pr_paths):
-        """The group set of a dispatch without inputs at the head of a ready same-repository pull request with these
-        files ("Choose the group set"; test_draft_light runs the real step against this)."""
+    def dispatch_group_set(self, run_paths, dispatch_paths=None, label=False):
+        """The group set of a dispatch without inputs at the head of a ready pull request whose run classified
+        run_paths (the synthetic merge's diff). origin/main decided from GitHub's file list (dispatch_paths, which
+        can hold more files); now the decision reads that run's jobs."""
+        import pr_lookup
         if self.version == "new":
-            return "windows-complement" if ci_scope.pr_run_is_whole_set(list(pr_paths)) else "full"
-        if self.version == "6df":
-            # 6df3f3fe0's rule, restated: scope pr and Rust-relevant files.
-            whole = self.scope_of_files(pr_paths) == "pr" and self.flags(pr_paths, False)[1]
-            return "windows-complement" if whole else "full"
-        return "windows-complement" if self.scope_of_files(pr_paths) == "pr" else "full"
+            jobs = run_jobs(self.scheduled("pull_request", run_paths, label=label))
+            return "windows-complement" if pr_lookup.scheduled_linux_rust(jobs, 1) else "full"
+        listed = run_paths if dispatch_paths is None else dispatch_paths
+        return "windows-complement" if self.scope_of_files(listed) == "pr" else "full"
 
     def checks(self, event, group_set, input_scope, labels, paths):
         return self._call(ci_scope.choose, event, group_set, input_scope, labels, list(paths))
 
-    def scheduled(self, event, paths=(), *, draft=False, label=False, input_scope="", pr_paths=None):
+    def scheduled(self, event, paths=(), *, draft=False, label=False, input_scope="", pr_paths=None,
+                  dispatch_paths=None):
         """{(ci.yml job, group set)} whose job condition holds. event: pull_request (ready, draft, labelled),
         workflow_dispatch (with a scope input, or without inputs at the head of a ready pull request with pr_paths,
         or None for no such pull request) or push (main and tags). detect-changes and the jobs that react to other
@@ -291,7 +287,8 @@ class Classifier:
             python, rust = self.flags(paths, label)
             checks = self.checks(event, group_set, "", ["ci:full"] if label else [], paths)
         elif event == "workflow_dispatch":
-            group_set = "full" if input_scope or pr_paths is None else self.dispatch_group_set(pr_paths)
+            group_set = ("full" if input_scope or pr_paths is None
+                         else self.dispatch_group_set(pr_paths, dispatch_paths, label))
             python = rust = True
             checks = self.checks(event, group_set, input_scope, [], [])
         else:
@@ -311,12 +308,14 @@ class Classifier:
                 ran.add((name, group_set))
         return ran
 
-    def composition(self, paths, label=False, dispatch_paths=None):
-        """What a ready pull request's run and a default dispatch at its head schedule together. The run classifies
-        the synthetic merge's diff; the dispatch reads GitHub's file list, which can hold more files
-        (dispatch_paths, a superset of paths; the same list by default)."""
-        return (self.scheduled("pull_request", paths, label=label)
-                | self.scheduled("workflow_dispatch", pr_paths=paths if dispatch_paths is None else dispatch_paths))
+    def composition(self, paths, label=False, dispatch_paths=None, draft=False):
+        """What a pull request's run and a default dispatch at its head schedule together. The run classifies the
+        synthetic merge's diff (paths); origin/main's dispatch read GitHub's file list (dispatch_paths, which can
+        hold more files). A draft has no ready pull request, so its dispatch is full."""
+        run = self.scheduled("pull_request", paths, label=label, draft=draft)
+        if draft:
+            return run | self.scheduled("workflow_dispatch")
+        return run | self.scheduled("workflow_dispatch", pr_paths=paths, dispatch_paths=dispatch_paths, label=label)
 
 
 def without_website(change):
@@ -379,8 +378,8 @@ class ViewerScopeTests(unittest.TestCase):
                 for kwargs in ({}, {"draft": True}, {"label": True}):
                     self.assertEqual(new.scheduled("pull_request", mixed, **kwargs),
                                      new.scheduled("pull_request", other, **kwargs), kwargs)
-                # The dispatch never complements a list with a website file (DifferentInventoryTests).
-                self.assertEqual(new.dispatch_group_set(mixed), "full")
+                # The dispatch follows the run, and the run is the same.
+                self.assertEqual(new.dispatch_group_set(mixed), new.dispatch_group_set(other))
 
     def test_a_pull_request_run_and_a_default_dispatch_together_cover_what_main_scheduled(self):
         # For every change, website files included: the pull request run plus a dispatch without inputs at its head
@@ -421,21 +420,10 @@ class ViewerScopeTests(unittest.TestCase):
         # The snapshot of main is not the classifier under test: there the website ran the Rust set.
         self.assertEqual({job for job, _ in main.scheduled("pull_request", WEBSITE)}, RUST_SET)
 
-    def test_a_dispatch_complements_only_a_pull_request_run_that_scheduled_the_whole_set(self):
-        new = Classifier()
-        for change in SAME_CHANGE:
-            with self.subTest(change=change):
-                if new.dispatch_group_set(change) == "windows-complement":
-                    self.assertLessEqual({(job, "pr") for job in RUST_SET}, new.scheduled("pull_request", change))
-                else:
-                    self.assertFalse(ci_scope.pr_run_is_whole_set(change))
-        self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/engine.rs"]), "windows-complement")
-        self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/native_expanded_training_run_v1.rs"]), "full")
-
     def test_pull_request_and_other_events_match_frozen_detect_outputs(self):
         # detect-changes outputs (checks, python_relevant, rust_relevant) as faf2b093b produced them, frozen by
         # hand: a ready, a draft and a labelled pull request for each change. Only the default dispatch at a ready
-        # pull request's head changed after faf2b093b (pr-run; see DifferentInventoryTests).
+        # pull request's head changed after faf2b093b: it now follows that run's jobs (tools/ci/pr_lookup.py).
         new = Classifier()
         frozen = [
             (["mtg-kernel/src/engine.rs"], ("all", False, True), ("all", False, True)),
@@ -506,7 +494,9 @@ class ViewerScopeTests(unittest.TestCase):
         self.assertNotIn("case ", step)
         self.assertIn('python3 tools/ci/ci_scope.py relevance < "$RUNNER_TEMP/ci-changed-paths"', step)
         self.assertNotIn("rust_relevant=true ;;", WORKFLOW.read_text(encoding="utf-8"))
-        self.assertIn('pr_files "$pr_number" | python3 tools/ci/ci_scope.py pr-run', WORKFLOW.read_text(encoding="utf-8"))
+        # The dispatch step reads the pull request run's jobs (pr_lookup.py), never a file list through ci_scope.py.
+        self.assertNotIn("ci_scope.py pr-run", WORKFLOW.read_text(encoding="utf-8"))
+        self.assertNotIn("ci_scope.py file-scope", WORKFLOW.read_text(encoding="utf-8"))
         # A path no rule names is Rust-relevant.
         self.assertEqual(relevant("Cargo.lock"), (False, True))
         self.assertEqual(relevant("some/new/file"), (False, True))
@@ -566,55 +556,6 @@ class ViewerScopeTests(unittest.TestCase):
             if path.is_file() and reference.search(path.read_text(encoding="utf-8", errors="replace")):
                 found.add(rel)
         self.assertEqual(found, NAMES_VIEWER_PATHS)
-def classify_arms():
-    """The classify step's two `case "$f" in` statements as (shell patterns, assignment or ':') lists."""
-    text = WORKFLOW.read_text(encoding="utf-8")
-    step = text.split("      - name: Classify changed paths\n", 1)[1].split("\n      - name: ", 1)[0]
-    blocks = re.findall(r'case "\$f" in\n(.*?)\n\s*esac', step, re.DOTALL)
-    return [[(patterns.split("|"), action) for patterns, action in
-             re.findall(r"^\s*([^\s)#][^)\n]*)\)\s*(.*?)\s*;;", block, re.MULTILINE | re.DOTALL)] for block in blocks]
-
-
-def flags(paths):
-    import fnmatch
-    found = {}
-    for path in paths:
-        for block in classify_arms():
-            for patterns, action in block:
-                if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
-                    if action != ":":
-                        name, value = action.split("=")
-                        found[name] = found.get(name, False) or value == "true"
-                    break
-    return found.get("python_relevant", False), found.get("rust_relevant", False)
-
-
-def scheduled(event, paths=(), *, draft=False, label=False, group_set=None):
-    """{(ci.yml job, group set)} whose job condition holds (detect-changes and the failure-reaction jobs left out)."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_runner_routing import evaluate, truthy
-    if event == "pull_request":
-        group_set = "draft" if draft and not label else "pr"
-        python, rust = flags(paths)
-        checks = ci_scope.choose(event, group_set, "", ["ci:full"] if label else [], list(paths))
-    else:
-        python = rust = True
-        checks = ci_scope.choose(event, group_set, "", [], [])
-    context = {"needs.detect-changes.outputs.checks": checks, "needs.detect-changes.outputs.scope": group_set,
-               "needs.detect-changes.outputs.python_relevant": str(python).lower(),
-               "needs.detect-changes.outputs.rust_relevant": str(rust).lower()}
-    ran = set()
-    for name, spec in workflow()["jobs"].items():
-        if name in ("detect-changes", "hosted-fallback", "post-merge-report"):
-            continue
-        condition = spec["if"].removeprefix("always() && ")
-        contexts = re.findall(r"\b(?:needs|github|vars|inputs|matrix|steps|env)\.[\w.\-*]+", condition)
-        assert condition and all(c.startswith("needs.detect-changes.outputs.") for c in contexts), (name, condition)
-        if truthy(evaluate(condition, **context)):
-            ran.add((name, group_set))
-    return ran
-
-
 def run_jobs(pr_scheduled):
     """The job records a pull request run with this schedule lists: expanded rust-test-groups rows on Linux and
     Windows when that job ran in the pull request set, unexpanded skipped names otherwise."""
@@ -630,21 +571,6 @@ def run_jobs(pr_scheduled):
         rows.append({"name": "Rust tests (ubuntu-24.04, limited-model)", "status": "queued", "conclusion": None,
                      "run_id": 1})
     return rows
-
-
-def composition(run_paths, dispatch_paths, *, label=False, draft=False, version="new"):
-    """A pull request run plus a dispatch without inputs at its head. The run classifies the synthetic merge's
-    diff (run_paths); origin/main's dispatch read GitHub's file list (dispatch_paths, which can hold more). A
-    draft has no ready pull request, so its dispatch is full in both versions."""
-    import pr_lookup
-    pr = scheduled("pull_request", run_paths, draft=draft, label=label)
-    if draft:
-        group_set = "full"
-    elif version == "new":
-        group_set = "windows-complement" if pr_lookup.scheduled_linux_rust(run_jobs(pr), 1) else "full"
-    else:
-        group_set = "windows-complement" if ci_scope.scope_of_files(list(dispatch_paths)) == "pr" else "full"
-    return pr | scheduled("workflow_dispatch", group_set=group_set)
 
 
 # (run paths, dispatch paths, label, draft)
@@ -673,27 +599,49 @@ class DispatchCompositionTests(unittest.TestCase):
     origin/main's file-list rule did for the same change."""
 
     def test_a_run_and_a_default_dispatch_cover_at_least_what_main_covered(self):
+        new, main = Classifier(), Classifier("main")
         for run_paths, dispatch_paths, label, draft in SAMPLES:
             with self.subTest(run=run_paths, dispatch=dispatch_paths, label=label, draft=draft):
-                new = coverage(composition(run_paths, dispatch_paths, label=label, draft=draft))
-                old = coverage(composition(run_paths, dispatch_paths, label=label, draft=draft, version="main"))
-                self.assertLessEqual(old, new)
+                self.assertLessEqual(coverage(main.composition(run_paths, label, dispatch_paths, draft)),
+                                     coverage(new.composition(run_paths, label, dispatch_paths, draft)))
 
     def test_main_had_a_gap_for_tools_ci_alone_and_it_is_closed(self):
-        everything = coverage(scheduled("workflow_dispatch", group_set="full"))
+        new, main = Classifier(), Classifier("main")
+        everything = coverage(new.scheduled("workflow_dispatch"))
         for dispatch_paths in (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py", "mtg-kernel/src/engine.rs"]):
             with self.subTest(dispatch=dispatch_paths):
-                old = coverage(composition(["tools/ci/hosted_fallback.py"], dispatch_paths, version="main"))
-                new = coverage(composition(["tools/ci/hosted_fallback.py"], dispatch_paths))
-                self.assertTrue(everything - old)
-                self.assertEqual(everything - new, set())
+                self.assertTrue(everything - coverage(main.composition(["tools/ci/hosted_fallback.py"], False,
+                                                                       dispatch_paths)))
+                self.assertEqual(everything - coverage(new.composition(["tools/ci/hosted_fallback.py"], False,
+                                                                       dispatch_paths)), set())
+
+    def test_website_changes_alter_only_the_run_and_the_dispatch_follows_it(self):
+        # Website plus tools/ci: the run is Python only, so a default dispatch is full, whatever GitHub's file list
+        # says: a Rust change already applied to the base, or a base-side rename of site/page.html to
+        # viewer/page.html (GitHub lists the old path, the merge diff the viewer path).
+        new, main = Classifier(), Classifier("main")
+        everything = coverage(new.scheduled("workflow_dispatch"))
+        for run_paths, dispatch_paths in (
+                (["viewer/index.html", "tools/ci/hosted_fallback.py"], None),
+                (["viewer/index.html", "tools/ci/hosted_fallback.py"],
+                 ["viewer/index.html", "tools/ci/hosted_fallback.py", "mtg-kernel/src/engine.rs"]),
+                (["viewer/page.html", "tools/ci/hosted_fallback.py"], ["site/page.html", "tools/ci/hosted_fallback.py"])):
+            with self.subTest(run=run_paths, dispatch=dispatch_paths):
+                self.assertEqual({job for job, _ in new.scheduled("pull_request", run_paths)}, PYTHON_SET)
+                self.assertEqual(new.dispatch_group_set(run_paths, dispatch_paths), "full")
+                composed = coverage(new.composition(run_paths, False, dispatch_paths))
+                self.assertEqual(everything - composed, set())
+                self.assertLessEqual(coverage(main.composition(run_paths, False, dispatch_paths)), composed)
+        # Website plus an engine file: the run schedules the Rust set, so the dispatch may complement it.
+        self.assertEqual(new.dispatch_group_set(["viewer/index.html", "mtg-kernel/src/engine.rs"]), "windows-complement")
 
     def test_the_complement_follows_only_a_run_with_linux_rust_groups(self):
         import pr_lookup
+        scheduled = Classifier().scheduled
         cases = {"engine": (["mtg-kernel/src/engine.rs"], False, True),
                  "labelled engine": (["mtg-kernel/src/engine.rs"], True, True),
-                 # ci:full gives checks all but leaves relevance to the paths here: no Rust rows, a full dispatch.
-                 "labelled tools/ci": (["tools/ci/hosted_fallback.py"], True, False),
+                 # ci:full sets both relevance flags here: its run lists the Rust rows, so the complement may follow.
+                 "labelled tools/ci": (["tools/ci/hosted_fallback.py"], True, True),
                  "tools/ci": (["tools/ci/hosted_fallback.py"], False, False),
                  "rules-limited (Limited rows only)": (["mtg-kernel/src/bin/kernel_limited_match_v1.rs"], False, False),
                  "trainer": (["mtg-kernel/src/native_expanded_training_run_v1.rs"], False, False),
@@ -772,44 +720,6 @@ def run_scope(*args, stdin=b"", env=None, prelude=""):
     environment = {k: v for k, v in os.environ.items() if k not in ("GITHUB_OUTPUT", "FULL_LABEL")}
     environment.update(env or {})
     return subprocess.run([sys.executable, "-c", code], input=stdin, env=environment, capture_output=True)
-
-
-class DifferentInventoryTests(unittest.TestCase):
-    """Third review: the dispatch reads GitHub's file list (three-dot), the pull request run the merge diff."""
-
-    def test_a_website_change_never_gets_the_complement_even_with_a_larger_dispatch_list(self):
-        new, main = Classifier(), Classifier("main")
-        everything = {(job, part) for job in RUST_SET | PYTHON_SET for part in PARTS["full"]}
-        run = ["viewer/index.html", "tools/ci/hosted_fallback.py"]
-        for extra in (["mtg-kernel/src/engine.rs"], ["Cargo.lock"], ["data/eternal_v1/cards.json"], []):
-            with self.subTest(extra=extra):
-                dispatch = run + extra   # the Rust file was applied to the base: only GitHub's list still has it
-                self.assertEqual(new.dispatch_group_set(dispatch), "full")
-                composed = coverage(new.composition(run, dispatch_paths=dispatch))
-                self.assertEqual(composed & everything, everything)
-                self.assertLessEqual(coverage(main.composition(run, dispatch_paths=dispatch)), composed)
-        # Without the website rule the same lists would complement a run that scheduled no Rust job.
-        self.assertEqual(Classifier("6df").dispatch_group_set(run + ["mtg-kernel/src/engine.rs"]), "windows-complement")
-        self.assertEqual({job for job, _ in new.scheduled("pull_request", run)}, PYTHON_SET)
-
-    def test_no_list_with_a_website_path_is_whole_set(self):
-        for change in SAME_CHANGE + [["viewer/a.html", "mtg-kernel/src/engine.rs", "Cargo.lock"],
-                                     ["viewer/a.html", ".github/workflows/ci.yml"]]:
-            if any(path.startswith("viewer/") for path in change):
-                with self.subTest(change=change):
-                    self.assertFalse(ci_scope.pr_run_is_whole_set(change))
-        engine = b'[[{"status": "modified", "filename": "mtg-kernel/src/engine.rs"}, ' \
-                 b'{"status": "modified", "filename": "viewer/index.html"}]]'
-        self.assertEqual(stdout_lines(run_scope("pr-run", stdin=engine)), ["partial"])
-
-    def test_lists_without_website_paths_are_decided_as_at_6df3f3fe0(self):
-        new, before = Classifier(), Classifier("6df")
-        changes = [c for c in SAME_CHANGE if not any(p.startswith("viewer/") for p in c)] + [
-            [path] for path, *_ in FROZEN_RELEVANCE if not path.startswith("viewer/")]
-        for change in changes:
-            with self.subTest(change=change):
-                self.assertEqual(new.dispatch_group_set(change), before.dispatch_group_set(change))
-        self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/engine.rs"]), "windows-complement")
 
 
 # origin/main's shell `case` verdicts, frozen by hand (not derived from ci_scope.py): path, python_relevant,
@@ -1009,25 +919,11 @@ ci_scope.open = fake_open
                 self.assertEqual(written, f"before=1\npython_relevant={python}\nrust_relevant={rust}\n")
 
     def test_bad_arguments_exit_non_zero(self):
-        for args in (["relevance", "extra"], ["pr-run", "extra"], ["file-scope", "extra"], ["no-such-command"], []):
+        for args in (["relevance", "extra"], ["pr-run"], ["file-scope"], ["no-such-command"], []):
             with self.subTest(args=args):
                 result = run_scope(*args, env={"GITHUB_OUTPUT": os.devnull})
                 self.assertEqual(result.returncode, 2)
                 self.assertNotIn(b"whole-set", result.stdout)
-
-    def test_pr_run_prints_whole_set_only_when_every_check_passed(self):
-        engine = b'[[{"status": "modified", "filename": "mtg-kernel/src/engine.rs"}]]'
-        self.assertEqual(stdout_lines(run_scope("pr-run", stdin=engine)), ["whole-set"])
-        for stdin, prelude in ((b"[[]]", ""), (b"", ""), (b"{", ""), (b"[[{}]]", ""), (b"\xff", ""),
-                               (engine, "def boom(*a): raise RuntimeError('x')\nci_scope.relevance = boom"),
-                               (engine, "ci_scope.RUST_RELEVANT_RULES = None")):
-            with self.subTest(stdin=stdin, prelude=prelude):
-                result = run_scope("pr-run", stdin=stdin, prelude=prelude)
-                self.assertNotIn(b"whole-set", result.stdout)
-                if stdin != b"[[]]":
-                    self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(stdout_lines(run_scope("pr-run", stdin=b"[[]]")), ["partial"])
-
 
 class NonPullRequestEventTests(unittest.TestCase):
     """Condition 3: pushes, tags and dispatches set both outputs themselves, before the classifier can run."""

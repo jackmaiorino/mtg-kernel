@@ -218,7 +218,7 @@ jobs:
           git diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/ci-changed-paths"
           # Python and Rust relevance of the paths, and the ci:full override
           # (every Rust and Python job, whatever the paths): ci_scope.py
-          # relevance, the same function the dispatch step's pr-run uses.
+          # relevance, the only copy of the patterns.
           python3 tools/ci/ci_scope.py relevance < "$RUNNER_TEMP/ci-changed-paths"
 
       # A ready pull request whose files all map to one scope runs only that
