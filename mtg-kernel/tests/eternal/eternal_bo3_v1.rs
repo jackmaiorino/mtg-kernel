@@ -22,12 +22,12 @@ mod leyline;
 #[path = "eternal_bo3_v1/eternal_bo3_native_v1.rs"]
 mod native;
 #[path = "eternal_bo3_v1/eternal_bo3_ordered_v1.rs"]
-mod ordered;
+pub(crate) mod ordered;
 
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 136] = [
+const PLAYABLE_75: [(&str, &str); 137] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -206,6 +206,7 @@ const PLAYABLE_75: [(&str, &str); 136] = [
     ("premodern", "premodern-bw-control"),
     ("premodern", "premodern-grow"),
     ("premodern", "premodern-other-control"),
+    ("premodern", "premodern-full-english-breakfast"),
 ];
 
 fn id(name: &str) -> u16 {
@@ -229,7 +230,8 @@ fn rows(cards: &[(&str, u32)]) -> Vec<CustomCardCountV1> {
 }
 
 /// Every snapshot deck's registration, with its format. A deck whose 75
-/// holds a Leyline registers with the native opening profile.
+/// holds a Leyline registers with the native opening profile; a deck whose 75
+/// holds Volrath's Shapeshifter registers with the ordered graveyard profile.
 fn registered_snapshot_decks() -> Vec<(String, EternalRegisteredDeckV1)> {
     snapshot_decks()
         .into_iter()
@@ -244,16 +246,20 @@ fn registered_snapshot_decks() -> Vec<(String, EternalRegisteredDeckV1)> {
                 deck.deck.companion.as_deref(),
             ) {
                 Err(EternalBo3ErrorV1::NativeOpeningSetup { .. }) => {
-                    let expand = |rows: &[CustomCardCountV1]| {
-                        rows.iter()
-                            .flat_map(|row| std::iter::repeat_n(id(&row.name), row.count as usize))
-                            .collect()
-                    };
                     EternalRegisteredDeckV1::new_with_native_opening_v1(
                         format,
                         deck.archetype.clone(),
-                        expand(&deck.deck.cards),
-                        expand(&deck.sideboard),
+                        expand_rows(&deck.deck.cards),
+                        expand_rows(&deck.sideboard),
+                        deck.deck.companion.as_deref().map(id),
+                    )
+                }
+                Err(EternalBo3ErrorV1::OrderedGraveyardSetup { .. }) => {
+                    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+                        format,
+                        deck.archetype.clone(),
+                        expand_rows(&deck.deck.cards),
+                        expand_rows(&deck.sideboard),
                         deck.deck.companion.as_deref().map(id),
                     )
                 }
@@ -286,6 +292,20 @@ fn needs_native_opening(deck: &EternalRegisteredDeckV1) -> bool {
 fn natively(deck: &EternalRegisteredDeckV1) -> EternalRegisteredDeckV1 {
     let configuration = deck.registered_configuration();
     EternalRegisteredDeckV1::new_with_native_opening_v1(
+        deck.format(),
+        deck.deck_id(),
+        configuration.mainboard().to_vec(),
+        configuration.sideboard().to_vec(),
+        deck.companion(),
+    )
+    .unwrap_or_else(|error| panic!("{}: {error}", deck.deck_id()))
+}
+
+/// `deck` registered with the Premodern ordered graveyard profile, as both
+/// decks of an ordered match must be.
+fn ordered_deck(deck: &EternalRegisteredDeckV1) -> EternalRegisteredDeckV1 {
+    let configuration = deck.registered_configuration();
+    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
         deck.format(),
         deck.deck_id(),
         configuration.mainboard().to_vec(),
@@ -727,6 +747,18 @@ fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_se
             format,
             "unrelated",
             unrelated,
+            vec![],
+            None
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { .. })
+    ));
+    let mut token = main.clone();
+    token[0] = id("Treasure Token");
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_native_opening_v1(
+            format,
+            "token-native",
+            token,
             vec![],
             None
         ),
@@ -1350,15 +1382,20 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     let (mut games, mut sideboarded, mut sided_in_casts, mut companion_games) = (0, 0, 0, 0);
     let mut index = 0u64;
     let mut native_matches = 0;
+    let mut ordered_matches = 0;
     let mut pairings = Vec::new();
     for (format, decks) in &by_format {
         // Each deck plays the next deck of its format, or a mirror when the
-        // format has one deck. A match with a deck that needs the native
-        // opening profile registers both decks with it.
+        // format has one deck. A match with a deck that needs the ordered
+        // graveyard or native opening profile registers both decks with it.
         for (position, first) in decks.iter().enumerate() {
             let second = decks[(position + 1) % decks.len()];
-            let native = needs_native_opening(first) || needs_native_opening(second);
-            let pair = if native {
+            let ordered = first.ordered_graveyard() || second.ordered_graveyard();
+            let native = !ordered && (needs_native_opening(first) || needs_native_opening(second));
+            let pair = if ordered {
+                ordered_matches += 1;
+                [ordered_deck(first), ordered_deck(second)]
+            } else if native {
                 native_matches += 1;
                 [natively(first), natively(second)]
             } else {
@@ -1366,21 +1403,32 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
             };
             let seed = 0x424f_3300_0000 + index;
             index += 1;
-            pairings.push((*format, *first, second, pair, seed, native));
+            pairings.push((*format, *first, second, pair, seed, native, ordered));
         }
     }
     // The matches run on worker threads (`in_parallel`); the lines, failures
     // and totals below take their results in this loop's order.
-    let outcomes = in_parallel(&pairings, |(_, _, _, pair, seed, native)| {
+    let outcomes = in_parallel(&pairings, |(_, _, _, pair, seed, native, ordered)| {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let record = play_match(pair.clone(), *seed, *native);
-            let replay = play_match(pair.clone(), *seed, *native);
-            assert_eq!(record.transcripts, replay.transcripts);
-            assert_eq!(record.winner, replay.winner);
-            record
+            if *ordered {
+                let (record, hashes) = play_ordered_match(pair.clone(), *seed);
+                let (replay, replay_hashes) = play_ordered_match(pair.clone(), *seed);
+                assert_eq!(record.transcripts, replay.transcripts);
+                assert_eq!(hashes, replay_hashes);
+                assert_eq!(record.winner, replay.winner);
+                record
+            } else {
+                let record = play_match(pair.clone(), *seed, *native);
+                let replay = play_match(pair.clone(), *seed, *native);
+                assert_eq!(record.transcripts, replay.transcripts);
+                assert_eq!(record.winner, replay.winner);
+                record
+            }
         }))
     });
-    for ((format, first, second, _, seed, native), outcome) in pairings.iter().zip(outcomes) {
+    for ((format, first, second, _, seed, native, ordered), outcome) in
+        pairings.iter().zip(outcomes)
+    {
         let Ok(record) = outcome else {
             failures.push(format!(
                 "{format}: {} / {} seed={seed}",
@@ -1390,7 +1438,7 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
             continue;
         };
         println!(
-            "{} / {} seed={seed} native={native} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
+            "{} / {} seed={seed} native={native} ordered={ordered} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
             first.deck_id(),
             second.deck_id(),
             record.games,
@@ -1415,6 +1463,10 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     assert!(
         native_matches > 0,
         "no match used the native opening profile"
+    );
+    assert!(
+        ordered_matches > 0,
+        "no match used the ordered graveyard profile"
     );
     let companions = decks.iter().any(|(_, deck)| deck.companion().is_some());
     assert!(
@@ -1601,20 +1653,52 @@ fn ordered_graveyard_registration_enforces_premodern_pool_profile_and_match_rule
         })
     );
 
-    // Partial Volrath's Shapeshifter stays refused by the general constructor
-    // in step B1, and tokens remain refused; the scoped frozen FEB 75 helper
-    // admits only the verified snapshot FEB 75.
-    let mut partial_volrath = clean_main.clone();
-    partial_volrath[0] = id("Volrath's Shapeshifter");
+    // Volrath's Shapeshifter is Full (step B2): admitted by the general
+    // ordered-graveyard constructor, refused by ordinary and native-opening
+    // registration in either zone, while tokens remain refused.
+    let mut with_volrath = clean_main.clone();
+    with_volrath[0] = id("Volrath's Shapeshifter");
+    let volrath_ordered = EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        EternalFormatV1::Premodern,
+        "full-volrath-ordered",
+        with_volrath.clone(),
+        Vec::new(),
+        None,
+    )
+    .unwrap();
+    assert!(volrath_ordered.ordered_graveyard());
     assert!(matches!(
-        EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        EternalRegisteredDeckV1::new_v1(
             EternalFormatV1::Premodern,
-            "partial-volrath",
-            partial_volrath,
+            "ordinary-volrath-main",
+            with_volrath.clone(),
             Vec::new(),
             None,
         ),
-        Err(EternalBo3ErrorV1::UnsupportedCard { name }) if name == "Volrath's Shapeshifter"
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
+            if reason.contains("Volrath's Shapeshifter")
+    ));
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_v1(
+            EternalFormatV1::Premodern,
+            "ordinary-volrath-side",
+            clean_main.clone(),
+            vec![id("Volrath's Shapeshifter")],
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
+            if reason.contains("Volrath's Shapeshifter")
+    ));
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_native_opening_v1(
+            EternalFormatV1::Premodern,
+            "native-volrath",
+            with_volrath,
+            Vec::new(),
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
+            if reason.contains("Volrath's Shapeshifter")
     ));
     let mut with_token = clean_main.clone();
     with_token[0] = id("Treasure Token");
@@ -1735,6 +1819,13 @@ fn schema_5_refuses_feb_and_outside_volrath_while_admitting_clean_sideboard() {
         let reply: Value = serde_json::from_str(&server.handle_line(&req.to_string())).unwrap();
         assert_eq!(reply["response_type"], "error");
         assert_eq!(reply["error"]["code"], "unsupported_deck");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("requires the ordered graveyard owner"),
+            "{reply}"
+        );
     }
 
     // Schema 5 reset with Extrapolate the Impossible in mainboard and
@@ -1760,6 +1851,13 @@ fn schema_5_refuses_feb_and_outside_volrath_while_admitting_clean_sideboard() {
         let reply: Value = serde_json::from_str(&server.handle_line(&req.to_string())).unwrap();
         assert_eq!(reply["response_type"], "error");
         assert_eq!(reply["error"]["code"], "unsupported_deck");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("requires the ordered graveyard owner"),
+            "{reply}"
+        );
     }
 
     // A PLAYABLE_75 game's sideboard without a Shapeshifter is admitted cleanly.
