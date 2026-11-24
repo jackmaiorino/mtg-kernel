@@ -1,9 +1,12 @@
 """Exercise admission and owned-process cleanup without invoking Docker."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -92,6 +95,69 @@ class TargetVariantTests(unittest.TestCase):
         self.assertNotEqual(PORTABLE_SCHEMA, VARIANT_SCHEMA)
 
 
+class ExampleTests(unittest.TestCase):
+    def test_default_dispatch_executes_the_original_guard_and_helper_bytes(self):
+        with patch.object(hosted.os, "execv", side_effect=SystemExit) as launch:
+            with self.assertRaises(SystemExit):
+                hosted.main(["--work-root", "root", "--source-commit", hosted.SOURCE])
+        command = launch.call_args.args[1]
+        guard = HERE / "bin-only/hosted.py"
+        self.assertEqual(command, [sys.executable, "-B", str(guard), "--work-root", "root", "--source-commit",
+                                   hosted.SOURCE, "--wall-seconds", str(hosted.MAX_WALL)])
+        self.assertEqual(hosted.sha256(guard), "40b712c9e376d9ced5743593b142cb40b0e727ad70f566ab50abc0c339bd7141")
+        self.assertEqual(hosted.sha256(guard.with_name("build.sh")),
+                         "ac283ee8d1b4f6725b16f3931128c7f61a83dbd9251bc924dbc1c5b494f51194")
+
+    def test_validation_accepts_only_named_targets_and_features_with_distinct_outputs(self):
+        def check(*specs):
+            command = shlex.join(["source", "build.sh", "--check-examples", *specs])
+            return subprocess.run([shutil.which("bash")], input=command, text=True, cwd=HERE, capture_output=True)
+
+        self.assertEqual(check("plain", "cube_b_census_v1:eternal-fixtures,other_2").returncode, 0)
+        for spec in ("", "../escape", "-flag", "name:", "name:a,,b", "name:a,", "name:a/b",
+                     "name:--all-features", "name:a;b", "name:$(id)", "name\nother", "námé",
+                     "DONE", "SHA256SUMS", "checkpoint_container_v1"):
+            with self.subTest(spec=spec):
+                self.assertEqual(check(spec).returncode, 2)
+        self.assertEqual(check("name", "name:other").returncode, 2)
+
+    def test_manifest_records_installed_examples_using_the_binary_metadata(self):
+        # Execute the manifest writer against fixture files. Only its external Linux tool queries are mocked.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bins = ["native_expanded_training_run_v1", "checkpoint_container_v1"]
+            specs = ["cube_b_census_v1:eternal-fixtures,other_2", "plain"]
+            for name in [*bins, "Cargo.lock", "rust-components.json", "debian-packages.tsv", "cube_b_census_v1", "plain"]:
+                (root / name).write_bytes(name.encode())
+
+            def command(args, **kwargs):
+                if args[:2] == ("gcc", "-print-prog-name=ld"):
+                    return sys.executable
+                if args[0] == "readelf":
+                    return "Advanced Micro Devices X86-64 /lib64/ld-linux-x86-64.so.2"
+                return "fixture"
+
+            def write(script, arguments):
+                source = script.read_text(encoding="utf-8").split("<<'PY'\n")[-1].split("\nPY\n")[0]
+                argv = ["-", str(root), str(root), hosted.SOURCE, "origin", "123", *bins, *arguments]
+                with patch.object(sys, "argv", argv), patch.object(subprocess, "check_output", side_effect=command):
+                    exec(compile(source, str(script), "exec"), {})
+                return (root / "BUILD-MANIFEST.json").read_bytes()
+
+            for cpu, flags, schema in (("default", "", PORTABLE_SCHEMA), ("znver5", "-C target-cpu=znver5", VARIANT_SCHEMA)):
+                with patch.dict(os.environ, PINNED_VARIANT=cpu, PINNED_RUSTFLAGS=flags, PINNED_MANIFEST_SCHEMA=schema):
+                    original = write(HERE / "bin-only/build.sh", [])
+                    self.assertEqual(write(HERE / "build.sh", ["--"]), original)
+                    manifest = json.loads(write(HERE / "build.sh", ["--", *specs]))
+                    examples = manifest.pop("examples")
+                    self.assertEqual(manifest, json.loads(original))
+                    for entry, name, features in zip(examples, ["cube_b_census_v1", "plain"],
+                                                     [["eternal-fixtures", "other_2"], []], strict=True):
+                        self.assertEqual(entry, dict(name=name, bytes=len(name), features=features,
+                                                     runtime_libraries=["fixture"],
+                                                     sha256=hashlib.sha256(name.encode()).hexdigest()))
+
+
 class HostedGuardTests(unittest.TestCase):
     def setUp(self):
         self.parent = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
@@ -124,7 +190,10 @@ class HostedGuardTests(unittest.TestCase):
         with patch.object(hosted, "TARGET_CPU", "znver5"):
             self.exercise_cleanup(growth_stop=True, target_cpu="znver5")
 
-    def exercise_cleanup(self, growth_stop=False, swapoff_error=False, target_cpu="default"):
+    def test_examples_reach_the_container_as_separate_arguments(self):
+        self.exercise_cleanup(examples=("cube_b_census_v1:eternal-fixtures", "plain"))
+
+    def exercise_cleanup(self, growth_stop=False, swapoff_error=False, target_cpu="default", examples=()):
         free = 85 * hosted.GIB
         daemon = Mock(pid=101, returncode=None)
         daemon.poll.return_value = None
@@ -175,7 +244,7 @@ class HostedGuardTests(unittest.TestCase):
               patch.object(hosted.subprocess, "run", side_effect=docker),
               patch.object(hosted.signal, "SIGKILL", 9, create=True),
               patch.object(hosted.os, "killpg", side_effect=lambda pid, sig: events.append((pid, sig)), create=True)):
-            receipt = hosted.run(self.root, hosted.SOURCE, 60)
+            receipt = hosted.run(self.root, hosted.SOURCE, 60, examples)
 
         self.assertEqual(commands[0][1]["DOCKER_TMPDIR"], str(self.root / "tmp"))
         self.assertEqual(commands[0][1]["TMPDIR"], str(self.root / "tmp"))
@@ -184,7 +253,8 @@ class HostedGuardTests(unittest.TestCase):
         self.assertIn(f"type=bind,src={self.root / 'work'},dst=/work", commands[1][0])
         self.assertIn("--memory-swap=28g", commands[1][0])
         self.assertNotIn("--rm", commands[1][0])
-        self.assertEqual(commands[1][0][-4:], [hosted.IMAGE, "/build.sh", hosted.SOURCE, "/work/out"])
+        self.assertEqual(commands[1][0][-(4 + len(examples)):],
+                         [hosted.IMAGE, "/build.sh", hosted.SOURCE, "/work/out", *examples])
         # The target-flag variant reaches build.sh through the container's environment; the default is `default`.
         position = commands[1][0].index("PINNED_TARGET_CPU=" + target_cpu)
         self.assertEqual(commands[1][0][position - 1], "--env")

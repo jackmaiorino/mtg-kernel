@@ -234,7 +234,7 @@ def remove_container(docker, env, log, receipt):
         container_command(docker, env, log, "rm", allow_missing=True)
 
 
-def run(root, source, wall):
+def run(root, source, wall, examples=()):
     resources = Resources(root, wall)
     started = time.monotonic()
     daemon = builder = None
@@ -297,7 +297,7 @@ def run(root, source, wall):
                          "--env", "PINNED_TARGET_CPU=" + TARGET_CPU,
                          "--mount", f"type=bind,src={work},dst=/work",
                          "--mount", f"type=bind,src={helper},dst=/build.sh,readonly",
-                         "--entrypoint", "/bin/bash", IMAGE, "/build.sh", source, "/work/out"],
+                         "--entrypoint", "/bin/bash", IMAGE, "/build.sh", source, "/work/out", *examples],
                         root / "container.log", env)
         while builder.poll() is None:
             resources.check()
@@ -375,17 +375,25 @@ def main(argv=None):
     parser.add_argument("--work-root", required=True, type=Path)
     parser.add_argument("--source-commit", required=True, choices=list(SOURCES))
     parser.add_argument("--wall-seconds", type=int, default=MAX_WALL)
+    parser.add_argument("--examples", default="", help="space-separated name[:feature1,feature2] entries")
     args = parser.parse_args(argv)
+    if args.examples == "":
+        # The receipt pins both scripts by content. Execute the original pair for bin-only requests.
+        original = Path(__file__).with_name("bin-only") / "hosted.py"
+        os.execv(sys.executable, [sys.executable, "-B", str(original), "--work-root", str(args.work_root),
+                                 "--source-commit", args.source_commit, "--wall-seconds", str(args.wall_seconds)])
+    examples = args.examples.split(" ")
     try:
+        subprocess.run(["bash", Path(__file__).with_name("build.sh"), "--check-examples", *examples], check=True)
         require(0 < args.wall_seconds <= MAX_WALL, f"wall limit must be 1 to {MAX_WALL} seconds")
         require(sys.platform.startswith("linux") and platform.machine() == "x86_64" and os.geteuid() == 0,
                 "run the hosted guard as root on Linux x86-64")
         os.umask(0o022)
         create_root(args.work_root)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         parser.exit(2, f"{exc}\n")
     signal.signal(signal.SIGTERM, interrupted)
-    receipt = run(args.work_root, args.source_commit, args.wall_seconds)
+    receipt = run(args.work_root, args.source_commit, args.wall_seconds, examples)
     print(json.dumps({"pass": receipt["pass"], "receipt": str(args.work_root / "guard.json"), "error": receipt["error"]}))
     return 0 if receipt["pass"] else 1
 
