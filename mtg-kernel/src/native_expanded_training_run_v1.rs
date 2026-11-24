@@ -1968,9 +1968,21 @@ fn start_checkpoint_engine_note_v1(
 
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
 /// only at completed iteration boundaries; it never changes the saved plan.
+/// Notes for the operator (`start_checkpoint_engine_note_v1`) go to stderr.
 pub fn run_native_expanded_training_v1(
     config: &NativeExpandedTrainingRunV1,
     max_new_iterations: Option<usize>,
+) -> Result<Value, String> {
+    run_native_expanded_training_noting_v1(config, max_new_iterations, &mut std::io::stderr())
+}
+
+/// [`run_native_expanded_training_v1`] with its operator notes written to
+/// `notes`, one whole line per write, so tests can read exactly what the run
+/// prints. A note that cannot be written never stops the run.
+fn run_native_expanded_training_noting_v1(
+    config: &NativeExpandedTrainingRunV1,
+    max_new_iterations: Option<usize>,
+    notes: &mut dyn Write,
 ) -> Result<Value, String> {
     let mut projection = config.validate_with_projection_v1()?;
     config.update_backend.require_compiled_v1()?;
@@ -2012,7 +2024,7 @@ pub fn run_native_expanded_training_v1(
     // stays JSON lines) and never refused.
     let engine = crate::engine_identity_v1::engine_identity_v1();
     if let Some(note) = start_checkpoint_engine_note_v1(&config.initial_source, &engine) {
-        eprintln!("{note}");
+        let _ = notes.write_all(format!("{note}\n").as_bytes());
     }
     // A converted (no-state-digest) run loads its initial source before the
     // plan, which records its validated effective identity and contract. An
@@ -5738,6 +5750,87 @@ mod tests {
             result["actual_identity"]["state_sha256"],
             PORTABLE_PARALLEL_RUN_STATE_SHA256_V1
         );
+    }
+
+    /// mtg-kernel#921 at the run entry: a run whose start checkpoint was
+    /// written by another engine, or by one that recorded none, prints exactly
+    /// one line and then trains as usual; a fresh start and a checkpoint this
+    /// engine wrote print nothing. The note sink stands in for stderr.
+    #[test]
+    fn run_entry_prints_one_line_for_a_start_checkpoint_from_another_or_no_recorded_engine() {
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        };
+        let (_root, config) =
+            real_two_iteration_config_v1("engine-note-run", gae, ExpandedUpdateBackendV1::Cpu);
+        let run = |config: &NativeExpandedTrainingRunV1| {
+            let mut notes = Vec::new();
+            let result =
+                run_native_expanded_training_noting_v1(config, Some(1), &mut notes).unwrap();
+            assert_eq!(result["completed_iterations"], 1);
+            assert!(config
+                .output_directory
+                .join("iterations/000000/complete.json")
+                .is_file());
+            (result, String::from_utf8(notes).unwrap())
+        };
+        // A fresh start: no checkpoint, no line.
+        assert!(config.initial_source.checkpoint.is_none());
+        let (fresh, notes) = run(&config);
+        assert_eq!(notes, "");
+        assert_eq!(fresh["actual_identity"]["adam_step"], 1);
+        // Continuations from the checkpoint the fresh run wrote, each into its
+        // own run directory, while its iteration receipt records this engine,
+        // another engine, or none.
+        let start: ExpandedModelSourceV1 = serde_json::from_value(fresh["source"].clone()).unwrap();
+        let receipt_pin: PinnedFileV1 =
+            serde_json::from_value(fresh["iterations"][0].clone()).unwrap();
+        let receipt = read_pin(&receipt_pin).unwrap();
+        let engine = crate::engine_identity_v1::engine_identity_v1();
+        assert_eq!(receipt["engine"], engine);
+        let continue_as = |name: &str, recorded: Option<Value>| {
+            let mut edited = receipt.clone();
+            match recorded {
+                Some(recorded) => edited["engine"] = recorded,
+                None => {
+                    edited.as_object_mut().unwrap().remove("engine");
+                }
+            }
+            fs::write(&receipt_pin.path, serde_json::to_vec(&edited).unwrap()).unwrap();
+            let mut next = config.clone();
+            next.initial_source = start.clone();
+            next.output_directory = config.output_directory.with_file_name(name);
+            run(&next)
+        };
+        let (same, notes) = continue_as("run-same-engine", Some(engine.clone()));
+        assert_eq!(notes, "");
+        assert_eq!(same["actual_identity"]["adam_step"], 2);
+        let mut other = engine.clone();
+        other["git_commit"] = json!("f".repeat(40));
+        other["rules_version"] = json!(0);
+        let (different, notes) = continue_as("run-other-engine", Some(other));
+        assert_eq!(notes.lines().count(), 1, "{notes}");
+        assert!(notes.ends_with("; continuing\n"), "{notes}");
+        assert!(notes.contains("written by a different engine"), "{notes}");
+        assert!(notes.contains(&"f".repeat(40)), "{notes}");
+        assert!(notes.contains(env!("MTG_KERNEL_BUILD_GIT_HEAD")), "{notes}");
+        let (unrecorded, notes) = continue_as("run-no-engine", None);
+        assert_eq!(notes.lines().count(), 1, "{notes}");
+        assert!(notes.ends_with("; continuing\n"), "{notes}");
+        assert!(notes.contains("has no recorded engine identity"), "{notes}");
+        // The note changes nothing the run trains or records.
+        for result in [&different, &unrecorded] {
+            for field in ["adam_step", "state_sha256"] {
+                assert_eq!(
+                    result["actual_identity"][field],
+                    same["actual_identity"][field]
+                );
+            }
+            assert_eq!(result["engine"], engine);
+        }
     }
 
     /// mtg-kernel#921: a run starting from a checkpoint finds the engine its
