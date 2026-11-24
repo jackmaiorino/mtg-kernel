@@ -44,14 +44,16 @@ fn digest_memo_matches_unmemoized_digests() {
             let picked: Vec<DigestSlotV1> = (0..count)
                 .map(|_| {
                     let source = &pool[next(&mut rng) as usize % pool.len()];
+                    let state_digest_off = next(&mut rng).is_multiple_of(4);
                     DigestSlotV1 {
                         state_json: source.state_json.clone(),
                         action_scratch: Vec::new(),
                         action_json: source.action_json.clone(),
                         action_ranges: source.action_ranges.clone(),
-                        // Both contracts, so the memoized and plain paths
-                        // must also agree with the state digest off.
-                        state_digest_off: next(&mut rng).is_multiple_of(4),
+                        // All three contracts, so the memoized and plain paths
+                        // must also agree with state and action digests off.
+                        state_digest_off,
+                        action_digest_off: state_digest_off && next(&mut rng).is_multiple_of(2),
                     }
                 })
                 .collect();

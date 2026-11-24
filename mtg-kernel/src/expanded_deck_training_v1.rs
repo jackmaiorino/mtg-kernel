@@ -4402,7 +4402,10 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     // checkpoints are admitted here like V4's.
     let contract = trajectory_contract_v1(t)?;
     if contract.input_contract_digest_v1().is_some() {
-        no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
+        no_state_digest_v1::check_trajectory_rows_v1(
+            &t.decisions,
+            contract.action_digest_off_v1(),
+        )?;
     }
     // W5: a row the search played replays the learner's own draw; the
     // update authenticates the played action against q.

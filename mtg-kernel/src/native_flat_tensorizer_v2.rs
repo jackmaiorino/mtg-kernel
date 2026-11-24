@@ -305,6 +305,11 @@ impl NativeFlatTensorScratchV3 {
         self.slot.state_digest_off = !on;
     }
 
+    /// [`NativeFlatTensorizerV2::set_action_digest_v1`] for the V3/V4 fills.
+    pub(crate) fn set_action_digest_v1(&mut self, on: bool) {
+        self.slot.action_digest_off = !on;
+    }
+
     /// The canonical observation JSON of the last successful fill (the bytes
     /// the state digest hashes when it is on).
     pub(crate) fn canonical_observation_v1(&self) -> &[u8] {
@@ -331,6 +336,10 @@ struct DigestSlotV1 {
     /// JSON is still written (its serializer validates the observation) but
     /// not hashed, and the 96 state-digest features are zero.
     state_digest_off: bool,
+    /// The no-digests input contract (`no-digests-v1`): canonical action JSON
+    /// serialization and per-action SHA-512 hashing are skipped, and the 96
+    /// action-digest features (`99..195`) remain +0.0.
+    action_digest_off: bool,
 }
 
 impl DigestSlotV1 {
@@ -806,6 +815,7 @@ thread_local! {
 struct DeferredActionJsonV1<'s> {
     json: &'s mut Vec<u8>,
     ranges: &'s mut Vec<(usize, usize)>,
+    action_digest_off: bool,
 }
 
 const STATE_HASH_NAMESPACE_V2: &[u8] = b"observation-state";
@@ -834,6 +844,12 @@ impl NativeFlatTensorizerV2 {
         self.slot.state_digest_off = !on;
     }
 
+    /// Selects the action-digest inputs: on (the original contract) or off
+    /// (`no-digests-v1`). Other features are unchanged.
+    pub(crate) fn set_action_digest_v1(&mut self, on: bool) {
+        self.slot.action_digest_off = !on;
+    }
+
     pub(crate) fn fill(
         &mut self,
         decision: FlatScoringDecisionViewV1<'_>,
@@ -852,6 +868,7 @@ impl NativeFlatTensorizerV2 {
                 prepared,
                 &self.digests.blocks[offsets[0]..offsets[1]],
                 slot.state_digest_off,
+                slot.action_digest_off,
             )
         });
         match encoded {
@@ -1079,6 +1096,7 @@ fn prepare_full_decision_v2(
         Some(DeferredActionJsonV1 {
             json: &mut slot.action_json,
             ranges: &mut slot.action_ranges,
+            action_digest_off: slot.action_digest_off,
         }),
     )?;
     if actions.action_features.len() != slot.action_ranges.len() * NATIVE_FLAT_ACTION_FEATURE_DIM_V1
@@ -1100,6 +1118,13 @@ fn prepare_full_decision_v2(
 /// resume point) form a shared-schedule group. Returns each slot's range in
 /// `batch.blocks`.
 fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> Vec<usize> {
+    if slots
+        .iter()
+        .all(|slot| slot.state_digest_off && slot.action_digest_off)
+    {
+        batch.blocks.clear();
+        return vec![0; slots.len() + 1];
+    }
     let budget = digest_memo_budget_v1();
     if budget == 0 {
         return hash_prepared_slots_unmemoized_v2(slots, batch);
@@ -1115,7 +1140,10 @@ fn hash_prepared_slots_unmemoized_v2(
     batch: &mut DigestBatchV1,
 ) -> Vec<usize> {
     const N: usize = ACTION_HASH_BLOCK_COUNT_V1;
-    if !slots.iter().any(|slot| slot.state_digest_off) {
+    if !slots
+        .iter()
+        .any(|slot| slot.state_digest_off || slot.action_digest_off)
+    {
         let mut offsets = Vec::with_capacity(slots.len() + 1);
         let mut resumes = Vec::with_capacity(slots.len());
         let mut groups = Vec::with_capacity(slots.len());
@@ -1219,15 +1247,19 @@ fn hash_prepared_slots_unmemoized_v2(
             state_resumes.push((&slot.state_json, resume, first));
         }
         total_blocks += N;
-        for &(start, end) in slot.action_ranges.iter() {
-            for counter in 0..N as u32 {
-                jobs.push(Sha512JobV1::new(
-                    ACTION_HASH_NAMESPACE_V1,
-                    counter,
-                    &slot.action_json[start..end],
-                ));
+        if !slot.action_digest_off {
+            for &(start, end) in slot.action_ranges.iter() {
+                for counter in 0..N as u32 {
+                    jobs.push(Sha512JobV1::new(
+                        ACTION_HASH_NAMESPACE_V1,
+                        counter,
+                        &slot.action_json[start..end],
+                    ));
+                }
+                total_blocks += N;
             }
-            total_blocks += N;
+        } else {
+            total_blocks += slot.action_ranges.len() * N;
         }
     }
     offsets.push(total_blocks);
@@ -1265,10 +1297,16 @@ fn hash_prepared_slots_unmemoized_v2(
             job_cursor += N;
         }
         let action_blocks = slot.action_ranges.len() * N;
-        batch
-            .blocks
-            .extend_from_slice(&batch.scratch_blocks[job_cursor..job_cursor + action_blocks]);
-        job_cursor += action_blocks;
+        if slot.action_digest_off {
+            batch
+                .blocks
+                .resize(batch.blocks.len() + action_blocks, [0; 64]);
+        } else {
+            batch
+                .blocks
+                .extend_from_slice(&batch.scratch_blocks[job_cursor..job_cursor + action_blocks]);
+            job_cursor += action_blocks;
+        }
     }
     offsets
 }
@@ -1289,6 +1327,7 @@ fn hash_prepared_slots_memoized_v2(
     // index of its first job.
     enum Source {
         EmptyState,
+        ZeroAction,
         Stored(usize),
         Jobs(usize),
     }
@@ -1332,25 +1371,31 @@ fn hash_prepared_slots_memoized_v2(
                 messages.push((STATE_HASH_NAMESPACE_V2, state, hash, Source::Jobs(first)));
             }
         }
-        for &(start, end) in slot.action_ranges.iter() {
-            let action = &slot.action_json[start..end];
-            let hash = digest_memo_hash_v1(ACTION_HASH_NAMESPACE_V1, action);
-            if let Some(blocks) = memo.get(hash, ACTION_HASH_NAMESPACE_V1, action) {
-                hits += 1;
-                stored.push(*blocks);
-                messages.push((
-                    ACTION_HASH_NAMESPACE_V1,
-                    action,
-                    hash,
-                    Source::Stored(stored.len() - 1),
-                ));
-            } else {
-                misses += 1;
-                let first = jobs.len();
-                for counter in 0..N as u32 {
-                    jobs.push(Sha512JobV1::new(ACTION_HASH_NAMESPACE_V1, counter, action));
+        if slot.action_digest_off {
+            for _ in 0..slot.action_ranges.len() {
+                messages.push((ACTION_HASH_NAMESPACE_V1, &[], 0, Source::ZeroAction));
+            }
+        } else {
+            for &(start, end) in slot.action_ranges.iter() {
+                let action = &slot.action_json[start..end];
+                let hash = digest_memo_hash_v1(ACTION_HASH_NAMESPACE_V1, action);
+                if let Some(blocks) = memo.get(hash, ACTION_HASH_NAMESPACE_V1, action) {
+                    hits += 1;
+                    stored.push(*blocks);
+                    messages.push((
+                        ACTION_HASH_NAMESPACE_V1,
+                        action,
+                        hash,
+                        Source::Stored(stored.len() - 1),
+                    ));
+                } else {
+                    misses += 1;
+                    let first = jobs.len();
+                    for counter in 0..N as u32 {
+                        jobs.push(Sha512JobV1::new(ACTION_HASH_NAMESPACE_V1, counter, action));
+                    }
+                    messages.push((ACTION_HASH_NAMESPACE_V1, action, hash, Source::Jobs(first)));
                 }
-                messages.push((ACTION_HASH_NAMESPACE_V1, action, hash, Source::Jobs(first)));
             }
         }
     }
@@ -1385,6 +1430,7 @@ fn hash_prepared_slots_memoized_v2(
     for (namespace, message, hash, source) in messages {
         match source {
             Source::EmptyState => batch.blocks.extend_from_slice(empty_blocks),
+            Source::ZeroAction => batch.blocks.resize(batch.blocks.len() + N, [0u8; 64]),
             Source::Stored(index) => batch.blocks.extend_from_slice(&stored[index]),
             Source::Jobs(first) => {
                 let blocks: [[u8; 64]; N] = batch.scratch_blocks[first..first + N]
@@ -1433,6 +1479,7 @@ fn finish_full_decision_v2(
     prepared: PreparedDecisionV2,
     blocks: &[[u8; 64]],
     state_digest_off: bool,
+    action_digest_off: bool,
 ) -> Result<NativeFlatDecisionTensorV2, NativeFlatTensorErrorV2> {
     let PreparedDecisionV2 {
         mut state_head,
@@ -1442,20 +1489,31 @@ fn finish_full_decision_v2(
     } = prepared;
     let head_len = state_head.len();
     state_head.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
-    state_digest_features_v1(
-        &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
-        state_digest_off,
-        &mut state_head[head_len..],
-    );
-    for (row, row_blocks) in actions
-        .action_features
-        .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
-        .zip(blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
-    {
-        digest_block_features_v1(
-            row_blocks,
-            &mut row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..],
+    if !state_digest_off {
+        state_digest_features_v1(
+            &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
+            false,
+            &mut state_head[head_len..],
         );
+    }
+    if action_digest_off {
+        for row in actions
+            .action_features
+            .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
+        {
+            row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..].fill(0.0);
+        }
+    } else {
+        for (row, row_blocks) in actions
+            .action_features
+            .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
+            .zip(blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
+        {
+            digest_block_features_v1(
+                row_blocks,
+                &mut row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..],
+            );
+        }
     }
     let output = NativeFlatDecisionTensorV2 {
         state: state_head,
@@ -2176,11 +2234,15 @@ fn encode_london_action_half_v7(
         if *action != expected {
             return Err(NativeFlatTensorErrorV1::NonCanonicalActionCore);
         }
-        write_canonical_action_json_v1(semantic, canonical_json)?;
         let features = explicit_action_features_contract_v3(action, &resolved, false)?;
-        let json_start = deferred.json.len();
-        deferred.json.extend_from_slice(canonical_json);
-        deferred.ranges.push((json_start, deferred.json.len()));
+        if deferred.action_digest_off {
+            deferred.ranges.push((0, 0));
+        } else {
+            write_canonical_action_json_v1(semantic, canonical_json)?;
+            let json_start = deferred.json.len();
+            deferred.json.extend_from_slice(canonical_json);
+            deferred.ranges.push((json_start, deferred.json.len()));
+        }
         out.action_features.extend_from_slice(&features);
         if let Some(reference) = card {
             let projected = projected_singular(reference, ROLE_CARD_V1);
@@ -2272,6 +2334,7 @@ fn fill_successor_reusing_v2(
     let deferred = DeferredActionJsonV1 {
         json: &mut scratch.slot.action_json,
         ranges: &mut scratch.slot.action_ranges,
+        action_digest_off: scratch.slot.action_digest_off,
     };
     let mut actions = match london {
         None => encode_action_half_reusing_v3(
@@ -2306,20 +2369,31 @@ fn fill_successor_reusing_v2(
     let blocks = &scratch.digests.blocks[offsets[0]..offsets[1]];
     let head_len = state.len();
     state.resize(head_len + NATIVE_FLAT_ACTION_HASH_FEATURE_DIM_V2, 0.0);
-    state_digest_features_v1(
-        &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
-        scratch.slot.state_digest_off,
-        &mut state[head_len..],
-    );
-    for (row, row_blocks) in actions
-        .action_features
-        .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
-        .zip(blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
-    {
-        digest_block_features_v1(
-            row_blocks,
-            &mut row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..],
+    if !scratch.slot.state_digest_off {
+        state_digest_features_v1(
+            &blocks[..ACTION_HASH_BLOCK_COUNT_V1],
+            false,
+            &mut state[head_len..],
         );
+    }
+    if scratch.slot.action_digest_off {
+        for row in actions
+            .action_features
+            .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
+        {
+            row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..].fill(0.0);
+        }
+    } else {
+        for (row, row_blocks) in actions
+            .action_features
+            .chunks_exact_mut(NATIVE_FLAT_ACTION_FEATURE_DIM_V1)
+            .zip(blocks[ACTION_HASH_BLOCK_COUNT_V1..].chunks_exact(ACTION_HASH_BLOCK_COUNT_V1))
+        {
+            digest_block_features_v1(
+                row_blocks,
+                &mut row[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..],
+            );
+        }
     }
     let next = NativeFlatDecisionTensorV2 {
         state,
@@ -8073,15 +8147,20 @@ fn encode_action_with_reference_scratch_contract_v3<'a>(
     if projected_refs.len() != resolved.len() {
         return Err(NativeFlatTensorErrorV1::ActionReferenceShape);
     }
-    write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
     let mut features =
         explicit_action_features_contract_v3(action, resolved, allow_chosen_creature_cost_v3)?;
     let sha512_blocks = if let Some(deferred) = deferred {
-        let start = deferred.json.len();
-        deferred.json.extend_from_slice(canonical_json_scratch);
-        deferred.ranges.push((start, deferred.json.len()));
+        if deferred.action_digest_off {
+            deferred.ranges.push((0, 0));
+        } else {
+            write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
+            let start = deferred.json.len();
+            deferred.json.extend_from_slice(canonical_json_scratch);
+            deferred.ranges.push((start, deferred.json.len()));
+        }
         [[0u8; ACTION_HASH_BLOCK_BYTES_V1]; ACTION_HASH_BLOCK_COUNT_V1]
     } else {
+        write_canonical_action_json_v1(semantic, canonical_json_scratch)?;
         let (sha512_blocks, hash_features) = action_hash_features_v1(canonical_json_scratch);
         features[NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V1..].copy_from_slice(&hash_features);
         sha512_blocks
