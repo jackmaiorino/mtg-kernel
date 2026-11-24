@@ -143,6 +143,8 @@ pub enum SeedStream {
     GameEnv = 7,
     /// A game's uniform action choices (parent: the game seed).
     GameActions = 8,
+    /// A halted game's retry deal seed (parent: the game seed; index: attempt 1..=3).
+    GameRetry = 9,
 }
 
 const SEED_DOMAIN_V1: u64 = 0x4355_4245_4452_4654;
@@ -184,7 +186,7 @@ pub fn game_seed(pod_seed: u64, game: usize) -> u64 {
 }
 
 /// An unbiased index in `0..bound` (`bound > 0`).
-fn uniform_index(rng: &mut SplitMix64, bound: usize) -> usize {
+pub(crate) fn uniform_index(rng: &mut SplitMix64, bound: usize) -> usize {
     let bound = bound as u64;
     let threshold = bound.wrapping_neg() % bound;
     loop {
@@ -1319,6 +1321,29 @@ pub fn play_seeded_game_tallied(
     play_seated_game(decks, [0, 1], seed, episode, caps)
 }
 
+/// Plays one game attempt with uniform-random legal actions through the
+/// Limited session, catching unwinding panics as [`GameEnd::Panic`].
+pub(crate) fn drive_uniform_attempt(
+    decks: [&Deck; 2],
+    seats: [usize; 2],
+    episode: u64,
+    env_seed: u64,
+    action_seed: u64,
+    caps: &GameCaps,
+) -> (u64, GameEnd, GameTally) {
+    let setup = GameSetup {
+        decks,
+        seats,
+        episode,
+        env_seed,
+        action_seed,
+    };
+    let mut tally = GameTally::default();
+    let (decisions, end) =
+        catch_game_panic(|decisions| drive_game(&setup, caps, decisions, &mut tally));
+    (decisions, end, tally)
+}
+
 fn play_seated_game(
     decks: [&Deck; 2],
     seats: [usize; 2],
@@ -1328,16 +1353,8 @@ fn play_seated_game(
 ) -> (GameRecord, GameTally) {
     let env_seed = derive_seed(seed, SeedStream::GameEnv, 0);
     let action_seed = derive_seed(seed, SeedStream::GameActions, 0);
-    let setup = GameSetup {
-        decks,
-        seats,
-        episode: game as u64,
-        env_seed,
-        action_seed,
-    };
-    let mut tally = GameTally::default();
-    let (decisions, end) =
-        catch_game_panic(|decisions| drive_game(&setup, caps, decisions, &mut tally));
+    let (decisions, end, tally) =
+        drive_uniform_attempt(decks, seats, game as u64, env_seed, action_seed, caps);
     (
         GameRecord {
             game,
