@@ -698,13 +698,8 @@ pub(super) fn selected(
         .as_ref()
         .and_then(bound)?;
     let (source, drawer, optional) = queued(state, at)?;
-    (original_context(pending)
-        && !state
-            .stack
-            .iter()
-            .any(|row| row.v4.stack_item_id == pending.resolving_item.v4.stack_item_id)
-        && owns(state, &pending.resolving_item, at))
-    .then_some((at, source, drawer, optional))
+    (original_context(pending) && owns(state, &pending.resolving_item, at))
+        .then_some((at, source, drawer, optional))
 }
 fn answer(state: &GameState, at: usize, item: StackItemId) -> Option<u8> {
     let mut answers = rows(state).filter_map(|(_, row)| match row {
@@ -777,11 +772,13 @@ pub(super) fn validate_idle(
         return Err("Denial cannot repeat a started draw".into());
     }
     let actual_root = root(at, source.controller, drawer, optional);
+    let on_stack = state.stack.iter().any(|row| row.v4.stack_item_id == item);
     let valid = if let Some(count) = answer(state, at, item) {
         optional
             && matches!((&pending.choice, pending.frames.as_slice()), (None, [EffectFrame::Program { op, path }]) if *op == leaf(at, count) && *path == [u16::from(count)])
     } else {
-        matches!((&pending.choice, pending.frames.as_slice()), (None, [EffectFrame::Program { op, path }]) if *op == actual_root && path.is_empty())
+        (!on_stack
+            && matches!((&pending.choice, pending.frames.as_slice()), (None, [EffectFrame::Program { op, path }]) if *op == actual_root && path.is_empty()))
             || matches!((&pending.choice, pending.frames.as_slice(), &actual_root), (Some(PendingEffectChoice::ChooseOption { player, path, options, purpose: EffectOptionChoicePurpose::Generic }), [], EffectOp::Choice { options: original, .. }) if *player == drawer && path.is_empty() && options == original)
     };
     if !valid {

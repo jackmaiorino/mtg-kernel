@@ -855,8 +855,9 @@ fn paid_denial_commandeer_retargets_without_replacing_original_payment() {
         state.active_player = actor;
         state.priority_player = actor;
         let first = bolt(&mut state, actor);
-        let source = denial(&mut state, actor, first);
         let second = bolt(&mut state, other);
+        let source = denial(&mut state, actor, first);
+        priority(&mut state, other);
         cast(
             &mut state,
             other,
