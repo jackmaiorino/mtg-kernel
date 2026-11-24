@@ -39,7 +39,8 @@ pub struct TurnScheduleV1 {
     /// Next turn first, including extra turns created during an extra turn.
     pub queued_next_first: Vec<ScheduledTurnV1>,
 }
-fn schedule(state: &GameState) -> Result<Option<TurnScheduleV1>, RlContractError> {
+/// The public schedule, or None before the first extra turn is scheduled.
+pub(crate) fn schedule(state: &GameState) -> Result<Option<TurnScheduleV1>, RlContractError> {
     let Some(turn) = &state.extra_turn_v1 else {
         return Ok(None);
     };

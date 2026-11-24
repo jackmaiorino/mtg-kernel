@@ -1091,6 +1091,16 @@ pub struct PublicObservationProjectionV5 {
     /// Mage's name applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meddling_mage_names: Option<Vec<PublicMeddlingMageNameV1>>,
+    /// The public turn schedule once an extra turn has been scheduled (Time
+    /// Walk, Time Vault's ability, Emrakul, the Aeons Torn's cast trigger),
+    /// under the public shroud contract (Limited schema 5). `turn` keeps its
+    /// round numbering, so an extra turn repeats its round and active seat;
+    /// the schedule's occurrence tells such turns apart and names the extra
+    /// turn being taken and those still queued. Absent until the game's
+    /// first extra turn is scheduled, and in every other observation, which
+    /// keeps refusing such games.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_schedule: Option<crate::extra_turn_public_v1::TurnScheduleV1>,
 }
 
 /// A Meddling Mage and the card name it chose as it entered (Eternal wave
@@ -3126,6 +3136,11 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 .then(|| public_meddling_mage_names_v1(state))
                 .transpose()?
                 .filter(|names| !names.is_empty()),
+            turn_schedule: if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+                crate::extra_turn_public_v1::schedule(state)?
+            } else {
+                None
+            },
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -3312,6 +3327,10 @@ fn build_policy_observation_parts(
     step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    // The schema 5 public contract reports the turn schedule
+    // (`PublicObservationProjectionV5::turn_schedule`), so its observation
+    // accepts a game with extra turns. Every other mode keeps refusing.
+    let accept_extra_turn = text_mode == ObservationTextModeV2::PublicShroudV5Artifact;
     build_policy_observation_parts_common(
         state,
         surface,
@@ -3319,8 +3338,21 @@ fn build_policy_observation_parts(
         step_index,
         text_mode,
         (
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false,
+            false,
+            false,
+            accept_extra_turn,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         ),
     )
 }
@@ -5846,6 +5878,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
             meddling_mage_names: None,
+            turn_schedule: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,

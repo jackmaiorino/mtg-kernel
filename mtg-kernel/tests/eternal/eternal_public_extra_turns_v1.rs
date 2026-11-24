@@ -30,16 +30,28 @@ fn rank(action: &Value) -> u8 {
     }
 }
 
-struct Game {
-    /// Every decision reply, in order.
-    decisions: Vec<Value>,
-    terminal: Value,
-    /// Every reply line, in order.
-    replies: Vec<String>,
+/// What one decision showed of the turn structure.
+#[derive(Debug, Clone, PartialEq)]
+struct Shown {
+    round: u64,
+    active: String,
+    /// `projection.turn_schedule`, or null while it is absent.
+    schedule: Value,
+    stack_items: usize,
 }
 
-/// Plays both seats with the same ranked preference until the game ends.
-fn play(schema: u32, decks: [Value; 2]) -> Game {
+struct Game {
+    /// One row per decision reply, in order.
+    shown: Vec<Shown>,
+    /// The terminal reply, unless `stop` ended the script first.
+    terminal: Option<Value>,
+    /// Whether any reply before the first reported schedule mentions it.
+    early_mention: bool,
+}
+
+/// Plays both seats with the same ranked preference until the game ends or
+/// `stop` accepts a decision.
+fn play(schema: u32, decks: [Value; 2], stop: impl Fn(&Shown) -> bool) -> Game {
     let mut server = match schema {
         4 => LimitedJsonlServerV1::new_with_london_mulligans_v1(),
         5 => LimitedJsonlServerV1::new_with_public_shroud_v1(),
@@ -50,21 +62,35 @@ fn play(schema: u32, decks: [Value; 2]) -> Game {
         "episode_id": 11, "env_seed": 0x5449_4d45_u64,
         "max_physical_decisions": 65536, "max_policy_steps": MAX_STEPS})
     .to_string();
-    let mut decisions = Vec::new();
-    let mut replies = Vec::new();
+    let mut game = Game {
+        shown: Vec::new(),
+        terminal: None,
+        early_mention: false,
+    };
+    let mut reported = false;
     for index in 0..MAX_STEPS {
         let raw = server.handle_line(&request);
         let reply: Value = serde_json::from_str(&raw).unwrap();
-        replies.push(raw);
         assert_ne!(reply["response_type"], "error", "step {index}: {reply}");
         if reply["response_type"] == "terminal" {
-            return Game {
-                decisions,
-                terminal: reply["terminal"].clone(),
-                replies,
-            };
+            game.terminal = Some(reply["terminal"].clone());
+            return game;
         }
-        let decision = reply["decision"].clone();
+        let decision = &reply["decision"];
+        let projection = &decision["observation"]["projection"];
+        let shown = Shown {
+            round: projection["turn"].as_u64().unwrap(),
+            active: projection["active_player"].as_str().unwrap().to_owned(),
+            schedule: projection["turn_schedule"].clone(),
+            stack_items: projection["stack"].as_array().unwrap().len(),
+        };
+        reported |= !shown.schedule.is_null();
+        game.early_mention |= !reported && raw.contains("turn_schedule");
+        let done = stop(&shown);
+        game.shown.push(shown);
+        if done {
+            return game;
+        }
         let action = decision["legal_actions"]
             .as_array()
             .unwrap()
@@ -76,35 +102,22 @@ fn play(schema: u32, decks: [Value; 2]) -> Game {
             "expected_step": decision["step"], "selected_index": action["selected_index"],
             "selected_action_id": action["stable_id"]})
         .to_string();
-        decisions.push(decision);
     }
-    panic!("the game did not end within {MAX_STEPS} steps");
+    panic!("the script did not end within {MAX_STEPS} steps");
 }
 
-fn projection(decision: &Value) -> &Value {
-    &decision["observation"]["projection"]
-}
-
-/// The (round, active seat) of each turn in the order the session showed
-/// them: one entry per maximal run of decisions with the same pair and the
-/// same public occurrence.
-fn turns(decisions: &[Value]) -> Vec<(u64, String, Option<u64>)> {
+/// Each turn the session showed, in order: one entry per maximal run of
+/// decisions with the same round, active seat and public occurrence.
+fn turns(shown: &[Shown]) -> Vec<(u64, String, Option<u64>)> {
     let mut seen: Vec<(u64, String, Option<u64>)> = Vec::new();
-    for decision in decisions {
-        let projection = projection(decision);
-        let Some(round) = projection["turn"].as_u64() else {
-            continue;
-        };
-        if round == 0 {
-            continue;
-        }
-        let row = (
-            round,
-            projection["active_player"].as_str().unwrap().to_owned(),
-            projection["turn_schedule"]["occurrence"].as_u64(),
+    for row in shown.iter().filter(|row| row.round != 0) {
+        let turn = (
+            row.round,
+            row.active.clone(),
+            row.schedule["occurrence"].as_u64(),
         );
-        if seen.last() != Some(&row) {
-            seen.push(row);
+        if seen.last() != Some(&turn) {
+            seen.push(turn);
         }
     }
     seen
@@ -118,98 +131,124 @@ fn schema_5_follows_time_walk_extra_turns_that_schema_4_refuses() {
             deck(&[("Island", 40)]),
         ]
     };
-    let public = play(5, decks());
-    assert_eq!(
-        public.terminal["terminal_code"], "natural_game_over",
-        "{}",
-        public.terminal
-    );
+    // Seat 0 keeps taking extra turns and draws its library out.
+    let public = play(5, decks(), |_| false);
+    let terminal = public.terminal.as_ref().unwrap();
+    assert_eq!(terminal["terminal_code"], "natural_game_over", "{terminal}");
 
     // Before the first Time Walk resolves the schedule is absent, so those
     // replies keep the bytes they had before this contract.
+    assert!(!public.early_mention);
     let first = public
-        .decisions
+        .shown
         .iter()
-        .position(|decision| !projection(decision)["turn_schedule"].is_null())
+        .position(|row| !row.schedule.is_null())
         .expect("a Time Walk resolved");
-    for reply in &public.replies[..first] {
-        assert!(!reply.contains("turn_schedule"), "{reply}");
-    }
 
     // The first schedule: Time Walk's controller (seat 0) has one extra turn
     // queued after this one, and the regular order resumes with seat 1.
-    let schedule = &projection(&public.decisions[first])["turn_schedule"];
+    let row = &public.shown[first];
+    let schedule = &row.schedule;
+    assert_eq!(row.active, "p0");
+    assert_eq!(schedule["occurrence"], row.round, "{schedule}");
+    assert_eq!(schedule["legacy_round"], row.round, "{schedule}");
     assert_eq!(schedule["current_extra"], Value::Null, "{schedule}");
+    assert_eq!(schedule["previous_player"], "p1", "{schedule}");
     assert_eq!(schedule["next_regular_player"], "p1", "{schedule}");
-    let queued = schedule["queued_next_first"].as_array().unwrap();
-    assert_eq!(queued.len(), 1, "{schedule}");
-    assert_eq!(queued[0]["captured_controller"], "p0", "{schedule}");
-    assert_eq!(queued[0]["physical_owner"], "p0", "{schedule}");
-    assert_eq!(queued[0]["spell_copy"], false, "{schedule}");
-    assert_eq!(projection(&public.decisions[first])["active_player"], "p0");
+    assert_eq!(
+        schedule["queued_next_first"],
+        json!([{"creation_ordinal": 0, "captured_controller": "p0",
+            "physical_owner": "p0", "spell_copy": false}]),
+        "{schedule}"
+    );
 
-    // Seat 0 takes at least one extra turn: two consecutive turns with the
-    // same round and active seat, told apart only by the public occurrence,
-    // and during the second the schedule names the extra turn being taken.
-    let turns = turns(&public.decisions);
-    assert!(
-        turns.windows(2).any(|pair| {
-            pair[0].0 == pair[1].0
-                && pair[0].1 == "p0"
-                && pair[1].1 == "p0"
-                && pair[1].2 == pair[0].2.map(|occurrence| occurrence + 1)
-        }),
+    // Seat 0 then takes that extra turn: the next turn has the same round and
+    // active seat, the next occurrence, and names the extra turn being taken.
+    let turns = turns(&public.shown);
+    let scheduled_turn = turns
+        .iter()
+        .position(|turn| turn.2 == schedule["occurrence"].as_u64())
+        .unwrap();
+    assert_eq!(
+        turns[scheduled_turn + 1],
+        (row.round, "p0".to_owned(), Some(row.round + 1)),
         "{turns:?}"
     );
-    assert!(public.decisions.iter().any(|decision| {
-        let projection = projection(decision);
-        projection["active_player"] == "p0"
-            && projection["turn_schedule"]["current_extra"]["captured_controller"] == "p0"
-    }));
-    // Every occurrence is one more than the last: no turn is skipped.
+    let extra = public
+        .shown
+        .iter()
+        .find(|shown| shown.schedule["occurrence"] == row.round + 1)
+        .unwrap();
+    assert_eq!(
+        extra.schedule["current_extra"]["captured_controller"], "p0",
+        "{}",
+        extra.schedule
+    );
+    assert_eq!(extra.schedule["previous_player"], "p0");
+    // Every occurrence is one more than the last: no turn is skipped, and
+    // the round only advances on seat 0's regular turns.
     let occurrences: Vec<u64> = turns.iter().filter_map(|turn| turn.2).collect();
     assert!(
         occurrences.windows(2).all(|pair| pair[1] == pair[0] + 1),
         "{occurrences:?}"
     );
+    assert!(turns.windows(2).all(|pair| pair[1].0 >= pair[0].0));
 
     // Schema 4 keeps its refusal at exactly the decision where schema 5 first
-    // reports the schedule, and every reply before it is unchanged.
-    let legacy = play(4, decks());
+    // reports the schedule, and never mentions it.
+    let legacy = play(4, decks(), |_| false);
     assert_eq!(
-        legacy.terminal["terminal_reason"],
+        legacy.terminal.unwrap()["terminal_reason"],
         "fail_closed:observation:extra turns require their selected public/Human successor"
     );
-    assert_eq!(legacy.decisions.len(), first);
-    for reply in &legacy.replies {
-        assert!(!reply.contains("turn_schedule"), "{reply}");
-    }
+    assert_eq!(legacy.shown.len(), first);
+    assert!(!legacy.early_mention);
+    assert_eq!(legacy.shown[..], public.shown[..first]);
 }
 
 #[test]
 fn schema_5_follows_emrakul_cast_trigger_extra_turn() {
     // Emrakul's extra turn comes from its cast trigger, so it is scheduled
-    // while Emrakul itself is still on the stack.
-    let decks = [
-        deck(&[("Island", 28), ("Emrakul, the Aeons Torn", 12)]),
-        deck(&[("Island", 40)]),
-    ];
-    let public = play(5, decks);
-    assert_eq!(
-        public.terminal["terminal_code"], "natural_game_over",
-        "{}",
-        public.terminal
-    );
-    let scheduled = public
-        .decisions
+    // while Emrakul itself is still on the stack. The script stops once the
+    // extra turn is being taken: this seat could cast an Emrakul every turn.
+    let decks = || {
+        [
+            deck(&[("Island", 28), ("Emrakul, the Aeons Torn", 12)]),
+            deck(&[("Island", 40)]),
+        ]
+    };
+    let taking_extra_turn = |shown: &Shown| !shown.schedule["current_extra"].is_null();
+    let public = play(5, decks(), taking_extra_turn);
+    assert!(public.terminal.is_none(), "{:?}", public.terminal);
+    assert!(!public.early_mention);
+    let first = public
+        .shown
         .iter()
-        .find(|decision| !projection(decision)["turn_schedule"].is_null())
+        .position(|row| !row.schedule.is_null())
         .expect("Emrakul was cast");
-    let schedule = &projection(scheduled)["turn_schedule"];
-    let queued = schedule["queued_next_first"].as_array().unwrap();
-    assert_eq!(queued.len(), 1, "{schedule}");
-    assert_eq!(queued[0]["captured_controller"], "p0", "{schedule}");
-    assert!(public.decisions.iter().any(|decision| {
-        projection(decision)["turn_schedule"]["current_extra"]["captured_controller"] == "p0"
-    }));
+    let row = &public.shown[first];
+    assert_eq!(row.active, "p0");
+    assert!(row.stack_items >= 1, "Emrakul is still on the stack");
+    assert_eq!(
+        row.schedule["queued_next_first"],
+        json!([{"creation_ordinal": 0, "captured_controller": "p0",
+            "physical_owner": "p0", "spell_copy": false}]),
+        "{}",
+        row.schedule
+    );
+    let last = public.shown.last().unwrap();
+    assert_eq!(last.active, "p0");
+    assert_eq!(last.round, row.round);
+    assert_eq!(
+        last.schedule["current_extra"]["captured_controller"], "p0",
+        "{}",
+        last.schedule
+    );
+
+    let legacy = play(4, decks(), taking_extra_turn);
+    assert_eq!(
+        legacy.terminal.unwrap()["terminal_reason"],
+        "fail_closed:observation:extra turns require their selected public/Human successor"
+    );
+    assert_eq!(legacy.shown.len(), first);
 }
