@@ -31565,13 +31565,21 @@ pub(crate) fn validate_pending_spell_copy(
         );
     }
     let (parent_index, parent) = pending_spell_copy_parent(state, pending)?;
+    // 707.10: the copy offer does not depend on how the parent was cast. A
+    // parent cast with flashback (a Chain Lightning given flashback by
+    // Snapcaster Mage) offers it too; its copy is not a flashback spell
+    // (`expected_spell_copy`), and the parent is exiled as it departs.
+    let cast_with_flashback = parent.v4.cast_method == Some(CastMethodV4::Flashback);
     if parent.inline_effect.is_some()
         || !parent.discarded.is_empty()
-        || parent.is_flashback
+        || parent.is_flashback != cast_with_flashback
         || parent.madness_offer
         || parent.kicked
         || parent.mode_chosen != 0
-        || parent.v4.cast_method != Some(CastMethodV4::Normal)
+        || !matches!(
+            parent.v4.cast_method,
+            Some(CastMethodV4::Normal | CastMethodV4::Flashback)
+        )
         || parent.v4.face_index != 0
         || parent.v4.x_value != 0
         || !parent.v4.paid_cost_refs.is_empty()
