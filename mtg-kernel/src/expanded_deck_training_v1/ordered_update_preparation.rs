@@ -215,16 +215,17 @@ fn plan_v1(
     Ok((jobs, sources, payload))
 }
 
-/// Test-only: whether the next job of any worker in this process writes a
+/// Test-only: whether every job of any worker in this process writes a
 /// diagnostic line and panics (`arm_preparation_probe_for_test_v1`).
 #[cfg(test)]
 static PREPARATION_PROBE_FOR_TEST_V1: AtomicBool = AtomicBool::new(false);
 
-/// Test-only: the next job of any preparation worker in this process (a
-/// trajectory read or a learner group) first writes the line
+/// Test-only: from now on every job of any preparation worker in this
+/// process (a trajectory read or a learner group) first writes the line
 /// `tail-probe preparation diagnostic` through `held_output_v1::line_v1` and
-/// then panics with `tail-probe preparation panic`; once. For a test that
-/// runs alone in its own process.
+/// then panics with `tail-probe preparation panic`: a failure that recurs
+/// when an update runs again, as a real one does. For a test that runs alone
+/// in its own process.
 #[cfg(test)]
 pub(crate) fn arm_preparation_probe_for_test_v1() {
     PREPARATION_PROBE_FOR_TEST_V1.store(true, Ordering::SeqCst);
@@ -232,7 +233,7 @@ pub(crate) fn arm_preparation_probe_for_test_v1() {
 
 #[cfg(test)]
 fn probe_for_test_v1() {
-    if PREPARATION_PROBE_FOR_TEST_V1.swap(false, Ordering::SeqCst) {
+    if PREPARATION_PROBE_FOR_TEST_V1.load(Ordering::SeqCst) {
         crate::held_output_v1::line_v1("tail-probe preparation diagnostic".into());
         panic!("tail-probe preparation panic");
     }

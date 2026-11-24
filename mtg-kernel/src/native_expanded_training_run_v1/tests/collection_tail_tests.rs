@@ -496,10 +496,11 @@ fn collection_tail_sealed_resident_child_v1() {
 /// with the error of the run with neither, publishes exactly the documents
 /// that run publishes (no update directory in any case), commits nothing and
 /// leaves nothing of the next iteration. The speculative update, which ran
-/// ahead of its held helper, wrote and printed nothing before the helper
-/// failed (its held output dropped unwritten); after its own failure, its
-/// held lines are written once both documents are durable, as the run with
-/// neither key writes them. A resume reaches the serial run's states.
+/// ahead of its held helper, wrote and printed nothing (its held output
+/// dropped unwritten): when the helper failed, and when it failed itself,
+/// where the published command then runs again as without the key and fails
+/// there (the injected failure recurs, as a real one does). A resume reaches
+/// the serial run's states.
 #[test]
 fn collection_tail_failed_steps_fail_like_the_serial_run_and_commit_nothing_later() {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -591,11 +592,18 @@ fn collection_tail_failed_steps_fail_like_the_serial_run_and_commit_nothing_late
                         "{case}: {log:?}"
                     );
                 } else if failure == FailureV1::BeforeLearner {
-                    assert!(log.discarded.is_empty(), "{case}: {log:?}");
-                    assert_eq!(log.released.len(), 1, "{case}: {log:?}");
-                    let (held, commands) = log.released[0];
-                    assert!(held >= 1 && commands == 1, "{case}: {log:?}");
-                    assert_eq!(log.written.len(), 1, "{case}: {log:?}");
+                    // The speculative update failed before its gate: its
+                    // held input line was dropped unwritten, and the
+                    // published command ran again, as without the key, and
+                    // failed there with the same error.
+                    assert!(
+                        log.written.is_empty() && log.released.is_empty(),
+                        "{case}: {log:?}"
+                    );
+                    assert!(
+                        matches!(log.discarded.as_slice(), [held] if *held >= 1),
+                        "{case}: {log:?}"
+                    );
                 } else {
                     assert!(
                         log.written.is_empty() && log.released.is_empty(),
@@ -745,20 +753,110 @@ fn collection_tail_rechecks_every_input_read_ahead_at_admission() {
     }
 }
 
+/// Review finding 1 in the reverse direction: an update that failed before
+/// its gate is never taken as the result. Barrier: iteration 1's collection
+/// is pinned, then the learner's import is removed (or changed); the helper
+/// is held until the speculative update has failed on it; between the
+/// publications of `update-input.json` and `update-command.json` the
+/// original bytes are put back. The run without either key reads the
+/// restored import when its update starts and completes; so must the run
+/// with both keys, by running the published command again, with the very
+/// tree of the run without them. The speculative failure's held output is
+/// dropped unwritten, and iteration 1 is not admitted at a gate.
+#[test]
+fn collection_tail_runs_again_when_an_input_it_failed_on_is_back_at_admission() {
+    let serial = tail_config_v1("tail-admission-back", 2, 2, 2, 2);
+    let tailed = tailed_v1(&serial);
+    let directory = serial.output_directory.clone();
+    let reference = directory.with_file_name("run-serial");
+    let import = serial.initial_source.play_import.path.clone();
+    let original = fs::read(&import).unwrap();
+    for removed in [true, false] {
+        let _ = fs::remove_dir_all(&directory);
+        let _ = fs::remove_dir_all(&reference);
+        for config in [&serial, &tailed] {
+            let tailed_run = config.collection_tail_v1;
+            let case = format!(
+                "import {} {}",
+                if removed { "removed" } else { "changed" },
+                if tailed_run { "tailed" } else { "serial" }
+            );
+            let (arm, log) = held_update_log_v1(&directory);
+            let (gone, back) = (import.clone(), import.clone());
+            let bytes = original.clone();
+            let (result, counts) = run_tailed_v1(config, None, move || {
+                if tailed_run {
+                    arm();
+                }
+                after_collection_for_test_v1(move |index| {
+                    if index == 1 {
+                        if removed {
+                            fs::remove_file(&gone).unwrap();
+                        } else {
+                            let mut changed = fs::read(&gone).unwrap();
+                            let middle = changed.len() / 2;
+                            changed[middle] ^= 1;
+                            fs::write(&gone, changed).unwrap();
+                        }
+                    }
+                });
+                after_update_document_for_test_v1(move |index, name| {
+                    if index == 1 && name == "update-input.json" {
+                        fs::write(&back, &bytes).unwrap();
+                    }
+                });
+            });
+            assert!(
+                fs::read(&import).unwrap() == original,
+                "{case}: the barrier was never reached"
+            );
+            let result = result.unwrap_or_else(|error| panic!("{case}: {error}"));
+            assert_eq!(result["complete"], true, "{case}");
+            if tailed_run {
+                assert_eq!(
+                    counts,
+                    CountsV1 {
+                        prefetched: 1,
+                        admitted: 1,
+                        restored: 1,
+                    },
+                    "{case}: iteration 1 must run again, not be admitted"
+                );
+                let log = log.lock().unwrap();
+                assert_eq!(log.released.len(), 1, "{case}: {log:?}");
+                assert_eq!(log.written.len(), 1, "{case}: {log:?}");
+                assert_eq!(
+                    log.discarded.len(),
+                    1,
+                    "{case}: the speculative failure was not dropped: {log:?}"
+                );
+                drop(log);
+                assert_same_tree_v1(&case, &directory, &reference, true);
+                fs::remove_dir_all(&directory).unwrap();
+            } else {
+                fs::rename(&directory, &reference).unwrap();
+            }
+        }
+        fs::remove_dir_all(&reference).unwrap();
+    }
+}
+
 /// The environment variable that runs `collection_tail_output_child_v1` in
 /// its child process.
 const OUTPUT_CHILD_ENV_V1: &str = "MTG_KERNEL_COLLECTION_TAIL_OUTPUT_CHILD_V1";
 
 /// Review finding 3: held output, in a real process. A child process runs,
 /// with each helper held until its update has read ahead, an update whose
-/// first preparation-worker job writes a diagnostic line and panics
+/// preparation-worker jobs write a diagnostic line and panic
 /// (`arm_preparation_probe_for_test_v1`); once with a helper that succeeds,
 /// once with one whose `update-input.json` cannot be published. Its actual
 /// stderr and stdout are captured. With the helper succeeding, the
 /// diagnostic and the panic message appear only after the helper's marker
-/// for the durable `update-command.json`; with the helper failing, they never
-/// appear. Neither appears on stdout. Without the holder on preparation
-/// workers both lines would be written at once, before the marker.
+/// for the durable `update-command.json` (the speculative update's held
+/// lines are dropped, and the published command, run again as without the
+/// key, writes its own); with the helper failing, they never appear.
+/// Neither appears on stdout. Without the holder on preparation workers the
+/// speculative update's lines would be written at once, before the marker.
 #[test]
 fn collection_tail_holds_preparation_worker_output_in_a_real_process() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())

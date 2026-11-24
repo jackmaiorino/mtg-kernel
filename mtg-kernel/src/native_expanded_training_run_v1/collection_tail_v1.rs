@@ -53,12 +53,12 @@
 //! - Failures. A failed validation or publication returns its own error and
 //!   drops the update's held output: nothing of the update is written or
 //!   printed, as without the setting, where the update never started. An
-//!   update that fails before its gate fails only once the helper has
-//!   published both documents and its files are checked again; its held
-//!   lines are then written and its own error returned, as without the
-//!   setting (or, if a file changed meanwhile, the published command runs
-//!   again as above). A panic of either is resumed on the driver's thread in
-//!   the same way.
+//!   update that fails (or panics) before its gate is never taken as the
+//!   result: what it read may have changed back since. Once the helper has
+//!   published both documents its held lines and panic are dropped and the
+//!   published command runs as without the setting, so its result, success
+//!   or failure, is that run's. A panic of the helper is resumed on the
+//!   driver's thread as without the setting.
 
 use crate::expanded_deck_training_v1::{ExpandedTrainingCommandV1, PinnedFileV1};
 use crate::held_output_v1::{self, HeldOutputV1};
@@ -183,11 +183,12 @@ impl ReachedV1 {
 /// on this one, first with `speculative` (the update command built from the
 /// trajectories the collection's receipt names) and the learner gate, then,
 /// only if the speculative run does not stand, again with the published
-/// command and no gate. The speculative run stands only if the published
-/// command is byte for byte the one it ran and `inputs_hold` (asked on this
-/// thread once the helper has published both documents and the update has
-/// read everything it reads before its gate) finds every file it read still
-/// holding its pin. Returns what the helper published, or the error (or
+/// command and no gate. The speculative run stands only if its gate admits
+/// it: the published command is byte for byte the one it ran and
+/// `inputs_hold` (asked on this thread once the helper has published both
+/// documents and the update has read everything it reads before its gate)
+/// finds every file it read still holding its pin. An update that ended
+/// before its gate never stands: the published command runs again. Returns what the helper published, or the error (or
 /// panic) the run without the setting returns at the same point. See the
 /// module documentation.
 pub(super) fn run_v1<H, U>(
@@ -300,17 +301,16 @@ where
                 Err(error)
             }
             Ok(Ok(committed)) => {
-                // Whether the speculative run stands: admitted at its gate;
-                // or, ended before its gate (its own error or panic), it ran
-                // the published command and everything it read still holds
-                // its pin, so the run without the setting ends the same way.
-                let stands = match gated.get() {
-                    Some(admitted) => admitted,
-                    None => same_command(&committed.command) && inputs_hold(),
-                };
+                // The speculative run stands only if its gate admitted it: from
+                // there on it is the update the run without the setting runs.
+                // An update that ended before its gate (its own error or
+                // panic) is never taken as the serial result: its inputs may
+                // have changed back since it failed, so it is dropped and the
+                // published command runs as below, whose result, success or
+                // failure, is the serial one.
+                let stands = gated.get() == Some(true);
                 if stands {
-                    // Its held lines (if it ended before its gate) are
-                    // written, and its own result or panic is the run's.
+                    // Its own result or panic, after its gate, is the run's.
                     held.release_v1();
                     drop(installed.borrow_mut().take());
                     match outcome {
@@ -318,11 +318,12 @@ where
                         Err(panic) => resume_unwind(panic),
                     }
                 } else {
-                    // A file it read changed or went missing since, or (never
-                    // expected) the published command differs: it stopped at
-                    // its gate or before and wrote and printed nothing. The
-                    // published command runs as without the setting, reading
-                    // everything afresh.
+                    // It ended before its gate, or its gate refused it (a file
+                    // it read changed or went missing since, or, never
+                    // expected, the published command differs): it wrote
+                    // nothing, and its held lines and any panic are dropped.
+                    // The published command runs as without the setting,
+                    // reading everything afresh.
                     held.discard_v1();
                     drop(installed.borrow_mut().take());
                     update(committed.command.clone(), None)?;

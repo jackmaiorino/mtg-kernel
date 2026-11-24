@@ -5757,7 +5757,7 @@ fn execute_update_inner_v1(
         .map(|(_, episode_ordinal, _)| *episode_ordinal)
         .collect();
     #[cfg(test)]
-    if FAIL_BEFORE_LEARNER_FOR_TEST_V1.with(|armed| armed.replace(false)) {
+    if FAIL_BEFORE_LEARNER_FOR_TEST_V1.with(std::cell::Cell::get) {
         return Err("injected failure: the update stops before its learner".into());
     }
     // `collection_tail_v1`: the inputs are read and checked and the learner
@@ -6765,8 +6765,10 @@ pub(crate) fn arm_crash_point_for_test_v1() {
 
 #[cfg(test)]
 thread_local! {
-    /// Test-only: the next update on this thread fails after its inputs are
-    /// read and its learner groups prepared, before its learner gate.
+    /// Test-only: every update on this thread, while armed, fails after its
+    /// inputs are read and its learner groups prepared, before its learner
+    /// gate: a failure that recurs when the update runs again, as a real one
+    /// does.
     static FAIL_BEFORE_LEARNER_FOR_TEST_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
