@@ -36,26 +36,25 @@ fn rename_dungeon_kinds(value: &mut Value, seats: usize) -> Result<()> {
 
 #[cfg(feature = "eternal-fixtures")]
 pub(super) fn prepare_premodern(observation: &mut Value) -> Result<()> {
-    let schema = observation
-        .get("schema")
-        .and_then(Value::as_str)
-        .ok_or_else(error)?;
+    let registered = match observation.get("schema").and_then(Value::as_str) {
+        Some(crate::premodern_ordered_public_v1::NUMERIC_SCHEMA_V1) => false,
+        Some(crate::premodern_ordered_public_v1::NUMERIC_REGISTERED_SCHEMA_V1) => true,
+        _ => return Err(error()),
+    };
     let stable = observation.get_mut("stable").ok_or_else(error)?;
     if stable.is_null() {
         return Ok(());
     }
     let projection = stable.get_mut("projection").ok_or_else(error)?;
-    match schema {
-        crate::premodern_ordered_public_v1::NUMERIC_SCHEMA_V1 => {
-            let typed: crate::rl::PublicObservationProjectionV2 =
-                serde_json::from_value(projection.clone()).map_err(|_| error())?;
-            if serde_json::to_value(&typed).map_err(|_| error())? != *projection {
-                return Err(error());
-            }
-            rename_dungeon_kinds(projection, typed.player_status.len())
+    if registered {
+        convert(projection)
+    } else {
+        let typed: crate::rl::PublicObservationProjectionV2 =
+            serde_json::from_value(projection.clone()).map_err(|_| error())?;
+        if serde_json::to_value(&typed).map_err(|_| error())? != *projection {
+            return Err(error());
         }
-        crate::premodern_ordered_public_v1::NUMERIC_REGISTERED_SCHEMA_V1 => convert(projection),
-        _ => Err(error()),
+        rename_dungeon_kinds(projection, typed.player_status.len())
     }
 }
 
