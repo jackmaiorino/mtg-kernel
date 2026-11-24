@@ -370,6 +370,78 @@ pub(crate) fn activation_allowed(
 
 // ---- Aang's Iceberg: waterbend payments -----------------------------------------------
 
+/// Aang's Iceberg's "Waterbend {3}".
+const ICEBERG_WATERBEND_GENERIC: u8 = 3;
+
+/// Whether `source` is an Aang's Iceberg and `components` one of its four
+/// waterbend payments.
+fn iceberg_waterbend_components(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && definition(state, source).is_some_and(|def| def.name == AANGS_ICEBERG)
+        && components.iter().any(|component| {
+            matches!(
+                component,
+                CostComponent::Mana(_) | CostComponent::TapControlled { .. }
+            )
+        })
+}
+
+/// The printed cost every one of the Iceberg's waterbend payments starts
+/// from, "Waterbend {3}", or `None` for every other ability. The engine's
+/// activation total (601.2f) adds the increases to it and takes the
+/// reductions off (Zirda, the Dawnwaker's floor included), as for Invasion
+/// Submersible (wave S1q); the recipe's split of {3} between taps and mana
+/// is not the total.
+pub(crate) fn waterbend_printed(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+) -> Option<Cost> {
+    iceberg_waterbend_components(state, source, components).then_some(Cost {
+        pips: &[],
+        generic: ICEBERG_WATERBEND_GENERIC,
+        x_count: 0,
+    })
+}
+
+/// The mana one of the Iceberg's waterbend payments still needs once its
+/// taps paid their part of `total` (601.2h). Other abilities keep `total`.
+pub(crate) fn waterbend_taps_paid(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+    total: Cost,
+) -> Cost {
+    if !iceberg_waterbend_components(state, source, components) {
+        return total;
+    }
+    Cost {
+        generic: total
+            .generic
+            .saturating_sub(iceberg_waterbend_taps(components)),
+        ..total
+    }
+}
+
+/// How many permanents an Iceberg waterbend payment may tap: the generic
+/// mana of the printed {3}, and never more than the total there is to pay,
+/// which the all-mana payment shows (Zirda's reduction to {1} leaves one).
+fn iceberg_waterbend_cap(state: &GameState, source: ObjectId) -> usize {
+    let total = state.objects.try_get(source).and_then(|live| {
+        let ability = CARD_DEFS[usize::from(live.card_def)]
+            .activated_abilities
+            .first()?;
+        crate::engine::activation_mana_payment(ability.cost, live.controller, source, state)
+    });
+    usize::from(total.map_or(ICEBERG_WATERBEND_GENERIC, |total| {
+        total.generic.min(ICEBERG_WATERBEND_GENERIC)
+    }))
+}
+
 /// How many artifacts and creatures one of the Iceberg's four waterbend
 /// payments taps to help: its `TapControlled` count, 0 for the all-mana one.
 fn iceberg_waterbend_taps(components: &[CostComponent]) -> u8 {
@@ -384,8 +456,8 @@ fn iceberg_waterbend_taps(components: &[CostComponent]) -> u8 {
 
 /// The Iceberg's waterbend payment `ability_index` while `source` is an Aang's
 /// Iceberg on the battlefield: its controller, how many permanents it taps,
-/// and the mana it still charges as the engine charges it (taxes included;
-/// none for the three-tap payment).
+/// and the mana it still charges as the engine charges it (the printed {3}
+/// with its increases and reductions, less the taps).
 fn iceberg_waterbend_payment(
     state: &GameState,
     source: ObjectId,
@@ -417,7 +489,15 @@ fn iceberg_waterbend_payable(state: &GameState, source: ObjectId, ability_index:
     else {
         return true;
     };
-    crate::eternal_sideboard_s1q_v1::completion_exists(state, controller, source, &cost, &[], taps)
+    taps <= iceberg_waterbend_cap(state, source)
+        && crate::eternal_sideboard_s1q_v1::completion_exists(
+            state,
+            controller,
+            source,
+            &cost,
+            &[],
+            taps,
+        )
 }
 
 /// Keeps only the waterbend taps after which the rest of the Iceberg's pending

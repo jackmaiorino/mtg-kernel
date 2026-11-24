@@ -6797,12 +6797,13 @@ fn activation_total_mana_cost_with_x(
     );
     #[cfg(not(feature = "eternal-fixtures"))]
     let tax = 0_u8;
-    // Invasion Submersible's four waterbend payments (wave S1q) and Aang,
-    // Swift Savior's nine waterbend payments (wave C9a) all start from their
-    // printed waterbend cost.
+    // Invasion Submersible's four waterbend payments (wave S1q), Aang, Swift
+    // Savior's nine (wave C9a) and Aang's Iceberg's four (wave C5c) all start
+    // from their printed waterbend cost.
     #[cfg(feature = "eternal-fixtures")]
     let waterbend = crate::eternal_sideboard_s1q_v1::waterbend_printed(state, source, components)
-        .or_else(|| crate::eternal_cube_c9a_v1::waterbend_printed(state, source, components));
+        .or_else(|| crate::eternal_cube_c9a_v1::waterbend_printed(state, source, components))
+        .or_else(|| crate::eternal_cube_c5c_v1::waterbend_printed(state, source, components));
     #[cfg(feature = "eternal-fixtures")]
     let printed = waterbend.as_ref().or(printed);
     let mut total = match printed {
@@ -6830,6 +6831,8 @@ fn activation_total_mana_cost_with_x(
         crate::eternal_sideboard_s1q_v1::waterbend_taps_paid(state, source, components, total);
     #[cfg(feature = "eternal-fixtures")]
     let total = crate::eternal_cube_c9a_v1::waterbend_taps_paid(state, source, components, total);
+    #[cfg(feature = "eternal-fixtures")]
+    let total = crate::eternal_cube_c5c_v1::waterbend_taps_paid(state, source, components, total);
     Some(crate::standard_cards_v1::spend_as_any_color(
         state, player, source, total,
     ))

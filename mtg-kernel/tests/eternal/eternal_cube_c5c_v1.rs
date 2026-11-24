@@ -1383,11 +1383,7 @@ fn aangs_iceberg_waterbend_is_not_offered_when_its_taps_leave_the_mana_unpayable
     put(&mut state, P0, "Plains", Zone::Battlefield);
     // {2} and one tap: the Stone is the only artifact, and the Plains alone
     // cannot pay {2}.
-    if activatable(&mut state, iceberg, 1) {
-        activate(&mut state, iceberg, 1, &[]);
-        finish_activation(&mut state, &[]);
-        panic!("an unpayable waterbend was offered and paid");
-    }
+    assert!(!activatable(&mut state, iceberg, 1));
     // {1} and two taps: only one artifact or creature.
     assert!(!activatable(&mut state, iceberg, 2));
 }
@@ -1428,6 +1424,68 @@ fn aangs_iceberg_waterbend_can_be_activated_again_while_one_is_on_the_stack() {
     assert!(state.objects.get(stone).tapped);
     settle_first(&mut state);
     assert_eq!(zone(&state, iceberg), Zone::Graveyard);
+}
+
+/// Review round 1, finding 4: under Zirda, the Dawnwaker ("abilities you
+/// activate that aren't mana abilities cost {2} less", never below one mana)
+/// the waterbend {3} costs {1} in all (601.2f), and a waterbend payment taps
+/// at most as many permanents as there is generic mana to pay: one tap pays
+/// it all, and two or three taps are not offered.
+#[test]
+fn aangs_iceberg_waterbend_under_zirda_costs_one_paid_by_one_tap() {
+    let mut state = plains();
+    let iceberg = put(&mut state, P0, "Aang's Iceberg", Zone::Battlefield);
+    let zirda = put(&mut state, P0, "Zirda, the Dawnwaker", Zone::Battlefield);
+    // No mana at all: one tap pays the whole {1}.
+    assert!(activatable(&mut state, iceberg, 1));
+    put(&mut state, P0, "Jackal Pup", Zone::Battlefield);
+    put(&mut state, P0, "Jackal Pup", Zone::Battlefield);
+    assert!(!activatable(&mut state, iceberg, 2), "two taps for {{1}}");
+    assert!(!activatable(&mut state, iceberg, 3), "three taps for {{1}}");
+    activate(&mut state, iceberg, 1, &[]);
+    finish_activation(&mut state, &[zirda]);
+    assert!(state.objects.get(zirda).tapped);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, iceberg), Zone::Graveyard);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+/// Aang's Iceberg through the schema 5 public session: a deck with Icebergs,
+/// mana rocks and creatures against a red creature deck, both seats, ranked
+/// and random policies; every game ends naturally. (At most two Icebergs:
+/// with three, each one's entry can exile the one whose exile returned it,
+/// a loop the ranked policy keeps choosing until the decision cap.)
+#[test]
+fn aangs_iceberg_finishes_public_sessions_both_seats() {
+    let icebergs = deck(&[
+        ("Plains", 16),
+        ("Aang's Iceberg", 2),
+        ("Mind Stone", 8),
+        ("Mox Pearl", 2),
+        ("Jackal Pup", 4),
+        ("Mother of Runes", 4),
+        ("Swords to Plowshares", 4),
+    ]);
+    let red = deck(&[
+        ("Mountain", 17),
+        ("Jackal Pup", 8),
+        ("Lightning Bolt", 4),
+        ("Chain Lightning", 4),
+        ("Mind Stone", 4),
+        ("Bonecrusher Giant", 3),
+    ]);
+    for (pair, first_seed) in [
+        ([icebergs.clone(), red.clone()], 0x1CEB_0000_u64),
+        ([red, icebergs], 0x1CEB_0010),
+    ] {
+        for seed in first_seed..first_seed + 4 {
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let game = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            }
+        }
+    }
 }
 
 // ---- Shifting Woodland ---------------------------------------------------------------
