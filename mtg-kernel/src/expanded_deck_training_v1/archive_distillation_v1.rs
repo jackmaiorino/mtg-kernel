@@ -752,6 +752,7 @@ pub(super) fn validate_phase1_checkpoint_v1<T: CheckpointTensorV1>(
             && saved.learning_rate_bits == learning_rate_bits
             && saved.value_coefficient_bits == 0.0_f32.to_bits()
             && saved.trajectories.is_empty()
+            && saved.card_semantics.is_none()
             && saved.e_supported.is_none()
             && saved.exploration.is_none()
             && saved.gamma_bits.is_none()
@@ -763,7 +764,8 @@ pub(super) fn validate_phase1_checkpoint_v1<T: CheckpointTensorV1>(
     let parent_record = read_checkpoint_record_v1(&provenance.parent)?;
     let parent = parse_ordinary_checkpoint_borrowed_v1(&parent_record, &saved.source_import)?;
     ensure(
-        parent.archive_distillation.is_none()
+        parent.card_semantics.is_none()
+            && parent.archive_distillation.is_none()
             && parent.loss_identity != PHASE1_LOSS_IDENTITY_V1
             && parent.state_sha256 == provenance.parent_state_sha256,
         "a phase-1 parent is the named ordinary checkpoint",
@@ -1053,7 +1055,8 @@ fn load_inputs_v1(
     let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
     let state_sha256 = hex(&state.state_sha256_v1().map_err(err)?);
     ensure(
-        saved.e_supported.is_none()
+        saved.card_semantics.is_none()
+            && saved.e_supported.is_none()
             && saved.exploration.is_none()
             && saved.archive_distillation.is_none()
             && saved.state_sha256 == state_sha256,
@@ -1270,7 +1273,8 @@ fn read_parent_trajectory_v1(
             && trajectory.source_import == *policy.identity_v1()
             && trajectory.behavior_state_sha256 == parent_state_sha256
             && trajectory.learner_sampler.is_none()
-            && trajectory.episode.reset.is_none(),
+            && trajectory.episode.reset.is_none()
+            && trajectory.episode.london_keep_offset.is_none(),
         "trajectory is not the parent's own ordinary play",
     )?;
     ensure(

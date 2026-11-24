@@ -1,0 +1,28 @@
+name: Mac runner heartbeat
+
+# A no-op job on the Mac runners (Linux arm64 VM on the Mac Studio) every five
+# minutes. CI's job token cannot list self-hosted runners, so
+# tools/ci/mac_route.py reads these runs instead: it routes groups to the Mac
+# only while the last heartbeat is recent and none waits for a runner.
+# The job checks out and runs no repository code.
+'on':
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  heartbeat:
+    name: Mac runner heartbeat
+    # Scheduled runs use the default branch's file; a manual run only by an
+    # account in MTG_CI_SELF_HOSTED_ACTORS (as in ci.yml).
+    if: github.event_name == 'schedule' || (startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor))
+    runs-on: [self-hosted, Linux, ARM64, fleet-mac-linux]
+    timeout-minutes: 5
+    steps:
+      - name: Report the runner
+        run: |
+          echo "runner $RUNNER_NAME"
+          df -h "$HOME" | tail -n 1
+          free -g | head -n 2

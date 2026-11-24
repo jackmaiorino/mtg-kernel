@@ -17,6 +17,10 @@
 //! Callers that only need inference/validation or that move the single owned
 //! train state into `CarriedLearnerV1` remember policy-only entries
 //! (`state: None`), so keeping an entry also copies zero train-state bytes.
+//! Every entry keeps its checkpoint's card-semantics section
+//! (`card_semantics_e1`), which the train state carries as admission metadata:
+//! an identity-only hit returns it, so update validation checks it without a
+//! train state or another read.
 //!
 //! A hit still performs every file check of a full load, in the same order
 //! and with the same errors: the descriptor bytes must equal the cached
@@ -45,7 +49,7 @@
 use super::fresh_initialization_source::{self, ExpandedFreshInitializationSourceV1};
 use super::loaded_source_profile_v1 as profile;
 use super::{
-    check_pinned_v1, ensure, inference_identity_v1, no_state_digest_v1,
+    check_pinned_v1, ensure, inference_identity_v1, no_state_digest_v1, CardSemanticsSectionV1,
     CheckpointInputExpectationV1, ExpandedCheckpointV1, ExpandedInferenceIdentityV1,
     ExpandedModelSourceV1, FrozenPlayPolicyV1, NativePolicyValueTrainStateV1, PinnedFileV1,
 };
@@ -217,7 +221,14 @@ struct LoadedSourceV1 {
     state: Option<NativePolicyValueTrainStateV1>,
     /// The checkpoint's recorded update inputs; `None` without a checkpoint.
     inputs: Option<RecordedInputsV1>,
+    /// The checkpoint's card-semantics section, which a served train state
+    /// carries itself (`loaded_card_semantics`); `None` without one.
+    card_semantics: Option<CardSemanticsSectionV1>,
 }
+
+/// A validated inference identity and its checkpoint's card-semantics section.
+pub(super) type IdentityAndSectionV1 =
+    (ExpandedInferenceIdentityV1, Option<CardSemanticsSectionV1>);
 
 type EntriesV1 = VecDeque<Arc<LoadedSourceV1>>;
 
@@ -413,12 +424,13 @@ pub(super) fn lookup_policy_v1(
 }
 
 /// The cached validated inference identity alone for these descriptor bytes,
-/// copying zero train-state or policy bytes.
+/// with its checkpoint's card-semantics section, copying zero train-state or
+/// policy bytes.
 pub(super) fn lookup_identity_v1(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     inputs: Option<&CheckpointInputExpectationV1<'_>>,
-) -> Result<Option<ExpandedInferenceIdentityV1>, String> {
+) -> Result<Option<IdentityAndSectionV1>, String> {
     let Some(entry) = find_verified_entry_v1(source, descriptor_bytes, inputs, false)? else {
         return Ok(None);
     };
@@ -476,13 +488,14 @@ pub(super) fn lookup_flat_checkpoint_policy_v1(
     serve_policy_v1(&entry, inputs)
 }
 
-/// Identity-only lookup for a FlatV7 or FlatV8 checkpoint source, copying
-/// neither train-state nor policy buffers.
+/// Identity-only lookup for a FlatV7 or FlatV8 checkpoint source, with its
+/// checkpoint's card-semantics section, copying neither train-state nor
+/// policy buffers.
 pub(super) fn lookup_flat_checkpoint_identity_v1(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     inputs: Option<&CheckpointInputExpectationV1<'_>>,
-) -> Result<Option<ExpandedInferenceIdentityV1>, String> {
+) -> Result<Option<IdentityAndSectionV1>, String> {
     let Some(entry) = find_verified_flat_entry_v1(source, descriptor_bytes, false)? else {
         return Ok(None);
     };
@@ -544,15 +557,16 @@ fn serve_policy_v1(
     Ok(Some((policy, entry.identity.clone())))
 }
 
-/// A hit's input binding, then the entry's validated identity alone without
-/// cloning either `NativePolicyValueTrainStateV1` or `FrozenPlayPolicyV1`.
+/// A hit's input binding, then the entry's validated identity and its
+/// checkpoint's card-semantics section without cloning either
+/// `NativePolicyValueTrainStateV1` or `FrozenPlayPolicyV1`.
 fn serve_identity_v1(
     entry: &LoadedSourceV1,
     inputs: Option<&CheckpointInputExpectationV1<'_>>,
-) -> Result<Option<ExpandedInferenceIdentityV1>, String> {
+) -> Result<Option<IdentityAndSectionV1>, String> {
     validate_inputs_v1(entry, inputs)?;
     profile::identity_served_v1();
-    Ok(Some(entry.identity.clone()))
+    Ok(Some((entry.identity.clone(), entry.card_semantics.clone())))
 }
 
 pub(super) fn state_copied_bytes_v1(state: &NativePolicyValueTrainStateV1) -> u64 {
@@ -594,6 +608,7 @@ pub(super) fn remember_v1<T>(
         identity,
         state: Some(state.clone()),
         inputs,
+        card_semantics: state.loaded_card_semantics.clone(),
     }));
 }
 
@@ -624,6 +639,7 @@ pub(super) fn remember_policy_v1<T>(
         identity: identity.clone(),
         state: None,
         inputs,
+        card_semantics: saved.and_then(|saved| saved.card_semantics.clone()),
     }));
 }
 
@@ -660,12 +676,13 @@ pub(super) fn remember_converted_v1(
         identity,
         state: Some(state.clone()),
         inputs,
+        card_semantics: state.loaded_card_semantics.clone(),
     }));
 }
 
 /// Keep a converted load's policy and validated identity without cloning its
-/// train state. Never inlined: its policy template stays out of the loader's
-/// frame.
+/// train state; `card_semantics` is the section that state carries. Never
+/// inlined: its policy template stays out of the loader's frame.
 #[inline(never)]
 pub(super) fn remember_converted_policy_v1(
     source: &ExpandedModelSourceV1,
@@ -673,6 +690,7 @@ pub(super) fn remember_converted_policy_v1(
     policy: &FrozenPlayPolicyV1,
     identity: &ExpandedInferenceIdentityV1,
     load: &no_state_digest_v1::ConvertedLoadV1,
+    card_semantics: Option<&CardSemanticsSectionV1>,
 ) {
     #[cfg(test)]
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
@@ -692,6 +710,7 @@ pub(super) fn remember_converted_policy_v1(
         identity: identity.clone(),
         state: None,
         inputs,
+        card_semantics: card_semantics.cloned(),
     }));
 }
 
@@ -728,6 +747,7 @@ pub(super) fn remember_flat_checkpoint_v1<T>(
         identity,
         state: Some(state.clone()),
         inputs,
+        card_semantics: state.loaded_card_semantics.clone(),
     }));
 }
 
@@ -761,6 +781,7 @@ pub(super) fn remember_flat_checkpoint_policy_v1<T>(
         identity: identity.clone(),
         state: None,
         inputs,
+        card_semantics: saved.card_semantics.clone(),
     }));
 }
 

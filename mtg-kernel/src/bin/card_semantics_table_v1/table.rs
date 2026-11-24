@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use mtg_kernel::card_def::{card_id_by_name, KERNEL_CARDDB_HASH};
+use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS, KERNEL_CARDDB_HASH};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -12,9 +12,13 @@ use super::mapping::Mapping;
 
 pub const TABLE_SCHEMA: &str = "card_semantics_table/v1";
 pub const POOL_PATH: &str = "data/pauper_support_v1.json";
+pub const CUBE_POOL_PATH: &str = "data/cube_v1/mtgo_vintage_cube_20261007.json";
 pub const MAPPING_PATH: &str = "data/card_semantics_v1/leaf_mapping_v1.json";
 pub const TABLE_PATH: &str = "data/card_semantics_v1/pauper_table_v1.json";
 pub const DUMP_PATH: &str = "data/card_semantics_v1/pauper_table_v1.txt";
+pub const CUBE_TABLE_PATH: &str = "data/card_semantics_v1/cube_table_v1.json";
+pub const CUBE_DUMP_PATH: &str = "data/card_semantics_v1/cube_table_v1.txt";
+pub const BASIC_LANDS: [&str; 5] = ["Plains", "Island", "Swamp", "Mountain", "Forest"];
 const CONTENT_HASH_KEY: &str = "\"content_sha256\": ";
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -24,6 +28,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         write!(out, "{byte:02x}").expect("string write");
     }
     out
+}
+
+/// Canonical SHA-256 of an ordered vocabulary (`index\tkind\ttoken\n`).
+pub fn vocabulary_sha256(vocab: &[(String, String)]) -> String {
+    let mut text = String::new();
+    for (i, (token, kind)) in vocab.iter().enumerate() {
+        writeln!(text, "{i}\t{kind}\t{token}").expect("string write");
+    }
+    sha256_hex(text.as_bytes())
 }
 
 /// What each token family means. The first matching prefix wins.
@@ -68,12 +81,36 @@ pub struct CardRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct PauperVocabularyRef {
+    pub path: &'static str,
+    pub sha256: String,
+    pub len: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct Table {
+    pub pool_path: &'static str,
     pub pool_sha256: String,
     pub mapping_sha256: String,
+    pub pauper_vocabulary: Option<PauperVocabularyRef>,
     pub vocabulary: Vec<VocabEntry>,
     pub rows: Vec<CardRow>,
     pub vectors: Vec<Vec<i64>>,
+}
+
+pub struct CubeSelection {
+    pub rows: Vec<CardRow>,
+    pub before_mapping: Vec<CardRow>,
+    pub not_implemented: Vec<String>,
+}
+
+pub struct TableBuildInput<'a> {
+    pub pool_path: &'static str,
+    pub pool_text: &'a str,
+    pub mapping_text: &'a str,
+    pub rows: Vec<CardRow>,
+    pub prior: &'a [(String, String)],
+    pub pauper_vocabulary: Option<PauperVocabularyRef>,
 }
 
 /// Card names of the Pauper pool, in file order.
@@ -85,6 +122,36 @@ pub fn pool_names(pool_text: &str) -> Vec<String> {
         .iter()
         .map(|row| row["name"].as_str().expect("card name").to_string())
         .collect()
+}
+
+/// Card names of the cube list, in file order, validating schema and uniqueness.
+pub fn parse_cube_names(pool_text: &str) -> Result<Vec<String>, String> {
+    let pool: serde_json::Value =
+        serde_json::from_str(pool_text).map_err(|e| format!("{CUBE_POOL_PATH}: {e}"))?;
+    if pool["schema"].as_str() != Some("cube_list/v1") {
+        return Err(format!(
+            "{CUBE_POOL_PATH}: schema {} is not cube_list/v1",
+            pool["schema"]
+        ));
+    }
+    let cards = pool["cards"]
+        .as_array()
+        .ok_or_else(|| format!("{CUBE_POOL_PATH}: missing cards array"))?;
+    let mut names = Vec::with_capacity(cards.len());
+    let mut seen = BTreeSet::new();
+    for (i, row) in cards.iter().enumerate() {
+        let name = row["name"]
+            .as_str()
+            .ok_or_else(|| format!("{CUBE_POOL_PATH}: card {i} has no string name"))?;
+        if name.trim().is_empty() {
+            return Err(format!("{CUBE_POOL_PATH}: card {i} has an empty name"));
+        }
+        if !seen.insert(name) {
+            return Err(format!("{CUBE_POOL_PATH}: duplicate card name {name:?}"));
+        }
+        names.push(name.to_string());
+    }
+    Ok(names)
 }
 
 pub fn rows(names: &[String], mapping: Option<&Mapping>) -> Vec<CardRow> {
@@ -101,22 +168,74 @@ pub fn rows(names: &[String], mapping: Option<&Mapping>) -> Vec<CardRow> {
         .collect()
 }
 
-/// Builds the table. `prior` is the vocabulary of the committed table:
-/// its order is kept and new tokens are appended in sorted order, so a card
-/// wave grows the vector without moving existing columns.
-pub fn build(
-    pool_text: &str,
-    mapping_text: &str,
-    mapping: &Mapping,
-    prior: &[(String, String)],
-) -> Table {
-    let names = pool_names(pool_text);
-    let rows = rows(&names, Some(mapping));
+/// Resolves cube list cards that have an executable definition (`Full` or
+/// `Partial`), appends the five basic lands, and lists missing/no-effect
+/// cube cards separately.
+pub fn select_cube_rows(cube_names: &[String], mapping: &Mapping) -> Result<CubeSelection, String> {
+    let mut rows = Vec::new();
+    let mut before_mapping = Vec::new();
+    let mut not_implemented = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+
+    for name in cube_names {
+        seen.insert(name.as_str());
+        match card_id_by_name(name) {
+            Some(id) if CARD_DEFS[usize::from(id)].is_executable() => {
+                rows.push(CardRow {
+                    name: name.clone(),
+                    id,
+                    tokens: card_tokens(id, Some(mapping)),
+                });
+                before_mapping.push(CardRow {
+                    name: name.clone(),
+                    id,
+                    tokens: card_tokens(id, None),
+                });
+            }
+            _ => not_implemented.push(name.clone()),
+        }
+    }
+    not_implemented.sort();
+
+    for land in BASIC_LANDS {
+        if seen.contains(land) {
+            continue;
+        }
+        let Some(id) = card_id_by_name(land) else {
+            return Err(format!("basic land {land} is not in CARD_DEFS"));
+        };
+        if !CARD_DEFS[usize::from(id)].is_executable() {
+            return Err(format!("basic land {land} is not executable in CARD_DEFS"));
+        }
+        rows.push(CardRow {
+            name: land.to_string(),
+            id,
+            tokens: card_tokens(id, Some(mapping)),
+        });
+        before_mapping.push(CardRow {
+            name: land.to_string(),
+            id,
+            tokens: card_tokens(id, None),
+        });
+    }
+
+    Ok(CubeSelection {
+        rows,
+        before_mapping,
+        not_implemented,
+    })
+}
+
+/// Builds a table from already-extracted rows. `prior` fixes the leading
+/// columns; new tokens are appended in sorted deterministic order.
+pub fn build_from_rows(input: TableBuildInput<'_>) -> Result<Table, String> {
     let mut kinds: BTreeMap<String, TokenKind> = BTreeMap::new();
-    for row in &rows {
+    for row in &input.rows {
         for (token, acc) in &row.tokens.tokens {
             if let Some(previous) = kinds.insert(token.clone(), acc.kind) {
-                assert_eq!(previous, acc.kind, "token {token} changed kind");
+                if previous != acc.kind {
+                    return Err(format!("token {token} changed kind across cards"));
+                }
             }
         }
     }
@@ -126,17 +245,23 @@ pub fn build(
     };
     let mut order: Vec<(String, &'static str)> = Vec::new();
     let mut seen = BTreeSet::new();
-    for (token, kind) in prior {
+    for (token, kind) in input.prior {
+        let static_kind = match kind.as_str() {
+            "count" => "count",
+            "value" => "value",
+            other => return Err(format!("prior token {token} has unknown kind {other:?}")),
+        };
         if let Some(now) = kinds.get(token) {
-            assert_eq!(
-                kind_name(*now),
-                kind,
-                "token {token} changed kind; a kind change needs a new table version"
-            );
+            if kind_name(*now) != static_kind {
+                return Err(format!(
+                    "token {token} changed kind; a kind change needs a new table version"
+                ));
+            }
         }
-        let kind = if kind == "count" { "count" } else { "value" };
-        order.push((token.clone(), kind));
-        seen.insert(token.clone());
+        if !seen.insert(token.clone()) {
+            return Err(format!("prior vocabulary lists token {token:?} twice"));
+        }
+        order.push((token.clone(), static_kind));
     }
     for (token, kind) in &kinds {
         if !seen.contains(token) {
@@ -150,7 +275,7 @@ pub fn build(
         .collect();
     let mut vectors = Vec::new();
     let mut carriers = vec![0usize; order.len()];
-    for row in &rows {
+    for row in &input.rows {
         let mut vector = vec![0i64; order.len()];
         for (token, acc) in &row.tokens.tokens {
             let column = index[token.as_str()];
@@ -169,13 +294,37 @@ pub fn build(
             carriers: carriers[i],
         })
         .collect();
-    Table {
-        pool_sha256: sha256_hex(pool_text.as_bytes()),
-        mapping_sha256: sha256_hex(mapping_text.as_bytes()),
+    Ok(Table {
+        pool_path: input.pool_path,
+        pool_sha256: sha256_hex(input.pool_text.as_bytes()),
+        mapping_sha256: sha256_hex(input.mapping_text.as_bytes()),
+        pauper_vocabulary: input.pauper_vocabulary,
         vocabulary,
-        rows,
+        rows: input.rows,
         vectors,
-    }
+    })
+}
+
+/// Builds the Pauper table. `prior` is the vocabulary of the committed table:
+/// its order is kept and new tokens are appended in sorted order, so a card
+/// wave grows the vector without moving existing columns.
+pub fn build(
+    pool_text: &str,
+    mapping_text: &str,
+    mapping: &Mapping,
+    prior: &[(String, String)],
+) -> Table {
+    let names = pool_names(pool_text);
+    let rows = rows(&names, Some(mapping));
+    build_from_rows(TableBuildInput {
+        pool_path: POOL_PATH,
+        pool_text,
+        mapping_text,
+        rows,
+        prior,
+        pauper_vocabulary: None,
+    })
+    .unwrap_or_else(|e| panic!("{e}"))
 }
 
 const ENCODING: [&str; 6] = [
@@ -197,7 +346,7 @@ pub fn render(table: &Table) -> String {
         writeln!(body, "  {}: {value},", serde_json::to_string(key).unwrap()).unwrap();
     };
     field(&mut body, "schema", json(&TABLE_SCHEMA));
-    field(&mut body, "pool_path", json(&POOL_PATH));
+    field(&mut body, "pool_path", json(&table.pool_path));
     field(&mut body, "pool_sha256", json(&table.pool_sha256.as_str()));
     field(
         &mut body,
@@ -210,6 +359,15 @@ pub fn render(table: &Table) -> String {
         "mapping_sha256",
         json(&table.mapping_sha256.as_str()),
     );
+    if let Some(pauper) = &table.pauper_vocabulary {
+        field(&mut body, "pauper_table_path", json(&pauper.path));
+        field(
+            &mut body,
+            "pauper_vocabulary_sha256",
+            json(&pauper.sha256.as_str()),
+        );
+        field(&mut body, "pauper_vocabulary_len", pauper.len.to_string());
+    }
     field(
         &mut body,
         "generator",
@@ -262,20 +420,39 @@ pub fn content_hash_holds(text: &str) -> bool {
     sha256_hex(body.as_bytes()) == recorded
 }
 
-/// Reads the vocabulary (token, kind) of a committed table.
-pub fn committed_vocabulary(text: &str) -> Vec<(String, String)> {
-    let value: serde_json::Value = serde_json::from_str(text).expect("committed table JSON");
-    value["vocabulary"]
+/// Reads and validates the vocabulary (token, kind) of a committed table.
+pub fn try_committed_vocabulary(text: &str) -> Result<Vec<(String, String)>, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("committed table JSON: {e}"))?;
+    let entries = value["vocabulary"]
         .as_array()
-        .expect("vocabulary")
-        .iter()
-        .map(|entry| {
-            (
-                entry["token"].as_str().expect("token").to_string(),
-                entry["kind"].as_str().expect("kind").to_string(),
-            )
-        })
-        .collect()
+        .ok_or_else(|| "committed table JSON: missing vocabulary array".to_string())?;
+    let mut out = Vec::with_capacity(entries.len());
+    let mut seen = BTreeSet::new();
+    for (i, entry) in entries.iter().enumerate() {
+        let index = entry["index"]
+            .as_u64()
+            .ok_or_else(|| format!("vocabulary entry {i}: missing integer index"))?;
+        if index != i as u64 {
+            return Err(format!(
+                "vocabulary entry {i}: index {index} does not match position {i}"
+            ));
+        }
+        let token = entry["token"]
+            .as_str()
+            .ok_or_else(|| format!("vocabulary entry {i}: missing token"))?;
+        let kind = entry["kind"]
+            .as_str()
+            .ok_or_else(|| format!("vocabulary entry {i}: missing kind"))?;
+        if kind != "count" && kind != "value" {
+            return Err(format!("vocabulary entry {i}: unknown kind {kind:?}"));
+        }
+        if !seen.insert(token) {
+            return Err(format!("vocabulary entry {i}: duplicate token {token:?}"));
+        }
+        out.push((token.to_string(), kind.to_string()));
+    }
+    Ok(out)
 }
 
 pub fn format_amount(acc: &super::extract::Acc) -> String {
@@ -286,12 +463,21 @@ pub fn format_amount(acc: &super::extract::Acc) -> String {
     }
 }
 
-/// The human-readable dump committed beside the table.
+/// The human-readable dump committed beside the Pauper table.
 pub fn render_dump(table: &Table, census_text: &str) -> String {
+    render_dump_with_title(table, "Pauper pool", census_text)
+}
+
+/// The human-readable dump committed beside the Vintage Cube table.
+pub fn render_cube_dump(table: &Table, census_text: &str) -> String {
+    render_dump_with_title(table, "Vintage Cube pool", census_text)
+}
+
+fn render_dump_with_title(table: &Table, pool_title: &str, census_text: &str) -> String {
     let mut out = String::new();
     writeln!(
         out,
-        "Card semantics table v1, Pauper pool: human-readable dump"
+        "Card semantics table v1, {pool_title}: human-readable dump"
     )
     .unwrap();
     writeln!(
@@ -302,6 +488,9 @@ pub fn render_dump(table: &Table, census_text: &str) -> String {
     writeln!(out, "kernel_carddb_hash {KERNEL_CARDDB_HASH:016x}").unwrap();
     writeln!(out, "pool_sha256 {}", table.pool_sha256).unwrap();
     writeln!(out, "mapping_sha256 {}", table.mapping_sha256).unwrap();
+    if let Some(pauper) = &table.pauper_vocabulary {
+        writeln!(out, "pauper_vocabulary_sha256 {}", pauper.sha256).unwrap();
+    }
     writeln!(out, "vector_width {}", table.vocabulary.len()).unwrap();
     writeln!(
         out,

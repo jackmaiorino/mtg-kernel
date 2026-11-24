@@ -123,6 +123,7 @@ fn member_checkpoint_v1(
             .collect::<Vec<_>>()
     };
     Ok(ExpandedCheckpointV1 {
+        card_semantics: None,
         schema: ordinary_checkpoint_schema_v1(policy.identity_v1()).into(),
         feature_contract_digest: identity.feature_contract_digest.into(),
         feature_encoding_digest: identity.feature_encoding_digest.into(),
