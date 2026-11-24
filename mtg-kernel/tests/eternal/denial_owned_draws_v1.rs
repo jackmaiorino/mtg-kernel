@@ -220,12 +220,23 @@ fn alter(
                 row[field] = replacement;
                 return true;
             }
-            map.values_mut()
-                .any(|v| alter(v, variant, field, replacement.clone()))
+            let mut changed = false;
+            for v in map.values_mut() {
+                if alter(v, variant, field, replacement.clone()) {
+                    changed = true;
+                }
+            }
+            changed
         }
-        serde_json::Value::Array(rows) => rows
-            .iter_mut()
-            .any(|v| alter(v, variant, field, replacement.clone())),
+        serde_json::Value::Array(rows) => {
+            let mut changed = false;
+            for v in rows.iter_mut() {
+                if alter(v, variant, field, replacement.clone()) {
+                    changed = true;
+                }
+            }
+            changed
+        }
         _ => false,
     }
 }
