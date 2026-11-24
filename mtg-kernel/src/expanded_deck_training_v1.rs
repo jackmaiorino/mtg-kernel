@@ -102,6 +102,8 @@ pub(crate) use bootstrapped_advantage_v1::{
     GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
 };
 mod ordered_update_preparation;
+#[cfg(test)]
+pub(crate) use ordered_update_preparation::arm_preparation_probe_for_test_v1;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 pub(crate) use ordered_update_preparation::{
     preparation_groups_bound_v1, trajectory_batch_bytes_v1,
@@ -1004,6 +1006,80 @@ pub(super) fn opponent_cache_files_v1(
         files.push((pin.path.clone(), read));
     }
     Ok(Some(files))
+}
+
+/// `collection_tail_v1`, at a speculative update's learner gate: whether
+/// every pinned file a prepared update of `source` over `trajectories`, with
+/// the episodes' `opponents`, read before its gate still holds its pin, by
+/// the readers the update itself uses (so in the run's read mode): each
+/// source's import, every file its full load reads (its import's own inputs,
+/// a converted source's conversion record, base import, base files and
+/// checkpoints, and its checkpoint), and every trajectory. `false` as soon as
+/// one does not, and for any source whose files this cannot list (an S
+/// learner, an import of another kind, a checkpoint that names a further
+/// file): the caller then runs the update again from its published command,
+/// as without the setting, which reads everything afresh and fails, if it
+/// fails, exactly as that run fails.
+pub(crate) fn update_inputs_hold_v1(
+    source: &ExpandedModelSourceV1,
+    opponents: &[ExpandedModelSourceV1],
+    trajectories: &[PinnedFileV1],
+) -> bool {
+    let mut checked: Vec<&ExpandedModelSourceV1> = Vec::new();
+    for source in std::iter::once(source).chain(opponents) {
+        if checked.contains(&source) {
+            continue;
+        }
+        checked.push(source);
+        if !source_files_hold_v1(source).unwrap_or(false) {
+            return false;
+        }
+    }
+    trajectories.iter().all(|pin| check_pinned_v1(pin).is_ok())
+}
+
+/// [`update_inputs_hold_v1`] for one source: `Ok(true)` when its import and
+/// every file its full load reads hold their pins.
+fn source_files_hold_v1(source: &ExpandedModelSourceV1) -> Result<bool, String> {
+    if source.s_learner.is_some() {
+        return Ok(false);
+    }
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    let (pins, checkpoints) = if probe.get("schema").and_then(Value::as_str)
+        == Some(no_state_digest_v1::IMPORT_SCHEMA_V1)
+    {
+        match no_state_digest_v1::source_pins_v1(source, &bytes)? {
+            Some(pins) => pins,
+            None => return Ok(false),
+        }
+    } else {
+        let Some(mut pins) = import_pins_v1(&bytes)? else {
+            return Ok(false);
+        };
+        let checkpoints: Vec<PinnedFileV1> = source.checkpoint.iter().cloned().collect();
+        pins.extend(checkpoints.iter().cloned());
+        (pins, checkpoints)
+    };
+    // A checkpoint is checked by the update's own metadata probe (its pin
+    // check, then the view it already parsed), which also tells whether it
+    // names a further file.
+    #[derive(Deserialize)]
+    struct ArchiveProbeV1 {
+        #[serde(default, deserialize_with = "present_value_v1")]
+        archive_distillation: Option<Value>,
+    }
+    for pin in &pins {
+        if checkpoints.contains(pin) {
+            let probe: ArchiveProbeV1 = read_checkpoint_metadata_v1(pin)?;
+            if probe.archive_distillation.is_some() {
+                return Ok(false);
+            }
+        } else {
+            check_pinned_v1(pin)?;
+        }
+    }
+    Ok(true)
 }
 
 /// The pins of the files a full load of an import reads besides the import

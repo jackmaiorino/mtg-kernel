@@ -292,9 +292,6 @@ fn held_log_v1(
                 }
                 HeldEventV1::Released { held } => log.released.push(held),
                 HeldEventV1::Discarded { held } => log.discarded.push(held),
-                // Only a collection's opponent check forwards, and its holder
-                // is never recorded.
-                HeldEventV1::Forwarded { .. } => {}
             }
         }));
         if hold {
@@ -1252,7 +1249,7 @@ fn commit_events_v1(
             HeldEventV1::Discarded { held: count } => {
                 held.lock().unwrap().push(format!("discarded {count}"))
             }
-            HeldEventV1::Written(_) | HeldEventV1::Forwarded { .. } => {}
+            HeldEventV1::Written(_) => {}
         }));
         hold_at_gate_for_test_v1();
     }

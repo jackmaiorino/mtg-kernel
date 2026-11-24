@@ -146,7 +146,6 @@ fn held_update_log_v1(
                     log.released.push((held, commands));
                 }
                 HeldEventV1::Discarded { held } => log.discarded.push(held),
-                HeldEventV1::Forwarded { held } => panic!("an update forwarded {held} lines"),
             }
         }));
         hold_helper_for_test_v1();
@@ -618,6 +617,247 @@ fn collection_tail_failed_steps_fail_like_the_serial_run_and_commit_nothing_late
     }
 }
 
+/// Invariant 3 at the update's admission (review finding 1): every pinned
+/// input the speculative update read ahead is checked again once both of its
+/// documents are durable. Barrier: each helper is held until its update has
+/// read and prepared everything it reads before its gate; then, between the
+/// publications of iteration 1's `update-input.json` and
+/// `update-command.json`, one input is changed or removed: the learner's
+/// import, its parameter payload, the learner's checkpoint (iteration 0's)
+/// or one of iteration 1's trajectories. The run with both keys fails with
+/// the error of the run with neither, before any output of the update: no
+/// update directory, no checkpoint, nothing committed past iteration 0, and
+/// the speculative update's held lines dropped unwritten. With the file put
+/// back, a resume reaches the serial run's states.
+#[test]
+fn collection_tail_rechecks_every_input_read_ahead_at_admission() {
+    let serial = tail_config_v1("tail-admission", 2, 2, 2, 2);
+    let tailed = tailed_v1(&serial);
+    let directory = serial.output_directory.clone();
+    let _ = fs::remove_dir_all(&directory);
+    let reference = run_tailed_v1(&serial, None, || {}).0.unwrap();
+    let reference_states = after_states_v1(&reference);
+    fs::remove_dir_all(&directory).unwrap();
+    let descriptor: crate::expanded_deck_training_v1::ExpandedFreshInitializationSourceV1 =
+        serde_json::from_slice(&fs::read(&serial.initial_source.play_import.path).unwrap())
+            .unwrap();
+    let second = iteration_directory_v1(&directory, 1).join("attempt-000000");
+    let inputs = [
+        ("import", serial.initial_source.play_import.path.clone()),
+        ("payload", descriptor.parameters.path.clone()),
+        (
+            "checkpoint",
+            iteration_directory_v1(&directory, 0)
+                .join("attempt-000000")
+                .join("update")
+                .join("checkpoint.json"),
+        ),
+        (
+            "trajectory",
+            second.join("collect").join("episode-0000.json"),
+        ),
+    ];
+    for (input, path) in inputs {
+        for removed in [false, true] {
+            let mut errors = Vec::new();
+            for config in [&serial, &tailed] {
+                let tailed_run = config.collection_tail_v1;
+                let case = format!(
+                    "{input} {} {}",
+                    if removed { "removed" } else { "changed" },
+                    if tailed_run { "tailed" } else { "serial" }
+                );
+                let (arm, log) = held_update_log_v1(&directory);
+                let original = Arc::new(Mutex::new(None::<Vec<u8>>));
+                let kept = Arc::clone(&original);
+                let target = path.clone();
+                let (failed, counts) = run_tailed_v1(config, None, move || {
+                    if tailed_run {
+                        arm();
+                    }
+                    after_update_document_for_test_v1(move |index, name| {
+                        if index == 1 && name == "update-input.json" {
+                            let bytes = fs::read(&target).unwrap();
+                            if removed {
+                                fs::remove_file(&target).unwrap();
+                            } else {
+                                let mut changed = bytes.clone();
+                                let middle = changed.len() / 2;
+                                changed[middle] ^= 1;
+                                fs::write(&target, changed).unwrap();
+                            }
+                            *kept.lock().unwrap() = Some(bytes);
+                        }
+                    });
+                });
+                let original = original
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap_or_else(|| panic!("{case}: the barrier was never reached"));
+                let error = failed.unwrap_err();
+                if tailed_run {
+                    assert_eq!(
+                        counts,
+                        CountsV1 {
+                            prefetched: 1,
+                            admitted: 1,
+                            restored: 0,
+                        },
+                        "{case}: iteration 1 was admitted"
+                    );
+                }
+                assert_eq!(committed_v1(&directory), 1, "{case}");
+                assert!(second.join("update-input.json").exists(), "{case}");
+                assert!(second.join("update-command.json").exists(), "{case}");
+                assert!(
+                    !second.join("update").exists(),
+                    "{case}: the update wrote output: {error}"
+                );
+                {
+                    let log = log.lock().unwrap();
+                    if tailed_run {
+                        // Iteration 0's lines were released; iteration 1's
+                        // input line was held and dropped unwritten.
+                        assert_eq!(log.released.len(), 1, "{case}: {log:?}");
+                        assert_eq!(log.written.len(), 1, "{case}: {log:?}");
+                        assert!(
+                            matches!(log.discarded.as_slice(), [held] if *held >= 1),
+                            "{case}: {log:?}"
+                        );
+                    } else {
+                        assert!(
+                            log.written.is_empty() && log.discarded.is_empty(),
+                            "{case}: {log:?}"
+                        );
+                    }
+                }
+                fs::write(&path, &original).unwrap();
+                let (resumed, _) = run_tailed_v1(config, None, || {});
+                let resumed = resumed.unwrap_or_else(|error| panic!("{case}: resume: {error}"));
+                assert_eq!(resumed["complete"], true, "{case}");
+                assert_eq!(after_states_v1(&resumed), reference_states, "{case}");
+                errors.push(error);
+                fs::remove_dir_all(&directory).unwrap();
+            }
+            assert_eq!(errors[0], errors[1], "{input} removed {removed}");
+        }
+    }
+}
+
+/// The environment variable that runs `collection_tail_output_child_v1` in
+/// its child process.
+const OUTPUT_CHILD_ENV_V1: &str = "MTG_KERNEL_COLLECTION_TAIL_OUTPUT_CHILD_V1";
+
+/// Review finding 3: held output, in a real process. A child process runs,
+/// with each helper held until its update has read ahead, an update whose
+/// first preparation-worker job writes a diagnostic line and panics
+/// (`arm_preparation_probe_for_test_v1`); once with a helper that succeeds,
+/// once with one whose `update-input.json` cannot be published. Its actual
+/// stderr and stdout are captured. With the helper succeeding, the
+/// diagnostic and the panic message appear only after the helper's marker
+/// for the durable `update-command.json`; with the helper failing, they never
+/// appear. Neither appears on stdout. Without the holder on preparation
+/// workers both lines would be written at once, before the marker.
+#[test]
+fn collection_tail_holds_preparation_worker_output_in_a_real_process() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "native_expanded_training_run_v1::tests::collection_tail_tests::collection_tail_output_child_v1",
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(OUTPUT_CHILD_ENV_V1, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "child failed:\n{stdout}\n{stderr}"
+    );
+    let section = |case: &str| -> &str {
+        let begin = format!("tail-probe begin {case}\n");
+        let start = stderr.find(&begin).unwrap_or_else(|| panic!("{stderr}")) + begin.len();
+        let end = stderr[start..]
+            .find(&format!("tail-probe end {case}"))
+            .unwrap_or_else(|| panic!("{stderr}"));
+        &stderr[start..start + end]
+    };
+    let probes = [
+        "tail-probe preparation diagnostic",
+        "tail-probe preparation panic",
+    ];
+    let succeeded = section("helper succeeds");
+    let marker = succeeded
+        .find("tail-probe published update-command.json 0")
+        .unwrap_or_else(|| panic!("{succeeded}"));
+    for probe in probes {
+        let at = succeeded
+            .find(probe)
+            .unwrap_or_else(|| panic!("{probe} missing:\n{succeeded}"));
+        assert!(
+            at > marker,
+            "{probe} before the command was durable:\n{succeeded}"
+        );
+    }
+    let failed = section("helper fails");
+    for probe in probes {
+        assert!(!failed.contains(probe), "{probe} written:\n{failed}");
+        assert!(!stdout.contains(probe), "{probe} on stdout:\n{stdout}");
+    }
+}
+
+/// The child of
+/// `collection_tail_holds_preparation_worker_output_in_a_real_process`.
+/// Skipped unless the parent set its environment variable.
+#[test]
+#[ignore = "run by collection_tail_holds_preparation_worker_output_in_a_real_process in a child process"]
+fn collection_tail_output_child_v1() {
+    if std::env::var(OUTPUT_CHILD_ENV_V1).as_deref() != Ok("1") {
+        return;
+    }
+    for (case, fail_helper) in [("helper succeeds", false), ("helper fails", true)] {
+        let config = tailed_v1(&tail_config_v1(
+            &format!("tail-output-{fail_helper}"),
+            2,
+            2,
+            2,
+            2,
+        ));
+        let _ = fs::remove_dir_all(&config.output_directory);
+        eprintln!("tail-probe begin {case}");
+        let (result, _) = run_tailed_v1(&config, None, move || {
+            hold_helper_for_test_v1();
+            after_update_document_for_test_v1(|index, name| {
+                eprintln!("tail-probe published {name} {index}");
+            });
+            if fail_helper {
+                fail_next_publish_for_test_v1("update-input.json");
+            }
+            crate::expanded_deck_training_v1::arm_preparation_probe_for_test_v1();
+        });
+        let error = result.unwrap_err();
+        eprintln!("tail-probe end {case}: {error}");
+        let expected = if fail_helper {
+            "injected failure"
+        } else {
+            "panicked"
+        };
+        assert!(error.contains(expected), "{case}: {error}");
+        assert!(
+            !iteration_directory_v1(&config.output_directory, 0)
+                .join("attempt-000000")
+                .join("update")
+                .exists(),
+            "{case}"
+        );
+        fs::remove_dir_all(&config.output_directory).unwrap();
+    }
+}
+
 /// Invariant 4 (the invocation limit): a limited run with both keys stops at
 /// the update the run with neither stops at, starts nothing past it, and
 /// resumes to the serial run's tree.
@@ -670,14 +910,24 @@ fn collection_tail_stops_at_the_invocation_limit_like_the_serial_run() {
 /// debris; never an update directory before its `update-command.json`; and
 /// committed iterations that are a prefix. Resuming reaches the serial run's
 /// state, step, loss and games at every iteration, and its very tree when the
-/// resume made no new attempt.
+/// resume made no new attempt. And at every crash point, also those where
+/// the resume makes a new attempt (review finding 4), the whole recovered
+/// tree is the tree of the run with neither key crashed at the same
+/// publication and resumed: every file, the restart log and every new
+/// attempt's commands, trajectories, checkpoints and receipts, byte for byte
+/// apart from timing telemetry and the keys in the plan. Both runs crash in
+/// the same state and recover into the same attempt paths, so no path is
+/// normalized: an attempt the serial recovery does not make is itself a
+/// difference.
 #[test]
-#[ignore = "slow: one crashed run and its resume per crash point; run before shipping a change to the collection tail"]
+#[ignore = "slow: two crashed runs and their resumes per crash point; run before shipping a change to the collection tail"]
 fn collection_tail_crash_at_any_publication_resumes_to_the_serial_result() {
     let serial = tail_config_v1("tail-crash-points", 3, 2, 2, 2);
     let tailed = tailed_v1(&serial);
     let directory = serial.output_directory.clone();
     let reference = directory.with_file_name("uninterrupted");
+    let serial_recovered = directory.with_file_name("serial-recovered");
+    let _ = fs::remove_dir_all(&serial_recovered);
     let root = publication_root_v1(&directory);
     let _ = fs::remove_dir_all(&directory);
     let _ = fs::remove_dir_all(&reference);
@@ -712,6 +962,17 @@ fn collection_tail_crash_at_any_publication_resumes_to_the_serial_result() {
     for index in 0..publications {
         for point in [CrashPointV1::BeforeFinal, CrashPointV1::AfterFinal] {
             let case = format!("publication {index} {point:?}");
+            // The run with neither key, crashed at the same publication and
+            // resumed, moved aside.
+            let ((serial_crashed, _), _, crashed) =
+                with_crash_point_v1(&root, Some((index, point)), || {
+                    run_tailed_v1(&serial, None, || {})
+                });
+            assert!(crashed, "{case}: serial never reached");
+            assert!(serial_crashed.is_err(), "{case}");
+            let (serial_resumed, _) = run_tailed_v1(&serial, None, || {});
+            assert_eq!(serial_resumed.unwrap()["complete"], true, "{case}");
+            fs::rename(&directory, &serial_recovered).unwrap();
             let ((crashed_run, _), _, crashed) =
                 with_crash_point_v1(&root, Some((index, point)), || {
                     run_tailed_v1(&tailed, None, holds)
@@ -768,7 +1029,14 @@ fn collection_tail_crash_at_any_publication_resumes_to_the_serial_result() {
             if !new_attempt {
                 assert_same_tree_v1(&format!("{case} resumed"), &directory, &reference, true);
             }
+            assert_same_tree_v1(
+                &format!("{case} recovered"),
+                &directory,
+                &serial_recovered,
+                true,
+            );
             fs::remove_dir_all(&directory).unwrap();
+            fs::remove_dir_all(&serial_recovered).unwrap();
         }
     }
     fs::remove_dir_all(&reference).unwrap();
