@@ -12,6 +12,8 @@ Four later sources of the same release line are accepted the same way, each buil
 
 The optional `examples` dispatch input (also `hosted.py --examples`) accepts entries separated by a single space. For example, `bench_kernel cube_b_census_v1:eternal-fixtures` requests two examples and enables a feature for the second. Use commas for multiple features. The chosen source commit must contain the requested targets and features. Each name must match `[A-Za-z0-9_][A-Za-z0-9_-]*`, and each example must have a distinct output name.
 
+List each feature once per example. For a build with examples, `guard.json` records the ordered specs under `examples`, including when the build fails. On success, `BUILD-MANIFEST.json` records the same specs under `build.examples`.
+
 Examples build one at a time after the two bins with the same release settings and target flags. The helper installs them beside the bins from `release/examples/` under the same target directory, including the target triple for CPU variants. Each entry in `BUILD-MANIFEST.json`'s `examples` array records the name, requested features, bytes, SHA-256 and runtime libraries. `SHA256SUMS` also covers every installed example.
 
 With an omitted or empty input, the launcher executes the original scripts preserved in `bin-only/`. This preserves the Cargo commands, manifest bytes and the two script hashes recorded in `guard.json`. Each run still records its own elapsed time and resource measurements.

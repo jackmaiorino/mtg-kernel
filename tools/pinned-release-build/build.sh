@@ -7,7 +7,9 @@ umask 022
 
 readonly -a bins=(native_expanded_training_run_v1 checkpoint_container_v1)
 validate_examples() {
-    local LC_ALL=C id='[a-zA-Z0-9_][a-zA-Z0-9_-]*' spec name
+    local LC_ALL=C id='[a-zA-Z0-9_][a-zA-Z0-9_-]*' spec name feature
+    local -a features
+    local -A seen_features
     local -A used=([DONE]=1 [SHA256SUMS]=1)
     for name in "${bins[@]}"; do used[$name]=1; done
     for spec in "$@"; do
@@ -21,6 +23,17 @@ validate_examples() {
             return 2
         fi
         used[$name]=1
+        if [[ $spec == *:* ]]; then
+            IFS=, read -ra features <<< "${spec#*:}"
+            seen_features=()
+            for feature in "${features[@]}"; do
+                if [[ -v seen_features[$feature] ]]; then
+                    printf 'Duplicate feature for example: %s\n' "$name" >&2
+                    return 2
+                fi
+                seen_features[$feature]=1
+            done
+        fi
     done
 }
 
@@ -278,6 +291,7 @@ manifest = {
     "checkpoint_container": executable(binaries[1]),
 }
 if examples:
+    manifest["build"]["examples"] = examples
     manifest["examples"] = []
     for spec in examples:
         name, _, features = spec.partition(":")
