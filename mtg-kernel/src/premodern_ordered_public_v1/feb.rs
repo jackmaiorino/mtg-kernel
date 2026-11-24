@@ -242,20 +242,20 @@ pub enum FebCurrentV1 {
     },
 }
 
-pub(super) enum ProfileDecisionViewV1 {
-    Frozen(NumericDecisionViewV1),
-    Registered(NumericRegisteredDecisionViewV1),
+enum ProfileDecisionViewV1 {
+    Frozen(Box<NumericDecisionViewV1>),
+    Registered(Box<NumericRegisteredDecisionViewV1>),
 }
 
 impl ProfileDecisionViewV1 {
-    pub(super) fn ordered(&self) -> &ObservationV1 {
+    fn ordered(&self) -> &ObservationV1 {
         match self {
             Self::Frozen(view) => &view.observation.ordered,
             Self::Registered(view) => &view.observation.ordered,
         }
     }
 
-    pub(super) fn menu(&self) -> Option<&NumericMenuV1> {
+    fn menu(&self) -> Option<&NumericMenuV1> {
         match self {
             Self::Frozen(view) => view.menu.as_ref(),
             Self::Registered(view) => view.menu.as_ref(),
@@ -545,7 +545,7 @@ impl FebSessionV1 {
         else {
             unreachable!("registered profile builds registered decision views");
         };
-        Ok(Some(view))
+        Ok(Some(*view))
     }
 
     #[cfg(test)]
@@ -559,25 +559,25 @@ impl FebSessionV1 {
         else {
             return Err("expected frozen FEB decision view".into());
         };
-        Ok((view, echo))
+        Ok((*view, echo))
     }
 
-    pub(super) fn profile_decision_view(
+    fn profile_decision_view(
         &self,
         binding: &BoundDecisionV1,
         viewer: PlayerId,
     ) -> Result<(ProfileDecisionViewV1, Option<human::NativeEffectOptionMenu>), String> {
         let state = &self.inner.game;
         let mut view = match self.profile {
-            OrderedProfileV1::Frozen => ProfileDecisionViewV1::Frozen(binding.view(
+            OrderedProfileV1::Frozen => ProfileDecisionViewV1::Frozen(Box::new(binding.view(
                 state,
                 &self.inner.surface,
                 viewer,
                 self.inner.step,
-            )?),
-            OrderedProfileV1::Registered => ProfileDecisionViewV1::Registered(
+            )?)),
+            OrderedProfileV1::Registered => ProfileDecisionViewV1::Registered(Box::new(
                 binding.view_registered(state, &self.inner.surface, viewer, self.inner.step)?,
-            ),
+            )),
         };
         // The echo decision names its original public permanent. Only change
         // the presentation copy, keeping the bound native actions intact.

@@ -187,8 +187,11 @@ pub(super) fn play(mut owner: FebSessionV1, seed: u64, policy: Policy) -> Ordere
                         })
                         .flatten()
                         .unwrap_or_else(|| {
-                            (0..actions.len())
-                                .min_by_key(|&ordinal| ranked_key(&actions[ordinal], ordinal))
+                            actions
+                                .iter()
+                                .enumerate()
+                                .min_by_key(|&(ordinal, row)| ranked_key(row, ordinal))
+                                .map(|(ordinal, _)| ordinal)
                                 .unwrap()
                         }),
                     Policy::Random(_) => {

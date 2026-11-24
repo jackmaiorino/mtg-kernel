@@ -1198,7 +1198,9 @@ fn premodern_ids(rows: &[(&str, usize)]) -> Vec<u16> {
 
 fn step_registered_until_main1(owner: &mut FebSessionV1) {
     for _ in 0..32 {
-        if owner.inner.game.step == Step::Main1 && owner.inner.game.london_mulligans_v1.is_none() {
+        if owner.inner.game.step == Step::Main1
+            && !crate::london_mulligan_v1::has_pending(&owner.inner.game)
+        {
             return;
         }
         let actor = acting(owner);
@@ -1621,8 +1623,8 @@ fn registered_owner_reports_registered_halt_and_frozen_keeps_native_halt_both_se
                 owner.current(viewer).unwrap(),
                 FebCurrentV1::RegisteredHaltV1 {
                     mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
-                    source: Some(ref source),
-                } if source == &host_ref
+                    source: Some(source),
+                } if source == host_ref
             ));
             assert!(owner.human_current(viewer).unwrap().is_none());
             assert!(owner.registered_decision_view_v1(viewer).unwrap().is_none());
