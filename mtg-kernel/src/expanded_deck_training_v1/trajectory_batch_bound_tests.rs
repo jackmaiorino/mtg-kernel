@@ -298,6 +298,7 @@ fn sealed_synthetic_group_batch(
                 input_contract: None,
                 opening_record: None,
                 search_played: None,
+                opponent_tensors_omitted: false,
             };
             let sealed = RecordEnvelopeV1::Zstd1
                 .seal_owned_v1(serde_json::to_vec(&trajectory).unwrap())

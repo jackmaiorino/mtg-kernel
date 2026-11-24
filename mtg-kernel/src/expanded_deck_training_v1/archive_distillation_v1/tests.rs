@@ -2998,6 +2998,7 @@ fn retention_run_config_v1(
         ex1: None,
         record_process_cpu: false,
         chain_ledger: None,
+        trajectory_format: Default::default(),
         output_directory: root.join("run"),
     }
 }

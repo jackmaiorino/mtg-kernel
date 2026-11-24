@@ -55,10 +55,19 @@ ABBA = ("A", "B", "B", "A")
 # classes; anything else is a mismatch. Timing: a numeric leaf whose key ends
 # in one of these suffixes (wall-clock receipts such as update.json's
 # `checkpoint_io_seconds`; they never enter state or hashes). Provenance: the
-# build identity in run.json, only between samples of different builds. Pin:
-# the sha256 of a run file that itself differs only in accounted fields.
+# build identity in run.json and the engine identity in complete.json and
+# completion.json, only between samples of different builds; that includes a
+# whole `engine` member that only one side's completion record carries, as
+# between a build from before engine identities were recorded (mtg-kernel#921)
+# and one after. Pin: the sha256 of a run file that itself differs only in
+# accounted fields.
 TIMING_SUFFIXES = ("_seconds", "_nanos", "_ns")
-PROVENANCE_KEYS = frozenset({"git_commit", "tracked_tree_sha256", "implementation_sha256"})
+PROVENANCE_KEYS = frozenset({"git_commit", "tracked_tree_sha256", "implementation_sha256", "git_clean"})
+ENGINE_KEY = "engine"
+ENGINE_IDENTITY_SCHEMA = "mtg-kernel-engine-identity/v1"
+# The completion records that carry the engine identity: each iteration's
+# complete.json and the run's completion.json.
+ENGINE_RECORD = re.compile(r"(?:iterations/[^/]+/complete|completion)\.json")
 JSON_DIFF_CAP = 64 << 20
 COLLECTED_DIFFERENCES = 10_000
 LISTED_DIFFERENCES = 20
@@ -869,7 +878,7 @@ class TreeComparison:
         classes: dict[str, int] = {}
         unaccounted = []
         for path, kind, parents in found:
-            label = self.classify(path, kind, parents, a, b)
+            label = self.classify(path, kind, parents, a, b, relative)
             classes[label] = classes.get(label, 0) + 1
             if label == "unaccounted":
                 unaccounted.append("/".join(map(str, path)) + f" ({kind})")
@@ -881,7 +890,9 @@ class TreeComparison:
                     "unaccounted": len(unaccounted), "truncated": truncated}
         return {"status": "accounted", "classes": classes}
 
-    def classify(self, path, kind, parents, a, b) -> str:
+    def classify(self, path, kind, parents, a, b, relative: str = "") -> str:
+        if self.engine_recorded_on_one_side(path, kind, a, b, relative):
+            return "provenance"
         if kind != "value" or not path or not isinstance(path[-1], str):
             return "unaccounted"
         key = path[-1]
@@ -897,6 +908,19 @@ class TreeComparison:
             if target is not None and self.file(target)["status"] == "accounted":
                 return "pin"
         return "unaccounted"
+
+    def engine_recorded_on_one_side(self, path, kind, a, b, relative: str) -> bool:
+        """A completion record's top-level engine identity that only one build
+        writes. Within one build, anywhere else, or when both sides record an
+        engine (their fields are then compared one by one), it is not."""
+        if not (self.across_builds and kind == "structure" and path == (ENGINE_KEY,)
+                and ENGINE_RECORD.fullmatch(relative)
+                and isinstance(a, dict) and isinstance(b, dict)):
+            return False
+        if (ENGINE_KEY in a) == (ENGINE_KEY in b):
+            return False
+        recorded = a.get(ENGINE_KEY, b.get(ENGINE_KEY))
+        return isinstance(recorded, dict) and recorded.get("schema") == ENGINE_IDENTITY_SCHEMA
 
     def summary(self) -> dict:
         names = sorted(set(self.reference_files) | set(self.sample_files))

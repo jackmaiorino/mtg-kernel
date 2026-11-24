@@ -524,6 +524,7 @@ fn run_config(
         ex1: None,
         record_process_cpu: false,
         chain_ledger: None,
+        trajectory_format: Default::default(),
         output_directory,
     }
 }

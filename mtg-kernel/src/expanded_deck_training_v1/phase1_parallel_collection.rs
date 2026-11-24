@@ -186,6 +186,7 @@ pub(super) fn collect_parallel_v1(
     training_math: TrainingMathV1,
     ex1: Option<super::ex1_collect_v1::Ex1CollectOptionsV1>,
     record_envelope: RecordEnvelopeV1,
+    trajectory_format: TrajectoryRecordFormatV1,
     output_directory: PathBuf,
     carried: Option<&super::CarriedLearnerV1>,
 ) -> Result<Value, String> {
@@ -195,6 +196,14 @@ pub(super) fn collect_parallel_v1(
     ensure(
         !episodes.is_empty() && episodes.len() <= 1024,
         "invalid collection size",
+    )?;
+    ensure(
+        !trajectory_format.uses_zstd1_payload() || record_envelope.is_none(),
+        "binary_zstd1 trajectory format cannot be double-wrapped with record_envelope zstd1",
+    )?;
+    ensure(
+        !(trajectory_format.omits_opponent_tensors() && ex1.is_some()),
+        "learner-only trajectory format refuses EX1 collection",
     )?;
     validate_max_non_natural_episode_fraction_v1(max_non_natural_episode_fraction)?;
     let mut ids = BTreeSet::new();
@@ -307,7 +316,7 @@ pub(super) fn collect_parallel_v1(
                 .as_ref()
                 .map(|opponent| collector.opponent_cache.load(opponent))
                 .transpose()?;
-            let (trajectory, entries, ex1_record) = collect_episode_tolerant_v1(
+            let (trajectory, entries, ex1_record) = collect_episode_tolerant_with_options_v1(
                 &mut collector.policy,
                 &learner,
                 opponent,
@@ -315,6 +324,7 @@ pub(super) fn collect_parallel_v1(
                 index,
                 max_non_natural_episode_fraction,
                 ex1.as_ref(),
+                trajectory_format.omits_opponent_tensors(),
             )
             .map_err(|(collection_error, entries)| {
                 ledger
@@ -334,9 +344,12 @@ pub(super) fn collect_parallel_v1(
             // the serialized bytes (`record_envelope_v1`), and the sealed
             // bytes are the published and offered ones.
             let name = format!("episode-{index:04}.json");
-            let bytes = std::sync::Arc::new(
-                record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?,
-            );
+            let raw_bytes = if trajectory_format.is_binary() {
+                super::trajectory_container_v1::encode_v1(&trajectory, trajectory_format)?
+            } else {
+                serialize_json_v1(&name, &trajectory)?
+            };
+            let bytes = std::sync::Arc::new(record_envelope.seal_owned_v1(raw_bytes)?);
             let pin = publish_json_shared_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record
@@ -608,6 +621,7 @@ mod tests {
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: Default::default(),
+            trajectory_format: Default::default(),
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -763,6 +777,7 @@ mod tests {
                 training_math: TrainingMathV1::PlatformLibm,
                 ex1: None,
                 record_envelope: Default::default(),
+                trajectory_format: Default::default(),
                 output_directory: root.join(label),
             })
             .unwrap();
@@ -875,6 +890,7 @@ mod tests {
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: Default::default(),
+            trajectory_format: Default::default(),
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -906,6 +922,7 @@ mod tests {
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: Default::default(),
+            trajectory_format: Default::default(),
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -1223,6 +1240,7 @@ mod tests {
                     training_math: TrainingMathV1::PlatformLibm,
                     ex1: None,
                     record_envelope: Default::default(),
+                    trajectory_format: Default::default(),
                     output_directory,
                 }
             };
@@ -1348,6 +1366,7 @@ mod tests {
                     training_math: TrainingMathV1::PlatformLibm,
                     ex1: None,
                     record_envelope: Default::default(),
+                    trajectory_format: Default::default(),
                     output_directory,
                 }
             };

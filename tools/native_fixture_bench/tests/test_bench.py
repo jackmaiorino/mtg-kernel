@@ -22,7 +22,10 @@ import bench  # noqa: E402
 # (with build provenance), per-iteration collection/update receipts carrying
 # fresh timings, a checkpoint, complete.json pins, completion.json, the
 # per-iteration stdout line and the diagnostics line. It resumes completed
-# iterations and honours --max-new-iterations.
+# iterations and honours --max-new-iterations. FAKE_RULES_VERSION=N makes it a
+# build that records its engine identity (with that rules version) in
+# complete.json and completion.json, as builds after mtg-kernel#921 do; unset,
+# it is a build from before.
 FAKE_BINARY = r'''
 import hashlib, json, os, random, sys
 from pathlib import Path
@@ -37,6 +40,10 @@ shift = int(os.environ.get("FAKE_STATE_SHIFT", "0"))
 exit_at = os.environ.get("FAKE_EXIT_AT")
 diagnostics = os.environ.get("MTG_KERNEL_CACHE_DIAGNOSTICS_V1")
 commit = os.environ.get("FAKE_GIT_COMMIT", "aaaa")
+rules = os.environ.get("FAKE_RULES_VERSION")
+engine = None if rules is None else {
+    "schema": "mtg-kernel-engine-identity/v1", "git_commit": commit,
+    "tracked_tree_sha256": commit * 2, "git_clean": True, "rules_version": int(rules)}
 
 def publish(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,8 +87,11 @@ for index, iteration in enumerate(config["iterations"]):
                       "checkpoint_io_seconds": random.random(),
                       "update_preparation": {"preparation_elapsed_seconds": random.random()}})
     identity = {"adam_step": step, "state": state, "state_sha256": checkpoint["sha256"]}
-    receipts.append(publish(complete, {"iteration": index, "collection": collection, "update": update,
-                                       "output_identity": identity}))
+    receipt = {"iteration": index, "collection": collection, "update": update,
+               "output_identity": identity}
+    if engine is not None:
+        receipt["engine"] = engine
+    receipts.append(publish(complete, receipt))
     new, lookups = new + 1, lookups + 3
     if diagnostics:
         with open(diagnostics, "a") as handle:
@@ -99,6 +109,8 @@ finished = len(receipts) == len(config["iterations"])
 result = {"schema": "mtg-kernel-native-expanded-training-run/v1", "complete": finished,
           "completed_iterations": len(receipts), "planned_iterations": len(config["iterations"]),
           "iterations": receipts}
+if engine is not None:
+    result["engine"] = engine
 if finished:
     publish(root / "completion.json", result)
 print(json.dumps(result))
@@ -402,6 +414,54 @@ class TreeComparisonTest(unittest.TestCase):
         self.assertEqual(file_result, {"status": "accounted", "classes": {"timing": bench.COLLECTED_DIFFERENCES}})
         self.assertEqual(summary["status"], "equal_up_to_accounted_fields")
 
+    ENGINE = {"schema": "mtg-kernel-engine-identity/v1", "git_commit": "bbbb",
+              "tracked_tree_sha256": "bbbbbbbb", "git_clean": True, "rules_version": 1}
+
+    def compare_file(self, relative, left_value, right_value, across_builds=True):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for tree, value in ((root / "reference", left_value), (root / "sample", right_value)):
+                (tree / relative).parent.mkdir(parents=True)
+                (tree / relative).write_text(json.dumps(value), encoding="utf-8")
+            comparison = bench.TreeComparison(root / "reference", root / "sample", prefix="run",
+                                              across_builds=across_builds)
+            return comparison.file(relative)
+
+    def test_an_engine_identity_only_one_build_records_is_provenance(self):
+        # mtg-kernel#921: a build from before engine identities were recorded
+        # against one from after, in both completion records, either way round.
+        before = {"iteration": 0, "output_identity": {"state_sha256": "s"}}
+        after = {**before, "engine": self.ENGINE}
+        for relative in ("iterations/000000/complete.json", "completion.json"):
+            for left, right in ((before, after), (after, before)):
+                self.assertEqual(self.compare_file(relative, left, right),
+                                 {"status": "accounted", "classes": {"provenance": 1}}, relative)
+        # Two builds that both record one compare it field by field: build
+        # provenance is accepted, a rules version is not.
+        other = {**after, "engine": {**self.ENGINE, "git_commit": "cccc", "git_clean": False}}
+        self.assertEqual(self.compare_file("completion.json", after, other),
+                         {"status": "accounted", "classes": {"provenance": 2}})
+        rules = {**after, "engine": {**self.ENGINE, "rules_version": 2}}
+        result = self.compare_file("completion.json", after, rules)
+        self.assertEqual(result["status"], "mismatch")
+        self.assertEqual(result["differences"], ["engine/rules_version (value)"])
+
+    def test_an_engine_member_is_provenance_only_where_the_trainer_records_it(self):
+        before = {"iteration": 0}
+        after = {**before, "engine": self.ENGINE}
+        mismatch = lambda *args, **kwargs: self.assertEqual(
+            self.compare_file(*args, **kwargs)["status"], "mismatch", args)
+        # Within one build, an engine member present on one side only.
+        mismatch("completion.json", before, after, across_builds=False)
+        # In any other run file, or nested below the top level.
+        mismatch("iterations/000000/attempt-000000/update/update.json", before, after)
+        mismatch("run.json", before, after)
+        mismatch("completion.json", {"output_identity": {}},
+                 {"output_identity": {"engine": self.ENGINE}})
+        # Something else under that name.
+        mismatch("completion.json", before, {**before, "engine": "bbbb"})
+        mismatch("completion.json", before, {**before, "engine": {**self.ENGINE, "schema": "x"}})
+
 
 @unittest.skipUnless(hasattr(os, "wait4") or os.name == "nt", "the driver times runs with wait4 or a job object")
 class DriverTest(unittest.TestCase):
@@ -511,6 +571,46 @@ class DriverTest(unittest.TestCase):
             self.assertEqual(bench.main(["compare", "--out", str(self.out)]), 2)
             self.assertEqual(bench.main(["receipt", "--run", f"smoke={self.out}",
                                          "--write", str(receipt)]), 2)
+
+    def test_a_build_from_before_engine_identities_matches_one_from_after(self):
+        # mtg-kernel#921 added `engine` to complete.json and completion.json,
+        # which changes complete.json's pin inside completion.json. A baseline
+        # built before it and a candidate built after it, with identical
+        # training outputs, still pass parity; both records and the pins are
+        # accounted for, not listed as mismatches.
+        code = self.bench("--warmup-runs", "0", "--cold-resume",
+                          "--arm-env", "branch:FAKE_RULES_VERSION=1")
+        self.assertEqual(code, 0, self.errors)
+        samples = self.samples()
+        for case in ("fresh", "warm"):
+            rows = [s for s in samples if s["case"] == case]
+            self.assertEqual(rows[0]["arm"], "main", "the reference records no engine")
+            across = [s for s in rows[1:] if s["arm"] == "branch"]
+            self.assertEqual(len(across), 3)
+            for sample in across:
+                parity = sample["parity"]
+                self.assertEqual(parity["status"], "equal_up_to_accounted_fields", (case, parity))
+                self.assertTrue(parity["boundaries_equal"])
+                classes = {f["file"]: f["classes"] for f in parity["accounted_files"]}
+                for index in range(2):
+                    self.assertEqual(classes[f"iterations/{index:06d}/complete.json"],
+                                     {"pin": 2, "provenance": 1})
+                self.assertEqual(classes["completion.json"], {"pin": 2, "provenance": 1})
+        comparison = json.loads((self.out / "comparison.json").read_text())
+        self.assertTrue(comparison["ok"])
+        self.assertTrue(all(c["parity_ok"] for c in comparison["cases"].values()))
+
+        # Identical training outputs are still required, and two builds that
+        # both record engines with different rules versions do not match.
+        for extra in (("--arm-env", "branch:FAKE_STATE_SHIFT=1"),
+                      ("--arm-env", "main:FAKE_RULES_VERSION=1",
+                       "--arm-env", "branch:FAKE_RULES_VERSION=2")):
+            shutil.rmtree(self.out)
+            code = self.bench("--warmup-runs", "0", "--cases", "fresh",
+                              "--arm-env", "branch:FAKE_RULES_VERSION=1", *extra)
+            self.assertEqual(code, 1, extra)
+            branch = [s for s in self.samples() if s["arm"] == "branch"]
+            self.assertTrue(all(s["parity"]["status"] == "mismatch" for s in branch), extra)
 
     def test_a_changed_state_or_a_failed_sample_fails_the_comparison(self):
         code = self.bench("--warmup-runs", "0", "--cases", "fresh",

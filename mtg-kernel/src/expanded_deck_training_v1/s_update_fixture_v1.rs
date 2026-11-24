@@ -624,6 +624,7 @@ pub fn generate_v1(options: &FixtureOptionsV1, out: &Path) -> Result<FixtureMani
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: RecordEnvelopeV1::default(),
+            trajectory_format: Default::default(),
             output_directory: directory.join("collect"),
         })?;
         let trajectories: Vec<PinnedFileV1> =
