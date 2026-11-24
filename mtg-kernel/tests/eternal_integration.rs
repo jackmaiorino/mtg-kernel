@@ -126,6 +126,8 @@ mod eternal_premodern_p3f_v1;
 mod eternal_premodern_p3g_v1;
 #[path = "eternal/eternal_premodern_p3h_v1.rs"]
 mod eternal_premodern_p3h_v1;
+#[path = "eternal/eternal_public_extra_turns_v1.rs"]
+mod eternal_public_extra_turns_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]
 mod eternal_public_shroud_v1;
 #[path = "eternal/eternal_sideboard_s1a_v1.rs"]
