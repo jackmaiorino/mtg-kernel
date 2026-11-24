@@ -2,6 +2,7 @@
 it scheduled everything the Windows complement leaves to it (pr-run), decided from the run's actual jobs."""
 import contextlib
 import io
+import json
 import os
 import re
 import sys
@@ -132,6 +133,8 @@ def plan(rust="true", python="false", scope="pr", checks="all", status="complete
 
 RUST_ONLY = RUST_ONLY_RUN_JOBS + [plan()]
 WITH_PYTHON = PYTHON_RUN_JOBS + [plan(python="true")]
+# The same run finished: every job succeeded or was skipped.
+DONE = [(n, "completed", "success") if s != "completed" else (n, s, c) for n, s, c in WITH_PYTHON]
 
 
 def pull(number, sha, repo=REPOSITORY, draft=False, ref=REF):
@@ -281,12 +284,13 @@ class EvidenceTests(unittest.TestCase):
 
     def test_rows_finished_or_on_their_way_show_the_whole_set(self):
         for status, conclusion in (("queued", None), ("in_progress", None), ("waiting", None),
-                                   ("completed", "success"), ("completed", "failure")):
+                                   ("completed", "success")):
             with self.subTest(status=status, conclusion=conclusion):
                 rows = replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-lib)", status, conclusion)
                 self.assertTrue(whole(rows))
-        done = [(n, "completed", "success") if s != "completed" else (n, s, c) for n, s, c in WITH_PYTHON]
-        self.assertTrue(whole(done, run(7, status="completed", conclusion="failure")))
+        self.assertTrue(whole(DONE, run(7, status="completed", conclusion="success")))
+        # A failed row is no longer evidence: the run is not green so far.
+        self.assertFalse(whole(replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-lib)", "completed", "failure")))
 
     def test_a_cancelled_or_unstarted_run_or_evidence_job_is_not_evidence(self):
         for name in ("Rust tests (ubuntu-24.04, workspace-lib)", "Build Python test binaries (windows-2025)"):
@@ -338,6 +342,62 @@ class EvidenceTests(unittest.TestCase):
             with self.subTest(case=name):
                 self.assertFalse(whole(rows))
 
+    def test_each_guard_decides_alone(self):
+        # Fixtures that qualify in every respect but one, so only that guard decides.
+        finished = run(7, status="completed", conclusion="success")
+        self.assertTrue(whole(DONE, finished))
+        # (a) A completed run that did not succeed, although every job listed succeeded or was skipped.
+        self.assertFalse(whole(DONE, run(7, status="completed", conclusion="failure")))
+        # (b) The plan's status must be completed (a queued plan row that already carries a success conclusion).
+        rows = [(n, "queued", c) if n.startswith("CI plan") else (n, s, c) for n, s, c in RUST_ONLY]
+        self.assertFalse(whole(rows))
+        # (c) A job with a status this code does not know, in an otherwise qualifying run.
+        self.assertFalse(whole(RUST_ONLY + [("Some new job", "mystery", None)]))
+        self.assertTrue(whole(RUST_ONLY + [("Some new job", "queued", None)]))
+
+    def test_any_failed_job_disqualifies_the_run(self):
+        # A failed prerequisite leaves its dependents unscheduled: GitHub skips the Python shards when one Python
+        # build fails, the Limited groups when the Limited build fails, the Eternal parts and inventory when the
+        # Eternal build fails. So does any other failed, cancelled or timed-out job.
+        ubuntu, windows = pr_lookup.PYTHON_BUILD_JOBS
+        failed_python = replace(DONE, windows, "completed", "failure")
+        failed_python = replace(failed_python, "Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})",
+                                "completed", "skipped")
+        cases = {
+            "failed Python build": failed_python,
+            "failed Limited build": replace(DONE, "Build shared Limited tests (ubuntu-24.04, tests)", "completed",
+                                            "failure"),
+            "failed Eternal build": replace(DONE, "Build shared Eternal integration tests (ubuntu-24.04)", "completed",
+                                            "failure"),
+            "failed leaf test": DONE + [("Python tests (ubuntu-24.04, shard 0)", "completed", "failure")],
+            "failed unrelated family": replace(DONE, "Rust formatting and lint", "completed", "failure"),
+            "cancelled job": replace(DONE, "Rust formatting and lint", "completed", "cancelled"),
+            "timed out job": replace(DONE, "Rust formatting and lint", "completed", "timed_out"),
+            "action required": replace(DONE, "Rust formatting and lint", "completed", "action_required"),
+            "neutral": replace(DONE, "Rust formatting and lint", "completed", "neutral"),
+            "startup failure": replace(DONE, "Rust formatting and lint", "completed", "startup_failure"),
+        }
+        for name, rows in cases.items():
+            for the_run in (run(7), run(7, status="completed", conclusion="success")):
+                with self.subTest(case=name, run=the_run["status"]):
+                    self.assertFalse(whole(rows, the_run))
+        self.assertIn(("Rust formatting and lint", "completed", "success"), DONE)
+
+    def test_every_linux_rust_group_row_must_be_present(self):
+        for group in pr_lookup.LINUX_RUST_GROUPS:
+            with self.subTest(missing=group):
+                rows = [r for r in RUST_ONLY if r[0] != f"Rust tests (ubuntu-24.04, {group})"]
+                self.assertFalse(whole(rows))
+                self.assertFalse(whole(replace(RUST_ONLY, f"Rust tests (ubuntu-24.04, {group})", "completed",
+                                               "skipped")))
+
+    def test_a_rerun_of_the_plan_job_alone(self):
+        # Rerunning one job: the latest attempt lists that job's new run and every other job's last run. While the
+        # plan is queued again there is no plan; once it succeeds the run qualifies again.
+        rerun = [(n, "queued", None) if n.startswith("CI plan") else (n, s, c) for n, s, c in DONE]
+        self.assertFalse(whole(rerun, run(7, status="queued")))
+        self.assertTrue(whole(DONE, run(7, status="completed", conclusion="success")))
+
     def test_every_job_record_is_validated_first(self):
         for bad in ({"id": 1, "name": None, "status": "queued", "conclusion": None, "run_id": 7},
                     {"id": 1, "name": "x", "status": None, "conclusion": None, "run_id": 7},
@@ -358,6 +418,13 @@ class EvidenceTests(unittest.TestCase):
             matrix = block(name).split("        group:\n", 1)[1]
             return re.findall(r"^          - ([a-z0-9-]+)$", matrix.split("\n        exclude:", 1)[0], re.MULTILINE)
         self.assertEqual(tuple(groups("rust-test-groups")), pr_lookup.RUST_TEST_GROUPS)
+        # The pull request set's exclude list drops exactly native-store-1 on Linux.
+        exclude = block("rust-test-groups").split("        exclude: ", 1)[1].split("\n", 1)[0]
+        pr_branch = exclude.split("needs.detect-changes.outputs.scope == 'windows-pr') && '", 1)[1].split("'", 1)[0]
+        linux_excluded = [row["group"] for row in json.loads(pr_branch) if row["os"] == "ubuntu-24.04"]
+        self.assertEqual(linux_excluded, ["native-store-1"])
+        self.assertEqual(pr_lookup.LINUX_RUST_GROUPS,
+                         tuple(g for g in pr_lookup.RUST_TEST_GROUPS if g not in linux_excluded))
         self.assertIn("    name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})\n", block("rust-test-groups"))
         self.assertIn('"ubuntu-24.04"', block("rust-test-groups").split("        os: ", 1)[1].split("\n", 1)[0])
         for other in ("rust-limited-groups", "rust-eternal-integration-parts"):
@@ -435,6 +502,12 @@ class RunSelectionTests(unittest.TestCase):
             return dict(body, total_count=body["total_count"] + (key == "workflow_runs" and page == 1))
         with self.assertRaises(ValueError):
             decide(many + [run(1)], {1: jobs(RUST_ONLY, 1)}, page_hook=recount)
+        # A listing capped at 1,000 of 1,001 records (GitHub returns at most 1,000 results): an error.
+        capped = [run(2000 + i, "2026-11-24T08:00:00Z", event="push") for i in range(1000)] + [run(1)]
+        def cap(key, page, body):
+            return dict(body, workflow_runs=[]) if key == "workflow_runs" and page > 10 else body
+        with self.assertRaises(ValueError):
+            decide(capped, {1: jobs(RUST_ONLY, 1)}, page_hook=cap, budget=self_hosted_budget.Budget(requests=40))
         # A job page that fails, and a job listing that runs past one page.
         long_jobs = jobs(RUST_ONLY + [(f"Extra job {i}", "completed", "success") for i in range(100)], 1)
         self.assertEqual(decide([run(1)], {1: long_jobs})[0], "whole-set")
