@@ -122,6 +122,7 @@ pub struct EternalRegisteredDeckV1 {
     registered: EternalConfigurationV1,
     companion: Option<u16>,
     native_opening: bool,
+    ordered_graveyard: bool,
 }
 
 impl EternalRegisteredDeckV1 {
@@ -142,6 +143,8 @@ impl EternalRegisteredDeckV1 {
             mainboard,
             sideboard,
             companion,
+            false,
+            false,
             false,
         )
     }
@@ -169,9 +172,83 @@ impl EternalRegisteredDeckV1 {
             sideboard,
             companion,
             true,
+            false,
+            false,
         )
     }
 
+    /// Explicit Premodern ordered-graveyard profile (`docs/design/premodern_shapeshifter_alter_reality_v1.md`,
+    /// section 3.3). Requires `EternalFormatV1::Premodern`, every card Full,
+    /// not a token, and in the 305-card Premodern snapshot pool, with no
+    /// companion and no native-opening card. Both match registrations must opt
+    /// in.
+    pub fn new_with_ordered_graveyard_v1(
+        format: EternalFormatV1,
+        deck_id: impl Into<String>,
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+        companion: Option<u16>,
+    ) -> Result<Self, EternalBo3ErrorV1> {
+        if !cfg!(feature = "eternal-fixtures") {
+            return Err(EternalBo3ErrorV1::OrderedGraveyardSetup {
+                reason: "the ordered graveyard profile requires the Eternal catalog".into(),
+            });
+        }
+        Self::register(
+            format,
+            deck_id.into(),
+            mainboard,
+            sideboard,
+            companion,
+            false,
+            true,
+            false,
+        )
+    }
+
+    /// Scoped admission of the exact verified frozen Full English Breakfast 75
+    /// under the ordered-graveyard profile while Volrath's Shapeshifter stays
+    /// Partial (step B1; step B2 flips the card to Full).
+    #[cfg(feature = "eternal-fixtures")]
+    pub fn frozen_feb_75_with_ordered_graveyard_v1() -> Result<Self, EternalBo3ErrorV1> {
+        let (mainboard, sideboard) =
+            crate::premodern_ordered_public_v1::feb::frozen_feb_75_ids_v1()
+                .map_err(|reason| EternalBo3ErrorV1::OrderedGraveyardSetup { reason })?;
+        Self::register(
+            EternalFormatV1::Premodern,
+            "premodern-full-english-breakfast".into(),
+            mainboard,
+            sideboard,
+            None,
+            false,
+            true,
+            true,
+        )
+    }
+
+    #[cfg(all(test, feature = "eternal-fixtures"))]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn register_test_partial_volrath_v1(
+        format: EternalFormatV1,
+        deck_id: impl Into<String>,
+        mainboard: Vec<u16>,
+        sideboard: Vec<u16>,
+        companion: Option<u16>,
+        ordered_graveyard: bool,
+    ) -> Result<Self, EternalBo3ErrorV1> {
+        Self::register(
+            format,
+            deck_id.into(),
+            mainboard,
+            sideboard,
+            companion,
+            false,
+            ordered_graveyard,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn register(
         format: EternalFormatV1,
         deck_id: String,
@@ -179,20 +256,58 @@ impl EternalRegisteredDeckV1 {
         sideboard: Vec<u16>,
         companion: Option<u16>,
         native_opening: bool,
+        ordered_graveyard: bool,
+        allow_partial_volrath: bool,
     ) -> Result<Self, EternalBo3ErrorV1> {
         if deck_id.is_empty() {
             return Err(EternalBo3ErrorV1::EmptyDeckId);
         }
+        if ordered_graveyard {
+            if native_opening {
+                return Err(EternalBo3ErrorV1::OrderedGraveyardSetup {
+                    reason: "ordered graveyard and native opening profiles cannot be combined"
+                        .into(),
+                });
+            }
+            if format != EternalFormatV1::Premodern {
+                return Err(EternalBo3ErrorV1::OrderedGraveyardSetup {
+                    reason: "the ordered graveyard profile requires Premodern".into(),
+                });
+            }
+            if companion.is_some() {
+                return Err(EternalBo3ErrorV1::OrderedGraveyardSetup {
+                    reason: "the ordered graveyard profile does not admit companions".into(),
+                });
+            }
+        }
         check_bounds(format, mainboard.len(), sideboard.len())?;
         let registered = EternalConfigurationV1::new_v1(mainboard, sideboard);
+        #[cfg(feature = "eternal-fixtures")]
+        let premodern_pool = if ordered_graveyard {
+            Some(
+                crate::premodern_ordered_public_v1::feb::premodern_pool_names_v1()
+                    .map_err(|reason| EternalBo3ErrorV1::OrderedGraveyardSetup { reason })?,
+            )
+        } else {
+            None
+        };
         for &id in registered.mainboard.iter().chain(&registered.sideboard) {
             let card = CARD_DEFS
                 .get(usize::from(id))
                 .ok_or(EternalBo3ErrorV1::UnknownCardId { card_id: id })?;
             let requires_opening = crate::eternal_opening_v1::requires_native_opening(card);
             if !native_opening && requires_opening {
-                return Err(EternalBo3ErrorV1::NativeOpeningSetup {
-                    reason: format!("{} requires native opening registration", card.name),
+                return Err(if ordered_graveyard {
+                    EternalBo3ErrorV1::OrderedGraveyardSetup {
+                        reason: format!(
+                            "{} requires the native opening profile, not ordered graveyard",
+                            card.name
+                        ),
+                    }
+                } else {
+                    EternalBo3ErrorV1::NativeOpeningSetup {
+                        reason: format!("{} requires native opening registration", card.name),
+                    }
                 });
             }
             if native_opening && crate::leyline_axe_v1::definition(id) {
@@ -200,11 +315,34 @@ impl EternalRegisteredDeckV1 {
                     reason: "Leyline Axe belongs to its own opening profile".into(),
                 });
             }
+            if ordered_graveyard
+                && (crate::leyline_axe_v1::definition(id) || card.name == "Chancellor of the Annex")
+            {
+                return Err(EternalBo3ErrorV1::OrderedGraveyardSetup {
+                    reason: format!(
+                        "{} is a native opening card and is not admitted in the ordered graveyard profile",
+                        card.name
+                    ),
+                });
+            }
             let opening_card = native_opening
                 && (requires_opening
                     || (card.is_executable() && card.name == "Chancellor of the Annex"));
-            if card.is_token || !(card.has_full_support() || opening_card) {
+            let requires_ordered = crate::full_text_v1::owns_definition(card);
+            let partial_volrath = allow_partial_volrath && requires_ordered;
+            if card.is_token || !(card.has_full_support() || opening_card || partial_volrath) {
                 return Err(EternalBo3ErrorV1::UnsupportedCard {
+                    name: card.name.to_owned(),
+                });
+            }
+            if !ordered_graveyard && requires_ordered {
+                return Err(EternalBo3ErrorV1::OrderedGraveyardSetup {
+                    reason: format!("{} requires ordered graveyard registration", card.name),
+                });
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if premodern_pool.is_some_and(|pool| !pool.contains(card.name)) {
+                return Err(EternalBo3ErrorV1::OutsidePremodernPoolV1 {
                     name: card.name.to_owned(),
                 });
             }
@@ -242,6 +380,7 @@ impl EternalRegisteredDeckV1 {
             registered,
             companion,
             native_opening,
+            ordered_graveyard,
         })
     }
 
@@ -285,6 +424,10 @@ impl EternalRegisteredDeckV1 {
 
     pub fn companion(&self) -> Option<u16> {
         self.companion
+    }
+
+    pub fn ordered_graveyard(&self) -> bool {
+        self.ordered_graveyard
     }
 
     /// Admits a configuration for game `game_index`: the registered 75
@@ -423,6 +566,9 @@ impl EternalBestOfThreeMatchV1 {
         if decks[0].native_opening != decks[1].native_opening {
             return Err(EternalBo3ErrorV1::OpeningProfileMismatch);
         }
+        if decks[0].ordered_graveyard != decks[1].ordered_graveyard {
+            return Err(EternalBo3ErrorV1::GraveyardProfileMismatch);
+        }
         Ok(Self {
             decks,
             state: BestOfThreeMatchStateV1::new_v1(game_one_chooser)?,
@@ -448,6 +594,9 @@ impl EternalBestOfThreeMatchV1 {
     ) -> Result<EternalPreparedGameV1, EternalBo3ErrorV1> {
         if self.decks[0].native_opening {
             return Err(EternalBo3ErrorV1::OpeningProfileMismatch);
+        }
+        if self.decks[0].ordered_graveyard {
+            return Err(EternalBo3ErrorV1::GraveyardProfileMismatch);
         }
         let (next, game) = self.prepare_game(chooser, choice, configurations)?;
         self.state = next;
@@ -493,6 +642,46 @@ impl EternalBestOfThreeMatchV1 {
         crate::eternal_outside_game_v1::set_outside_the_game(&mut state, outside);
         self.state = next;
         Ok((game, state))
+    }
+
+    /// Start a game under the two registrations' ordered-graveyard profile,
+    /// returning the prepared match-to-seat mapping and the in-process
+    /// registered ordered owner (`FebSessionV1::reset_registered_v1`).
+    /// The prepared game maps native seat P0 to the match's starting player.
+    #[cfg(feature = "eternal-fixtures")]
+    pub fn start_game_with_ordered_graveyard_v1(
+        &mut self,
+        chooser: PlayerId,
+        choice: PlayDrawChoiceV1,
+        configurations: [EternalConfigurationV1; 2],
+        seed: u64,
+    ) -> Result<
+        (
+            EternalPreparedGameV1,
+            crate::premodern_ordered_public_v1::feb::FebSessionV1,
+        ),
+        EternalBo3ErrorV1,
+    > {
+        if !self.decks[0].ordered_graveyard {
+            return Err(EternalBo3ErrorV1::GraveyardProfileMismatch);
+        }
+        let (next, game) = self.prepare_game(chooser, choice, configurations)?;
+        let mainboards =
+            [0, 1].map(|seat| game.configuration(game.player_in_seat(seat)).mainboard());
+        let outside = [0, 1].map(|seat| {
+            game.game_deck(game.player_in_seat(seat))
+                .outside_the_game
+                .clone()
+        });
+        let owner = crate::premodern_ordered_public_v1::feb::FebSessionV1::reset_registered_v1(
+            mainboards,
+            outside,
+            seed,
+            crate::rl::PlayerSeatV1::P0,
+        )
+        .map_err(|reason| EternalBo3ErrorV1::OrderedGraveyardSetup { reason })?;
+        self.state = next;
+        Ok((game, owner))
     }
 
     fn prepare_game(
@@ -594,6 +783,9 @@ pub enum EternalBo3ErrorV1 {
     OpeningProfileMismatch,
     NativeOpeningSetup { reason: String },
     Match(MatchStateErrorV1),
+    OutsidePremodernPoolV1 { name: String },
+    OrderedGraveyardSetup { reason: String },
+    GraveyardProfileMismatch,
 }
 
 impl From<MatchStateErrorV1> for EternalBo3ErrorV1 {
@@ -650,6 +842,15 @@ impl fmt::Display for EternalBo3ErrorV1 {
             ),
             Self::NativeOpeningSetup { reason } => write!(f, "native opening setup: {reason}"),
             Self::Match(error) => write!(f, "match state: {error}"),
+            Self::OutsidePremodernPoolV1 { name } => {
+                write!(f, "card {name:?} is outside the Premodern snapshot pool")
+            }
+            Self::OrderedGraveyardSetup { reason } => {
+                write!(f, "ordered graveyard setup: {reason}")
+            }
+            Self::GraveyardProfileMismatch => f.write_str(
+                "both registrations and the game start must use the same ordered graveyard profile",
+            ),
         }
     }
 }

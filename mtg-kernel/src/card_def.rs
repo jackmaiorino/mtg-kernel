@@ -3866,6 +3866,11 @@ pub enum DeckPreflightError {
         card_def: u16,
         name: &'static str,
     },
+    RequiresOrderedGraveyardOwnerV1 {
+        index: usize,
+        card_def: u16,
+        name: &'static str,
+    },
 }
 
 impl fmt::Display for DeckPreflightError {
@@ -3899,6 +3904,14 @@ impl fmt::Display for DeckPreflightError {
                 f,
                 "deck card {index} ({name}, definition {card_def}) requires the native opening profile"
             ),
+            DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index,
+                card_def,
+                name,
+            } => write!(
+                f,
+                "deck card {index} ({name}, definition {card_def}) requires the ordered graveyard owner"
+            ),
         }
     }
 }
@@ -3906,7 +3919,8 @@ impl fmt::Display for DeckPreflightError {
 impl std::error::Error for DeckPreflightError {}
 
 /// Admits explicitly `Full` printings to ordinary environment construction.
-/// Printings requiring the native opening owner use its separate registration.
+/// Printings requiring the native opening owner or the ordered graveyard owner
+/// use their separate registrations.
 pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
     for (index, &card_def) in card_defs.iter().enumerate() {
         let Some(def) = CARD_DEFS.get(card_def as usize) else {
@@ -3929,6 +3943,31 @@ pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPrefl
         }
         if crate::eternal_opening_v1::requires_native_opening(def) {
             return Err(DeckPreflightError::RequiresNativeOpening {
+                index,
+                card_def,
+                name: def.name,
+            });
+        }
+        if crate::full_text_v1::owns_definition(def) {
+            return Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index,
+                card_def,
+                name: def.name,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Refuses cards outside the game that require the ordered graveyard owner,
+/// and checks nothing else so existing outside-the-game inputs are unchanged.
+pub fn preflight_outside_the_game(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
+    for (index, &card_def) in card_defs.iter().enumerate() {
+        let Some(def) = CARD_DEFS.get(card_def as usize) else {
+            continue;
+        };
+        if crate::full_text_v1::owns_definition(def) {
+            return Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
                 index,
                 card_def,
                 name: def.name,
@@ -4720,6 +4759,31 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    #[cfg(feature = "eternal-fixtures")]
+    fn preflight_outside_the_game_refuses_volrath_and_accepts_other_cards() {
+        let forest = card_id_by_name("Forest").unwrap();
+        let extrapolate = card_id_by_name("Extrapolate the Impossible").unwrap();
+        let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
+
+        assert!(preflight_outside_the_game(&[forest, extrapolate]).is_ok());
+        let error = preflight_outside_the_game(&[forest, volrath]).unwrap_err();
+        assert_eq!(
+            error,
+            DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index: 1,
+                card_def: volrath,
+                name: "Volrath's Shapeshifter",
+            }
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("requires the ordered graveyard owner"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -1026,6 +1026,14 @@ fn play_frozen_feb_mirror(
             Ok(FebCurrentV1::NativeHalt) => {
                 panic!("{} native halt: {:?}", at(), owner.inner.game.engine.halted);
             }
+            Ok(FebCurrentV1::RegisteredHaltV1 { mechanic, source }) => {
+                panic!(
+                    "{} unexpected registered halt {:?} source {:?}",
+                    at(),
+                    mechanic,
+                    source
+                );
+            }
             Ok(FebCurrentV1::UnsupportedDecision) => {
                 panic!(
                     "{} unsupported decision: {:?}",
@@ -1177,4 +1185,580 @@ fn frozen_feb_mirrors_reach_native_terminal_and_replay_both_starting_seats() {
             "FEB starting {starting:?} replay changed native event receipts"
         );
     }
+}
+
+fn premodern_ids(rows: &[(&str, usize)]) -> Vec<u16> {
+    rows.iter()
+        .flat_map(|&(name, count)| {
+            let id = card_id_by_name(name).unwrap_or_else(|| panic!("missing card {name:?}"));
+            std::iter::repeat_n(id, count)
+        })
+        .collect()
+}
+
+fn step_registered_until_main1(owner: &mut FebSessionV1) {
+    for _ in 0..32 {
+        if owner.inner.game.step == Step::Main1 && owner.inner.game.london_mulligans_v1.is_none() {
+            return;
+        }
+        let actor = acting(owner);
+        let view = owner
+            .registered_decision_view_v1(actor)
+            .unwrap()
+            .expect("actor has registered view");
+        let Some(NumericMenuV1::Native { actions }) = view.menu else {
+            panic!("expected native opening menu");
+        };
+        let ordinal = actions
+            .iter()
+            .position(|row| {
+                matches!(
+                    row.action.semantic,
+                    ActionSemanticV1::ChooseLondonMulligan {
+                        mulligan: false,
+                        ..
+                    } | ActionSemanticV1::Pass { .. }
+                )
+            })
+            .expect("expected keep or pass while advancing to Main1");
+        let (_, token) = issued(owner, actor);
+        owner.step(&token.unwrap(), ordinal).unwrap();
+    }
+    panic!("registered owner did not reach Main1");
+}
+
+#[test]
+fn registered_owner_step_snapshot_restore_stale_tokens_privacy_and_shroud_both_seats() {
+    let deck = premodern_ids(&[
+        ("Forest", 26),
+        ("Plains", 26),
+        ("Argothian Enchantress", 4),
+        ("True Believer", 4),
+    ]);
+    let sideboard = premodern_ids(&[("Swords to Plowshares", 4)]);
+    let frozen = FebSessionV1::reset(460_701, PlayerSeatV1::P0).unwrap();
+    assert_eq!(frozen.profile(), PROFILE_V1);
+    assert!(frozen
+        .registered_decision_view_v1(PlayerSeatV1::P0)
+        .is_err());
+
+    for first in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let first_player = native_seat(first);
+        let other: PlayerSeatV1 = first_player.opponent().into();
+        let mut owner = FebSessionV1::reset_registered_v1(
+            [&deck, &deck],
+            [sideboard.clone(), sideboard.clone()],
+            460_702,
+            first,
+        )
+        .unwrap();
+        let foreign = FebSessionV1::reset_registered_v1(
+            [&deck, &deck],
+            [sideboard.clone(), sideboard.clone()],
+            460_702,
+            first,
+        )
+        .unwrap();
+        assert_eq!(owner.profile(), REGISTERED_PROFILE_V1);
+        assert!(owner.terminal_state_hash_v1().is_none());
+        assert!(owner.inner.game.public_shroud_v1);
+        assert!(owner.inner.game.engine.combat.foundations_v1.is_some());
+        assert!(owner.inner.game.london_mulligans_v1.is_some());
+        assert_eq!(
+            crate::eternal_outside_game_v1::outside_the_game(&owner.inner.game, PlayerId::P0),
+            sideboard.as_slice()
+        );
+
+        let (initial, token) = issued(&owner, first);
+        let token = token.unwrap();
+        assert_eq!(initial.profile, REGISTERED_PROFILE_V1);
+        assert_eq!(initial.actor, first);
+        assert_eq!(initial.actions.len(), 2);
+        let human = owner.human_current(first).unwrap().unwrap();
+        assert_eq!(human.profile, REGISTERED_PROFILE_V1);
+        let (nonactor, authority) = issued(&owner, other);
+        assert_eq!(nonactor.profile, REGISTERED_PROFILE_V1);
+        assert!(authority.is_none() && nonactor.actions.is_empty());
+
+        // Hidden-world privacy: swapping opponent hand and library cards leaves
+        // every view for `first` unchanged.
+        let mut paired = FebSessionV1::reset_registered_v1(
+            [&deck, &deck],
+            [sideboard.clone(), sideboard.clone()],
+            460_702,
+            first,
+        )
+        .unwrap();
+        let opp_idx = first_player.opponent().index();
+        let hand_card = paired.inner.game.players[opp_idx].hand[0];
+        let lib_card = paired.inner.game.players[opp_idx]
+            .library
+            .iter()
+            .copied()
+            .find(|&id| {
+                paired.inner.game.objects.get(id).card_def
+                    != paired.inner.game.objects.get(hand_card).card_def
+            })
+            .unwrap();
+        let a = paired.inner.game.objects.get(hand_card).card_def;
+        let b = paired.inner.game.objects.get(lib_card).card_def;
+        for (id, def) in [(hand_card, b), (lib_card, a)] {
+            let obj = paired.inner.game.objects.get_mut(id);
+            obj.card_def = def;
+            obj.name = rl::card_name(def);
+            obj.v4 = crate::state::ObjectStateV4::from_card_def(def);
+        }
+        assert_ne!(
+            owner.inner.game.state_hash(),
+            paired.inner.game.state_hash()
+        );
+        let (paired_view, _) = issued(&paired, first);
+        assert_eq!(initial.observation, paired_view.observation);
+        assert_eq!(initial.actions, paired_view.actions);
+        assert_eq!(
+            owner.registered_decision_view_v1(first).unwrap(),
+            paired.registered_decision_view_v1(first).unwrap()
+        );
+        assert_eq!(
+            owner.human_current(first).unwrap(),
+            paired.human_current(first).unwrap()
+        );
+
+        // Snapshot, restore, foreign rejection, and stale token invalidation.
+        let saved = owner.snapshot();
+        let (_, foreign_token) = issued(&foreign, first);
+        assert!(owner.step(&foreign_token.unwrap(), 0).is_err());
+        assert!(owner.restore(&foreign.snapshot()).is_err());
+        assert!(owner.step(&token, usize::MAX).is_err());
+        assert_eq!(owner.inner.game.state_hash(), saved.inner.game.state_hash());
+
+        let reg_view = owner.registered_decision_view_v1(first).unwrap().unwrap();
+        let Some(NumericMenuV1::Native { actions }) = reg_view.menu else {
+            panic!("expected London mulligan native menu");
+        };
+        let keep = actions
+            .iter()
+            .position(|row| {
+                matches!(
+                    row.action.semantic,
+                    ActionSemanticV1::ChooseLondonMulligan {
+                        mulligan: false,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        owner.step(&token, keep).unwrap();
+        assert_eq!(acting(&owner), other);
+        owner.restore(&saved).unwrap();
+        assert!(owner.step(&token, keep).is_err());
+        let (restored, fresh) = issued(&owner, first);
+        assert_eq!(restored.observation, initial.observation);
+        assert_eq!(restored.actions, initial.actions);
+        owner.step(&fresh.unwrap(), keep).unwrap();
+
+        // Advance to Main1, place permanent shroud and player shroud on the
+        // battlefield, and check both numeric and typed registered views.
+        step_registered_until_main1(&mut owner);
+        let enchantress = stage_deck_card(
+            &mut owner.inner.game,
+            first_player,
+            "Argothian Enchantress",
+            Zone::Battlefield,
+        );
+        let _believer = stage_deck_card(
+            &mut owner.inner.game,
+            first_player,
+            "True Believer",
+            Zone::Battlefield,
+        );
+        owner.inner.current = bind_next_for_profile(
+            &mut owner.inner.game,
+            &mut owner.inner.surface,
+            owner.inner.step,
+            OrderedProfileV1::Registered,
+        );
+        assert!(rl::observe_premodern_ordered_v1(
+            &owner.inner.game,
+            &owner.inner.surface,
+            first_player,
+            owner.inner.step
+        )
+        .is_err());
+        for viewer in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            let (numeric, _) = issued(&owner, viewer);
+            assert_eq!(numeric.profile, REGISTERED_PROFILE_V1);
+            let typed = owner.registered_decision_view_v1(viewer).unwrap().unwrap();
+            assert_eq!(
+                typed.observation.schema,
+                crate::premodern_ordered_public_v1::NUMERIC_REGISTERED_SCHEMA_V1
+            );
+            let shroud = typed
+                .observation
+                .stable
+                .unwrap()
+                .projection
+                .public_shroud
+                .expect("registered scene reports public shroud");
+            assert_eq!(
+                shroud.permanents,
+                vec![rl::card_ref(&owner.inner.game, enchantress).unwrap()]
+            );
+            let mut expected_players = [false, false];
+            expected_players[first_player.index()] = true;
+            assert_eq!(shroud.players, expected_players);
+        }
+    }
+}
+
+#[test]
+fn registered_owner_casts_meddling_mage_names_via_menu_and_reports_in_scene_both_seats() {
+    let deck = premodern_ids(&[
+        ("Island", 24),
+        ("Plains", 24),
+        ("Meddling Mage", 4),
+        ("Swords to Plowshares", 4),
+        ("Birds of Paradise", 4),
+    ]);
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let caster = native_seat(seat);
+        let opponent: PlayerSeatV1 = caster.opponent().into();
+        let mut owner = FebSessionV1::reset_registered_v1(
+            [&deck, &deck],
+            [Vec::new(), Vec::new()],
+            460_703,
+            seat,
+        )
+        .unwrap();
+        step_registered_until_main1(&mut owner);
+
+        let mage = stage_deck_card(&mut owner.inner.game, caster, "Meddling Mage", Zone::Hand);
+        let _swords = stage_deck_card(
+            &mut owner.inner.game,
+            caster,
+            "Swords to Plowshares",
+            Zone::Hand,
+        );
+        // Ensure a legal creature target exists so Swords to Plowshares would
+        // be castable if Meddling Mage did not prohibit it.
+        let _bird = stage_deck_card(
+            &mut owner.inner.game,
+            caster.opponent(),
+            "Birds of Paradise",
+            Zone::Battlefield,
+        );
+        let mana = &mut owner.inner.game.players[caster.index()].mana_pool;
+        mana[ManaColor::W.pool_index()] = 2;
+        mana[ManaColor::U.pool_index()] = 1;
+        owner.inner.current = bind_next_for_profile(
+            &mut owner.inner.game,
+            &mut owner.inner.surface,
+            owner.inner.step,
+            OrderedProfileV1::Registered,
+        );
+
+        // Cast Meddling Mage using numeric submission.
+        let view = owner.registered_decision_view_v1(seat).unwrap().unwrap();
+        let Some(NumericMenuV1::Native { actions }) = view.menu else {
+            panic!("expected Main1 native menu");
+        };
+        let cast_ordinal = actions
+            .iter()
+            .position(|row| {
+                matches!(
+                    &row.action.semantic,
+                    ActionSemanticV1::CastSpell { source, .. } if source.arena_id == mage.0
+                )
+            })
+            .expect("Meddling Mage is castable");
+        let (_, token) = issued(&owner, seat);
+        owner.step(&token.unwrap(), cast_ordinal).unwrap();
+
+        // Pass priority until the Meddling Mage entry naming menu appears.
+        for _ in 0..8 {
+            let actor = acting(&owner);
+            let view = owner.registered_decision_view_v1(actor).unwrap().unwrap();
+            let Some(NumericMenuV1::Native { actions }) = view.menu else {
+                panic!("expected native menu while resolving Meddling Mage");
+            };
+            if actions.iter().any(|row| {
+                matches!(
+                    row.action.semantic,
+                    ActionSemanticV1::ChooseMeddlingMageNameV1 { .. }
+                )
+            }) {
+                break;
+            }
+            let pass = actions
+                .iter()
+                .position(|row| matches!(row.action.semantic, ActionSemanticV1::Pass { .. }))
+                .unwrap();
+            let (_, token) = issued(&owner, actor);
+            owner.step(&token.unwrap(), pass).unwrap();
+        }
+
+        // Choose letter group "S", then "Swords to Plowshares" via numeric
+        // ordinals (while Human view labels them as explicit Unsupported rows).
+        for (expected_group, target_text) in [(false, "S"), (true, "Swords to Plowshares")] {
+            assert_eq!(acting(&owner), seat);
+            let (numeric, token) = issued(&owner, seat);
+            let token = token.unwrap();
+            assert_eq!(numeric.profile, REGISTERED_PROFILE_V1);
+            let (opp_numeric, opp_token) = issued(&owner, opponent);
+            assert!(opp_token.is_none() && opp_numeric.actions.is_empty());
+
+            let human = owner.human_current(seat).unwrap().unwrap();
+            assert_eq!(human.profile, REGISTERED_PROFILE_V1);
+            assert_eq!(human.actions.len(), numeric.actions.len());
+            assert!(human.actions.iter().all(|row| matches!(
+                row,
+                FebHumanActionV1::Unsupported { action_kind, .. }
+                    if action_kind == "choose_meddling_mage_name_v1"
+            )));
+            assert!(owner.step_human(&token, 0).is_err());
+
+            let typed = owner.registered_decision_view_v1(seat).unwrap().unwrap();
+            let Some(NumericMenuV1::Native { actions }) = typed.menu else {
+                panic!("expected Meddling Mage naming menu");
+            };
+            let ordinal = actions
+                .iter()
+                .position(|row| {
+                    matches!(
+                        &row.action.semantic,
+                        ActionSemanticV1::ChooseMeddlingMageNameV1 {
+                            group,
+                            option_text,
+                            ..
+                        } if group.is_some() == expected_group && option_text == target_text
+                    )
+                })
+                .unwrap_or_else(|| panic!("missing Mage option {target_text:?}"));
+
+            let saved = owner.snapshot();
+            owner.step(&token, ordinal).unwrap();
+            owner.restore(&saved).unwrap();
+            assert!(owner.step(&token, ordinal).is_err());
+            let (_, fresh) = issued(&owner, seat);
+            owner.step(&fresh.unwrap(), ordinal).unwrap();
+        }
+
+        // Meddling Mage is now on the battlefield, its chosen name appears in
+        // both seats' scenes, and Swords to Plowshares cannot be cast.
+        assert_eq!(owner.inner.game.objects.get(mage).zone, Zone::Battlefield);
+        let mage_ref = rl::card_ref(&owner.inner.game, mage).unwrap();
+        for viewer in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            let (numeric, _) = issued(&owner, viewer);
+            assert_eq!(numeric.profile, REGISTERED_PROFILE_V1);
+            let typed = owner.registered_decision_view_v1(viewer).unwrap().unwrap();
+            let names = typed
+                .observation
+                .stable
+                .unwrap()
+                .projection
+                .meddling_mage_names
+                .expect("registered scene reports Meddling Mage's chosen name");
+            assert!(names
+                .iter()
+                .any(|entry| entry.source == mage_ref && entry.name == "Swords to Plowshares"));
+        }
+        let actor_view = owner.registered_decision_view_v1(seat).unwrap().unwrap();
+        let Some(NumericMenuV1::Native { actions }) = actor_view.menu else {
+            panic!("expected Main1 menu after Meddling Mage entered");
+        };
+        let swords_id = card_id_by_name("Swords to Plowshares").unwrap();
+        assert!(!actions.iter().any(|row| matches!(
+            &row.action.semantic,
+            ActionSemanticV1::CastSpell { source, .. } if source.card_db_id == swords_id
+        )));
+    }
+}
+
+#[test]
+fn registered_owner_reports_registered_halt_and_frozen_keeps_native_halt_both_seats() {
+    use crate::engine::UnsupportedMechanic;
+
+    let deck = premodern_ids(&[
+        ("Island", 54),
+        ("Volrath's Shapeshifter", 2),
+        ("Masticore", 4),
+    ]);
+    for seat in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let controller = native_seat(seat);
+        let mut owner = FebSessionV1::reset_registered_v1(
+            [&deck, &deck],
+            [Vec::new(), Vec::new()],
+            460_704,
+            seat,
+        )
+        .unwrap();
+        step_registered_until_main1(&mut owner);
+        let host = stage_deck_card(
+            &mut owner.inner.game,
+            controller,
+            "Volrath's Shapeshifter",
+            Zone::Battlefield,
+        );
+        let _donor = stage_deck_card(
+            &mut owner.inner.game,
+            controller,
+            "Masticore",
+            Zone::Graveyard,
+        );
+        assert_eq!(
+            owner.inner.game.engine.halted,
+            Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, host))
+        );
+        owner.inner.current = bind_next_for_profile(
+            &mut owner.inner.game,
+            &mut owner.inner.surface,
+            owner.inner.step,
+            OrderedProfileV1::Registered,
+        );
+        let host_ref = rl::card_ref(&owner.inner.game, host).unwrap();
+        for viewer in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            assert!(matches!(
+                owner.current(viewer).unwrap(),
+                FebCurrentV1::RegisteredHaltV1 {
+                    mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
+                    source: Some(ref source),
+                } if source == &host_ref
+            ));
+            assert!(owner.human_current(viewer).unwrap().is_none());
+            assert!(owner.registered_decision_view_v1(viewer).unwrap().is_none());
+        }
+        assert!(owner.terminal_state_hash_v1().is_none());
+        // The frozen JSONL projection maps a registered halt to `native_halt`,
+        // never `unsupported_numeric_projection`.
+        let wire = crate::premodern_ordered_public_v1::feb_jsonl::fixture_wire_state(&owner);
+        assert_eq!(wire["state_type"], "native_halt");
+
+        // A non-public halt source (e.g. a card in hand) reports `source: None`
+        // so hidden identities never cross the public halt boundary.
+        let hidden = owner.inner.game.players[controller.index()].hand[0];
+        owner.inner.game.engine.halted =
+            Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, hidden));
+        for viewer in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            assert!(matches!(
+                owner.current(viewer).unwrap(),
+                FebCurrentV1::RegisteredHaltV1 {
+                    mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
+                    source: None,
+                }
+            ));
+        }
+
+        // The frozen owner never returns `RegisteredHaltV1`: it keeps `NativeHalt`.
+        let mut frozen = main_phase_owner(460_705, seat);
+        let frozen_host = stage_deck_card(
+            &mut frozen.inner.game,
+            controller,
+            "Volrath's Shapeshifter",
+            Zone::Battlefield,
+        );
+        frozen.inner.game.engine.halted =
+            Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, frozen_host));
+        frozen.inner.current = bind_next(
+            &mut frozen.inner.game,
+            &mut frozen.inner.surface,
+            frozen.inner.step,
+        );
+        for viewer in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+            assert!(matches!(
+                frozen.current(viewer).unwrap(),
+                FebCurrentV1::NativeHalt
+            ));
+        }
+    }
+}
+
+#[test]
+fn ordered_register_refuses_volrath_without_profile_and_rl_session_refuses_outside_volrath() {
+    use crate::eternal_bo3_v1::{EternalBo3ErrorV1, EternalFormatV1, EternalRegisteredDeckV1};
+    use crate::rl_session::{RlEpisodeSessionV1, RlSessionErrorCode};
+
+    let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
+    let island = card_id_by_name("Island").unwrap();
+    let extrapolate = card_id_by_name("Extrapolate the Impossible").unwrap();
+
+    // Even when Volrath's Partial capability is waived (as once B2 flips it to
+    // Full), registering it without the ordered-graveyard profile is refused
+    // with `OrderedGraveyardSetup`.
+    let mut with_volrath = vec![island; 58];
+    with_volrath.extend([volrath; 2]);
+    assert!(matches!(
+        EternalRegisteredDeckV1::register_test_partial_volrath_v1(
+            EternalFormatV1::Premodern,
+            "ordinary-volrath",
+            with_volrath.clone(),
+            Vec::new(),
+            None,
+            false,
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
+            if reason.contains("Volrath's Shapeshifter")
+    ));
+    EternalRegisteredDeckV1::register_test_partial_volrath_v1(
+        EternalFormatV1::Premodern,
+        "ordered-volrath",
+        with_volrath,
+        Vec::new(),
+        None,
+        true,
+    )
+    .unwrap();
+
+    // Schema 5 reset refuses a Shapeshifter outside the game in either seat
+    // (closing the Extrapolate the Impossible route) while admitting ordinary
+    // outside-the-game sideboards without a Shapeshifter.
+    let mut main = vec![island; 56];
+    main.extend([extrapolate; 4]);
+    let clean_sideboard = premodern_ids(&[("Hydroblast", 4), ("Dominate", 1)]);
+    for seat in [0usize, 1] {
+        let mut outside = [clean_sideboard.clone(), clean_sideboard.clone()];
+        outside[seat].push(volrath);
+        let error =
+            match RlEpisodeSessionV1::reset_with_custom_decks_companions_london_and_shroud_v1(
+                460,
+                460_706,
+                65_536,
+                65_536,
+                ["extrapolate-0".into(), "extrapolate-1".into()],
+                [main.as_slice(), main.as_slice()],
+                [None, None],
+                Some(outside),
+                PriorityModeV1::EngineWindowsV1,
+                true,
+                true,
+                true,
+            ) {
+                Ok(_) => panic!("outside-the-game Volrath must be refused in seat {seat}"),
+                Err(error) => error,
+            };
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(
+            error
+                .message
+                .contains("requires the ordered graveyard owner"),
+            "unexpected message: {}",
+            error.message
+        );
+    }
+    assert!(
+        RlEpisodeSessionV1::reset_with_custom_decks_companions_london_and_shroud_v1(
+            460,
+            460_707,
+            65_536,
+            65_536,
+            ["extrapolate-0".into(), "extrapolate-1".into()],
+            [main.as_slice(), main.as_slice()],
+            [None, None],
+            Some([clean_sideboard.clone(), clean_sideboard]),
+            PriorityModeV1::EngineWindowsV1,
+            true,
+            true,
+            true,
+        )
+        .is_ok()
+    );
 }

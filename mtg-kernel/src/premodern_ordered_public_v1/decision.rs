@@ -1,6 +1,6 @@
 use super::{
     choose_order, observe_human, public_name, DonatedActivationV1, FullTextProgramV1,
-    HumanObservationV1, NumericObservationV1, OrderChoiceV1,
+    HumanObservationV1, NumericObservationV1, NumericRegisteredObservationV1, OrderChoiceV1,
 };
 use crate::{
     engine::Decision,
@@ -34,6 +34,19 @@ pub enum NumericMenuV1 {
 pub struct NumericDecisionViewV1 {
     pub observation: NumericObservationV1,
     pub menu: Option<NumericMenuV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NumericRegisteredDecisionViewV1 {
+    pub observation: NumericRegisteredObservationV1,
+    pub menu: Option<NumericMenuV1>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum OrderedProfileV1 {
+    Frozen,
+    #[cfg(feature = "eternal-fixtures")]
+    Registered,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -106,6 +119,15 @@ pub(super) fn bind_next(
     surface: &mut HarnessSurfaceV2,
     step_index: u64,
 ) -> Result<BoundBoundaryV1, String> {
+    bind_next_for_profile(state, surface, step_index, OrderedProfileV1::Frozen)
+}
+
+pub(super) fn bind_next_for_profile(
+    state: &mut GameState,
+    surface: &mut HarnessSurfaceV2,
+    step_index: u64,
+    profile: OrderedProfileV1,
+) -> Result<BoundBoundaryV1, String> {
     if !graveyard_order_v1::enabled(state) {
         return Err("Premodern numeric decision requires its native reset profile".into());
     }
@@ -128,9 +150,21 @@ pub(super) fn bind_next(
         .ok_or("Premodern native decision has no actor")?;
     // Check the owning observation before offering any action. Other native
     // guards can refuse worlds outside this observation's scope.
-    let view = rl::observe_premodern_ordered_v1(state, surface, actor, step_index)
-        .map_err(|e| e.to_string())?;
-    let menu = if let Some(choice) = view.ordered.order_choice {
+    let (order_choice, has_stable) = match profile {
+        OrderedProfileV1::Frozen => {
+            let view = rl::observe_premodern_ordered_v1(state, surface, actor, step_index)
+                .map_err(|e| e.to_string())?;
+            (view.ordered.order_choice, view.stable.is_some())
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        OrderedProfileV1::Registered => {
+            let view =
+                rl::observe_premodern_ordered_registered_v1(state, surface, actor, step_index)
+                    .map_err(|e| e.to_string())?;
+            (view.ordered.order_choice, view.stable.is_some())
+        }
+    };
+    let menu = if let Some(choice) = order_choice {
         let SurfaceDecision::Decision(Decision::ChooseEffectTargets {
             legal_targets,
             can_finish: false,
@@ -148,7 +182,7 @@ pub(super) fn bind_next(
         }
         BoundMenu::GraveyardOrder(choice)
     } else {
-        if view.stable.is_none() {
+        if !has_stable {
             return Err("Premodern native actor has no ordered decision".into());
         }
         BoundMenu::Native(
@@ -156,6 +190,27 @@ pub(super) fn bind_next(
         )
     };
     Ok(BoundBoundaryV1::Decision(BoundDecisionV1 { actor, menu }))
+}
+
+fn menu_for_viewer(
+    bound: &BoundMenu,
+    state: &GameState,
+    actor: PlayerId,
+    viewer: PlayerId,
+) -> Option<NumericMenuV1> {
+    (viewer == actor).then(|| match bound {
+        BoundMenu::GraveyardOrder(_) => NumericMenuV1::GraveyardOrder,
+        BoundMenu::Native(candidates) => NumericMenuV1::Native {
+            actions: candidates
+                .iter()
+                .map(|candidate| NumericNativeActionV1 {
+                    full_text: activation_program(state, &candidate.record.semantic)
+                        .map(|(_, program)| program),
+                    action: candidate.record.clone(),
+                })
+                .collect(),
+        },
+    })
 }
 
 fn view(
@@ -168,19 +223,7 @@ fn view(
 ) -> Result<NumericDecisionViewV1, String> {
     let observation = rl::observe_premodern_ordered_v1(state, surface, viewer, step_index)
         .map_err(|e| e.to_string())?;
-    let menu = (viewer == actor).then(|| match bound {
-        BoundMenu::GraveyardOrder(_) => NumericMenuV1::GraveyardOrder,
-        BoundMenu::Native(candidates) => NumericMenuV1::Native {
-            actions: candidates
-                .iter()
-                .map(|candidate| NumericNativeActionV1 {
-                    full_text: activation_program(state, &candidate.record.semantic)
-                        .map(|(_, program)| program),
-                    action: candidate.record.clone(),
-                })
-                .collect(),
-        },
-    });
+    let menu = menu_for_viewer(bound, state, actor, viewer);
     Ok(NumericDecisionViewV1 { observation, menu })
 }
 
@@ -209,6 +252,20 @@ impl BoundDecisionV1 {
         step: u64,
     ) -> Result<NumericDecisionViewV1, String> {
         view(&self.menu, state, surface, self.actor, step, viewer)
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn view_registered(
+        &self,
+        state: &GameState,
+        surface: &HarnessSurfaceV2,
+        viewer: PlayerId,
+        step: u64,
+    ) -> Result<NumericRegisteredDecisionViewV1, String> {
+        let observation = rl::observe_premodern_ordered_registered_v1(state, surface, viewer, step)
+            .map_err(|e| e.to_string())?;
+        let menu = menu_for_viewer(&self.menu, state, self.actor, viewer);
+        Ok(NumericRegisteredDecisionViewV1 { observation, menu })
     }
 
     #[cfg(feature = "eternal-fixtures")]
