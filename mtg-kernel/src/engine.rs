@@ -15159,6 +15159,14 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         if let Some(decision) = crate::graveyard_order_v1::paused_decision(state) {
             return decision;
         }
+        if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state) {
+            // An enclosing linked-operation replay already captured its
+            // unanswered choice checkpoint and discards this return value.
+            return Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                source: ObjectId(0),
+            };
+        }
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_statics_v1::expire_attack_block_restrictions(state);
         if let Err(source) = event::validate_exile_if_dies_replacements(state) {

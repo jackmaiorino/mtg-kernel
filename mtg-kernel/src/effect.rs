@@ -17620,6 +17620,10 @@ fn drive_resumable_in_departure_scope_v1(
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+                // The linked replay owns the checkpoint for an unanswered damage choice.
+                if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state) {
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             // Dredge (wave E7b): each card drawn may be dredged instead.
             EffectOp::ResolveMonarchTrigger { binding }
