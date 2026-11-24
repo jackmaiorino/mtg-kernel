@@ -144,6 +144,7 @@ TRAINING_REFERENCE_EXCLUSIONS = {
     "async_rollout_v2": "self-play rollout collection, not update arithmetic",
     "card_def": "engine card database hash; engine changes run the whole set",
     "durable_publication_v1": "file publication of artifacts",
+    "engine_identity_v1": "build provenance checked at run start, not update arithmetic",
     "flat_policy_v2": "action-surface contract: decision views and buffers, not update arithmetic",
     "flat_policy_v3": "action-surface contract: decision encoder and views, not update arithmetic",
     "flat_policy_v4": "action-surface contract: decision encoder and views, not update arithmetic",

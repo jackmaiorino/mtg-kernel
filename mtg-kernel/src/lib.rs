@@ -287,6 +287,7 @@ mod drakuseth_damage_source_v76;
 pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
+pub mod engine_identity_v1;
 mod equipment_damage_source_v4;
 /// Eternal best-of-three: format-aware 75-card registrations, a
 /// companion-aware game builder and a seeded random sideboarding policy.
