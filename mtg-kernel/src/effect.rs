@@ -14595,6 +14595,8 @@ fn drive_resumable_in_departure_scope_v1(
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::SearchLibraryToBattlefieldTapped {
                     player,
@@ -14653,6 +14655,8 @@ fn drive_resumable_in_departure_scope_v1(
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::DiscardRevealedHandCard {
                     player,
@@ -14683,7 +14687,15 @@ fn drive_resumable_in_departure_scope_v1(
                     {
                         return Err("Duress discard binding changed".to_string());
                     }
-                    crate::engine::commit_discarded_card(state, selected.object);
+                    if !(cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                            state,
+                            continuation.ctx.controller,
+                            player,
+                        ))
+                    {
+                        crate::engine::commit_discarded_card(state, selected.object);
+                    }
                 }
                 EffectFrame::BeginSearchLibraryToBattlefieldTapped {
                     player,
@@ -15034,6 +15046,8 @@ fn drive_resumable_in_departure_scope_v1(
                     if fiend_artisan_v1::selected(state, &continuation.resolving_item) {
                         fiend_artisan_v1::finish(state, &continuation.resolving_item);
                     }
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::SearchLibraryToHandMany {
                     player,
@@ -15106,6 +15120,8 @@ fn drive_resumable_in_departure_scope_v1(
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                    #[cfg(feature = "eternal-fixtures")]
+                    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
                 }
                 EffectFrame::PayGenericDrawV1 {
                     amount,
@@ -15800,7 +15816,15 @@ fn drive_resumable_in_departure_scope_v1(
                     return Err("pile choice answer changed".to_string());
                 }
                 continuation.answered_choice_guard = None;
-                crate::standard_cards_v1::sacrifice_pile(state, player, &pile);
+                if !(cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                        state,
+                        continuation.ctx.controller,
+                        player,
+                    ))
+                {
+                    crate::standard_cards_v1::sacrifice_pile(state, player, &pile);
+                }
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::ApplyChosenPermanent { chosen, action },
@@ -16963,6 +16987,15 @@ fn drive_resumable_in_departure_scope_v1(
             }
             EffectOp::SacrificeCreature { player, filter } => {
                 let player = continuation.ctx.resolve_player(player, state);
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                        state,
+                        continuation.ctx.controller,
+                        player,
+                    )
+                {
+                    continue;
+                }
                 let candidates = creature_sacrifice_bindings(state, player, filter)?;
                 match candidates.as_slice() {
                     [] => {}
@@ -17612,6 +17645,10 @@ fn drive_resumable_in_departure_scope_v1(
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+                // The linked replay owns the checkpoint for an unanswered damage choice.
+                if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state) {
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             // Dredge (wave E7b): each card drawn may be dredged instead.
             EffectOp::ResolveMonarchTrigger { binding }
@@ -17728,8 +17765,18 @@ fn drive_resumable_in_departure_scope_v1(
             }
             leaf => {
                 if let EffectOp::DiscardCards { player, count } = &leaf {
+                    let resolved_player = continuation.ctx.resolve_player(*player, state);
+                    if cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                            state,
+                            continuation.ctx.controller,
+                            resolved_player,
+                        )
+                    {
+                        continue;
+                    }
                     if !continuation.frames.is_empty() {
-                        let player = continuation.ctx.resolve_player(*player, state);
+                        let player = resolved_player;
                         let original_hand = bind_hand(state, player);
                         validate_bound_hand_exact(state, player, &original_hand)?;
                         if original_hand.is_empty() || *count == 0 {
@@ -19643,6 +19690,9 @@ fn library_filter_matches(
     if subtype_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err("library-search effective subtypes are not sorted and unique".to_string());
     }
+    let is_grist =
+        cfg!(feature = "eternal-fixtures") && crate::eternal_cube_c9c_v1::is_grist_card(def.name);
+    let is_creature = def.has_type(CardType::Creature) || is_grist;
     Ok(match filter {
         LibraryCardFilter::LandWithSubtype(subtype) => {
             def.has_type(CardType::Land) && subtype.is_in_subtype_ids(subtype_ids)
@@ -19684,26 +19734,24 @@ fn library_filter_matches(
             def.has_type(CardType::Artifact) && def.mana_value == mana_value
         }
         LibraryCardFilter::CreatureManaValueAtMost(maximum) => {
-            def.has_type(CardType::Creature) && def.mana_value <= maximum
+            is_creature && def.mana_value <= maximum
         }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(maximum) => {
             def.mana_value <= maximum
-                && [
-                    CardType::Artifact,
-                    CardType::Creature,
-                    CardType::Enchantment,
-                ]
-                .into_iter()
-                .any(|card_type| def.has_type(card_type))
+                && (is_creature
+                    || def.has_type(CardType::Artifact)
+                    || def.has_type(CardType::Enchantment))
         }
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
                 && def.mana_value == value
         }
-        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes
-            .iter()
-            .any(|subtype| subtype.is_in_subtype_ids(subtype_ids)),
-        LibraryCardFilter::CardWithTypeV1(card_type) => def.has_type(card_type),
+        LibraryCardFilter::CardWithAnySubtypeV1(subtypes) => subtypes.iter().any(|subtype| {
+            subtype.is_in_subtype_ids(subtype_ids) || (is_grist && *subtype == Subtype::Insect)
+        }),
+        LibraryCardFilter::CardWithTypeV1(card_type) => {
+            def.has_type(card_type) || (is_grist && card_type == CardType::Creature)
+        }
         LibraryCardFilter::ArtifactManaValueAtMostV1(maximum) => {
             def.has_type(CardType::Artifact) && def.mana_value <= maximum
         }
@@ -19724,7 +19772,7 @@ fn library_filter_matches(
                         != 0)
         }
         LibraryCardFilter::ColorlessCreatureV1 => {
-            def.has_type(CardType::Creature)
+            is_creature
                 && def.colors.is_empty()
                 && crate::eternal_legacy_e9a_v1::statics::painter_mask(state) == 0
         }
@@ -19734,12 +19782,14 @@ fn library_filter_matches(
         LibraryCardFilter::InstantOrSorceryCardV1 => {
             def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery)
         }
-        LibraryCardFilter::CardWithSubtypeV1(subtype) => subtype.is_in_subtype_ids(subtype_ids),
+        LibraryCardFilter::CardWithSubtypeV1(subtype) => {
+            subtype.is_in_subtype_ids(subtype_ids) || (is_grist && subtype == Subtype::Insect)
+        }
         LibraryCardFilter::ArtifactOrEnchantmentCardV1 => {
             def.has_type(CardType::Artifact) || def.has_type(CardType::Enchantment)
         }
         LibraryCardFilter::GreenCreatureV1 => {
-            def.has_type(CardType::Creature)
+            is_creature
                 && crate::eternal_legacy_e9a_v1::statics::card_has_color(
                     state,
                     binding.object,
@@ -19995,18 +20045,22 @@ fn library_partition_matching_prefix(
         let definition = crate::card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or_else(|| "library-partition card definition is missing".to_string())?;
+        let is_grist = cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cube_c9c_v1::is_grist_card(definition.name);
+        let is_creature = definition.has_type(CardType::Creature) || is_grist;
         let selectable = match filter {
-            LibraryPartitionFilter::ByType(card_type) => definition.has_type(card_type),
+            LibraryPartitionFilter::ByType(card_type) => {
+                definition.has_type(card_type) || (is_grist && card_type == CardType::Creature)
+            }
             LibraryPartitionFilter::Pick(rule) => match rule.selection {
                 None => true,
                 Some(selection) => match selection.filter {
                     LibraryPickFilterV1::Any => true,
                     LibraryPickFilterV1::CreatureOrLandV1 => {
-                        definition.has_type(CardType::Creature)
-                            || definition.has_type(CardType::Land)
+                        is_creature || definition.has_type(CardType::Land)
                     }
                     LibraryPickFilterV1::CreatureManaValueAtMostControlledLands => {
-                        definition.has_type(CardType::Creature)
+                        is_creature
                             && usize::from(definition.mana_value)
                                 <= loot_v1::controlled_lands(state, object.owner)
                     }
@@ -20017,7 +20071,7 @@ fn library_partition_matching_prefix(
                                     .into(),
                             );
                         }
-                        if definition.has_type(CardType::Creature) {
+                        if is_creature {
                             if crate::engine::effective_base_power(state, binding.object).is_none()
                             {
                                 return Err("library creature power has no accepted characteristic authority".into());
@@ -20028,13 +20082,13 @@ fn library_partition_matching_prefix(
                         }
                     }
                     LibraryPickFilterV1::LegendaryCreature => {
-                        definition.has_type(CardType::Creature)
+                        is_creature
                             && definition
                                 .supertypes
                                 .contains(&crate::card_def::Supertype::Legendary)
                     }
                     LibraryPickFilterV1::NoncreatureNonlandPermanentManaValueAtMost(max) => {
-                        !definition.has_type(CardType::Creature)
+                        !is_creature
                             && !definition.has_type(CardType::Land)
                             && [
                                 CardType::Artifact,
@@ -20046,24 +20100,22 @@ fn library_partition_matching_prefix(
                             && definition.mana_value <= max
                     }
                     LibraryPickFilterV1::ArtifactOrCreatureManaValueAtMost(max) => {
-                        (definition.has_type(CardType::Artifact)
-                            || definition.has_type(CardType::Creature))
+                        (definition.has_type(CardType::Artifact) || is_creature)
                             && definition.mana_value <= max
                     }
-                    LibraryPickFilterV1::AnySubtype(subtypes) => subtypes
-                        .iter()
-                        .any(|subtype| subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)),
+                    LibraryPickFilterV1::AnySubtype(subtypes) => subtypes.iter().any(|subtype| {
+                        subtype.is_in_subtype_ids(&object.v4.effective_subtype_ids)
+                            || (is_grist && *subtype == Subtype::Insect)
+                    }),
                     LibraryPickFilterV1::InstantOrSorcery => {
                         definition.has_type(CardType::Instant)
                             || definition.has_type(CardType::Sorcery)
                     }
                     LibraryPickFilterV1::NoncreatureNonlandV1 => {
-                        !definition.has_type(CardType::Creature)
-                            && !definition.has_type(CardType::Land)
+                        !is_creature && !definition.has_type(CardType::Land)
                     }
                     LibraryPickFilterV1::CreatureOrLandCardV1 => {
-                        definition.has_type(CardType::Creature)
-                            || definition.has_type(CardType::Land)
+                        is_creature || definition.has_type(CardType::Land)
                     }
                 },
             },
@@ -20629,9 +20681,10 @@ fn revealed_discard_eligible_hand(
         let definition = crate::card_def::CARD_DEFS
             .get(object.card_def as usize)
             .ok_or("Duress hand card definition is missing")?;
-        if !definition.has_type(CardType::Land)
-            && (!exclude_creatures || !definition.has_type(CardType::Creature))
-        {
+        let is_creature = definition.has_type(CardType::Creature)
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c9c_v1::is_grist_card(definition.name));
+        if !definition.has_type(CardType::Land) && (!exclude_creatures || !is_creature) {
             eligible.push(binding);
         }
     }
@@ -22054,7 +22107,15 @@ fn execute_in_departure_scope_v1(
         }
         EffectOp::Sacrifice { object } => {
             let object = ctx.resolve_object(*object);
-            if state.objects.get(object).zone == Zone::Battlefield {
+            let live = state.objects.get(object);
+            if live.zone == Zone::Battlefield
+                && !(cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                        state,
+                        ctx.controller,
+                        live.controller,
+                    ))
+            {
                 event::log_sacrifice(state, object);
                 event::propose_and_commit(
                     state,
@@ -23941,6 +24002,15 @@ fn execute_in_departure_scope_v1(
         }
         EffectOp::DiscardCards { player, count } => {
             let player = ctx.resolve_player(*player, state);
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                    state,
+                    ctx.controller,
+                    player,
+                )
+            {
+                return;
+            }
             state.engine.pending_discard = Some(crate::engine::PendingDiscard {
                 player,
                 count: *count,
@@ -24143,7 +24213,10 @@ fn execute_in_departure_scope_v1(
             event::propose_and_commit_batch(state, events);
         }
         EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { token_def, count } => {
-            if crate::doubling_season_v48::requires_successor(state) {
+            if crate::doubling_season_v48::requires_successor(state)
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::token_doubler_count(state, ctx.controller) > 0)
+            {
                 let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
                 if let event::ProposedEvent::CreateToken(token) = &mut proposal {
                     token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
@@ -25326,7 +25399,9 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             }
-            if crate::doubling_season_v48::requires_successor(state) {
+            if crate::doubling_season_v48::requires_successor(state)
+                || cfg!(feature = "eternal-fixtures")
+            {
                 let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
                 if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
                     change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {
@@ -28777,6 +28852,11 @@ impl std::hash::Hash for EternalDamageLkiV1 {
 impl EternalDamageLkiV1 {
     pub(crate) fn for_minsc(proof: crate::eternal_vintage_e7b_v1::minsc::DamageLoanV1) -> Self {
         Self(EternalDamageOriginV1::Historical(proof.facts()))
+    }
+
+    #[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+    pub(crate) fn for_c8c(facts: crate::event::HistoricalDamageSourceV1) -> Self {
+        Self(EternalDamageOriginV1::Historical(facts))
     }
 
     pub(crate) fn for_full_text(loan: crate::full_text_v1::DamageLoanV1) -> Self {

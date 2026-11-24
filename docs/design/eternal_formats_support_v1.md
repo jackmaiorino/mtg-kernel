@@ -3487,6 +3487,79 @@ Engine changes shared with other cards:
   planeswalker 0-loyalty SBA exemption and granted loyalty ability (Sanctum Lurker), Backup 1
   granted attack triggers (Guardian Scalelord), and `Subtype::Spy` (stable id 750).
 
+### C8: adventure, DFCs, prepare, copies, bestow and library triggers
+
+Wave C8 adds 19 cards (plus `Regrowth`, `Green Insect Token`, and `Wan Shi Tong Spirit Token`),
+raising the cube to 523 of 540 Full (0 Partial, 17 Missing). Its three sub-modules chain after
+wave C7c: C8a (`eternal_cube_c8a_v1`), C8b (`eternal_cube_c8b_v1`) and C8c (`eternal_cube_c8c_v1`),
+the new tail.
+
+- C8a: Bonecrusher Giant (Stomp Adventure), Concealing Curtains (Revealing Eye), Jace, Vryn's
+  Prodigy (Jace, Telepath Unbound), Jennifer Walters (The Sensational She-Hulk), Emeritus of
+  Abundance (Regrowth prepare spell), Emeritus of Ideation (Ancestral Recall prepare spell).
+- C8b: Phantasmal Image, Superior Spider-Man, Vaultborn Tyrant, Saheeli, Sublime Artificer,
+  Springheart Nantuko (Green Insect Token), Detective's Phoenix.
+- C8c: Pyrogoyf, Elite Spellbinder, Wan Shi Tong, All-Knowing (Wan Shi Tong Spirit Token),
+  Wan Shi Tong, Librarian, Thieving Skydiver, Zirda, the Dawnwaker, Absorbing Man.
+
+Engine changes shared with other cards:
+
+- Prepare generalization (`eternal_vintage_e7b_v1`) now maps multiple prepared creatures to their
+  prepare spells while keeping standalone `Ancestral Recall` untouched; `StandardTargetV1` adds
+  `CardInOwnGraveyardV1`, `ControlledArtifactThenAnotherControlledArtifactOrCreatureV1`, and
+  `C8cV1(C8cTargetV1)` at the end of the enum.
+- As-enters copy exceptions and temporary copy effects cover Illusion + becomes-target sacrifice
+  (Phantasmal Image), graveyard Mind Swap with Layer 1 4/4 name/subtype overrides and reflexive
+  exile (Superior Spider-Man), nontoken dies artifact token copy (Vaultborn Tyrant), until-EOT
+  artifact copy (Saheeli), and until-your-next-turn 4/4 legendary Human Villain Vigilance copy
+  (Absorbing Man).
+- Non-X Bestow support adds graveyard Bestow and Collect Evidence 6 excluding the cast spell
+  (Detective's Phoenix), attached-host optional `{1}{G}` copy landfall (Springheart Nantuko), and
+  Bestow Enchantment-Aura spell types on the stack.
+- Extended spell/activation mechanics add Kicker `{X}` with `X >= 1` (Thieving Skydiver),
+  non-mana activated-ability `{2}` reduction floored at 1 mana plus companion validation (Zirda),
+  per-exile-incarnation `+{2}` cast tax (Elite Spellbinder), entering-creature damage source LKI
+  (Pyrogoyf), batched card-to-library triggers and opponent library-search hooks across search
+  sites (both Wan Shi Tong printings), and `Subtype::{Fox = 760, Gamma = 761, Saheeli = 762}`.
+
+### C9: final Vintage Cube completion (540 of 540 Full)
+
+Wave C9 adds the final 17 Vintage Cube cards (plus `Black Green Insect Token`), completing MTGO
+Vintage Cube (2026-10-07) coverage at 540 of 540 Full (0 Partial, 0 FDN only, 0 Missing). Its
+three sub-modules chain after wave C8c: C9a (`eternal_cube_c9a_v1`), C9b (`eternal_cube_c9b_v1`)
+and C9c (`eternal_cube_c9c_v1`), the new tail.
+
+- C9a: Aang, Swift Savior (Aang and La, Ocean's Fury), Badgermole Cub, Batroc the Leaper,
+  Blightsteel Colossus, Crabomination, Fear of Missing Out.
+- C9b: Figure of Destiny, Figure of Fable, Hexdrinker, Nadu, Winged Wisdom, Serra Paragon,
+  Swift Reconfiguration.
+- C9c: Elspeth, Storm Slayer, Grist, the Hunger Tide (Black Green Insect Token), Nissa, Who
+  Shakes the World, Tamiyo, Collector of Tales, Through the Breach.
+
+Engine changes shared with other cards:
+
+- New keywords, subtypes and target/choice variants: `Keywords::INFECT` (`1 << 20`, CR 702.90
+  combat and noncombat poison/counter damage), `Subtype::{Badger = 770, Mole = 771, Elspeth = 772,
+  Grist = 773, Nissa = 774}`, `StandardTargetV1::{C9aV1, C9cV1}`, and `E3ChoiceKindV1::{C9aV1, C9cV1}`.
+- C9a mechanics add airbend exile with permanent `{2}` alt-cost permission and Waterbend `{8}`
+  transform (Aang, Swift Savior), permanent 0/0 earthbend animation with delayed graveyard/exile
+  return and creature-mana triggered `{G}` (Badgermole Cub), Multikicker `{2}` with LKI batch
+  damage (Batroc the Leaper), reveal-and-shuffle graveyard replacement from anywhere (Blightsteel
+  Colossus), Emerge from artifact `{5}{B}{B}` and random 3-zone exile free cast (Crabomination),
+  and Delirium first-attack extra combat phases at `Step::EndCombat` (Fear of Missing Out).
+- C9b mechanics add timestamped hybrid class/PT/keyword forms and dynamic protection from
+  opponents (Figure of Destiny, Figure of Fable), sorcery-speed Level Up counters with static
+  level bands and protection from instants/everything (Hexdrinker), per-incarnation twice-per-turn
+  targeting grants (Nadu, Winged Wisdom), shared once-per-turn graveyard land/MV<=3 permanent
+  permissions with granted dies-exile-gain-2 triggers (Serra Paragon), and Layer 4/6 Vehicle
+  conversion with granted Crew 5 and combat removal on attachment (Swift Reconfiguration).
+- C9c mechanics add permanent token-doubling replacement (`2^n`, Elspeth, Storm Slayer), CR 604.3
+  non-battlefield 1/1 Insect Creature CDA across all non-battlefield queries (Grist, the Hunger
+  Tide), Forest triggered mana and permanent 0/0 Elemental land animation plus indestructible
+  lands emblem (Nissa, Who Shakes the World), opponent-effect discard/sacrifice shield (Tamiyo,
+  Collector of Tales), and Through the Breach hand-to-battlefield haste/end-step-sacrifice plus
+  generalized Splice onto Arcane `{2}{R}{R}`.
+
 ## Eternal rules precision closeout (#717)
 
 This records the finite [rules review checklist](https://github.com/jackmaiorino/mtg-kernel/issues/717)

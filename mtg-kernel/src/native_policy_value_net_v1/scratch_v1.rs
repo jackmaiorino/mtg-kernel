@@ -381,19 +381,17 @@ impl NativePolicyValueNetV1 {
             counts.action_count * self.scorer_first.output_dim,
         );
         let state_dim = scratch.state_hidden.len();
-        let action_dim = self.scorer_first.input_dim - state_dim;
-        for action_row in scratch.action_hidden.chunks_exact(action_dim) {
-            let begin = scratch.scorer_hidden.len();
-            scratch
-                .scorer_hidden
-                .extend_from_slice(&scratch.state_prefix);
-            accumulate_linear_row_v1(
-                &self.scorer_first,
-                action_row,
-                state_dim,
-                &mut scratch.scorer_hidden[begin..],
-            );
-        }
+        scratch
+            .scorer_hidden
+            .resize(counts.action_count * self.scorer_first.output_dim, 0.0);
+        accumulate_linear_rows_v1(
+            &self.scorer_first,
+            &scratch.action_hidden,
+            counts.action_count,
+            state_dim,
+            &scratch.state_prefix,
+            &mut scratch.scorer_hidden,
+        );
         tanh_in_place_v1(&mut scratch.scorer_hidden, mode);
         linear_into(
             &self.scorer_second,
@@ -450,12 +448,8 @@ fn zero_for(buffer: &mut Vec<f32>, len: usize) {
 fn linear_into(linear: &LinearV1, input: &[f32], rows: usize, output: &mut Vec<f32>) {
     debug_assert_eq!(input.len(), rows * linear.input_dim);
     debug_assert_eq!(linear.weight_t.len(), linear.weight.len());
-    clear_for(output, rows * linear.output_dim);
-    for input_row in input.chunks_exact(linear.input_dim).take(rows) {
-        let begin = output.len();
-        output.extend_from_slice(&linear.bias);
-        accumulate_linear_row_v1(linear, input_row, 0, &mut output[begin..]);
-    }
+    output.resize(rows * linear.output_dim, 0.0);
+    accumulate_linear_rows_v1(linear, input, rows, 0, &linear.bias, output);
 }
 
 fn two_layer_into(
@@ -482,11 +476,20 @@ fn two_layer_into_guarded_v1(
 ) {
     let first = &encoder.first;
     debug_assert_eq!(input.len(), rows * first.input_dim);
-    clear_for(hidden, rows * first.output_dim);
-    for input_row in input.chunks_exact(first.input_dim).take(rows) {
-        let begin = hidden.len();
-        hidden.extend_from_slice(&first.bias);
-        v8_inclusion_v1::accumulate_guarded_row_v1(first, input_row, guard, &mut hidden[begin..]);
+    if guard.is_none() {
+        linear_into(first, input, rows, hidden);
+    } else {
+        clear_for(hidden, rows * first.output_dim);
+        for input_row in input.chunks_exact(first.input_dim).take(rows) {
+            let begin = hidden.len();
+            hidden.extend_from_slice(&first.bias);
+            v8_inclusion_v1::accumulate_guarded_row_v1(
+                first,
+                input_row,
+                guard,
+                &mut hidden[begin..],
+            );
+        }
     }
     tanh_in_place_v1(hidden, mode);
     linear_into(&encoder.second, hidden, rows, output);

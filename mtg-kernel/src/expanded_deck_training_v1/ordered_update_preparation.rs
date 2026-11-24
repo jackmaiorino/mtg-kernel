@@ -1080,15 +1080,39 @@ fn replay_other_seat_setting_v1(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
-/// A replay worker's row caches, one for each seat's rows. A group is one
-/// seat's rows, the seats are scored by different models whenever the
-/// opponent is not the current learner, and a `ReplayForwardRowsV1` keeps
-/// one model's rows at a time: with one storage, alternating seats would
-/// empty it at every group. Storage that is never used holds nothing.
+/// Maximum distinct opponent models cached simultaneously per replay worker
+/// when `ReplayRowCacheV1::AllRows` or deferred-replay other-seat caching is
+/// active. Keeps multi-opponent rosters from thrashing one slot while bounding
+/// per-worker memory.
+const OTHER_ROW_CACHE_SLOTS_V1: usize = 4;
+
+/// A replay worker's row caches, one for the learner seat and a small bounded
+/// LRU of opponent-model caches keyed by opponent source index (`job.opponent`).
+/// A `ReplayForwardRowsV1` keeps one model's rows at a time; with one shared
+/// opponent slot, alternating opponent sources in a multi-opponent roster would
+/// empty it on every switch. Unused slots allocate nothing.
 #[derive(Default)]
 struct SeatRowCachesV1 {
     learner: ReplayForwardRowsV1,
-    other: ReplayForwardRowsV1,
+    other: Vec<(Option<usize>, ReplayForwardRowsV1)>,
+}
+
+impl SeatRowCachesV1 {
+    fn other_for_v1(&mut self, opponent: Option<usize>) -> &mut ReplayForwardRowsV1 {
+        if let Some(pos) = self.other.iter().position(|(key, _)| *key == opponent) {
+            if pos != 0 {
+                let entry = self.other.remove(pos);
+                self.other.insert(0, entry);
+            }
+            return &mut self.other[0].1;
+        }
+        if self.other.len() >= OTHER_ROW_CACHE_SLOTS_V1 {
+            self.other.pop();
+        }
+        self.other
+            .insert(0, (opponent, ReplayForwardRowsV1::default()));
+        &mut self.other[0].1
+    }
 }
 
 /// The prepared replay with every row through the reference forward.
@@ -1170,7 +1194,46 @@ pub(super) fn prepare_deferring_learner_rows_v1<'a>(
         max_prepared_tensor_mebibytes,
         max_groups,
         training_math,
-        LearnerRowsV1::Defer { other_forwards },
+        LearnerRowsV1::Defer {
+            other_forwards: Some(other_forwards),
+            other_row_cache: false,
+        },
+    )
+}
+
+/// [`prepare_deferring_learner_rows_v1`] for CPU GAE updates (Net-8 and wide)
+/// whose learner step recomputes every learner row's forward tape and checks
+/// every output bit (`validate_forward_output_bits_v1`) before mutating state.
+/// When `other_row_cache` is true, opponent rows replay through each worker's
+/// bounded per-opponent exact row cache. On any failure, the caller falls back
+/// to [`prepare_with_row_cache_v1`] so error text and earliest-group precedence
+/// stay identical to the reference.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_v1's inputs, the group bound, and opponent row caching"
+)]
+pub(super) fn prepare_deferring_learner_rows_with_cache_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    other_row_cache: bool,
+) -> Result<PreparedGroupsV1<'a>, String> {
+    prepare_loading_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        max_groups,
+        training_math,
+        LearnerRowsV1::Defer {
+            other_forwards: None,
+            other_row_cache,
+        },
     )
 }
 
@@ -1179,8 +1242,13 @@ pub(super) fn prepare_deferring_learner_rows_v1<'a>(
 enum LearnerRowsV1<'c> {
     /// Replayed and checked, through the forward `ReplayRowCacheV1` picks.
     Replay(ReplayRowCacheV1),
-    /// Decoded only; `other_forwards` counts the other rows' forwards.
-    Defer { other_forwards: &'c AtomicU64 },
+    /// Decoded only; `other_forwards` optionally counts the other rows'
+    /// forwards, and `other_row_cache` enables exact per-opponent row caching
+    /// for the other seat's rows.
+    Defer {
+        other_forwards: Option<&'c AtomicU64>,
+        other_row_cache: bool,
+    },
 }
 
 #[allow(
@@ -1340,26 +1408,38 @@ where
         } else {
             s_update_profile::StageV1::ReplayOtherRow
         };
-        // A deferring preparation replays only the other seat's rows, each
-        // through the reference forward; the learner's are left to the
-        // verified learner.
-        let (row_cache, other_forwards) = match learner_replay {
-            LearnerRowsV1::Replay(row_cache) => (row_cache, None),
-            LearnerRowsV1::Defer { other_forwards } => {
-                (ReplayRowCacheV1::Off, Some(other_forwards))
-            }
+        // A deferring preparation replays only the other seat's rows; the
+        // learner's rows are left to the verified learner step.
+        let (defer_learner, row_cache, other_forwards) = match learner_replay {
+            LearnerRowsV1::Replay(row_cache) => (false, row_cache, None),
+            LearnerRowsV1::Defer {
+                other_forwards,
+                other_row_cache,
+            } => (
+                true,
+                if other_row_cache {
+                    ReplayRowCacheV1::AllRows
+                } else {
+                    ReplayRowCacheV1::Off
+                },
+                other_forwards,
+            ),
         };
-        let mut cache = row_cache
-            .caches_v1(learner_rows)
-            .then_some(if learner_rows {
-                &mut caches.learner
-            } else {
-                &mut caches.other
-            });
+        let mut cache = if defer_learner && learner_rows {
+            None
+        } else {
+            row_cache.caches_v1(learner_rows).then(|| {
+                if learner_rows {
+                    &mut caches.learner
+                } else {
+                    caches.other_for_v1(job.opponent)
+                }
+            })
+        };
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
-            if learner_rows && other_forwards.is_some() {
+            if learner_rows && defer_learner {
                 rows.push((row, common));
                 continue;
             }

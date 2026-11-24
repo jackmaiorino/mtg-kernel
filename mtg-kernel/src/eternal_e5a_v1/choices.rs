@@ -89,7 +89,10 @@ fn library_cards(
 fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     state
         .shuffle_library(player)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
+    Ok(())
 }
 
 fn push(continuation: &mut EffectContinuation, op: EffectOp, path: &[u16]) {
@@ -221,7 +224,7 @@ pub(crate) fn drive(
                 .filter(|&card| {
                     CARD_DEFS
                         .get(state.objects.get(card).card_def as usize)
-                        .is_some_and(|def| def.has_type(CardType::Creature))
+                        .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .map(|card| bind(state, card))
                 .collect::<Vec<_>>();

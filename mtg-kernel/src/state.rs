@@ -1409,6 +1409,12 @@ fn stack_target_contract_shape(
             && stack_item_id.0 <= state.engine.next_stack_item_id
             && state.objects.try_get(source).is_some_and(|live| {
                 (live.card_def == card_def
+                    || crate::standard_cards_v1::had_card_def(
+                        state,
+                        source,
+                        source_zone_change_count,
+                        card_def,
+                    )
                     || historical_storm && live.zone_change_count > source_zone_change_count)
                     && live.owner == owner
                     && live.zone_change_count >= source_zone_change_count
@@ -1438,6 +1444,7 @@ fn stack_target_contract_shape(
                 ) || filter.slot_kind(target_index) == Some(None)
                     || crate::eternal_cube_c1c_v1::targets::slot_takes_player(filter, target_index)
                     || crate::eternal_cube_c1b_v1::targets::slot_takes_player(filter, target_index)
+                    || crate::eternal_cube_c9a_v1::targets::slot_takes_player(filter, target_index)
             }
         };
         if !matches_kind {
@@ -1630,6 +1637,7 @@ fn stack_target_contract_shape(
     };
     state.objects.try_get(object).is_some_and(|live| {
         (live.card_def == card_def
+            || crate::standard_cards_v1::had_card_def(state, object, zone_change_count, card_def)
             || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin
@@ -3881,6 +3889,8 @@ impl GameState {
         crate::standard_cards_v1::refresh_aegis_copies(self);
         if changed_host {
             crate::standard_cards_v1::aegis_attached(self, source, host_link);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c9b_v1::after_attachment(self, target);
         }
         self.validate_attachment_relations()?;
         crate::fake_your_own_death_v50::return_aura::record_attachment(

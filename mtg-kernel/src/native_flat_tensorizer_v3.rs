@@ -30,6 +30,11 @@ impl NativeFlatTensorizerV3 {
         self.scratch.set_state_digest_v1(on);
     }
 
+    /// See `NativeFlatTensorizerV2::set_action_digest_v1`.
+    pub(crate) fn set_action_digest_v1(&mut self, on: bool) {
+        self.scratch.set_action_digest_v1(on);
+    }
+
     pub(crate) fn fill(
         &mut self,
         decision: FlatScoringDecisionViewV3<'_>,

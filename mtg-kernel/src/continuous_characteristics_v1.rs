@@ -449,6 +449,13 @@ pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i
         settings.extend(crate::eternal_sideboard_s1g_v1::base_power_toughness(
             state, id,
         ));
+        // Badgermole Cub's earthbent 0/0 lands (Vintage Cube wave C9a).
+        settings.extend(crate::eternal_cube_c9a_v1::base_power_toughness(state, id));
+        // Figure of Destiny, Figure of Fable, and Hexdrinker level bands
+        // (Vintage Cube wave C9b).
+        settings.extend(crate::eternal_cube_c9b_v1::base_power_toughness(state, id));
+        // Nissa, Who Shakes the World's 0/0 Elemental lands (wave C9c).
+        settings.extend(crate::eternal_cube_c9c_v1::base_power_toughness(state, id));
     }
     if object.zone == Zone::Battlefield {
         settings.extend(object.v4.temporary_base_pt_v1);

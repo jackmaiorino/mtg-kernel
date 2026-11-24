@@ -16,6 +16,7 @@ use std::hash::{Hash, Hasher};
 mod hallow_replay;
 pub(crate) use hallow_replay::{
     legacy_damage_order_v1, legacy_hallow_only_v1, legacy_sphere_order_v1,
+    soul_scar_damage_order_v1,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,12 +285,16 @@ pub struct StateV1 {
         Option<Box<crate::fake_your_own_death_v50::return_aura::CheckpointV50>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) pending_meddling_mage_v1: Option<Box<mage_entry::CheckpointV1>>,
+    /// The damage frontier remains the same if an operation suspends under a different owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    damage_order: Option<hallow_replay::Order>,
     #[serde(skip)]
     runtime: Option<Box<RunnerV1>>,
 }
 impl StateV1 {
     pub fn is_empty(&self) -> bool {
-        self.pending_hallow_v1.is_none()
+        self.damage_order.is_none()
+            && self.pending_hallow_v1.is_none()
             && self.pending_kinship_v1.is_none()
             && self.pending.is_none()
             && self.pending_general_v36.is_none()
@@ -341,6 +346,10 @@ impl Hash for StateV1 {
             serde_json::to_vec(pending)
                 .expect("owned Mage checkpoint serializes")
                 .hash(hasher);
+        }
+        if let Some(order) = self.damage_order {
+            "linked-aura-damage-order/v1".hash(hasher);
+            order.hash(hasher);
         }
     }
 }
@@ -1149,6 +1158,14 @@ pub(crate) fn prepare_hallow_batch(
             crate::eternal_prevention_order_v1::BatchDamageResultV1::Complete(Default::default()),
         );
     }
+    if !locally_owned(state)
+        && crate::eternal_prevention_order_v1::soul_scar_may_need_choice(state)
+        && !crate::eternal_pauper_pf1c_v1::batch_has_covered_damage(state, events)
+    {
+        return Ok(
+            crate::eternal_prevention_order_v1::BatchDamageResultV1::Complete(Default::default()),
+        );
+    }
     let runner = state
         .engine
         .linked_aura_operation_v1
@@ -1510,6 +1527,8 @@ fn replay_general_input_v1(
         {
             return Err("Genesis current-slot replay changed its exact color-entry owner".into());
         }
+        checkpoint.engine.linked_aura_operation_v1.damage_order =
+            hallow_replay::checkpoint_marker(original, &checkpoint);
         if let GeneralChoiceV36::HallowV1 { choice } = choice {
             checkpoint.engine.linked_aura_operation_v1.pending_hallow_v1 =
                 Some(Box::new(HallowCheckpointV1 {
@@ -1944,12 +1963,25 @@ fn validate_checkpoint_owners(state: &GameState) -> Result<(), String> {
     if owners > 1 || (owners != 0 && locally_owned(state)) {
         return Err("entry checkpoint has multiple or synchronous owners".into());
     }
+    if owners == 0 && state.engine.linked_aura_operation_v1.damage_order.is_some() {
+        return Err("entry checkpoint damage order has no owner".into());
+    }
     Ok(())
 }
 
 /// Complete checkpoint reconstruction authenticates source incarnation,
 /// owner, menu, already committed choices, actual journal and operation tail.
 pub fn validate(state: &GameState) -> Result<(), String> {
+    if has_pending(state) {
+        let marker = state.engine.linked_aura_operation_v1.damage_order;
+        return marker
+            .unwrap_or(hallow_replay::Order::Expanded)
+            .with(marker, || validate_in_order(state));
+    }
+    validate_in_order(state)
+}
+
+fn validate_in_order(state: &GameState) -> Result<(), String> {
     validate_checkpoint_owners(state)?;
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
         return hallow_replay::recorded_order(state, pending).map(|_| ());
@@ -2245,6 +2277,16 @@ fn decision(state: &GameState) -> Result<Decision, String> {
     })
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if !has_pending(state) {
+        return step_in_order(state, action);
+    }
+    let marker = state.engine.linked_aura_operation_v1.damage_order;
+    marker
+        .unwrap_or(hallow_replay::Order::Expanded)
+        .with(marker, || step_in_order(state, action))
+}
+
+fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
         validate_checkpoint_owners(state)?;
         let order = hallow_replay::recorded_order(state, pending)?;
@@ -2280,7 +2322,8 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
             choice: pending.choice.clone(),
             prevention,
         });
-        let (next, _) = order.with(|| {
+        let marker = state.engine.linked_aura_operation_v1.damage_order;
+        let (mut next, _) = order.with(marker, || {
             replay_general(
                 &pending.original,
                 &pending.operation,
@@ -2288,6 +2331,17 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
                 pending.used_banner,
             )
         })?;
+        if marker.is_none()
+            && order != hallow_replay::Order::Expanded
+            && has_pending(&next)
+            && next
+                .engine
+                .linked_aura_operation_v1
+                .pending_hallow_v1
+                .is_none()
+        {
+            next.engine.linked_aura_operation_v1.damage_order = Some(order);
+        }
         *state = next;
         return Ok(());
     }

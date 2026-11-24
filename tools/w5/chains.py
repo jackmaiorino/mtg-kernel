@@ -317,6 +317,9 @@ PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledge
                   'record_envelope', 'verified_reads'}
 RECORD_ENVELOPES = ('zstd1',)  # mtg-kernel record_envelope_v1
 VERIFIED_READS = ('resident',)  # mtg-kernel verified_bytes_cache_v1 resident reads
+INPUT_CONTRACTS = ('no-state-digest-v1', 'no-digests-v1')  # mtg-kernel no_state_digest_v1
+INPUT_CONTRACT_IMPORT_SCHEMA = 'mtg-kernel-no-state-digest-import/v1'
+INPUT_CONTRACT_CONVERSION_SCHEMA = 'mtg-kernel-no-state-digest-conversion/v1'
 INITIAL_SEGMENT_START = 'segment-start'  # arm key initial_opponent: the base's `initial` kind is the segment start
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
               'replay_sample.py': HERE / 'replay_sample.py', 'pgrow.py': HERE / 'pgrow.py',
@@ -377,6 +380,29 @@ def pin(path):
 def check_pin(p, what):
     require(p is not None and Path(p['path']).exists() and sha(p['path']) == p['sha256'],
             f'{what} differs from its pin ({None if p is None else p["path"]})')
+
+
+def check_input_contract_source(source, expected_contract, what):
+    """Verifies a net-8 model source carries a pinned no-state-digest / no-digests import and conversion matching
+    `expected_contract` (mtg-kernel no_state_digest_v1)."""
+    require(isinstance(source, dict), f'{what}: missing model source')
+    require(source.get('s_learner') is None and source.get('w_learner') is None,
+            f'{what}: input_contract {expected_contract!r} is net-8 only (no s_learner or w_learner)')
+    play_import_pin = source.get('play_import')
+    check_pin(play_import_pin, f'{what} play_import')
+    play_import = read(play_import_pin['path'])
+    require(isinstance(play_import, dict) and play_import.get('schema') == INPUT_CONTRACT_IMPORT_SCHEMA,
+            f'{what}: play_import is not a {INPUT_CONTRACT_IMPORT_SCHEMA} document')
+    conv_pin = play_import.get('conversion')
+    check_pin(conv_pin, f'{what} conversion')
+    conv = read(conv_pin['path'])
+    require(isinstance(conv, dict) and conv.get('schema') == INPUT_CONTRACT_CONVERSION_SCHEMA,
+            f'{what}: conversion is not a {INPUT_CONTRACT_CONVERSION_SCHEMA} document')
+    require(conv.get('contract') == expected_contract,
+            f'{what}: conversion contract is {conv.get("contract")!r}, expected {expected_contract!r}')
+    require(conv.get('base_play_import') == play_import.get('base_play_import'),
+            f'{what}: conversion base_play_import differs from import')
+    return conv_pin
 
 
 def log(root, **row):
@@ -1374,6 +1400,8 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
             raise
         raise Stop(f'{arm["arm"]}: {exc}') from exc
     if source is not None:
+        if arm.get('input_contract') is not None:
+            check_input_contract_source(source, arm['input_contract'], f'{arm["arm"]} continuation')
         cfg['initial_source'] = source
     if arm.get('record_envelope'):
         cfg['record_envelope'] = arm['record_envelope']
@@ -1747,6 +1775,8 @@ def recipe_identity(arm):
         identity['pregame_announcement_step_scale'] = arm['pregame_announcement_step_scale']  # absent otherwise: manifests unchanged
     if arm.get('postboard_exposure') is not None:
         identity['postboard_exposure'] = arm['postboard_exposure']  # absent otherwise: existing manifests unchanged
+    if arm.get('input_contract') is not None:
+        identity['input_contract'] = arm['input_contract']  # absent otherwise: existing manifests unchanged
     return identity
 
 
@@ -1761,6 +1791,8 @@ def check_pair(x_arm, c_arm, seed_root, scratch):
     XS's other differences (reported)."""
     require(c_arm.get('postboard_exposure') is None,
             f'{x_arm["arm"]} and C cannot pair with postboard_exposure for {seed_root}')
+    require(c_arm.get('input_contract') is None,
+            f'{x_arm["arm"]} and C cannot pair with input_contract for {seed_root}')
     x_base, c_base = read(x_arm['base']['path']), read(c_arm['base']['path'])
     require(x_base['iterations'] == c_base['iterations'] and x_base.get('opponents') == c_base.get('opponents'),
             f'{x_arm["arm"]} and C use different opponent schedules for {seed_root}')
@@ -1986,6 +2018,23 @@ def make_plan(inputs_path):
                 pregame_announcement_step_scale = qual.validate_pregame_announcement_step_scale(pregame_announcement_step_scale, pregame_advantage)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
+        # input_contract: opt-in converted net-8 input contract ('no-state-digest-v1' or 'no-digests-v1'). Every
+        # source the arm runs (parent, non-replaced base opponents, and any ladder history states) must pin a matching
+        # mtg-kernel-no-state-digest-import/v1 conversion; absent (or null): nothing changes.
+        input_contract = spec.get('input_contract')
+        if input_contract is not None:
+            require(input_contract in INPUT_CONTRACTS,
+                    f'{a}: input_contract is one of {INPUT_CONTRACTS}')
+            require(recipe == 'C', f'{a}: input_contract trains only on the plain CPU update of a C-recipe arm')
+            check_input_contract_source(parent.get('source'), input_contract, f'{a} parent')
+            replaced_id = ladder['replaces'] if ladder is not None else None
+            for opp in base_doc.get('opponents') or []:
+                if replaced_id is not None and opp.get('id') == replaced_id:
+                    continue
+                check_input_contract_source(opp.get('source'), input_contract, f'{a} opponent {opp.get("id")}')
+            if ladder is not None:
+                for idx, src, _ in pgrow.history_states(ladder, parent['source']):
+                    check_input_contract_source(src, input_contract, f'{a} ladder history {idx}')
         # mull_monitor: the descriptive London opening log (mull_monitor.py), kept by the scratch reaper. Absent (or
         # false): nothing changes, including the arm's tool pins.
         monitor = spec.get('mull_monitor')
@@ -2051,6 +2100,8 @@ def make_plan(inputs_path):
             doc['pregame_announcement_step_scale'] = pregame_announcement_step_scale
         if postboard_exposure is not None:  # absent otherwise, as record_envelope
             doc['postboard_exposure'] = postboard_exposure
+        if input_contract is not None:  # absent otherwise, as record_envelope
+            doc['input_contract'] = input_contract
         if monitor:  # absent otherwise, as record_envelope
             doc['mull_monitor'] = True
         if pooled is not None:  # execution only: absent otherwise, and never part of recipe_identity

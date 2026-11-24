@@ -468,6 +468,11 @@ const IMPROVISED_ACT: &str = "Improvised Act";
 /// Pauper field wave Pf1b's prepare creature and its spell.
 const ELITE_INTERCEPTOR: &str = "Elite Interceptor";
 const REJOINDER: &str = "Rejoinder";
+/// Vintage Cube wave C8a's prepare creatures and their spells.
+const EMERITUS_OF_ABUNDANCE: &str = "Emeritus of Abundance";
+const REGROWTH: &str = "Regrowth";
+const EMERITUS_OF_IDEATION: &str = "Emeritus of Ideation";
+const ANCESTRAL_RECALL: &str = "Ancestral Recall";
 const CREEPING_CHILL: &str = "Creeping Chill";
 const DACK_FAYDEN: &str = "Dack Fayden";
 const GOLGARI_GRAVE_TROLL: &str = "Golgari Grave-Troll";
@@ -1902,6 +1907,13 @@ pub(crate) fn drive(
                 &ctx,
                 state,
             );
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                returner,
+            ) {
+                return Ok(false);
+            }
             let lands = state.players[returner.index()]
                 .battlefield
                 .iter()
@@ -1947,7 +1959,7 @@ pub(crate) fn drive(
                 .filter(|&other| {
                     other != card
                         && definition(state, other).is_some_and(|def| {
-                            def.has_type(CardType::Creature)
+                            crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
                                 && (def.colors.iter().any(|&color| {
                                     crate::card_def::mana_color_mask(color) & black != 0
                                 }) || crate::eternal_legacy_e9a_v1::statics::painter_mask(
@@ -2644,7 +2656,13 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                 .is_some_and(|live| live.zone == Zone::Battlefield)
                 && matches!(
                     definition_name(state, object),
-                    Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE | ELITE_INTERCEPTOR)
+                    Some(
+                        CARNIVOROUS_CULTIVATOR
+                            | POMPOUS_BATTLEMAGE
+                            | ELITE_INTERCEPTOR
+                            | EMERITUS_OF_ABUNDANCE
+                            | EMERITUS_OF_IDEATION
+                    )
                 )
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
             {
@@ -2688,7 +2706,13 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
         // its abilities (Dress Down) does not enter prepared.
         if matches!(
             definition_name(state, object),
-            Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE | ELITE_INTERCEPTOR)
+            Some(
+                CARNIVOROUS_CULTIVATOR
+                    | POMPOUS_BATTLEMAGE
+                    | ELITE_INTERCEPTOR
+                    | EMERITUS_OF_ABUNDANCE
+                    | EMERITUS_OF_IDEATION
+            )
         ) && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
         {
             prepare(state, object);
@@ -2707,7 +2731,7 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
 /// It stays there while the creature is on the battlefield and prepared,
 /// and the creature's controller may cast it; as they do, the creature
 /// stops being prepared. A creature can't be prepared twice at once.
-fn prepare(state: &mut GameState, creature: ObjectId) {
+pub(crate) fn prepare(state: &mut GameState, creature: ObjectId) {
     let link = live_link(state, creature);
     if read_state(state)
         .is_some_and(|e7b| e7b.prepared.iter().any(|(prepared, _)| *prepared == link))
@@ -2718,6 +2742,8 @@ fn prepare(state: &mut GameState, creature: ObjectId) {
     let printing = match definition_name(state, creature) {
         Some(POMPOUS_BATTLEMAGE) => IMPROVISED_ACT,
         Some(ELITE_INTERCEPTOR) => REJOINDER,
+        Some(EMERITUS_OF_ABUNDANCE) => REGROWTH,
+        Some(EMERITUS_OF_IDEATION) => ANCESTRAL_RECALL,
         _ => ENROOT,
     };
     let card_def = token_id(printing);

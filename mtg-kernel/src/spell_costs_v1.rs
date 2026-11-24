@@ -173,6 +173,8 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) improvise: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
+    /// Splice onto Arcane: X packs `(Desperate Rituals, Through the Breaches)`.
+    pub(super) splice: bool,
     /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
     /// restricted mana.
     pub(super) colorless_eldrazi: bool,
@@ -185,6 +187,9 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) no_mana: bool,
     /// The spell's own card, which never pays for itself by delve.
     pub(super) no_mana_source: Option<ObjectId>,
+    /// Emerge from artifact (Crabomination, wave C9a): reduces generic mana by
+    /// the sacrificed artifact's mana value.
+    pub(super) emerge_artifact: bool,
 }
 
 impl SelectedSpellManaCostsV1 {
@@ -408,6 +413,25 @@ impl SelectedSpellManaCostsV1 {
             }
         }
         let (increase, reduction) = generic_modifiers;
+        let reduction = if cfg!(feature = "eternal-fixtures") && self.emerge_artifact {
+            if let Some(artifact) = self.component_groups.iter().zip(chosen_by_group).find_map(
+                |(components, chosen)| {
+                    components
+                        .iter()
+                        .any(|component| {
+                            matches!(component, CostComponent::SacrificeControlled { .. })
+                        })
+                        .then(|| chosen.first().copied())
+                        .flatten()
+                },
+            ) {
+                reduction.saturating_add(u32::from(super::object_mana_value(state, artifact)))
+            } else {
+                reduction
+            }
+        } else {
+            reduction
+        };
         let plan = |reserved: &[ObjectId]| {
             self.payment_plan(x, player, state, increase, reduction, reserved)
                 .filter(|payment| {
@@ -540,22 +564,26 @@ impl SelectedSpellManaCostsV1 {
         if self.convoke && self.delve {
             return None;
         }
-        let replicated = self
-            .replicate
-            .iter()
-            .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)));
+        let extra_costs: Vec<Cost> = if self.splice && cfg!(feature = "eternal-fixtures") {
+            crate::eternal_pauper_e8b_v1::splice_costs_for_code(x)
+        } else {
+            self.replicate
+                .iter()
+                .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)))
+                .collect()
+        };
         let pips = self
             .costs
             .iter()
             .copied()
-            .chain(replicated.clone())
+            .chain(extra_costs.iter().copied())
             .flat_map(|cost| cost.pips.iter().copied())
             .collect::<Vec<_>>();
         let generic = self
             .costs
             .iter()
             .map(|cost| u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x))
-            .chain(replicated.map(|cost| u32::from(cost.generic)))
+            .chain(extra_costs.iter().map(|cost| u32::from(cost.generic)))
             .sum::<u32>()
             .saturating_add(increase)
             .saturating_add(self.own_generic_increase)
@@ -761,6 +789,18 @@ fn selected_spell_mana_costs_with_escape(
     state: &GameState,
     breach_escape: bool,
 ) -> Option<SelectedSpellManaCostsV1> {
+    let grist_cda = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c9c_v1::is_grist_card(definition.name)
+        && method != CastMethodV4::Omen
+        && method != CastMethodV4::Bestow
+        && !(method == CastMethodV4::Alternative
+            && definition
+                .alt_cost
+                .is_some_and(|a| a.condition == card_def::AltCostCondition::DisguiseFromHand));
+    let replicate = crate::eternal_cards_v1::replicate_cost(definition.name)
+        .or_else(|| crate::eternal_cube_c2c_v1::multikicker_cost(definition.name));
+    let splice =
+        replicate.is_none() && crate::eternal_pauper_e8b_v1::splice_cost(definition).is_some();
     let mut selected = SelectedSpellManaCostsV1 {
         breach_escape,
         granted_flashback_v1: false,
@@ -785,18 +825,21 @@ fn selected_spell_mana_costs_with_escape(
             .collect(),
         costs: Vec::new(),
         component_groups: Vec::new(),
-        types: definition.types,
+        types: if grist_cda {
+            &[CardType::Planeswalker, CardType::Creature]
+        } else {
+            definition.types
+        },
         own_generic_reduction: 0,
         own_generic_increase: 0,
         delve: false,
         convoke: false,
         improvise: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
-        // Splice onto Arcane is paid like replicate: once per spliced card.
-        // Multikicker (wave C2c) is paid the same way, once per kick.
-        replicate: crate::eternal_cards_v1::replicate_cost(definition.name)
-            .or_else(|| crate::eternal_cube_c2c_v1::multikicker_cost(definition.name))
-            .or_else(|| crate::eternal_pauper_e8b_v1::splice_cost(definition)),
+        // Multikicker (wave C2c) is paid like replicate, once per kick.
+        // Splice onto Arcane packs (Rituals, Through the Breaches) in `x`.
+        replicate,
+        splice,
         // Painter's Servant colors every spell (eternal wave E9a).
         colorless_eldrazi: definition.colors.is_empty()
             && definition.subtypes.contains(&card_def::Subtype::Eldrazi)
@@ -805,6 +848,9 @@ fn selected_spell_mana_costs_with_escape(
         no_mana: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e8a_v1::statics::no_mana_spell(definition.name),
         no_mana_source: None,
+        emerge_artifact: cfg!(feature = "eternal-fixtures")
+            && method == CastMethodV4::Alternative
+            && crate::eternal_cube_c9a_v1::is_emerge_artifact(definition.name),
     };
     match method {
         CastMethodV4::Normal => {
@@ -870,6 +916,11 @@ fn selected_spell_mana_costs_with_escape(
                 .iter()
                 .map(|subtype| subtype.stable_id()),
         );
+    }
+    if grist_cda {
+        selected
+            .spell_subtypes
+            .push(card_def::Subtype::Insect.stable_id());
     }
     selected.spell_subtypes.sort_unstable();
     selected.spell_subtypes.dedup();
@@ -1131,6 +1182,11 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 // (Pauper field wave Pf1c).
                 .saturating_add(crate::eternal_pauper_pf1c_v1::torch_target_tax(
                     state, targets,
+                ))
+                // Elite Spellbinder: a spell cast via its exile permission
+                // costs {2} more to cast (Vintage Cube wave C8c).
+                .saturating_add(crate::eternal_cube_c8c_v1::spellbinder_spell_tax(
+                    state, source, player,
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
@@ -1174,6 +1230,33 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         // Citadel: "pay life equal to its mana value rather than pay its
         // mana cost", paid as the cast completes.
         selected.costs.remove(0);
+    } else if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, source, player)
+    {
+        // Airbend (Aang, Swift Savior, wave C9a): "While it is exiled, its
+        // owner may cast it for {2} rather than its mana cost." An alternative
+        // cost replaces the mana cost and cannot combine with another
+        // alternative cost (118.9a).
+        if matches!(
+            method,
+            CastMethodV4::Alternative
+                | CastMethodV4::Bestow
+                | CastMethodV4::Flashback
+                | CastMethodV4::Escape
+                | CastMethodV4::Madness
+                | CastMethodV4::Plotted
+        ) || (method == CastMethodV4::Omen
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name))
+        {
+            return None;
+        }
+        if let Some(first) = selected.costs.first_mut() {
+            *first = crate::eternal_cube_c9a_v1::AIRBEND_CAST_COST;
+        } else {
+            selected
+                .costs
+                .insert(0, crate::eternal_cube_c9a_v1::AIRBEND_CAST_COST);
+        }
     }
     if crate::eternal_premodern_p2b_v1::is_thornscape(definition)
         && state.engine.pending_cast.as_ref().is_some_and(|pending| {
@@ -1423,13 +1506,25 @@ fn selected_spell_quote_branch_grant_v1(
     {
         return None;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if kicked && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0) && x == 0 {
+        return None;
+    }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
-    // additional cost's discards (Premodern wave P1b), and a replicate,
-    // multikicker or splice count, which counts additional cost payments.
+    // additional cost's discards (Premodern wave P1b), a replicate,
+    // multikicker or splice count, which counts additional cost payments, and
+    // an X kicker cost paid on top of a free cast (Thieving Skydiver, wave C8c).
+    let x_is_additional_cost =
+        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
+            || super::announces_additional_cost_count(definition)
+            || (cfg!(feature = "eternal-fixtures")
+                && kicked
+                && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0));
     if x != 0
-        && !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
-        && !super::announces_additional_cost_count(definition)
+        && !x_is_additional_cost
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, source, player))
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal
                 && (crate::eternal_cards_v1::e3::free_hand_cast_selected(
@@ -1451,6 +1546,13 @@ fn selected_spell_quote_branch_grant_v1(
     // Sneak and disturb: the costs each card may be cast for.
     #[cfg(feature = "eternal-fixtures")]
     if !crate::eternal_pauper_e6b_v1::quote_allowed(state, definition, source, origin_zone, method)
+        || !crate::eternal_cube_c8a_v1::quote_allowed(
+            state,
+            definition,
+            source,
+            origin_zone,
+            method,
+        )
     {
         return None;
     }
@@ -1690,8 +1792,10 @@ fn selected_spell_quote_branch_grant_v1(
             .is_empty()
             && (hand.len() <= discard_count
                 || !hand.iter().any(|object| {
-                    card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
-                        .has_type(CardType::Creature)
+                    let def = &card_def::CARD_DEFS[state.objects.get(*object).card_def as usize];
+                    def.has_type(CardType::Creature)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
                 }))
         {
             return None;
@@ -2079,7 +2183,9 @@ pub(super) fn prepare_final_spell_payment_v1(
     {
         Some(definition.optional_additional_cost?)
     } else {
-        None
+        super::pending_collect_evidence_minimum(definition, pending).map(|minimum_mana_value| {
+            super::OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }
+        })
     };
     let optional_objects = pending
         .optional_additional_cost_chosen

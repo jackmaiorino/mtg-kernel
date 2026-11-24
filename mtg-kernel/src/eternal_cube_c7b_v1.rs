@@ -460,44 +460,49 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
 
 // ---- Hooks: Soul-Scar Mage ----------------------------------------------------------
 
-/// Soul-Scar Mage: "If a source you control would deal noncombat damage to a
-/// creature an opponent controls, put that many -1/-1 counters on that creature
-/// instead." Returns `true` when the damage event was replaced and suppressed.
-pub(crate) fn replace_noncombat_damage(state: &mut GameState, damage: &DamageProposed) -> bool {
+fn noncombat_damage_replacement(
+    state: &GameState,
+    damage: &DamageProposed,
+) -> Option<(ObjectId, PlayerId, ObjectId)> {
     if damage.is_combat || damage.amount <= 0 {
-        return false;
+        return None;
     }
     let Target::Object(victim) = damage.target else {
-        return false;
+        return None;
     };
-    let Some(victim_obj) = state.objects.try_get(victim) else {
-        return false;
-    };
+    let victim_obj = state.objects.try_get(victim)?;
     if victim_obj.zone != Zone::Battlefield
         || !crate::engine::object_has_type(state, victim, CardType::Creature)
     {
-        return false;
+        return None;
     }
-    let victim_controller = victim_obj.controller;
-    let source_controller = match damage.historical_facts(state) {
-        Ok(Some(facts)) => facts.source.controller,
-        Ok(None) => {
-            let Some(source) = state.objects.try_get(damage.source) else {
-                return false;
-            };
-            source.controller
-        }
-        Err(_) => return false,
+    let source_controller = match damage.historical_facts(state).ok()? {
+        Some(facts) => facts.source.controller,
+        None => state.objects.try_get(damage.source)?.controller,
     };
-    if victim_controller != source_controller.opponent() {
-        return false;
+    if victim_obj.controller != source_controller.opponent() {
+        return None;
     }
-    if crate::eternal_e5a_v1::active_permanents(state, SOUL_SCAR_MAGE, Some(source_controller))
-        .next()
-        .is_none()
-    {
+    let mage =
+        crate::eternal_e5a_v1::active_permanents(state, SOUL_SCAR_MAGE, Some(source_controller))
+            .next()?;
+    Some((victim, source_controller, mage))
+}
+
+pub(crate) fn noncombat_damage_replacement_source(
+    state: &GameState,
+    damage: &DamageProposed,
+) -> Option<ObjectLinkV4> {
+    let (_, _, mage) = noncombat_damage_replacement(state, damage)?;
+    Some(crate::eternal_e5a_v1::live_link(state, mage))
+}
+
+/// Soul-Scar Mage replaces controlled noncombat damage to opposing creatures
+/// with -1/-1 counters. A replaced packet deals no damage.
+pub(crate) fn replace_noncombat_damage(state: &mut GameState, damage: &DamageProposed) -> bool {
+    let Some((victim, source_controller, _)) = noncombat_damage_replacement(state, damage) else {
         return false;
-    }
+    };
     // 614.6 + Melira/Solemnity: the damage is still replaced even if -1/-1
     // counters cannot be placed on the creature; zero counters are placed.
     if crate::eternal_sideboard_s1n_v1::prevents_minus1_minus1_counters_on(state, victim) {

@@ -540,6 +540,22 @@ pub enum Subtype {
     /// Appended for Vintage Cube wave C7 (Black Widow, Super Spy), stable id
     /// 750. A creature type.
     Spy = 750,
+    /// Appended for Vintage Cube wave C8 (Zirda, the Dawnwaker; Jennifer
+    /// Walters // The Sensational She-Hulk; Saheeli, Sublime Artificer),
+    /// stable ids 760 to 762. Fox and Gamma are creature types; Saheeli is a
+    /// planeswalker type.
+    Fox = 760,
+    Gamma = 761,
+    Saheeli = 762,
+    /// Appended for Vintage Cube wave C9 (Badgermole Cub; Elspeth, Storm Slayer;
+    /// Grist, the Hunger Tide; Nissa, Who Shakes the World), stable ids 770 to
+    /// 774. Badger and Mole are creature types; Elspeth, Grist, and Nissa are
+    /// planeswalker types.
+    Badger = 770,
+    Mole = 771,
+    Elspeth = 772,
+    Grist = 773,
+    Nissa = 774,
 }
 
 impl Subtype {
@@ -961,6 +977,14 @@ impl Subtype {
         Subtype::Klingon,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Spy,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Fox,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Gamma,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Badger,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mole,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1227,6 +1251,14 @@ impl Subtype {
             721 => Subtype::Garruk,
             740 => Subtype::Klingon,
             750 => Subtype::Spy,
+            760 => Subtype::Fox,
+            761 => Subtype::Gamma,
+            762 => Subtype::Saheeli,
+            770 => Subtype::Badger,
+            771 => Subtype::Mole,
+            772 => Subtype::Elspeth,
+            773 => Subtype::Grist,
+            774 => Subtype::Nissa,
             _ => return None,
         })
     }
@@ -1472,6 +1504,14 @@ impl Subtype {
             Subtype::Garruk => false,
             Subtype::Klingon => true,
             Subtype::Spy => true,
+            Subtype::Fox => true,
+            Subtype::Gamma => true,
+            Subtype::Saheeli => false,
+            Subtype::Badger => true,
+            Subtype::Mole => true,
+            Subtype::Elspeth => false,
+            Subtype::Grist => false,
+            Subtype::Nissa => false,
         }
     }
 
@@ -1597,6 +1637,10 @@ impl Subtype {
                     | Subtype::Doctor
                     | Subtype::Klingon
                     | Subtype::Spy
+                    | Subtype::Fox
+                    | Subtype::Gamma
+                    | Subtype::Badger
+                    | Subtype::Mole
             )
         {
             return true;
@@ -2110,6 +2154,10 @@ impl Keywords {
     pub const SHROUD: Keywords = Keywords(1 << 18);
     /// Protection from every object (702.16j), not a color-quality shortcut.
     pub const PROTECTION_FROM_EVERYTHING: Keywords = Keywords(1 << 19);
+    /// Infect (702.90): deals damage to creatures as -1/-1 counters and to
+    /// players as poison counters. Appended for Vintage Cube wave C9a
+    /// (Blightsteel Colossus).
+    pub const INFECT: Keywords = Keywords(1 << 20);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -4202,7 +4250,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x4836_b459_b81e_9350;
+        const EXPECTED_ETERNAL: u64 = 0x018a_a4f2_7088_c66b;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

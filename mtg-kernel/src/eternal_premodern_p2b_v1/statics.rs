@@ -110,7 +110,7 @@ pub(crate) fn discard_cost_allows(state: &GameState, source: ObjectId, card: Obj
     if definition_name(state, source) != Some(SURVIVAL_OF_THE_FITTEST) {
         return true;
     }
-    definition(state, card).is_some_and(|def| def.has_type(CardType::Creature))
+    definition(state, card).is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
 }
 
 // ---- Morph ---------------------------------------------------------------------------

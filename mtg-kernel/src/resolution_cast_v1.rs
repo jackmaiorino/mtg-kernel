@@ -706,12 +706,11 @@ pub(super) fn validate_child(
     {
         return Err("resolution child lost its exact public parent".into());
     }
-    projected.engine.pending_effect = Some((**parent).clone());
-    // The parent is suspended before a child can discard. Its own validation
-    // must not mistake a child's additional cost for a parent effect answer.
-    projected.engine.pending_discard = None;
-    effect::validate_pending_effect_choice(&projected)?;
-    projected.engine.pending_effect = None;
+    // Restore the pre-announcement state of the pending child before
+    // re-validating the suspended parent. Otherwise a pending child whose
+    // stack presence re-enters `validate_pending_cast` (such as an extra-turn
+    // spell checked by `extra_turn_v1::validate`) would see the temporary
+    // `projected.engine.pending_effect` and reject itself.
     projected.engine.pending_cast = None;
     projected.engine.pending_land_play = None;
     if !land {
@@ -729,6 +728,15 @@ pub(super) fn validate_child(
         }
     }
     *projected.objects.get_mut(source) = original.clone();
+    if projected.stack.get(context.parent_index) != Some(&parent.resolving_item) {
+        return Err("resolution child shifted its public parent".into());
+    }
+    projected.engine.pending_effect = Some((**parent).clone());
+    // The parent is suspended before a child can discard. Its own validation
+    // must not mistake a child's additional cost for a parent effect answer.
+    projected.engine.pending_discard = None;
+    effect::validate_pending_effect_choice(&projected)?;
+    projected.engine.pending_effect = None;
     effect::validate_resolution_play_authorization(
         &mut projected,
         parent,

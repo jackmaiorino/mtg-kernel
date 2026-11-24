@@ -578,7 +578,9 @@ pub(crate) fn protected(
                     state,
                     target,
                     facts.werewolf,
-                ))
+                )
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9b_v1::protected_from_historical(state, target, facts)))
     })
 }
 

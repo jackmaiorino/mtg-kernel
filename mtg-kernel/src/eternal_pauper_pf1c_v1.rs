@@ -580,9 +580,9 @@ fn covered_packet(
     let (source, source_zone) = damage_source_incarnation(state, damage)?;
     if !shared_redirect
         && !crate::eternal_prevention_order_v1::nomads_v1::needs_frontier(state, damage)
+        && !crate::eternal_prevention_order_v1::eligible(state, damage)
         && (crate::eternal_prevention_order_v1::cannot_prevent_damage(state, damage)
             || (hallow_beneficiaries(state, source, source_zone).is_empty()
-                && !crate::eternal_prevention_order_v1::eligible(state, damage)
                 && !crate::eternal_prevention_order_v1::residual_order_applies(state, damage)))
     {
         return None;
@@ -686,6 +686,11 @@ fn prevent_packets(
         steps[item.event] = step
             .checked_add(1)
             .ok_or("Hallow packet step ordinal overflow")?;
+        // Save the public packet identity. Replay reconstructs the live source
+        // loans, which must stay with the packet used to apply the effect.
+        let mut saved_damage = damage.clone();
+        saved_damage.eternal_damage_lki_v1 = None;
+        saved_damage.niv_damage_origin_v1 = None;
         let choice = HallowChoiceV1 {
             cohort: batch.map(|batch| {
                 (
@@ -694,7 +699,7 @@ fn prevent_packets(
                     step,
                 )
             }),
-            damage: damage.clone(),
+            damage: saved_damage,
             source: item.source,
             source_zone: item.source_zone,
             chooser,
