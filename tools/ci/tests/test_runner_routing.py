@@ -61,48 +61,55 @@ class Evaluator:
     def peek(self):
         return self.tokens[self.at] if self.at < len(self.tokens) else None
 
-    # Each parse method returns a thunk, so && and || short-circuit as GitHub's do: the right side of
-    # `a && fromJSON(b)` is never evaluated while a is falsy.
-    def either(self):
-        value = self.both()
+    def either(self, resolve=True):
+        value = self.both(resolve)
         while self.peek() == "||":
             self.take()
-            value = (lambda left, right: lambda: left() if truthy(left()) else right())(value, self.both())
+            use_other = resolve and not truthy(value)
+            other = self.both(use_other)
+            if use_other:
+                value = other
         return value
 
-    def both(self):
-        value = self.comparison()
+    def both(self, resolve):
+        value = self.comparison(resolve)
         while self.peek() == "&&":
             self.take()
-            value = (lambda left, right: lambda: right() if truthy(left()) else left())(value, self.comparison())
+            use_other = resolve and truthy(value)
+            other = self.comparison(use_other)
+            if use_other:
+                value = other
         return value
 
-    def comparison(self):
-        value = self.operand()
+    def comparison(self, resolve):
+        value = self.operand(resolve)
         while self.peek() in ("==", "!="):
             negate = self.take() == "!="
-            value = (lambda left, right, negate: lambda: equal(left(), right()) != negate)(value, self.operand(), negate)
+            other = self.operand(resolve)
+            if resolve:
+                value = equal(value, other) != negate
         return value
 
-    def operand(self):
+    def operand(self, resolve):
         token = self.take()
         if token == "(":
-            value = self.either()
+            value = self.either(resolve)
             self.take(")")
             return value
         if token.startswith("'"):
-            return lambda: token[1:-1].replace("''", "'")
+            return token[1:-1].replace("''", "'")
         if self.peek() == "(":
             self.take("(")
-            thunks = [self.either()]
+            arguments = [self.either(resolve)]
             while self.peek() == ",":
                 self.take()
-                thunks.append(self.either())
+                arguments.append(self.either(resolve))
             self.take(")")
+            # Parse skipped branches without evaluating any functions in them.
             if token not in ("fromJSON", "format", "contains", "startsWith", "endsWith", "join"):
                 raise ValueError(f"unsupported function {token}")
-            return lambda: call(token, [thunk() for thunk in thunks])
-        return lambda: self.context.get(token, "")
+            return call(token, arguments) if resolve else None
+        return self.context.get(token, "")
 
 
 def text(value):
@@ -139,7 +146,7 @@ def evaluate(expression, **context):
     value = evaluator.either()
     if evaluator.peek() is not None:
         raise ValueError("trailing tokens")
-    return value()
+    return value
 
 
 def runs_on_expressions():
@@ -169,6 +176,15 @@ EVERY_POOL = {"vars.MTG_CI_WINDOWS_RUNNER": json.dumps(WINDOWS_POOL), "vars.MTG_
               "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL), "vars.MTG_CI_LINUX_GROUPS": '["eternal", "workspace-targets"]'}
 
 
+# Trusted except for the actor list: an unlisted actor, triggering actor or bot, and a missing, empty or malformed list.
+UNLISTED = [event(actor="someone"), event("push", actor="someone"), event("workflow_dispatch", actor="github-actions[bot]"),
+            event(actor="maintaine"), event(actor="maintainer2"), event(triggering="someone"),
+            event("push", actor="someone", triggering=OWNER)]
+BAD_LISTS = [event(**{"vars.MTG_CI_SELF_HOSTED_ACTORS": value})
+             for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
+                           f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]',
+                           f'["{OWNER}","helper"]', f'["{OWNER}" , "helper"]')]
+
 # Jobs on MTG_CI_DETECT_RUNNER: light, generic jobs whose runner does not depend on the matrix.
 LIGHT_JOBS = ("detect-changes", "rust-tests")
 DETECT_POOL = ["self-hosted", "fleet-mac-linux"]
@@ -177,7 +193,6 @@ LIGHT = {"vars.MTG_CI_DETECT_RUNNER": json.dumps(DETECT_POOL), "vars.MTG_CI_SELF
 
 def by(actor, triggering=None, **context):
     return {"github.actor": actor, "github.triggering_actor": triggering or actor, **context}
-
 
 class EvaluatorTests(unittest.TestCase):
     def test_operators_follow_github_semantics(self):
@@ -188,6 +203,12 @@ class EvaluatorTests(unittest.TestCase):
         self.assertFalse(evaluate("contains(fromJSON(list || '[]'), item)", item="k"))
         with self.assertRaises(ValueError):
             evaluate("a ? b : c")
+
+    def test_and_or_short_circuit_function_calls(self):
+        self.assertEqual(evaluate("missing && fromJSON(setting) || 'hosted'", setting="["), "hosted")
+        self.assertEqual(evaluate("'hosted' || fromJSON(setting)", setting="["), "hosted")
+        with self.assertRaises(json.JSONDecodeError):
+            evaluate("'selected' && fromJSON(setting)", setting="[")
 
     def test_and_or_short_circuit_and_string_functions(self):
         self.assertEqual(evaluate("a && fromJSON(b) || 'hosted'", b="not json"), "hosted")
@@ -235,16 +256,9 @@ class RoutingTests(unittest.TestCase):
         # A same-repository branch pushed by any account outside MTG_CI_SELF_HOSTED_ACTORS (a collaborator, a
         # bot), a re-run by one, and a missing, empty or malformed list all stay hosted. No owner comparison:
         # in an organization github.repository_owner is the organization.
-        unlisted = [event(actor="someone"), event("push", actor="someone"),
-                    event("workflow_dispatch", actor="github-actions[bot]"), event(actor="maintaine"),
-                    event(actor="maintainer2"), event(triggering="someone"), event("push", actor="someone", triggering=OWNER)]
-        bad_lists = [event(**{"vars.MTG_CI_SELF_HOSTED_ACTORS": value})
-                     for value in ("", "[]", "null", f'"{OWNER}"', f'"{OWNER}x"', f'["{OWNER}"', f' ["{OWNER}"]', OWNER,
-                                   f'{{"{OWNER}": 1}}', f'[["{OWNER}"]]', f'[{{"{OWNER}": true}}]',
-                                   f'["{OWNER}","helper"]', f'["{OWNER}" , "helper"]')]
         for expression in self.expressions.values():
             self.assertNotIn("repository_owner", expression)
-        for untrusted in unlisted + bad_lists:
+        for untrusted in UNLISTED + BAD_LISTS:
             for name, expression in self.expressions.items():
                 for system in ("ubuntu-24.04", "windows-2025"):
                     with self.subTest(job=name, system=system, event=untrusted["github.event_name"]):
@@ -275,6 +289,17 @@ class RoutingTests(unittest.TestCase):
                     self.route("ubuntu-24.04", "eternal", **{**event(), **EVERY_POOL, **bad})
                 self.assertEqual(self.route("ubuntu-24.04", "eternal", **{**event(head="someone/fork"), **EVERY_POOL, **bad}),
                                  "ubuntu-24.04")
+
+    def test_a_manual_heartbeat_needs_a_listed_actor(self):
+        text = (WORKFLOW.parent / "mac-heartbeat.yml").read_text(encoding="utf-8")
+        condition, = re.findall(r"^    if: (.+)$", text, re.MULTILINE)
+        self.assertTrue(evaluate(condition, **{"github.event_name": "schedule"}))
+        self.assertTrue(evaluate(condition, **event("workflow_dispatch")))
+        self.assertTrue(evaluate(condition, **event("workflow_dispatch", actor="helper")))
+        for untrusted in (event("workflow_dispatch", actor="someone"), event("workflow_dispatch", triggering="someone"),
+                          event("workflow_dispatch", **{"vars.MTG_CI_SELF_HOSTED_ACTORS": ""}),
+                          event("workflow_dispatch", **{"vars.MTG_CI_SELF_HOSTED_ACTORS": f'["{OWNER}", 1]'})):
+            self.assertFalse(evaluate(condition, **untrusted))
 
     def test_pull_request_windows_groups_follow_the_budget_output(self):
         # The variable names the candidates; only the groups detect-changes chose within the budget route.
@@ -585,6 +610,91 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("scope: tests-${{ env.MTG_CI_BUILD_GROUP }}", block)
         self.assertNotIn("scope: tests-${{ matrix.group }}", block)
         self.assertIn("matrix.group == env.MTG_CI_BUILD_GROUP", block)
+
+
+MAC_POOL = ["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]
+MAC_JOBS = ("rust-test-groups", "rust-limited-groups", "python-tests")
+
+
+class MacRoutingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.expressions = runs_on_expressions()
+
+    def route(self, job, system, group, **context):
+        return evaluate(self.expressions[job], **{"matrix.os": system, "matrix.group": group, **context})
+
+    def test_chosen_linux_groups_go_to_the_mac_for_listed_actors_only(self):
+        chosen = {"needs.detect-changes.outputs.mac_groups": '["limited-only", "standard", "python-shard-0"]',
+                  "vars.MTG_CI_MAC_GROUPS": '["limited-only", "standard", "python-shard-0"]'}
+        for job, group in (("rust-test-groups", "standard"), ("rust-limited-groups", "limited-only"),
+                           ("python-tests", "python-shard-0")):
+            with self.subTest(job=job):
+                for trusted in (event(), event("push"), event("workflow_dispatch")):
+                    self.assertEqual(self.route(job, "ubuntu-24.04", group, **trusted, **chosen), MAC_POOL)
+                for untrusted in [event(head="someone/fork")] + UNLISTED + BAD_LISTS:
+                    self.assertEqual(self.route(job, "ubuntu-24.04", group, **untrusted, **chosen), "ubuntu-24.04")
+                # A group detect-changes did not choose, or no choice at all, stays hosted.
+                self.assertEqual(self.route(job, "ubuntu-24.04", group + "-x", **event(), **chosen), "ubuntu-24.04")
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event()), "ubuntu-24.04")
+                # The step output alone never routes: the variable must name the group too.
+                output_only = {"needs.detect-changes.outputs.mac_groups": chosen["needs.detect-changes.outputs.mac_groups"]}
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event(), **output_only), "ubuntu-24.04")
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event(), **output_only,
+                                            **{"vars.MTG_CI_MAC_GROUPS": "[]"}), "ubuntu-24.04")
+                # The Mac never takes a Windows row.
+                self.assertEqual(self.route(job, "windows-2025", group, **event(), **chosen), "windows-2025")
+
+    def test_the_mac_comes_before_the_linux_pool(self):
+        both = {"needs.detect-changes.outputs.mac_groups": '["eternal"]', "vars.MTG_CI_MAC_GROUPS": '["eternal"]',
+                "vars.MTG_CI_LINUX_GROUPS": '["eternal"]',
+                "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)}
+        self.assertEqual(self.route("rust-test-groups", "ubuntu-24.04", "eternal", **event(), **both), MAC_POOL)
+
+    def test_malformed_mac_setting_keeps_linux_on_hosted_runners(self):
+        settings = {"vars.MTG_CI_MAC_GROUPS": '["python-shard-0"',
+                    "needs.detect-changes.outputs.mac_groups": "[]"}
+        for job, group in zip(MAC_JOBS, ("standard", "limited-only", "python-shard-0")):
+            with self.subTest(job=job):
+                self.assertEqual(self.route(job, "ubuntu-24.04", group, **event(), **settings), "ubuntu-24.04")
+
+    def test_the_mac_step_runs_for_listed_actors_from_this_repository_only(self):
+        block = job_block("detect-changes", "rust-quality")
+        index = block.index("      - name: Choose the Mac groups")
+        self.assertLess(block.index("      - name: Choose the checks"), index)
+        self.assertLess(block.index("      - name: Choose the self-hosted pull request groups"), index)
+        self.assertEqual(block.count("      - name: Check out merge ref with parents"), 1)
+        step = block[index:]
+        condition, = re.findall(r"^        if: (.+)$", step.split("\n      - name: ", 1)[0], re.MULTILINE)
+        settings = {"vars.MTG_CI_MAC_GROUPS": '["standard"]'}
+        self.assertTrue(evaluate(condition, **event(), **settings))
+        self.assertTrue(evaluate(condition, **event("push"), **settings))
+        self.assertFalse(evaluate(condition, **event()))
+        for untrusted in [event(head="someone/fork")] + UNLISTED + BAD_LISTS:
+            with self.subTest(event=untrusted):
+                self.assertFalse(evaluate(condition, **untrusted, **settings))
+        self.assertIn("timeout-minutes: 2\n        continue-on-error: true\n", step)
+        self.assertIn("run: python3 tools/ci/mac_route.py", step)
+        self.assertIn("CHECKS: ${{ steps.checks.outputs.checks || 'all' }}", step)
+        self.assertIn("mac_groups: ${{ steps.mac.outputs.groups }}", block)
+
+    def test_every_eligible_group_is_a_linux_row(self):
+        detect = job_block("detect-changes", "rust-quality")
+        (line,) = [line for line in detect.splitlines() if "MAC_ELIGIBLE:" in line]
+        eligible = json.loads(line.split("MAC_ELIGIBLE:", 1)[1].strip().strip("'"))
+        rows = set(matrix_groups(job_block("rust-test-groups", "limited-build"))) - {"native-store-1"}
+        rows |= set(matrix_groups(job_block("rust-limited-groups", "rust-tests")))
+        rows |= {"python-shard-0", "python-shard-1"}
+        self.assertTrue(eligible)
+        self.assertLessEqual(set(eligible), rows)
+
+    def test_python_shards_carry_their_group_names(self):
+        block = job_block("python-tests", "hosted-fallback")
+        for shard in (0, 1, 2):
+            self.assertIn(f"- {{shard: {shard}, group: python-shard-{shard}}}", block)
+        # An arm64 runner builds its own binaries instead of the shared x86-64 ones.
+        self.assertIn("if: runner.arch == 'ARM64'", block)
+        self.assertEqual(block.count("if: runner.arch != 'ARM64'"), 2)
 
 
 if __name__ == "__main__":
