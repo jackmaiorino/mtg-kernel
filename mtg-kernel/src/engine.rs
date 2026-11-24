@@ -923,6 +923,12 @@ pub enum UnsupportedMechanic {
     /// (`full_text_v1::entry_refused`). The source is the Shapeshifter.
     /// Appended to preserve prior unsupported-state discriminants.
     FullTextDonorOutsideSetV1,
+    /// A Layer-3 color-word text replacement targeted a face-up card outside
+    /// the audited Premodern pool, a changed face-down permanent turned face
+    /// up as an unaudited card, or a stack item holding a captured color-word
+    /// change was copied (`text_color_change_v1`).
+    /// Appended to preserve prior unsupported-state discriminants.
+    TextColorChangeOutsideAuditV1,
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
@@ -2202,6 +2208,9 @@ fn pending_cast_targeting_is_complete(pending: &PendingCast, spec: TargetSpec) -
 }
 
 fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
+    if state.text_color_changes_v1.is_some() {
+        return object_color_mask(state, id) & card_def::mana_color_mask(color) != 0;
+    }
     let def_idx = state.objects.get(id).card_def;
     // Painter's Servant adds its chosen color to every card, spell and
     // permanent (eternal wave E9a).
@@ -4057,6 +4066,9 @@ struct TargetingSource {
     /// target must differ from an object other than its own source.
     other_than: Option<ObjectId>,
     original_source_incarnation_only: bool,
+    /// Origin from which color-word target specs read Layer-3 text changes
+    /// (live object for spells/announcements, stack-item capture for abilities).
+    text_color_origin: Option<crate::text_color_change_v1::TargetOriginV1>,
 }
 
 fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<TargetingSource> {
@@ -4071,6 +4083,12 @@ fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<Ta
         power_lki: None,
         other_than: None,
         original_source_incarnation_only: false,
+        text_color_origin: Some(crate::text_color_change_v1::TargetOriginV1::Object(
+            ObjectLinkV4 {
+                object,
+                zone_change_count: live.zone_change_count,
+            },
+        )),
     })
 }
 
@@ -4146,6 +4164,9 @@ fn spell_sourced_trigger_targeting_source(item: &StackItem) -> Option<TargetingS
         power_lki: None,
         other_than: None,
         original_source_incarnation_only: false,
+        text_color_origin: Some(crate::text_color_change_v1::TargetOriginV1::Ability(
+            item.v4.stack_item_id,
+        )),
     })
 }
 
@@ -4181,6 +4202,12 @@ fn triggered_ability_targeting_source(
             power_lki: None,
             other_than: None,
             original_source_incarnation_only: false,
+            text_color_origin: Some(crate::text_color_change_v1::TargetOriginV1::Object(
+                ObjectLinkV4 {
+                    object: original.source,
+                    zone_change_count: original.zone_change_count,
+                },
+            )),
         });
     }
     let bound_room = crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect);
@@ -4218,6 +4245,12 @@ fn triggered_ability_targeting_source(
                 | EffectOp::AshrootBoostFromCaptureV2 { .. }
                 | EffectOp::CreateAnotherControlledNonlandTargetCopyV1
         ),
+        text_color_origin: Some(crate::text_color_change_v1::TargetOriginV1::Object(
+            ObjectLinkV4 {
+                object: source,
+                zone_change_count: contract.zone_change_count,
+            },
+        )),
     })
 }
 
@@ -4656,8 +4689,22 @@ fn legal_targets_unrestricted_v1(
                 .map(|item| Target::Object(item.source))
                 .collect()
         }
-        TargetSpec::BlueSpellOnStack => spell_targets_of_color(state, mana::ManaColor::U),
-        TargetSpec::RedSpellOnStack => spell_targets_of_color(state, mana::ManaColor::R),
+        TargetSpec::BlueSpellOnStack => spell_targets_of_color(
+            state,
+            crate::text_color_change_v1::target_origin_color(
+                state,
+                source.and_then(|source| source.text_color_origin),
+                mana::ManaColor::U,
+            ),
+        ),
+        TargetSpec::RedSpellOnStack => spell_targets_of_color(
+            state,
+            crate::text_color_change_v1::target_origin_color(
+                state,
+                source.and_then(|source| source.text_color_origin),
+                mana::ManaColor::R,
+            ),
+        ),
         TargetSpec::ArtifactOrEnchantmentSpellOnStack => {
             spell_targets_with_any_type(state, &[CardType::Artifact, CardType::Enchantment])
         }
@@ -4672,8 +4719,22 @@ fn legal_targets_unrestricted_v1(
             spell_targets_with_any_type(state, &[CardType::Artifact])
         }
         TargetSpec::AnyPermanent => battlefield_objects(state).map(Target::Object).collect(),
-        TargetSpec::BluePermanent => permanent_targets_of_color(state, mana::ManaColor::U),
-        TargetSpec::RedPermanent => permanent_targets_of_color(state, mana::ManaColor::R),
+        TargetSpec::BluePermanent => permanent_targets_of_color(
+            state,
+            crate::text_color_change_v1::target_origin_color(
+                state,
+                source.and_then(|source| source.text_color_origin),
+                mana::ManaColor::U,
+            ),
+        ),
+        TargetSpec::RedPermanent => permanent_targets_of_color(
+            state,
+            crate::text_color_change_v1::target_origin_color(
+                state,
+                source.and_then(|source| source.text_color_origin),
+                mana::ManaColor::R,
+            ),
+        ),
         TargetSpec::NonlandPermanent => battlefield_objects(state)
             .filter(|&id| !object_has_type(state, id, CardType::Land))
             .map(Target::Object)
@@ -4737,13 +4798,17 @@ fn legal_targets_unrestricted_v1(
             })
             .map(Target::Object)
             .collect(),
-        TargetSpec::NonblackCreature => battlefield_objects(state)
-            .filter(|&id| {
-                object_has_type(state, id, CardType::Creature)
-                    && !is_color(state, id, mana::ManaColor::B)
-            })
-            .map(Target::Object)
-            .collect(),
+        TargetSpec::NonblackCreature => {
+            let excluded = crate::text_color_change_v1::target_origin_color(
+                state,
+                source.and_then(|source| source.text_color_origin),
+                mana::ManaColor::B,
+            );
+            battlefield_objects(state)
+                .filter(|&id| object_has_type(state, id, CardType::Creature) && !is_color(state, id, excluded))
+                .map(Target::Object)
+                .collect()
+        }
         TargetSpec::CreaturePowerPlusToughnessAtMostFive => battlefield_objects(state)
             .filter(|&id| {
                 object_has_type(state, id, CardType::Creature)
@@ -4946,6 +5011,7 @@ fn legal_targets_unrestricted_v1(
             filter,
             controller,
             source.map(|source| (source.object, source.zone_change_count)),
+            source.and_then(|source| source.text_color_origin),
             targets_chosen,
             state,
         ),
@@ -5707,6 +5773,12 @@ pub(crate) fn effect_target_is_legal_from_ability_source_with_power_lki(
                 other_than: None,
                 original_source_incarnation_only: spec
                     == TargetSpec::AnotherControlledNonlandPermanent,
+                text_color_origin: Some(crate::text_color_change_v1::TargetOriginV1::Object(
+                    ObjectLinkV4 {
+                        object: source.source,
+                        zone_change_count: source.zone_change_count,
+                    },
+                )),
             }),
             state,
         )
@@ -5910,7 +5982,15 @@ fn activation_legal_targets_for(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    activation_legal_targets_with_source_lki(source, ability, targets_chosen, false, None, state)
+    activation_legal_targets_with_source_lki(
+        source,
+        ability,
+        targets_chosen,
+        false,
+        None,
+        None,
+        state,
+    )
 }
 
 /// `source_departed`: the ability's source has left the battlefield since
@@ -5925,6 +6005,7 @@ fn activation_legal_targets_with_source_lki(
     targets_chosen: &[Target],
     source_departed: bool,
     captured_source: Option<AbilitySourceContractV4>,
+    stack_item_id: Option<StackItemId>,
     state: &GameState,
 ) -> Vec<Target> {
     if matches!(
@@ -5965,6 +6046,16 @@ fn activation_legal_targets_with_source_lki(
             power_lki: None,
             other_than: None,
             original_source_incarnation_only: false,
+            text_color_origin: Some(match stack_item_id {
+                Some(item_id) => crate::text_color_change_v1::TargetOriginV1::Ability(item_id),
+                None => crate::text_color_change_v1::TargetOriginV1::Object(ObjectLinkV4 {
+                    object: source,
+                    zone_change_count: captured_source.map_or_else(
+                        || state.objects.get(source).zone_change_count,
+                        |s| s.zone_change_count,
+                    ),
+                }),
+            }),
         }),
         state,
     )
@@ -14412,6 +14503,9 @@ fn turn_face_up(state: &mut GameState, player: PlayerId, id: ObjectId) -> Result
     // A Bane of the Living owes its X (Premodern wave P2a).
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_premodern_p2a_v1::statics::turned_face_up(state, id);
+    if !crate::text_color_change_v1::on_turned_face_up(state, id) {
+        return Ok(());
+    }
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];
     state.priority_player = player;
@@ -16931,6 +17025,7 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
                 return None;
             }
             crate::source_power_activation_v1::finish(state, &item);
+            crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
             let finished = if let Some(owner) = inspiration_owner.as_ref() {
                 effect::finish_owned_inspiration_resolution(
                     state,
@@ -20938,6 +21033,28 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    if !finalized.madness_offer {
+        let capture_source = finalized
+            .v4
+            .ability_source_contract
+            .map(|contract| ObjectLinkV4 {
+                object: contract.source,
+                zone_change_count: contract.zone_change_count,
+            })
+            .or_else(|| {
+                finalized.v4.source_contract.map(|contract| ObjectLinkV4 {
+                    object: contract.source,
+                    zone_change_count: contract.zone_change_count,
+                })
+            });
+        if let Some(capture_source) = capture_source {
+            crate::text_color_change_v1::capture_for_stack_item(
+                state,
+                stack_item_id,
+                capture_source,
+            );
+        }
+    }
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cards_v1::e3::dungeons::occurrences::publish(state, &finalized)?;
     crate::drake_hatcher_v1::custody::publish(state, &finalized)?;
@@ -22327,6 +22444,7 @@ pub(crate) fn stack_targets_still_legal(
                         &chosen,
                         source_departed,
                         Some(source_contract),
+                        Some(item.v4.stack_item_id),
                         state,
                     )
                     .contains(&target)
@@ -22353,6 +22471,15 @@ pub(crate) fn stack_targets_still_legal(
                             power_lki: None,
                             other_than: None,
                             original_source_incarnation_only: false,
+                            text_color_origin: Some(
+                                crate::text_color_change_v1::TargetOriginV1::Object(ObjectLinkV4 {
+                                    object: item.source,
+                                    zone_change_count: state
+                                        .objects
+                                        .get(item.source)
+                                        .zone_change_count,
+                                }),
+                            ),
                         }),
                         StackItemKind::TriggeredAbility
                             if spell_sourced_trigger_targeting_source(item).is_some() =>
@@ -22364,7 +22491,9 @@ pub(crate) fn stack_targets_still_legal(
                                 .inline_effect
                                 .as_ref()
                                 .ok_or("triggered stack item lost its effect program")?;
-                            if crate::faebloom_trick_v43::capture_of(effect).is_some() {
+                            let trigger_source = if crate::faebloom_trick_v43::capture_of(effect)
+                                .is_some()
+                            {
                                 // This reflexive retains its genuine spell source contract.
                                 // Full metadata and capture authority were authenticated above.
                                 triggered_ability_targeting_source(state, item.source, None, effect)
@@ -22385,6 +22514,11 @@ pub(crate) fn stack_targets_still_legal(
                                     power_lki: None,
                                     other_than: None,
                                     original_source_incarnation_only: false,
+                                    text_color_origin: Some(
+                                        crate::text_color_change_v1::TargetOriginV1::Ability(
+                                            item.v4.stack_item_id,
+                                        ),
+                                    ),
                                 })
                             } else {
                                 triggered_ability_targeting_source(
@@ -22395,7 +22529,14 @@ pub(crate) fn stack_targets_still_legal(
                                     )?),
                                     effect,
                                 )
-                            }
+                            };
+                            trigger_source.map(|mut src| {
+                                src.text_color_origin =
+                                    Some(crate::text_color_change_v1::TargetOriginV1::Ability(
+                                        item.v4.stack_item_id,
+                                    ));
+                                src
+                            })
                         }
                         StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
                             unreachable!("handled or untargeted")
@@ -22839,6 +22980,7 @@ pub(crate) fn counter_stack_item_by_id_to_zone(
     effect::kaito_cunning_v75::record_not_resolved(state, &item, true)?;
     effect::chandra_flameshaper_v1::record_not_resolved(state, &item, true)?;
     crate::source_power_activation_v1::finish(state, &item);
+    crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
     crate::librarian_activation_v1::record_countered(state, &item, librarian_counter_owner)?;
@@ -22864,6 +23006,7 @@ pub(crate) fn counter_stack_item_by_id_to_zone(
 /// move normally; virtual spell copies cease without entering a card zone.
 fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
     crate::librarian_activation_v1::finish(state, item);
+    crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
     if item.inline_effect.is_some() || item.kind != StackItemKind::Spell {
         return Ok(());
     }
@@ -24169,6 +24312,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
         crate::source_power_activation_v1::finish(state, &item);
+        crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
         return ResolutionProgress::Complete;
     }
 
@@ -24182,6 +24326,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return ResolutionProgress::Suspended;
             }
+            crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
             return ResolutionProgress::Complete;
         }
         owner => owner,
@@ -24217,6 +24362,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
         return ResolutionProgress::Complete;
     }
     if let Some(effect) = item.inline_effect.clone() {
@@ -24248,6 +24394,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
             crate::banishing_light_v1::finish(state, &item);
+            crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
             return ResolutionProgress::Complete;
         }
         let progress = if let Some(owner) = drakuseth_owner.filter(|_| crystal_owner.is_none()) {
@@ -24316,6 +24463,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             crate::librarian_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
             crate::cerberus_capture_v1::finish(state, &item);
+            crate::text_color_change_v1::remove_capture(state, item.v4.stack_item_id);
             crate::wildwood_capture_v1::close(state, &item, false);
             keep_ability_on_stack_until_discarded(state, &item);
         }
@@ -25209,6 +25357,7 @@ fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
             obj.v4.animation_timestamp = None;
         }
     }
+    crate::text_color_change_v1::cleanup_animations(state);
     crate::standard_creatures_v1::cleanup(state);
     crate::sower_restriction_capture_v1::expire(state);
     crate::effect::temporary_control_v1::expire_at_cleanup(state);
@@ -25893,9 +26042,12 @@ fn unpainted_object_color_mask(state: &GameState, id: ObjectId) -> u8 {
     }
     // An animation with listed colors sets them; one without leaves the
     // object's colors unchanged (XMage only sets a colored token's color).
-    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
-        if !animation.colors.is_empty() {
-            return card_def::mana_colors_mask(animation.colors);
+    if let Some((animation, timestamp)) = crate::continuous_characteristics_v1::animation(state, id)
+    {
+        if let Some(mask) = crate::continuous_characteristics_v1::animation_color_mask(
+            state, id, animation, timestamp,
+        ) {
+            return mask;
         }
     }
     if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
@@ -25913,7 +26065,8 @@ fn unpainted_object_color_mask(state: &GameState, id: ObjectId) -> u8 {
             if let Some((_, _, color)) = crate::standard_cards_v1::room_characteristics(state, id) {
                 return color;
             }
-            object.v4.effective_color_mask
+            crate::text_color_change_v1::token_color_mask(state, id)
+                .unwrap_or(object.v4.effective_color_mask)
         }
     })
 }
@@ -30234,6 +30387,13 @@ pub(crate) fn copy_spell_for(
         .iter()
         .find(|item| item.kind == StackItemKind::Spell && item.source == spell)?
         .clone();
+    if crate::text_color_change_v1::refuse_copied_capture(
+        state,
+        parent.v4.stack_item_id,
+        parent.source,
+    ) {
+        return None;
+    }
     let original = state.objects.get(parent.source).clone();
     let copy_source = state.objects.push(crate::state::GameObject {
         card_def: original.card_def,
@@ -30632,6 +30792,13 @@ pub(crate) fn finish_spell_copy_targets(
 fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (ObjectId, StackItemId) {
     let (_, parent) = pending_spell_copy_parent(state, pending)
         .expect("validated immediately before paying; no action can interleave");
+    if crate::text_color_change_v1::refuse_copied_capture(
+        state,
+        parent.v4.stack_item_id,
+        parent.source,
+    ) {
+        return (parent.source, StackItemId::default());
+    }
     let original = state.objects.get(parent.source);
     let copy_source = state.objects.push(expected_spell_copy_source_object(
         original, &parent, pending,
@@ -31144,6 +31311,9 @@ fn apply_choose_paid_spell_copy(state: &mut GameState, option: u16) -> Result<()
 
 fn enter_spell_copy_retarget(state: &mut GameState, pending: &PendingSpellCopy) {
     let (copy_source, copy_stack_item) = create_spell_copy(state, pending);
+    if state.engine.halted.is_some() {
+        return;
+    }
     let live = state
         .engine
         .pending_spell_copy
@@ -33353,7 +33523,16 @@ fn materialize_aborted_cast_v1(
         } else {
             None
         };
+        let old_zone_change_count = object.zone_change_count;
         object.zone_change_count += 1;
+        crate::text_color_change_v1::on_zone_change_field(
+            &mut state.text_color_changes_v1,
+            pending.spell,
+            Zone::Stack,
+            to_zone,
+            old_zone_change_count,
+            object.zone_change_count,
+        );
         object
             .v4
             .reset_for_zone_change(object.card_def, to_zone, turn);
@@ -33988,6 +34167,14 @@ fn push_paid_activation(
             ..StackStateV4::default()
         },
     });
+    crate::text_color_change_v1::capture_for_stack_item(
+        state,
+        stack_item_id,
+        ObjectLinkV4 {
+            object: ability_source_contract.source,
+            zone_change_count: ability_source_contract.zone_change_count,
+        },
+    );
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::vial::record_paid(
         state,
         stack_item_id,
@@ -34226,7 +34413,16 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone, face_down
         object.counters = Default::default();
     }
     object.plotted_turn = None;
+    let old_zone_change_count = object.zone_change_count;
     object.zone_change_count += 1;
+    crate::text_color_change_v1::on_zone_change_field(
+        &mut state.text_color_changes_v1,
+        id,
+        from_zone,
+        Zone::Stack,
+        old_zone_change_count,
+        object.zone_change_count,
+    );
     object
         .v4
         .reset_for_zone_change(object.card_def, Zone::Stack, turn);
