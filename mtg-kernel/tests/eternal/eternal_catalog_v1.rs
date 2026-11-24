@@ -1364,7 +1364,10 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // Spells and abilities target Ward permanents freely, and the session
     // follows each Ward payment (generic, life).
     println!("ward payment decisions (generic, life): {ward_payments:?}");
-    assert!(ward_payments[0] > 0, "{ward_payments:?}");
+    assert!(
+        ward_payments.iter().all(|count| *count > 0),
+        "{ward_payments:?}"
+    );
 }
 
 /// A deck of `lands` and four copies of each of nine spells.
