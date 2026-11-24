@@ -1447,7 +1447,8 @@ fn chain_lightning_escaped_through_underworld_breach_offers_its_copy() {
     assert!(castable(&mut state, chain));
     act(&mut state, Action::CastSpell(chain));
     let mut offered = false;
-    settle_with(&mut state, |_, decision| match decision {
+    let mut copied = false;
+    settle_with(&mut state, |state, decision| match decision {
         Decision::ChooseTargets { legal_targets, .. }
             if legal_targets.contains(&Target::Player(P1)) && !offered =>
         {
@@ -1459,7 +1460,14 @@ fn chain_lightning_escaped_through_underworld_breach_offers_its_copy() {
         }
         Decision::ChooseSpellCopyPayment { .. } => Action::ChooseSpellCopyPayment(false),
         Decision::ChooseEffectOption { .. } if offered => Action::ChooseEffectOption(1),
-        Decision::ChooseSpellCopyRetarget { .. } => Action::ChooseSpellCopyRetarget(true),
+        Decision::ChooseSpellCopyRetarget { .. } => {
+            let copy = state.stack.last().expect("the copy");
+            assert!(copy.is_copy);
+            assert!(copy.v4.paid_cost_refs.is_empty(), "the copy paid nothing");
+            assert!(copy.discarded.is_empty());
+            copied = true;
+            Action::ChooseSpellCopyRetarget(true)
+        }
         Decision::ChooseTargets { legal_targets, .. }
             if legal_targets.contains(&Target::Player(P0)) =>
         {
@@ -1468,6 +1476,7 @@ fn chain_lightning_escaped_through_underworld_breach_offers_its_copy() {
         other => first_answer(other),
     });
     assert!(offered, "the copy was offered");
+    assert!(copied, "the copy was made");
     assert_eq!(life(&state, P1), 17);
     assert_eq!(life(&state, P0), 17, "the copy hit P0");
     assert_eq!(state.exile.len(), 3, "the escape cost exiled three cards");
@@ -1494,15 +1503,30 @@ fn chain_lightning_retraced_with_the_wrenn_and_six_emblem_offers_its_copy() {
     retrace_emblem(&mut state);
     let chain = put(&mut state, P0, "Chain Lightning", Zone::Graveyard);
     let land = put(&mut state, P0, "Mountain", Zone::Hand);
+    put(&mut state, P1, "Mountain", Zone::Battlefield);
+    put(&mut state, P1, "Mountain", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::R], 0);
     assert!(castable(&mut state, chain));
     act(&mut state, Action::CastSpell(chain));
     let mut offered = false;
-    settle_with(&mut state, |_, decision| match decision {
+    let mut copied = false;
+    settle_with(&mut state, |state, decision| match decision {
+        // P1 pays for one copy, keeping its target (P1); the copy's own
+        // offer is declined.
         Decision::ChooseSpellCopyPayment { player, .. } => {
             assert_eq!(player, P1);
+            let pay = !offered;
             offered = true;
-            Action::ChooseSpellCopyPayment(false)
+            Action::ChooseSpellCopyPayment(pay)
+        }
+        Decision::ChooseEffectOption { .. } if offered => Action::ChooseEffectOption(1),
+        Decision::ChooseSpellCopyRetarget { .. } => {
+            let copy = state.stack.last().expect("the copy");
+            assert!(copy.is_copy);
+            assert!(copy.v4.paid_cost_refs.is_empty(), "the copy paid nothing");
+            assert!(copy.discarded.is_empty());
+            copied = true;
+            Action::ChooseSpellCopyRetarget(false)
         }
         Decision::ChooseTargets { legal_targets, .. }
             if legal_targets.contains(&Target::Player(P1)) =>
@@ -1512,7 +1536,8 @@ fn chain_lightning_retraced_with_the_wrenn_and_six_emblem_offers_its_copy() {
         other => first_answer(other),
     });
     assert!(offered, "the copy was offered");
-    assert_eq!(life(&state, P1), 17);
+    assert!(copied, "the copy was made");
+    assert_eq!(life(&state, P1), 14, "the spell and its copy");
     assert_eq!(zone(&state, land), Zone::Graveyard, "discarded for retrace");
     assert_eq!(zone(&state, chain), Zone::Graveyard);
 }

@@ -31550,6 +31550,65 @@ fn has_supported_spell_copy_offer_program(state: &GameState, item: &StackItem) -
         ]))
 }
 
+/// The object payments a spell-copy parent may carry: none, except the
+/// route-owned ones of escape (exactly the escape cost's other graveyard
+/// cards, now exiled, of the caster) and retrace on a graveyard route
+/// (exactly one land card of the caster, discarded).
+fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackItem) -> bool {
+    let Some(source) = state.objects.try_get(parent.source) else {
+        return false;
+    };
+    let Some(def) = card_def::CARD_DEFS.get(usize::from(source.card_def)) else {
+        return false;
+    };
+    let caster = parent.controller;
+    let refs = &parent.v4.paid_cost_refs;
+    let route = source.v4.spell_cast_origin.map(|origin| origin.route);
+    match (parent.v4.cast_method, route) {
+        (Some(CastMethodV4::Escape), Some(route)) if route.is_escape() => {
+            let count =
+                spell_costs_v1::escape_cost_v1(def, route == SpellCastRouteV4::BreachEscapeV1)
+                    .and_then(|cost| {
+                        cost.iter().find_map(|part| match part {
+                            CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                                Some(usize::from(*n))
+                            }
+                            _ => None,
+                        })
+                    });
+            parent.discarded.is_empty()
+                && count == Some(refs.len())
+                && refs.iter().enumerate().all(|(index, card)| {
+                    card.owner == caster
+                        && card.zone == Zone::Exile
+                        && card.object != parent.source
+                        && !refs[..index]
+                            .iter()
+                            .any(|prior| prior.object == card.object)
+                })
+        }
+        // Retrace (Wrenn and Six's emblem) is recorded on a graveyard
+        // permission route; it pays with one discarded land card, as
+        // `validate_spell_stack_source` reads the same routes.
+        (
+            Some(CastMethodV4::Normal),
+            Some(SpellCastRouteV4::RetraceV1 | SpellCastRouteV4::GraveyardPermissionV1 { .. }),
+        ) => match refs.as_slice() {
+            [] => route != Some(SpellCastRouteV4::RetraceV1) && parent.discarded.is_empty(),
+            [land] => {
+                land.owner == caster
+                    && land.zone == Zone::Graveyard
+                    && card_def::CARD_DEFS
+                        .get(usize::from(land.card_def))
+                        .is_some_and(|land_def| land_def.has_type(CardType::Land))
+                    && (parent.discarded.is_empty() || parent.discarded == [land.object])
+            }
+            _ => false,
+        },
+        _ => refs.is_empty() && parent.discarded.is_empty(),
+    }
+}
+
 pub(crate) fn validate_pending_spell_copy(
     state: &GameState,
     pending: &PendingSpellCopy,
@@ -31590,6 +31649,7 @@ pub(crate) fn validate_pending_spell_copy(
         || parent.v4.face_index != 0
         || parent.v4.x_value != 0
         || parent.v4.activated_ability_index.is_some()
+        || !spell_copy_parent_route_payments_are_exact(state, &parent)
     {
         return Err("the spell-copy continuation parent has invalid cast provenance".to_string());
     }
@@ -43827,6 +43887,46 @@ mod tests {
             crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, &copied).is_none(),
             "a cost equal to a printed one but not that ability"
         );
+
+    /// A hand-cast Chain Lightning has no object payments: a payment record
+    /// added to it must still be refused when its copy offer is answered.
+    #[test]
+    fn chain_copy_rejects_fabricated_payment_records_on_a_hand_cast_parent() {
+        let mut state = ready_game_in_main1(1);
+        let chain = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        let red1 = put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut with_payment = state.clone();
+        let payment = crate::state::PaidCostRefV4::capture(&with_payment, red1);
+        with_payment
+            .stack
+            .last_mut()
+            .unwrap()
+            .v4
+            .paid_cost_refs
+            .push(payment);
+        let before = with_payment.clone();
+        assert!(step(&mut with_payment, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(with_payment, before);
+
+        let mut with_discard = state.clone();
+        with_discard.stack.last_mut().unwrap().discarded.push(red1);
+        let before = with_discard.clone();
+        assert!(step(&mut with_discard, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(with_discard, before);
+
+        // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
     }
 }
 
