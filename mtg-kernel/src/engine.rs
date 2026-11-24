@@ -3635,6 +3635,16 @@ fn validate_spell_sourced_trigger(
             state, item, false,
         );
     }
+    if item
+        .inline_effect
+        .as_ref()
+        .and_then(crate::eternal_cards_v1::owned_draws_v1::denial::bound)
+        .is_some()
+    {
+        return crate::eternal_cards_v1::owned_draws_v1::denial::validate_trigger(
+            state, item, false,
+        );
+    }
     if let Some(expected) = casualty_trigger_source_contract(
         state,
         item.source,
@@ -20427,6 +20437,13 @@ fn pending_trigger_spell_source_contract(
         )
         .map(Some);
     }
+    if crate::eternal_cards_v1::owned_draws_v1::denial::bound(&pending.effect).is_some() {
+        return crate::eternal_cards_v1::owned_draws_v1::denial::pending_source(
+            state,
+            &pending.effect,
+        )
+        .map(Some);
+    }
     if let Some(index) = crate::faebloom_trick_v43::capture_of(&pending.effect) {
         return crate::faebloom_trick_v43::source_at(state, index).map(Some);
     }
@@ -20892,6 +20909,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         effect::curator_v1::publish(state, &row)?;
     }
     crate::eternal_cards_v1::owned_draws_v1::portent::publish(state, stack_item_id)?;
+    crate::eternal_cards_v1::owned_draws_v1::denial::publish(state, stack_item_id)?;
     crate::eternal_cards_v1::owned_draws_v1::standstill::publish(state, stack_item_id)?;
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
@@ -21296,6 +21314,14 @@ fn triggered_stack_item_expected_target_spec(
     }
     if let Some((_, target)) = crate::full_text_v1::trigger_program(state, item)? {
         return Ok((target != TargetSpec::None).then_some(target));
+    }
+    if crate::eternal_cards_v1::owned_draws_v1::denial::bound(inline_effect).is_some() {
+        crate::eternal_cards_v1::owned_draws_v1::denial::validate_trigger(
+            state,
+            item,
+            require_publication,
+        )?;
+        return Ok(None);
     }
     if effect::curator_v1::selected(state, item) {
         effect::curator_v1::validate_item(state, item)?;
@@ -30301,6 +30327,7 @@ pub(crate) fn gain_control_of_spell_v1(
     let id = state.stack[position].v4.stack_item_id;
     let previous = state.stack[position].controller;
     if previous != player {
+        let before = state.stack[position].clone();
         crate::eternal_vintage_e7b_v1::note_spell_caster(state, id, previous);
         let item = &mut state.stack[position];
         item.controller = player;
@@ -30308,6 +30335,13 @@ pub(crate) fn gain_control_of_spell_v1(
             contract.controller = player;
         }
         state.objects.get_mut(spell).controller = player;
+        if crate::eternal_cards_v1::owned_draws_v1::denial::record_rebind(state, &before).is_err()
+            || crate::eternal_cards_v1::owned_draws_v1::knowledge::record_rebind(state, &before)
+                .is_err()
+        {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, spell));
+            return None;
+        }
     }
     Some(id)
 }
@@ -30370,6 +30404,7 @@ pub(crate) fn retarget_spell_targets_v1(
     }
     let paid_portent =
         crate::eternal_cards_v1::owned_draws_v1::portent::retarget_binding(state, stack_item);
+    let denial_before = item.clone();
     let item = state
         .stack
         .iter_mut()
@@ -30377,6 +30412,7 @@ pub(crate) fn retarget_spell_targets_v1(
         .ok_or("the retargeted spell left the stack")?;
     item.targets = targets.to_vec();
     item.v4.target_contracts = contracts;
+    crate::eternal_cards_v1::owned_draws_v1::denial::record_rebind(state, &denial_before)?;
     log_final_targeting_events(state, stack_item)?;
     crate::eternal_cards_v1::owned_draws_v1::portent::record_retarget(
         state,
@@ -30502,22 +30538,7 @@ pub(crate) fn retarget_spell_v1(
     if !spell_retarget_candidates_v1(state, stack_item).contains(&target) {
         return Err(format!("{target:?} is not a legal new target"));
     }
-    let contract = StackTargetContractV4::capture(state, target);
-    let paid_portent =
-        crate::eternal_cards_v1::owned_draws_v1::portent::retarget_binding(state, stack_item);
-    let item = state
-        .stack
-        .iter_mut()
-        .find(|item| item.v4.stack_item_id == stack_item)
-        .ok_or("the retargeted spell left the stack")?;
-    item.targets = vec![target];
-    item.v4.target_contracts = vec![contract];
-    log_final_targeting_events(state, stack_item)?;
-    crate::eternal_cards_v1::owned_draws_v1::portent::record_retarget(
-        state,
-        stack_item,
-        paid_portent,
-    )
+    retarget_spell_targets_v1(state, stack_item, &[target])
 }
 
 /// The spell copy's current targets.
@@ -32978,6 +32999,8 @@ fn finalize_owned_cast(
         );
     }
     crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
+    crate::eternal_cards_v1::owned_draws_v1::denial::record_cast(state, stack_item_id)?;
+    crate::eternal_cards_v1::owned_draws_v1::knowledge::record_cast(state, stack_item_id)?;
     crate::etali_primal_storm_receipts_v1::record_cast(
         state,
         stack_item_id,
