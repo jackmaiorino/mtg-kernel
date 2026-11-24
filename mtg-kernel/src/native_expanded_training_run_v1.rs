@@ -1167,6 +1167,49 @@ fn take_helper_publish_failure_for_test_v1() -> Option<&'static str> {
     })
 }
 
+/// Test-only: called with an iteration's index and a document's name once
+/// the driver (or, with `collection_tail_v1`, the collection tail's helper)
+/// has published that iteration's `update-input.json` or
+/// `update-command.json`, before the next step.
+#[cfg(test)]
+type AfterUpdateDocumentForTestV1 = Arc<std::sync::Mutex<dyn FnMut(usize, &str) + Send>>;
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_UPDATE_DOCUMENT_FOR_TEST_V1: std::cell::RefCell<Option<AfterUpdateDocumentForTestV1>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only: every driver on this thread, and every collection tail helper
+/// it starts, calls `hook` after each publication of an iteration's
+/// `update-input.json` and `update-command.json` (`AfterUpdateDocumentForTestV1`).
+#[cfg(test)]
+fn after_update_document_for_test_v1(hook: impl FnMut(usize, &str) + Send + 'static) {
+    let hook: AfterUpdateDocumentForTestV1 = Arc::new(std::sync::Mutex::new(hook));
+    AFTER_UPDATE_DOCUMENT_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = Some(hook));
+}
+
+/// Test-only: the hook of `after_update_document_for_test_v1`, if armed.
+#[cfg(test)]
+fn update_document_hook_for_test_v1() -> Option<AfterUpdateDocumentForTestV1> {
+    AFTER_UPDATE_DOCUMENT_FOR_TEST_V1.with(|slot| slot.borrow().clone())
+}
+
+/// Test-only: calls `hook` (`after_update_document_for_test_v1`) for
+/// iteration `index`'s document `name`.
+#[cfg(test)]
+fn call_update_document_hook_for_test_v1(
+    hook: &Option<AfterUpdateDocumentForTestV1>,
+    index: usize,
+    name: &str,
+) {
+    if let Some(hook) = hook {
+        (hook
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))(index, name);
+    }
+}
+
 /// Test-only: an iteration's index, given once its collection is pinned
 /// and before the collection is validated, on this thread.
 #[cfg(test)]
@@ -2480,6 +2523,23 @@ pub fn run_native_expanded_training_v1(
             if let Some(speculative) = speculative {
                 #[cfg(test)]
                 let armed = take_helper_publish_failure_for_test_v1();
+                #[cfg(test)]
+                let document_hook = update_document_hook_for_test_v1();
+                // At the learner gate: every file the update read ahead (its
+                // source's, its opponents' and its trajectories) still holds
+                // its pin, or it runs again from the published command.
+                let opponents: Vec<ExpandedModelSourceV1> = episodes
+                    .iter()
+                    .filter_map(|episode| episode.opponent.clone())
+                    .collect();
+                let read_ahead = speculative.clone();
+                let inputs_hold = || {
+                    crate::expanded_deck_training_v1::update_inputs_hold_v1(
+                        &current,
+                        &opponents,
+                        &read_ahead,
+                    )
+                };
                 let speculative_command =
                     update_command(config, index, &current, speculative, attempt.join("update"));
                 update_started = Instant::now();
@@ -2508,6 +2568,12 @@ pub fn run_native_expanded_training_v1(
                             "update-input.json",
                             &json!({"collection":collection}),
                         )?;
+                        #[cfg(test)]
+                        call_update_document_hook_for_test_v1(
+                            &document_hook,
+                            index,
+                            "update-input.json",
+                        );
                         let command = update_command(
                             config,
                             index,
@@ -2516,6 +2582,12 @@ pub fn run_native_expanded_training_v1(
                             attempt.join("update"),
                         );
                         publish(&attempt, "update-command.json", &command)?;
+                        #[cfg(test)]
+                        call_update_document_hook_for_test_v1(
+                            &document_hook,
+                            index,
+                            "update-command.json",
+                        );
                         Ok(collection_tail_v1::CommittedInputV1 {
                             trajectories,
                             validation_seconds,
@@ -2523,6 +2595,7 @@ pub fn run_native_expanded_training_v1(
                         })
                     },
                     speculative_command,
+                    &inputs_hold,
                     &mut run_update,
                 )?;
                 collection_validation_seconds += committed.validation_seconds;
@@ -2546,6 +2619,12 @@ pub fn run_native_expanded_training_v1(
                     "update-input.json",
                     &json!({"collection":collection}),
                 )?;
+                #[cfg(test)]
+                call_update_document_hook_for_test_v1(
+                    &update_document_hook_for_test_v1(),
+                    index,
+                    "update-input.json",
+                );
                 let update_command = match (&config.search_targets, &config.ex1) {
                     (_, Some(options)) => ExpandedTrainingCommandV1::Ex1Update {
                         source: current.clone(),
@@ -2574,6 +2653,12 @@ pub fn run_native_expanded_training_v1(
                     ),
                 };
                 publish(&attempt, "update-command.json", &update_command)?;
+                #[cfg(test)]
+                call_update_document_hook_for_test_v1(
+                    &update_document_hook_for_test_v1(),
+                    index,
+                    "update-command.json",
+                );
                 update_started = Instant::now();
                 run_update(update_command, None)?;
             }

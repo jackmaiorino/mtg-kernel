@@ -6,6 +6,8 @@ use super::*;
 use crate::sideboard_play_policy_v1::ReplayForwardRowsV1;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -213,6 +215,29 @@ fn plan_v1(
     Ok((jobs, sources, payload))
 }
 
+/// Test-only: whether the next job of any worker in this process writes a
+/// diagnostic line and panics (`arm_preparation_probe_for_test_v1`).
+#[cfg(test)]
+static PREPARATION_PROBE_FOR_TEST_V1: AtomicBool = AtomicBool::new(false);
+
+/// Test-only: the next job of any preparation worker in this process (a
+/// trajectory read or a learner group) first writes the line
+/// `tail-probe preparation diagnostic` through `held_output_v1::line_v1` and
+/// then panics with `tail-probe preparation panic`; once. For a test that
+/// runs alone in its own process.
+#[cfg(test)]
+pub(crate) fn arm_preparation_probe_for_test_v1() {
+    PREPARATION_PROBE_FOR_TEST_V1.store(true, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn probe_for_test_v1() {
+    if PREPARATION_PROBE_FOR_TEST_V1.swap(false, Ordering::SeqCst) {
+        crate::held_output_v1::line_v1("tail-probe preparation diagnostic".into());
+        panic!("tail-probe preparation panic");
+    }
+}
+
 /// Each result occupies its original ordinal. After a failure, lower in-flight
 /// jobs still finish; monotonic dispatch ensures no lower job was skipped.
 /// Higher jobs already in flight may finish, but never affect error selection.
@@ -309,8 +334,12 @@ where
                             break;
                         }
                         let started = Instant::now();
-                        let result = catch_unwind(AssertUnwindSafe(|| work(&mut state, ordinal)))
-                            .unwrap_or_else(|_| Err("preparation worker panicked".into()));
+                        let result = catch_unwind(AssertUnwindSafe(|| {
+                            #[cfg(test)]
+                            probe_for_test_v1();
+                            work(&mut state, ordinal)
+                        }))
+                        .unwrap_or_else(|_| Err("preparation worker panicked".into()));
                         busy += started.elapsed().as_secs_f64();
                         if result.is_err() {
                             first_error.fetch_min(ordinal, Ordering::AcqRel);

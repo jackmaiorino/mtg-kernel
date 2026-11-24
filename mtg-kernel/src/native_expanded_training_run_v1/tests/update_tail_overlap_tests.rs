@@ -278,9 +278,6 @@ fn held_log_v1(
                 }
                 HeldEventV1::Released { held } => log.released.push(held),
                 HeldEventV1::Discarded { held } => log.discarded.push(held),
-                // Only a collection's opponent check forwards, and its holder
-                // is never recorded.
-                HeldEventV1::Forwarded { .. } => {}
             }
         }));
         if hold {
