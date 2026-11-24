@@ -20,9 +20,12 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 
 const H: usize = 64;
 /// Torch-layout parameter tensors: the embedding, then weight and bias of
-/// 16 linears (`native_policy_train_step_v1`'s ordinals).
+/// 16 linears (`native_policy_train_step_v1`'s ordinals), plus 2 pairing
+/// linears (4 tensors) for the V8 inclusion net.
 const TENSORS: usize = 33;
+const V8_TENSORS: usize = 37;
 const LAYERS: usize = 16;
+const V8_LAYERS: usize = 18;
 const TERM_FIELDS: usize = 18;
 
 /// Prefix of an error that only means this update does not fit the device
@@ -71,7 +74,7 @@ pub(crate) struct LearnerBuffersV1 {
     d_values_device: Option<CudaSlice<f32>>,
     grad_offsets_device: Option<CudaSlice<i64>>,
     gradients: Option<CudaSlice<f32>>,
-    terms_per_layer: [Vec<[i64; TERM_FIELDS]>; LAYERS],
+    terms_per_layer: [Vec<[i64; TERM_FIELDS]>; V8_LAYERS],
     terms_flat: Vec<i64>,
     terms_device: Option<CudaSlice<i64>>,
     occurrences: Vec<(i32, i64)>,
@@ -91,8 +94,10 @@ struct Shape {
     edges: usize,
     refs: usize,
     actions: usize,
+    pairs: usize,
     floats: [i64; 5],
     ints: [i64; 6],
+    pair_ints: [i64; 2],
     scratch: i64,
 }
 
@@ -104,8 +109,10 @@ impl Shape {
             edges: descriptor[2] as usize,
             refs: descriptor[3] as usize,
             actions: descriptor[4] as usize,
+            pairs: descriptor[19] as usize,
             floats: [f(5), f(6), f(7), f(8), f(9)],
             ints: [f(10), f(11), f(12), f(13), f(14), f(15)],
+            pair_ints: [f(20), f(21)],
             scratch: f(16),
         }
     }
@@ -129,6 +136,7 @@ struct Tape {
     act_h: i64,
     scorer_h: i64,
     value_h: i64,
+    pair_h1: i64,
 }
 
 fn tape(s: &Shape, dims: &DimsV1) -> Tape {
@@ -153,6 +161,7 @@ fn tape(s: &Shape, dims: &DimsV1) -> Tape {
     let act_h = act_h1 + a * h;
     let scorer_h = act_h + a * h + h;
     let value_h = scorer_h + a * h;
+    let pair_h1 = value_h + h;
     Tape {
         obj_h1: 0,
         obj_base: o * h,
@@ -169,6 +178,7 @@ fn tape(s: &Shape, dims: &DimsV1) -> Tape {
         act_h,
         scorer_h,
         value_h,
+        pair_h1,
     }
 }
 
@@ -192,15 +202,18 @@ struct Grad {
     d2_obj: i64,
     d1_obj: i64,
     d_oin: i64,
+    d2_pair: i64,
+    d1_pair: i64,
     len: i64,
 }
 
 fn grad(s: &Shape, dims: &DimsV1) -> Grad {
-    let (o, e, r, a) = (
+    let (o, e, r, a, p) = (
         s.objects as i64,
         s.edges as i64,
         s.refs as i64,
         s.actions as i64,
+        s.pairs as i64,
     );
     let h = H as i64;
     let k_obj = i64::from(dims.object_feature_dim + dims.embedding_dim);
@@ -245,6 +258,9 @@ fn grad(s: &Shape, dims: &DimsV1) -> Grad {
     let d2_obj = take(o * h);
     let d1_obj = take(o * h);
     let d_oin = take(o * k_obj);
+    let d2_pair = take(p * h);
+    let d1_pair = take(p * h);
+    take(p * 2 * h); // d_pin
     Grad {
         d_lg,
         d_v,
@@ -263,6 +279,8 @@ fn grad(s: &Shape, dims: &DimsV1) -> Grad {
         d2_obj,
         d1_obj,
         d_oin,
+        d2_pair,
+        d1_pair,
         len: at,
     }
 }
@@ -290,6 +308,7 @@ fn term(dout: i64, rows: usize, segments: &[(i64, i64, i64, i64, i64)]) -> [i64;
 /// tensor's offset.
 fn layouts_into(
     tensors: &[&[f32]],
+    layers: usize,
     forward: &mut Vec<f32>,
     forward_layout: &mut Vec<i64>,
     torch: &mut Vec<f32>,
@@ -300,7 +319,7 @@ fn layouts_into(
     forward_layout.clear();
     forward_layout.push(0);
     forward.extend_from_slice(tensors[0]);
-    for layer in 0..LAYERS {
+    for layer in 0..layers {
         let weight = tensors[1 + 2 * layer];
         let bias = tensors[2 + 2 * layer];
         let n = bias.len();
@@ -321,28 +340,38 @@ fn layouts_into(
         torch.extend_from_slice(tensor);
     }
     torch_layout.clear();
-    torch_layout.extend((0..LAYERS).map(|l| torch_offsets[1 + 2 * l]));
+    torch_layout.extend((0..layers).map(|l| torch_offsets[1 + 2 * l]));
 }
 
 /// The gradients of every parameter tensor (Torch layout, parameter order)
-/// for `substeps` in visiting order.
+/// for `substeps` in visiting order. Covers both Net-8 (33 tensors) and
+/// FlatV8 inclusion net (37 tensors), under either platform-libm or portable
+/// math.
 pub(crate) fn net8_gradients_v1(
     device: &ExactDeviceV1,
     buffers: &mut LearnerBuffersV1,
     config: NativePolicyValueModelConfigV1,
+    math: crate::training_math_v1::TrainingMathV1,
     tensors: &[&[f32]],
     substeps: &[LearnerSubstepV1<'_>],
 ) -> Result<Vec<Vec<f32>>, String> {
-    if tensors.len() != TENSORS {
+    let v8 = crate::native_policy_value_net_v1::v8_inclusion_v1::include_guard_v1(
+        config.action_feature_dim,
+    )
+    .is_some();
+    let expected_tensors = if v8 { V8_TENSORS } else { TENSORS };
+    let layers = if v8 { V8_LAYERS } else { LAYERS };
+    if tensors.len() != expected_tensors {
         return Err(format!(
-            "net-8 has {TENSORS} parameter tensors, not {}",
+            "net-8{} has {expected_tensors} parameter tensors, not {}",
+            if v8 { " V8" } else { "" },
             tensors.len()
         ));
     }
     if substeps.is_empty() {
         return Ok(tensors.iter().map(|t| vec![0.0; t.len()]).collect());
     }
-    let dims = DimsV1::of_config_v1(&config);
+    let dims = DimsV1::of_config_with_math_v1(&config, math);
     let stream = &device.stream;
     let e =
         |what: &'static str| move |error: cudarc::driver::DriverError| format!("{what}: {error:?}");
@@ -363,6 +392,7 @@ pub(crate) fn net8_gradients_v1(
     }
     layouts_into(
         tensors,
+        layers,
         &mut buffers.forward_params,
         &mut buffers.forward_layout,
         &mut buffers.torch_host,
@@ -383,7 +413,7 @@ pub(crate) fn net8_gradients_v1(
         grad_len += grad(shape, &dims).len;
     }
     let total_objects: usize = buffers.shapes.iter().map(|s| s.objects).sum();
-    let total_terms_i64 = LAYERS
+    let total_terms_i64 = layers
         .saturating_mul(substeps.len())
         .saturating_mul(TERM_FIELDS);
 
@@ -408,7 +438,7 @@ pub(crate) fn net8_gradients_v1(
         .saturating_add(model_extra_bytes)
         .saturating_add(extra_slice_bytes(&buffers.grad_scratch, grad_len as usize))
         .saturating_add(extra_slice_bytes(&buffers.torch_device, torch_len))
-        .saturating_add(extra_slice_bytes(&buffers.torch_layout_device, LAYERS))
+        .saturating_add(extra_slice_bytes(&buffers.torch_layout_device, layers))
         .saturating_add(extra_slice_bytes(
             &buffers.d_logits_device,
             buffers.batch.logits_len,
@@ -526,7 +556,7 @@ pub(crate) fn net8_gradients_v1(
     }
     ensure(device, &mut buffers.grad_scratch, grad_len as usize)?;
     ensure(device, &mut buffers.torch_device, torch_len)?;
-    ensure(device, &mut buffers.torch_layout_device, LAYERS)?;
+    ensure(device, &mut buffers.torch_layout_device, layers)?;
     ensure(
         device,
         &mut buffers.d_logits_device,
@@ -554,7 +584,7 @@ pub(crate) fn net8_gradients_v1(
                 .torch_layout_device
                 .as_mut()
                 .expect("ensured")
-                .slice_mut(..LAYERS),
+                .slice_mut(..layers),
         )
         .map_err(e("upload"))?;
     if !buffers.d_logits_host.is_empty() {
@@ -728,6 +758,24 @@ pub(crate) fn net8_gradients_v1(
         push(13, g.d_lg, a, &[(SCRATCH, sc + t.scorer_h, none, h, h)]);
         push(14, g.d_vh, 1, &[(SCRATCH, sc + t.state_hidden, none, h, h)]);
         push(15, g.d_v, 1, &[(SCRATCH, sc + t.value_h, none, h, h)]);
+        if v8 && shape.pairs > 0 {
+            let [pair_blocker, pair_attacker] = shape.pair_ints;
+            push(
+                16,
+                g.d1_pair,
+                shape.pairs,
+                &[
+                    (SCRATCH, sc + t.obj_base, pair_blocker, h, h),
+                    (SCRATCH, sc + t.obj_base, pair_attacker, h, h),
+                ],
+            );
+            push(
+                17,
+                g.d2_pair,
+                shape.pairs,
+                &[(SCRATCH, sc + t.pair_h1, none, h, h)],
+            );
+        }
         // Card embedding rows: non-padding tokens in object order.
         let k_obj = fo + emb;
         for (object, &token) in substeps[index].view.object_card_ids.iter().enumerate() {
@@ -739,10 +787,10 @@ pub(crate) fn net8_gradients_v1(
         }
     }
 
-    // Pack all 16 layers' terms contiguously and upload in one H2D copy.
+    // Pack all active layers' terms contiguously and upload in one H2D copy.
     buffers.terms_flat.clear();
-    let mut layer_ranges = [(0usize, 0usize, 0usize); LAYERS];
-    for (layer, layer_terms) in buffers.terms_per_layer.iter().enumerate() {
+    let mut layer_ranges = [(0usize, 0usize, 0usize); V8_LAYERS];
+    for (layer, layer_terms) in buffers.terms_per_layer[..layers].iter().enumerate() {
         let start = buffers.terms_flat.len();
         for t in layer_terms {
             buffers.terms_flat.extend_from_slice(t);
@@ -771,7 +819,11 @@ pub(crate) fn net8_gradients_v1(
         .memset_zeros(&mut gradients.slice_mut(..torch_len))
         .map_err(e("zero gradients"))?;
 
-    for (layer, &(term_start, term_end, nterms_usize)) in layer_ranges.iter().enumerate() {
+    for (layer, &(term_start, term_end, nterms_usize)) in layer_ranges[..layers].iter().enumerate()
+    {
+        if nterms_usize == 0 {
+            continue;
+        }
         let weight_offset = buffers.torch_offsets[1 + 2 * layer] as usize;
         let bias_offset = buffers.torch_offsets[2 + 2 * layer] as usize;
         let n = tensors[2 + 2 * layer].len();

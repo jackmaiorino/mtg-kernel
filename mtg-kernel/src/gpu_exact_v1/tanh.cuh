@@ -69,3 +69,46 @@ __device__ float mtg_tanh(float x) {
     }
     return __uint_as_float(__float_as_uint(z) | sign);
 }
+
+// Kernel-owned portable deterministic tanh (`deterministic_math_v1::tanh_f32_v1`),
+// bit-identical on all 2^32 f32 inputs without calling any platform libm.
+__device__ __forceinline__ double mtg_bits64(unsigned long long bits) {
+    return __longlong_as_double((long long)bits);
+}
+
+__device__ float mtg_tanh_portable(float x) {
+    const unsigned int ux = __float_as_uint(x);
+    const unsigned int abs_bits = ux & 0x7fffffffu;
+    const unsigned int sign = ux & 0x80000000u;
+    if (abs_bits > 0x7f800000u) return __uint_as_float(0x7fc00000u);  // canonical quiet NaN
+    if (abs_bits == 0x7f800000u) return __uint_as_float(0x3f800000u | sign);  // +/-inf
+    if (abs_bits <= 0x39800000u) return x;  // |x| <= 2^-12 (inclusive): exact passthrough
+    if (abs_bits >= 0x41102cb4u) return __uint_as_float(0x3f800000u | sign);  // saturation
+    const double ax64 = (double)__uint_as_float(abs_bits);
+    const double t = __dmul_rn(2.0, ax64);
+    const double y = __dmul_rn(t, mtg_bits64(0x3ff71547652b82feULL));  // 1 / ln(2)
+    const double tr = trunc(y);
+    const double frac = __dsub_rn(y, tr);
+    const double k_f = __dadd_rn(tr, frac >= 0.5 ? 1.0 : 0.0);
+    const int k = (int)k_f;
+    const double r = __dsub_rn(t, __dmul_rn((double)k, mtg_bits64(0x3fe62e42fefa39efULL)));
+    double value = mtg_bits64(0x3f2a01a01a01a01aULL);  // 1/7!
+    value = __dadd_rn(__dmul_rn(value, r), mtg_bits64(0x3f56c16c16c16c17ULL));  // 1/6!
+    value = __dadd_rn(__dmul_rn(value, r), mtg_bits64(0x3f81111111111111ULL));  // 1/5!
+    value = __dadd_rn(__dmul_rn(value, r), mtg_bits64(0x3fa5555555555555ULL));  // 1/4!
+    value = __dadd_rn(__dmul_rn(value, r), mtg_bits64(0x3fc5555555555555ULL));  // 1/3!
+    value = __dadd_rn(__dmul_rn(value, r), mtg_bits64(0x3fe0000000000000ULL));  // 1/2!
+    const double eminus1_r = __dmul_rn(__dadd_rn(__dmul_rn(value, r), 1.0), r);
+    const double scale = mtg_bits64(((unsigned long long)(k + 1023)) << 52);
+    const double em1 = __dadd_rn(__dsub_rn(scale, 1.0), __dmul_rn(scale, eminus1_r));
+    const double denom = __dadd_rn(em1, 2.0);
+    double q = __ddiv_rn(em1, denom);
+    if (q < 0.0) q = 0.0;
+    if (q > 1.0) q = 1.0;
+    const float result_abs = __double2float_rn(q);
+    return __uint_as_float(__float_as_uint(result_abs) | sign);
+}
+
+__device__ __forceinline__ float mtg_tanh_mode(float x, int portable) {
+    return portable ? mtg_tanh_portable(x) : mtg_tanh(x);
+}
