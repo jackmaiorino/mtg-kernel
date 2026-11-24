@@ -1100,7 +1100,8 @@ pub struct PublicObservationProjectionV5 {
     /// published goad has `expires_at_turn` 0: the goad lasts until its
     /// `player`'s next turn begins, whichever turn that is, and no round
     /// number names that turn. Fields stamped with the turn key
-    /// (`entered_battlefield_turn`, `plotted_turn`, and the `turn` of
+    /// (`entered_battlefield_turn`, `plotted_turn`, the turn in
+    /// `creature_upgrade.wurmlet_resolved_turn`, and the `turn` of
     /// `engine_context.trigger_uses` and
     /// `engine_context.combat_damage_prevention`) hold the round until the
     /// schedule exists and its `occurrence` from then on, so they compare
