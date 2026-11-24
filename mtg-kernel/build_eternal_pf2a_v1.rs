@@ -139,10 +139,11 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     super::build_eternal_pf2b_v1::alt_cost_for(name)
 }
 
-/// Printed evergreen keywords, in printed order.
+/// Printed evergreen keywords not already inferred from `cards_v1.json`
+/// `mechanics` (`defender` is inferred by `build.rs` directly).
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
-        "Tuktuk Rubblefort" => &["Keywords::DEFENDER", "Keywords::REACH"],
+        "Tuktuk Rubblefort" => &["Keywords::REACH"],
         _ => super::build_eternal_pf2b_v1::keywords_for(name),
     }
 }

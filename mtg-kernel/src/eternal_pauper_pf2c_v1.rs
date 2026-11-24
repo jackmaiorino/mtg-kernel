@@ -41,7 +41,6 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const BENEVOLENT_UNICORN: &str = "Benevolent Unicorn";
 pub(crate) const BOULDERBRANCH_GOLEM: &str = "Boulderbranch Golem";
-pub(crate) const INSIDE_OUT: &str = "Inside Out";
 
 /// Alternate Layer-1 characteristics of a prototyped spell or permanent
 /// (CR 718.3b-c).
@@ -341,16 +340,6 @@ pub(crate) fn note_prototyped_entry(state: &mut GameState, object: ObjectId) {
     let list = &mut pf2c_state(state).prototyped_permanents;
     list.retain(|entry| entry.object != object);
     list.push(link);
-}
-
-/// Propagates or clears prototype status when `copier` becomes a copy of
-/// `copied` (CR 718.3c / 707.2: prototype characteristics are copiable).
-pub(crate) fn note_prototyped_copy(state: &mut GameState, copier: ObjectId, copied: ObjectId) {
-    if is_prototyped_permanent(state, copied) {
-        note_prototyped_entry(state, copier);
-    } else {
-        clear_prototyped(state, copier);
-    }
 }
 
 /// Removes any prototype marker on `object` (e.g. when a copy reverts or

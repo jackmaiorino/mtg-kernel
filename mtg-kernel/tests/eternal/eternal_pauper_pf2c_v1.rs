@@ -303,16 +303,16 @@ fn run_until(
 }
 
 fn to_next_turn(state: &mut GameState) {
-    let turn = state.turn_number;
+    let turn = state.turn;
     let active = state.active_player;
     run_until(
         state,
-        |s| (s.turn_number != turn || s.active_player != active) && s.step == Step::Main1,
+        |s| (s.turn != turn || s.active_player != active) && s.step == Step::Main1,
         |_, _| None,
     );
 }
 
-fn deck(rows: &[(&str, u16)]) -> CustomDeckV1 {
+fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
     CustomDeckV1 {
         cards: rows
             .iter()

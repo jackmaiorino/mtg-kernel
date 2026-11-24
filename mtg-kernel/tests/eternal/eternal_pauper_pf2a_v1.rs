@@ -297,16 +297,16 @@ fn run_until(
 }
 
 fn to_next_turn(state: &mut GameState) {
-    let turn = state.turn_number;
+    let turn = state.turn;
     let active = state.active_player;
     run_until(
         state,
-        |s| (s.turn_number != turn || s.active_player != active) && s.step == Step::Main1,
+        |s| (s.turn != turn || s.active_player != active) && s.step == Step::Main1,
         |_, _| None,
     );
 }
 
-fn deck(rows: &[(&str, u16)]) -> CustomDeckV1 {
+fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
     CustomDeckV1 {
         cards: rows
             .iter()
@@ -464,14 +464,14 @@ fn escape_tunnel_fetches_basic_land_tapped_and_makes_small_creature_unblockable(
         &mut state,
         |s| s.step == Step::Main2,
         |_, decision| match decision {
-            Decision::DeclareAttackers {
-                legal_attackers, ..
-            } if legal_attackers.contains(&small) => Some(Action::DeclareAttackers(vec![small])),
+            Decision::DeclareAttackers { eligible, .. } if eligible.contains(&small) => {
+                Some(Action::DeclareAttackers(vec![small]))
+            }
             Decision::DeclareBlockers { legal_blockers, .. } => {
                 assert!(
                     legal_blockers
                         .iter()
-                        .all(|(b, atk)| !(*b == blocker && *atk == small)),
+                        .all(|(atk, blockers)| !(*atk == small && blockers.contains(&blocker))),
                     "unblockable creature must not be blockable: {legal_blockers:?}"
                 );
                 Some(Action::DeclareBlockers(Vec::new()))
@@ -506,11 +506,9 @@ fn tuktuk_rubblefort_defends_reaches_and_grants_haste_to_controlled_creatures() 
         &mut state,
         |s| s.step == Step::Main2,
         |_, decision| match decision {
-            Decision::DeclareAttackers {
-                legal_attackers, ..
-            } => {
-                assert!(legal_attackers.contains(&bear));
-                assert!(!legal_attackers.contains(&fort));
+            Decision::DeclareAttackers { eligible, .. } => {
+                assert!(eligible.contains(&bear));
+                assert!(!eligible.contains(&fort));
                 Some(Action::DeclareAttackers(vec![bear]))
             }
             _ => None,

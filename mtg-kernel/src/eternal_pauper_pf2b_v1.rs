@@ -50,7 +50,6 @@ pub(crate) const ROOFTOP_PERCHER: &str = "Rooftop Percher";
 pub(crate) const RIFT_SOWER: &str = "Rift Sower";
 pub(crate) const PEGASUS_GUARDIAN: &str = "Pegasus Guardian";
 pub(crate) const PEGASUS_TOKEN: &str = "Pegasus Token";
-pub(crate) const STORMSHRIEK_FERAL: &str = "Stormshriek Feral";
 
 // ---- State: Aurora Eidolon shields --------------------------------------------------
 

@@ -322,26 +322,26 @@ fn run_until(
 }
 
 fn to_next_turn(state: &mut GameState) {
-    let turn = state.turn_number;
+    let turn = state.turn;
     let active = state.active_player;
     run_until(
         state,
-        |s| (s.turn_number != turn || s.active_player != active) && s.step == Step::Main1,
+        |s| (s.turn != turn || s.active_player != active) && s.step == Step::Main1,
         |_, _| None,
     );
 }
 
 fn to_next_own_main(state: &mut GameState) {
-    let turn = state.turn_number;
+    let turn = state.turn;
     let owner = state.active_player;
     run_until(
         state,
-        |s| s.turn_number > turn && s.active_player == owner && s.step == Step::Main1,
+        |s| s.turn > turn && s.active_player == owner && s.step == Step::Main1,
         |_, _| None,
     );
 }
 
-fn deck(rows: &[(&str, u16)]) -> CustomDeckV1 {
+fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
     CustomDeckV1 {
         cards: rows
             .iter()
@@ -597,8 +597,10 @@ fn sandstorm_eidolon_stops_blocking_and_returns_on_multicolored_cast() {
             Decision::DeclareAttackers { .. } => Some(Action::DeclareAttackers(vec![attacker])),
             Decision::DeclareBlockers { legal_blockers, .. } => {
                 assert!(
-                    legal_blockers.iter().all(|(b, _)| *b != blocker),
-                    "target creature must not be able to block this turn"
+                    legal_blockers
+                        .iter()
+                        .all(|(_, blockers)| !blockers.contains(&blocker)),
+                    "target creature must not be able to block this turn: {legal_blockers:?}"
                 );
                 Some(Action::DeclareBlockers(Vec::new()))
             }
@@ -701,7 +703,7 @@ fn rooftop_percher_is_changeling_flyer_and_exiles_up_to_two_and_gains_life() {
                 if !picked && legal_targets.contains(&Target::Object(gy)) {
                     picked = true;
                     Some(Action::ChooseTarget(Target::Object(gy)))
-                } else if can_finish {
+                } else if *can_finish {
                     Some(Action::FinishEffectSelection)
                 } else {
                     None
