@@ -1225,11 +1225,13 @@ fn elemental_blasts_pyroblast_hydroblast_snuff_out_and_anarchy_on_stack() {
     cast_mode(&mut state, reb, 0, &[Target::Object(charm)]);
     change(&mut state, reb, ManaColor::U, ManaColor::G);
     settle_with(&mut state, |_, decision| first_answer(decision));
+    assert_eq!(zone(&state, reb), Zone::Graveyard);
     assert_eq!(
         state.players[1].graveyard.len(),
-        4,
-        "REB fizzled so Vision Charm milled 4"
+        5,
+        "fizzled REB + 4 cards milled by Vision Charm"
     );
+    assert_eq!(state.players[1].library.len(), 16);
 
     // Site 23: Pyroblast — resolves and does nothing to blue target after U -> G; destroys green target.
     let mut state = islands();
