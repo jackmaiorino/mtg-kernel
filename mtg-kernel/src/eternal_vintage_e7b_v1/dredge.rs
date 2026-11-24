@@ -154,6 +154,9 @@ pub(crate) fn forces_resumable(
     ) {
         return crate::effect::resumable_program_supported(program);
     }
+    if owned_draws_v1::knowledge::recipe(program) {
+        return crate::effect::resumable_program_supported(program);
+    }
     let starting_draws = match program {
         EffectOp::DrawCards { player, count }
             if !is_copy && is_coveted_jewel_entry_draw(ctx, *player, *count) =>
