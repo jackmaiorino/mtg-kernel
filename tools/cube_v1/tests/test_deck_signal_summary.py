@@ -154,16 +154,16 @@ class PartATest(unittest.TestCase):
         self.assertEqual(dss.reading_of(0.3, 0.55), "inconclusive")
 
     def test_treatments_must_agree(self):
-        # 1 halt in 40 games (2.5%): the halted pair decides between positive and not.
-        results = [("win", "win")] * 2 + [("loss", "loss")] * 2
-        rows = a_rows(results * 4 + [("halt", "win")] + [("win", "loss")] * 3)
+        # 1 halt in 40 games (2.5%). Every other pair scores 0.5, so the halted pair decides:
+        # as a C loss the interval is [0.5, 0.5] (negative), as 0.5 it stays below 0.55
+        # (negative), as a C win it reaches 0.55 (inconclusive). The treatments disagree.
+        rows = a_rows([("win", "loss")] * 19 + [("halt", "win")])
         summary = dss.summarise_a(rows)
         self.assertFalse(summary["halt_share_above_5pct"])
-        readings = {t["reading"] for t in summary["treatments"].values()}
-        if len(readings) > 1:
-            self.assertEqual(summary["reading"], "inconclusive")
-        else:
-            self.assertEqual(summary["reading"], readings.pop())
+        self.assertEqual(summary["treatments"]["c_loss"]["reading"], "negative")
+        self.assertEqual(summary["treatments"]["draw"]["reading"], "negative")
+        self.assertEqual(summary["treatments"]["c_win"]["reading"], "inconclusive")
+        self.assertEqual(summary["reading"], "inconclusive")
 
     def test_exactly_five_percent_halted_is_not_a_failure(self):
         rows = a_rows([("halt", "win")] + [("win", "win")] * 9)
