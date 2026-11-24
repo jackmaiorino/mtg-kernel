@@ -240,6 +240,38 @@ impl Costs {
         usize::from(count(self.route)) + usize::from(self.printed.count())
     }
 
+    /// The two groups in payment order (the printed group first while the
+    /// order is open, as option 0 pays them), each with the picks staged for
+    /// it so far. The route group is the escape exile.
+    pub(super) fn staged_groups_v1(
+        self,
+        pending: &PendingCast,
+    ) -> Result<Vec<StagedEscapeCostGroupV1>, String> {
+        let route_first = pending.graveyard_cost_first_v1;
+        let picks = &pending.sacrifice_chosen;
+        if (route_first.is_none() && !picks.is_empty()) || picks.len() > self.count() {
+            return Err("noncanonical staged compound cost prefix".to_string());
+        }
+        let route_first = route_first.unwrap_or(false);
+        let groups = self.groups(route_first);
+        let split = picks.len().min(usize::from(groups[0].count()));
+        let (first, second) = picks.split_at(split);
+        Ok([(groups[0], first), (groups[1], second)]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (group, selected))| StagedEscapeCostGroupV1 {
+                kind: group
+                    .component()
+                    .map_or(CostKind::SacrificePermanents, kind),
+                escape: (index == 0) == route_first,
+                count: Some(group.count()),
+                min_card_types: None,
+                selected: selected.to_vec(),
+                finished: false,
+            })
+            .collect())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn quote(
         self,

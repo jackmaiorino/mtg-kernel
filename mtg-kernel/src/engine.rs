@@ -9773,6 +9773,118 @@ fn escape_extra_exile_open(state: &GameState) -> bool {
     })
 }
 
+/// One object-cost group of a staged Escape cast, in payment order: the
+/// escape cost's own graveyard exile, or a printed cost paid with it (an
+/// additional cost, or a bargain or casualty sacrifice).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StagedEscapeCostGroupV1 {
+    pub(crate) kind: CostKind,
+    /// Whether this group is the escape cost's "exile other cards from your
+    /// graveyard".
+    pub(crate) escape: bool,
+    /// Exactly this many objects. `None` for Nethergoyf's escape, which
+    /// exiles any number of cards with `min_card_types` card types among them.
+    pub(crate) count: Option<u8>,
+    pub(crate) min_card_types: Option<u8>,
+    /// The objects chosen so far, in order. Each stays where it is until the
+    /// whole cost is paid.
+    pub(crate) selected: Vec<ObjectId>,
+    /// Nethergoyf's escape: the caster stopped exiling further cards.
+    pub(crate) finished: bool,
+}
+
+/// A pending Escape cast as its caster stages it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StagedEscapeV1 {
+    /// The caster still chooses how to cast the card from its graveyard;
+    /// option `i` takes `routes[i]`.
+    ChoosingRoute(Vec<sphinx_lore_cast_v1::RouteV1>),
+    Paying {
+        /// Underworld Breach's escape (the card's mana cost and three other
+        /// graveyard cards) rather than the card's printed escape.
+        breach: bool,
+        /// False while the caster still orders two groups: option 0 pays
+        /// `groups` in the listed order, option 1 the escape exile first.
+        order_chosen: bool,
+        groups: Vec<StagedEscapeCostGroupV1>,
+    },
+}
+
+/// The staged Escape cast `pending`, read from the same cost definitions and
+/// payment order the engine stages it with. Errors when `pending` is not an
+/// Escape cast, or stages a shape this record does not describe.
+pub(crate) fn staged_escape_v1(
+    state: &GameState,
+    pending: &PendingCast,
+) -> Result<StagedEscapeV1, String> {
+    validate_pending_cast(state, pending)?;
+    if pending.source_contract.cast_method != CastMethodV4::Escape {
+        return Err("the pending cast is not an Escape cast".to_string());
+    }
+    if sphinx_lore_cast_v1::waiting(pending) {
+        let choice = pending
+            .sphinx_lore_v1
+            .ok_or("graveyard cast route stage absent")?;
+        let options = sphinx_lore_cast_v1::options_record(state, choice.options_history_index)?;
+        return Ok(StagedEscapeV1::ChoosingRoute(options.routes.clone()));
+    }
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let breach_route = pending.source_contract.breach_escape();
+    // A card without a printed escape escapes only by Breach's grant.
+    let breach = breach_route || def.escape.is_none();
+    let mut escape = spell_costs_v1::escape_cost_v1(def, breach_route)
+        .ok_or("escape cost definition is absent")?
+        .iter()
+        .find_map(|component| match *component {
+            CostComponent::ExileOtherCardsFromOwnGraveyard(count) => Some((Some(count), None)),
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
+                Some((None, Some(minimum)))
+            }
+            _ => None,
+        })
+        .map(|(count, min_card_types)| StagedEscapeCostGroupV1 {
+            kind: CostKind::ExileFromGraveyard,
+            escape: true,
+            count,
+            min_card_types,
+            selected: Vec::new(),
+            finished: false,
+        })
+        .ok_or("escape exile cost is absent")?;
+    if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, pending, def) {
+        if compound_cast_cost_v1::Costs::waiting_for_x(pending, def) {
+            return Err("a staged Escape cast awaiting its X has no cost record".to_string());
+        }
+        let groups = costs.staged_groups_v1(pending)?;
+        if !groups
+            .iter()
+            .any(|group| group.escape && group.count == escape.count)
+        {
+            return Err("staged Escape groups disagree with the escape cost".to_string());
+        }
+        return Ok(StagedEscapeV1::Paying {
+            breach,
+            order_chosen: pending.graveyard_cost_first_v1.is_some(),
+            groups,
+        });
+    }
+    // Without a printed cost paid alongside, every staged pick is an escape
+    // exile: the exile is staged before any later object cost.
+    if escape
+        .count
+        .is_some_and(|count| pending.sacrifice_chosen.len() > usize::from(count))
+    {
+        return Err("a staged Escape cast stages an object cost with no record".to_string());
+    }
+    escape.selected = pending.sacrifice_chosen.clone();
+    escape.finished = escape.min_card_types.is_some() && pending.escape_exile_finished_v1;
+    Ok(StagedEscapeV1::Paying {
+        breach,
+        order_chosen: true,
+        groups: vec![escape],
+    })
+}
+
 /// The cards of `color` in `player`'s hand other than `source`: the
 /// candidates for "exile a blue card from your hand" (Force of Will).
 pub(crate) fn hand_exile_cost_candidates(
