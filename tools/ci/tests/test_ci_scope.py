@@ -451,7 +451,9 @@ class ViewerScopeTests(unittest.TestCase):
     def test_pull_request_and_other_events_match_frozen_detect_outputs(self):
         # detect-changes outputs (checks, python_relevant, rust_relevant) as faf2b093b produced them, frozen by
         # hand: a ready, a draft and a labelled pull request for each change. Only the default dispatch at a ready
-        # pull request's head changed after faf2b093b: it now follows that run's jobs (tools/ci/pr_lookup.py).
+        # pull request's head changed after faf2b093b: it now follows that run's jobs (tools/ci/pr_lookup.py). The
+        # rule: a change that includes website files runs exactly what the same change without them runs
+        # (WebsiteScheduleTableTests holds the complete schedules).
         new = Classifier()
         frozen = [
             (["mtg-kernel/src/engine.rs"], ("all", False, True), ("all", False, True)),
@@ -716,6 +718,46 @@ class DispatchCompositionTests(unittest.TestCase):
                             run_jobs(new, paths, label=True, python_rows=state), ACTIVE_RUN))
 
 
+# Jobs a ready, unlabelled pull request schedules, written by hand: the complete change, the jobs on this branch
+# (the same with or without the website file), and what the base (before the viewer scope) scheduled for the
+# complete change. The rule: a change that includes website files runs exactly what the same change without the
+# website files runs. The base ran the whole Rust set in every row with a website file only because the website
+# path had no scope; the reductions are intended.
+R = frozenset({"rust-quality", "rust-test-groups", "limited-build", "rust-limited-groups", "rust-tests",
+               "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory"})
+P = frozenset({"python-env-build", "python-tests"})
+NONE = frozenset()
+WEBSITE_SCHEDULES = [
+    # (name, other files, jobs now, base jobs for website plus the other files)
+    ("website only", [], NONE, R),
+    ("website plus docs", ["README.md"], NONE, R),
+    ("website plus engine file", ["mtg-kernel/src/engine.rs"], R, R),
+    ("website plus trainer file", ["mtg-kernel/src/native_expanded_training_run_v1.rs"],
+     frozenset({"rust-quality", "trainer-tests"}), R),
+    ("website plus Limited binary", ["mtg-kernel/src/bin/kernel_limited_match_v1.rs"],
+     frozenset({"rust-quality", "limited-build", "rust-limited-groups"}), R),
+    ("website plus Python tool", ["python/tools/foo.py"], P, R | P),
+    ("website plus Rust-relevant Python", ["python/mtg_kernel_rl/features.py"], R | P, R | P),
+    ("website plus named Rust runner file", ["python/tools/run_rust_lib_filters.py"], R | P, R | P),
+    ("website plus tools/ci file", ["tools/ci/hosted_fallback.py"], P, R | P),
+    ("website plus data file", ["data/eternal_v1/cards.json"], R | P, R | P),
+    ("website plus viewer.yml", [".github/workflows/viewer.yml"], NONE, R | P),
+    ("website plus ci.yml", [".github/workflows/ci.yml"], R | P, R | P),
+]
+
+
+class WebsiteScheduleTableTests(unittest.TestCase):
+    def test_a_change_with_website_files_runs_what_it_runs_without_them(self):
+        for name, others, now, base in WEBSITE_SCHEDULES:
+            with self.subTest(change=name):
+                self.assertEqual(jobs_that_run(["viewer/index.html"] + others), now)
+                if others:
+                    self.assertEqual(jobs_that_run(others), now)
+                # The base column, from the model of the base (no viewer rule, website paths Rust-relevant).
+                self.assertEqual({job for job, _ in Classifier("main").scheduled("pull_request",
+                                                                                ["viewer/index.html"] + others)}, base)
+
+
 class ShardTests(unittest.TestCase):
     def test_every_trainer_filter_lands_in_exactly_one_shard(self):
         flat = [f for shard in ci_scope.TRAINER_SHARDS for f in shard]
@@ -938,7 +980,15 @@ ci_scope.open = fake_open
             with self.subTest(stage=stage):
                 result, written = self.relevance(b"mtg-kernel/src/engine.rs\0", prelude=f"STAGE = {stage!r}" + fake)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertNotIn("rust_relevant=", written if stage != "close" else "")
+                if stage == "open":
+                    self.assertEqual(written, "before=1\n")
+                elif stage == "write":
+                    # The partial state a failing write can leave: python_relevant without rust_relevant, with a red
+                    # step (the non-zero exit above).
+                    self.assertEqual(written, "before=1\npython_relevant=false\n")
+                else:
+                    # Both lines reached the file before the close failed; the step is red all the same.
+                    self.assertEqual(written, "before=1\npython_relevant=false\nrust_relevant=true\n")
         result, written = self.relevance(b"mtg-kernel/src/engine.rs\0", prelude="STAGE = 'none'" + fake)
         self.assertEqual((result.returncode, written), (0, "before=1\npython_relevant=false\nrust_relevant=true\n"))
 
@@ -968,6 +1018,12 @@ ci_scope.open = fake_open
                 self.assertIn(b"fail closed", result.stdout)
         self.assertEqual(Classifier().scheduled("pull_request", []), FULL_PR)
         self.assertEqual(ci_scope.choose("pull_request", "pr", "", [], []), "all")
+        # A read that fails exits non-zero and writes nothing.
+        broken = ("class Broken:\n    def read(self):\n        raise OSError(5, 'Input/output error')\n"
+                  "sys.stdin = type('Stdin', (), {'buffer': Broken()})()")
+        result, written = self.relevance(b"mtg-kernel/src/engine.rs\0", prelude=broken)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(written, "before=1\n")
 
     def test_odd_path_bytes_classify_like_the_shell_case(self):
         # Not UTF-8, or a newline inside a path: shell case `*` matches any byte, newlines included.
