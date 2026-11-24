@@ -339,9 +339,8 @@ jobs:
     # Same path rule as the Rust test groups: a change that touches only
     # docs, markdown, Python tests, non-embedded Python tools, top-level
     # tools/** or the website (viewer/**) cannot change what rustfmt or
-    # Clippy see. Pushes to main
-    # always run it. Windows-only group sets leave it to the run they
-    # complement or rerun.
+    # Clippy see. Pushes to main always run it. Windows-only group sets
+    # leave it to the run they complement or rerun.
     if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope) && contains(fromJSON('["all", "trainer", "rules-limited"]'), needs.detect-changes.outputs.checks)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
