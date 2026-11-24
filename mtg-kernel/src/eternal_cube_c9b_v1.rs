@@ -1004,8 +1004,7 @@ pub(crate) fn unattach_illegal_equipment(state: &mut GameState) -> bool {
         .filter_map(|(id, live)| {
             let definition = CARD_DEFS.get(usize::from(live.card_def))?;
             let link = live.v4.attached_to?;
-            let is_equipment =
-                definition.equipment.is_some() || definition.subtypes.contains(&Subtype::Equipment);
+            let is_equipment = definition.subtypes.contains(&Subtype::Equipment);
             (live.zone == Zone::Battlefield
                 && is_equipment
                 && (!link_live_in(state, link, Zone::Battlefield)

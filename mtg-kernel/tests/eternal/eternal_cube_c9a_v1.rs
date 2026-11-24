@@ -1580,8 +1580,17 @@ fn blightsteel_colossus_graveyard_replacement_from_all_zones() {
 
     // 5. Dress Down removes Blightsteel's abilities on battlefield -> goes to graveyard.
     let mut state = plains();
-    let _dress = put(&mut state, P1, "Dress Down", Zone::Battlefield);
     let colossus = put(&mut state, P0, "Blightsteel Colossus", Zone::Battlefield);
+    let dress = put(&mut state, P1, "Dress Down", Zone::Hand);
+    state.priority_player = P1;
+    pool(&mut state, P1, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, dress), Zone::Battlefield);
+    assert!(
+        !keyword(&state, colossus, Keywords::INFECT),
+        "Dress Down suppresses Blightsteel Colossus's abilities"
+    );
     event::propose_and_commit(
         &mut state,
         ProposedEvent::zone_change(colossus, Zone::Graveyard),
