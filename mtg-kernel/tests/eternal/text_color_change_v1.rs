@@ -9,8 +9,11 @@ use mtg_kernel::card_def::{card_id_by_name, mana_color_mask, CardDef, CARD_DEFS}
 use mtg_kernel::effect::{
     EffectContinuation, EffectOp, EffectOptionChoicePurpose, ExecCtx, PendingEffectChoice,
 };
-use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice, UnsupportedMechanic};
-use mtg_kernel::eternal_sideboard_s1d_v1::CircleColorV1;
+use mtg_kernel::engine::{
+    self, Action, CastMode, Decision, OptionalCostChoice, UnsupportedMechanic,
+};
+use mtg_kernel::eternal_cards_v1::EternalOpV1;
+use mtg_kernel::eternal_sideboard_s1d_v1::{CircleColorV1, S1dOpV1};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::infoset_v1::{export_v2, ExportErrorV1, ExportInputV1, RefusalCodeV1};
@@ -20,6 +23,7 @@ use mtg_kernel::rl::{
     enable_public_shroud_v1, observe_policy_v5, observe_premodern_ordered_v1, observe_v1,
     policy_legal_action_candidates_v5, ActionSemanticV1, PlayerSeatV1, TargetRefV1,
 };
+use mtg_kernel::standard_cards_v1::StandardOpV1;
 use mtg_kernel::state::{
     FaceDownV1, GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone,
 };
@@ -173,8 +177,13 @@ fn first_answer(decision: Decision) -> Action {
         }
         Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
         Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(false),
+        Decision::ChooseCostTargets { candidates, .. } => Action::ChooseCostTarget(candidates[0]),
+        Decision::ChooseCastMode { options, .. } => Action::ChooseCastMode(options[0]),
         Decision::ChooseKicker { .. } => Action::ChooseKicker(false),
         Decision::ChooseSpellMode { legal_modes, .. } => Action::ChooseSpellMode(legal_modes[0]),
+        Decision::ChooseTriggerMode { legal_modes, .. } => {
+            Action::ChooseTriggerMode(legal_modes[0])
+        }
         Decision::ChooseOptionalCost { .. } => {
             Action::ChooseOptionalCost(OptionalCostChoice::Decline)
         }
@@ -524,13 +533,15 @@ fn core_rules_timestamps_zone_change_phasing_control_change_and_face_down() {
 
     // 5. Face-down permanent accepted without reading identity; turning face up runs audit.
     let mut state = islands();
-    let angel = put(&mut state, P0, "Exalted Angel", Zone::Battlefield);
-    state.objects.get_mut(angel).v4.face_down_v1 = Some(FaceDownV1 {
-        disguised: true,
-        lookers: 1,
-        hidden_by: None,
-        hidden_by_source: None,
+    let angel = put(&mut state, P0, "Exalted Angel", Zone::Hand);
+    pool(&mut state, P0, &[], 3);
+    act(&mut state, Action::CastSpell(angel));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Alternative),
+        other => first_answer(other),
     });
+    assert_eq!(zone(&state, angel), Zone::Battlefield);
+    assert!(state.objects.get(angel).v4.face_down_v1.is_some());
     assert!(text_color_change_v1::apply_change(
         &mut state,
         angel,
@@ -539,7 +550,9 @@ fn core_rules_timestamps_zone_change_phasing_control_change_and_face_down() {
         ManaColor::U
     ));
     pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
-    act(&mut state, Action::TurnFaceUp(angel));
+    assert!(activatable(&mut state, angel, 255));
+    act(&mut state, Action::ActivateAbility(angel, 255));
+    assert!(state.objects.get(angel).v4.face_down_v1.is_none());
     assert!(state.engine.halted.is_none());
     assert_eq!(
         text_color_change_v1::text_color(&state, angel, ManaColor::W),
@@ -599,13 +612,14 @@ fn storage_captures_snapshot_restore_and_section_4_6_conditions() {
     // §4.6 #2: A state with a stack item, a pending trigger, and no text_color_changes_v1
     // omits `"text_color_changes_v1"` in JSON, round-trips identically, and matches baseline hashes.
     let mut base = islands();
-    let dryad = put(&mut base, P0, "Quirion Dryad", Zone::Battlefield);
+    put(&mut base, P0, "Quirion Dryad", Zone::Battlefield);
+    put(&mut base, P0, "Quirion Dryad", Zone::Battlefield);
     let bolt = put(&mut base, P0, "Lightning Bolt", Zone::Hand);
     pool(&mut base, P0, &[ManaColor::R], 0);
     cast(&mut base, bolt, &[Target::Player(P1)]);
-    // Put a second spell on stack so both a stack spell and a triggered ability exist cleanly.
-    let _ = dryad;
+    assert!(matches!(next(&mut base), Decision::OrderTriggers { .. }));
     assert!(!base.stack.is_empty());
+    assert!(!base.engine.pending_triggers.is_empty());
     assert!(base.text_color_changes_v1.is_none());
     let raw_json = serde_json::to_string(&base).unwrap();
     assert!(
@@ -618,6 +632,11 @@ fn storage_captures_snapshot_restore_and_section_4_6_conditions() {
         roundtrip.diagnostic_state_hash(),
         base.diagnostic_state_hash()
     );
+    println!(
+        "section_4_6_base_hashes state_hash={:#018x} diagnostic_state_hash={:#018x}",
+        base.state_hash(),
+        base.diagnostic_state_hash(),
+    );
 
     // §4.6 #3: A state whose only change was removed returns to None and hashes identically
     // to a state that never had a change (with matching next_effect_timestamp).
@@ -629,7 +648,7 @@ fn storage_captures_snapshot_restore_and_section_4_6_conditions() {
     bury(&mut clean, clean_target);
     bury(&mut dirty, clean_target);
     assert!(dirty.text_color_changes_v1.is_none());
-    clean.next_effect_timestamp = dirty.next_effect_timestamp;
+    clean.engine.next_effect_timestamp = dirty.engine.next_effect_timestamp;
     assert_eq!(dirty.state_hash(), clean.state_hash());
     assert_eq!(dirty.diagnostic_state_hash(), clean.diagnostic_state_hash());
     assert_eq!(
@@ -1053,17 +1072,52 @@ fn circle_of_protection_red_changed_to_green_prevents_live_and_departed_damage()
     );
     let red_src = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield);
     let green_src = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let green_decoy = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
 
     change(&mut state, cop, ManaColor::R, ManaColor::G);
     pool(&mut state, P0, &[], 1);
     activate(&mut state, cop, 0, &[]);
     // Changing CoP again while activation is on stack leaves captured green intact.
     change(&mut state, cop, ManaColor::G, ManaColor::W);
-    // Resolve CoP choice: only green_src (not red_src) is offered.
+    // Resolve CoP choice: only the two green sources (NOT red_src) are offered.
     match settle(&mut state) {
         Some(Decision::ChooseEffectOption { option_count, .. }) => {
-            assert_eq!(option_count, 1, "only the green source should be offered");
-            act(&mut state, Action::ChooseEffectOption(0));
+            assert_eq!(
+                option_count, 2,
+                "only the two green sources should be offered"
+            );
+            let options = match state
+                .engine
+                .pending_effect
+                .as_ref()
+                .and_then(|cont| cont.choice.as_ref())
+            {
+                Some(PendingEffectChoice::ChooseOption { options, .. }) => options,
+                other => panic!("expected Circle options, got {other:?}"),
+            };
+            let offered: Vec<(ObjectId, CircleColorV1)> = options
+                .iter()
+                .map(|op| match op {
+                    EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(
+                        S1dOpV1::CircleShieldV1 { source, color },
+                    ))) => (source.object, *color),
+                    other => panic!("unexpected Circle option: {other:?}"),
+                })
+                .collect();
+            assert!(offered
+                .iter()
+                .all(|(_, color)| *color == CircleColorV1::Green));
+            assert!(offered.iter().any(|(id, _)| *id == green_src));
+            assert!(offered.iter().any(|(id, _)| *id == green_decoy));
+            assert!(offered.iter().all(|(id, _)| *id != red_src));
+            let green_idx = offered
+                .iter()
+                .position(|(id, _)| *id == green_src)
+                .expect("green_src offered");
+            act(
+                &mut state,
+                Action::ChooseEffectOption(u16::try_from(green_idx).unwrap()),
+            );
         }
         other => panic!("expected Circle source choice, got {other:?}"),
     }
@@ -1147,9 +1201,8 @@ fn elemental_blasts_pyroblast_hydroblast_snuff_out_and_anarchy_on_stack() {
     pool(&mut state, P0, &[ManaColor::R], 0);
     pool(&mut state, P1, &[ManaColor::U], 0);
     cast(&mut state, bolt, &[Target::Player(P1)]);
-    let bolt_item = state.stack.last().unwrap().v4.stack_item_id;
     act(&mut state, Action::Pass); // P0 passes -> P1 gets priority
-    cast_mode(&mut state, beb, 0, &[Target::StackItem(bolt_item)]);
+    cast_mode(&mut state, beb, 0, &[Target::Object(bolt)]);
     change(&mut state, beb, ManaColor::R, ManaColor::G);
     settled(&mut state);
     assert_eq!(life(&state, P1), 17, "BEB fizzled so Bolt resolved");
@@ -1170,9 +1223,8 @@ fn elemental_blasts_pyroblast_hydroblast_snuff_out_and_anarchy_on_stack() {
     pool(&mut state, P0, &[ManaColor::U], 0);
     pool(&mut state, P1, &[ManaColor::R], 0);
     cast_mode(&mut state, charm, 0, &[Target::Player(P1)]);
-    let charm_item = state.stack.last().unwrap().v4.stack_item_id;
     act(&mut state, Action::Pass);
-    cast_mode(&mut state, reb, 0, &[Target::StackItem(charm_item)]);
+    cast_mode(&mut state, reb, 0, &[Target::Object(charm)]);
     change(&mut state, reb, ManaColor::U, ManaColor::G);
     settled(&mut state);
     assert_eq!(
@@ -1261,8 +1313,10 @@ fn plaguebearer_targeting_and_captured_resolution_recheck() {
     // Change Plaguebearer B -> W: now "nonwhite creature with mana value X".
     change(&mut state, plaguebearer, ManaColor::B, ManaColor::W);
     pool(&mut state, P0, &[ManaColor::B], 6);
+    let mv1_targets = ability_targets(&state, plaguebearer, 1);
+    assert!(!mv1_targets.contains(&Target::Object(lions)));
     assert_eq!(
-        ability_targets(&state, plaguebearer, 1),
+        mv1_targets,
         vec![Target::Object(fanatic)],
         "white Lions excluded, red Fanatic legal"
     );
@@ -1570,7 +1624,7 @@ fn schema_5_projection_ordering_face_down_masking_actions_and_refusals() {
     let p0_first = put(&mut state, P0, "Goblin Piledriver", Zone::Battlefield);
     let p0_face_down = put(&mut state, P0, "Exalted Angel", Zone::Battlefield);
     state.objects.get_mut(p0_face_down).v4.face_down_v1 = Some(FaceDownV1 {
-        disguised: true,
+        disguised: false,
         lookers: 1,
         hidden_by: None,
         hidden_by_source: None,

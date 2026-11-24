@@ -384,6 +384,9 @@ fn decoy(state: &mut GameState, player: PlayerId, color: CircleColorV1) -> Objec
     let name = match color {
         CircleColorV1::Blue => "Mulldrifter",
         CircleColorV1::Red => "Jackal Pup",
+        CircleColorV1::White => "Savannah Lions",
+        CircleColorV1::Black => "Hypnotic Specter",
+        CircleColorV1::Green => "Llanowar Elves",
     };
     let object = put(state, player, name, Zone::Battlefield);
     link(state, object)

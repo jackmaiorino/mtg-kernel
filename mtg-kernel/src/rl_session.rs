@@ -21597,6 +21597,9 @@ mod tests {
             session.flat_policy_observation_v2(decision),
             Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
         );
+        assert!(session
+            .kernel_search_redeterminized_clone_v4(46_002)
+            .is_err());
         session.current = None;
         session.terminal = None;
         session.advance_to_decision_or_terminal();
