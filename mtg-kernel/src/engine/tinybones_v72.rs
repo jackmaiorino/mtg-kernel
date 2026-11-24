@@ -1666,16 +1666,18 @@ pub(crate) fn sampler_stash_conflicts_v72(
 /// except a foreign Adventure receipt and its native reversal: those are
 /// written for any Adventure whose resolving spell was controlled by a player
 /// other than its owner, which an ordinary cast-from-exile grant (Ragavan,
-/// Fallen Shinobi) reaches without any Tinybones. Such a receipt is Tinybones
-/// state only when its original cast came through a Tinybones play, by the
-/// route the receipt itself records. A row this cannot resolve counts as
-/// Tinybones state, so the legacy boundary stays closed for it.
+/// Fallen Shinobi, Etali) reaches without any Tinybones. Such a receipt is
+/// outside Tinybones only when it proves it: its Adventure-form cast records a
+/// present cast origin whose route is a known non-Tinybones grant held by the
+/// spell's controller. A missing or erased contract or origin, a Tinybones
+/// route, or any other route counts as Tinybones state, so the legacy boundary
+/// stays closed for it.
 fn tinybones_row(state: &GameState, at: usize, row: &JournalV72) -> bool {
     match row {
-        JournalV72::ForeignAdventure { original, .. } => original
+        JournalV72::ForeignAdventure { original, .. } => !original
             .v4
             .source_contract
-            .is_none_or(|s| route(s).is_some()),
+            .is_some_and(|s| known_grant_route(original, s)),
         JournalV72::AdventureAborted { permission, .. } => match usize::try_from(*permission) {
             Ok(earlier) if earlier < at => journal(state, *permission)
                 .ok()
@@ -1684,6 +1686,29 @@ fn tinybones_row(state: &GameState, at: usize, row: &JournalV72) -> bool {
         },
         _ => true,
     }
+}
+
+/// The routes by which a player other than the owner casts a card's
+/// Adventure form under an ordinary grant: an exile play permission, paid or
+/// free (Ragavan, Fallen Shinobi, Dauthi Voidwalker), a resolving instruction
+/// (Etali), or a library or graveyard cast grant. Each names its holder, who
+/// must be the spell's controller.
+fn known_grant_route(original: &StackItem, source: StackSourceContractV4) -> bool {
+    original.v4.cast_method == Some(CastMethodV4::Omen)
+        && source.cast_method == CastMethodV4::Omen
+        && source.controller == original.controller
+        && source
+            .spell_cast_origin
+            .is_some_and(|origin| match origin.route {
+                SpellCastRouteV4::ExilePermission { holder, .. }
+                | SpellCastRouteV4::ExileFreePermission { holder, .. }
+                | SpellCastRouteV4::ResolvingEffectV1 { holder, .. }
+                | SpellCastRouteV4::LibraryPermissionV1 { holder, .. }
+                | SpellCastRouteV4::GraveyardPermissionV1 { holder, .. } => {
+                    holder == source.controller
+                }
+                _ => false,
+            })
 }
 
 pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {

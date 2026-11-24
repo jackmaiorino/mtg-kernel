@@ -8,8 +8,16 @@
 //! the creature cast to the actual caster only.
 #![cfg(feature = "eternal-fixtures")]
 
-use mtg_kernel::card_def::card_id_by_name;
+use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
+use mtg_kernel::engine::{
+    self, Action, Decision, FreeCastV1, PlayOrCast, PlayPermission, PlayPermissionExpiry,
+};
+use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
+use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+use mtg_kernel::rl::{enable_public_shroud_v1, observe_policy_v5, observe_v2};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::surface_v2::HarnessSurfaceV2;
 use serde_json::{json, Value};
 
 const SCHEMA: u32 = 5;
@@ -241,4 +249,229 @@ fn battle_display_cast_from_ragavans_exile_leaves_the_knight_castable_by_its_cas
 #[test]
 fn petty_theft_cast_from_ragavans_exile_leaves_the_borrower_castable_by_its_caster() {
     foreign_adventure_cycle("Brazen Borrower", "Island");
+}
+
+// ---- The same mechanic in a hand-built position ------------------------------------
+
+const P0: PlayerId = PlayerId::P0;
+const P1: PlayerId = PlayerId::P1;
+
+fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
+    let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("{name}"));
+    let object = state.objects.push(GameObject {
+        card_def,
+        name: CARD_DEFS[card_def as usize].object_name.into(),
+        owner: player,
+        controller: player,
+        zone,
+        tapped: false,
+        summoning_sick: false,
+        damage: 0,
+        counters: Default::default(),
+        attachments: Vec::new(),
+        v4: ObjectStateV4::from_card_def(card_def),
+        spell_copy_origin: None,
+        plotted_turn: None,
+        zone_change_count: 0,
+    });
+    let seat = &mut state.players[player.index()];
+    match zone {
+        Zone::Hand => seat.hand.push(object),
+        Zone::Battlefield => seat.battlefield.push(object),
+        Zone::Exile => state.exile.push(object),
+        _ => panic!("helper zone"),
+    }
+    object
+}
+
+fn next(state: &mut GameState) -> Decision {
+    let decision = engine::advance_until_decision(state);
+    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+    decision
+}
+
+fn act(state: &mut GameState, action: Action) {
+    engine::step(state, action.clone()).unwrap_or_else(|error| panic!("{action:?}: {error}"));
+}
+
+/// Passes every decision until `stop` accepts one, which it returns.
+fn pass_until(state: &mut GameState, stop: impl Fn(&GameState, &Decision) -> bool) -> Decision {
+    for _ in 0..1000 {
+        let decision = next(state);
+        if stop(state, &decision) {
+            return decision;
+        }
+        let action = match decision {
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::DeclareAttackers { .. } => Action::DeclareAttackers(Vec::new()),
+            Decision::DeclareBlockers { .. } => Action::DeclareBlockers(Vec::new()),
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            Decision::Discard { count, choices, .. } => {
+                Action::Discard(choices.into_iter().take(count as usize).collect())
+            }
+            other => panic!("unexpected decision {other:?}"),
+        };
+        act(state, action);
+    }
+    panic!("stop condition never reached");
+}
+
+/// `player`'s priority in its own first main phase with an empty stack:
+/// the timing for a sorcery-speed creature.
+fn own_main_phase(state: &mut GameState, player: PlayerId) -> Vec<ObjectId> {
+    let decision = pass_until(state, |s, d| {
+        s.active_player == player
+            && s.step == Step::Main1
+            && s.stack.is_empty()
+            && matches!(d, Decision::CastSpellOrPass { player: p, .. } if *p == player)
+    });
+    let Decision::CastSpellOrPass {
+        castable_spells, ..
+    } = decision
+    else {
+        unreachable!()
+    };
+    castable_spells
+}
+
+/// The schema 5 policy observation of this position under the legacy text
+/// mode and under the public shroud contract, without the public contract's
+/// own fields and the hash over them. The legacy observation is complete
+/// here exactly when the two agree.
+fn same_observation_under_both_contracts(state: &GameState, viewer: PlayerId, card: ObjectId) {
+    let surface = PolicySurfaceV5::new();
+    let legacy = observe_policy_v5(state, &surface, viewer, 0, 0, 0, 1).expect("legacy mode");
+    let mut public_state = state.clone();
+    enable_public_shroud_v1(&mut public_state);
+    let public =
+        observe_policy_v5(&public_state, &surface, viewer, 0, 0, 0, 1).expect("public contract");
+    let strip = |observation: &mtg_kernel::rl::ObservationV5| {
+        let mut value = serde_json::to_value(observation).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("visible_projection_hash");
+        let projection = value["projection"].as_object_mut().unwrap();
+        projection.remove("public_shroud");
+        projection.remove("meddling_mage_names");
+        value
+    };
+    let legacy = strip(&legacy);
+    assert_eq!(legacy, strip(&public));
+    // The exiled card is public and face up to both seats.
+    assert!(legacy["projection"]["exile"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["stable"]["arena_id"] == card.0
+            && entry["stable"]["card_db_id"] == state.objects.get(card).card_def));
+    observe_v2(state, &HarnessSurfaceV2::new(), viewer, 0).expect("harness observation");
+}
+
+/// P0 casts P1's Adventure card from exile under an ordinary paid grant (as
+/// Ragavan leaves it), on P1's Sol Ring. Then P1, the owner, holds priority in
+/// its own main phase with the mana and timing to cast that creature (a twin
+/// in hand, whose Adventure has no legal target left, is castable) and is not
+/// offered it. Then P0 casts it, and it resolves under P0, owned by P1. Every
+/// observation on the way is identical under the legacy mode and the public
+/// shroud contract.
+fn owner_is_refused_and_caster_casts(adventure: &str, land: &str) {
+    let library = vec![card_id_by_name(land).unwrap(); 20];
+    let mut state = GameState::new_from_libraries(
+        &library,
+        &library,
+        |id| CARD_DEFS[id as usize].object_name.into(),
+        0x4643_4144_0001,
+    );
+    state.active_player = P0;
+    state.priority_player = P0;
+    state.step = Step::Main1;
+    for _ in 0..4 {
+        put(&mut state, P0, land, Zone::Battlefield);
+        put(&mut state, P1, land, Zone::Battlefield);
+    }
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+    let card = put(&mut state, P1, adventure, Zone::Exile);
+    let twin = put(&mut state, P1, adventure, Zone::Hand);
+    state.engine.exile_play_permissions.push(PlayPermission {
+        without_mana_cost: FreeCastV1::default(),
+        any_mana_type: Default::default(),
+        object: card,
+        holder: P0,
+        zone_change_generation: state.objects.get(card).zone_change_count,
+        play_or_cast: PlayOrCast::Cast,
+        expiry: PlayPermissionExpiry::EndOfTurn,
+    });
+
+    // P0 casts the Adventure on P1's Sol Ring, and it resolves.
+    let castable = own_main_phase(&mut state, P0);
+    assert!(castable.contains(&card), "{adventure}: the grant");
+    act(&mut state, Action::CastSpell(card));
+    loop {
+        match next(&mut state) {
+            Decision::ChooseSpellMode { legal_modes, .. } => {
+                assert!(legal_modes.contains(&1), "{legal_modes:?}");
+                act(&mut state, Action::ChooseSpellMode(1));
+            }
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(ring)));
+                act(&mut state, Action::ChooseTarget(Target::Object(ring)));
+            }
+            Decision::CastSpellOrPass { .. } => break,
+            other => panic!("unexpected cast decision {other:?}"),
+        }
+    }
+    pass_until(&mut state, |s, d| {
+        s.stack.is_empty() && matches!(d, Decision::CastSpellOrPass { .. })
+    });
+    assert_ne!(state.objects.get(ring).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(card).zone, Zone::Exile);
+    assert!(state.objects.get(card).v4.on_adventure);
+    same_observation_under_both_contracts(&state, P0, card);
+    same_observation_under_both_contracts(&state, P1, card);
+
+    // The owner has the mana and timing, and is not offered the cast.
+    let castable = own_main_phase(&mut state, P1);
+    assert!(
+        castable.contains(&twin),
+        "{adventure}: P1 can cast the same creature from hand"
+    );
+    assert!(
+        !castable.contains(&card),
+        "{adventure}: the owner holds no Adventure permission"
+    );
+    same_observation_under_both_contracts(&state, P1, card);
+
+    // The actual caster casts the creature, and only the creature.
+    let castable = own_main_phase(&mut state, P0);
+    assert!(
+        castable.contains(&card),
+        "{adventure}: the caster's permission"
+    );
+    same_observation_under_both_contracts(&state, P0, card);
+    act(&mut state, Action::CastSpell(card));
+    match next(&mut state) {
+        Decision::CastSpellOrPass { .. } => {}
+        other => panic!("the creature has no choices: {other:?}"),
+    }
+    pass_until(&mut state, |s, d| {
+        s.stack.is_empty() && matches!(d, Decision::CastSpellOrPass { .. })
+    });
+    let creature = state.objects.get(card);
+    assert_eq!(creature.zone, Zone::Battlefield);
+    assert_eq!(creature.controller, P0);
+    assert_eq!(creature.owner, P1);
+    assert!(!creature.v4.on_adventure);
+}
+
+#[test]
+fn shieldbreaker_owner_is_refused_and_the_caster_casts_the_knight() {
+    owner_is_refused_and_caster_casts("Embereth Shieldbreaker", "Mountain");
+}
+
+#[test]
+fn borrower_owner_is_refused_and_the_caster_casts_the_borrower() {
+    owner_is_refused_and_caster_casts("Brazen Borrower", "Island");
 }
