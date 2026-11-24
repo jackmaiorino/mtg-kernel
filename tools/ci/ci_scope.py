@@ -1,0 +1,338 @@
+"""Which checks a CI run needs on the release line: the one table behind its scoped checks and docs/CI-SCOPES.md.
+
+The release line has one narrow scope, release-trainer (the lead's ruling of 2026-11-21): a change confined to
+the trainer and learner modules plus a named list of shared modules runs formatting, Clippy and the library
+tests of every one of those modules in full. Any other file (engine rules, cards, data, build files, workflow)
+runs the whole pull request set, and so does any pull request that contains a merge commit (a merge between
+this line and main). Pushes to the line run the full matrix as a coalesced monitor.
+
+Usage:
+  ci_scope.py choose          detect-changes step: reads EVENT, SCOPE, INPUT_SCOPE, LABELS (JSON list),
+                              MERGE_COMMITS (count), and NUL-delimited paths on stdin for pull requests;
+                              writes checks=<name>.
+  ci_scope.py file-scope      print the scope of the file list on stdin.
+  ci_scope.py commands SCOPE  print the shell commands of a scope's local run.
+  ci_scope.py trainer-filters print the library test filters of release-trainer, space separated.
+  ci_scope.py markdown        print docs/CI-SCOPES.md.
+"""
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import sys
+
+# Shared modules that qualify for release-trainer, tested in full: the policy value net, the tensorizers, the
+# samplers, the sideboard policy, rl_session, and the trainer's observation code (public_features, and
+# stack_features, which encodes the stack for the same observation the policy reads).
+SHARED_QUALIFYING = [
+    "mtg-kernel/src/native_policy_value_net_v1.rs", "mtg-kernel/src/native_policy_value_net_v1/*",
+    "mtg-kernel/src/native_flat_tensorizer_*",
+    "mtg-kernel/src/fast_sampler.rs", "mtg-kernel/src/unclamped_softmax_sampler_v1.rs",
+    "mtg-kernel/src/native_opponent_sampler_v1.rs",
+    "mtg-kernel/src/sideboard_play_policy_v1.rs", "mtg-kernel/src/sideboard_play_policy_v1/*",
+    "mtg-kernel/src/rl_session.rs", "mtg-kernel/src/rl_session/*",
+]
+TRAINER_MODULES = [
+    "mtg-kernel/src/expanded_deck_training_v1.rs", "mtg-kernel/src/expanded_deck_training_v1/*",
+    "mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1/*",
+    "mtg-kernel/src/native_expanded_training_run_v1.rs", "mtg-kernel/src/native_expanded_training_run_v1/*",
+    "mtg-kernel/src/bin/native_expanded_training_run_v1.rs", "mtg-kernel/src/bin/expanded_deck_training_v1.rs",
+    "mtg-kernel/src/bin/checkpoint_container_v1.rs",
+]
+PATH_RULES: list[tuple[tuple[str, ...], str]] = [
+    (("data/*",), "pr"),
+    (("*.md",), "docs"),
+    (tuple(TRAINER_MODULES + SHARED_QUALIFYING), "release-trainer"),
+]
+NEUTRAL = {"docs"}
+SCOPES: dict[str, dict] = {
+    "pr": {"jobs": ["the whole pull request set"], "summary": "every job of the pull request set"},
+    "release-trainer": {"jobs": ["rust-quality", "trainer-tests"],
+                        "summary": "formatting and Clippy, plus the library tests of the trainer modules and of "
+                                   "every qualifying shared module in full (TRAINER_FILTERS), Linux"},
+    "docs": {"jobs": [], "summary": "nothing"},
+}
+DISPATCH_SCOPES = ["release-trainer"]
+# Library test filters (libtest substring filters): the trainer and learner modules, everything that feeds a
+# training update (GAE, the train step, both backward paths and their differential tests, tensorizers, replay
+# caches, the keep-lean and pass-lean offsets in expanded_deck_training_v1, checkpoint container and receipt
+# code), and each qualifying shared module in full.
+TRAINER_FILTERS = [
+    "expanded_deck_training_v1::", "native_policy_train_step_v1::", "native_expanded_training_run_v1::",
+    "native_policy_value_net_v1::", "training_math_v1::", "native_flat_tensorizer_v", "inference_cache_v1::",
+    "native_train_state_payload_v1::", "native_trainer_schedule_v", "native_trainer_v1::", "native_training_",
+    "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
+    "s_transformer_v1::",
+    # The training-update backends the train step, training math and learners call (option A of 2026-11-21):
+    # the CUDA training bridge, the exact GPU learner, the deterministic and vector math, the line-B teacher target,
+    # the EX1 target and the policy anchor of the retention loss.
+    "experimental_burn_net8_packed_v1::", "gpu_exact_v1::", "deterministic_math_v1::", "vector_tanh_v1::",
+    "line_b_teacher_target_v1::", "ex1_v1::", "native_policy_anchor_v1::", "w5_xact_v1::",
+    "native_opponent_sampler_v1::", "sideboard_play_policy_v1::", "rl_session::",
+]
+# Rows of the trainer-tests job (tools/ci/run_trainer_row.py). The default row runs every selected library test;
+# each other row runs exactly the selected tests its build compiles and the default build does not, as predicted
+# from each test's cfg by tools/ci/rust_test_cfg.py and checked against the compiled inventory on every run. The
+# Windows default row runs the selected tests on Windows, as the pull request set's Windows workspace suite does.
+# Selected tests that compile only on Windows with other features are outside this scope, as they are outside the
+# pull request set; tools/ci/tests/test_ci_scope.py fails if any other selected test is compiled by no row.
+FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-v1", "limited-fdn-fixtures",
+                "limited-fdn-fixtures,native-training-store-v2-production", "standard-magezero-fixtures",
+                "eternal-fixtures", "gameplay-decision-trace-v1",
+                "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,"
+                "native-training-store-v2-production,gpu-exact-fault-injection-v1"]
+TRAINER_ROWS = [("linux", features) for features in FEATURE_SETS] + [("windows", "")]
+# The rust-quality job's formatting and Clippy commands (a test keeps them equal), for local runs.
+QUALITY_COMMANDS = [
+    "cargo fmt --all -- --check",
+    "cargo clippy --release --locked --workspace --all-targets -- -D warnings",
+    "cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings",
+    "cargo clippy --release --locked -p mtg-kernel --all-targets --features limited-fdn-fixtures -- -D warnings",
+    "cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 -- -D warnings",
+]
+
+
+# Modules the train step and training math reference that the filters leave out, each with its reason. A test
+# fails on any referenced module that is neither filtered nor listed here, so a new backend is examined first.
+TRAINING_REFERENCE_EXCLUSIONS = {
+    "card_def": "catalog identity pin for the Arm E card-semantics table; card definitions run the full set",
+    "flat_policy_v2": "action-surface contract: decision views and buffers the tests build, not update arithmetic",
+    "flat_policy_v3": "action-surface contract: decision encoder and views, not update arithmetic",
+    "flat_policy_v4": "action-surface contract: decision encoder and views, not update arithmetic",
+    "policy_observation_v6": "observation contract: a test helper builds choice states from it",
+    "rl": "engine types (seats, terminal outcomes); engine changes run the full set",
+    "state": "engine state and its SplitMix64 seed stream; engine changes run the full set",
+}
+# The files whose references TRAINING_REFERENCE_EXCLUSIONS is checked against.
+TRAINING_REFERENCE_ROOTS = ["mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1",
+                            "mtg-kernel/src/training_math_v1.rs"]
+
+
+def filtered(module: str) -> bool:
+    """Whether the trainer filters select a crate module's tests: a `name::` filter selects exactly that module,
+    a prefix filter (no trailing ::) every module starting with it."""
+    return any(module == f[:-2] if f.endswith("::") else module.startswith(f) for f in TRAINER_FILTERS)
+
+
+def crate_references(file, depth: int) -> set[str]:
+    """Crate-root modules a Rust file names: `crate::x`, grouped `crate::{x, y::z}`, and `super::` chains that
+    climb to the crate root from the file's module depth plus any enclosing inline modules."""
+    import rust_test_cfg  # the tokenizer (strings, comments and raw strings handled)
+    toks = rust_test_cfg.tokens(file.read_text(encoding="utf-8", errors="replace"))
+    out, stack, i = set(), [], 0
+
+    def group(j: int) -> int:
+        """toks[j] == '{': add the first name of each top-level item; return the index after the group."""
+        level, first = 0, True
+        while True:
+            t = toks[j]
+            if t == "{":
+                level += 1
+                first = first or level == 1
+            elif t == "}":
+                level -= 1
+                if level == 0:
+                    return j + 1
+            elif t == "," and level == 1:
+                first = True
+            elif level == 1 and first and re.fullmatch(r"[a-z_][a-z_0-9]*", t):
+                if t not in ("self", "super", "crate"):
+                    out.add(t)
+                first = False
+            elif level == 1 and first and t == "*":
+                out.add("*")
+                first = False
+            j += 1
+
+    import re
+    while i < len(toks):
+        t = toks[i]
+        if t == "mod" and i + 2 < len(toks) and toks[i + 2] == "{":
+            stack.append("mod")
+            i += 3
+            continue
+        if t == "{":
+            stack.append("{")
+        elif t == "}":
+            if stack:
+                stack.pop()
+        elif t in ("crate", "super") and toks[i + 1:i + 3] == [":", ":"]:
+            j, climbs = i, 0
+            if t == "super":
+                while toks[j] == "super" and toks[j + 1:j + 3] == [":", ":"]:
+                    climbs += 1
+                    j += 3
+                if climbs < depth + stack.count("mod"):
+                    i = j
+                    continue
+            else:
+                j += 3
+            if toks[j] == "{":
+                i = group(j)
+                continue
+            if re.fullmatch(r"[a-z_][a-z_0-9]*", toks[j]) or toks[j] == "*":
+                out.add(toks[j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
+def training_reference_gaps(root=None) -> tuple[list[str], list[str]]:
+    """(referenced modules neither filtered nor excluded, exclusions no longer referenced) for the files in
+    TRAINING_REFERENCE_ROOTS. The trainer scope runs this, so a qualifying change cannot add an unexamined backend."""
+    from pathlib import Path
+    base = Path(root) if root else Path(__file__).resolve().parents[2]
+    src = base / "mtg-kernel" / "src"
+    referenced = set()
+    for name in TRAINING_REFERENCE_ROOTS:
+        path = base / name
+        for file in ([path] if path.is_file() else sorted(path.rglob("*.rs"))):
+            parts = file.relative_to(src).with_suffix("").parts
+            depth = len(parts) - (1 if parts[-1] == "mod" else 0)
+            referenced |= crate_references(file, depth)
+    gaps = sorted(m for m in referenced if m not in TRAINING_REFERENCE_EXCLUSIONS and not filtered(m))
+    return gaps, sorted(set(TRAINING_REFERENCE_EXCLUSIONS) - referenced)
+
+
+BIT_IDENTITY_ROWS = [
+    "the production 10-game recipe", "the production 60-game recipe", "the pilot recipe with mulligans",
+    "the pilot recipe with mulligans and priority windows (keep lean present)",
+]
+BIT_IDENTITY_BUILDS = "on the znver5 build and on the portable build, and on native arm64 when Mac arms use that build"
+RECIPE_FIELD_RULE = ("A change that adds a recipe field also needs those rows with the field absent and the feature's "
+                     "own differential tests with it present.")
+TRAINER_RULE = ("A trainer pull request without those rows linked is not mergeable under the merge rule, "
+                "whatever CI says.")
+BLIND_NOTE = ("Production recipes do not exercise sideboarding or every observation path, so the bit-identity rows are "
+              "blind there and these unit suites are the only gate; that is why the shared modules run in full.")
+RULES_NOTE = ("Engine rules and card changes that alter play are never bit-identical by scope: outside the qualifying "
+              "list they run the whole pull request set, and, if a running lineage's trainer would pick them up, need "
+              "a declaration.")
+
+
+def scope_of(path: str) -> str | None:
+    for patterns, scope in PATH_RULES:
+        if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
+            return scope
+    return None
+
+
+def scope_of_files(paths: list[str]) -> str:
+    found = {scope_of(path) for path in paths} - NEUTRAL
+    if not found:
+        return "docs"
+    if len(found) == 1:
+        (only,) = found
+        if only in SCOPES and only != "pr":
+            return only
+    return "pr"
+
+
+def choose(event: str, group_set: str, input_scope: str, labels: list[str], files: list[str],
+           merge_commits: int = 0, head_ref: str = "") -> str:
+    if event == "workflow_dispatch":
+        return input_scope if input_scope in DISPATCH_SCOPES else "all"
+    if event != "pull_request" or group_set != "pr" or "ci:full" in labels or merge_commits > 0:
+        return "all"
+    # A pull request from main or a release line syncs the lines, even when it has no merge commit.
+    if head_ref == "main" or head_ref.startswith("release/"):
+        return "all"
+    scope = scope_of_files(files)
+    return "all" if scope == "pr" else scope
+
+
+def trainer_record() -> str:
+    return (f"release-trainer scope: CI runs formatting, Clippy and the library tests of the trainer and qualifying "
+            f"shared modules only. Mandatory bit-identity rows, run on a node, not in CI: {'; '.join(BIT_IDENTITY_ROWS)}, "
+            f"{BIT_IDENTITY_BUILDS}. {RECIPE_FIELD_RULE} {TRAINER_RULE}")
+
+
+def markdown() -> str:
+    out = ["# CI scopes (release line)", "",
+           "Generated by `python tools/ci/ci_scope.py markdown` from `tools/ci/ci_scope.py`; "
+           "`tools/ci/tests/test_ci_scope.py` fails if this file and the table differ.", "",
+           "A ready pull request whose files all qualify for release-trainer runs only that scope. Any other file, "
+           "any merge commit in the pull request (a merge between this line and main), a pull request whose head "
+           "branch is main or a release line (a sync without a merge commit), or a pull request of more "
+           "than 250 commits (the listing limit), runs the whole pull request set. Markdown files never decide. "
+           "`ci:full` forces the whole set on the next push or ready (a label alone starts no run); labels never "
+           "narrow a run. Pushes to the line run the full matrix as a monitor, coalesced as on main (one running, "
+           "one waiting, a newer merge replaces the waiting one); a red monitor's report names every merge it "
+           "covers, and a red shard there is fixed forward or reverted the same day.", "",
+           "## Files that qualify for release-trainer", "",
+           "Trainer modules: " + ", ".join(f"`{p}`" for p in TRAINER_MODULES) + ".", "",
+           "Shared modules (tested in full): " + ", ".join(f"`{p}`" for p in SHARED_QUALIFYING) + ".", "",
+           "Everything else: whole pull request set (docs files: no checks).", "",
+           "## Scope to checks", "", "| scope | ci.yml jobs | what runs |", "|---|---|---|"]
+    for name, spec in SCOPES.items():
+        out.append(f"| {name} | {', '.join(spec['jobs']) or 'none'} | {spec['summary']} |")
+    out += ["", "Library test filters: " + ", ".join(f"`{f}`" for f in TRAINER_FILTERS) + ".", "",
+            "Rows: Linux with " + ", ".join(f"`{f or 'default features'}`" for f in FEATURE_SETS)
+            + ", and Windows with default features. A default row runs every library test the filters select; "
+            "another row runs the selected tests its build compiles and the default build does not, plus the selected "
+            "tests the full pull request set's own commands with the same feature set run, so no row is weaker than "
+            "the full set (`tools/ci/rust_test_cfg.py`, checked against the compiled inventory on every run). Selected tests "
+            "that compile only on Windows with other features are not run here, as in the pull request set.", "",
+            trainer_record(), "", BLIND_NOTE, "", RULES_NOTE, ""]
+    return "\n".join(out)
+
+
+def main(argv: list[str]) -> int:
+    command = argv[1] if len(argv) > 1 else ""
+    if command == "markdown":
+        sys.stdout.write(markdown())
+        return 0
+    if command == "trainer-filters":
+        print(" ".join(TRAINER_FILTERS))
+        return 0
+    if command == "check-references":
+        gaps, stale = training_reference_gaps()
+        for module in gaps:
+            print(f"{module}: referenced by the train step or training math; add it to TRAINER_FILTERS or to "
+                  "TRAINING_REFERENCE_EXCLUSIONS with a reason")
+        for module in stale:
+            print(f"{module}: listed in TRAINING_REFERENCE_EXCLUSIONS but no longer referenced; remove it")
+        if not gaps and not stale:
+            print("references: every module the train step and training math reference is filtered or excluded")
+        return 1 if gaps or stale else 0
+    if command == "file-scope":
+        print(scope_of_files([line.strip() for line in sys.stdin if line.strip()]))
+        return 0
+    if command == "commands":
+        if argv[2] != "release-trainer":
+            print(f"no local command list for scope {argv[2]}", file=sys.stderr)
+            return 2
+        # The lint job's commands, then this host's rows (Windows runs only its default row, as in CI).
+        for command in QUALITY_COMMANDS:
+            print(command)
+        for os_name, features in TRAINER_ROWS:
+            if os_name == ("windows" if sys.platform == "win32" else "linux"):
+                print(f'python tools/ci/run_trainer_row.py --features "{features}"')
+        return 0
+    if command == "choose":
+        labels = json.loads(os.environ.get("LABELS") or "[]")
+        event = os.environ.get("EVENT", "")
+        files = []
+        if event == "pull_request":
+            paths = sys.stdin.buffer.read().split(b"\0")
+            files = [path.decode("utf-8", errors="surrogateescape") for path in paths if path]
+        checks = choose(event, os.environ.get("SCOPE", ""), os.environ.get("INPUT_SCOPE", ""), labels, files,
+                        int(os.environ.get("MERGE_COMMITS") or 0), os.environ.get("HEAD_REF", ""))
+        lines = [f"checks: {checks}" + ("" if checks == "all" else f" ({SCOPES[checks]['summary']})")]
+        if checks == "release-trainer":
+            lines.append(trainer_record())
+        print("\n".join(lines))
+        for name, text in (("GITHUB_OUTPUT", f"checks={checks}\n"), ("GITHUB_STEP_SUMMARY", "\n\n".join(lines) + "\n")):
+            path = os.environ.get(name)
+            if path:
+                with open(path, "a", encoding="utf-8") as out:
+                    out.write(text)
+        return 0
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
