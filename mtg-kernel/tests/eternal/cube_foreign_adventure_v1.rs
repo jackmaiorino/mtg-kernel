@@ -76,6 +76,8 @@ struct Outcome {
     offered_to_caster: bool,
     /// The creature is on the battlefield under P0, still owned by P1.
     resolved_under_caster: bool,
+    /// The last chosen actions, for a failure message.
+    trail: Vec<String>,
 }
 
 /// P0 (Ragavan) attacks and casts whatever Ragavan exiles, preferring the
@@ -181,6 +183,10 @@ fn play(adventure_name: &str, land: &str, seed: u64) -> Outcome {
             .min_by_key(|action| rank(action, adventure, p0_has_ragavan))
             .unwrap();
         let s = &action["semantic"];
+        if outcome.trail.len() == 12 {
+            outcome.trail.remove(0);
+        }
+        outcome.trail.push(s.to_string());
         if outcome.on_adventure.is_none()
             && s["action_kind"] == "cast_spell"
             && s["actor"] == "p0"

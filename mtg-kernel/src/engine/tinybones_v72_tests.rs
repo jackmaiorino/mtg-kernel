@@ -680,6 +680,23 @@ fn foreign_paid_adventure_retains_actual_caster_permission_after_stash_and_sourc
         assert_eq!(s.objects.get(dragon).counters.stash, 0);
         assert!(adventure_allowed(&s, dragon, p));
         assert!(!adventure_allowed(&s, dragon, p.opponent()));
+        // This receipt's original cast came through a Tinybones play, so the
+        // receipt alone is Tinybones state at the legacy boundary.
+        let (at, row) = s
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(at, e)| match e {
+                CommittedEvent::TinybonesV72 { journal } => {
+                    matches!(journal.as_ref(), JournalV72::ForeignAdventure { .. })
+                        .then(|| (at, journal.as_ref().clone()))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(tinybones_row(&s, at, &row));
+        assert!(require_legacy(&s, Some(p)).is_err());
         // Real paid source removal; Adventure permission survives independently.
         cast(&mut s, p.opponent(), bolt, Some(Target::Object(tiny)));
         finish(&mut s);
@@ -709,6 +726,21 @@ fn foreign_paid_adventure_retains_actual_caster_permission_after_stash_and_sourc
         let pending = s.engine.pending_cast.take().unwrap();
         abort_cast(&mut s, pending, CastMethodV4::Normal);
         validate_state(&restore(&s)).unwrap();
+        // The reversal inherits the Tinybones provenance of its permission.
+        let (at, row) = s
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(at, e)| match e {
+                CommittedEvent::TinybonesV72 { journal } => {
+                    matches!(journal.as_ref(), JournalV72::AdventureAborted { .. })
+                        .then(|| (at, journal.as_ref().clone()))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(tinybones_row(&s, at, &row));
         assert!(adventure_allowed(&s, dragon, p));
         assert!(!adventure_allowed(&s, dragon, p.opponent()));
         let before = tapped(&s, p);

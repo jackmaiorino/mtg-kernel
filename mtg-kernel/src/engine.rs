@@ -2586,12 +2586,21 @@ fn validate_physical_spell_cast_origin(
                 )
         }
         SpellCastRouteV4::AdventureExile => {
+            // Rule 715.4: the player who controlled the resolving Adventure
+            // holds the permission, which is the owner unless a foreign
+            // Adventure receipt names another player. The caster is
+            // Commandeer-aware in eternal builds; elsewhere it stays the
+            // contract's controller, as before.
             origin.origin_zone == Zone::Exile
-                && (if cfg!(feature = "eternal-fixtures") {
-                    source.owner == caster
-                } else {
-                    tinybones_v72::adventure_contract(state, contract)
-                })
+                && tinybones_v72::adventure_contract(
+                    state,
+                    contract,
+                    if cfg!(feature = "eternal-fixtures") {
+                        caster
+                    } else {
+                        contract.controller
+                    },
+                )
                 && cast_method == CastMethodV4::Normal
                 && def.adventure.is_some()
         }
