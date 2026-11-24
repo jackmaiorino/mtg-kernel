@@ -1352,6 +1352,84 @@ fn aangs_iceberg_waterbend_pays_the_rest_with_mana() {
     assert_eq!(zone(&state, iceberg), Zone::Graveyard);
 }
 
+/// Census stop `InvalidEffectContinuation` (cube fence, 2026-11-24, game
+/// 1806 shape): the only artifact to tap is a Mox, and the rest is paid with
+/// floating mana and a land.
+#[test]
+fn aangs_iceberg_waterbend_taps_the_only_artifact_and_pays_the_rest() {
+    let mut state = plains();
+    let iceberg = put(&mut state, P0, "Aang's Iceberg", Zone::Battlefield);
+    let mox = put(&mut state, P0, "Mox Jet", Zone::Battlefield);
+    put(&mut state, P0, "Island", Zone::Battlefield);
+    put(&mut state, P0, "Plains", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    assert!(activatable(&mut state, iceberg, 1));
+    activate(&mut state, iceberg, 1, &[]);
+    finish_activation(&mut state, &[mox]);
+    assert!(state.objects.get(mox).tapped, "tapped to help");
+    settle_first(&mut state);
+    assert_eq!(zone(&state, iceberg), Zone::Graveyard);
+}
+
+/// A waterbend payment is offered only when some choice of its taps leaves
+/// the rest payable: a mana rock that must tap for the cost cannot also pay
+/// mana for it. Before the fix the payment was offered, and activating it
+/// auto-chose the rock and halted at payment (census game 1806 shape).
+#[test]
+fn aangs_iceberg_waterbend_is_not_offered_when_its_taps_leave_the_mana_unpayable() {
+    let mut state = plains();
+    let iceberg = put(&mut state, P0, "Aang's Iceberg", Zone::Battlefield);
+    put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+    put(&mut state, P0, "Plains", Zone::Battlefield);
+    // {2} and one tap: the Stone is the only artifact, and the Plains alone
+    // cannot pay {2}.
+    if activatable(&mut state, iceberg, 1) {
+        activate(&mut state, iceberg, 1, &[]);
+        finish_activation(&mut state, &[]);
+        panic!("an unpayable waterbend was offered and paid");
+    }
+    // {1} and two taps: only one artifact or creature.
+    assert!(!activatable(&mut state, iceberg, 2));
+}
+
+/// With a creature as well, tapping the creature leaves the Stone and the
+/// Plains for {2}: only the creature is offered as the tap. Before the fix
+/// the Stone was offered too, and choosing it halted at payment (census
+/// choose_cost_target shape, game 9481).
+#[test]
+fn aangs_iceberg_waterbend_offers_only_taps_that_leave_the_rest_payable() {
+    let mut state = plains();
+    let iceberg = put(&mut state, P0, "Aang's Iceberg", Zone::Battlefield);
+    let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+    put(&mut state, P0, "Plains", Zone::Battlefield);
+    let pup = put(&mut state, P0, "Jackal Pup", Zone::Battlefield);
+    assert!(activatable(&mut state, iceberg, 1));
+    activate(&mut state, iceberg, 1, &[]);
+    finish_activation(&mut state, &[stone]);
+    assert!(state.objects.get(pup).tapped, "the creature helped");
+    settle_first(&mut state);
+    assert_eq!(zone(&state, iceberg), Zone::Graveyard);
+    assert!(state.objects.get(stone).tapped, "the Stone paid mana");
+}
+
+/// Game 9481 shape: a waterbend with mana is on the stack and the Iceberg
+/// activates again, tapping an artifact.
+#[test]
+fn aangs_iceberg_waterbend_can_be_activated_again_while_one_is_on_the_stack() {
+    let mut state = plains();
+    let iceberg = put(&mut state, P0, "Aang's Iceberg", Zone::Battlefield);
+    let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+    pool(&mut state, P0, &[], 5);
+    activate(&mut state, iceberg, 0, &[]);
+    finish_activation(&mut state, &[]);
+    assert!(activatable(&mut state, iceberg, 1));
+    activate(&mut state, iceberg, 1, &[]);
+    finish_activation(&mut state, &[stone]);
+    assert!(state.objects.get(stone).tapped);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, iceberg), Zone::Graveyard);
+}
+
 // ---- Shifting Woodland ---------------------------------------------------------------
 
 /// Four card types in P0's graveyard: a creature, an instant, an artifact and

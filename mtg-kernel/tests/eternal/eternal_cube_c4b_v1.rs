@@ -1342,6 +1342,64 @@ fn sage_of_the_skies_copies_itself_if_you_cast_another_spell_this_turn() {
     );
 }
 
+/// Census stop `InvalidEffectContinuation` (cube fence, 2026-11-24): a spell
+/// or ability that targets the token the Sage's copy became halted the
+/// engine, because the token kept its spell-copy provenance, which the stack
+/// target contract accepts only on the stack.
+#[test]
+fn sage_of_the_skies_token_copy_is_an_ordinary_target() {
+    let mut state = plains();
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    cast_and_resolve(&mut state, bolt, &[ManaColor::R], 0, &[Target::Player(P1)]);
+    let sage = put(&mut state, P0, "Sage of the Skies", Zone::Hand);
+    cast_and_resolve(&mut state, sage, &[ManaColor::W], 2, &[]);
+    let token = named(&state, P0, "Sage of the Skies")
+        .into_iter()
+        .find(|&object| state.objects.get(object).v4.is_token)
+        .expect("the copy became a token");
+
+    // The opponent bolts the token: it dies and ceases to exist.
+    opponent_bolts(&mut state, Target::Object(token));
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Sage of the Skies"), vec![sage]);
+
+    // P0 bolts the Sage card itself as before.
+    let second = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    cast_and_resolve(
+        &mut state,
+        second,
+        &[ManaColor::R],
+        0,
+        &[Target::Object(sage)],
+    );
+    assert_eq!(zone(&state, sage), Zone::Graveyard);
+}
+
+/// The token copy as the target of a spell that resolves while it is still
+/// there, and of a spell whose target left before it resolved.
+#[test]
+fn sage_of_the_skies_token_copy_exiled_in_response_leaves_a_stale_target() {
+    let mut state = plains();
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    cast_and_resolve(&mut state, bolt, &[ManaColor::R], 0, &[Target::Player(P1)]);
+    let sage = put(&mut state, P0, "Sage of the Skies", Zone::Hand);
+    cast_and_resolve(&mut state, sage, &[ManaColor::W], 2, &[]);
+    let token = named(&state, P0, "Sage of the Skies")
+        .into_iter()
+        .find(|&object| state.objects.get(object).v4.is_token)
+        .expect("the copy became a token");
+    // The opponent's Bolt targets the token; in response P0 exiles it with
+    // Swords to Plowshares, so the Bolt's target is gone when it resolves.
+    let their_bolt = opponent_bolts(&mut state, Target::Object(token));
+    let swords = put(&mut state, P0, "Swords to Plowshares", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, swords, &[Target::Object(token)]);
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Sage of the Skies"), vec![sage]);
+    assert_eq!(zone(&state, their_bolt), Zone::Graveyard);
+    assert_eq!(life(&state, P0), 20 + 2, "the token's power, from Swords");
+}
+
 #[test]
 fn sage_of_the_skies_does_not_copy_itself_as_your_first_spell_of_the_turn() {
     // Nothing cast before, and an opponent's spell does not count.
