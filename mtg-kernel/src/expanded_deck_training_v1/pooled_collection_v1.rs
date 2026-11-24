@@ -240,7 +240,7 @@ pub fn merge_shards_v1(
     let mut first_slot = 0usize;
     let mut reference: Option<Value> = None;
     let mut state_hash: Option<Value> = None;
-    let mut trajectory_bytes: Vec<Vec<u8>> = Vec::with_capacity(schedule);
+    let mut trajectory_bytes: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(schedule);
     let mut ledger_entries: Vec<NonNaturalLedgerEntryV1> = Vec::new();
     let mut worker_timings = Vec::new();
     let mut provenance = Vec::with_capacity(shard_directories.len());
@@ -301,7 +301,8 @@ pub fn merge_shards_v1(
         )?;
         for (offset, pin) in pins.iter().enumerate() {
             let name = format!("episode-{:04}.json", first_slot + offset);
-            trajectory_bytes.push(read_shard_file_v1(directory, pin, &name)?);
+            let source_path = directory.join(&name);
+            trajectory_bytes.push((source_path, read_shard_file_v1(directory, pin, &name)?));
         }
         match document.get("non_natural_ledger") {
             None | Some(Value::Null) => ensure(
@@ -386,12 +387,17 @@ pub fn merge_shards_v1(
         Some(pin) => ledgered_retry_seed_overrides_v1(pin, whole.episodes)?,
         None => vec![None; schedule],
     };
-    check_trajectories_against_schedule_v1(&trajectory_bytes, &whole, &seed_overrides)?;
+    let raw_slices: Vec<&[u8]> = trajectory_bytes
+        .iter()
+        .map(|(_, bytes)| bytes.as_slice())
+        .collect();
+    check_trajectories_against_schedule_v1(&raw_slices, &whole, &seed_overrides)?;
     let mut outputs = Vec::with_capacity(schedule);
-    for (slot, bytes) in trajectory_bytes.into_iter().enumerate() {
+    for (slot, (source_path, bytes)) in trajectory_bytes.into_iter().enumerate() {
         let name = format!("episode-{slot:04}.json");
-        outputs.push(publish_json_shared_v1(
+        outputs.push(publish_verified_hardlink_or_copy_shared_v1(
             whole.output_directory,
+            &source_path,
             &name,
             &Arc::new(bytes),
         )?);
@@ -436,7 +442,7 @@ pub fn merge_shards_v1(
 /// episode. Opened and parsed on a few threads; the first failing slot in
 /// schedule order is reported.
 fn check_trajectories_against_schedule_v1(
-    trajectories: &[Vec<u8>],
+    trajectories: &[&[u8]],
     whole: &WholeCommandV1<'_>,
     seed_overrides: &[Option<u64>],
 ) -> Result<(), String> {
@@ -446,7 +452,7 @@ fn check_trajectories_against_schedule_v1(
         "collection episode count differs",
     )?;
     let check = |slot: usize| -> Result<(), String> {
-        let bytes = &trajectories[slot];
+        let bytes = trajectories[slot];
         ensure(
             record_envelope_v1::is_sealed_v1(bytes) != envelope.is_none(),
             &format!("shard trajectory {slot} is not in the requested record envelope"),

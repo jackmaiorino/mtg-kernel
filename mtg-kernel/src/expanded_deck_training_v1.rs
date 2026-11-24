@@ -7101,6 +7101,43 @@ fn publish_json_bytes_in_v1(
     Ok(pin)
 }
 
+/// `publish_json_shared_v1` for an existing verified file on disk (such as a
+/// pooled shard trajectory): hard-links directly on the same filesystem after
+/// verifying identity and content, falling back to `publish_json_shared_v1`
+/// across filesystems, and records the shared bytes in the verified cache.
+fn publish_verified_hardlink_or_copy_shared_v1(
+    directory: &Path,
+    source_path: &Path,
+    name: &str,
+    bytes: &Arc<Vec<u8>>,
+) -> Result<PinnedFileV1, String> {
+    ensure(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "output exceeds file size limit",
+    )?;
+    let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
+    if let Some(receipt) = crate::durable_publication_v1::publish_existing_verified_hardlink_v1(
+        &parent,
+        source_path,
+        name,
+        bytes,
+    )
+    .map_err(err)?
+    {
+        let pin = PinnedFileV1 {
+            path: directory.join(name),
+            sha256: hex(&receipt.sha256()),
+        };
+        verified_bytes_cache_v1::global_v1().record_verified_shared_v1(
+            &pin.path,
+            &pin.sha256,
+            Arc::clone(bytes),
+        );
+        return Ok(pin);
+    }
+    publish_json_shared_v1(directory, name, bytes)
+}
+
 /// `publish_json_bytes_v1` for bytes the caller shares: the verified-bytes
 /// cache holds the same allocation instead of a copy. Same publication.
 fn publish_json_shared_v1(
