@@ -1645,13 +1645,16 @@ fn stack_target_contract_shape(
                 live.zone == Zone::Stack && zone_change_count == live.zone_change_count
             } else if spell_copy_origin.is_some() {
                 // 707.10f: a resolved permanent spell copy is a token on the
-                // battlefield. It keeps its immutable copy provenance and is
-                // targeted as any other permanent, so a later incarnation is
-                // an ordinary stale target.
+                // battlefield. It keeps its immutable copy provenance. Its
+                // constructors allocate it at generation zero on the stack,
+                // so its one battlefield generation is one, and a token never
+                // re-enters: a later live generation is an ordinary stale
+                // target.
                 zone == Zone::Battlefield
+                    && zone_change_count == 1
                     && live.v4.is_token
-                    && zone_change_count <= live.zone_change_count
-                    && (zone_change_count != live.zone_change_count || zone == live.zone)
+                    && live.zone_change_count >= 1
+                    && (live.zone_change_count != 1 || live.zone == Zone::Battlefield)
             } else {
                 zone_change_count <= live.zone_change_count
                     && (zone_change_count != live.zone_change_count || zone == live.zone)
@@ -5020,6 +5023,101 @@ mod tests {
         assert!(state.players[0].battlefield.contains(&id));
         assert!(!state.players[0].hand.contains(&id));
         assert!(!state.players[0].library.contains(&id));
+    }
+
+    /// A resolved permanent spell copy (707.10f): a token that entered the
+    /// battlefield from the stack at generation one, keeping its origin.
+    fn resolved_copy_token(state: &mut GameState) -> ObjectId {
+        let parent = ObjectId(0);
+        let token = ObjectId(1);
+        state.players[PlayerId::P0.index()]
+            .library
+            .retain(|&object| object != token);
+        state.players[PlayerId::P0.index()].battlefield.push(token);
+        let parent_object = state.objects.get(parent).clone();
+        let live = state.objects.get_mut(token);
+        live.zone = Zone::Battlefield;
+        live.zone_change_count = 1;
+        live.v4.is_token = true;
+        live.spell_copy_origin = Some(SpellCopyOriginV4 {
+            parent,
+            parent_card_def: live.card_def,
+            parent_owner: parent_object.owner,
+            parent_controller: parent_object.controller,
+            parent_stack_zone_change_count: parent_object.zone_change_count,
+            parent_was_copy: false,
+            source_types_v1: Default::default(),
+        });
+        token
+    }
+
+    #[test]
+    fn resolved_copy_token_battlefield_contract_is_exact_and_stale_after_it_leaves() {
+        let (lib0, lib1) = two_card_libraries();
+        let mut state = GameState::new_from_libraries(&lib0, &lib1, debug_names, 7);
+        let token = resolved_copy_token(&mut state);
+        let target = Target::Object(token);
+        let contract = StackTargetContractV4::capture(&state, target);
+        let valid = |state: &GameState, contract| {
+            stack_target_contract_is_structurally_valid(
+                state,
+                TargetSpec::AnyTarget,
+                0,
+                target,
+                contract,
+            )
+        };
+        assert!(valid(&state, contract));
+
+        // Forged: the stack generation named as a battlefield target.
+        let StackTargetContractV4::Object {
+            object,
+            card_def,
+            owner,
+            controller,
+            spell_copy_origin,
+            ..
+        } = contract
+        else {
+            panic!("an object contract");
+        };
+        let forged = |zone_change_count| StackTargetContractV4::Object {
+            object,
+            card_def,
+            owner,
+            controller,
+            zone: Zone::Battlefield,
+            zone_change_count,
+            spell_copy_origin,
+        };
+        assert!(!valid(&state, forged(0)), "the stack generation");
+        assert!(!valid(&state, forged(2)), "a future generation");
+
+        // Forged: a different copy origin.
+        let mut other_origin = spell_copy_origin.expect("a copy origin");
+        other_origin.parent_stack_zone_change_count += 1;
+        let mismatched = StackTargetContractV4::Object {
+            object,
+            card_def,
+            owner,
+            controller,
+            zone: Zone::Battlefield,
+            zone_change_count: 1,
+            spell_copy_origin: Some(other_origin),
+        };
+        assert!(!valid(&state, mismatched), "a mismatched origin");
+
+        // Not a token: copy provenance on a nontoken permanent.
+        let mut nontoken = state.clone();
+        nontoken.objects.get_mut(token).v4.is_token = false;
+        assert!(!valid(&nontoken, contract), "a nontoken permanent");
+
+        // After the token leaves the battlefield the contract is stale.
+        let mut departed = state.clone();
+        let live = departed.objects.get_mut(token);
+        live.zone = Zone::Graveyard;
+        live.zone_change_count = 2;
+        assert!(valid(&departed, contract), "a stale target");
     }
 
     #[test]

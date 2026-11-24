@@ -3145,6 +3145,46 @@ pub(crate) fn validate_historical_permanent_copy_source(
         return Ok(());
     }
     let invalid = || "ability source contract is structurally inconsistent".to_string();
+    if entry.is_none() && !crate::garruks_uprising_v1::records_entry_observations() {
+        // Catalogs without Garruk's Uprising record no entry observation, so
+        // a resolved permanent spell copy (707.10f, Sage of the Skies' token)
+        // is authenticated from the zone changes in the event history: its
+        // arena object was allocated on the stack at generation zero, its
+        // first zone change is its one entry from the stack, and as a token it
+        // never re-enters.
+        let origin = live.spell_copy_origin.ok_or_else(invalid)?;
+        let mut changes = state
+            .engine
+            .event_history
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::ZoneChange])
+            .filter_map(|(_, event)| match event {
+                CommittedEvent::ZoneChange {
+                    object, from, to, ..
+                } if *object == contract.source => Some((*from, *to)),
+                _ => None,
+            });
+        if changes.next() != Some((Zone::Stack, Zone::Battlefield))
+            || changes.any(|(from, to)| from == Zone::Stack && to == Zone::Battlefield)
+            || contract.zone != Zone::Battlefield
+            || contract.zone_change_count != 1
+            || contract.owner != live.owner
+            || origin.parent_card_def != live.card_def
+            || !live.v4.is_token
+            || live.v4.spell_cast_origin.is_some()
+            || origin.parent.0 >= contract.source.0
+            || state
+                .objects
+                .try_get(origin.parent)
+                .is_none_or(|parent| parent.owner != origin.parent_owner)
+            || state
+                .stack
+                .iter()
+                .any(|item| item.kind == StackItemKind::Spell && item.source == contract.source)
+        {
+            return Err(invalid());
+        }
+        return Ok(());
+    }
     let origin = live.spell_copy_origin.ok_or_else(invalid)?;
     let (observation, entry) = entry.ok_or_else(invalid)?;
     let snapshot = &entry.snapshot;
@@ -22140,6 +22180,22 @@ fn validated_stack_item_target_metadata(
             )?
         {
             return Err("stack target contract is structurally malformed".to_string());
+        }
+        // A resolved permanent spell copy (a token) named on the battlefield
+        // carries the same immutable ancestry as a copy on the stack.
+        if let StackTargetContractV4::Object {
+            object,
+            zone: Zone::Battlefield,
+            spell_copy_origin: Some(origin),
+            ..
+        } = contract
+        {
+            validate_spell_copy_origin_chain(
+                state,
+                object,
+                state.objects.get(object).card_def,
+                origin,
+            )?;
         }
         if let StackTargetContractV4::Object {
             object,

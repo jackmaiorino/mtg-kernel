@@ -1400,6 +1400,166 @@ fn sage_of_the_skies_token_copy_exiled_in_response_leaves_a_stale_target() {
     assert_eq!(life(&state, P0), 20 + 2, "the token's power, from Swords");
 }
 
+/// P0 casts a Lightning Bolt at P1, then Sage of the Skies: the Sage and its
+/// token copy are on the battlefield. Returns (the Sage card, the token).
+fn sage_and_token(state: &mut GameState) -> (ObjectId, ObjectId) {
+    let bolt = put(state, P0, "Lightning Bolt", Zone::Hand);
+    cast_and_resolve(state, bolt, &[ManaColor::R], 0, &[Target::Player(P1)]);
+    let sage = put(state, P0, "Sage of the Skies", Zone::Hand);
+    cast_and_resolve(state, sage, &[ManaColor::W], 2, &[]);
+    let token = named(state, P0, "Sage of the Skies")
+        .into_iter()
+        .find(|&object| state.objects.get(object).v4.is_token)
+        .expect("the copy became a token");
+    (sage, token)
+}
+
+/// Attaches P0's `equipment` to `creature` through its equip ability, paying
+/// with `generic` colorless mana.
+fn equip(state: &mut GameState, equipment: ObjectId, creature: ObjectId, generic: u8) {
+    pool(state, P0, &[], generic);
+    let (_, abilities) = priority(state);
+    let index = abilities
+        .iter()
+        .filter(|(source, _)| *source == equipment)
+        .map(|&(_, index)| index)
+        .find(|&index| {
+            let mut probe = state.clone();
+            act(&mut probe, Action::ActivateAbility(equipment, index));
+            matches!(
+                next(&mut probe),
+                Decision::ChooseTargets { ref legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(creature))
+            )
+        })
+        .expect("an equip ability that can target the creature");
+    activate(state, equipment, index, &[Target::Object(creature)]);
+    settled(state);
+    assert_eq!(
+        state
+            .objects
+            .get(equipment)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(creature),
+        "equipped"
+    );
+}
+
+/// Review round 1, finding 2: the Sage's token copy as the host of an
+/// Equipment's trigger. Skullclamp's "whenever equipped creature dies" draws
+/// two when the equipped token dies.
+#[test]
+fn sage_of_the_skies_token_copy_equipped_with_skullclamp_dies_and_draws_two() {
+    let mut state = plains();
+    let (_, token) = sage_and_token(&mut state);
+    let clamp = put(&mut state, P0, "Skullclamp", Zone::Battlefield);
+    equip(&mut state, clamp, token, 1);
+    assert_eq!(power_toughness(&state, token), (3, 2));
+    let hand = hand_size(&state, P0);
+    opponent_bolts(&mut state, Target::Object(token));
+    settled(&mut state);
+    assert!(
+        named(&state, P0, "Sage of the Skies").len() == 1,
+        "the token died"
+    );
+    assert_eq!(hand_size(&state, P0), hand + 2, "Skullclamp drew two");
+}
+
+/// The token copy as an attacker with lifelink and as the host of Umezawa's
+/// Jitte's combat damage trigger.
+#[test]
+fn sage_of_the_skies_token_copy_attacks_with_lifelink_and_charges_jitte() {
+    let mut state = plains();
+    let (_, token) = sage_and_token(&mut state);
+    state.objects.get_mut(token).summoning_sick = false;
+    let jitte = put(&mut state, P0, "Umezawa's Jitte", Zone::Battlefield);
+    equip(&mut state, jitte, token, 2);
+    let (p0_life, p1_life) = (life(&state, P0), life(&state, P1));
+    attack_with(&mut state, vec![token], |_, _| None);
+    assert_eq!(life(&state, P1), p1_life - 2, "the token's combat damage");
+    assert_eq!(life(&state, P0), p0_life + 2, "lifelink");
+    assert_eq!(state.objects.get(jitte).counters.charge, 2, "Jitte charged");
+}
+
+/// Review round 1, finding 2: the token copy as the SOURCE of an activated
+/// ability. Agatha's Soul Cauldron exiles a Devoted Druid card and puts its
+/// +1/+1 counter on the token, which then has the Druid's untap ability; its
+/// stack item names the token as its source incarnation.
+#[test]
+fn sage_of_the_skies_token_copy_activates_an_ability_from_agathas_soul_cauldron() {
+    let mut state = plains();
+    let (_, token) = sage_and_token(&mut state);
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let card = put(&mut state, P1, "Devoted Druid", Zone::Graveyard);
+    next(&mut state);
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    let mut wanted = [Target::Object(card), Target::Object(token)].into_iter();
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(&mut state, Action::ChooseTarget(target));
+            }
+            Decision::ChooseEffectTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(&mut state, Action::ChooseEffectTarget(target));
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                break
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => act(&mut state, first_answer(other)),
+        }
+    }
+    assert_eq!(zone(&state, card), Zone::Exile);
+    assert_eq!(state.objects.get(token).counters.plus1_plus1, 1);
+    state.priority_player = P0;
+    let borrowed = priority(&mut state)
+        .1
+        .into_iter()
+        .filter(|&(source, _)| source == token)
+        .map(|(_, index)| index)
+        .min()
+        .expect("the token has the Druid's untap ability");
+    activate(&mut state, token, borrowed, &[]);
+    settle_first(&mut state);
+    let counters = state.objects.get(token).counters;
+    assert!(
+        counters.minus1_minus1 == 1 || counters.plus1_plus1 == 0,
+        "the cost was paid: {counters:?}"
+    );
+}
+
+/// The Sage of the Skies token copy through the schema 5 public session: a
+/// white deck of Sages, Bolts and Swords to Plowshares, both seats, ranked and
+/// random policies; every game ends naturally.
+#[test]
+fn sage_of_the_skies_token_copies_finish_public_sessions_both_seats() {
+    let sages = deck(&[
+        ("Plateau", 8),
+        ("Plains", 5),
+        ("Mountain", 4),
+        ("Sage of the Skies", 8),
+        ("Lightning Bolt", 6),
+        ("Swords to Plowshares", 5),
+        ("Mox Pearl", 2),
+        ("Skullclamp", 2),
+    ]);
+    for (pair, first_seed) in [([sages.clone(), sages.clone()], 0x5A6E_0000_u64)] {
+        for seed in first_seed..first_seed + 6 {
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let game = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            }
+        }
+    }
+}
+
 #[test]
 fn sage_of_the_skies_does_not_copy_itself_as_your_first_spell_of_the_turn() {
     // Nothing cast before, and an opponent's spell does not count.
