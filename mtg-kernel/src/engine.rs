@@ -3108,9 +3108,10 @@ fn copy_entries(state: &GameState) -> Option<std::rc::Rc<CopyEntriesV1>> {
 /// the exact stack incarnation of a genuinely cast parent (its published
 /// cast receipt at that generation, of that owner, controller and
 /// definition), and the copy's arena object, allocated on the stack after
-/// that cast, has its one entry from the stack as its first zone change.
-/// A copy that later left the battlefield keeps all of this, so it stays a
-/// valid stale target.
+/// that cast, has its one entry from the stack as its first zone change;
+/// it is no cast spell and is not on the stack as a spell. The ability-source
+/// and stack-target paths share this check. A copy that later left the
+/// battlefield keeps all of this, so it stays a valid stale target.
 pub(crate) fn authenticate_resolved_permanent_copy(
     state: &GameState,
     object: ObjectId,
@@ -3121,10 +3122,15 @@ pub(crate) fn authenticate_resolved_permanent_copy(
     let parent = state.objects.try_get(origin.parent).ok_or_else(invalid)?;
     if !live.v4.is_token
         || live.spell_copy_origin != Some(origin)
+        || live.v4.spell_cast_origin.is_some()
         || live.card_def != origin.parent_card_def
         || origin.parent_was_copy
         || origin.parent.0 >= object.0
         || parent.owner != origin.parent_owner
+        || state
+            .stack
+            .iter()
+            .any(|item| item.kind == StackItemKind::Spell && item.source == object)
     {
         return Err(invalid());
     }
@@ -3226,11 +3232,6 @@ pub(crate) fn validate_historical_permanent_copy_source(
         if contract.zone != Zone::Battlefield
             || contract.zone_change_count != 1
             || contract.owner != live.owner
-            || live.v4.spell_cast_origin.is_some()
-            || state
-                .stack
-                .iter()
-                .any(|item| item.kind == StackItemKind::Spell && item.source == contract.source)
         {
             return Err(invalid());
         }
