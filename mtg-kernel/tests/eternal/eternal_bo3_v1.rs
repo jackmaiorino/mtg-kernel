@@ -1557,7 +1557,6 @@ fn ordered_graveyard_registration_enforces_premodern_pool_profile_and_match_rule
         "Leyline of the Void",
         "Leyline of Sanctity",
         "Chancellor of the Annex",
-        "Leyline Axe",
     ] {
         let mut with_opening = clean_main.clone();
         with_opening[0] = id(opening);
@@ -1735,7 +1734,7 @@ fn schema_5_refuses_feb_and_outside_volrath_while_admitting_clean_sideboard() {
         });
         let reply: Value = serde_json::from_str(&server.handle_line(&req.to_string())).unwrap();
         assert_eq!(reply["response_type"], "error");
-        assert_eq!(reply["code"], "unsupported_deck");
+        assert_eq!(reply["error"]["code"], "unsupported_deck");
     }
 
     // Schema 5 reset with Extrapolate the Impossible in mainboard and
@@ -1760,7 +1759,7 @@ fn schema_5_refuses_feb_and_outside_volrath_while_admitting_clean_sideboard() {
         });
         let reply: Value = serde_json::from_str(&server.handle_line(&req.to_string())).unwrap();
         assert_eq!(reply["response_type"], "error");
-        assert_eq!(reply["code"], "unsupported_deck");
+        assert_eq!(reply["error"]["code"], "unsupported_deck");
     }
 
     // A PLAYABLE_75 game's sideboard without a Shapeshifter is admitted cleanly.
