@@ -130,7 +130,9 @@ jobs:
       # that pull request runs skip. Running every group there repeated the
       # pull request run's Linux and Windows work at the same commit (about a
       # third of all hosted runner time on 2026-11-11). Such a dispatch now
-      # runs only the complement; together the two runs cover every group.
+      # runs only the complement when the pull request run says it scheduled
+      # the rest (tools/ci/pr_lookup.py pr-run); together the two runs cover
+      # every group whose paths were relevant.
       - name: Check out merge ref with parents
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || vars.MTG_CI_MAC_GROUPS != ''
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -183,11 +185,13 @@ jobs:
             if [ -n "$pr_base" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               # Complement only what that pull request's own run scheduled:
               # its ci.yml run (event pull_request, this commit, this
-              # repository) must show expanded, not skipped Linux Rust group
-              # jobs (tools/ci/pr_lookup.py pr-run, read with this job's
-              # token and its existing actions: read). Anything else, an
-              # error included, keeps the full set.
-              pr_run=$(python3 tools/ci/pr_lookup.py pr-run "$GITHUB_SHA") || pr_run=
+              # repository, this pull request) must say so in its ci-plan
+              # job and show healthy Linux Rust group jobs, and the Python
+              # build jobs unless its plan skipped Python
+              # (tools/ci/pr_lookup.py pr-run, read with this job's token and
+              # its existing actions: read). Anything else, an error
+              # included, keeps the full set.
+              pr_run=$(python3 tools/ci/pr_lookup.py pr-run "$GITHUB_SHA" "$pr_number") || pr_run=
               echo "its pull request run: ${pr_run:-unknown}"
               # Narrow only if the same PR is still ready with the same head
               # and base after that read.
@@ -330,6 +334,27 @@ jobs:
           PYTHON_RELEVANT: ${{ steps.classify.outputs.python_relevant }}
           RUST_RELEVANT: ${{ steps.classify.outputs.rust_relevant }}
         run: python3 tools/ci/mac_route.py
+
+  # The run's plan, in its job name: read by tools/ci/pr_lookup.py pr-run (a
+  # dispatch without inputs at a ready pull request's head decides from it
+  # whether the Windows complement is enough). Renaming this job or changing
+  # the name's format makes every such dispatch run the full matrix (fail
+  # closed) until that parser is updated; tools/ci/tests/test_pr_lookup.py
+  # pins the format. Nothing needs this job and it gates nothing.
+  ci-plan:
+    name: "CI plan: rust=${{ needs.detect-changes.outputs.rust_relevant }} python=${{ needs.detect-changes.outputs.python_relevant }} scope=${{ needs.detect-changes.outputs.scope }} checks=${{ needs.detect-changes.outputs.checks }}"
+    needs: detect-changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Show the plan
+        env:
+          RUST_RELEVANT: ${{ needs.detect-changes.outputs.rust_relevant }}
+          PYTHON_RELEVANT: ${{ needs.detect-changes.outputs.python_relevant }}
+          SCOPE: ${{ needs.detect-changes.outputs.scope }}
+          CHECKS: ${{ needs.detect-changes.outputs.checks }}
+        run: echo "rust=$RUST_RELEVANT python=$PYTHON_RELEVANT scope=$SCOPE checks=$CHECKS"
 
   rust-quality:
     name: Rust formatting and lint

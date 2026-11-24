@@ -189,8 +189,20 @@ PARTS = {"full": ("linux", "windows-pr", "windows-rest"), "pr": ("linux", "windo
          "windows-complement": ("windows-rest",), "draft": ("linux",)}
 
 
+def linux_only_jobs():
+    """ci.yml jobs that never name a Windows runner (one Linux row whatever the group set)."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    parts = re.split(r"^  ([a-z][a-z-]*):\n", text[text.index("\njobs:\n"):], flags=re.MULTILINE)
+    return {name for name, body in zip(parts[1::2], parts[2::2]) if "windows-2025" not in body}
+
+
 def coverage(scheduled):
-    return {(job, part) for job, group_set in scheduled for part in PARTS[group_set]}
+    """A Linux-only job (lint, trainer and tools tests) covers only Linux, in any group set. The Python jobs have
+    the same rows in the pull request set and the full set (Windows is in both; test_pr_lookup pins the build
+    matrix), so they have no part outside the pull request set for the complement to leave out."""
+    linux_only = linux_only_jobs()
+    return {(job, "linux" if job in linux_only else part) for job, group_set in scheduled for part in PARTS[group_set]
+            if not (job in PYTHON_SET and part == "windows-rest")}
 
 
 def classify_arms():
@@ -216,23 +228,27 @@ def flags(paths):
     return found.get("python_relevant", False), found.get("rust_relevant", False)
 
 
-def scheduled(event, paths=(), *, draft=False, label=False, group_set=None):
-    """{(ci.yml job, group set)} whose job condition holds (detect-changes and the failure-reaction jobs left out)."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_runner_routing import evaluate, truthy
+def outputs(event, paths=(), *, draft=False, label=False, group_set=None):
+    """detect-changes' outputs: (rust_relevant, python_relevant, scope, checks)."""
     if event == "pull_request":
         group_set = "draft" if draft and not label else "pr"
         python, rust = flags(paths)
-        checks = ci_scope.choose(event, group_set, "", ["ci:full"] if label else [], list(paths))
-    else:
-        python = rust = True
-        checks = ci_scope.choose(event, group_set, "", [], [])
+        return rust, python, group_set, ci_scope.choose(event, group_set, "", ["ci:full"] if label else [], list(paths))
+    return True, True, group_set, ci_scope.choose(event, group_set, "", [], [])
+
+
+def scheduled(event, paths=(), *, draft=False, label=False, group_set=None):
+    """{(ci.yml job, group set)} whose job condition holds (detect-changes, ci-plan and the failure-reaction jobs
+    left out)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_runner_routing import evaluate, truthy
+    rust, python, group_set, checks = outputs(event, paths, draft=draft, label=label, group_set=group_set)
     context = {"needs.detect-changes.outputs.checks": checks, "needs.detect-changes.outputs.scope": group_set,
                "needs.detect-changes.outputs.python_relevant": str(python).lower(),
                "needs.detect-changes.outputs.rust_relevant": str(rust).lower()}
     ran = set()
     for name, spec in workflow()["jobs"].items():
-        if name in ("detect-changes", "hosted-fallback", "post-merge-report"):
+        if name in ("detect-changes", "ci-plan", "hosted-fallback", "post-merge-report"):
             continue
         condition = spec["if"].removeprefix("always() && ")
         contexts = re.findall(r"\b(?:needs|github|vars|inputs|matrix|steps|env)\.[\w.\-*]+", condition)
@@ -242,21 +258,28 @@ def scheduled(event, paths=(), *, draft=False, label=False, group_set=None):
     return ran
 
 
-def run_jobs(pr_scheduled):
-    """The job records a pull request run with this schedule lists: expanded rust-test-groups rows on Linux and
-    Windows when that job ran in the pull request set, unexpanded skipped names otherwise."""
+def run_jobs(paths, *, draft=False, label=False):
+    """The job records a pull request run lists: its plan row (named as ci.yml's ci-plan job names it), expanded
+    rust-test-groups rows on Linux and Windows and both Python build rows when those jobs ran in the pull request
+    set, unexpanded skipped names otherwise."""
     import pr_lookup
-    rows = [{"name": "Detect changed paths", "status": "completed", "conclusion": "success", "run_id": 1}]
-    if ("rust-test-groups", "pr") in pr_scheduled:
-        rows += [{"name": f"Rust tests ({os_}, {group})", "status": "queued", "conclusion": None, "run_id": 1}
-                 for os_ in ("ubuntu-24.04", "windows-2025") for group in pr_lookup.RUST_TEST_GROUPS]
+    pr = scheduled("pull_request", paths, draft=draft, label=label)
+    rust, python, group_set, checks = outputs("pull_request", paths, draft=draft, label=label)
+    names = [(f"CI plan: rust={str(rust).lower()} python={str(python).lower()} scope={group_set} checks={checks}",
+              "completed", "success")]
+    if ("rust-test-groups", "pr") in pr:
+        names += [(f"Rust tests ({os_}, {group})", "queued", None)
+                  for os_ in ("ubuntu-24.04", "windows-2025") for group in pr_lookup.RUST_TEST_GROUPS]
     else:
-        rows.append({"name": "Rust tests (${{ matrix.os }}, ${{ matrix.group }})", "status": "completed",
-                     "conclusion": "skipped", "run_id": 1})
-    if ("rust-limited-groups", "pr") in pr_scheduled:
-        rows.append({"name": "Rust tests (ubuntu-24.04, limited-model)", "status": "queued", "conclusion": None,
-                     "run_id": 1})
-    return rows
+        names.append(("Rust tests (${{ matrix.os }}, ${{ matrix.group }})", "completed", "skipped"))
+    if ("rust-limited-groups", "pr") in pr:
+        names.append(("Rust tests (ubuntu-24.04, limited-model)", "queued", None))
+    if ("python-env-build", "pr") in pr:
+        names += [(name, "in_progress", None) for name in pr_lookup.PYTHON_BUILD_JOBS]
+    else:
+        names.append(("Build Python test binaries (${{ matrix.os }})", "completed", "skipped"))
+    return [{"id": index, "name": name, "status": status, "conclusion": conclusion, "run_id": ACTIVE_RUN["id"]}
+            for index, (name, status, conclusion) in enumerate(names)]
 
 
 def composition(run_paths, dispatch_paths, *, label=False, draft=False, version="new"):
@@ -268,43 +291,55 @@ def composition(run_paths, dispatch_paths, *, label=False, draft=False, version=
     if draft:
         group_set = "full"
     elif version == "new":
-        group_set = "windows-complement" if pr_lookup.scheduled_linux_rust(run_jobs(pr), ACTIVE_RUN) else "full"
+        whole = pr_lookup.scheduled_whole_set(run_jobs(run_paths, label=label), ACTIVE_RUN)
+        group_set = "windows-complement" if whole else "full"
     else:
         group_set = "windows-complement" if ci_scope.scope_of_files(list(dispatch_paths)) == "pr" else "full"
     return pr | scheduled("workflow_dispatch", group_set=group_set)
 
 
-# (run paths, dispatch paths, label, draft)
+# (run paths, dispatch paths, label, draft, Python lost against origin/main by intent)
 SAMPLES = [
-    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], False, False),
+    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], False, False, False),
     # A Rust change applied to the base independently: only GitHub's list still has it.
-    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py", "mtg-kernel/src/engine.rs"], False, False),
-    (["python/tools/foo.py", "tools/stage4a/a.py"], ["python/tools/foo.py", "tools/stage4a/a.py"], False, False),
-    (["mtg-kernel/src/engine.rs"], ["mtg-kernel/src/engine.rs"], False, False),
+    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py", "mtg-kernel/src/engine.rs"], False, False, False),
+    (["python/tools/foo.py", "tools/stage4a/a.py"], ["python/tools/foo.py", "tools/stage4a/a.py"], False, False, False),
+    (["mtg-kernel/src/engine.rs"], ["mtg-kernel/src/engine.rs"], False, False, False),
     (["mtg-kernel/src/native_expanded_training_run_v1.rs"], ["mtg-kernel/src/native_expanded_training_run_v1.rs"],
-     False, False),
-    (["mtg-kernel/src/bin/kernel_limited_match_v1.rs"], ["mtg-kernel/src/bin/kernel_limited_match_v1.rs"], False, False),
-    (["python/tools/foo.py"], ["python/tools/foo.py"], False, False),
-    (["README.md"], ["README.md"], False, False),
-    ([".github/workflows/ci.yml"], [".github/workflows/ci.yml"], False, False),
-    (["data/eternal_v1/cards.json"], ["data/eternal_v1/cards.json"], False, False),
-    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], True, False),
-    (["README.md"], ["README.md"], True, False),
-    (["mtg-kernel/src/engine.rs"], ["mtg-kernel/src/engine.rs"], False, True),
-    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], False, True),
+     False, False, False),
+    (["mtg-kernel/src/bin/kernel_limited_match_v1.rs"], ["mtg-kernel/src/bin/kernel_limited_match_v1.rs"],
+     False, False, False),
+    (["python/tools/foo.py"], ["python/tools/foo.py"], False, False, False),
+    (["README.md"], ["README.md"], False, False, False),
+    ([".github/workflows/ci.yml"], [".github/workflows/ci.yml"], False, False, False),
+    (["data/eternal_v1/cards.json"], ["data/eternal_v1/cards.json"], False, False, False),
+    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], True, False, False),
+    (["README.md"], ["README.md"], True, False, False),
+    (["mtg-kernel/src/engine.rs"], ["mtg-kernel/src/engine.rs"], True, False, False),
+    # The one case that runs less than origin/main on this change alone: ci:full on Rust-only paths. Its plan reads
+    # python=false, so the complement follows; origin/main's file list mapped to a narrower scope and gave a full
+    # dispatch. The viewer-scope change makes ci:full set python=true, which closes it.
+    (["mtg-kernel/src/native_expanded_training_run_v1.rs"], ["mtg-kernel/src/native_expanded_training_run_v1.rs"],
+     True, False, True),
+    (["mtg-kernel/src/bin/kernel_limited_match_v1.rs"], ["mtg-kernel/src/bin/kernel_limited_match_v1.rs"],
+     True, False, True),
+    (["mtg-kernel/src/engine.rs"], ["mtg-kernel/src/engine.rs"], False, True, False),
+    (["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], False, True, False),
 ]
 
 
 class DispatchCompositionTests(unittest.TestCase):
-    """Point 4: the dispatch follows the pull request run's jobs, so the two together never cover less than
-    origin/main's file-list rule did for the same change."""
+    """Point 4: the dispatch follows the pull request run's plan and jobs, so the two together never cover less
+    than origin/main's file-list rule did for the same change, except the labelled Rust-only case (Python only)."""
 
     def test_a_run_and_a_default_dispatch_cover_at_least_what_main_covered(self):
-        for run_paths, dispatch_paths, label, draft in SAMPLES:
+        for run_paths, dispatch_paths, label, draft, python_lost in SAMPLES:
             with self.subTest(run=run_paths, dispatch=dispatch_paths, label=label, draft=draft):
                 new = coverage(composition(run_paths, dispatch_paths, label=label, draft=draft))
                 old = coverage(composition(run_paths, dispatch_paths, label=label, draft=draft, version="main"))
-                self.assertLessEqual(old, new)
+                lost = old - new
+                self.assertEqual(bool(lost), python_lost)
+                self.assertTrue(all(job in PYTHON_SET for job, _ in lost), lost)
 
     def test_main_had_a_gap_for_tools_ci_alone_and_it_is_closed(self):
         everything = coverage(scheduled("workflow_dispatch", group_set="full"))
@@ -315,22 +350,23 @@ class DispatchCompositionTests(unittest.TestCase):
                 self.assertTrue(everything - old)
                 self.assertEqual(everything - new, set())
 
-    def test_the_complement_follows_only_a_run_with_linux_rust_groups(self):
+    def test_the_complement_follows_only_a_run_whose_plan_and_jobs_show_the_whole_set(self):
         import pr_lookup
         cases = {"engine": (["mtg-kernel/src/engine.rs"], False, True),
                  "labelled engine": (["mtg-kernel/src/engine.rs"], True, True),
-                 # ci:full gives checks all but leaves relevance to the paths here: no Rust rows, a full dispatch.
+                 "engine and data (Python rows too)": (["mtg-kernel/src/engine.rs", "data/eternal_v1/cards.json"],
+                                                      False, True),
+                 # ci:full gives checks all but leaves relevance to the paths here.
                  "labelled tools/ci": (["tools/ci/hosted_fallback.py"], True, False),
+                 "labelled trainer": (["mtg-kernel/src/native_expanded_training_run_v1.rs"], True, True),
                  "tools/ci": (["tools/ci/hosted_fallback.py"], False, False),
                  "rules-limited (Limited rows only)": (["mtg-kernel/src/bin/kernel_limited_match_v1.rs"], False, False),
                  "trainer": (["mtg-kernel/src/native_expanded_training_run_v1.rs"], False, False),
                  "docs": (["README.md"], False, False)}
         for name, (paths, label, expected) in cases.items():
             with self.subTest(case=name):
-                self.assertEqual(pr_lookup.scheduled_linux_rust(run_jobs(scheduled("pull_request", paths, label=label)), ACTIVE_RUN),
-                                 expected)
-        self.assertFalse(pr_lookup.scheduled_linux_rust(run_jobs(scheduled("pull_request", ["mtg-kernel/src/engine.rs"],
-                                                                           draft=True)), ACTIVE_RUN))
+                self.assertEqual(pr_lookup.scheduled_whole_set(run_jobs(paths, label=label), ACTIVE_RUN), expected)
+        self.assertFalse(pr_lookup.scheduled_whole_set(run_jobs(["mtg-kernel/src/engine.rs"], draft=True), ACTIVE_RUN))
 
 
 class ShardTests(unittest.TestCase):

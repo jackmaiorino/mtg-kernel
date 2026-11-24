@@ -5,8 +5,12 @@ scope, or any file no rule names, run the whole pull request set. Docs files nev
 still runs on every push to main and every tag (and on a dispatch without `scope`, the way release lines are
 checked) as a monitor, so a scope only decides what gates a merge (collab HANDOFFS/20261117/COORD.md, "Standing
 rule, merges (2026-11-21 07:27 ET)"). One exception: a dispatch without inputs at the head of a ready pull request
-runs only the Windows complement when that pull request's own run at the same commit scheduled the Linux Rust
-groups (tools/ci/pr_lookup.py pr-run); otherwise the full matrix; `full_matrix=true` always forces the full matrix.
+runs only the Windows complement when that pull request's own run at the same commit says (its ci-plan job) and
+shows that it scheduled the whole pull request set: the Linux Rust groups, and the Python build on both systems
+unless its paths were not Python-relevant (tools/ci/pr_lookup.py pr-run); otherwise the full matrix. The two runs
+then cover every group whose paths were relevant: a Rust-only pull request, labelled ci:full or not, runs no Python
+before the merge. `full_matrix=true` skips that lookup; `fallback_scope` and an explicit `scope` input take
+precedence over it.
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
@@ -330,8 +334,11 @@ def markdown() -> str:
            "one scope, a shared file, or a file no rule names run the whole pull request set. Docs files never "
            "decide. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor (one exception: a "
            "dispatch without inputs at the head of a ready pull request runs only the Windows complement when that "
-           "pull request's own run at the same commit scheduled the Linux Rust groups; otherwise the full matrix; "
-           "`full_matrix=true` always forces the full matrix): pushes to a line share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and "
+           "pull request's own run at the same commit says (its ci-plan job) and shows that it scheduled the whole pull "
+           "request set, the Linux Rust groups and, unless its paths were not Python-relevant, the Python build on "
+           "both systems; otherwise the full matrix; a Rust-only pull request, labelled ci:full or not, runs no Python "
+           "before the merge; `full_matrix=true` skips that lookup, and `fallback_scope` or an explicit `scope` input "
+           "takes precedence over it): pushes to a line share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and "
            "a red monitor's report names every merge it covers. `ci:full` on a pull request forces the whole pull "
            "request set from the next push, reopen or ready-for-review event (adding the label starts no run); "
            "labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one "
