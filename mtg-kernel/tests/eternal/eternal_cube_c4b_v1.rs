@@ -1525,8 +1525,13 @@ fn sage_of_the_skies_token_copy_activates_an_ability_from_agathas_soul_cauldron(
         .map(|(_, index)| index)
         .min()
         .expect("the token has the Druid's untap ability");
+    state.objects.get_mut(token).tapped = true;
     activate(&mut state, token, borrowed, &[]);
     settle_first(&mut state);
+    assert!(
+        !state.objects.get(token).tapped,
+        "the borrowed ability untapped the token"
+    );
     let counters = state.objects.get(token).counters;
     assert!(
         counters.minus1_minus1 == 1 || counters.plus1_plus1 == 0,
