@@ -180,6 +180,7 @@ pub(crate) fn copy_snapshot_legal_targets(
             power_lki: None,
             other_than: None,
             original_source_incarnation_only: false,
+            text_color_origin: None,
         }),
         state,
     ))

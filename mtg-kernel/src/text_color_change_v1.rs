@@ -1287,7 +1287,8 @@ mod tests {
         assert_eq!(text_color(&state, copy_obj, ManaColor::R), ManaColor::R);
 
         // Copying a stack item that holds a capture halts with TextColorChangeOutsideAuditV1.
-        capture_for_stack_item(&mut state, stack_item_id, hydro);
+        let hydro_link = live_link(&state, hydro).unwrap();
+        capture_for_stack_item(&mut state, stack_item_id, hydro_link);
         assert!(has_capture(&state, stack_item_id));
         let denied = engine::copy_spell_for(&mut state, hydro, PlayerId::P0);
         assert!(denied.is_none());
