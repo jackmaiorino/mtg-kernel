@@ -17,7 +17,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Iterable
 
 SCHEDULE_SCHEMA = "cube_deal_schedule/v1"
 MASK = (1 << 63) - 1
@@ -505,6 +505,47 @@ def build_schedule(
     if constants_sha256 is not None:
         result["constants_sha256"] = constants_sha256
     return result
+
+
+def card_names_by_id(pool_doc: Any) -> dict[int, str]:
+    """Map every card id of a validated pool (spells, nonbasic lands and basics) to its name."""
+    validate_pool(pool_doc)
+    return {card["card_id"]: card["name"] for key in ("spells", "nonbasic_lands", "basics") for card in pool_doc[key]}
+
+
+def deck_card_names(card_ids: Iterable[int], names_by_id: dict[int, str]) -> list[str]:
+    """Translate a deck's card ids to card names; an id the map lacks is an error."""
+    names: list[str] = []
+    for cid in card_ids:
+        if not _is_int(cid) or cid not in names_by_id:
+            raise ValueError(f"deck card id {cid!r} is not in the pool")
+        names.append(names_by_id[cid])
+    return names
+
+
+def canonical_deck_text(card_names: Iterable[str]) -> str:
+    """Canonical text of one deck: a `name count` line per distinct card name, sorted by name
+    (Unicode code point order), each line ending in LF. Card order and file formatting do not matter."""
+    counts: dict[str, int] = {}
+    for name in card_names:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"deck card name must be a non-empty string, got {name!r}")
+        if "\n" in name or "\r" in name:
+            raise ValueError(f"deck card name contains a line break: {name!r}")
+        counts[name] = counts.get(name, 0) + 1
+    if not counts:
+        raise ValueError("a deck must hold at least one card")
+    return "".join(f"{name} {counts[name]}\n" for name in sorted(counts))
+
+
+def canonical_decks_sha256(decks: Iterable[Iterable[str]]) -> str:
+    """SHA-256 (lowercase hex) of a list of decks, each given as card names (repeats count).
+
+    The hashed text is, for each deck in list order, its canonical_deck_text followed by one
+    empty line, encoded as UTF-8 with LF line endings. It depends only on the decks' card names
+    and counts and on the order of the decks, never on how or where they were stored."""
+    text = "".join(canonical_deck_text(deck) + "\n" for deck in decks)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _read_json_with_sha256(path: Path) -> tuple[Any, str]:

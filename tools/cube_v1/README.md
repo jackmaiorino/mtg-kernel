@@ -30,7 +30,9 @@ Offline input tools for cube self-play training configs:
    ```
    All deal constants come from `--constants` (`deck_size`, `colours_per_seat`, `nonland_spells`, `nonbasic_lands`, `basic_split` = `"even_first_colour_extra"`, `pairs_per_update`, which must be even). Derives episode seeds via `qual.py`'s SHA-256-of-JSON `seed([namespace, run, update, slot])`, deals non-basic cube cards without overlap across seats (basic lands are exempt: both decks may hold copies of the same basic land type), splits basics by seat colour, and emits both seat orders in run-config `iterations` shape (or stamps `--base BASE.json`, swapping seat-indexed `mulligan_modes` with the decks). Deck A of a pair is drawn first. The learner holds deck A in both slots of an even pair and deck B in both slots of an odd pair; seat 0 starts, so each deck is on the play once per pair.
 
-4. **Tests**:
+4. **Canonical deck hash** (`deal.canonical_decks_sha256`): hashes a list of decks, each given as card names (`deal.card_names_by_id` and `deal.deck_card_names` translate card ids through a pool). Each deck is written as sorted `name count` lines followed by one empty line, LF line endings, UTF-8, and SHA-256 runs over that text, so card order, file formatting, line endings and provenance fields cannot change it.
+
+5. **Tests**:
    ```bash
    python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'
    ```

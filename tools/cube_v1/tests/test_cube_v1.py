@@ -258,6 +258,73 @@ class LfOutputTests(unittest.TestCase):
             self.assertEqual(deal_bytes, deal_stdout)
 
 
+class CanonicalDeckHashTests(unittest.TestCase):
+    def test_canonical_text_is_sorted_name_count_lines_with_lf(self):
+        text = deal.canonical_deck_text(["Island", "Brainstorm", "Island", "Ancestral Recall"])
+        self.assertEqual(text, "Ancestral Recall 1\nBrainstorm 1\nIsland 2\n")
+
+    def test_hash_is_the_sha256_of_the_stated_text(self):
+        decks = [["Island", "Brainstorm", "Island"], ["Mountain", "Lightning Bolt"]]
+        expected_text = "Brainstorm 1\nIsland 2\n\nLightning Bolt 1\nMountain 1\n\n"
+        self.assertEqual(
+            deal.canonical_decks_sha256(decks),
+            hashlib.sha256(expected_text.encode("utf-8")).hexdigest(),
+        )
+        # Non-ASCII names hash as UTF-8.
+        self.assertEqual(
+            deal.canonical_decks_sha256([["Lim-Dûl's Vault"]]),
+            hashlib.sha256("Lim-Dûl's Vault 1\n\n".encode("utf-8")).hexdigest(),
+        )
+
+    def test_hash_ignores_card_order_and_file_formatting(self):
+        deck = ["Island", "Brainstorm", "Island", "Ancestral Recall", "Swamp"]
+        reference = deal.canonical_decks_sha256([deck])
+        self.assertEqual(deal.canonical_decks_sha256([list(reversed(deck))]), reference)
+        self.assertEqual(deal.canonical_decks_sha256([sorted(deck)]), reference)
+        # The same deck stored compact with LF, or indented with CRLF, hashes the same.
+        compact = json.dumps({"cards": deck}, separators=(",", ":")).encode("utf-8")
+        indented = json.dumps({"cards": deck, "pool_sha256": "f" * 64}, indent=4).replace("\n", "\r\n").encode("utf-8")
+        for raw in (compact, indented):
+            self.assertEqual(deal.canonical_decks_sha256([json.loads(raw.decode("utf-8"))["cards"]]), reference)
+
+    def test_hash_depends_on_counts_names_and_deck_order(self):
+        a = ["Island", "Brainstorm"]
+        b = ["Mountain", "Lightning Bolt"]
+        reference = deal.canonical_decks_sha256([a, b])
+        self.assertNotEqual(deal.canonical_decks_sha256([b, a]), reference)
+        self.assertNotEqual(deal.canonical_decks_sha256([a + ["Island"], b]), reference)
+        self.assertNotEqual(deal.canonical_decks_sha256([a + b]), reference)
+        self.assertNotEqual(deal.canonical_decks_sha256([a]), reference)
+
+    def test_refuses_empty_decks_and_bad_names(self):
+        with self.assertRaises(ValueError):
+            deal.canonical_decks_sha256([[]])
+        for bad in ("", "  ", "Island\n", "Is\r\nland", 7, None):
+            with self.assertRaises(ValueError):
+                deal.canonical_deck_text(["Island", bad])
+
+    def test_deck_ids_translate_to_names_through_the_pool(self):
+        pool_doc = pool.build_pool_from_paths(
+            FIXTURES_DIR / "cube_list.json",
+            FIXTURES_DIR / "gaps.json",
+            FIXTURES_DIR / "id_export.json",
+            FIXTURES_DIR / "fence.json",
+        )
+        names_by_id = deal.card_names_by_id(pool_doc)
+        schedule = deal.build_schedule(
+            pool_doc, _read_fixture("constants.json"), namespace="golden", run="hash", update_start=0, update_end=1
+        )
+        deck = schedule["iterations"][0]["episodes"][0]["episode"]["registered"][0]["mainboard"]
+        names = deal.deck_card_names(deck, names_by_id)
+        self.assertEqual(len(names), len(deck))
+        self.assertEqual(names, [names_by_id[cid] for cid in deck])
+        # Basic lands translate too.
+        basic_names = {card["name"] for card in pool_doc["basics"]}
+        self.assertTrue(basic_names & set(names))
+        with self.assertRaisesRegex(ValueError, "not in the pool"):
+            deal.deck_card_names([65535], names_by_id)
+
+
 class DealGuaranteeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
