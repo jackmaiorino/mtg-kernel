@@ -1,4 +1,4 @@
-//! Layer-3 full-text primitives for the Partial Volrath's Shapeshifter.
+//! Layer-3 full-text primitives for Volrath's Shapeshifter.
 //!
 //! The physical printing remains the layer-1 authority. Copy effects read
 //! `GameObject::card_def` and do not inherit layer-3 text changes (CR 612.6,

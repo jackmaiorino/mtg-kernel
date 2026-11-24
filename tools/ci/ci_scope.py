@@ -375,25 +375,6 @@ def scope_of_files(paths: list[str]) -> str:
     return "pr"
 
 
-def pull_request_paths(pages: object) -> list[str]:
-    # GitHub's REST OpenAPI diff-entry.status enum.
-    statuses = ("added", "removed", "modified", "renamed", "copied", "changed", "unchanged")
-    if not isinstance(pages, list) or not pages or any(not isinstance(page, list) for page in pages):
-        raise ValueError("expected an array of file pages")
-    paths = []
-    for page in pages:
-        for entry in page:
-            if not isinstance(entry, dict) or entry.get("status") not in statuses:
-                raise ValueError("expected a changed-file object with a recognized status")
-            names = [entry.get("filename")]
-            if entry["status"] == "renamed" or "previous_filename" in entry:
-                names.append(entry.get("previous_filename"))
-            if any(not isinstance(name, str) or not name or "\0" in name for name in names):
-                raise ValueError("expected a nonempty filename for each changed path")
-            paths.extend(names)
-    return paths
-
-
 def choose(event: str, group_set: str, input_scope: str, labels: list[str], files: list[str]) -> str:
     """checks=all keeps the run's group set as chosen before (full, pr, draft, windows-*); a scope name runs
     only that scope's jobs."""

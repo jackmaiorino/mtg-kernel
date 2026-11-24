@@ -165,33 +165,32 @@ jobs:
             esac
           elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ] && [ -z "$INPUT_SCOPE" ]; then
             # Only an open, ready (not draft) same-repository pull request
-            # whose head is this exact commit has a pull request run covering
-            # the rest. Any lookup failure keeps the full set. A self-hosted
-            # runner without the GitHub CLI makes the same two REST calls
-            # with tools/ci/pr_lookup.py.
+            # whose head is this exact commit can have a pull request run
+            # covering the rest. Any lookup failure keeps the full set. A
+            # self-hosted runner without the GitHub CLI finds the pull
+            # request with tools/ci/pr_lookup.py.
             if command -v gh > /dev/null 2>&1; then
               open_pr() {
                 gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" |
                   python3 tools/ci/pr_lookup.py ready-pr
               }
-              pr_files() { gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"; }
             else
               open_pr() { python3 tools/ci/pr_lookup.py open-pr-head; }
-              pr_files() { python3 tools/ci/pr_lookup.py pr-files "$1"; }
             fi
             pr=$(open_pr) || pr=
             read -r pr_number pr_head pr_base <<< "$pr"
             echo "open pull request ${pr_number:-none} head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
             if [ -n "$pr_base" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
-              # Its run covered the whole pull request set only if its files
-              # did not narrow it to one scope and were Rust-relevant (else
-              # it left out Linux Rust, lint and its Windows groups, which
-              # the complement cannot recover): ci_scope.py pr-run, the same
-              # scope and relevance functions the pull request run used.
-              pr_run=$(pr_files "$pr_number" | python3 tools/ci/ci_scope.py pr-run) || pr_run=
+              # Complement only what that pull request's own run scheduled:
+              # its ci.yml run (event pull_request, this commit, this
+              # repository) must show expanded, not skipped Linux Rust group
+              # jobs (tools/ci/pr_lookup.py pr-run, read with this job's
+              # token and its existing actions: read). Anything else, an
+              # error included, keeps the full set.
+              pr_run=$(python3 tools/ci/pr_lookup.py pr-run "$GITHUB_SHA") || pr_run=
               echo "its pull request run: ${pr_run:-unknown}"
-              # File listing is live and paginated. Narrow only if the same
-              # PR is still ready with the same head and base after that read.
+              # Narrow only if the same PR is still ready with the same head
+              # and base after that read.
               if [ "$pr_run" = whole-set ] && rechecked=$(open_pr) && [ "$rechecked" = "$pr" ]; then
                 scope=windows-complement
               fi

@@ -60,12 +60,23 @@ fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
     );
     let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
     assert_eq!(deck.iter().filter(|&&id| id == volrath).count(), 2);
-    assert!(crate::limited_session_v1::CustomDeckV1 {
+    let resolved = crate::limited_session_v1::CustomDeckV1 {
         cards: rows.to_vec(),
-        companion: None
+        companion: None,
     }
     .resolve()
-    .is_err());
+    .unwrap();
+    assert_eq!(resolved, deck.as_slice());
+    assert!(matches!(
+        crate::card_def::preflight_fully_supported_deck(&resolved),
+        Err(
+            crate::card_def::DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                card_def,
+                name: "Volrath's Shapeshifter",
+                ..
+            }
+        ) if card_def == volrath
+    ));
 
     for first in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
         let first_player = native_seat(first);
@@ -1683,30 +1694,28 @@ fn ordered_register_refuses_volrath_without_profile_and_rl_session_refuses_outsi
     let island = card_id_by_name("Island").unwrap();
     let extrapolate = card_id_by_name("Extrapolate the Impossible").unwrap();
 
-    // Even when Volrath's Partial capability is waived (as once B2 flips it to
-    // Full), registering it without the ordered-graveyard profile is refused
-    // with `OrderedGraveyardSetup`.
+    // Volrath's Shapeshifter is Full and requires the ordered-graveyard
+    // profile: ordinary registration refuses it with `OrderedGraveyardSetup`,
+    // while ordered-graveyard registration admits it.
     let mut with_volrath = vec![island; 58];
     with_volrath.extend([volrath; 2]);
     assert!(matches!(
-        EternalRegisteredDeckV1::register_test_partial_volrath_v1(
+        EternalRegisteredDeckV1::new_v1(
             EternalFormatV1::Premodern,
             "ordinary-volrath",
             with_volrath.clone(),
             Vec::new(),
             None,
-            false,
         ),
         Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
             if reason.contains("Volrath's Shapeshifter")
     ));
-    EternalRegisteredDeckV1::register_test_partial_volrath_v1(
+    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
         EternalFormatV1::Premodern,
         "ordered-volrath",
         with_volrath,
         Vec::new(),
         None,
-        true,
     )
     .unwrap();
 
