@@ -1223,7 +1223,7 @@ fn elemental_blasts_pyroblast_hydroblast_snuff_out_and_anarchy_on_stack() {
     act(&mut state, Action::Pass);
     cast_mode(&mut state, reb, 0, &[Target::Object(charm)]);
     change(&mut state, reb, ManaColor::U, ManaColor::G);
-    settled(&mut state);
+    settle_with(&mut state, |_, decision| first_answer(decision));
     assert_eq!(
         state.players[1].graveyard.len(),
         4,
@@ -1726,11 +1726,20 @@ fn schema_5_projection_ordering_face_down_masking_actions_and_refusals() {
         let spell = put(&mut choice_state, P0, "Hydroblast", Zone::Hand);
         pool(&mut choice_state, P0, &[ManaColor::U], 0);
         cast_mode(&mut choice_state, spell, 1, &[Target::Object(perm)]);
-        let resolving_item = choice_state.stack.pop().unwrap();
+        let resolving_item = choice_state.stack.last().unwrap().clone();
         assert_eq!(resolving_item.kind, StackItemKind::Spell);
         let mut ctx = ExecCtx::no_targets(spell, P0);
         ctx.stack_item_id = Some(resolving_item.v4.stack_item_id);
-        ctx.targets = vec![Target::Object(perm)];
+        ctx.targets = resolving_item.targets.clone();
+        ctx.target_contracts = resolving_item.v4.target_contracts.clone();
+        ctx.discarded = resolving_item.discarded.clone();
+        ctx.paid_cost_refs = resolving_item.v4.paid_cost_refs.clone();
+        ctx.hidden_ability_source = resolving_item.v4.hidden_ability_source;
+        ctx.kicked = resolving_item.kicked;
+        ctx.ability_source_contract = resolving_item.v4.ability_source_contract;
+        ctx.cauldron_grant = resolving_item.v4.cauldron_grant;
+        ctx.optional_additional_cost_paid = resolving_item.v4.optional_additional_cost_paid;
+        ctx.x_value = resolving_item.v4.x_value;
         choice_state.engine.pending_effect = Some(EffectContinuation {
             resolving_item,
             ctx,
