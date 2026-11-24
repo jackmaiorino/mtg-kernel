@@ -7441,10 +7441,22 @@ fn validate_ward_targeter_provenance(
         .objects
         .try_get(ward_source)
         .ok_or("Ward source object no longer exists")?;
-    if live.card_def != card_def
+    // The live object must be the same physical card with no earlier zone
+    // history than the incarnation that triggered. The Ward ability exists
+    // independently of its source (113.7a), so that incarnation may since
+    // have left the battlefield. It is compared with its historical record,
+    // never with what it is now: a copy (Phyrexian Metamorph) that leaves
+    // stops being a copy, and a phased-out permanent has not left the
+    // battlefield (702.26d) though it is in the command-zone marker.
+    let same_incarnation = live.zone_change_count == zone_change_count;
+    let on_battlefield = live.zone == Zone::Battlefield
+        || crate::eternal_e5a_v1::phasing::phased_out(state, ward_source);
+    let had_definition = live.card_def == card_def
+        || crate::standard_cards_v1::had_card_def(state, ward_source, zone_change_count, card_def);
+    if !had_definition
         || live.owner != owner
         || live.zone_change_count < zone_change_count
-        || (live.zone_change_count == zone_change_count && live.zone != Zone::Battlefield)
+        || (same_incarnation && !on_battlefield)
     {
         return Err("Ward source incarnation metadata is inconsistent".to_string());
     }
@@ -7614,7 +7626,9 @@ pub(crate) fn validated_life_ward_observation_targeter(
 
 /// Legacy observations can infer the binding only when exactly one live item
 /// targets the Ward source. Keep this coverage restriction at their boundary,
-/// rather than halting the rules engine for successor-aware consumers.
+/// rather than halting the rules engine for successor-aware consumers. The
+/// schema 5 public contract reports each binding instead
+/// (`PublicObservationProjectionV5::ward_payments`) and skips this check.
 pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), String> {
     crate::engine::validate_legacy_variable_cast_targets(state)?;
     let pending = state
@@ -8240,6 +8254,14 @@ pub(crate) fn jace_draw_replacement_origin(
                     u32::from(branch),
                     Vec::new(),
                 ),
+                (
+                    0,
+                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                        crate::eternal_cards_v1::EternalOpV1::Pf2aV1(
+                            crate::eternal_pauper_pf2a_v1::Pf2aOpV1::ThrillingDiscoveryV1,
+                        ),
+                    ))),
+                ) => (PlayerRef::Controller, 3, Vec::new()),
                 _ => return false,
             }
         }
@@ -8311,6 +8333,14 @@ fn leaf_staged_draw(
         }
         // K'un-Lun Warrior stages one draw at the leaf after payment.
         E::Pf1aV1(Pf1aOpV1::KunLunV1) => Some((PlayerRef::Controller, 1, Vec::new())),
+        // Keep Watch stages one draw per attacking creature at resolution.
+        E::Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aOpV1::KeepWatchV1) => {
+            Some((PlayerRef::Controller, u32::MAX, Vec::new()))
+        }
+        // Flush Out stages two draws after its mandatory discard.
+        E::Pf2bV1(crate::eternal_pauper_pf2b_v1::Pf2bOpV1::FlushOutV1) => {
+            Some((PlayerRef::Controller, 2, Vec::new()))
+        }
         // Sylvan Library stages two draws above its choose/put-back frame.
         E::P1aV1(P1aOpV1::SylvanDrawV1) => {
             let below = EffectFrame::Program {

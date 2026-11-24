@@ -161,7 +161,9 @@ impl Projection {
                 }))
             }
             Ok(FebCurrentV1::GameOver { winner }) => Self::Terminal { winner },
-            Ok(FebCurrentV1::NativeHalt) => Self::NativeHalt,
+            Ok(FebCurrentV1::NativeHalt) | Ok(FebCurrentV1::RegisteredHaltV1 { .. }) => {
+                Self::NativeHalt
+            }
             Ok(FebCurrentV1::UnsupportedDecision) => {
                 Self::Unsupported("unsupported_native_decision")
             }

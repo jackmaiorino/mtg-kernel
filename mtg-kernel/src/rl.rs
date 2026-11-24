@@ -1091,6 +1091,31 @@ pub struct PublicObservationProjectionV5 {
     /// Mage's name applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meddling_mage_names: Option<Vec<PublicMeddlingMageNameV1>>,
+    /// The public turn schedule once an extra turn has been scheduled (Time
+    /// Walk, Time Vault's ability, Emrakul, the Aeons Torn's cast trigger),
+    /// under the public shroud contract (Limited schema 5). `turn` keeps its
+    /// round numbering, so an extra turn repeats its round and active seat;
+    /// the schedule's occurrence tells such turns apart and names the extra
+    /// turn being taken and those still queued. While it is present every
+    /// published goad has `expires_at_turn` 0: the goad lasts until its
+    /// `player`'s next turn begins, whichever turn that is, and no round
+    /// number names that turn. Fields stamped with the turn key
+    /// (`entered_battlefield_turn`, `plotted_turn`, the turn in
+    /// `creature_upgrade.wurmlet_resolved_turn`, and the `turn` of
+    /// `engine_context.trigger_uses` and
+    /// `engine_context.combat_damage_prevention`) hold the round until the
+    /// schedule exists and its `occurrence` from then on, so they compare
+    /// with `turn_schedule.occurrence`, not with `turn`.
+    /// Absent until the game's first extra turn is scheduled, and in every
+    /// other observation, which keeps refusing such games.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_schedule: Option<crate::extra_turn_public_v1::TurnScheduleV1>,
+    /// Pending and queued Ward payments, each bound to its exact targeting
+    /// stack item, under the public shroud contract (Limited schema 5).
+    /// Absent while no Ward trigger is bound; every other observation mode
+    /// keeps refusing the Ward states it cannot represent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ward_payments: Option<PublicWardPaymentsV1>,
 }
 
 /// A Meddling Mage and the card name it chose as it entered (Eternal wave
@@ -1101,6 +1126,53 @@ pub struct PublicMeddlingMageNameV1 {
     /// The printed name: a card's, a split half's or Room door's, or an
     /// Adventure, Omen or back face's.
     pub name: String,
+}
+
+/// Ward payments under the public shroud contract (Limited schema 5): the
+/// Ward payment its payer is answering now and every Ward trigger on the
+/// stack still bound to a live spell or ability. Present only while one
+/// exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWardPaymentsV1 {
+    /// The resolving Ward trigger whose payer is choosing to pay or not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<PublicWardPaymentV1>,
+    /// Ward triggers waiting on the stack, bottom first. A trigger whose
+    /// targeting spell or ability has left the stack does nothing and has
+    /// no record (its stack row remains).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued: Vec<PublicQueuedWardPaymentV1>,
+}
+
+/// "Counter that spell or ability unless its controller pays": the Ward
+/// source, the exact spell or ability, who may pay and what.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWardPaymentV1 {
+    /// The permanent whose Ward (printed or granted) triggered.
+    pub ward_source: CardStableRefV1,
+    /// The public stack row of the spell or ability the trigger counters
+    /// unless its cost is paid.
+    pub targeting_stack_index: u32,
+    /// That spell or ability's controller.
+    pub payer: PlayerSeatV1,
+    pub cost: PublicWardCostV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PublicWardCostV1 {
+    /// "Ward {N}": N generic mana.
+    Generic { amount: u8 },
+    /// "Ward--Pay N life": payable only with at least N life (rule 119.4).
+    Life { amount: u8 },
+}
+
+/// A Ward trigger waiting on the stack and the payment it will ask for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicQueuedWardPaymentV1 {
+    /// The Ward trigger's own public stack row.
+    pub trigger_stack_index: u32,
+    pub payment: PublicWardPaymentV1,
 }
 
 /// Shroud under the public shroud contract (Limited schema 5).
@@ -1990,6 +2062,107 @@ fn public_shroud_v1(state: &GameState) -> Result<PublicShroudV1> {
     })
 }
 
+/// Schema 5's Ward payments (`PublicObservationProjectionV5::ward_payments`).
+/// Each binding is the authenticated one the typed successors use
+/// (`validated_ward_observation_targeter` for generic mana,
+/// `validated_life_ward_observation_targeter` for life), so the exact
+/// targeting stack item is reported rather than inferred. The Ward source is
+/// the public source already shown for the trigger: its stack row, or the
+/// pending effect's source while its payer answers. Every fact here is
+/// public: the stack, its controllers and the printed or granted cost.
+fn public_ward_payments_v1(
+    state: &GameState,
+    projection: &PublicObservationProjectionV2,
+) -> Result<Option<PublicWardPaymentsV1>> {
+    let bound = |trigger: &StackItem| -> Result<Option<(u32, PlayerSeatV1, PublicWardCostV1)>> {
+        let generic = crate::effect::validated_ward_observation_targeter(state, trigger)
+            .map_err(RlContractError)?
+            .map(|(targeter, amount)| (targeter, PublicWardCostV1::Generic { amount }));
+        let bound = match generic {
+            Some(bound) => Some(bound),
+            None => crate::effect::validated_life_ward_observation_targeter(state, trigger)
+                .map_err(RlContractError)?
+                .map(|(targeter, amount)| (targeter, PublicWardCostV1::Life { amount })),
+        };
+        bound
+            .map(|(targeter, cost)| {
+                let index = state
+                    .stack
+                    .iter()
+                    .position(|live| live.v4.stack_item_id == targeter.v4.stack_item_id)
+                    .ok_or_else(|| {
+                        RlContractError("Ward targeter lost public stack membership".into())
+                    })?;
+                let index = u32::try_from(index)
+                    .map_err(|_| RlContractError("Ward targeter index exceeds u32".into()))?;
+                Ok((index, targeter.controller.into(), cost))
+            })
+            .transpose()
+    };
+    let pending_effect = state.engine.pending_effect.as_ref();
+    let mut queued = Vec::new();
+    for (index, trigger) in state.stack.iter().enumerate() {
+        if pending_effect.is_some_and(|pending| {
+            pending.resolving_item.v4.stack_item_id == trigger.v4.stack_item_id
+        }) {
+            continue;
+        }
+        let Some((targeting_stack_index, payer, cost)) = bound(trigger)? else {
+            continue;
+        };
+        let trigger_stack_index = u32::try_from(index)
+            .map_err(|_| RlContractError("Ward trigger index exceeds u32".into()))?;
+        let ward_source = projection
+            .stack
+            .get(index)
+            .filter(|row| row.stack_index == trigger_stack_index)
+            .ok_or_else(|| RlContractError("Ward trigger has no public stack row".into()))?
+            .source
+            .clone();
+        queued.push(PublicQueuedWardPaymentV1 {
+            trigger_stack_index,
+            payment: PublicWardPaymentV1 {
+                ward_source,
+                targeting_stack_index,
+                payer,
+                cost,
+            },
+        });
+    }
+    let mut pending = None;
+    if let Some(continuation) = pending_effect {
+        if matches!(
+            continuation.choice.as_ref(),
+            Some(crate::effect::PendingEffectChoice::ChooseBoolean {
+                purpose: crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { .. }
+                    | crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. },
+                ..
+            })
+        ) {
+            let (targeting_stack_index, payer, cost) = bound(&continuation.resolving_item)?
+                .ok_or_else(|| {
+                    RlContractError("pending Ward payment has no live bound targeter".into())
+                })?;
+            let ward_source = projection
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| pending.source.clone())
+                .ok_or_else(|| {
+                    RlContractError("pending Ward payment has no public source".into())
+                })?;
+            pending = Some(PublicWardPaymentV1 {
+                ward_source,
+                targeting_stack_index,
+                payer,
+                cost,
+            });
+        }
+    }
+    Ok((pending.is_some() || !queued.is_empty())
+        .then_some(PublicWardPaymentsV1 { pending, queued }))
+}
+
 /// Wave S1k's Meddling Mage names, in public battlefield order.
 fn public_meddling_mage_names_v1(state: &GameState) -> Result<Vec<PublicMeddlingMageNameV1>> {
     crate::eternal_sideboard_s1b_v1::applying_mage_names(state)
@@ -2001,6 +2174,14 @@ fn public_meddling_mage_names_v1(state: &GameState) -> Result<Vec<PublicMeddling
             })
         })
         .collect()
+}
+
+fn public_attack_count_v1(state: &GameState) -> Option<u32> {
+    if state.creatures_attacked_this_turn_v1() == 0 {
+        None
+    } else {
+        Some(state.creatures_attacked_this_turn_v1())
+    }
 }
 
 /// `public_shroud` is true only while building the schema 5 policy
@@ -2248,11 +2429,110 @@ pub fn observe_premodern_ordered_v1(
     })
 }
 
+/// Numeric observation for the registered Premodern ordered-graveyard profile.
+/// Its stable scene carries the schema 5 public projection (Foundations combat,
+/// London mulligans, public shroud, and Meddling Mage names) alongside the
+/// ordered-graveyard and full-text facts.
+pub fn observe_premodern_ordered_registered_v1(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    viewer: PlayerId,
+    step_index: u64,
+) -> Result<crate::premodern_ordered_public_v1::NumericRegisteredObservationV1> {
+    use crate::premodern_ordered_public_v1::{
+        observe, NumericRegisteredObservationV1, NumericRegisteredStableSceneV1,
+        NUMERIC_REGISTERED_SCHEMA_V1,
+    };
+
+    if !state.public_shroud_v1 {
+        return Err(RlContractError(
+            "Premodern registered ordered observation requires the public shroud profile".into(),
+        ));
+    }
+    let ordered = observe(state, viewer).map_err(RlContractError)?;
+    let stable = if ordered.full_text.is_some() {
+        crate::wildwood_capture_v1::refuse_legacy(state)?;
+        crate::elenda_public_v52::require_legacy_visible(state, Some(viewer))
+            .map_err(RlContractError)?;
+        crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+        crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+            .map_err(RlContractError)?;
+        if state
+            .engine
+            .pending_cast
+            .as_ref()
+            .is_some_and(|pending| pending.source_contract.cast_method == CastMethodV4::Escape)
+        {
+            return Err(RlContractError(
+                "policy schema v5 cannot represent a staged Escape graveyard-exile prefix; a versioned object-cost successor is required"
+                    .to_string(),
+            ));
+        }
+        let text_mode = ObservationTextModeV2::PremodernOrderedRegisteredV1Artifact;
+        let common = build_observation_v2(state, surface, viewer, step_index, text_mode)?;
+        let projection = PublicObservationProjectionV5 {
+            poison_counters: public_poison_counters_v1(state),
+            ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
+            poison_prevention: {
+                let flags = [
+                    state.players[0].poison_prevention_v1.0,
+                    state.players[1].poison_prevention_v1.0,
+                ];
+                flags.iter().any(|x| *x).then_some(flags)
+            },
+            creatures_attacked_this_turn: public_attack_count_v1(state),
+            restricted_mana: public_restricted_mana_v1(
+                state,
+                text_mode,
+                LimitedAppendixV1::Legacy,
+            )?,
+            surface: common.projection,
+            policy_surface_context: PolicySurfaceContextV5 {
+                current_stage: PolicySurfaceStageV5::Surface,
+                private_combat_selection: None,
+            },
+            london_mulligans: public_london_mulligans_v1(state),
+            foundations_combat: public_foundations_combat_v1(state)?,
+            public_shroud: text_mode
+                .accepts_public_shroud()
+                .then(|| public_shroud_v1(state))
+                .transpose()?,
+            meddling_mage_names: text_mode
+                .accepts_public_shroud()
+                .then(|| public_meddling_mage_names_v1(state))
+                .transpose()?
+                .filter(|names| !names.is_empty()),
+            // This observation keeps refusing a game with extra turns and
+            // the Ward states the legacy check cannot bind.
+            turn_schedule: None,
+            ward_payments: None,
+        };
+        Some(NumericRegisteredStableSceneV1 {
+            projection,
+            own_hand: common.own_hand,
+            known_library_cards: common.known_library_cards,
+            known_hand_cards: common.known_hand_cards,
+            known_face_down_cards: common.known_face_down_cards,
+        })
+    } else {
+        None
+    };
+    Ok(NumericRegisteredObservationV1 {
+        schema: NUMERIC_REGISTERED_SCHEMA_V1,
+        step_index,
+        ordered,
+        stable,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObservationTextModeV2 {
     FullArtifact,
     /// Stable common facts consumed by the ordered Premodern envelope only.
     PremodernOrderedV1Artifact,
+    /// Union of `PublicShroudV5Artifact` and `PremodernOrderedV1Artifact` for
+    /// the registered Premodern ordered-graveyard profile only.
+    PremodernOrderedRegisteredV1Artifact,
     /// `FullArtifact` for a game under the public shroud contract (Limited
     /// schema 5): shroud on permanents and players is reported instead of
     /// refused. Only `observe_policy_v5` selects it.
@@ -2276,6 +2556,20 @@ enum ObservationTextModeV2 {
 }
 
 impl ObservationTextModeV2 {
+    fn accepts_public_shroud(self) -> bool {
+        matches!(
+            self,
+            Self::PublicShroudV5Artifact | Self::PremodernOrderedRegisteredV1Artifact
+        )
+    }
+
+    fn accepts_ordered_full_text(self) -> bool {
+        matches!(
+            self,
+            Self::PremodernOrderedV1Artifact | Self::PremodernOrderedRegisteredV1Artifact
+        )
+    }
+
     fn complete_source_scope(self) -> Option<CommonProjectionScopeV42> {
         match self {
             Self::PreparedV57Artifact => Some(CommonProjectionScopeV42::PreparedV57),
@@ -2298,6 +2592,7 @@ impl ObservationTextModeV2 {
         match self {
             Self::FullArtifact
             | Self::PremodernOrderedV1Artifact
+            | Self::PremodernOrderedRegisteredV1Artifact
             | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
@@ -2320,6 +2615,7 @@ impl ObservationTextModeV2 {
         match self {
             Self::FullArtifact
             | Self::PremodernOrderedV1Artifact
+            | Self::PremodernOrderedRegisteredV1Artifact
             | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
@@ -2498,10 +2794,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             "Eternal opening actions require their consumer successor".into(),
         ));
     }
-    // Only the schema 5 policy observation represents Meddling Mage's names
-    // (`meddling_mage_names`, wave S1k). It never reads a pending entry's
-    // saved world or answers, and still refuses a pending Metamorph copy menu.
-    let mage_refused = if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+    // Only the schema 5 policy observation and the registered Premodern
+    // ordered profile represent Meddling Mage's names (`meddling_mage_names`,
+    // wave S1k). They never read a pending entry's saved world or answers, and
+    // still refuse a pending Metamorph copy menu.
+    let mage_refused = if text_mode.accepts_public_shroud() {
         crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_copy_successor(state)
     } else {
         crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state)
@@ -2511,7 +2808,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             "Meddling Mage named entry requires its consumer successor".into(),
         ));
     }
-    if text_mode != ObservationTextModeV2::PremodernOrderedV1Artifact {
+    if !text_mode.accepts_ordered_full_text() {
         crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if !matches!(
@@ -2715,7 +3012,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         refuse_unrepresented_shroud_in_mode(
             state,
             accept_akroma,
-            text_mode == ObservationTextModeV2::PublicShroudV5Artifact,
+            text_mode.accepts_public_shroud(),
         )?;
     }
     if !matches!(
@@ -2867,7 +3164,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::denial::refuse_legacy(state)
         .map_err(RlContractError)?;
-    let ordered_full_text = text_mode == ObservationTextModeV2::PremodernOrderedV1Artifact;
+    let ordered_full_text = text_mode.accepts_ordered_full_text();
     if ordered_full_text {
         crate::fixed_source_damage_v3::validate_state(state).map_err(RlContractError)?;
     }
@@ -3059,7 +3356,14 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_count,
         text_mode,
     } = request;
-    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+    let public_contract = text_mode == ObservationTextModeV2::PublicShroudV5Artifact;
+    if public_contract {
+        // Schema 5 reports every bound Ward payment (`ward_payments`); only
+        // the variable-target guard shared with the legacy check applies.
+        crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    } else {
+        crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+    }
     crate::effect::temporary_control_v1::refuse_legacy_observation(state)
         .map_err(RlContractError)?;
     #[cfg(test)]
@@ -3085,8 +3389,29 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
     // completed V5 observation once; the flat typed path explicitly skips it.
-    let (base, policy_surface_context) =
+    let (mut base, policy_surface_context) =
         build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
+    let turn_schedule = if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+        crate::extra_turn_public_v1::schedule(state)?
+    } else {
+        None
+    };
+    if turn_schedule.is_some() {
+        // Once the schedule exists a goad lasts until its player's next turn
+        // begins, whichever turn that is (701.15a): the engine removes it at
+        // that turn's untap step and no longer reads the stored round. No
+        // number names that turn in advance, so none is published.
+        for card in base.projection.battlefield.iter_mut().flatten() {
+            for goad in &mut card.goaded_by {
+                goad.expires_at_turn = 0;
+            }
+        }
+    }
+    let ward_payments = if public_contract {
+        public_ward_payments_v1(state, &base.projection)?
+    } else {
+        None
+    };
     Ok(ObservationV5 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V5,
         kernel_version: base.kernel_version,
@@ -3108,8 +3433,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 ];
                 flags.iter().any(|x| *x).then_some(flags)
             },
-            creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
-                .then(|| state.creatures_attacked_this_turn_v1()),
+            creatures_attacked_this_turn: public_attack_count_v1(state),
             restricted_mana: public_restricted_mana_v1(
                 state,
                 text_mode,
@@ -3119,13 +3443,17 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
             foundations_combat: public_foundations_combat_v1(state)?,
-            public_shroud: (text_mode == ObservationTextModeV2::PublicShroudV5Artifact)
+            public_shroud: text_mode
+                .accepts_public_shroud()
                 .then(|| public_shroud_v1(state))
                 .transpose()?,
-            meddling_mage_names: (text_mode == ObservationTextModeV2::PublicShroudV5Artifact)
+            meddling_mage_names: text_mode
+                .accepts_public_shroud()
                 .then(|| public_meddling_mage_names_v1(state))
                 .transpose()?
                 .filter(|names| !names.is_empty()),
+            turn_schedule,
+            ward_payments,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -3312,6 +3640,10 @@ fn build_policy_observation_parts(
     step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    // The schema 5 public contract reports the turn schedule
+    // (`PublicObservationProjectionV5::turn_schedule`), so its observation
+    // accepts a game with extra turns. Every other mode keeps refusing.
+    let accept_extra_turn = text_mode == ObservationTextModeV2::PublicShroudV5Artifact;
     build_policy_observation_parts_common(
         state,
         surface,
@@ -3319,8 +3651,21 @@ fn build_policy_observation_parts(
         step_index,
         text_mode,
         (
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false,
+            false,
+            false,
+            accept_extra_turn,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         ),
     )
 }
@@ -3485,7 +3830,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
         refuse_unrepresented_shroud_in_mode(
             state,
             accept_akroma,
-            text_mode == ObservationTextModeV2::PublicShroudV5Artifact,
+            text_mode.accepts_public_shroud(),
         )?;
     }
     if !matches!(
@@ -5846,6 +6191,8 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
             meddling_mage_names: None,
+            turn_schedule: None,
+            ward_payments: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -7823,9 +8170,30 @@ fn core_surface_action_candidates_fake_scoped_v50(
                     )?;
                 }
             }
-            Decision::ChooseEffectBoolean { player, source, .. } => {
+            Decision::ChooseEffectBoolean {
+                player,
+                source,
+                purpose,
+                ..
+            } => {
                 let actor = (*player).into();
-                let source = card_ref(state, *source)?;
+                // Under the public shroud contract (Limited schema 5) a Ward
+                // payment answer names the Ward source by the public
+                // incarnation its trigger showed (`ward_payments`), never by
+                // a zone it has since moved to: a bounced source put back
+                // into its owner's library (Brainstorm) stays hidden. Every
+                // other mode keeps the current reference.
+                let ward = matches!(
+                    purpose,
+                    crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. }
+                );
+                let source = match state.engine.pending_effect.as_ref() {
+                    Some(pending) if ward && state.public_shroud_v1 => {
+                        stack_source_ref(state, &pending.resolving_item)?
+                    }
+                    _ => card_ref(state, *source)?,
+                };
                 // Schema-v4's canonical Boolean ordering follows the
                 // existing ChooseKicker convention: false/No, then true/Yes.
                 // Legacy AIRL displays chooseUse as Yes then No; the semantic
