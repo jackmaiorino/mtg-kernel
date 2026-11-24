@@ -264,6 +264,10 @@ class Classifier:
         files ("Choose the group set"; test_draft_light runs the real step against this)."""
         if self.version == "new":
             return "windows-complement" if ci_scope.pr_run_is_whole_set(list(pr_paths)) else "full"
+        if self.version == "6df":
+            # 6df3f3fe0's rule, restated: scope pr and Rust-relevant files.
+            whole = self.scope_of_files(pr_paths) == "pr" and self.flags(pr_paths, False)[1]
+            return "windows-complement" if whole else "full"
         return "windows-complement" if self.scope_of_files(pr_paths) == "pr" else "full"
 
     def checks(self, event, group_set, input_scope, labels, paths):
@@ -301,9 +305,12 @@ class Classifier:
                 ran.add((name, group_set))
         return ran
 
-    def composition(self, paths, label=False):
-        """What a ready pull request's run and a default dispatch at its head schedule together."""
-        return self.scheduled("pull_request", paths, label=label) | self.scheduled("workflow_dispatch", pr_paths=paths)
+    def composition(self, paths, label=False, dispatch_paths=None):
+        """What a ready pull request's run and a default dispatch at its head schedule together. The run classifies
+        the synthetic merge's diff; the dispatch reads GitHub's file list, which can hold more files
+        (dispatch_paths, a superset of paths; the same list by default)."""
+        return (self.scheduled("pull_request", paths, label=label)
+                | self.scheduled("workflow_dispatch", pr_paths=paths if dispatch_paths is None else dispatch_paths))
 
 
 def without_website(change):
@@ -366,7 +373,8 @@ class ViewerScopeTests(unittest.TestCase):
                 for kwargs in ({}, {"draft": True}, {"label": True}):
                     self.assertEqual(new.scheduled("pull_request", mixed, **kwargs),
                                      new.scheduled("pull_request", other, **kwargs), kwargs)
-                self.assertEqual(new.dispatch_group_set(mixed), new.dispatch_group_set(other))
+                # The dispatch never complements a list with a website file (DifferentInventoryTests).
+                self.assertEqual(new.dispatch_group_set(mixed), "full")
 
     def test_a_pull_request_run_and_a_default_dispatch_together_cover_what_main_scheduled(self):
         # For every change, website files included: the pull request run plus a dispatch without inputs at its head
@@ -379,7 +387,9 @@ class ViewerScopeTests(unittest.TestCase):
                     self.assertLessEqual(coverage(main.composition(change, label)),
                                          coverage(new.composition(change, label)))
                     others = without_website(change)
-                    self.assertEqual(new.composition(change, label), new.composition(others, label))
+                    # Website files never narrow it: the same pull request run, and a dispatch that is full.
+                    self.assertLessEqual(coverage(new.composition(others, label)),
+                                         coverage(new.composition(change, label)))
         # The pull request run alone covers less than main's only where main's run grew because of the website
         # files (website only, or with docs, Python, tools, ci-tools or workflow files: they made it Rust-relevant
         # or mixed). That drop is the purpose of the scope: viewer.yml tests the website, and the rest is covered
@@ -429,8 +439,8 @@ class ViewerScopeTests(unittest.TestCase):
                     self.assertEqual(new.scheduled("workflow_dispatch", input_scope=scope),
                                      faf.scheduled("workflow_dispatch", input_scope=scope))
                 if new.dispatch_group_set(change) != faf.dispatch_group_set(change):
-                    self.assertEqual(new.flags(change, False)[1], False)
-                    self.assertEqual(faf.scope_of_files(change), "pr")
+                    self.assertEqual(new.dispatch_group_set(change), "full")
+                    self.assertTrue(not new.flags(change, False)[1] or any(p.startswith("viewer/") for p in change))
         self.assertEqual(new.scheduled("push"), faf.scheduled("push"))
 
     def test_ci_full_runs_every_rust_and_python_job_whatever_the_paths(self):
@@ -608,6 +618,115 @@ def run_scope(*args, stdin=b"", env=None, prelude=""):
     return subprocess.run([sys.executable, "-c", code], input=stdin, env=environment, capture_output=True)
 
 
+class DifferentInventoryTests(unittest.TestCase):
+    """Third review: the dispatch reads GitHub's file list (three-dot), the pull request run the merge diff."""
+
+    def test_a_website_change_never_gets_the_complement_even_with_a_larger_dispatch_list(self):
+        new, main = Classifier(), Classifier("main")
+        everything = {(job, part) for job in RUST_SET | PYTHON_SET for part in PARTS["full"]}
+        run = ["viewer/index.html", "tools/ci/hosted_fallback.py"]
+        for extra in (["mtg-kernel/src/engine.rs"], ["Cargo.lock"], ["data/eternal_v1/cards.json"], []):
+            with self.subTest(extra=extra):
+                dispatch = run + extra   # the Rust file was applied to the base: only GitHub's list still has it
+                self.assertEqual(new.dispatch_group_set(dispatch), "full")
+                composed = coverage(new.composition(run, dispatch_paths=dispatch))
+                self.assertEqual(composed & everything, everything)
+                self.assertLessEqual(coverage(main.composition(run, dispatch_paths=dispatch)), composed)
+        # Without the website rule the same lists would complement a run that scheduled no Rust job.
+        self.assertEqual(Classifier("6df").dispatch_group_set(run + ["mtg-kernel/src/engine.rs"]), "windows-complement")
+        self.assertEqual({job for job, _ in new.scheduled("pull_request", run)}, PYTHON_SET)
+
+    def test_no_list_with_a_website_path_is_whole_set(self):
+        for change in SAME_CHANGE + [["viewer/a.html", "mtg-kernel/src/engine.rs", "Cargo.lock"],
+                                     ["viewer/a.html", ".github/workflows/ci.yml"]]:
+            if any(path.startswith("viewer/") for path in change):
+                with self.subTest(change=change):
+                    self.assertFalse(ci_scope.pr_run_is_whole_set(change))
+        engine = b'[[{"status": "modified", "filename": "mtg-kernel/src/engine.rs"}, ' \
+                 b'{"status": "modified", "filename": "viewer/index.html"}]]'
+        self.assertEqual(run_scope("pr-run", stdin=engine).stdout, b"partial\n")
+
+    def test_lists_without_website_paths_are_decided_as_at_6df3f3fe0(self):
+        new, before = Classifier(), Classifier("6df")
+        changes = [c for c in SAME_CHANGE if not any(p.startswith("viewer/") for p in c)] + [
+            [path] for path, *_ in FROZEN_RELEVANCE if not path.startswith("viewer/")]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertEqual(new.dispatch_group_set(change), before.dispatch_group_set(change))
+        self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/engine.rs"]), "windows-complement")
+
+
+# origin/main's shell `case` verdicts, frozen by hand (not derived from ci_scope.py): path, python_relevant,
+# rust_relevant on origin/main, and the path's scope now. Every pattern of both lists appears at least once.
+FROZEN_RELEVANCE = [
+    ("python/mtg_kernel_rl/features.py", True, True, None),
+    ("data/eternal_v1/cards.json", True, True, "pr"),
+    ("data/notes.md", True, False, "pr"),
+    (".github/workflows/ci.yml", True, True, "pr"),
+    (".github/workflows/w5-tools.yml", True, True, "w5-tools"),
+    (".github/workflows/s-transformer-v1.yml", True, True, "workflow"),
+    (".github/workflows/viewer.yml", True, True, "workflow"),
+    (".github/actions/x/action.yml", True, True, "pr"),
+    ("uv.lock", True, True, None),
+    ("pyproject.toml", True, True, None),
+    (".python-version", True, True, None),
+    ("tools/reach/plan.py", True, False, "python"),
+    ("tools/stage4a/report.py", True, False, "tools"),
+    ("tools/w5/chains.py", True, False, "w5-tools"),
+    ("tools/ci/hosted_fallback.py", True, False, "pr"),
+    ("python/tools/run_rust_workspace_tests.py", True, True, "pr"),
+    ("python/tools/run_rust_lib_filters.py", True, True, "pr"),
+    ("python/tools/rust_case_seconds.json", True, True, "pr"),
+    ("python/tools/rust_case_timeout_seconds.json", True, True, "pr"),
+    ("python/tools/rust_limited_only_known_failures.json", True, True, "pr"),
+    ("python/tools/run_rust_integration_tests.py", True, True, "pr"),
+    ("python/tools/rust_integration_module_seconds.json", True, True, "pr"),
+    ("python/tools/check_rust_integration_inventory.py", True, True, "pr"),
+    ("python/tools/check_rust_integration_parts.py", True, True, "pr"),
+    ("python/tools/limited_muldrotha_session_v12.py", True, True, "pr"),
+    ("python/tools/limited_tinybones_session_v13.py", True, True, "pr"),
+    ("python/tools/limited_liliana_session_v14.py", True, True, "pr"),
+    ("python/tools/limited_chandra_session_v15.py", True, True, "pr"),
+    ("python/tools/limited_kaito_session_v16.py", True, True, "pr"),
+    ("python/tools/limited_call_session_v8.py", True, False, "pr"),
+    ("python/tests/test_x.py", True, False, "python"),
+    ("python/tools/foo.py", True, False, "python"),
+    ("python/README.md", True, False, "docs"),
+    ("docs/notes.txt", False, False, "docs"),
+    ("docs/a.md", False, False, "docs"),
+    ("README.md", False, False, "docs"),
+    ("mtg-kernel/README.md", False, False, "docs"),
+    ("Cargo.lock", False, True, None),
+    ("mtg-kernel/src/engine.rs", False, True, None),
+    ("mtg-kernel/build.rs", False, True, None),
+    ("mtg-kernel/src/native_expanded_training_run_v1.rs", False, True, "trainer"),
+    ("mtg-kernel/src/bin/kernel_limited_match_v1.rs", False, True, "rules-limited"),
+    ("mtg-kernel/src/rl_session.rs", False, True, "shared"),
+    ("viewer_tools/x.py", False, True, None),
+    # Website paths: origin/main's verdicts; now both False (viewer/index.html) under the viewer scope.
+    ("viewer/index.html", False, True, "viewer"),
+    ("viewer/README.md", False, False, "docs"),
+]
+
+
+class FrozenBaselineTests(unittest.TestCase):
+    def test_relevance_and_scopes_match_the_frozen_main_table(self):
+        for path, python, rust, scope in FROZEN_RELEVANCE:
+            with self.subTest(path=path):
+                now = (False, False) if path.startswith("viewer/") else (python, rust)
+                self.assertEqual(ci_scope.relevance([path]), now)
+                self.assertEqual(ci_scope.scope_of(path), scope)
+
+    def test_the_frozen_table_samples_every_pattern(self):
+        paths = [row[0] for row in FROZEN_RELEVANCE]
+        patterns = list(ci_scope.PYTHON_RELEVANT) + [p for patterns, _ in ci_scope.RUST_RELEVANT_RULES for p in patterns]
+        for pattern in patterns:
+            with self.subTest(pattern=pattern):
+                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for path in paths), pattern)
+        # The catch-all (no rule names it) is sampled too.
+        self.assertIn(("Cargo.lock", False, True, None), FROZEN_RELEVANCE)
+
+
 class RelevanceCliTests(unittest.TestCase):
     """Condition 1: both outputs or neither, as the last act. Condition 2: any error exits non-zero."""
 
@@ -651,9 +770,12 @@ class RelevanceCliTests(unittest.TestCase):
         self.assertEqual(written, "before=1\n")
 
     def test_relevance_without_github_output_exits_non_zero(self):
-        result, written = self.relevance(b"mtg-kernel/src/engine.rs\0", output=False)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn(b"GITHUB_OUTPUT is not set", result.stderr)
+        for stdin in (b"Cargo.lock\0", b"mtg-kernel/src/engine.rs\0"):
+            for env in ({}, {"GITHUB_OUTPUT": ""}):
+                with self.subTest(stdin=stdin, env=env):
+                    result = run_scope("relevance", stdin=stdin, env=env)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(b"GITHUB_OUTPUT is not set", result.stderr)
 
     def test_an_empty_or_unreadable_path_list_fails_closed(self):
         for stdin in (b"", b"\0", b"\0\0"):

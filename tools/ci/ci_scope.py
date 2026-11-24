@@ -333,8 +333,19 @@ def pr_run_is_whole_set(paths: list[str]) -> bool:
     """Whether a ready, unlabelled pull request's run with these files scheduled the whole pull request set:
     checks all (scope pr) and the Rust jobs (Rust-relevant files). Only then may a dispatch at its head run just
     the Windows complement: otherwise the pull request run left out Linux Rust, lint and the pull request's Windows
-    groups, which the complement cannot recover. (A ci:full run did schedule them; the dispatch step does not see
-    labels, so such a dispatch runs the full set, which only costs time.)"""
+    groups, which the complement cannot recover. The dispatch step does not see labels: a labelled pull request
+    whose files pass this test gets the complement (right, its run scheduled everything), and one whose files fail
+    it gets the full set although its run scheduled everything (which only costs time).
+
+    Never with a website file. These paths come from GitHub's file list (three-dot, against the merge base), but
+    the pull request run classified the synthetic merge's diff, which can lack files the base already has (a Rust
+    change applied to the base independently). Before the viewer scope a website file alone made that run schedule
+    Rust; now it does not, so a list with a website file could say whole-set for a run without Rust. Refusing the
+    complement whenever a website file is listed makes the dispatch alone cover everything for such changes, never
+    less than before; lists without website files are decided as before. Cost: a hand dispatch on a website plus
+    engine pull request runs the full set instead of the complement."""
+    if any(scope_of(path) == "viewer" for path in paths):
+        return False
     return scope_of_files(paths) == "pr" and relevance(paths)[1]
 
 
