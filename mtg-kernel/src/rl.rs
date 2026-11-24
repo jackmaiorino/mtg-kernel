@@ -1096,9 +1096,13 @@ pub struct PublicObservationProjectionV5 {
     /// under the public shroud contract (Limited schema 5). `turn` keeps its
     /// round numbering, so an extra turn repeats its round and active seat;
     /// the schedule's occurrence tells such turns apart and names the extra
-    /// turn being taken and those still queued. Absent until the game's
-    /// first extra turn is scheduled, and in every other observation, which
-    /// keeps refusing such games.
+    /// turn being taken and those still queued. While it is present every
+    /// published goad has `expires_at_turn` 0: the goad lasts until its
+    /// `player`'s next turn begins, whichever turn that is, and no round
+    /// number names that turn. Card fields that hold a round
+    /// (`entered_battlefield_turn`, `plotted_turn`) keep holding the round.
+    /// Absent until the game's first extra turn is scheduled, and in every
+    /// other observation, which keeps refusing such games.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_schedule: Option<crate::extra_turn_public_v1::TurnScheduleV1>,
 }
@@ -3095,8 +3099,24 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
     // completed V5 observation once; the flat typed path explicitly skips it.
-    let (base, policy_surface_context) =
+    let (mut base, policy_surface_context) =
         build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
+    let turn_schedule = if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+        crate::extra_turn_public_v1::schedule(state)?
+    } else {
+        None
+    };
+    if turn_schedule.is_some() {
+        // Once the schedule exists a goad lasts until its player's next turn
+        // begins, whichever turn that is (701.15a): the engine removes it at
+        // that turn's untap step and no longer reads the stored round. No
+        // number names that turn in advance, so none is published.
+        for card in base.projection.battlefield.iter_mut().flatten() {
+            for goad in &mut card.goaded_by {
+                goad.expires_at_turn = 0;
+            }
+        }
+    }
     Ok(ObservationV5 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V5,
         kernel_version: base.kernel_version,
@@ -3136,11 +3156,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 .then(|| public_meddling_mage_names_v1(state))
                 .transpose()?
                 .filter(|names| !names.is_empty()),
-            turn_schedule: if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
-                crate::extra_turn_public_v1::schedule(state)?
-            } else {
-                None
-            },
+            turn_schedule,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,

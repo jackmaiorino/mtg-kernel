@@ -65,15 +65,20 @@ pub(crate) fn schedule(state: &GameState) -> Result<Option<TurnScheduleV1>, RlCo
             .ok_or_else(|| {
                 RlContractError("extra turn has no original scheduling occurrence".into())
             })?;
-        let source = item
+        // A spell and a cast trigger (Emrakul, the Aeons Torn) carry their
+        // spell source capture; an activated ability (Time Vault) carries
+        // only its ability source capture.
+        let owner = item
             .v4
             .source_contract
+            .map(|source| source.owner)
+            .or_else(|| item.v4.ability_source_contract.map(|source| source.owner))
             .ok_or_else(|| RlContractError("extra turn source capture missing".into()))?;
         Ok(ScheduledTurnV1 {
             creation_ordinal: u64::try_from(ordinal)
                 .map_err(|_| RlContractError("schedule ordinal overflow".into()))?,
             captured_controller: item.controller.into(),
-            physical_owner: source.owner.into(),
+            physical_owner: owner.into(),
             spell_copy: item.is_copy,
         })
     };
