@@ -70,6 +70,8 @@ pub enum CubeDraftError {
     Json(String),
     /// A cube or basic land name the registry does not know.
     UnknownCard(String),
+    /// A fence record names a card that is not on the cube list.
+    FencedCardNotInCube(String),
     /// The draftable pool has fewer distinct cards than one draft opens.
     PoolTooSmall { have: usize, need: usize },
     /// A picker returned an index outside the pack in front of it.
@@ -91,6 +93,9 @@ impl fmt::Display for CubeDraftError {
         match self {
             CubeDraftError::Json(message) => write!(f, "invalid cube JSON: {message}"),
             CubeDraftError::UnknownCard(name) => write!(f, "unknown card {name:?}"),
+            CubeDraftError::FencedCardNotInCube(name) => {
+                write!(f, "fenced card {name:?} is not on the cube list")
+            }
             CubeDraftError::PoolTooSmall { have, need } => {
                 write!(f, "draftable pool has {have} distinct cards, a draft needs {need}")
             }
@@ -367,7 +372,8 @@ fn add_colour_counts(counts: &mut [u32; 5], bits: u8) {
 // ---------------------------------------------------------------------------
 
 /// The draftable cube pool: the cube list minus every card the gap record
-/// lists, as registry card ids and cube names in cube-list order.
+/// lists and every card the fence record (if any) lists, as registry card ids
+/// and cube names in cube-list order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CubePool {
     ids: Vec<u16>,
@@ -376,14 +382,25 @@ pub struct CubePool {
 
 impl CubePool {
     /// Builds the pool from the texts of the cube list
-    /// (`{"cards": [{"name": ...}, ...]}`) and its gap record (every
+    /// (`{"cards": [{"name": ...}, ...]}`), its gap record (every
     /// top-level array of names, such as `partial`, `fdn_only` and
-    /// `missing`, is excluded). A name listed twice, or two names of one
-    /// registry card, enter the pool once, at the first position. A name
-    /// outside the gap record that the registry does not know is an error.
-    pub fn from_json_texts(cube_list: &str, gap_record: &str) -> Result<Self, CubeDraftError> {
+    /// `missing`, is excluded) and an optional fence record (see
+    /// [`parse_fence_record`]), whose cards are excluded too. `None` fences
+    /// nothing. A name listed twice, or two names of one registry card, enter
+    /// the pool once, at the first position. A name outside the gap record
+    /// and the fence that the registry does not know is an error, and so is a
+    /// fenced name that is not on the cube list.
+    pub fn from_json_texts(
+        cube_list: &str,
+        gap_record: &str,
+        fence_record: Option<&str>,
+    ) -> Result<Self, CubeDraftError> {
         let cube: Value = serde_json::from_str(cube_list)
             .map_err(|error| CubeDraftError::Json(format!("cube list: {error}")))?;
+        let fenced_names = match fence_record {
+            Some(text) => parse_fence_record(text)?,
+            None => BTreeSet::new(),
+        };
         let gaps: Value = serde_json::from_str(gap_record)
             .map_err(|error| CubeDraftError::Json(format!("gap record: {error}")))?;
         let gap_object = gaps
@@ -403,6 +420,20 @@ impl CubePool {
         let cards = cube["cards"]
             .as_array()
             .ok_or_else(|| CubeDraftError::Json("cube list has no cards array".to_owned()))?;
+        let cube_names: BTreeSet<&str> = cards
+            .iter()
+            .map(|card| {
+                card["name"]
+                    .as_str()
+                    .ok_or_else(|| CubeDraftError::Json("cube card without a name".to_owned()))
+            })
+            .collect::<Result<_, _>>()?;
+        if let Some(name) = fenced_names
+            .iter()
+            .find(|name| !cube_names.contains(name.as_str()))
+        {
+            return Err(CubeDraftError::FencedCardNotInCube(name.clone()));
+        }
         let mut seen: BTreeSet<u16> = BTreeSet::new();
         let mut pool = CubePool {
             ids: Vec::with_capacity(cards.len()),
@@ -412,7 +443,7 @@ impl CubePool {
             let name = card["name"]
                 .as_str()
                 .ok_or_else(|| CubeDraftError::Json("cube card without a name".to_owned()))?;
-            if gap_names.contains(name) {
+            if gap_names.contains(name) || fenced_names.contains(name) {
                 continue;
             }
             let id = card_id_by_name(name)
@@ -439,6 +470,51 @@ impl CubePool {
     pub fn card_count(&self) -> usize {
         self.ids.len()
     }
+}
+
+/// The fenced card names of a fence record: `{"cards": [{"name": ...,
+/// "reason": ...}, ...]}`, or the bare `[{"name": ..., "reason": ...}, ...]`
+/// list that `tools/cube_v1/pool.py` reads. Every entry needs a non-empty
+/// string `name` and a non-empty string `reason`; a name listed twice is an
+/// error. An empty list fences nothing.
+pub fn parse_fence_record(text: &str) -> Result<BTreeSet<String>, CubeDraftError> {
+    let record: Value = serde_json::from_str(text)
+        .map_err(|error| CubeDraftError::Json(format!("fence record: {error}")))?;
+    let entries = match &record {
+        Value::Array(entries) => entries,
+        Value::Object(object) => object
+            .get("cards")
+            .and_then(Value::as_array)
+            .ok_or_else(|| CubeDraftError::Json("fence record has no cards array".to_owned()))?,
+        _ => {
+            return Err(CubeDraftError::Json(
+                "fence record is neither an object nor a list".to_owned(),
+            ))
+        }
+    };
+    let mut names = BTreeSet::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let name = entry["name"]
+            .as_str()
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| {
+                CubeDraftError::Json(format!("fence entry {index} has no non-empty string name"))
+            })?;
+        if entry["reason"]
+            .as_str()
+            .is_none_or(|reason| reason.trim().is_empty())
+        {
+            return Err(CubeDraftError::Json(format!(
+                "fence entry {index} ({name:?}) has no non-empty string reason"
+            )));
+        }
+        if !names.insert(name.to_owned()) {
+            return Err(CubeDraftError::Json(format!(
+                "fence record lists {name:?} twice"
+            )));
+        }
+    }
+    Ok(names)
 }
 
 // ---------------------------------------------------------------------------
