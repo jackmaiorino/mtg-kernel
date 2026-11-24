@@ -5103,10 +5103,28 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::Generic => {
+                    let pending = continuation.clone();
+                    if let Err(err) = crate::eternal_cards_v1::owned_draws_v1::denial::record_answer(
+                        state,
+                        &pending,
+                        option_index,
+                    ) {
+                        if let Some(continuation) = state.engine.pending_effect.as_mut() {
+                            continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                                player,
+                                path,
+                                options,
+                                purpose,
+                            });
+                        }
+                        return Err(err);
+                    }
                     path.push(option_index);
-                    continuation
-                        .frames
-                        .push(EffectFrame::Program { op: selected, path });
+                    if let Some(continuation) = state.engine.pending_effect.as_mut() {
+                        continuation
+                            .frames
+                            .push(EffectFrame::Program { op: selected, path });
+                    }
                 }
                 EffectOptionChoicePurpose::StandardManaCombinationV1 {
                     player: mana_player,
@@ -15966,6 +15984,12 @@ fn drive_resumable_in_departure_scope_v1(
                 continuation.answered_choice_guard = None;
                 put_returning_aura_attached(state, aura, host)?;
             }
+            EffectOp::Sequence(ops)
+                if !continuation.resolving_item.is_copy
+                    && crate::eternal_cards_v1::owned_draws_v1::knowledge::recipe(&EffectOp::Sequence(ops.clone())) =>
+            {
+                crate::eternal_cards_v1::owned_draws_v1::knowledge::begin(state, &mut continuation, &path)?;
+            }
             EffectOp::Sequence(ops) => {
                 if execute_graveyard_return_tapped(&ops, &continuation.ctx, state, native_row) {
                     continue;
@@ -16153,6 +16177,13 @@ fn drive_resumable_in_departure_scope_v1(
                 }
                 _ => {
                     let player = continuation.ctx.resolve_player(controller, state);
+                    crate::eternal_cards_v1::owned_draws_v1::denial::begin_choice(
+                        state,
+                        &continuation,
+                        player,
+                        &path,
+                        &options,
+                    )?;
                     continuation.choice = Some(PendingEffectChoice::ChooseOption {
                         player,
                         path,
@@ -21497,6 +21528,18 @@ fn execute_in_departure_scope_v1(
                     ctx.source,
                 ));
             }
+        }
+        EffectOp::Sequence(ops)
+            if crate::eternal_cards_v1::owned_draws_v1::knowledge::recipe(&EffectOp::Sequence(
+                ops.clone(),
+            )) =>
+        {
+            // Actual casts, including native copies, enter the resumable root.
+            // A raw recipe/context cannot manufacture the paid draw owner.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::Sequence(ops) => {
             if execute_graveyard_return_tapped(ops, ctx, state, native_row) {
