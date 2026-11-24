@@ -47,6 +47,9 @@ mod build_eternal_c7c_v1;
 mod build_eternal_c8a_v1;
 mod build_eternal_c8b_v1;
 mod build_eternal_c8c_v1;
+mod build_eternal_c9a_v1;
+mod build_eternal_c9b_v1;
+mod build_eternal_c9c_v1;
 mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
@@ -4850,9 +4853,10 @@ fn object_name_for(name: &str) -> &str {
         "Baloth Beast Token" => "Beast Token",
         "Gingerbrute Token" => "Gingerbrute",
         "Fanatic of Rhonas Eternalized Token" => "Fanatic of Rhonas",
-        // Vintage Cube waves C8b/C8c: printed names of their tokens.
+        // Vintage Cube waves C8b/C8c/C9c: printed names of their tokens.
         "Green Insect Token" => "Insect Token",
         "Wan Shi Tong Spirit Token" => "Spirit Token",
+        "Black Green Insect Token" => "Insect Token",
         _ => build_standard_v1::object_name_for(name)
             .or_else(|| build_eternal_lurrus_v1::object_name_for(name))
             .unwrap_or(name),
@@ -11713,6 +11717,11 @@ fn subtype_variant(t: &str) -> &'static str {
         "Fox" => "Subtype::Fox",
         "Gamma" => "Subtype::Gamma",
         "Saheeli" => "Subtype::Saheeli",
+        "Badger" => "Subtype::Badger",
+        "Mole" => "Subtype::Mole",
+        "Elspeth" => "Subtype::Elspeth",
+        "Grist" => "Subtype::Grist",
+        "Nissa" => "Subtype::Nissa",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

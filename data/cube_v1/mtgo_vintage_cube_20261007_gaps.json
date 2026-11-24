@@ -4,23 +4,5 @@
  "note": "Cube cards that are not Full in the eternal-fixtures build. python/tests/test_cube_coverage_v1.py keeps this record equal to the registries, so each card wave removes its cards here.",
  "partial": [],
  "fdn_only": [],
- "missing": [
-  "Aang, Swift Savior",
-  "Badgermole Cub",
-  "Batroc the Leaper",
-  "Blightsteel Colossus",
-  "Crabomination",
-  "Elspeth, Storm Slayer",
-  "Fear of Missing Out",
-  "Figure of Destiny",
-  "Figure of Fable",
-  "Grist, the Hunger Tide",
-  "Hexdrinker",
-  "Nadu, Winged Wisdom",
-  "Nissa, Who Shakes the World",
-  "Serra Paragon",
-  "Swift Reconfiguration",
-  "Tamiyo, Collector of Tales",
-  "Through the Breach"
- ]
+ "missing": []
 }

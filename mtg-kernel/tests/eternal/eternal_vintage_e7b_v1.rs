@@ -1959,6 +1959,92 @@ fn minsc_and_boo_make_boo_grow_it_and_fling_it() {
 }
 
 #[test]
+fn departed_minsc_damage_keeps_the_soul_scar_and_hallow_choices_after_restore() {
+    let mut state = islands();
+    let mage = put(&mut state, P0, "Soul-Scar Mage", Zone::Battlefield);
+    let victim = put(&mut state, P1, "Wall of Blossoms", Zone::Battlefield);
+    let minsc = put(&mut state, P0, "Minsc & Boo, Timeless Heroes", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 2);
+    cast(&mut state, minsc, &[]);
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, hallow, &[Target::Object(minsc)]);
+    settle_picking(&mut state, 1, None);
+    let [boo] = controls(&state, P0, "Boo Token").try_into().unwrap();
+    assert_eq!(power_toughness(&state, boo), (1, 1));
+    let damage_source_generation = state.objects.get(minsc).zone_change_count;
+
+    activate(&mut state, minsc, 1, &[]);
+    let sacrifice = settle(&mut state);
+    assert!(
+        matches!(
+            &sacrifice,
+            Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. })
+                if legal_targets.len() == 2
+                    && legal_targets.contains(&Target::Object(boo))
+                    && legal_targets.contains(&Target::Object(mage))
+        ),
+        "unexpected Minsc sacrifice choice: {sacrifice:?}"
+    );
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(boo)));
+    choose_target(&mut state, Target::Object(victim));
+    let bounce = put(&mut state, P0, "Echoing Truth", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, bounce, &[Target::Object(minsc)]);
+    pass_until(&mut state, |state| zone(state, minsc) == Zone::Hand);
+    assert_eq!(state.stack.last().unwrap().source, minsc);
+
+    let hand_before_draw = state.players[P0.index()].hand.len();
+    let library_before_draw = state.players[P0.index()].library.len();
+    let choice = settle(&mut state);
+    assert!(matches!(
+        &choice,
+        Some(Decision::ChooseEffectOption { player: P1, source, option_count: 2 })
+            if *source == minsc
+    ));
+    let pending = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_ref()
+        .unwrap();
+    assert_eq!(pending.choice.source.object, minsc);
+    assert_eq!(
+        pending.choice.source.zone_change_count,
+        damage_source_generation
+    );
+    assert_eq!(pending.choice.source_zone, Zone::Battlefield);
+
+    let snapshot = serde_json::to_vec(&state).unwrap();
+    let mut outcomes = [(0, 0); 2];
+    for (option, outcome) in outcomes.iter_mut().enumerate() {
+        let mut live = state.clone();
+        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        assert_eq!(settle(&mut restored), choice);
+        for branch in [&mut live, &mut restored] {
+            let actor = &branch.players[P0.index()];
+            assert_eq!(actor.hand.len(), hand_before_draw);
+            assert_eq!(actor.library.len(), library_before_draw);
+            act(branch, Action::ChooseEffectOption(option as u16));
+            settled(branch);
+            let actor = &branch.players[P0.index()];
+            assert_eq!(actor.hand.len(), hand_before_draw + 1);
+            assert_eq!(actor.library.len() + 1, library_before_draw);
+            assert_eq!(zone(branch, minsc), Zone::Hand);
+            let creature = branch.objects.get(victim);
+            assert_eq!((creature.zone, creature.damage), (Zone::Battlefield, 0));
+        }
+        assert_eq!(restored.state_hash(), live.state_hash());
+        *outcome = (
+            live.players[P0.index()].life,
+            live.objects.get(victim).counters.minus1_minus1,
+        );
+    }
+    outcomes.sort_unstable();
+    assert_eq!(outcomes, [(20, 1), (21, 0)]);
+}
+
+#[test]
 fn minsc_hamster_draw_resumes_after_damage_and_fizzles_with_its_target_both_seats() {
     use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 

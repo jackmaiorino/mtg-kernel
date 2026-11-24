@@ -37,7 +37,7 @@ const ZIRDA: [ActivatedAbilityRecipe; 2] = [
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Zirda, the Dawnwaker" => &ZIRDA,
-        _ => &[],
+        _ => super::build_eternal_c9a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -54,7 +54,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_cube_c8c_v1::skydiver_enter",
         },
-        _ => return None,
+        _ => return super::build_eternal_c9a_v1::special_for(name),
     })
 }
 
@@ -62,23 +62,23 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Thieving Skydiver" => Some("{X}"),
-        _ => None,
+        _ => super::build_eternal_c9a_v1::kicker_cost_for(name),
     }
 }
 
 /// No C8c card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_c9a_v1::attachment_for(name)
 }
 
 /// No C8c card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_c9a_v1::flashback_for(name)
 }
 
 /// No C8c card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_c9a_v1::alt_cost_for(name)
 }
 
 /// Printed evergreen keywords of this wave's cards.
@@ -91,7 +91,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
             &["Keywords::FLASH", "Keywords::FLYING", "Keywords::VIGILANCE"]
         }
         "Absorbing Man" => &["Keywords::VIGILANCE"],
-        _ => &[],
+        _ => super::build_eternal_c9a_v1::keywords_for(name),
     }
 }
 
@@ -106,6 +106,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Thieving Skydiver" => "kicker_x_nonzero;etb_if_kicked:gain_control_target_artifact_mv_at_most_x:if_equipment_attach_to_self",
         "Zirda, the Dawnwaker" => "companion:permanent_cards_have_activated_ability;static:nonmana_activated_abilities_cost_2_less_min_1",
         "Absorbing Man" => "beginning_precombat_main:until_next_turn_copy_up_to_one_artifact_non_aura_enchantment_or_land_as_4_4_legendary_human_villain_vigilance",
-        _ => "none",
+        _ => super::build_eternal_c9a_v1::trigger_recipe_for(name),
     }
 }

@@ -1939,3 +1939,168 @@ fn projection_refuses_converted_paths_v1() {
     assert!(!config.output_directory.join("iterations").exists());
     fs::remove_dir_all(root).unwrap();
 }
+
+/// End-to-end test for `no-digests-v1` (omitting both state and action
+/// SHA-512 digests): converts a trained checkpoint (narrowing state_encoder to
+/// 1,403 and action_encoder to 163), refuses mixed contracts, runs a full
+/// two-iteration parallel + resumed run with per-forward parity checking
+/// against the unconverted weights, verifies serial/parallel bit identity,
+/// verifies all stored state and action digest features are +0.0 bits, and
+/// refuses tampered action-digest inputs or weights.
+#[test]
+fn no_digests_run_collects_updates_resumes_and_refuses_tampering() {
+    on_large_stack(no_digests_run_end_to_end_v1);
+}
+
+fn no_digests_run_end_to_end_v1() {
+    let root = temp_root("no-digests-run");
+    let base = fresh_source(&root);
+    let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
+        source: base.clone(),
+        episodes: vec![episode("parent-0", 2_026_112_301, None)],
+        max_non_natural_episode_fraction: 0.0,
+        collection_sampler: CollectionSamplerV1::Legacy,
+        training_math: TrainingMathV1::PlatformLibm,
+        ex1: None,
+        output_directory: root.join("parent-collect"),
+    })
+    .unwrap();
+    let trajectories: Vec<PinnedFileV1> =
+        serde_json::from_value(collection["trajectories"].clone()).unwrap();
+    let update = execute_v1(ExpandedTrainingCommandV1::Update {
+        source: base.clone(),
+        trajectories,
+        learning_rate: 0.0003,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: gae(),
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format: crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
+        output_directory: root.join("parent-update"),
+        card_semantics: None,
+    })
+    .unwrap();
+    let parent = ExpandedModelSourceV1 {
+        checkpoint: Some(serde_json::from_value(update["checkpoint"].clone()).unwrap()),
+        ..base.clone()
+    };
+    let parent_path = root.join("parent-source.json");
+    fs::write(&parent_path, serde_json::to_vec(&parent).unwrap()).unwrap();
+
+    // Convert under no-digests-v1 and also under no-state-digest-v1 to check separation.
+    let outputs = convert_no_digests_v1(&parent_path, &root.join("conv-no-digests")).unwrap();
+    assert_eq!(outputs.record.contract, CONTRACT_NO_DIGESTS_V1);
+    assert_eq!(
+        outputs.record.action_digest_columns,
+        Some([ACTION_DIGEST_COLUMNS_V1.start, ACTION_DIGEST_COLUMNS_V1.end])
+    );
+    let converted: ExpandedModelSourceV1 =
+        serde_json::from_slice(&fs::read(&outputs.source.path).unwrap()).unwrap();
+    let (_, state_only_converted) = convert(&root, &parent, "conv-state-only");
+
+    // Mixing no-digests-v1 with either unconverted or no-state-digest-v1 is refused.
+    for other in [&parent, &state_only_converted] {
+        let error = execute_v1(ExpandedTrainingCommandV1::Collect {
+            source: converted.clone(),
+            episodes: vec![episode("mixed", 2_026_112_302, Some(other.clone()))],
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
+            ex1: None,
+            output_directory: root.join(format!(
+                "mixed-{}",
+                if std::ptr::eq(other, &parent) {
+                    "plain"
+                } else {
+                    "state-only"
+                }
+            )),
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "learner and opponent use different no-state-digest contracts"
+        );
+    }
+
+    // Run 2 iterations (parallel + resume vs serial) with per-forward parity check enabled.
+    with_check_for_test_v1(true, || {
+        let parallel = run_config(&converted, 2, root.join("run-parallel"));
+        let first = run_native_expanded_training_v1(&parallel, Some(1)).unwrap();
+        assert_eq!(first["completed_iterations"], 1);
+        let finished = run_native_expanded_training_v1(&parallel, None).unwrap();
+        assert_eq!(finished["complete"], true);
+        let serial = run_config(&converted, 1, root.join("run-serial"));
+        let serial_result = run_native_expanded_training_v1(&serial, None).unwrap();
+        for field in ["state_sha256", "model", "adam_step"] {
+            assert_eq!(
+                serial_result["actual_identity"][field],
+                finished["actual_identity"][field]
+            );
+        }
+        assert_eq!(finished["actual_identity"]["adam_step"], 3);
+    });
+
+    // Every stored trajectory row carries +0.0 bits in both state and action digest columns,
+    // and tampering any action-digest input bit is refused on replay and validation.
+    let traj_path =
+        root.join("run-parallel/iterations/000000/attempt-000000/collect/episode-0000.json");
+    let trajectory: ExpandedTrajectoryV1 =
+        serde_json::from_slice(&fs::read(&traj_path).unwrap()).unwrap();
+    assert_eq!(
+        trajectory
+            .input_contract
+            .as_ref()
+            .map(|c| c.contract.as_str()),
+        Some(CONTRACT_NO_DIGESTS_V1)
+    );
+    let action_width = crate::native_flat_tensorizer_v2::NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+    for decision in &trajectory.decisions {
+        assert!(decision.tensor.state[STATE_DIGEST_COLUMNS_V1]
+            .iter()
+            .all(|bits| *bits == 0));
+        for row in decision.tensor.action_features.chunks_exact(action_width) {
+            assert!(row[ACTION_DIGEST_COLUMNS_V1].iter().all(|bits| *bits == 0));
+        }
+    }
+    let (initial_policy, _) = super::super::load_expanded_inference_v1(&converted).unwrap();
+    assert!(initial_policy.action_digest_off_v1());
+    let common = trajectory.decisions[0].tensor.tensor();
+    for bad_bits in [0x8000_0000_u32, 0x3f80_0000_u32] {
+        let mut tampered = common.clone();
+        tampered.action_features[ACTION_DIGEST_COLUMNS_V1.start + 5] = f32::from_bits(bad_bits);
+        let err = initial_policy
+            .score_replay_tensor_v1(FreshLineageGenerationV1::V4, tampered, &[])
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "no-digests contract: a stored action-digest input is not +0.0"
+        );
+        let mut bad_decisions = trajectory.decisions.clone();
+        bad_decisions[0].tensor.action_features[ACTION_DIGEST_COLUMNS_V1.start + 5] = bad_bits;
+        assert_eq!(
+            check_trajectory_rows_v1(&bad_decisions, true).unwrap_err(),
+            "no-digests contract: a stored action-digest input is not +0.0"
+        );
+    }
+
+    // Tampered action-digest weight column in a saved checkpoint is refused.
+    let ckpt_path =
+        root.join("run-parallel/iterations/000000/attempt-000000/update/checkpoint.json");
+    let mut saved: ExpandedCheckpointV1 =
+        serde_json::from_slice(&fs::read(&ckpt_path).unwrap()).unwrap();
+    assert!(check_saved_columns_v1(&saved).is_ok());
+    let a_weight = saved
+        .parameters
+        .iter_mut()
+        .find(|p| p.name == ACTION_ENCODER_WEIGHT)
+        .unwrap();
+    a_weight.values[ACTION_DIGEST_COLUMNS_V1.start] = 1.0_f32.to_bits();
+    assert!(check_saved_columns_v1(&saved)
+        .unwrap_err()
+        .contains("action-digest parameter column is not +0.0"));
+
+    fs::remove_dir_all(root).unwrap();
+}

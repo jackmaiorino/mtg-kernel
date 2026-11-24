@@ -238,7 +238,7 @@ pub fn multikicker_cost(name: &str) -> Option<Cost> {
             generic: 2,
             x_count: 0,
         }),
-        _ => None,
+        _ => crate::eternal_cube_c9a_v1::multikicker_cost(name),
     }
 }
 

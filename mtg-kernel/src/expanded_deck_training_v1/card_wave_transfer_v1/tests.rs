@@ -263,6 +263,7 @@ fn no_state_digest_checkpoint() -> ExpandedCheckpointV1 {
             no_state_digest_v1::STATE_DIGEST_COLUMNS_V1.start,
             no_state_digest_v1::STATE_DIGEST_COLUMNS_V1.end,
         ],
+        action_digest_columns: None,
         conversion: PinnedFileV1 {
             path: PathBuf::from("/synthetic/conversion.json"),
             sha256: "9".repeat(64),

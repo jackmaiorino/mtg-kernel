@@ -439,7 +439,9 @@ fn noncreature_spells_cast_this_turn(state: &GameState, player: PlayerId) -> usi
         match event {
             CommittedEvent::UpkeepBegan { .. } => break,
             CommittedEvent::SpellCast { spell, controller } if *controller == player => {
-                if definition(state, *spell).is_some_and(|def| !def.has_type(CardType::Creature)) {
+                if definition(state, *spell).is_some_and(|def| {
+                    !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                }) {
                     count += 1;
                 }
             }

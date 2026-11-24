@@ -70,6 +70,7 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
         let mut tensor = NativeFlatDecisionTensorV4::default();
         let mut tensorizer = NativeFlatTensorizerV4::default();
         tensorizer.set_state_digest_v1(self.policy.input_contract.is_none());
+        tensorizer.set_action_digest_v1(!self.policy.action_digest_off_v1());
         tensorizer
             .fill(
                 FlatScoringDecisionViewV4::new(owned.view(), &encoded.extensions),

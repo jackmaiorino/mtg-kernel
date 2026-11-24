@@ -650,6 +650,11 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Fox => Some(CreatureTypeV60::Fox),
         Subtype::Gamma => Some(CreatureTypeV60::Gamma),
         Subtype::Saheeli => None,
+        Subtype::Badger => Some(CreatureTypeV60::Badger),
+        Subtype::Mole => Some(CreatureTypeV60::Mole),
+        Subtype::Elspeth => None,
+        Subtype::Grist => None,
+        Subtype::Nissa => None,
     }
 }
 

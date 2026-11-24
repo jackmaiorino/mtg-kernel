@@ -312,7 +312,9 @@ pub(crate) fn trigger_matches(
                 return false;
             };
             caster == controller
-                && definition(state, spell).is_some_and(|def| !def.has_type(CardType::Creature))
+                && definition(state, spell).is_some_and(|def| {
+                    !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                })
                 && noncreature_spells_cast_this_turn(state, controller) == 4
         }
     }
