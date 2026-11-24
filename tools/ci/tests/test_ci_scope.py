@@ -193,6 +193,11 @@ OTHERS = [[], ["README.md"], ["docs/a.md", "docs/notes.txt"], ["mtg-kernel/src/e
           ["tools/w5/chains.py"], ["tools/ci/hosted_fallback.py"], ["python/tools/foo.py", "tools/stage4a/a.py"],
           [".github/workflows/ci.yml"], [".github/workflows/viewer.yml"], ["data/eternal_v1/cards.json"],
           ["viewer_tools/x.py"], ["mtg-kernel/src/viewer.rs"]]
+# Same-change baselines (finding 1 of the second review first).
+SAME_CHANGE = [WEBSITE + ["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], WEBSITE,
+               WEBSITE + ["README.md"], WEBSITE + ["mtg-kernel/src/engine.rs"], WEBSITE + ["python/tools/foo.py"],
+               WEBSITE + [".github/workflows/ci.yml"], WEBSITE + [".github/workflows/s-transformer-v1.yml"],
+               WEBSITE + ["data/eternal_v1/cards.json"]] + [WEBSITE + other for other in OTHERS] + OTHERS[1:]
 RUST_SET = {"rust-quality", "rust-test-groups", "limited-build", "rust-limited-groups", "rust-tests",
             "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory"}
 PYTHON_SET = {"python-env-build", "python-tests"}
@@ -205,71 +210,64 @@ NAMES_VIEWER_PATHS = {".github/workflows/viewer.yml", ".github/workflows/ci.yml"
                       "python/tools/limited_genesis_wave_session_v10.py"}
 
 
-def classify_arms(text=None):
-    """The two `case "$f" in` statements of detect-changes' "Classify changed paths" step, as lists of
-    (shell patterns, assignment or ':')."""
-    text = text or WORKFLOW.read_text(encoding="utf-8")
-    step = text.split("      - name: Classify changed paths\n", 1)[1].split("\n      - name: ", 1)[0]
-    blocks = re.findall(r'case "\$f" in\n(.*?)\n\s*esac', step, re.DOTALL)
-    return [[(patterns.split("|"), action) for patterns, action in
-             re.findall(r"^\s*([^\s)#][^)\n]*)\)\s*(.*?)\s*;;", block, re.MULTILINE | re.DOTALL)] for block in blocks]
+def relevant(path):
+    """(python_relevant, rust_relevant) of one unlabelled pull request path (ci_scope.relevance, which the classify
+    step and the dispatch step's pr-run both call)."""
+    return ci_scope.relevance([path])
 
 
-def relevant(path, arms=None):
-    """(python_relevant, rust_relevant) of one pull request path, by the workflow's case arms (shell case patterns
-    match like fnmatch: `*` also matches `/`)."""
-    found = {}
-    for block in arms or classify_arms():
-        for patterns, action in block:
-            if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
-                if action != ":":
-                    name, value = action.split("=")
-                    found[name] = value == "true"
-                break
-    return found.get("python_relevant", False), found.get("rust_relevant", False)
+# What part of the matrix a job covers in each group set: the pull request set runs Linux and the pull request's
+# Windows groups, the complement only the Windows groups that set leaves out, a draft only Linux lint.
+PARTS = {"full": ("linux", "windows-pr", "windows-rest"), "pr": ("linux", "windows-pr"),
+         "windows-complement": ("windows-rest",), "draft": ("linux",)}
+
+
+def coverage(scheduled):
+    return {(job, part) for job, group_set in scheduled for part in PARTS[group_set]}
 
 
 class Classifier:
-    """The classifier under test, or (main=True) origin/main's before the viewer scope: no viewer rule, docs the
-    only neutral scope, no viewer/* case arm and ci:full leaving the relevance flags to the paths."""
+    """The classifier under test (version "new"); at faf2b093b ("faf": the same scope table and relevance, but a
+    default dispatch complemented every pull request whose scope was pr); or origin/main's before the viewer scope
+    ("main": no viewer rule, docs the only neutral scope, no viewer/* relevance rule, ci:full leaving the relevance
+    flags to the paths, and the faf dispatch rule)."""
 
-    def __init__(self, main=False):
-        self.main = main
-        text = WORKFLOW.read_text(encoding="utf-8")
-        self.text = text.replace("|*.md|viewer/*) : ;;", "|*.md) : ;;") if main else text
-        self.arms = classify_arms(self.text)
+    def __init__(self, version="new"):
+        self.version = version
 
-    def scope_of_files(self, paths):
-        if not self.main:
-            return ci_scope.scope_of_files(list(paths))
-        saved = ci_scope.PATH_RULES, ci_scope.NEUTRAL
+    def _main_tables(self):
+        saved = ci_scope.PATH_RULES, ci_scope.NEUTRAL, ci_scope.RUST_RELEVANT_RULES
         ci_scope.PATH_RULES = [rule for rule in ci_scope.PATH_RULES if rule[1] != "viewer"]
         ci_scope.NEUTRAL = {"docs"}
+        ci_scope.RUST_RELEVANT_RULES = [(tuple(p for p in patterns if p != "viewer/*"), value)
+                                        for patterns, value in ci_scope.RUST_RELEVANT_RULES]
+        return saved
+
+    def _call(self, function, *args):
+        if self.version != "main":
+            return function(*args)
+        saved = self._main_tables()
         try:
-            return ci_scope.scope_of_files(list(paths))
+            return function(*args)
         finally:
-            ci_scope.PATH_RULES, ci_scope.NEUTRAL = saved
+            ci_scope.PATH_RULES, ci_scope.NEUTRAL, ci_scope.RUST_RELEVANT_RULES = saved
+
+    def scope_of_files(self, paths):
+        return self._call(ci_scope.scope_of_files, list(paths))
 
     def flags(self, paths, label):
         """detect-changes' python_relevant and rust_relevant for a pull request."""
-        if label and not self.main:
-            # The step's ci:full override (a test below keeps it in the workflow).
-            return True, True
-        found = [relevant(path, self.arms) for path in paths]
-        return any(p for p, _ in found), any(r for _, r in found)
+        return self._call(ci_scope.relevance, list(paths), label and self.version != "main")
 
     def dispatch_group_set(self, pr_paths):
         """The group set of a dispatch without inputs at the head of a ready same-repository pull request with these
         files ("Choose the group set"; test_draft_light runs the real step against this)."""
+        if self.version == "new":
+            return "windows-complement" if ci_scope.pr_run_is_whole_set(list(pr_paths)) else "full"
         return "windows-complement" if self.scope_of_files(pr_paths) == "pr" else "full"
 
     def checks(self, event, group_set, input_scope, labels, paths):
-        if not self.main:
-            return ci_scope.choose(event, group_set, input_scope, labels, list(paths))
-        if event == "pull_request" and group_set == "pr" and "ci:full" not in labels:
-            scope = self.scope_of_files(paths)
-            return "all" if scope == "pr" else scope
-        return ci_scope.choose(event, group_set, input_scope, labels, [])
+        return self._call(ci_scope.choose, event, group_set, input_scope, labels, list(paths))
 
     def scheduled(self, event, paths=(), *, draft=False, label=False, input_scope="", pr_paths=None):
         """{(ci.yml job, group set)} whose job condition holds. event: pull_request (ready, draft, labelled),
@@ -306,6 +304,11 @@ class Classifier:
     def composition(self, paths, label=False):
         """What a ready pull request's run and a default dispatch at its head schedule together."""
         return self.scheduled("pull_request", paths, label=label) | self.scheduled("workflow_dispatch", pr_paths=paths)
+
+
+def classify_step():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    return text.split("      - name: Classify changed paths\n", 1)[1].split("\n      - name: ", 1)[0]
 
 
 def jobs_that_run(paths, **kwargs):
@@ -360,22 +363,72 @@ class ViewerScopeTests(unittest.TestCase):
                 self.assertEqual(new.dispatch_group_set(mixed), new.dispatch_group_set(other))
 
     def test_a_pull_request_run_and_a_default_dispatch_together_cover_what_main_scheduled(self):
-        # For every change: the pull request run plus a dispatch without inputs at its head schedule the same with
-        # or without the website files, and never less than origin/main's classifier for the other files alone.
-        new, main = Classifier(), Classifier(main=True)
-        for other in OTHERS:
+        # For every change, website files included: the pull request run plus a dispatch without inputs at its head
+        # cover never less of the matrix than origin/main's classifier did for the SAME change, and schedule the
+        # same with or without the website files.
+        new, main = Classifier(), Classifier("main")
+        for change in SAME_CHANGE:
             for label in (False, True):
-                with self.subTest(other=other, label=label):
-                    self.assertEqual(new.composition(WEBSITE + other, label), new.composition(other, label))
-                    self.assertLessEqual(main.composition(other, label), new.composition(other, label))
-        # Reviewer's case: website plus a Python tool is a python change, so its default dispatch is the full set.
-        self.assertEqual(new.dispatch_group_set(["viewer/src/main.tsx", "python/tools/foo.py"]), "full")
-        self.assertEqual(main.dispatch_group_set(["viewer/src/main.tsx", "python/tools/foo.py"]), "windows-complement")
+                with self.subTest(change=change, label=label):
+                    self.assertLessEqual(coverage(main.composition(change, label)),
+                                         coverage(new.composition(change, label)))
+                    others = [path for path in change if not path.startswith("viewer/")]
+                    self.assertEqual(new.composition(change, label), new.composition(others, label))
+        # The pull request run alone covers less than main's only where main's run grew because of the website
+        # files (website only, or with docs, Python, tools, ci-tools or workflow files: they made it Rust-relevant
+        # or mixed). That drop is the purpose of the scope: viewer.yml tests the website, and the rest is covered
+        # only by a dispatch, which at such a head is a full one (website only included: no Rust job runs unless
+        # someone dispatches).
+        lost_somewhere = []
+        for change in SAME_CHANGE:
+            others = [path for path in change if not path.startswith("viewer/")]
+            with self.subTest(change=change):
+                now = coverage(new.scheduled("pull_request", change))
+                self.assertLessEqual(coverage(main.scheduled("pull_request", others)), now)
+                if coverage(main.scheduled("pull_request", change)) - now:
+                    lost_somewhere.append(change)
+                    self.assertEqual(new.dispatch_group_set(change), "full")
+        self.assertIn(WEBSITE, lost_somewhere)
+        self.assertIn(WEBSITE + ["tools/ci/hosted_fallback.py"], lost_somewhere)
+        # Reviewer's cases: website plus a Python tool, and website plus a ci tool (scope pr, not Rust-relevant).
+        for change in (WEBSITE + ["python/tools/foo.py"], WEBSITE + ["tools/ci/hosted_fallback.py"],
+                       ["tools/ci/hosted_fallback.py"]):
+            with self.subTest(change=change):
+                self.assertEqual(new.dispatch_group_set(change), "full")
+                self.assertEqual(main.dispatch_group_set(change), "windows-complement")
         # The snapshot of main is not the classifier under test: there the website ran the Rust set.
         self.assertEqual({job for job, _ in main.scheduled("pull_request", WEBSITE)}, RUST_SET)
 
+    def test_a_dispatch_complements_only_a_pull_request_run_that_scheduled_the_whole_set(self):
+        new = Classifier()
+        for change in SAME_CHANGE:
+            with self.subTest(change=change):
+                if new.dispatch_group_set(change) == "windows-complement":
+                    self.assertLessEqual({(job, "pr") for job in RUST_SET}, new.scheduled("pull_request", change))
+                else:
+                    self.assertFalse(ci_scope.pr_run_is_whole_set(change))
+        self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/engine.rs"]), "windows-complement")
+        self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/native_expanded_training_run_v1.rs"]), "full")
+
+    def test_every_other_event_schedules_what_it_did_at_faf2b093b(self):
+        # Only a default dispatch at a ready pull request's head changed since faf2b093b, and only for changes
+        # whose pull request run scheduled no Rust job.
+        new, faf = Classifier(), Classifier("faf")
+        for change in SAME_CHANGE:
+            with self.subTest(change=change):
+                for kwargs in ({}, {"draft": True}, {"label": True}):
+                    self.assertEqual(new.scheduled("pull_request", change, **kwargs),
+                                     faf.scheduled("pull_request", change, **kwargs))
+                for scope in ("", "trainer", "python"):
+                    self.assertEqual(new.scheduled("workflow_dispatch", input_scope=scope),
+                                     faf.scheduled("workflow_dispatch", input_scope=scope))
+                if new.dispatch_group_set(change) != faf.dispatch_group_set(change):
+                    self.assertEqual(new.flags(change, False)[1], False)
+                    self.assertEqual(faf.scope_of_files(change), "pr")
+        self.assertEqual(new.scheduled("push"), faf.scheduled("push"))
+
     def test_ci_full_runs_every_rust_and_python_job_whatever_the_paths(self):
-        new, main = Classifier(), Classifier(main=True)
+        new, main = Classifier(), Classifier("main")
         for paths in (WEBSITE, WEBSITE + ["README.md"], ["README.md"], ["python/tools/foo.py"], ["mtg-kernel/src/engine.rs"]):
             with self.subTest(paths=paths):
                 self.assertEqual(new.scheduled("pull_request", paths, label=True), FULL_PR)
@@ -385,11 +438,8 @@ class ViewerScopeTests(unittest.TestCase):
         self.assertEqual(new.scheduled("pull_request", ["mtg-kernel/src/engine.rs"], draft=True), {("rust-quality", "draft")})
         # On origin/main the label left the flags to the paths: a labelled docs-only change ran nothing.
         self.assertEqual(main.scheduled("pull_request", ["README.md"], label=True), set())
-        step = WORKFLOW.read_text(encoding="utf-8").split("      - name: Classify changed paths\n", 1)[1]
-        step = step.split("\n      - name: ", 1)[0]
-        self.assertIn("FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}", step)
-        self.assertIn('if [ "$FULL_LABEL" = true ]; then\n            python_relevant=true\n'
-                      '            rust_relevant=true\n', step)
+        self.assertIn("FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}",
+                      classify_step())
 
     def test_other_events_are_unchanged_by_the_scope(self):
         new = Classifier()
@@ -416,16 +466,22 @@ class ViewerScopeTests(unittest.TestCase):
         self.assertEqual(ci_scope.scope_of("python/tools/viewer_export_v1.py"), "python")
         self.assertEqual(ci_scope.scope_of("python/tests/test_viewer_uct_v1.py"), "python")
 
-    def test_the_classify_case_arms_agree_with_the_scope_table(self):
-        arms = classify_arms()
-        self.assertEqual(len(arms), 2)
-        self.assertEqual(arms[1][-1], (["*"], "rust_relevant=true"))
+    def test_relevance_has_one_copy_and_agrees_with_the_scope_table(self):
+        # The workflow keeps no copy of the relevance patterns: both steps call ci_scope.py.
+        step = classify_step()
+        self.assertNotIn("case ", step)
+        self.assertIn('python3 tools/ci/ci_scope.py relevance < "$RUNNER_TEMP/ci-changed-paths"', step)
+        self.assertNotIn("rust_relevant=true ;;", WORKFLOW.read_text(encoding="utf-8"))
+        self.assertIn('pr_files "$pr_number" | python3 tools/ci/ci_scope.py pr-run', WORKFLOW.read_text(encoding="utf-8"))
+        # A path no rule names is Rust-relevant.
+        self.assertEqual(relevant("Cargo.lock"), (False, True))
+        self.assertEqual(relevant("some/new/file"), (False, True))
         samples = WEBSITE + LOOKALIKES + [path for other in OTHERS for path in other] + [
             "viewer/README.md", "python/README.md", "tools/reach/plan.py", "python/tools/run_rust_lib_filters.py",
             "python/mtg_kernel_rl/features.py", "mtg-kernel/src/rl_session.rs", "mtg-kernel/build.rs", "pyproject.toml",
             ".github/workflows/w5-tools.yml", ".github/actions/x/action.yml", "tools/ci/ci_scope.py"]
         for path in samples:
-            python, rust = relevant(path, arms)
+            python, rust = relevant(path)
             scope = ci_scope.scope_of(path)
             with self.subTest(path=path, scope=scope, python=python, rust=rust):
                 if scope == "viewer":

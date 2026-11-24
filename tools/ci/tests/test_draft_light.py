@@ -100,7 +100,9 @@ gh() {
 
 class DraftLightTests(unittest.TestCase):
     def test_changed_path_gates_preserve_git_paths(self):
-        classify = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request")
+        classify = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request").replace(
+            "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
+        )
         checks = workflow_step("Choose the checks").replace(
             "python3 tools/ci/ci_scope.py", '"$CI_TEST_PYTHON" "$CI_TEST_SCOPE"'
         )
@@ -169,7 +171,8 @@ class DraftLightTests(unittest.TestCase):
         cases = [
             ([[{"status": "added", "filename": "tools/stage4a/café\nstep.py"}]], "tools", "full"),
             ([[rename]], "tools", "full"),
-            ([[rename], [{"status": "modified", "filename": "python/tests/test café.py"}]], "all", "windows-complement"),
+            # Scope pr but no Rust-relevant file: its pull request run scheduled no Rust job, so no complement.
+            ([[rename], [{"status": "modified", "filename": "python/tests/test café.py"}]], "all", "full"),
             ([[{"status": "added", "filename": " tools/stage4a/café.py"}]], "all", "windows-complement"),
             ([[{"status": "added", "filename": "README.md "}]], "all", "windows-complement"),
         ]

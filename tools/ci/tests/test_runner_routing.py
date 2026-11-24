@@ -664,11 +664,14 @@ class MatrixTests(unittest.TestCase):
         # Without always() a failed part would skip the gate, and a skipped check does not block a merge.
         self.assertTrue(re.search(r"^    if: (.+)$", gate, re.MULTILINE).group(1).startswith("always() && "))
         # A change to the tools the parts use must itself run them.
-        detect = job_block("detect-changes", "rust-quality")
-        (relevant,) = [line for line in detect.splitlines() if "python/tools/run_rust_integration_tests.py|" in line]
+        # (Relevance lives in ci_scope.py; the classify step calls it.)
+        import sys
+        sys.path.insert(0, str(WORKFLOW.parents[2] / "tools" / "ci"))
+        import ci_scope
+        self.assertIn("python3 tools/ci/ci_scope.py relevance", job_block("detect-changes", "rust-quality"))
         for tool in ("run_rust_integration_tests.py", "rust_integration_module_seconds.json",
                      "check_rust_integration_parts.py"):
-            self.assertIn(f"python/tools/{tool}|", relevant)
+            self.assertEqual(ci_scope.relevance([f"python/tools/{tool}"]), (True, True))
         for job in ETERNAL_JOBS:
             with self.subTest(job=job):
                 self.assertIn(job, needs.split(", "))
