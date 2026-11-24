@@ -166,15 +166,22 @@ def run_recorded(command: list[str]) -> tuple[int, list[str]]:
     """Run one test process, pass its output through, and name the tests it reported.
 
     Only standard output is read, where libtest prints one line as each test
-    ends; standard error still goes straight to the job log.
+    ends; standard error still goes straight to the job log. After the last
+    test libtest replays captured output under "successes:" and "failures:"
+    (with --show-output also that of passing tests); nothing from there on is
+    a result, whatever a test printed.
     """
     reported = []
+    results = True
     sys.stdout.flush()
     with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
         for raw in process.stdout:
             sys.stdout.buffer.write(raw)
             sys.stdout.buffer.flush()
-            match = TEST_LINE.match(raw.decode("utf-8", "replace"))
+            line = raw.decode("utf-8", "replace")
+            if line.strip() in ("successes:", "failures:"):
+                results = False
+            match = TEST_LINE.match(line) if results else None
             if match:
                 reported.append(match.group(1))
     return process.returncode, reported
@@ -190,7 +197,8 @@ def run_suite(executable: str, *, allow_empty: bool = False, selection: dict | N
     if list_path:
         # The build job of a suite run in parts: name the binary's tests and
         # run none of them.
-        Path(list_path).write_text(json.dumps({"tests": sorted(tests)}, indent=1) + "\n", encoding="utf-8")
+        listing = {"attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT") or 0), "tests": sorted(tests)}
+        Path(list_path).write_text(json.dumps(listing, indent=1) + "\n", encoding="utf-8")
         print(f"Integration test list: {len(tests)} tests written, none run", flush=True)
         return 0
     modules = sorted({test.split("::", 1)[0] for test in tests})

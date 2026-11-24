@@ -1,5 +1,18 @@
 name: CI
 
+# Self-hosted runners and pull requests from forks. Several jobs below can run
+# on the repository's self-hosted runners (15 registered on 2026-11-24). Their
+# runs-on conditions admit only events from this repository by the accounts in
+# MTG_CI_SELF_HOSTED_ACTORS. That is not a boundary by itself: a pull request
+# runs its own copy of this file, so a fork can rewrite those conditions or
+# name a self-hosted label directly. What keeps fork code off those runners is
+# the repository setting that holds every outside contributor's run until a
+# maintainer approves it (Settings, Actions, General: require approval for all
+# external contributors). Approving a run approves the workflow files in that
+# pull request: never approve one without reading its diff under
+# .github/workflows/ and .github/actions/. Repository-level runners cannot be
+# limited to chosen workflows.
+
 'on':
   push:
     branches:
@@ -222,7 +235,7 @@ jobs:
             # markdown are irrelevant. build.rs still hashes every tracked
             # file into its provenance digest; no test pins that value.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/check_rust_integration_parts.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -1519,9 +1532,9 @@ jobs:
   # 2026-11-24: 27 minutes of compiling, then 90 modules one process after
   # another, 65 to 98 minutes on a hosted Linux runner, 90 to 134 in all. One
   # job per system now builds the test binary once and the parts below run it
-  # side by side. The Standard suite on this catalog (4 minutes to compile,
-  # seconds to run) stays in this job, after the build is handed over, so no
-  # part waits for it.
+  # side by side. The Standard suite on this catalog (4 minutes to compile on
+  # top of this build, seconds to run) is a part of its own there: in this
+  # job it would hold every part back, since they start when this job ends.
   eternal-integration-build:
     name: Build shared Eternal integration tests (${{ matrix.os }})
     needs: detect-changes
@@ -1642,17 +1655,8 @@ jobs:
           name: eternal-integration-list-${{ matrix.os }}-${{ github.run_attempt }}
           path: eternal-integration-tests.json
           if-no-files-found: error
-          retention-days: 1
-
-      # Pauper, Legacy and Vintage catalog: the Standard catalog plus
-      # data/eternal_v1. The Standard suite also runs on it, since every
-      # Standard card keeps its id and program in this build.
-      - name: Run the Standard integration suite on the eternal catalog
-        run: |
-          if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=2
-          fi
-          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
+          # Small, and the inventory job of a later rerun needs it.
+          retention-days: 14
 
       - name: Report the hosted Linux runner's memory use
         if: always() && steps.memory_guard.outcome == 'success'
@@ -1688,6 +1692,9 @@ jobs:
           - eternal-integration-5
           - eternal-integration-6
           - eternal-integration-7
+          # Not a shard: the Standard suite on the Eternal catalog, which
+          # compiles its own test binary on top of the shared build.
+          - eternal-standard
     # Hosted runners only, on the system of the shared build: its freshness
     # records name hosted checkout paths and its binary is for that system.
     runs-on: ${{ matrix.os }}
@@ -1763,7 +1770,11 @@ jobs:
           restore-keys: |
             cargo-registry-tests-${{ matrix.os }}-
 
+      # The build is kept for a day. A part rerun after that finds none and
+      # compiles the suite itself, as it does when Cargo finds the build
+      # stale, so the step may fail without failing the part.
       - name: Download the shared Eternal integration build
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           # A partial retry keeps the build job's artifact from the prior
@@ -1784,38 +1795,62 @@ jobs:
           fi
           mkdir -p target
           # Attempts keep separate directories; take the newest.
-          archive=$(find "$staging" -mindepth 2 -maxdepth 2 -type f -path "*/eternal-integration-build-*/eternal-integration.tar" | sort -V | tail -n 1)
-          test -n "$archive" || { echo "Missing shared Eternal integration build artifact" >&2; exit 1; }
+          archive=
+          if [ -d "$staging" ]; then
+            archive=$(find "$staging" -mindepth 2 -maxdepth 2 -type f -path "*/eternal-integration-build-*/eternal-integration.tar" | sort -V | tail -n 1)
+          fi
+          if [ -z "$archive" ]; then
+            echo "::warning::No shared Eternal integration build to unpack: this part compiles the suite itself."
+            exit 0
+          fi
           tar -xf "$archive" -C target
           rm -rf -- "$staging"
           stamp=$(date +%s)
           find target -exec touch -d "@$stamp" {} +
 
+      # A part that compiles the suite again still tests the same code, only
+      # later: say so in the run instead of failing. Cargo's status lines are
+      # read without color, which would split the words searched for.
+      - name: Check that Cargo reuses the shared build
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
+          CARGO_TERM_COLOR=never python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --no-run 2>&1 | tee eternal-integration-build.log
+          if grep -q 'Compiling mtg-kernel' eternal-integration-build.log; then
+            echo "::warning::The shared Eternal integration build was not reused: this part compiled the suite again."
+          fi
+
       - name: Run this part of the Eternal integration suite
+        if: matrix.group != 'eternal-standard'
         run: |
           part=0
           if [ '${{ matrix.group }}' != eternal-integration ]; then
             part='${{ matrix.group }}'
             part="${part##*-}"
           fi
+          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --shard-index "$part" --shard-count 8 --executed-list eternal-integration-executed.json
+
+      # Pauper, Legacy and Vintage catalog: the Standard catalog plus
+      # data/eternal_v1. The Standard suite also runs on it, since every
+      # Standard card keeps its id and program in this build.
+      - name: Run the Standard integration suite on the eternal catalog
+        if: matrix.group == 'eternal-standard'
+        run: |
           if [ "$RUNNER_OS" = Linux ]; then
             export CARGO_BUILD_JOBS=2
           fi
-          # A part that compiles the suite again still tests the same code,
-          # only later: say so in the run instead of failing.
-          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --no-run 2>&1 | tee eternal-integration-build.log
-          if grep -q 'Compiling mtg-kernel' eternal-integration-build.log; then
-            echo "::warning::The shared Eternal integration build was not reused: this part compiled the suite again."
-          fi
-          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --shard-index "$part" --shard-count 8 --executed-list eternal-integration-executed.json
+          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
       - name: Upload the names of the tests this part executed
+        if: matrix.group != 'eternal-standard'
         uses: actions/upload-artifact@v4
         with:
           name: eternal-integration-executed-${{ matrix.os }}-${{ matrix.group }}-${{ github.run_attempt }}
           path: eternal-integration-executed.json
           if-no-files-found: error
-          retention-days: 1
+          # Small, and the inventory job of a later rerun needs it.
+          retention-days: 14
 
       - name: Report the hosted Linux runner's memory use
         if: always() && steps.memory_guard.outcome == 'success'

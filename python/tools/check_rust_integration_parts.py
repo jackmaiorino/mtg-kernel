@@ -69,11 +69,11 @@ def main() -> int:
                         help="Directory holding the executed lists of the parts")
     parser.add_argument("--count", type=int, required=True, help="Number of parts")
     args = parser.parse_args()
-    lists = sorted(args.listed.rglob("*.json"))
+    lists = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(args.listed.rglob("*.json"))]
     if not lists:
         raise ValueError(f"No list file under {args.listed}")
-    # Every attempt builds the same commit; the newest file is as good as any.
-    listed = json.loads(lists[-1].read_text(encoding="utf-8"))["tests"]
+    # Every attempt builds the same commit; take the newest attempt's list.
+    listed = newest(lists)["tests"]
     records = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(args.parts.rglob("*.json"))]
     problems = check(listed, records, args.count)
     for problem in problems:

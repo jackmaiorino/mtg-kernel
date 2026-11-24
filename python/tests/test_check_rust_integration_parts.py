@@ -98,6 +98,21 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(any("no report from part(s) [1] of 2" in line for line in lines))
 
+    def test_the_list_of_the_newest_attempt_is_used(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Attempt 10 sorts before attempt 9 by name; the attempt number decides.
+            for attempt, tests in ((9, ["old::one"]), (10, LISTED)):
+                folder = root / "lists" / f"list-{attempt}"
+                folder.mkdir(parents=True)
+                (folder / "tests.json").write_text(json.dumps({"attempt": attempt, "tests": tests}), encoding="utf-8")
+            folder = root / "parts" / "executed-0"
+            folder.mkdir(parents=True)
+            (folder / "executed.json").write_text(json.dumps(record(0, LISTED, count=1)), encoding="utf-8")
+            argv = ["check", "--listed", str(root / "lists"), "--parts", str(root / "parts"), "--count", "1"]
+            with patch.object(sys, "argv", argv), patch("builtins.print"):
+                self.assertEqual(parts.main(), 0)
+
     def test_no_list_file_is_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             argv = ["check", "--listed", directory, "--parts", directory, "--count", "1"]

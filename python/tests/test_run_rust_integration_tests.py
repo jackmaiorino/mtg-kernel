@@ -187,6 +187,37 @@ class RecordedRunTests(unittest.TestCase):
         self.assertEqual(reported, ["alpha::one", "alpha::two", "alpha::three", "alpha::four"])
         self.assertEqual(b"".join(written).decode().replace("\r\n", "\n").count("\n"), 8)
 
+    def reported_by(self, script):
+        fake = type("Out", (), {"flush": lambda self: None,
+                                "buffer": type("Buffer", (), {"write": lambda self, raw: None,
+                                                              "flush": lambda self: None})()})()
+        with patch.object(integration.sys, "stdout", fake):
+            return integration.run_recorded([sys.executable, "-c", script])
+
+    def test_output_a_test_printed_is_not_a_result(self):
+        # With --show-output libtest replays what passing tests printed, after every result line.
+        for section in ("successes:", "failures:"):
+            script = ("print('test alpha::one ... ok')\n"
+                      "print()\n"
+                      f"print('{section}')\n"
+                      "print()\n"
+                      "print('---- alpha::one stdout ----')\n"
+                      "print('test alpha::one ... ok')\n"
+                      "print('test alpha::invented ... ok')\n"
+                      "print('test result: ok. 1 passed')\n")
+            with self.subTest(section=section):
+                self.assertEqual(self.reported_by(script), (0, ["alpha::one"]))
+
+    def test_a_result_line_written_in_two_pieces_is_one_result(self):
+        # One test thread: libtest writes the name when the test starts and the outcome when it ends.
+        script = ("import sys, time\n"
+                  "sys.stdout.write('test alpha::slow ... ')\n"
+                  "sys.stdout.flush()\n"
+                  "time.sleep(0.2)\n"
+                  "sys.stdout.write('ok\\n')\n"
+                  "sys.stdout.flush()\n")
+        self.assertEqual(self.reported_by(script), (0, ["alpha::slow"]))
+
 
 class RunSuiteTests(unittest.TestCase):
     TESTS = ["alpha::one", "alpha::two", "beta::one", "gamma::one"]
@@ -268,7 +299,8 @@ class RunSuiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             listing = Path(directory) / "tests.json"
             self.assertEqual(self.commands(None, list_path=str(listing)), (0, []))
-            self.assertEqual(json.loads(listing.read_text(encoding="utf-8")), {"tests": sorted(self.TESTS)})
+            self.assertEqual(json.loads(listing.read_text(encoding="utf-8")),
+                             {"attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT") or 0), "tests": sorted(self.TESTS)})
 
     def recorded(self, selection, reports, returncode=0):
         def run_recorded(command):
