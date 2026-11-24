@@ -400,17 +400,14 @@ pub(super) fn read_trajectories_bounded_v1(
     let read = |ordinal: usize| {
         let bytes = super::read_pinned_shared_v1(&pins[ordinal])?;
         admitted[ordinal].check_v1(&bytes)?;
-        let length = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?;
+        let length = super::trajectory_container_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?;
         let episode =
             match trajectory_parse_ahead_v1::take_trajectory_v1(&pins[ordinal].sha256, &bytes) {
                 Some(episode) => {
                     parsed_ahead.fetch_add(1, Ordering::Relaxed);
                     episode
                 }
-                None => {
-                    serde_json::from_slice(&record_envelope_v1::open_v1(&bytes, MAX_FILE_BYTES)?)
-                        .map_err(err)?
-                }
+                None => super::trajectory_container_v1::decode_any_v1(&bytes, MAX_FILE_BYTES)?,
             };
         // The batch bound counts record bytes, sealed (`record_envelope_v1`)
         // or not.
@@ -1438,6 +1435,13 @@ where
         };
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
+            if trajectory.opponent_tensors_omitted && !learner_rows {
+                ensure(
+                    row.tensor.is_empty_v1(),
+                    "learner-only trajectory carries unexpected opponent tensor",
+                )?;
+                continue;
+            }
             let common = row.tensor.tensor();
             if learner_rows && defer_learner {
                 rows.push((row, common));

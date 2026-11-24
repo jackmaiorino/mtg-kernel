@@ -27,8 +27,11 @@ struct MtgSeg {
 };
 
 // out[r * n + o] = act(init[o] + sum over segments, k of in(r, k) * w[k * n + o]).
+// If `guarded_col >= 0`, column `guarded_col` uses V8's zero-product guard
+// (`add_nonzero_products_v1`): a zero product leaves the accumulator unchanged.
 __device__ void mtg_linear_stage(int rows, const MtgSeg* segs, int nseg, const float* init,
-                                 const float* w, int n, float* out, bool apply_tanh) {
+                                 const float* w, int n, float* out, bool apply_tanh,
+                                 int portable_tanh, int guarded_col) {
     const int total = rows * n;
     for (int item = threadIdx.x; item < total; item += blockDim.x) {
         const int r = item / n;
@@ -40,15 +43,27 @@ __device__ void mtg_linear_stage(int rows, const MtgSeg* segs, int nseg, const f
             const int src_row = seg.rowmap ? seg.rowmap[r] : r;
             const float* in = seg.base + (size_t)src_row * seg.stride;
             const float* wk = w + (size_t)k_base * n + o;
-            // Unrolling only lets independent loads issue early; the adds
-            // stay one chain in ascending k.
+            if (guarded_col >= k_base && guarded_col < k_base + seg.len) {
+                const int gk = guarded_col - k_base;
+                for (int k = 0; k < gk; ++k) {
+                    acc = __fadd_rn(acc, __fmul_rn(in[k], wk[(size_t)k * n]));
+                }
+                const float prod = __fmul_rn(in[gk], wk[(size_t)gk * n]);
+                if (prod != 0.0f) acc = __fadd_rn(acc, prod);
+                for (int k = gk + 1; k < seg.len; ++k) {
+                    acc = __fadd_rn(acc, __fmul_rn(in[k], wk[(size_t)k * n]));
+                }
+            } else {
+                // Unrolling only lets independent loads issue early; the adds
+                // stay one chain in ascending k.
 #pragma unroll 8
-            for (int k = 0; k < seg.len; ++k) {
-                acc = __fadd_rn(acc, __fmul_rn(in[k], wk[(size_t)k * n]));
+                for (int k = 0; k < seg.len; ++k) {
+                    acc = __fadd_rn(acc, __fmul_rn(in[k], wk[(size_t)k * n]));
+                }
             }
             k_base += seg.len;
         }
-        out[item] = apply_tanh ? mtg_tanh(acc) : acc;
+        out[item] = apply_tanh ? mtg_tanh_mode(acc, portable_tanh) : acc;
     }
     __syncthreads();
 }
@@ -87,6 +102,7 @@ enum MtgLayout {
     L_ACT1_W, L_ACT1_B, L_ACT2_W, L_ACT2_B,
     L_SCORER1_W, L_SCORER1_B, L_SCORER2_W, L_SCORER2_B,
     L_VALUE1_W, L_VALUE1_B, L_VALUE2_W, L_VALUE2_B,
+    L_PAIR1_W, L_PAIR1_B, L_PAIR2_W, L_PAIR2_B,
     L_COUNT
 };
 
@@ -94,6 +110,8 @@ enum MtgLayout {
 struct MtgDims {
     int state_dim, object_feature_dim, edge_feature_dim, action_feature_dim;
     int action_ref_feature_dim, group_count, embedding_dim;
+    int portable_tanh;      // 0 = platform libm tanhf, 1 = deterministic_math_v1::tanh_f32_v1
+    int include_guard_col;  // -1 for net-8, 195 for FlatV8 inclusion net
 };
 
 // Per-request descriptor (ints): counts, then offsets into the packed float
@@ -104,6 +122,7 @@ enum MtgReq {
     R_STATE, R_OBJ_FEAT, R_EDGE_FEAT, R_REF_FEAT, R_ACT_FEAT,      // float offsets
     R_CARD_IDS, R_GROUPS, R_EDGE_SRC, R_EDGE_TGT, R_REF_NODE, R_REF_ACTION,  // int offsets
     R_SCRATCH, R_LOGITS, R_VALUE,
+    R_PAIRS, R_PAIR_BLOCKER, R_PAIR_ATTACKER,
     R_FIELDS
 };
 
@@ -119,7 +138,9 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
     const int* req = requests + (size_t)blockIdx.x * R_FIELDS;
     const float* p = params;
     const int H = MTG_HIDDEN;
+    const int pt = dims.portable_tanh;
     const int nobj = req[R_OBJECTS], nedge = req[R_EDGES], nref = req[R_REFS], nact = req[R_ACTIONS];
+    const int npair = req[R_PAIRS];
     const float* state = floats + req[R_STATE];
     const float* obj_feat = floats + req[R_OBJ_FEAT];
     const float* edge_feat = floats + req[R_EDGE_FEAT];
@@ -131,6 +152,8 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
     const int* edge_tgt = ints + req[R_EDGE_TGT];
     const int* ref_node = ints + req[R_REF_NODE];
     const int* ref_action = ints + req[R_REF_ACTION];
+    const int* pair_blocker = ints + req[R_PAIR_BLOCKER];
+    const int* pair_attacker = ints + req[R_PAIR_ATTACKER];
 
     // Scratch, carved in the order the host sized it.
     float* s = scratch + (size_t)req[R_SCRATCH];
@@ -152,6 +175,8 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
     float* scorer_prefix = s;     s += H;
     float* scorer_h = s;          s += (size_t)nact * H;
     float* value_h = s;           s += H;
+    float* pair_h1 = s;           s += (size_t)npair * H;
+    float* pair_msg = s;          s += (size_t)npair * H;
 
     __shared__ MtgSeg segs[3];
     const float* emb = p + layout[L_CARD_EMBEDDING];
@@ -162,10 +187,10 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
         segs[1] = MtgSeg{emb, card_ids, dims.embedding_dim, dims.embedding_dim};
     }
     __syncthreads();
-    mtg_linear_stage(nobj, segs, 2, p + layout[L_OBJ1_B], p + layout[L_OBJ1_W], H, obj_h1, true);
+    mtg_linear_stage(nobj, segs, 2, p + layout[L_OBJ1_B], p + layout[L_OBJ1_W], H, obj_h1, true, pt, -1);
     if (threadIdx.x == 0) segs[0] = MtgSeg{obj_h1, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(nobj, segs, 1, p + layout[L_OBJ2_B], p + layout[L_OBJ2_W], H, obj_base, true);
+    mtg_linear_stage(nobj, segs, 1, p + layout[L_OBJ2_B], p + layout[L_OBJ2_W], H, obj_base, true, pt, -1);
 
     // Edge encoder and ordered messages (sources, then targets).
     if (nedge > 0) {
@@ -175,12 +200,41 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
             segs[2] = MtgSeg{obj_base, edge_tgt, H, H};
         }
         __syncthreads();
-        mtg_linear_stage(nedge, segs, 3, p + layout[L_EDGE1_B], p + layout[L_EDGE1_W], H, edge_h1, true);
+        mtg_linear_stage(nedge, segs, 3, p + layout[L_EDGE1_B], p + layout[L_EDGE1_W], H, edge_h1, true, pt, -1);
         if (threadIdx.x == 0) segs[0] = MtgSeg{edge_h1, nullptr, H, H};
         __syncthreads();
-        mtg_linear_stage(nedge, segs, 1, p + layout[L_EDGE2_B], p + layout[L_EDGE2_W], H, edge_h, true);
+        mtg_linear_stage(nedge, segs, 1, p + layout[L_EDGE2_B], p + layout[L_EDGE2_W], H, edge_h, true, pt, -1);
     }
     mtg_index_add_stage(edge_pooled, nobj, edge_h, nedge, edge_src, edge_tgt);
+
+    // V8 pairing path (`v8_inclusion_v1`): messages added into both nodes'
+    // pooled edge messages in pair order, skipping zero values.
+    if (npair > 0) {
+        if (threadIdx.x == 0) {
+            segs[0] = MtgSeg{obj_base, pair_blocker, H, H};
+            segs[1] = MtgSeg{obj_base, pair_attacker, H, H};
+        }
+        __syncthreads();
+        mtg_linear_stage(npair, segs, 2, p + layout[L_PAIR1_B], p + layout[L_PAIR1_W], H, pair_h1, true, pt, -1);
+        if (threadIdx.x == 0) segs[0] = MtgSeg{pair_h1, nullptr, H, H};
+        __syncthreads();
+        mtg_linear_stage(npair, segs, 1, p + layout[L_PAIR2_B], p + layout[L_PAIR2_W], H, pair_msg, false, 0, -1);
+        const int total = nobj * H;
+        for (int item = threadIdx.x; item < total; item += blockDim.x) {
+            const int o = item / H;
+            const int j = item - o * H;
+            float acc = edge_pooled[item];
+            for (int r = 0; r < npair; ++r) {
+                const float msg = pair_msg[(size_t)r * H + j];
+                if (msg != 0.0f) {
+                    if (pair_blocker[r] == o) acc = __fadd_rn(acc, msg);
+                    if (pair_attacker[r] == o) acc = __fadd_rn(acc, msg);
+                }
+            }
+            edge_pooled[item] = acc;
+        }
+        __syncthreads();
+    }
 
     // Node update over [base hidden, pooled messages].
     if (threadIdx.x == 0) {
@@ -188,10 +242,10 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
         segs[1] = MtgSeg{edge_pooled, nullptr, H, H};
     }
     __syncthreads();
-    mtg_linear_stage(nobj, segs, 2, p + layout[L_NODE1_B], p + layout[L_NODE1_W], H, node_h1, true);
+    mtg_linear_stage(nobj, segs, 2, p + layout[L_NODE1_B], p + layout[L_NODE1_W], H, node_h1, true, pt, -1);
     if (threadIdx.x == 0) segs[0] = MtgSeg{node_h1, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(nobj, segs, 1, p + layout[L_NODE2_B], p + layout[L_NODE2_W], H, obj_hidden, true);
+    mtg_linear_stage(nobj, segs, 1, p + layout[L_NODE2_B], p + layout[L_NODE2_W], H, obj_hidden, true, pt, -1);
 
     // Group pooling in object order, then the state encoder.
     mtg_index_add_stage(group_pooled, dims.group_count, obj_hidden, nobj, groups, nullptr);
@@ -200,10 +254,10 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
         segs[1] = MtgSeg{group_pooled, nullptr, dims.group_count * H, dims.group_count * H};
     }
     __syncthreads();
-    mtg_linear_stage(1, segs, 2, p + layout[L_STATE1_B], p + layout[L_STATE1_W], H, state_h1, true);
+    mtg_linear_stage(1, segs, 2, p + layout[L_STATE1_B], p + layout[L_STATE1_W], H, state_h1, true, pt, -1);
     if (threadIdx.x == 0) segs[0] = MtgSeg{state_h1, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(1, segs, 1, p + layout[L_STATE2_B], p + layout[L_STATE2_W], H, state_hidden, true);
+    mtg_linear_stage(1, segs, 1, p + layout[L_STATE2_B], p + layout[L_STATE2_W], H, state_hidden, true, pt, -1);
 
     // Action refs, pooled per action in ref order.
     if (nref > 0) {
@@ -212,10 +266,10 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
             segs[1] = MtgSeg{obj_hidden, ref_node, H, H};
         }
         __syncthreads();
-        mtg_linear_stage(nref, segs, 2, p + layout[L_REF1_B], p + layout[L_REF1_W], H, ref_h1, true);
+        mtg_linear_stage(nref, segs, 2, p + layout[L_REF1_B], p + layout[L_REF1_W], H, ref_h1, true, pt, -1);
         if (threadIdx.x == 0) segs[0] = MtgSeg{ref_h1, nullptr, H, H};
         __syncthreads();
-        mtg_linear_stage(nref, segs, 1, p + layout[L_REF2_B], p + layout[L_REF2_W], H, ref_h, true);
+        mtg_linear_stage(nref, segs, 1, p + layout[L_REF2_B], p + layout[L_REF2_W], H, ref_h, true, pt, -1);
     }
     mtg_index_add_stage(ref_pooled, nact, ref_h, nref, ref_action, nullptr);
 
@@ -225,36 +279,44 @@ extern "C" __global__ void mtg_net8_forward(const int* __restrict__ requests,
         segs[1] = MtgSeg{ref_pooled, nullptr, H, H};
     }
     __syncthreads();
-    mtg_linear_stage(nact, segs, 2, p + layout[L_ACT1_B], p + layout[L_ACT1_W], H, act_h1, true);
+    mtg_linear_stage(nact, segs, 2, p + layout[L_ACT1_B], p + layout[L_ACT1_W], H, act_h1, true, pt,
+                     dims.include_guard_col);
     if (threadIdx.x == 0) segs[0] = MtgSeg{act_h1, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(nact, segs, 1, p + layout[L_ACT2_B], p + layout[L_ACT2_W], H, act_h, true);
+    mtg_linear_stage(nact, segs, 1, p + layout[L_ACT2_B], p + layout[L_ACT2_W], H, act_h, true, pt, -1);
 
     // Scorer: the state prefix once (bias, then the state inputs), then each
     // action row continues from it with its action inputs.
     if (threadIdx.x == 0) segs[0] = MtgSeg{state_hidden, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(1, segs, 1, p + layout[L_SCORER1_B], p + layout[L_SCORER1_W], H, scorer_prefix, false);
+    mtg_linear_stage(1, segs, 1, p + layout[L_SCORER1_B], p + layout[L_SCORER1_W], H, scorer_prefix, false, 0, -1);
     if (threadIdx.x == 0) segs[0] = MtgSeg{act_h, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(nact, segs, 1, scorer_prefix, p + layout[L_SCORER1_W] + (size_t)H * H, H, scorer_h, true);
+    mtg_linear_stage(nact, segs, 1, scorer_prefix, p + layout[L_SCORER1_W] + (size_t)H * H, H, scorer_h, true, pt, -1);
     if (threadIdx.x == 0) segs[0] = MtgSeg{scorer_h, nullptr, H, H};
     __syncthreads();
     mtg_linear_stage(nact, segs, 1, p + layout[L_SCORER2_B], p + layout[L_SCORER2_W], 1,
-                     logits + req[R_LOGITS], false);
+                     logits + req[R_LOGITS], false, 0, -1);
 
     // Value head.
     if (threadIdx.x == 0) segs[0] = MtgSeg{state_hidden, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(1, segs, 1, p + layout[L_VALUE1_B], p + layout[L_VALUE1_W], H, value_h, true);
+    mtg_linear_stage(1, segs, 1, p + layout[L_VALUE1_B], p + layout[L_VALUE1_W], H, value_h, true, pt, -1);
     if (threadIdx.x == 0) segs[0] = MtgSeg{value_h, nullptr, H, H};
     __syncthreads();
-    mtg_linear_stage(1, segs, 1, p + layout[L_VALUE2_B], p + layout[L_VALUE2_W], 1, values + req[R_VALUE], false);
+    mtg_linear_stage(1, segs, 1, p + layout[L_VALUE2_B], p + layout[L_VALUE2_W], 1, values + req[R_VALUE], false, 0, -1);
 }
 
 // All 2^32 inputs in chunks: out[i] = mtg_tanh(bits(first + i)).
 extern "C" __global__ void mtg_tanh_proof(unsigned int first, unsigned int count, unsigned int* out) {
     for (unsigned int i = blockIdx.x * blockDim.x + threadIdx.x; i < count; i += gridDim.x * blockDim.x) {
         out[i] = __float_as_uint(mtg_tanh(__uint_as_float(first + i)));
+    }
+}
+
+// All 2^32 inputs in chunks: out[i] = mtg_tanh_portable(bits(first + i)).
+extern "C" __global__ void mtg_tanh_portable_proof(unsigned int first, unsigned int count, unsigned int* out) {
+    for (unsigned int i = blockIdx.x * blockDim.x + threadIdx.x; i < count; i += gridDim.x * blockDim.x) {
+        out[i] = __float_as_uint(mtg_tanh_portable(__uint_as_float(first + i)));
     }
 }

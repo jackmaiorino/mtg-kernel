@@ -158,7 +158,10 @@ fn read_trajectory(
             })
         }
         TrajectoryKind::NativeExpandedV3 => {
-            let t: ExpandedTrajectoryV1 = serde_json::from_slice(bytes).map_err(err)?;
+            let t = super::super::trajectory_container_v1::decode_any_v1(
+                bytes,
+                super::super::MAX_FILE_BYTES,
+            )?;
             ensure(
                 t.schema == FRESH_TRAJECTORY_SCHEMA,
                 "native trajectory schema differs",

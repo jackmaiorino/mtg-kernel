@@ -1123,6 +1123,7 @@ fn net8_prepared_gae_update_defers_learner_replay_bit_exact_with_error_fallback_
         training_math: TrainingMathV1::PlatformLibm,
         ex1: None,
         record_envelope: RecordEnvelopeV1::None,
+        trajectory_format: Default::default(),
     })
     .unwrap();
     let trajectories: Vec<PinnedFileV1> =
