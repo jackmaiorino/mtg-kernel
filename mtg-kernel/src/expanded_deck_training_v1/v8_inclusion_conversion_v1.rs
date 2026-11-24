@@ -106,7 +106,8 @@ fn admit_parent_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
         "the V8 conversion takes a V4 or FlatV7 checkpoint",
     )?;
     ensure(
-        saved.input_contract.is_none()
+        saved.card_semantics.is_none()
+            && saved.input_contract.is_none()
             && saved.registry_transfer.is_none()
             && saved.archive_distillation.is_none()
             && saved.e_supported.is_none()
@@ -290,6 +291,8 @@ fn preservation_check_v1(
             mulligan_modes: game
                 .london
                 .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut child_policy, &learner, None, &episode)?;
         ensure(
@@ -377,4 +380,19 @@ fn preservation_check_v1(
         "mismatches": mismatches,
         "preserved": mismatches == 0,
     }))
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    #[test]
+    fn inclusion_parent_refuses_projection_section() {
+        let (root, _source, config, mut saved) = card_semantics_e1::fixture_files_v1("v8-refusal");
+        admit_parent_v1(&saved).unwrap();
+        saved.card_semantics = Some(config.load_v1().unwrap().section_v1());
+        assert!(admit_parent_v1(&saved)
+            .unwrap_err()
+            .contains("ordinary platform-libm"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

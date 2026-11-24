@@ -811,6 +811,24 @@ def available(config: dict, timed: dict, claims: list[dict], *, background: bool
     return free[:max(0, room)]
 
 
+def background_order(config: dict, room: list[int]) -> list[int]:
+    """Take the CI floor first, then the other cores from the far end of the preference order.
+
+    Ordinary admission takes the front of the same order, so this reduces avoidable overlap between ordinary and
+    background work at admission; it does not remove it: once other claims end, a later ordinary request can still
+    take a background claim's core while other cores are free.
+    A host with a keep_free reserve retains the original order: an ordinary core pool can use the whole
+    allocatable budget, so moving a background claim off that pool could keep it running outside the budget.
+    Ordinary admission and its prediction both use the live claims' cores and their original placement order, so
+    copies with the old and the new rule decide alike on an identical live snapshot; different placement histories
+    can still lead to different later admissions.
+    """
+    if config["keep_free"]:
+        return room
+    floor = set(ci_floor_cores(config))
+    return [core for core in room if core in floor] + [core for core in reversed(room) if core not in floor]
+
+
 def unclaimed(config: dict, timed: dict, claims: list[dict], *, core_pool: list[int] | None = None) -> list[int]:
     """Cores no claim of any class runs on now (lent cores count as used), outside timed work and keep_free room,
     in preference order. A shared claim grows only onto these, so it never takes a core another claim holds or
@@ -1569,7 +1587,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                     room = available(config, timed, snap["claims"], background=background,
                                      core_pool=core_pool)
                     if len(room) >= wanted:
-                        cores = sorted(room[:wanted])
+                        cores = sorted((background_order(config, room) if background else room)[:wanted])
                         alone = not any(n.startswith("queue-") and n != ticket.name for n in snap["names"])
                         record = _claim_record(base, cores, priority, now_utc(), enqueued_at,
                                                time.monotonic() - queued_mono, config, timed, snap["claims"],

@@ -37,6 +37,17 @@ fn context_mut(state: &mut GameState) -> Option<&mut ResolutionPlayV1> {
 pub(super) fn active(state: &GameState) -> bool {
     context(state).is_some()
 }
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn defer_dredge_captures(
+    state: &mut GameState,
+    captures: Vec<PendingTrigger>,
+) -> Result<(), Vec<PendingTrigger>> {
+    let Some(context) = context_mut(state) else {
+        return Err(captures);
+    };
+    context.deferred_triggers.extend(captures);
+    Ok(())
+}
 pub(super) fn permit(state: &GameState, object: ObjectId) -> Option<ResolutionPermissionV1> {
     context(state)?
         .permission
@@ -72,8 +83,17 @@ pub(super) fn free_cast_for(state: &GameState, source: ObjectId, controller: Pla
         }
         Zone::Stack => object.v4.spell_cast_origin.is_some_and(|origin| {
             // Mad Wizard's Lair casts a hand card for free during a
-            // resolution.
-            (origin.origin_zone == Zone::Exile
+            // resolution; Malcolm casts the discarded graveyard card for free;
+            // Chandra, Torch of Defiance pays the exiled card's mana cost.
+            let paid_exile = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Exile
+                && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, source);
+            let free_graveyard = cfg!(feature = "eternal-fixtures")
+                && origin.origin_zone == Zone::Graveyard
+                && matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })
+                && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, source);
+            ((origin.origin_zone == Zone::Exile && !paid_exile)
+                || free_graveyard
                 || (cfg!(feature = "eternal-fixtures")
                     && origin.origin_zone == Zone::Hand
                     && matches!(origin.route, SpellCastRouteV4::ResolvingEffectV1 { .. })))
@@ -133,6 +153,11 @@ fn live(state: &GameState, binding: EffectObjectBinding) -> bool {
 /// Whether `source` is being cast, or announced, from its owner's graveyard
 /// under a resolving instruction that pays its costs (Bilbo).
 pub(super) fn graveyard_resolution_cast(state: &GameState, source: ObjectId) -> bool {
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, source)
+    {
+        return false;
+    }
     let Some(object) = state.objects.try_get(source) else {
         return false;
     };
@@ -269,7 +294,10 @@ pub(super) fn form_completable(
 ) -> bool {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let room = crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Normal).is_some();
-    if room && pending.cast_mode.is_none() {
+    let chandra_alt = cfg!(feature = "eternal-fixtures")
+        && def.alt_cost.is_some()
+        && crate::eternal_cube_c7a_v1::is_chandra_paid_cast(state, pending.spell);
+    if (room || chandra_alt) && pending.cast_mode.is_none() {
         return [CastMode::Normal, CastMode::Alternative]
             .into_iter()
             .any(|mode| {
@@ -287,7 +315,7 @@ pub(super) fn form_completable(
             (CastMethodV4::Omen, types, Keywords::NONE)
         } else if form == 1 && supported_bestow(def).is_some() {
             return false;
-        } else if room && pending.cast_mode == Some(CastMode::Alternative) {
+        } else if (room || chandra_alt) && pending.cast_mode == Some(CastMode::Alternative) {
             (CastMethodV4::Alternative, def.types, def.keywords)
         } else {
             (CastMethodV4::Normal, def.types, def.keywords)
@@ -488,6 +516,16 @@ pub(crate) fn stage(
     }
     let parent = continuation.resolving_item.v4.stack_item_id;
     let parent_index = state.stack.len();
+    if state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| standard.resolution_play.as_ref())
+        .is_some_and(|context| {
+            context.parent != parent || context.suspended.is_some() || context.permission.is_some()
+        })
+    {
+        return Err("resolution play overlaps another casting instruction".into());
+    }
     // Capture the parent's preceding events before a child cast can change
     // their trigger conditions. Placement still waits for the whole parent.
     let captures = trigger::capture_triggers_without_sba(state);
@@ -495,7 +533,7 @@ pub(crate) fn stage(
         return Err("resolution play could not capture preceding triggers".into());
     }
     let kicked_source = state.engine.pending_kicked_source.take();
-    let context = state
+    state
         .standard_v1
         .get_or_insert_with(Default::default)
         .resolution_play
@@ -508,9 +546,10 @@ pub(crate) fn stage(
             kicked_source,
             authorization: None,
         });
-    if context.parent != parent || context.suspended.is_some() || context.permission.is_some() {
-        return Err("resolution play overlaps another casting instruction".into());
-    }
+    #[cfg(feature = "eternal-fixtures")]
+    let earlier_dredge = crate::eternal_vintage_e7b_v1::dredge::take_captures_keep_deferring(state);
+    let pending_triggers = std::mem::take(&mut state.engine.pending_triggers);
+    let context = context_mut(state).unwrap();
     context.suspended = Some(Box::new(continuation));
     context.permission = Some(ResolutionPermissionV1 {
         card,
@@ -522,9 +561,9 @@ pub(crate) fn stage(
         answer,
         exiled_card,
     }));
-    context
-        .deferred_triggers
-        .append(&mut state.engine.pending_triggers);
+    #[cfg(feature = "eternal-fixtures")]
+    context.deferred_triggers.extend(earlier_dredge);
+    context.deferred_triggers.extend(pending_triggers);
     context.deferred_triggers.extend(captures);
     state.priority_player = controller;
     if land {
@@ -667,12 +706,11 @@ pub(super) fn validate_child(
     {
         return Err("resolution child lost its exact public parent".into());
     }
-    projected.engine.pending_effect = Some((**parent).clone());
-    // The parent is suspended before a child can discard. Its own validation
-    // must not mistake a child's additional cost for a parent effect answer.
-    projected.engine.pending_discard = None;
-    effect::validate_pending_effect_choice(&projected)?;
-    projected.engine.pending_effect = None;
+    // Restore the pre-announcement state of the pending child before
+    // re-validating the suspended parent. Otherwise a pending child whose
+    // stack presence re-enters `validate_pending_cast` (such as an extra-turn
+    // spell checked by `extra_turn_v1::validate`) would see the temporary
+    // `projected.engine.pending_effect` and reject itself.
     projected.engine.pending_cast = None;
     projected.engine.pending_land_play = None;
     if !land {
@@ -690,6 +728,15 @@ pub(super) fn validate_child(
         }
     }
     *projected.objects.get_mut(source) = original.clone();
+    if projected.stack.get(context.parent_index) != Some(&parent.resolving_item) {
+        return Err("resolution child shifted its public parent".into());
+    }
+    projected.engine.pending_effect = Some((**parent).clone());
+    // The parent is suspended before a child can discard. Its own validation
+    // must not mistake a child's additional cost for a parent effect answer.
+    projected.engine.pending_discard = None;
+    effect::validate_pending_effect_choice(&projected)?;
+    projected.engine.pending_effect = None;
     effect::validate_resolution_play_authorization(
         &mut projected,
         parent,
@@ -747,11 +794,19 @@ pub(super) fn finish_parent(state: &mut GameState, parent: StackItemId) {
             .resolution_play
             .take()
             .unwrap();
+        state.engine.pending_kicked_source = context.kicked_source;
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state) {
+            crate::eternal_vintage_e7b_v1::dredge::prepend_captures(
+                state,
+                context.deferred_triggers,
+            );
+            return;
+        }
         state
             .engine
             .pending_triggers
             .extend(context.deferred_triggers);
-        state.engine.pending_kicked_source = context.kicked_source;
     }
 }
 pub(crate) fn resolving_index(state: &GameState, parent: StackItemId) -> Option<usize> {
@@ -760,11 +815,17 @@ pub(crate) fn resolving_index(state: &GameState, parent: StackItemId) -> Option<
         .map(|c| c.parent_index)
         .or_else(|| state.stack.len().checked_sub(1))
 }
+/// Where a resolving item the interpreter removed from the public stack
+/// returns when its resolution suspends.
+pub(crate) fn restore_index(state: &GameState, item: StackItemId) -> usize {
+    context(state)
+        .filter(|c| c.parent == item)
+        .map_or(state.stack.len(), |c| c.parent_index)
+        .min(state.stack.len())
+}
 pub(super) fn restore_parent(state: &mut GameState, item: StackItem) {
-    let index = context(state)
-        .filter(|c| c.parent == item.v4.stack_item_id)
-        .map_or(state.stack.len(), |c| c.parent_index);
-    state.stack.insert(index.min(state.stack.len()), item);
+    let index = restore_index(state, item.v4.stack_item_id);
+    state.stack.insert(index, item);
 }
 
 #[cfg(all(test, feature = "standard-magezero-fixtures"))]
@@ -817,6 +878,7 @@ mod tests {
             play_or_cast: PlayOrCast::Cast,
             expiry: PlayPermissionExpiry::EndOfTurn,
             without_mana_cost: FreeCastV1(true),
+            any_mana_type: Default::default(),
         });
     }
     fn bind(state: &GameState, source: ObjectId) -> EffectObjectBinding {
@@ -1319,5 +1381,30 @@ mod tests {
         assert_eq!(object_mana_value(&state, room), 5);
         validate_spell_stack_source(&state, item).unwrap();
         assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[test]
+    fn overlapping_resolution_play_preserves_pending_kicked_source() {
+        let (mut state, child) = discover_child();
+        let second = put(&mut state, "Burst Lightning", Zone::Exile);
+        let active = context(&state).unwrap();
+        let mut continuation = (**active.suspended.as_ref().unwrap()).clone();
+        continuation.resolving_item.v4.stack_item_id = StackItemId(active.parent.0 + 1);
+        let answer = active.authorization.as_ref().unwrap().answer.clone();
+        state.engine.pending_kicked_source = Some(child);
+        let before = state.clone();
+        let second_binding = bind(&state, second);
+        let err = stage(
+            &mut state,
+            continuation,
+            second_binding,
+            None,
+            false,
+            answer,
+        )
+        .unwrap_err();
+        assert!(err.contains("overlaps"));
+        assert_eq!(state.engine.pending_kicked_source, Some(child));
+        assert_eq!(state, before);
     }
 }

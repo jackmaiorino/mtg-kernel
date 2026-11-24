@@ -36,10 +36,10 @@
 //! registry-transfer and registry-evolution shells, the line (b) collection
 //! sampler, and every net-8-only command.
 
-use super::record_envelope_v1::open_v1;
+use super::record_envelope_v1::{self, open_v1};
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
-    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
+    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_bounded_v1,
     replay_learner_groups_v1, validate_actual_behaviors_v1, validate_trajectory,
     CheckpointInputExpectationV1, CheckpointRecordFormatV1, CollectionSamplerV1,
     ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
@@ -494,10 +494,15 @@ pub(crate) fn validate_update_loss_v1(
         gamma,
         lambda,
         entropy_coefficient,
+        pregame_advantage,
     } = loss_selection
     else {
         return Err("a wide learner trains only the GAE loss (gae_advantage_value/v1)".into());
     };
+    ensure(
+        pregame_advantage.is_gae(),
+        "a wide learner refuses the terminal pregame advantage",
+    )?;
     ensure(
         record.gamma_bits == gamma.to_bits()
             && record.gae_lambda_bits == lambda.to_bits()
@@ -556,6 +561,8 @@ pub(super) struct WUpdateInputsV1 {
     pub(super) output_directory: std::path::PathBuf,
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
+    /// The trajectory batch bound in bytes (`max_trajectory_batch_mebibytes`).
+    pub(super) max_batch_bytes: u64,
     pub(super) unsupported: WUnsupportedOptionsV1,
     pub(super) training_math: TrainingMathV1,
     pub(super) record_format: CheckpointRecordFormatV1,
@@ -600,10 +607,15 @@ fn refuse_unsupported_v1(inputs: &WUpdateInputsV1) -> Result<(f32, f32), String>
             gamma,
             lambda,
             entropy_coefficient,
+            pregame_advantage,
         } => {
             ensure(
                 entropy_coefficient.to_bits() == 0,
                 "a wide learner's GAE loss has no entropy term",
+            )?;
+            ensure(
+                pregame_advantage.is_gae(),
+                "a wide learner refuses the terminal pregame advantage",
             )?;
             Ok((gamma, lambda))
         }
@@ -613,6 +625,106 @@ fn refuse_unsupported_v1(inputs: &WUpdateInputsV1) -> Result<(f32, f32), String>
                 .into(),
         ),
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "isolates preparation locals from execute_w_update_v1's stack frame"
+)]
+#[inline(never)]
+fn prepare_w_update_groups_v1<'a>(
+    episodes: &'a [super::ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    preparation_workers: Option<usize>,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    defer_learner_rows: bool,
+) -> Result<
+    (
+        Vec<super::LearnerTensorGroupV1<'a>>,
+        Option<ordered_update_preparation::PreparationTelemetryV1>,
+        bool,
+    ),
+    String,
+> {
+    if let Some(workers) = preparation_workers {
+        if defer_learner_rows {
+            if let Ok(prepared) =
+                ordered_update_preparation::prepare_deferring_learner_rows_with_cache_v1(
+                    episodes,
+                    policy,
+                    learner,
+                    workers,
+                    max_prepared_tensor_mebibytes,
+                    max_groups,
+                    training_math,
+                    ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+                )
+            {
+                if !prepared.groups.is_empty() {
+                    return Ok((prepared.groups, Some(prepared.telemetry), true));
+                }
+            }
+        }
+        let prepared = ordered_update_preparation::prepare_v1(
+            episodes,
+            policy,
+            learner,
+            workers,
+            max_prepared_tensor_mebibytes,
+            max_groups,
+            training_math,
+        )?;
+        Ok((prepared.groups, Some(prepared.telemetry), false))
+    } else {
+        let mut tensor_groups = Vec::new();
+        let mut opponent_cache =
+            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
+        for (episode_ordinal, episode) in episodes.iter().enumerate() {
+            let opponent = episode
+                .episode
+                .opponent
+                .as_ref()
+                .map(|s| opponent_cache.load(s))
+                .transpose()?;
+            validate_actual_behaviors_v1(episode, learner, opponent.as_ref().map(|o| &o.behavior))?;
+            tensor_groups.extend(replay_learner_groups_v1(
+                episode_ordinal,
+                episode,
+                policy,
+                opponent.as_ref().map(|o| &o.policy),
+            )?);
+        }
+        Ok((tensor_groups, None, false))
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "isolates reference fallback replay from execute_w_update_v1's stack frame"
+)]
+#[inline(never)]
+fn fallback_w_reference_preparation_v1(
+    episodes: &[super::ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+) -> Result<(), String> {
+    let _ = ordered_update_preparation::prepare_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        max_groups,
+        training_math,
+    )?;
+    Ok(())
 }
 
 /// The wide update (see the module documentation). The caller has checked
@@ -627,6 +739,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         training_math,
         record_envelope,
         started,
@@ -656,15 +769,25 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
-        ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
     let mut ids = BTreeSet::new();
     for episode in &episodes {
         validate_trajectory(episode)?;
+        // The London keep offset (one number or one per mulligan count) is
+        // applied by the net-8 update only; this update would train without
+        // it, off the distribution the rows were drawn from.
+        ensure(
+            episode.episode.london_keep_offset.is_none(),
+            "a wide learner update refuses the London keep offset",
+        )?;
         ensure(
             episode.search_played.is_none(),
             "a wide learner refuses search-played rows",
@@ -693,42 +816,31 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     let input_read_seconds = started.elapsed().as_secs_f64();
     let replay_started = std::time::Instant::now();
     // The replay recomputes every actor-visible row: the learner's with the
-    // wide net, a net-8 opponent's with net-8.
-    let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared = ordered_update_preparation::prepare_v1(
+    // wide net, a net-8 opponent's with net-8. For prepared updates, the wide
+    // GAE step recomputes every learner row's forward tape and verifies every
+    // output bit before mutating state, so learner rows can be deferred with
+    // exact reference fallback on any error.
+    let defer_learner_rows = preparation_workers.is_some()
+        && crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok()
+        && episodes.iter().all(|episode| {
+            super::trajectory_contract_v1(episode)
+                .is_ok_and(|c| c.generation == FreshLineageGenerationV1::V4)
+                && !episode.decisions.iter().any(|row| {
+                    row.actor == episode.episode.learner_seat
+                        && !row.tensor.pairing_node_indices.is_empty()
+                })
+        });
+    let (tensor_groups, preparation_telemetry, used_deferred_learner_rows) =
+        prepare_w_update_groups_v1(
             &episodes,
             &policy,
             &learner,
-            workers,
+            preparation_workers,
             max_prepared_tensor_mebibytes,
+            ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
             training_math,
+            defer_learner_rows,
         )?;
-        (prepared.groups, Some(prepared.telemetry))
-    } else {
-        let mut tensor_groups = Vec::new();
-        let mut opponent_cache =
-            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
-        for (episode_ordinal, episode) in episodes.iter().enumerate() {
-            let opponent = episode
-                .episode
-                .opponent
-                .as_ref()
-                .map(|s| opponent_cache.load(s))
-                .transpose()?;
-            validate_actual_behaviors_v1(
-                episode,
-                &learner,
-                opponent.as_ref().map(|o| &o.behavior),
-            )?;
-            tensor_groups.extend(replay_learner_groups_v1(
-                episode_ordinal,
-                episode,
-                &policy,
-                opponent.as_ref().map(|o| &o.policy),
-            )?);
-        }
-        (tensor_groups, None)
-    };
     ensure(!tensor_groups.is_empty(), "no learner decisions")?;
     let mut values = Vec::with_capacity(tensor_groups.len());
     for (index, (_, _, rows)) in tensor_groups.iter().enumerate() {
@@ -782,19 +894,35 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     );
     let learner_started = std::time::Instant::now();
     let learner_workers = preparation_workers.unwrap_or(1);
-    let step = state
-        .train_step_gae_feature_transfer_profiled_dims_v1(
-            FreshLineageGenerationV1::V4,
-            &groups,
-            &gae.value_targets,
-            &gae.advantages,
-            value_coefficient,
-            learning_rate,
-            None,
-            learner_workers,
-            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
-        )
-        .map_err(err)?;
+    let step = match state.train_step_gae_feature_transfer_profiled_dims_v1(
+        FreshLineageGenerationV1::V4,
+        &groups,
+        &gae.value_targets,
+        &gae.advantages,
+        value_coefficient,
+        learning_rate,
+        None,
+        learner_workers,
+        &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+    ) {
+        Ok(step) => step,
+        Err(step_err) => {
+            if used_deferred_learner_rows {
+                if let Some(workers) = preparation_workers {
+                    fallback_w_reference_preparation_v1(
+                        &episodes,
+                        &policy,
+                        &learner,
+                        workers,
+                        max_prepared_tensor_mebibytes,
+                        ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
+                        training_math,
+                    )?;
+                }
+            }
+            return Err(err(step_err));
+        }
+    };
     let learner_update_seconds = learner_started.elapsed().as_secs_f64();
     drop(groups);
     drop(substeps);
@@ -1007,7 +1135,7 @@ pub fn widen_source_with_rows_v1(
             (metadata.trajectories, "parent-update-inputs")
         }
     };
-    let episodes = read_trajectory_batch_v1(&trajectories, 1)?;
+    let episodes = read_trajectory_batch_bounded_v1(&trajectories, 1, MAX_BATCH_BYTES)?;
     if rows.is_some() {
         for episode in &episodes {
             ensure(

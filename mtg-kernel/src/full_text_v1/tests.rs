@@ -724,9 +724,7 @@ enum Expect {
 
 /// Every pool creature outside `REFUSED_DONORS`, with its expected behavior,
 /// written out from the design's appendix A independently of the production
-/// lists. Auramancer, Monk Realist and Uktabi Orangutan are entry triggers
-/// and Ghitu Slinger and Xantid Swarm are refused until their donated
-/// programs land.
+/// lists.
 const EXPECTED_DONORS: [(&str, Expect); 39] = [
     ("Akroma, Angel of Wrath", Expect::Supported),
     ("Battlefield Scrounger", Expect::Supported),
@@ -745,11 +743,11 @@ const EXPECTED_DONORS: [(&str, Expect); 39] = [
     ("Wall of Roots", Expect::Supported),
     ("Elvish Spirit Guide", Expect::Supported),
     ("Squee, Goblin Nabob", Expect::Supported),
-    ("Auramancer", Expect::EntryTrigger),
-    ("Monk Realist", Expect::EntryTrigger),
-    ("Uktabi Orangutan", Expect::EntryTrigger),
-    ("Ghitu Slinger", Expect::Refused),
-    ("Xantid Swarm", Expect::Refused),
+    ("Auramancer", Expect::Supported),
+    ("Monk Realist", Expect::Supported),
+    ("Uktabi Orangutan", Expect::Supported),
+    ("Ghitu Slinger", Expect::Supported),
+    ("Xantid Swarm", Expect::Supported),
     ("Meddling Mage", Expect::EntryReplacement),
     ("Anger", Expect::Supported),
     ("Arrogant Wurm", Expect::Supported),
@@ -792,15 +790,12 @@ const GENERIC_FIXTURE_DONORS: [&str; 11] = [
     "Thornscape Battlemage",
 ];
 
-const ENTRY_TRIGGER_FIXTURE_DONORS: [&str; 8] = [
+const ENTRY_TRIGGER_FIXTURE_DONORS: [&str; 5] = [
     "Caller of the Claw",
     "Goblin Matron",
     "Goblin Ringleader",
     "Phyrexian Dreadnought",
     "Wall of Blossoms",
-    "Auramancer",
-    "Monk Realist",
-    "Uktabi Orangutan",
 ];
 
 #[test]
@@ -856,16 +851,9 @@ fn every_premodern_pool_creature_is_in_exactly_one_donor_class() {
     for name in classes.iter().flat_map(|class| class.iter()) {
         assert!(creatures.contains(*name), "{name} is not a pool creature");
     }
-    for name in LISTED_ENTRY_PROGRAMS_PENDING_V1
-        .iter()
-        .chain(&LISTED_PROGRAMS_PENDING_V1)
-    {
-        assert!(LISTED_DONORS_V1.contains(name), "{name}");
-    }
 
     // The expected behavior of every pool creature, written out here
-    // independently of the production lists (design appendix A, with the
-    // listed additions whose programs are still pending).
+    // independently of the production lists (design appendix A).
     let definition = |name: &str| &CARD_DEFS[usize::from(id(name))];
     let expected = EXPECTED_DONORS
         .iter()
@@ -1736,4 +1724,130 @@ fn full_text_batch_keywords_follow_paid_host_donor_and_layer_six_both_seats() {
         );
         check(&state, source, Keywords::NONE);
     }
+}
+
+#[test]
+fn donated_echo_retains_ghitu_slinger_cost_and_public_program_after_donor_departure() {
+    use crate::engine::{self, Action, Decision};
+    use crate::mana::ManaColor;
+    use crate::premodern_ordered_public_v1::FullTextProgramV1;
+    use crate::state::Step;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = game();
+        state.engine.runtime_rules.order_graveyard_batches_v1 = true;
+        state.active_player = player;
+        state.priority_player = player;
+        state.step = Step::Upkeep;
+        let source = put(&mut state, player, VOLRATH, Zone::Hand);
+        event::commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+        let upkeep = state.engine.event_history.len();
+        event::log_upkeep_began(&mut state, player);
+        queue_upkeep_triggers(&mut state, player, upkeep).unwrap();
+        let triggers = crate::trigger::collect_and_process(&mut state);
+        state.engine.pending_triggers.extend(triggers);
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.stack.last().is_some_and(is_donated_trigger));
+        let producers = public_producers(&state).unwrap();
+        assert!(producers
+            .iter()
+            .any(|row| row.program == FullTextProgramV1::DonatedEcho));
+
+        event::commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+        let red = ManaColor::R.pool_index();
+        let colorless = ManaColor::C.pool_index();
+        state.players[player.index()].mana_pool[red] = 1;
+        state.players[player.index()].mana_pool[colorless] = 2;
+        let state: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for (option, destination) in [(0, Zone::Battlefield), (1, Zone::Graveyard)] {
+            let mut branch = state.clone();
+            for _ in 0..2 {
+                assert!(matches!(
+                    engine::advance_until_decision(&mut branch),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                engine::step(&mut branch, Action::Pass).unwrap();
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut branch),
+                Decision::ChooseEffectOption { player: chooser, .. } if chooser == player
+            ));
+            engine::step(&mut branch, Action::ChooseEffectOption(option)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut branch),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(branch.objects.get(source).zone, destination);
+            assert_eq!(
+                branch.players[player.index()].mana_pool[red],
+                if option == 0 { 0 } else { 1 }
+            );
+            assert_eq!(
+                branch.players[player.index()].mana_pool[colorless],
+                if option == 0 { 0 } else { 2 }
+            );
+        }
+    }
+}
+
+#[test]
+fn xantid_swarm_donated_attack_trigger_requires_abilities_active_and_checks_attack_record() {
+    use crate::premodern_ordered_public_v1::FullTextProgramV1;
+
+    let mut state = game();
+    state.active_player = PlayerId::P0;
+    state.priority_player = PlayerId::P0;
+    let source = put(&mut state, PlayerId::P0, VOLRATH, Zone::Battlefield);
+    put(&mut state, PlayerId::P0, "Xantid Swarm", Zone::Graveyard);
+    assert!(!has_donated_attack_trigger(&state, source));
+
+    state.engine.runtime_rules = crate::engine::RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1;
+    assert!(has_donated_attack_trigger(&state, source));
+
+    let declaration = state.engine.event_history.len();
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::DeclaredAttacker {
+            source,
+            source_zone_change_count: state.objects.get(source).zone_change_count,
+            controller: PlayerId::P0,
+        });
+    record_attack_trigger(&mut state, declaration).unwrap();
+    let capture_index = declaration as u64 + 1;
+    let record = trigger_record(&state, capture_index).unwrap();
+    assert_eq!(record.program(&state).unwrap(), p3b::xantid_attacks());
+    let triggers = crate::trigger::collect_and_process(&mut state);
+    state.engine.pending_triggers.extend(triggers);
+    assert!(public_producers(&state)
+        .unwrap()
+        .iter()
+        .any(|row| row.program == FullTextProgramV1::XantidSwarmSilence));
+
+    let mut mismatched = state.clone();
+    mismatched.engine.event_history[declaration] = CommittedEvent::UpkeepBegan {
+        player: PlayerId::P0,
+    };
+    assert!(trigger_record(&mismatched, capture_index).is_err());
+
+    let mut duplicated = state.clone();
+    let copy = duplicated.engine.event_history[capture_index as usize].clone();
+    duplicated.engine.event_history.push(copy);
+    assert!(trigger_record(&duplicated, capture_index).is_err());
+
+    let dress = put(&mut state, PlayerId::P1, "Dress Down", Zone::Hand);
+    event::commit(
+        &mut state,
+        ProposedEvent::zone_change(dress, Zone::Battlefield),
+    );
+    let _ = crate::trigger::collect_and_process(&mut state);
+    assert!(!has_donated_attack_trigger(&state, source));
 }

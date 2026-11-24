@@ -122,7 +122,7 @@ fn graveyard_creature_card(state: &GameState, controller: PlayerId, object: Obje
             && live.spell_copy_origin.is_none()
             && CARD_DEFS
                 .get(usize::from(live.card_def))
-                .is_some_and(|def| def.has_type(CardType::Creature))
+                .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
     })
 }
 

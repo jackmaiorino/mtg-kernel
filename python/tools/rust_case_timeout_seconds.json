@@ -1,0 +1,5 @@
+{
+  "_comment": "Per-case limits in seconds for isolated Rust cases (run_rust_lib_filters.py --isolated-cases); every other case keeps the 1800 s default. Passing runs 2026-11-19..21 took up to 1697 s (wide) and 1750 s (liliana) against 1800 s, so both timed out in 6 of 8 main runs; 3000 s is 1.7 times the slowest observed pass. A case that hangs still fails at this limit.",
+  "current_mixed_policy_v1::liliana::tests::paid_numeric_all_three_original_loyalty_roots_and_native_choice_restore_both_seats": 3000,
+  "human_bo3_v1::next_five_v59::wide_tests::paid_wide_human_and_opponent_original_indices_native_parity_and_stale_restore_both_seats": 3000
+}

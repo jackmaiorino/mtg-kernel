@@ -10,7 +10,7 @@ use crate::native_policy_value_net_v1::{NativeEncodedDecisionViewV1, NativePolic
 use cudarc::driver::{CudaSlice, DevicePtr, DevicePtrMut, DeviceRepr, LaunchConfig, PushKernelArg};
 
 /// `MtgReq` in `net8_forward.cu`.
-pub(super) const R_FIELDS: usize = 19;
+pub(super) const R_FIELDS: usize = 22;
 pub(super) const THREADS_PER_BLOCK: u32 = 256;
 const HIDDEN: usize = 64;
 
@@ -25,6 +25,8 @@ pub(super) struct DimsV1 {
     pub(super) action_ref_feature_dim: i32,
     pub(super) group_count: i32,
     pub(super) embedding_dim: i32,
+    pub(super) portable_tanh: i32,
+    pub(super) include_guard_col: i32,
 }
 
 // SAFETY: plain `repr(C)` integers, the layout of the CUDA struct.
@@ -79,6 +81,21 @@ impl DimsV1 {
     pub(super) fn of_config_v1(
         config: &crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
     ) -> Self {
+        Self::of_config_with_math_v1(
+            config,
+            crate::training_math_v1::TrainingMathV1::PlatformLibm,
+        )
+    }
+
+    pub(super) fn of_config_with_math_v1(
+        config: &crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+        math: crate::training_math_v1::TrainingMathV1,
+    ) -> Self {
+        let include_guard_col =
+            crate::native_policy_value_net_v1::v8_inclusion_v1::include_guard_v1(
+                config.action_feature_dim,
+            )
+            .map_or(-1, |col| col as i32);
         Self {
             state_dim: config.state_dim as i32,
             object_feature_dim: config.object_feature_dim as i32,
@@ -87,6 +104,8 @@ impl DimsV1 {
             action_ref_feature_dim: config.action_ref_feature_dim as i32,
             group_count: config.object_group_count as i32,
             embedding_dim: config.card_embedding_dim as i32,
+            portable_tanh: i32::from(!math.is_platform_libm()),
+            include_guard_col,
         }
     }
 }
@@ -209,6 +228,8 @@ impl PackedBatchV1 {
             d[16] += scratch;
             d[17] += logits;
             d[18] += values;
+            d[20] += ints;
+            d[21] += ints;
             self.requests.extend_from_slice(&d);
         }
         self.floats.extend_from_slice(&other.floats);
@@ -243,7 +264,11 @@ impl PackedBatchV1 {
         config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
         view: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<(), String> {
-        if !view.pairing_node_indices.is_empty() {
+        let v8 = crate::native_policy_value_net_v1::v8_inclusion_v1::include_guard_v1(
+            config.action_feature_dim,
+        )
+        .is_some();
+        if !v8 && !view.pairing_node_indices.is_empty() {
             return Err("pairing rows need the V8 net".into());
         }
         let counts = view.validate(config).map_err(|e| format!("{e:?}"))?;
@@ -253,6 +278,10 @@ impl PackedBatchV1 {
             counts.action_ref_count,
             counts.action_count,
         );
+        let pairs = view.pairing_node_indices.len() / 2;
+        if pairs * 2 != view.pairing_node_indices.len() {
+            return Err("pairing_node_indices length must be even".into());
+        }
         let floats = |values: &[f32], floats: &mut Vec<f32>| -> Result<i32, String> {
             let at = offset_i32(floats.len(), "float")?;
             floats.extend_from_slice(values);
@@ -275,9 +304,23 @@ impl PackedBatchV1 {
         let edge_targets = ints(view.edge_target_indices, &mut self.ints)?;
         let ref_nodes = ints(view.action_ref_node_indices, &mut self.ints)?;
         let ref_actions = ints(view.action_ref_action_indices, &mut self.ints)?;
+        let pair_blockers = offset_i32(self.ints.len(), "int")?;
+        for pair in view.pairing_node_indices.chunks_exact(2) {
+            self.ints.push(pair[0] as i32);
+        }
+        let pair_attackers = offset_i32(self.ints.len(), "int")?;
+        for pair in view.pairing_node_indices.chunks_exact(2) {
+            self.ints.push(pair[1] as i32);
+        }
         let scratch = offset_i32(self.scratch_len, "scratch")?;
         self.scratch_len += HIDDEN
-            * (5 * objects + 2 * edges + config.object_group_count + 4 + 2 * refs + 4 * actions);
+            * (5 * objects
+                + 2 * edges
+                + config.object_group_count
+                + 4
+                + 2 * refs
+                + 4 * actions
+                + 2 * pairs);
         let logits = offset_i32(self.logits_len, "logits")?;
         self.logits_len += actions;
         let value = offset_i32(self.replies.len(), "value")?;
@@ -301,6 +344,9 @@ impl PackedBatchV1 {
             scratch,
             logits,
             value,
+            pairs as i32,
+            pair_blockers,
+            pair_attackers,
         ]);
         self.replies.push((slot, logits as usize, actions));
         Ok(())
@@ -461,7 +507,22 @@ pub(crate) fn forward_batch_v1(
     {
         return Err("request names a model slot that is not resident".into());
     }
-    match kernels {
+    if dims.portable_tanh != 0 {
+        if !device.portable_tanh_proved {
+            return Err("GPU portable tanh is not proved on this device".into());
+        }
+    } else if !device.libm_tanh_proved {
+        return Err(
+            "GPU platform-libm tanh is not proved on this host; use portable math or Windows UCRT"
+                .into(),
+        );
+    }
+    let effective_kernels = if dims.portable_tanh != 0 || dims.include_guard_col >= 0 {
+        KernelsV1::V1
+    } else {
+        kernels
+    };
+    match effective_kernels {
         KernelsV1::V1 => forward_v1(device, models, batch, buffers),
         KernelsV1::V2 => forward_v2(device, models, batch, buffers),
     }

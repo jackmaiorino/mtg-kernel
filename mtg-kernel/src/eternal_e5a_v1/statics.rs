@@ -56,10 +56,9 @@ pub(crate) fn urzas_workshop_yield(state: &GameState, controller: PlayerId) -> i
 
 // ---- Serra's Emissary -----------------------------------------------------------
 
-/// The card types Serra's Emissary may name, by index (205.2a's card types
-/// that cards in this catalog have). Kindred is not offered: every Kindred
-/// card in the catalog is also an instant, so naming Instant protects from
-/// all of them and more, and the menu keeps its seven options.
+/// The original seven choices keep their serialized indices. Dungeon follows them
+/// because the native room source is represented separately from object card types.
+/// Instant covers every Kindred card in this catalog.
 pub(crate) const PROTECTION_TYPES: [CardType; 7] = [
     CardType::Artifact,
     CardType::Creature,
@@ -69,6 +68,8 @@ pub(crate) const PROTECTION_TYPES: [CardType; 7] = [
     CardType::Planeswalker,
     CardType::Sorcery,
 ];
+const DUNGEON_PROTECTION_INDEX: u8 = 7;
+const PROTECTION_CHOICE_COUNT: u16 = 8;
 
 /// The Serra's Emissary that just entered and has not chosen a card type.
 fn emissary_needing_type(state: &GameState) -> Option<ObjectId> {
@@ -95,7 +96,7 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     Some(crate::engine::Decision::ChooseEffectOption {
         player: state.objects.get(emissary).controller,
         source: emissary,
-        option_count: PROTECTION_TYPES.len() as u16,
+        option_count: PROTECTION_CHOICE_COUNT,
     })
 }
 
@@ -107,7 +108,7 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
     };
     let index = u8::try_from(option)
         .ok()
-        .filter(|&index| usize::from(index) < PROTECTION_TYPES.len())
+        .filter(|&index| u16::from(index) < PROTECTION_CHOICE_COUNT)
         .ok_or("card type option is out of range")?;
     let link = live_link(state, emissary);
     let types = &mut e5a_state(state).emissary_types;
@@ -133,6 +134,36 @@ fn protection_types(state: &GameState, player: PlayerId) -> Vec<CardType> {
         })
         .filter_map(|(_, index)| PROTECTION_TYPES.get(usize::from(*index)).copied())
         .collect()
+}
+
+/// Called only for an authenticated native dungeon room source. The
+/// venturing permanent is provenance, not the source of the room ability.
+pub(crate) fn protected_from_dungeon(state: &GameState, target: Target) -> bool {
+    let player = match target {
+        Target::Player(player) => player,
+        Target::Object(object) => {
+            let Some(live) = state.objects.try_get(object) else {
+                return false;
+            };
+            if live.zone != Zone::Battlefield
+                || !crate::engine::object_has_type(state, object, CardType::Creature)
+            {
+                return false;
+            }
+            live.controller
+        }
+        Target::StackItem(_) => return false,
+    };
+    read_state(state).is_some_and(|e5a| {
+        e5a.emissary_types.iter().any(|(host, index)| {
+            *index == DUNGEON_PROTECTION_INDEX
+                && state.objects.try_get(host.object).is_some_and(|live| {
+                    live.zone_change_count == host.zone_change_count
+                        && live.controller == player
+                        && active_named(state, host.object, SERRAS_EMISSARY)
+                })
+        })
+    })
 }
 
 /// Whether a source object has a card type: a permanent's current types,

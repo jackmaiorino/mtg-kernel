@@ -25,6 +25,7 @@ struct LabelInput<'a> {
         Option<&'a crate::policy_observation_v6::PendingChosenCreatureCostV6>,
     pending_ward_payment: Option<&'a crate::policy_observation_v6::WardPaymentV6>,
     resolving_spell_sources: Vec<&'a CardStableRefV1>,
+    resolving_trigger_sources: Vec<&'a CardStableRefV1>,
 }
 
 impl<'a> LabelInput<'a> {
@@ -49,6 +50,17 @@ impl<'a> LabelInput<'a> {
                 })
                 .map(|record| &record.source)
                 .collect(),
+            resolving_trigger_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context
+                        == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::TriggeredAbility
+                })
+                .map(|record| &record.source)
+                .collect(),
         }
     }
 
@@ -67,6 +79,16 @@ impl<'a> LabelInput<'a> {
                 .filter(|record| {
                     record.context == HistoricalSourceContextV6::PendingEffect
                         && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+            resolving_trigger_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context == HistoricalSourceContextV6::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::TriggeredAbility
                 })
                 .map(|record| &record.source)
                 .collect(),
@@ -89,6 +111,17 @@ impl<'a> LabelInput<'a> {
                     record.context
                         == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
                         && record.stack_item_kind == StackItemKindV2::Spell
+                })
+                .map(|record| &record.source)
+                .collect(),
+            resolving_trigger_sources: observation
+                .extensions
+                .historical_public_sources
+                .iter()
+                .filter(|record| {
+                    record.context
+                        == crate::policy_observation_v7::HistoricalSourceContextV7::PendingEffect
+                        && record.stack_item_kind == StackItemKindV2::TriggeredAbility
                 })
                 .map(|record| &record.source)
                 .collect(),
@@ -1090,6 +1123,7 @@ fn successor_keyword_names(keywords: card_def::Keywords) -> Result<String, Error
         (K::TOXIC_1, "toxic 1"),
         (K::SHROUD, "shroud"),
         (K::PROTECTION_FROM_EVERYTHING, "protection from everything"),
+        (K::INFECT, "infect"),
     ];
     let mask = known.iter().fold(0, |mask, (keyword, _)| mask | keyword.0);
     if keywords == K::NONE || keywords.0 & !mask != 0 {
@@ -1960,12 +1994,29 @@ fn label_common(
                         ManaAbilityCostDef::TapTwoControlledPermanentsWithSubtypeV1(_) => {
                             return Err(Error::UnsupportedPrompt);
                         }
+                        ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_) => {
+                            format!(
+                                "Tap {source_name} and sacrifice {}",
+                                handles
+                                    .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
+                            )
+                        }
+                        ManaAbilityCostDef::TapUntappedControlledArtifactV1 => {
+                            format!(
+                                "Tap {}",
+                                handles
+                                    .name(cost_target.as_ref().ok_or(Error::UnsupportedPrompt)?)?
+                            )
+                        }
+                        ManaAbilityCostDef::NoneOwnTurnOnlyV1 => String::new(),
                     };
                     if !matches!(
                         ability.cost,
                         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature
                             | ManaAbilityCostDef::TapSelfSacrificeControlledCreatureV1
                             | ManaAbilityCostDef::SacrificeControlledWithSubtypeV1(_)
+                            | ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(_)
+                            | ManaAbilityCostDef::TapUntappedControlledArtifactV1
                     ) && cost_target.is_some()
                     {
                         return Err(Error::UnsupportedPrompt);
@@ -2142,9 +2193,38 @@ fn label_common(
                     .ok_or(Error::UnsupportedPrompt)?;
                 return Ok(format!("For {}, {}", handles.name(source)?, option.label()));
             }
-            let EffectOp::Choice { options, .. } =
-                pending_program(source, structural_path, observation)?
-            else {
+            // The native delayed trigger validator authenticates this exact
+            // paid source and its three options before public projection.
+            // Its program is intentionally absent from the public DTO.
+            if observation.resolving_trigger_sources.contains(&source)
+                && definition(source)?.object_name == "Arcane Denial"
+                && (definition(source)?.spell_effect)()
+                    == Some(crate::eternal_e9b_v1::arcane_denial())
+                && structural_path.is_empty()
+                && *option_count == 3
+                && *option_index < 3
+            {
+                return Ok(format!(
+                    "For {}, draw {option_index} cards",
+                    handles.name(source)?
+                ));
+            }
+            let program = pending_program(source, structural_path, observation)?;
+            if matches!(
+                program,
+                EffectOp::OfferAffectedPlayerSpellCopy {
+                    affected: TargetRef::Target(0)
+                }
+            ) && structural_path == crate::engine::SPELL_COPY_CHOICE_PATH
+                && *option_count == 2
+            {
+                return match *option_index {
+                    0 => Ok(format!("Decline to copy {}", handles.name(source)?)),
+                    1 => Ok(format!("Copy {}", handles.name(source)?)),
+                    _ => Err(Error::UnsupportedPrompt),
+                };
+            }
+            let EffectOp::Choice { options, .. } = program else {
                 return Err(Error::UnsupportedPrompt);
             };
             if options.len() != *option_count as usize {
@@ -2352,8 +2432,16 @@ fn label_common(
             ) {
                 return Err(Error::UnsupportedPrompt);
             }
-            format!("{} {{R}}{{R}} to copy {} (inherited target: {}; a new target may be chosen after payment)",
-                if *pay { "Attempt to pay" } else { "Decline to pay" }, handles.name(source)?, target(&pending.inherited_target, handles, human)?)
+            format!(
+                "{} {{R}}{{R}} for the option to copy {} (inherited target: {})",
+                if *pay {
+                    "Attempt to pay"
+                } else {
+                    "Decline to pay"
+                },
+                handles.name(source)?,
+                target(&pending.inherited_target, handles, human)?
+            )
         }
         A::ChooseMadnessCast { card, cast_it, .. } => {
             if *cast_it {

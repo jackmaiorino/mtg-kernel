@@ -125,6 +125,7 @@ mod action_reference_reuse_tests {
             Some(DeferredActionJsonV1 {
                 json: &mut json,
                 ranges: &mut ranges,
+                action_digest_off: false,
             }),
             ActionHalfV1::default(),
         )

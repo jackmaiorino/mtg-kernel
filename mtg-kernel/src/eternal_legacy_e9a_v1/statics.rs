@@ -174,7 +174,9 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
     // Goblin Warchief's haste and Mystic Enforcer's flying (wave P1a).
     let premodern = crate::eternal_premodern_p1a_v1::statics::granted_keywords(state, object)
         // Samut's haste and Marwyn's hexproof (wave C3b).
-        | crate::eternal_cube_c3b_v1::granted_keywords(state, object);
+        | crate::eternal_cube_c3b_v1::granted_keywords(state, object)
+        // Tuktuk Rubblefort's haste (Pauper field wave Pf2a).
+        | crate::eternal_pauper_pf2a_v1::granted_keywords(state, object);
     if grants_haste(state, object) {
         Keywords::HASTE | premodern
     } else {
@@ -460,13 +462,15 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         | crate::eternal_premodern_p2c_v1::statics::protection_mask(state, host)
         | crate::eternal_sideboard_s1c_v1::statics::protection_mask(state, host)
         | crate::eternal_premodern_p3a_v1::statics::protection_mask(state, host)
-        | crate::eternal_premodern_p3c_v1::statics::protection_mask(state, host);
+        | crate::eternal_premodern_p3c_v1::statics::protection_mask(state, host)
+        | crate::eternal_pauper_pf2a_v1::protection_mask(state, host);
     // Absolute Law's protection for all creatures (Premodern wave P3e).
     let law = crate::eternal_premodern_p3e_v1::protection_mask(state, host);
     printed
         | law
         | granted_protection_mask(state, host)
         | crate::eternal_sideboard_s1n_v1::protection_mask(state, host)
+        | crate::eternal_pauper_pf1a_v1::protection_mask(state, host)
 }
 
 /// Sejiri Steppe's protection until end of turn, as a mask.
@@ -504,38 +508,11 @@ pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> boo
 /// oldest shield of the damaged creature whose target is still on the
 /// battlefield: one point goes to that creature, the rest stays.
 pub(crate) fn redirect_damage(state: &mut GameState, damage: &mut DamageProposed) {
-    if damage.amount <= 0 {
-        return;
-    }
-    let Target::Object(damaged) = damage.target else {
+    let Some((position, record)) = applicable_redirects(state, damage).next() else {
         return;
     };
-    let Some(e9a) = read_state(state) else {
-        return;
-    };
-    if e9a.redirects.is_empty() {
-        return;
-    }
-    let Some(live) = state.objects.try_get(damaged) else {
-        return;
-    };
-    if live.zone != Zone::Battlefield {
-        return;
-    }
-    let from = ObjectLinkV4 {
-        object: damaged,
-        zone_change_count: live.zone_change_count,
-    };
-    let now = TurnV1::now(state);
-    let Some(position) = e9a.redirects.iter().position(|record| {
-        record.from == from
-            && record.turn == now
-            && link_live_in(state, record.to, Zone::Battlefield)
-            && crate::engine::object_has_type(state, record.to.object, CardType::Creature)
-    }) else {
-        return;
-    };
-    let record = e9a_state(state).redirects.remove(position);
+    e9a_state(state).redirects.remove(position);
+    let damaged = record.from.object;
     if record.to.object == damaged {
         return;
     }
@@ -548,6 +525,35 @@ pub(crate) fn redirect_damage(state: &mut GameState, damage: &mut DamageProposed
     redirected.target = Target::Object(record.to.object);
     redirected.amount = 1;
     event::propose_and_commit(state, ProposedEvent::Damage(redirected));
+}
+
+/// Each established redirect can be ordered against prevention on this recipient.
+pub(crate) fn applicable_redirects<'a>(
+    state: &'a GameState,
+    damage: &DamageProposed,
+) -> impl Iterator<Item = (usize, super::RedirectV1)> + 'a {
+    let damaged = match damage.target {
+        Target::Object(id) if damage.amount > 0 => state
+            .objects
+            .try_get(id)
+            .filter(|live| live.zone == Zone::Battlefield)
+            .map(|live| ObjectLinkV4 {
+                object: id,
+                zone_change_count: live.zone_change_count,
+            }),
+        _ => None,
+    };
+    let now = TurnV1::now(state);
+    read_state(state)
+        .into_iter()
+        .flat_map(|s| s.redirects.iter().enumerate())
+        .filter_map(move |(index, record)| {
+            (Some(record.from) == damaged
+                && record.turn == now
+                && link_live_in(state, record.to, Zone::Battlefield)
+                && crate::engine::object_has_type(state, record.to.object, CardType::Creature))
+            .then_some((index, *record))
+        })
 }
 
 // ---- Echoing Deeps -------------------------------------------------------------------

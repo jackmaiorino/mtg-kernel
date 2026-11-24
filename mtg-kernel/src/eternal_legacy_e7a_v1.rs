@@ -407,6 +407,8 @@ const DRONE_TOKEN: &str = "Drone Token";
 const DARK_DEPTHS_ICE: u32 = 10;
 /// Gaea's Will: "Suspend 4".
 const SUSPEND_TIME_COUNTERS: u8 = 4;
+/// Rift Sower (Pauper field wave Pf2b): "Suspend 2--{G}".
+const RIFT_SOWER_SUSPEND_TIME_COUNTERS: u8 = 2;
 
 fn e7a(op: E7aOpV1) -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(op)))
@@ -642,7 +644,10 @@ fn library_cards(
 fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     state
         .shuffle_library(player)
-        .map_err(|error| format!("{error:?}"))
+        .map_err(|error| format!("{error:?}"))?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
+    Ok(())
 }
 
 /// Puts `card` onto the battlefield under `controller`'s control.
@@ -1002,9 +1007,7 @@ pub(crate) fn dragon_engine_rummage() -> EffectOp {
 
 pub(crate) fn discard_controller_hand(state: &mut GameState, player: PlayerId) {
     let hand = state.players[player.index()].hand.clone();
-    for card in hand {
-        crate::engine::commit_discarded_card(state, card);
-    }
+    crate::engine::commit_discarded_cards(state, &hand);
 }
 
 fn dreadnought_entry() -> EffectOp {
@@ -1375,7 +1378,7 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 .retain(|(host, _)| *host != aura_link);
             if !link_live_in(state, card, Zone::Graveyard)
                 || !definition(state, card.object)
-                    .is_some_and(|def| def.has_type(CardType::Creature))
+                    .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
             {
                 return;
             }
@@ -1459,7 +1462,7 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     live.owner == ctx.controller
                         && !live.v4.is_token
                         && definition(state, card)
-                            .is_some_and(|def| def.has_type(CardType::Creature))
+                            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
             else {
                 return;
@@ -1546,7 +1549,7 @@ pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let copied = exiled.card_def;
             if !CARD_DEFS
                 .get(usize::from(copied))
-                .is_some_and(|def| def.has_type(CardType::Creature))
+                .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
             {
                 return;
             }
@@ -1648,19 +1651,18 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
             return;
         }
     }
-    if crate::graveyard_order_v1::enabled(state) {
-        let discarded = hand
-            .into_iter()
-            .filter(|&card| definition(state, card).is_some_and(|def| def.object_name == name))
-            .collect::<Vec<_>>();
-        crate::engine::commit_discarded_cards(state, &discarded);
-    } else {
-        for card in hand {
-            if definition(state, card).is_some_and(|def| def.object_name == name) {
-                crate::engine::commit_discarded_card(state, card);
-            }
-        }
+    if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+        state,
+        ctx.controller,
+        player,
+    ) {
+        return;
     }
+    let discarded = hand
+        .into_iter()
+        .filter(|&card| definition(state, card).is_some_and(|def| def.object_name == name))
+        .collect::<Vec<_>>();
+    crate::engine::commit_discarded_cards(state, &discarded);
 }
 
 /// Echo of Eons: each player, in turn order, shuffles their hand and
@@ -1729,6 +1731,7 @@ fn galvanic_relay_effect(ctx: &ExecCtx, state: &mut GameState) {
     let land = CARD_DEFS[live.card_def as usize].is_land;
     let permission = crate::engine::PlayPermission {
         without_mana_cost: crate::engine::FreeCastV1::default(),
+        any_mana_type: Default::default(),
         object: top,
         holder: player,
         zone_change_generation: live.zone_change_count,
@@ -2057,6 +2060,15 @@ pub(crate) fn drive(
                 return Ok(false);
             };
             if !continuation.ctx.target_incarnation_matches(0, state) {
+                return Ok(false);
+            }
+            // Tamiyo, Collector of Tales (wave C9c): opponents' spells and
+            // abilities can't cause Tamiyo's controller to sacrifice.
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                opponent,
+            ) {
                 return Ok(false);
             }
             // The sacrifice; the rest of the trigger's sequence follows.
@@ -2519,10 +2531,8 @@ fn dark_depths_triggers(state: &mut GameState) {
             .stack
             .iter()
             .any(|item| item.inline_effect.as_ref() == Some(&effect))
-            || state
-                .engine
-                .pending_triggers
-                .iter()
+            || crate::optional_trigger_public_v1::held(state)
+                .into_iter()
                 .any(|trigger| trigger.effect == effect);
         if pending {
             continue;
@@ -2569,17 +2579,8 @@ pub(crate) fn animate_dead_leaves_source(
                 .and_then(|pending| item_source(&pending.resolving_item))
         })
         .or_else(|| {
-            state
-                .engine
-                .pending_triggers
-                .iter()
-                .find_map(pending_source)
-        })
-        .or_else(|| {
-            state
-                .pending_legend_rule_v1
-                .iter()
-                .flat_map(|pending| pending.waiting_triggers())
+            crate::optional_trigger_public_v1::held(state)
+                .into_iter()
                 .find_map(pending_source)
         })
 }
@@ -2854,7 +2855,7 @@ pub(crate) fn prevents_zone_change(state: &GameState, change: &event::ZoneChange
         && !live.v4.is_token
         && CARD_DEFS
             .get(live.card_def as usize)
-            .is_some_and(|def| def.has_type(CardType::Creature))
+            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
         && any_active(state, GRAFDIGGERS_CAGE)
 }
 
@@ -2912,14 +2913,27 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
     // its abilities either (wave S1m), nor does an Invasion Submersible's
     // after its exhaust ability (wave S1q), nor an animated land's or
     // artifact's, which a resolved ability gave it (Celestial Colonnade).
-    if live.zone != Zone::Battlefield
-        || !(CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
-            def.types_for_face(live.v4.face_index)
-                .contains(&CardType::Creature)
-                || (live.v4.animation_timestamp.is_some() && def.animation.is_some())
-        }) || crate::eternal_sideboard_s1m_v1::stationed(state, object)
-            || crate::eternal_sideboard_s1q_v1::animated(state, object))
-    {
+    if live.zone != Zone::Battlefield {
+        return None;
+    }
+    let is_creature = match crate::eternal_cube_c9b_v1::swift_reconfiguration_type_override(
+        state,
+        object,
+        CardType::Creature,
+    ) {
+        Some(answer) => answer,
+        None => {
+            CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
+                def.types_for_face(live.v4.face_index)
+                    .contains(&CardType::Creature)
+                    || (live.v4.animation_timestamp.is_some() && def.animation.is_some())
+            }) || crate::eternal_sideboard_s1m_v1::stationed(state, object)
+                || crate::eternal_sideboard_s1q_v1::animated(state, object)
+                || crate::eternal_cube_c9a_v1::is_earthbent(state, object)
+                || crate::eternal_cube_c9c_v1::nissa_animated_timestamp(state, object).is_some()
+        }
+    };
+    if !is_creature {
         return None;
     }
     active_dress_down_timestamp(state, Some(object))
@@ -3177,7 +3191,7 @@ pub(crate) fn is_special_activation(state: &GameState, source: ObjectId, index: 
     };
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => live.zone == Zone::Battlefield,
-        Some(GAEAS_WILL) => live.zone == Zone::Hand,
+        Some(GAEAS_WILL | crate::eternal_pauper_pf2b_v1::RIFT_SOWER) => live.zone == Zone::Hand,
         // Elvish Spirit Guide's (wave E9b) and Simian Spirit Guide's (wave
         // E9a) mana abilities.
         _ => {
@@ -3198,7 +3212,10 @@ pub(crate) fn special_activation(
 ) -> Result<(), String> {
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => activate_arena(state, player, source),
-        Some(GAEAS_WILL) => suspend(state, player, source),
+        Some(GAEAS_WILL) => suspend(state, player, source, SUSPEND_TIME_COUNTERS),
+        Some(crate::eternal_pauper_pf2b_v1::RIFT_SOWER) => {
+            suspend(state, player, source, RIFT_SOWER_SUSPEND_TIME_COUNTERS)
+        }
         _ if crate::eternal_e9b_v1::is_special_activation(state, source, 0) => {
             crate::eternal_e9b_v1::special_activation(state, player, source)
         }
@@ -3257,7 +3274,8 @@ pub(crate) fn note_restricted_spending(
             })
     });
     if !arena
-        || !definition(state, spell).is_some_and(|def| def.has_type(CardType::Creature))
+        || !definition(state, spell)
+            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
         || state.objects.get(spell).zone != Zone::Stack
     {
         return;
@@ -3278,9 +3296,14 @@ pub(crate) fn add_suspended(state: &mut GameState, card: ObjectId, counters: u8)
     }
 }
 
-/// Suspend (702.62a): exiles `source` from `player`'s hand with four time
-/// counters, paying {G}. No stack, no priority pass.
-fn suspend(state: &mut GameState, player: PlayerId, source: ObjectId) -> Result<(), String> {
+/// Suspend (702.62a): exiles `source` from `player`'s hand with `counters`
+/// time counters, paying {G}. No stack, no priority pass.
+fn suspend(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    counters: u8,
+) -> Result<(), String> {
     let live = state.objects.get(source);
     if live.zone != Zone::Hand || live.owner != player {
         return Err("suspend needs the card in its owner's hand".to_string());
@@ -3292,7 +3315,7 @@ fn suspend(state: &mut GameState, player: PlayerId, source: ObjectId) -> Result<
     if state.objects.get(source).zone != Zone::Exile {
         return Ok(());
     }
-    state.objects.get_mut(source).v4.time_counters_v1 = SUSPEND_TIME_COUNTERS;
+    state.objects.get_mut(source).v4.time_counters_v1 = counters;
     let link = live_link(state, source);
     e7a_state(state).suspended.push(link);
     Ok(())
@@ -3425,7 +3448,9 @@ pub(crate) fn graveyard_target_matches(
                 && def.has_type(CardType::Artifact)
                 && def.mana_value <= u16::from(maximum)
         }
-        S::CreatureCardInAGraveyardV1 => def.has_type(CardType::Creature),
+        S::CreatureCardInAGraveyardV1 => {
+            crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+        }
         S::UpToThreeLandCardsInOwnGraveyardV1 => {
             live.owner == controller && def.has_type(CardType::Land)
         }

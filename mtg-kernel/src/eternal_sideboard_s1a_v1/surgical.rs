@@ -344,5 +344,9 @@ pub(crate) fn finish(
     state
         .commit_library_shuffle(owner, shuffle)
         .map_err(|e| e.to_string())?;
+    if owner == choice.player {
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c8c_v1::note_library_searched(state, owner);
+    }
     Ok(false)
 }

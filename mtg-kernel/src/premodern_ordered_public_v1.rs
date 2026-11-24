@@ -10,7 +10,7 @@ use crate::{
     ids::{ObjectId, PlayerId},
     rl::{
         self, CardPrivateV1, CardStableRefV1, FaceDownCardKnowledgeV1, KnownLibraryCardV4,
-        PlayerSeatV1, PublicObservationProjectionV2,
+        PlayerSeatV1, PublicObservationProjectionV2, PublicObservationProjectionV5,
     },
     state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone},
 };
@@ -24,10 +24,12 @@ pub mod feb_jsonl;
 pub use decision::{
     advance_numeric, HumanDecisionViewV1, HumanFullTextActionV1, NumericBoundaryV1,
     NumericDecisionV1, NumericDecisionViewV1, NumericMenuV1, NumericNativeActionV1,
+    NumericRegisteredDecisionViewV1,
 };
 
 pub const SCHEMA_V1: &str = "mtg-kernel-premodern-ordered-public/v1";
 pub const NUMERIC_SCHEMA_V1: &str = "mtg-kernel-numeric-premodern-ordered/v1";
+pub const NUMERIC_REGISTERED_SCHEMA_V1: &str = "mtg-kernel-numeric-premodern-ordered-registered/v1";
 pub const HUMAN_SCHEMA_V1: &str = "mtg-kernel-human-premodern-ordered-public/v1";
 pub const HUMAN_ORDER_SCHEMA_V1: &str = "mtg-kernel-human-premodern-graveyard-order/v1";
 
@@ -99,6 +101,12 @@ pub enum FullTextProgramV1 {
     KarmicGuideEcho,
     DevourerSacrifice,
     RavenousRatsDiscard,
+    AuramancerReturnEnchantment,
+    MonkRealistDestroyEnchantment,
+    UktabiOrangutanDestroyArtifact,
+    GhituSlingerDamage,
+    DonatedEcho,
+    XantidSwarmSilence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -170,6 +178,28 @@ pub struct NumericObservationV1 {
     pub ordered: ObservationV1,
     /// Suspended batches have no stable gameplay scene until order commits.
     pub stable: Option<NumericStableSceneV1>,
+}
+
+/// Common gameplay facts for the registered Premodern ordered profile, with the
+/// schema 5 public projection (Foundations combat, London mulligans, public
+/// shroud and Meddling Mage names). The frozen `NumericStableSceneV1` is
+/// unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NumericRegisteredStableSceneV1 {
+    pub projection: PublicObservationProjectionV5,
+    pub own_hand: Vec<CardPrivateV1>,
+    pub known_library_cards: [Vec<KnownLibraryCardV4>; 2],
+    pub known_hand_cards: [Vec<CardPrivateV1>; 2],
+    pub known_face_down_cards: Vec<FaceDownCardKnowledgeV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NumericRegisteredObservationV1 {
+    pub schema: &'static str,
+    pub step_index: u64,
+    pub ordered: ObservationV1,
+    /// Suspended batches have no stable gameplay scene until order commits.
+    pub stable: Option<NumericRegisteredStableSceneV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -634,6 +664,101 @@ mod tests {
             }
             assert_eq!(b.players[owner.index()].battlefield.len(), 1);
             assert!(b.players[owner.index()].hand.is_empty());
+        }
+    }
+
+    #[test]
+    fn registered_paired_hidden_worlds_preserve_public_order_shroud_and_privacy() {
+        let surface = crate::surface_v2::HarnessSurfaceV2::new();
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let build = |hidden: &str, with_shroud_flag: bool| {
+                let mut state = GameState::new_from_libraries_with_graveyard_order_v1(
+                    &[],
+                    &[],
+                    rl::card_name,
+                    0x460_221,
+                    owner,
+                );
+                if with_shroud_flag {
+                    rl::enable_public_shroud_v1(&mut state);
+                }
+                state.step = Step::Main1;
+                put(&mut state, owner.opponent(), hidden, Zone::Library);
+                put(&mut state, owner.opponent(), hidden, Zone::Hand);
+                put(&mut state, owner, "Forest", Zone::Hand);
+                let enchantress = put(
+                    &mut state,
+                    owner,
+                    "Argothian Enchantress",
+                    Zone::Battlefield,
+                );
+                let first = put(&mut state, owner, "Palinchron", Zone::Library);
+                let second = put(&mut state, owner, "Triskelion", Zone::Library);
+                event::propose_and_commit_batch(
+                    &mut state,
+                    vec![
+                        event::ProposedEvent::zone_change(first, Zone::Graveyard),
+                        event::ProposedEvent::zone_change(second, Zone::Graveyard),
+                    ],
+                );
+                (state, enchantress, first, second)
+            };
+            let (without_flag, _, _, _) = build("Island", false);
+            assert!(rl::observe_premodern_ordered_registered_v1(
+                &without_flag,
+                &surface,
+                owner,
+                17
+            )
+            .is_err());
+
+            let (mut a, enchantress, first, second) = build("Island", true);
+            let (mut b, _, _, _) = build("Mountain", true);
+            assert_ne!(a.state_hash(), b.state_hash());
+            for viewer in [owner, owner.opponent()] {
+                let numeric =
+                    rl::observe_premodern_ordered_registered_v1(&a, &surface, viewer, 17).unwrap();
+                assert_eq!(
+                    numeric,
+                    rl::observe_premodern_ordered_registered_v1(&b, &surface, viewer, 17).unwrap()
+                );
+                assert_eq!(numeric.schema, NUMERIC_REGISTERED_SCHEMA_V1);
+                assert!(numeric.stable.is_none());
+                assert_eq!(numeric.ordered.order_choice.is_some(), viewer == owner);
+            }
+            let prompt = observe_human(&a, owner).unwrap().order_choice.unwrap();
+            choose_human_order(&mut a, owner, &prompt, 1).unwrap();
+            choose_human_order(&mut b, owner, &prompt, 1).unwrap();
+            assert_eq!(a.players[owner.index()].graveyard, [second, first]);
+            assert_eq!(b.players[owner.index()].graveyard, [second, first]);
+
+            // Frozen ordered observation refuses shroud; registered profile
+            // reports it in the schema 5 projection while preserving privacy.
+            assert!(rl::observe_premodern_ordered_v1(&a, &surface, owner, 18).is_err());
+            let numeric =
+                rl::observe_premodern_ordered_registered_v1(&a, &surface, owner, 18).unwrap();
+            assert_eq!(
+                numeric,
+                rl::observe_premodern_ordered_registered_v1(&b, &surface, owner, 18).unwrap()
+            );
+            assert_eq!(numeric.schema, NUMERIC_REGISTERED_SCHEMA_V1);
+            let scene = numeric.stable.unwrap();
+            assert_eq!(scene.own_hand[0].card_name, "Forest");
+            assert_eq!(scene.projection.surface.hand_counts, [1, 1]);
+            assert!(scene.known_hand_cards[owner.opponent().index()].is_empty());
+            let shroud = scene
+                .projection
+                .public_shroud
+                .expect("registered profile reports public shroud");
+            assert_eq!(
+                shroud.permanents,
+                vec![rl::card_ref(&a, enchantress).unwrap()]
+            );
+            assert_eq!(shroud.players, [false, false]);
+            let opponent =
+                rl::observe_premodern_ordered_registered_v1(&a, &surface, owner.opponent(), 18)
+                    .unwrap();
+            assert_eq!(opponent.stable.unwrap().own_hand[0].card_name, "Island");
         }
     }
 }

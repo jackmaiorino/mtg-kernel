@@ -52,8 +52,8 @@ use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1, StandardTriggerV1};
 use crate::state::{
-    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, SpellCastRouteV4,
-    StackItemKind, Step, Target, Zone,
+    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, StackItemKind, Step, Target,
+    Zone,
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ use serde::{Deserialize, Serialize};
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct E7bStateV1 {
     /// Triggers detected by hooks, waiting for the next trigger collection.
@@ -115,9 +115,14 @@ pub struct E7bStateV1 {
     /// Wrenn and Six emblems each player has.
     #[serde(default, skip_serializing_if = "no_emblems")]
     pub wrenn_emblems: [u8; 2],
-    /// The player whose draw-step draw waits for their dredge choice.
+    /// The player whose draw-step draw waits for their dredge or competing
+    /// replacement choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dredge_draw: Option<PlayerId>,
+    /// Remaining draws in the active draw step when a replacement choice
+    /// suspends a multi-draw turn-based draw (e.g. Quantum Riddler).
+    #[serde(default, skip_serializing_if = "OptionalRemainingV1::is_none")]
+    pub draw_step_remaining: OptionalRemainingV1,
     /// Spells whose control Commandeer changed, with the player who cast
     /// them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -134,10 +139,74 @@ pub struct E7bStateV1 {
     /// once the mulligans end.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub powder_declined: Vec<(PlayerId, Vec<ObjectLinkV4>)>,
+    /// Whether a resolving effect or draw-step dredge is deferring trigger
+    /// captures until the next trigger-placement checkpoint.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dredge_deferring: bool,
+    /// Event-time trigger captures drained before a dredge mill changes
+    /// graveyard contents, held until `trigger::collect_and_process` orders
+    /// the combined checkpoint batch under APNAP (CR 603.2, 603.3b).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dredge_captures: Vec<PendingTrigger>,
 }
 
 fn no_emblems(emblems: &[u8; 2]) -> bool {
     emblems[0] == 0 && emblems[1] == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl std::hash::Hash for E7bStateV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.queued_triggers.hash(state);
+        self.evoked_casts.hash(state);
+        self.dash_casts.hash(state);
+        self.dashed.hash(state);
+        self.escaped_casts.hash(state);
+        self.graveyard_casts.hash(state);
+        self.end_step_returns.hash(state);
+        self.revoker_names.hash(state);
+        self.shields.hash(state);
+        self.discards.hash(state);
+        self.creature_spells.hash(state);
+        self.skimmer_uses.hash(state);
+        self.dack_emblems.hash(state);
+        self.wrenn_emblems.hash(state);
+        self.dredge_draw.hash(state);
+        self.draw_step_remaining.hash(state);
+        self.casters.hash(state);
+        self.prepared.hash(state);
+        self.prepare_copies.hash(state);
+        self.powder_declined.hash(state);
+        if self.dredge_deferring || !self.dredge_captures.is_empty() {
+            "e7b-dredge-captures/v1".hash(state);
+            self.dredge_deferring.hash(state);
+            self.dredge_captures.hash(state);
+        }
+    }
+}
+
+/// Optional remaining draw-step draw count that hashes zero bytes when `None`,
+/// preserving every existing snapshot and state hash outside multi-draw turn
+/// draws (Quantum Riddler).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct OptionalRemainingV1(pub Option<u32>);
+
+impl OptionalRemainingV1 {
+    pub(crate) fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl std::hash::Hash for OptionalRemainingV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(remaining) = self.0 {
+            remaining.hash(state);
+        }
+    }
 }
 
 impl E7bStateV1 {
@@ -396,6 +465,14 @@ const ENROOT: &str = "Enroot";
 /// Vintage Cube wave C4b's prepare creature and its spell.
 const POMPOUS_BATTLEMAGE: &str = "Pompous Battlemage";
 const IMPROVISED_ACT: &str = "Improvised Act";
+/// Pauper field wave Pf1b's prepare creature and its spell.
+const ELITE_INTERCEPTOR: &str = "Elite Interceptor";
+const REJOINDER: &str = "Rejoinder";
+/// Vintage Cube wave C8a's prepare creatures and their spells.
+const EMERITUS_OF_ABUNDANCE: &str = "Emeritus of Abundance";
+const REGROWTH: &str = "Regrowth";
+const EMERITUS_OF_IDEATION: &str = "Emeritus of Ideation";
+const ANCESTRAL_RECALL: &str = "Ancestral Recall";
 const CREEPING_CHILL: &str = "Creeping Chill";
 const DACK_FAYDEN: &str = "Dack Fayden";
 const GOLGARI_GRAVE_TROLL: &str = "Golgari Grave-Troll";
@@ -889,6 +966,11 @@ pub(crate) fn pending_retrace(state: &GameState, pending: &crate::engine::Pendin
             .source_contract
             .spell_cast_origin
             .is_some_and(|origin| {
+                if origin.origin_zone == Zone::Graveyard
+                    && origin.route == crate::state::SpellCastRouteV4::RetraceV1
+                {
+                    return retrace_permission(state, pending.spell, pending.controller);
+                }
                 origin.origin_zone == Zone::Graveyard
                     && matches!(
                         origin.route,
@@ -1707,6 +1789,7 @@ fn ragavan(state: &mut GameState, ctx: &ExecCtx) {
         .exile_play_permissions
         .push(crate::engine::PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1(false),
+            any_mana_type: Default::default(),
             object: top,
             holder: ctx.controller,
             zone_change_generation,
@@ -1752,6 +1835,7 @@ fn golos(state: &mut GameState, player: PlayerId) {
             .exile_play_permissions
             .push(crate::engine::PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1(true),
+                any_mana_type: Default::default(),
                 object: card,
                 holder: player,
                 zone_change_generation,
@@ -1823,6 +1907,13 @@ pub(crate) fn drive(
                 &ctx,
                 state,
             );
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                returner,
+            ) {
+                return Ok(false);
+            }
             let lands = state.players[returner.index()]
                 .battlefield
                 .iter()
@@ -1868,7 +1959,7 @@ pub(crate) fn drive(
                 .filter(|&other| {
                     other != card
                         && definition(state, other).is_some_and(|def| {
-                            def.has_type(CardType::Creature)
+                            crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
                                 && (def.colors.iter().any(|&color| {
                                     crate::card_def::mana_color_mask(color) & black != 0
                                 }) || crate::eternal_legacy_e9a_v1::statics::painter_mask(
@@ -2429,11 +2520,7 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
                         casts.push(link);
                     }
                 }
-                Some(URO)
-                    if cast_origin.is_some_and(|origin| {
-                        origin.route == SpellCastRouteV4::GraveyardEscape
-                    }) =>
-                {
+                Some(URO) if cast_origin.is_some_and(|origin| origin.route.is_escape()) => {
                     let casts = &mut e7b_state(state).escaped_casts;
                     if !casts.contains(&link) {
                         casts.push(link);
@@ -2569,7 +2656,13 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                 .is_some_and(|live| live.zone == Zone::Battlefield)
                 && matches!(
                     definition_name(state, object),
-                    Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+                    Some(
+                        CARNIVOROUS_CULTIVATOR
+                            | POMPOUS_BATTLEMAGE
+                            | ELITE_INTERCEPTOR
+                            | EMERITUS_OF_ABUNDANCE
+                            | EMERITUS_OF_IDEATION
+                    )
                 )
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
             {
@@ -2613,7 +2706,13 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
         // its abilities (Dress Down) does not enter prepared.
         if matches!(
             definition_name(state, object),
-            Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+            Some(
+                CARNIVOROUS_CULTIVATOR
+                    | POMPOUS_BATTLEMAGE
+                    | ELITE_INTERCEPTOR
+                    | EMERITUS_OF_ABUNDANCE
+                    | EMERITUS_OF_IDEATION
+            )
         ) && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
         {
             prepare(state, object);
@@ -2632,7 +2731,7 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
 /// It stays there while the creature is on the battlefield and prepared,
 /// and the creature's controller may cast it; as they do, the creature
 /// stops being prepared. A creature can't be prepared twice at once.
-fn prepare(state: &mut GameState, creature: ObjectId) {
+pub(crate) fn prepare(state: &mut GameState, creature: ObjectId) {
     let link = live_link(state, creature);
     if read_state(state)
         .is_some_and(|e7b| e7b.prepared.iter().any(|(prepared, _)| *prepared == link))
@@ -2640,10 +2739,12 @@ fn prepare(state: &mut GameState, creature: ObjectId) {
         return;
     }
     let controller = state.objects.get(creature).controller;
-    let printing = if definition_name(state, creature) == Some(POMPOUS_BATTLEMAGE) {
-        IMPROVISED_ACT
-    } else {
-        ENROOT
+    let printing = match definition_name(state, creature) {
+        Some(POMPOUS_BATTLEMAGE) => IMPROVISED_ACT,
+        Some(ELITE_INTERCEPTOR) => REJOINDER,
+        Some(EMERITUS_OF_ABUNDANCE) => REGROWTH,
+        Some(EMERITUS_OF_IDEATION) => ANCESTRAL_RECALL,
+        _ => ENROOT,
     };
     let card_def = token_id(printing);
     let copy = state.objects.push(crate::state::GameObject {
@@ -2676,6 +2777,27 @@ fn note_prepare_cast(state: &mut GameState, spell: ObjectId) {
     }
 }
 
+/// Prepared spells are cast like other spells, but their copies are never cards.
+pub(crate) fn is_prepare_copy(state: &GameState, object: ObjectId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && read_state(state).is_some_and(|e7b| e7b.prepare_copies.contains(&object))
+}
+
+/// Clears the prepare relationship and permission after the copy ceases.
+pub(crate) fn forget_prepare_copy(state: &mut GameState, copy: ObjectId) {
+    if !is_prepare_copy(state, copy) {
+        return;
+    }
+    let e7b = e7b_state(state);
+    e7b.prepared
+        .retain(|(_, prepared_copy)| *prepared_copy != copy);
+    e7b.prepare_copies.retain(|live| *live != copy);
+    state
+        .engine
+        .exile_play_permissions
+        .retain(|permission| permission.object != copy);
+}
+
 /// Keeps each prepare copy's cast permission with its creature's current
 /// controller, and makes copies cease to exist once their creature left or
 /// they left exile and the stack.
@@ -2704,9 +2826,9 @@ fn maintain_prepared(state: &mut GameState) {
             .filter(|(creature, _)| in_exile && link_live_in(state, *creature, Zone::Battlefield))
             .map(|(creature, _)| state.objects.get(creature.object).controller);
         let generation = state.objects.get(copy).zone_change_count;
-        let permissions = &mut state.engine.exile_play_permissions;
         match holder {
             Some(holder) => {
+                let permissions = &mut state.engine.exile_play_permissions;
                 let current = permissions
                     .iter()
                     .filter(|permission| permission.object == copy)
@@ -2723,6 +2845,7 @@ fn maintain_prepared(state: &mut GameState) {
                     // grant for a turn that never comes.
                     permissions.push(crate::engine::PlayPermission {
                         without_mana_cost: crate::engine::FreeCastV1::default(),
+                        any_mana_type: Default::default(),
                         object: copy,
                         holder,
                         zone_change_generation: generation,
@@ -2735,12 +2858,8 @@ fn maintain_prepared(state: &mut GameState) {
                 }
             }
             None => {
-                permissions.retain(|permission| permission.object != copy);
                 event::cease_to_exist(state, copy);
-                let e7b = e7b_state(state);
-                e7b.prepared
-                    .retain(|(_, prepared_copy)| *prepared_copy != copy);
-                e7b.prepare_copies.retain(|live| *live != copy);
+                forget_prepare_copy(state, copy);
             }
         }
     }

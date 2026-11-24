@@ -477,7 +477,13 @@ fn discard_at_random(ctx: &ExecCtx, state: &mut GameState, count: usize) {
     let Some(Target::Player(player)) = ctx.targets.first().copied() else {
         return;
     };
-    if count == 0 {
+    if count == 0
+        || crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+            state,
+            ctx.controller,
+            player,
+        )
+    {
         return;
     }
     match state.random_hand_cards_v1(player, count) {
@@ -621,6 +627,13 @@ pub(crate) fn drive(
             if !ctx.target_incarnation_matches(0, state) {
                 return Ok(false);
             }
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                ctx.controller,
+                player,
+            ) {
+                return Ok(offer_chain_copy(state, continuation, player, path));
+            }
             let hand = state.players[player.index()].hand.clone();
             if hand.len() > 2 {
                 // "Target player discards two cards": their choice.
@@ -735,7 +748,14 @@ pub(crate) fn finish_selection(
             let Some(card) = bindings.first().copied() else {
                 return Err("Collective Brutality chooses a card".to_string());
             };
-            if state.objects.get(card.object).zone == Zone::Hand {
+            let live = state.objects.get(card.object);
+            if live.zone == Zone::Hand
+                && !crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                    state,
+                    continuation.ctx.controller,
+                    live.owner,
+                )
+            {
                 crate::engine::commit_discarded_card(state, card.object);
             }
             Ok(false)

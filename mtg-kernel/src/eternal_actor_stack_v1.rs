@@ -136,6 +136,7 @@ pub fn capture_pending_v1(
                 .iter()
                 .flat_map(|pending| pending.waiting_triggers()),
         )
+        .chain(crate::rl::dredge_waiting_triggers(state))
         .collect::<Vec<_>>();
     if pending.len() != public.len() {
         return Err(error());
@@ -486,5 +487,43 @@ mod tests {
         let (origin, program) = bind_trigger(&state, thief_printing, &draw).unwrap();
         assert_eq!(origin, ProgramOriginV1::GrantedLeaveBattlefieldOpponentDraw);
         assert_eq!(program, ProgramV1::Printed(Box::new(draw)));
+    }
+
+    #[test]
+    fn dredge_deferred_pending_trigger_captures_through_public_v2_both_seats() {
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(viewer);
+            let source = put(
+                &mut state,
+                viewer,
+                "Atraxa, Grand Unifier",
+                Zone::Battlefield,
+            );
+            let printing = state.objects.get(source).card_def;
+            let triggers = crate::trigger::triggers_for(printing);
+            assert_eq!(triggers.len(), 1);
+            let pending = crate::eternal_cards_v1::delayed_trigger(
+                crate::state::AbilitySourceContractV4::capture(&state, source),
+                viewer,
+                (triggers[0].effect)(),
+            );
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(&mut state, vec![pending]);
+            let surface = crate::surface_v2::HarnessSurfaceV2::default();
+            for observer in [viewer, viewer.opponent()] {
+                let obs = crate::rl::observe_v2(&state, &surface, observer, 0).unwrap();
+                assert_eq!(obs.projection.engine_context.pending_triggers.len(), 1);
+                let captured = capture_pending_v1(
+                    &state,
+                    observer,
+                    &obs.projection.engine_context.pending_triggers,
+                )
+                .unwrap();
+                assert_eq!(captured.len(), 1);
+                assert_eq!(
+                    captured[0].meaning.origin,
+                    ProgramOriginV1::PrintedTrigger { trigger_index: 0 }
+                );
+            }
+        }
     }
 }

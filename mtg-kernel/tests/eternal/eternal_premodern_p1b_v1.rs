@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::eternal_premodern_p1b_v1::statics as p1b;
@@ -612,10 +612,88 @@ fn accumulated_knowledge_counts_its_name_in_all_graveyards() {
     let knowledge = put(&mut state, P0, "Accumulated Knowledge", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 1);
     cast(&mut state, knowledge, &[]);
-    settled(&mut state);
-    // One, then one for each of the two in graveyards.
-    assert_eq!(state.players[0].hand.len(), 3);
-    assert_eq!(zone(&state, knowledge), Zone::Graveyard);
+    let mut replay: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    for branch in [&mut state, &mut replay] {
+        settled(branch);
+        // One, then one for each of the two in graveyards. The resolving
+        // physical Knowledge does not join its graveyard until both finish.
+        assert_eq!(branch.players[0].hand.len(), 3);
+        assert_eq!(zone(branch, knowledge), Zone::Graveyard);
+    }
+    assert_eq!(state.state_hash(), replay.state_hash());
+}
+
+#[test]
+fn accumulated_knowledge_restores_under_the_commandeering_controller_both_seats() {
+    for caster in [P0, P1] {
+        let new_controller = caster.opponent();
+        let mut state = islands();
+        state.active_player = caster;
+        state.priority_player = caster;
+        for player in [P0, P1] {
+            put(&mut state, player, "Accumulated Knowledge", Zone::Graveyard);
+        }
+
+        let knowledge = put(&mut state, caster, "Accumulated Knowledge", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::U], 1);
+        cast(&mut state, knowledge, &[]);
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == caster)
+        );
+        let original = state
+            .stack
+            .last()
+            .expect("Knowledge was paid and put on the stack");
+        assert_eq!(original.source, knowledge);
+        assert_eq!(original.controller, caster);
+        assert!(original.targets.is_empty());
+        let item_id = original.v4.stack_item_id;
+
+        act(&mut state, Action::Pass);
+        let commandeer = put(&mut state, new_controller, "Commandeer", Zone::Hand);
+        pool(&mut state, new_controller, &[ManaColor::U; 2], 5);
+        cast(&mut state, commandeer, &[Target::Object(knowledge)]);
+        run_until(
+            &mut state,
+            |state| {
+                state.stack.iter().any(|item| {
+                    item.v4.stack_item_id == item_id && item.controller == new_controller
+                })
+            },
+            |_, _| None,
+        );
+        assert_eq!(zone(&state, commandeer), Zone::Graveyard);
+        let stolen = state
+            .stack
+            .last()
+            .expect("the transferred Knowledge still awaits resolution");
+        assert_eq!(stolen.source, knowledge);
+        assert_eq!(stolen.v4.stack_item_id, item_id);
+        assert_eq!(stolen.controller, new_controller);
+        assert!(stolen.targets.is_empty());
+        assert_eq!(state.objects.get(knowledge).owner, caster);
+        assert_eq!(state.objects.get(knowledge).controller, new_controller);
+        let caster_library = state.players[caster.index()].library.len();
+        let new_controller_library = state.players[new_controller.index()].library.len();
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(restored.state_hash(), state.state_hash());
+        for branch in [&mut state, &mut restored] {
+            settled(branch);
+            let original_player = &branch.players[caster.index()];
+            let drawing_player = &branch.players[new_controller.index()];
+            assert!(original_player.hand.is_empty());
+            assert_eq!(original_player.library.len(), caster_library);
+            assert!(original_player.graveyard.contains(&knowledge));
+            assert!(!drawing_player.graveyard.contains(&knowledge));
+            assert_eq!(drawing_player.hand.len(), 3);
+            assert_eq!(drawing_player.library.len(), new_controller_library - 3);
+            assert_eq!(zone(branch, knowledge), Zone::Graveyard);
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
 }
 
 #[test]
@@ -1123,6 +1201,69 @@ fn mirris_guile_may_reorder_the_top_three_at_upkeep() {
     // The draw step drew the new top card: Forest.
     assert_eq!(zone(&state, third), Zone::Hand);
     assert_eq!(state.players[0].library[0], second);
+}
+
+#[test]
+fn animated_journey_can_exile_itself_and_return_as_a_new_incarnation_both_seats() {
+    for seat in [P0, P1] {
+        let mut state = islands();
+        state.active_player = seat;
+        state.priority_player = seat;
+        let opalescence = put(&mut state, seat, "Opalescence", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::W, ManaColor::W], 2);
+        cast(&mut state, opalescence, &[]);
+        settled(&mut state);
+
+        let creature = put(
+            &mut state,
+            seat.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let journey = put(&mut state, seat, "Journey to Nowhere", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::W], 1);
+        cast(&mut state, journey, &[]);
+        let mut generations = Vec::new();
+        while let Some(decision) = settle(&mut state) {
+            let Decision::ChooseTargets {
+                spell,
+                legal_targets,
+                ..
+            } = decision
+            else {
+                panic!("unexpected Journey decision {decision:?}")
+            };
+            assert_eq!(spell, journey);
+            assert!(is_creature(&state, journey));
+            assert!(legal_targets.contains(&Target::Object(journey)));
+            assert!(legal_targets.contains(&Target::Object(creature)));
+            generations.push(state.objects.get(journey).zone_change_count);
+            let target = match generations.len() {
+                1 => journey,
+                2 => creature,
+                _ => panic!("unexpected third Journey entry"),
+            };
+            assert_eq!(
+                state.engine.pending_triggers[0].target_spec,
+                TargetSpec::Creature
+            );
+            if seat == P1 {
+                // Also resume a stored trigger encoded with the former target tag.
+                state.engine.pending_triggers[0].target_spec = TargetSpec::CreatureOtherThanSource;
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            }
+            choose_target(&mut state, Target::Object(target));
+        }
+        assert_eq!(generations.len(), 2);
+        assert_eq!(generations[1], generations[0] + 2);
+        assert_eq!(zone(&state, journey), Zone::Battlefield);
+        assert_eq!(zone(&state, creature), Zone::Exile);
+        let links = &state.engine.linked_exile_records;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].source.source, journey);
+        assert_eq!(links[0].source.zone_change_count, generations[1]);
+        assert_eq!(links[0].exiled, creature);
+    }
 }
 
 #[test]

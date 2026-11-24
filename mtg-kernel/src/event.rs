@@ -126,6 +126,11 @@ impl DamageProposed {
             _ => Err("damage proposal changed its native source loan".into()),
         }
     }
+
+    pub(crate) fn departed_types(&self) -> Option<crate::source_type_hexproof_v1::SourceTypesV1> {
+        self.eternal_damage_lki_v1
+            .and_then(|origin| origin.departed_types())
+    }
 }
 
 impl std::hash::Hash for DamageProposed {
@@ -2264,6 +2269,19 @@ pub enum CommittedEvent {
     EtaliPrimalStormReceiptV1 {
         journal: Box<crate::etali_primal_storm_receipts_v1::JournalV1>,
     },
+    /// Resolution payment for an exact spell incarnation, retained only in
+    /// engine history. It does not create a trigger or cast a spell.
+    SpellCopyCostPaidV1 {
+        parent: StackItemId,
+        player: PlayerId,
+    },
+    /// Physical card immediately before its linked exile incarnation ended independently.
+    LinkedExileDepartureV1 {
+        exiled: crate::state::ObjectLinkV4,
+        owner: PlayerId,
+        card_def: u16,
+        move_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3007,6 +3025,26 @@ fn refuse_unowned_donated_damage(state: &mut GameState, event: &ProposedEvent) -
     true
 }
 
+/// A covered damage packet still passes the same source/custody and roster
+/// checks before Hallow's cohort can remove it from ordinary replacements.
+pub(crate) fn preflight_hallow_damage_v1(state: &mut GameState, event: &ProposedEvent) -> bool {
+    if let Err(source) = validate_exile_if_dies_replacements(state) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return false;
+    }
+    if !preflight_historical_damage_v1(state, event) {
+        return false;
+    }
+    if let Err(source) = crate::progenitus_v1::plan(state, event, None) {
+        halt_zone_pt_v1(state, source);
+        return false;
+    }
+    true
+}
+
 fn apply_replacements_inner(
     state: &mut GameState,
     mut proposed: ProposedEvent,
@@ -3046,20 +3084,50 @@ fn apply_replacements_inner(
             change.to_zone = Zone::Exile;
         }
     }
-    let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-        && state.engine.until_end_of_turn.iter().any(|effect| {
-            matches!(
-                effect,
-                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-            )
-        });
+    let damage_cannot_be_prevented = match &proposed {
+        ProposedEvent::Damage(damage) => {
+            state.engine.until_end_of_turn.iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                )
+            }) || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+        }
+        _ => false,
+    };
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            || crate::eternal_prevention_order_v1::soul_scar_competes(state, damage)
+            || crate::eternal_prevention_order_v1::unicorn_competes(state, damage)
+        {
+            use crate::eternal_prevention_order_v1::DamageResultV1;
+            match crate::eternal_pauper_pf1c_v1::replace_damage(state, damage) {
+                DamageResultV1::Uncovered => {}
+                DamageResultV1::Prevented => return None,
+                DamageResultV1::Residual(damage) => {
+                    if !crate::linked_aura_operation_v1::soul_scar_damage_order_v1()
+                        && crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, &damage)
+                    {
+                        return None;
+                    }
+                    return Some(ProposedEvent::Damage(damage));
+                }
+            }
+        }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before
         // the increases, the redirection and every shield.
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented
             && crate::eternal_premodern_p3a_v1::statics::sphere_of_law_prevents(state, damage)
         {
+            return None;
+        }
+        // Benevolent Unicorn (Pauper field wave Pf2c): CR 614.1a spell-damage
+        // replacement effect, unaffected by "damage can't be prevented".
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_pauper_pf2c_v1::unicorn_replaces_damage(state, damage) {
             return None;
         }
         if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
@@ -3111,11 +3179,13 @@ fn apply_replacements_inner(
                             damage.target,
                         )
                     },
-                    |facts| match damage.target {
-                        Target::Object(target) => {
-                            crate::source_power_activation_v1::protected(state, facts, target)
-                        }
-                        _ => false,
+                    |facts| {
+                        historical_damage_prevented_by_protection(
+                            state,
+                            facts,
+                            damage.departed_types(),
+                            damage.target,
+                        )
                     },
                 )
         {
@@ -3132,14 +3202,28 @@ fn apply_replacements_inner(
             return None;
         }
     }
+    // Aurora Eidolon (Pauper field wave Pf2b): finite prevention shields.
+    #[cfg(feature = "eternal-fixtures")]
+    if let ProposedEvent::Damage(damage) = &mut proposed {
+        if !damage_cannot_be_prevented
+            && crate::eternal_pauper_pf2b_v1::aurora_prevents_damage(state, damage)
+        {
+            return None;
+        }
+    }
     loop {
-        let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
-            && state.engine.until_end_of_turn.iter().any(|effect| {
-                matches!(
-                    effect,
-                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
-                )
-            });
+        let damage_cannot_be_prevented = match &proposed {
+            ProposedEvent::Damage(damage) => {
+                state.engine.until_end_of_turn.iter().any(|effect| {
+                    matches!(
+                        effect,
+                        crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                    )
+                }) || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
+            }
+            _ => false,
+        };
         let hit = state
             .engine
             .active_replacements
@@ -3158,6 +3242,15 @@ fn apply_replacements_inner(
             .cloned();
 
         let Some(repl) = hit else {
+            // Soul-Scar Mage (Vintage Cube wave C7b): noncombat damage from a
+            // controlled source to an opponent's creature becomes -1/-1
+            // counters instead.
+            #[cfg(feature = "eternal-fixtures")]
+            if let ProposedEvent::Damage(damage) = &proposed {
+                if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage) {
+                    return None;
+                }
+            }
             return Some(proposed);
         };
 
@@ -3647,6 +3740,70 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
         )
 }
 
+pub(crate) fn historical_damage_prevented_by_protection(
+    state: &GameState,
+    facts: HistoricalDamageSourceV1,
+    departed_types: Option<crate::source_type_hexproof_v1::SourceTypesV1>,
+    target: Target,
+) -> bool {
+    let Some(types) = departed_types else {
+        return match target {
+            Target::Object(id) => crate::source_power_activation_v1::protected(state, facts, id),
+            Target::Player(_) | Target::StackItem(_) => false,
+        };
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let _ = types;
+    match target {
+        Target::Player(player) => {
+            #[cfg(feature = "eternal-fixtures")]
+            {
+                crate::eternal_cards_v1::e3::player_protected(state, player)
+                    || crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                        state,
+                        Target::Player(player),
+                        types,
+                    )
+            }
+            #[cfg(not(feature = "eternal-fixtures"))]
+            {
+                let _ = player;
+                false
+            }
+        }
+        Target::Object(id) => {
+            if crate::source_power_activation_v1::protected(state, facts, id) {
+                return true;
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if state
+                .objects
+                .try_get(id)
+                .is_some_and(|object| object.zone == Zone::Battlefield)
+            {
+                let multicolored = (facts.color_mask & 0x1f).count_ones() > 1;
+                return crate::eternal_pauper_e6b_v1::protected_from_colors(
+                    state,
+                    id,
+                    facts.color_mask,
+                ) || (multicolored
+                    && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(
+                        state, id,
+                    ))
+                    || (types.contains(crate::card_def::CardType::Creature)
+                        && crate::eternal_vintage_v1::protected_from_creatures(state, id))
+                    || crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                        state,
+                        Target::Object(id),
+                        types,
+                    );
+            }
+            false
+        }
+        Target::StackItem(_) => false,
+    }
+}
+
 /// Convenience: replace/prevent then commit if anything survived. Lifelink
 /// is evaluated from the final damage amount and source immediately before
 /// that damage is committed.
@@ -3681,6 +3838,9 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
         state,
         crate::full_text_v1::DonorCheckSiteV1::CommitTail,
     );
+    // Hallow's life for the damage this event's shield prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
@@ -4087,6 +4247,13 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if matches!(&event, ProposedEvent::Damage(damage)
+        if crate::eternal_pauper_pf1c_v1::needs_redirect_batch(state, damage))
+    {
+        batch_without_linked_aura_v1(state, vec![event]);
+        return;
+    }
     // Hullbreacher: an opponent's draw (other than the first of their draw
     // step) becomes a Treasure token for its controller (eternal wave S1c).
     #[cfg(feature = "eternal-fixtures")]
@@ -4101,8 +4268,13 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             return;
         }
     }
-    if matches!(&event,ProposedEvent::CreateToken(t) if !crate::doubling_season_v48::sources(state,t.controller).is_empty())
-    {
+    if matches!(
+        &event,
+        ProposedEvent::CreateToken(t)
+            if !crate::doubling_season_v48::sources(state, t.controller).is_empty()
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::token_doubler_count(state, t.controller) > 0)
+    ) {
         batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
@@ -4154,6 +4326,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             std::slice::from_ref(&input),
             &[],
+            &[],
         ) {
             Ok(plan) => plan,
             Err(source) => {
@@ -4171,6 +4344,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             (None, None, None),
             ((None, false), None, input, None, Some(&plan)),
+            None,
             None,
         );
         if state.engine.halted.is_none() {
@@ -4399,6 +4573,7 @@ fn commit_with_ability_lki_and_entry_batch(
         (entry_batches.0, entry_batches.1, None),
         (entry_context, None, None, None, None),
         None,
+        None,
     );
 }
 
@@ -4500,6 +4675,7 @@ fn commit_with_entry_batch_and_source_color(
     ),
     entry_context: EntryContextWithSourceColorV1<'_>,
     mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
+    mut blightsteel_shuffles: Option<&mut Vec<(PlayerId, ObjectId)>>,
 ) {
     if !preflight_wide_life_v59(state, &event) {
         return;
@@ -4692,6 +4868,64 @@ fn commit_with_entry_batch_and_source_color(
             change.to_zone = Zone::Exile;
         }
     }
+    // Blightsteel Colossus (Vintage Cube wave C9a): if it would be put into a
+    // graveyard from anywhere, reveal it and shuffle it into its owner's
+    // library instead. Check after Fiery/Finality and skip if an active
+    // graveyard-exile replacement (Rest in Peace, Leyline of the Void, Dauthi
+    // Voidwalker, Yawgmoth's Will, Unearth, etc.) already redirects it, matching
+    // batch replacement ordering.
+    #[cfg(feature = "eternal-fixtures")]
+    let graveyard_redirected = match &event {
+        ProposedEvent::ZoneChange(change)
+            if change.to_zone == Zone::Graveyard
+                && state.objects.try_get(change.object).is_some_and(|live| {
+                    crate::eternal_cube_c9a_v1::is_blightsteel(live.card_def)
+                }) =>
+        {
+            let mut probe = change.clone();
+            crate::standard_keywords_v1::unearth_exile_instead(state, &mut probe);
+            crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut probe);
+            crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut probe);
+            crate::eternal_cube_c8a_v1::adjust_zone_change(state, &mut probe);
+            crate::eternal_e9b_v1::replace_zone_change(state, &mut probe, false);
+            crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut probe);
+            probe.to_zone != Zone::Graveyard
+        }
+        _ => false,
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let graveyard_redirected = false;
+    let blightsteel_shuffle = if graveyard_redirected {
+        None
+    } else {
+        crate::eternal_cube_c9a_v1::plan_blightsteel_shuffle(
+            state,
+            &event,
+            abilities_removed_before,
+        )
+    };
+    if let Some((owner, source, true)) = blightsteel_shuffle {
+        if let Some(queue) = blightsteel_shuffles.as_mut() {
+            queue.push((owner, source));
+        } else if let Err(source) =
+            crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, vec![(owner, source)])
+        {
+            halt_zone_pt_v1(state, source);
+        }
+        return;
+    }
+    let event = if blightsteel_shuffle.is_some() {
+        match event {
+            ProposedEvent::ZoneChange(mut change) => {
+                change.to_zone = Zone::Library;
+                change.library_insert_visibility = LibraryInsertVisibility::Public;
+                ProposedEvent::ZoneChange(change)
+            }
+            other => other,
+        }
+    } else {
+        event
+    };
     let local_zone_plan = if zone_plan.is_none()
         && needs_final_zone_pt_plan_v1(state, std::slice::from_ref(&event))
     {
@@ -4703,6 +4937,7 @@ fn commit_with_entry_batch_and_source_color(
                 .map(|batch| batch.observers.as_slice()),
             entry_context.0,
             std::slice::from_ref(&counter_input),
+            &[],
             &[],
         ) {
             Ok(plan) => Some(plan),
@@ -4812,6 +5047,7 @@ fn commit_with_entry_batch_and_source_color(
     let progenitus_input = progenitus_plan
         .as_ref()
         .map(|plan| plan.record_input(state));
+    let linked_exile_departure = crate::linked_exile_v4::capture_departure(state, &event);
     // Exile does not have the battlefield/stack reveal-on-exit rule. A
     // concealed exiled card can enter a hidden zone without naming itself.
     let concealed_exile_departure = match &event {
@@ -4925,6 +5161,7 @@ fn commit_with_entry_batch_and_source_color(
         niv_source_departure,
         curie_departure,
         minsc_departure,
+        full_text_departure,
     }) = materialize_event_v1(
         state,
         event,
@@ -5045,6 +5282,9 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    if let Some(departure) = linked_exile_departure {
+        departure.record(state, entry_history_index);
+    }
     if let Some(departure) = curie_departure {
         crate::eternal_legacy_e7a_v1::curie::record_departure(
             state,
@@ -5058,6 +5298,9 @@ fn commit_with_entry_batch_and_source_color(
             entry_history_index,
             departure,
         );
+    }
+    if let Some(departure) = full_text_departure {
+        crate::full_text_v1::record_departure(state, entry_history_index, departure);
     }
     if let Some(copy) = metamorph_mage_copy {
         if matches!(state.engine.event_history.get(entry_history_index),
@@ -5479,6 +5722,15 @@ fn commit_with_entry_batch_and_source_color(
             halt_zone_pt_v1(state, source);
         }
     }
+    if let Some((owner, source, false)) = blightsteel_shuffle {
+        if let Some(queue) = blightsteel_shuffles.as_mut() {
+            queue.push((owner, source));
+        } else if let Err(source) =
+            crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, vec![(owner, source)])
+        {
+            halt_zone_pt_v1(state, source);
+        }
+    }
 }
 
 fn initialize_materialized_entry_v1(
@@ -5511,6 +5763,7 @@ struct FinalZonePtPlanV1 {
     departures: Vec<(crate::state::ObjectLinkV4, (i32, i32))>,
     curie_departures: Vec<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
     minsc_departures: Vec<crate::eternal_vintage_e7b_v1::minsc::DepartureV1>,
+    full_text_departures: Vec<crate::full_text_v1::DepartureV1>,
 }
 #[derive(Clone, Copy)]
 enum NativeMaterializationV1<'a> {
@@ -5539,6 +5792,27 @@ impl NativeMaterializationV1<'_> {
                     .copied()
             }
             Self::Commit(None) => crate::eternal_vintage_e7b_v1::minsc::departure(state, id),
+        }
+    }
+
+    fn full_text_departure(
+        self,
+        state: &GameState,
+        id: ObjectId,
+    ) -> Option<crate::full_text_v1::DepartureV1> {
+        match self {
+            Self::FinalScene(_) => None,
+            Self::Commit(Some(plan)) => {
+                let generation = state.objects.get(id).zone_change_count;
+                plan.full_text_departures
+                    .iter()
+                    .find(|departure| {
+                        departure.facts.source.source == id
+                            && departure.facts.source.zone_change_count == generation
+                    })
+                    .copied()
+            }
+            Self::Commit(None) => crate::full_text_v1::departure(state, id, &[]),
         }
     }
 
@@ -5619,13 +5893,23 @@ fn needs_final_zone_pt_plan_v1(state: &GameState, events: &[ProposedEvent]) -> b
         })
 }
 impl FinalZonePtPlanV1 {
-    fn eternal_departures_only(state: &GameState, events: &[ProposedEvent]) -> Option<Self> {
+    fn eternal_departures_only(
+        state: &GameState,
+        events: &[ProposedEvent],
+        checkpoint_triggers: &[crate::trigger::PendingTrigger],
+    ) -> Option<Self> {
         let curie_departures = crate::eternal_legacy_e7a_v1::curie::capture_batch(state, events);
         let minsc_departures = crate::eternal_vintage_e7b_v1::minsc::capture_batch(state, events);
-        (!curie_departures.is_empty() || !minsc_departures.is_empty()).then_some(Self {
+        let full_text_departures =
+            crate::full_text_v1::capture_batch(state, events, checkpoint_triggers);
+        (!curie_departures.is_empty()
+            || !minsc_departures.is_empty()
+            || !full_text_departures.is_empty())
+        .then_some(Self {
             departures: Vec::new(),
             curie_departures,
             minsc_departures,
+            full_text_departures,
         })
     }
 
@@ -5639,6 +5923,7 @@ impl FinalZonePtPlanV1 {
             crate::effect::EffectObjectBinding,
             crate::effect::EffectObjectBinding,
         )],
+        checkpoint_triggers: &[crate::trigger::PendingTrigger],
     ) -> Result<Self, ObjectId> {
         if events.len() != counter_inputs.len() {
             return Err(ObjectId(0));
@@ -5649,6 +5934,11 @@ impl FinalZonePtPlanV1 {
             departures: Vec::new(),
             curie_departures: crate::eternal_legacy_e7a_v1::curie::capture_batch(original, events),
             minsc_departures: crate::eternal_vintage_e7b_v1::minsc::capture_batch(original, events),
+            full_text_departures: crate::full_text_v1::capture_batch(
+                original,
+                events,
+                checkpoint_triggers,
+            ),
         };
         for event in events {
             if let ProposedEvent::ZoneChange(z) = event {
@@ -5862,17 +6152,31 @@ fn direct_zone_scene_events_v1(state: &GameState, events: &[ProposedEvent]) -> V
 fn direct_zone_pt_plan_v1(
     state: &GameState,
     events: &[ProposedEvent],
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
 ) -> Result<Option<FinalZonePtPlanV1>, ObjectId> {
     crate::progenitus_v1::preview(state, events)?;
     if !needs_final_zone_pt_plan_v1(state, events) {
-        return Ok(FinalZonePtPlanV1::eternal_departures_only(state, events));
+        return Ok(FinalZonePtPlanV1::eternal_departures_only(
+            state,
+            events,
+            checkpoint_triggers,
+        ));
     }
     let final_events = direct_zone_scene_events_v1(state, events);
     let inputs = final_events
         .iter()
         .map(|event| crate::doubling_season_v48::entry_input(state, event))
         .collect::<Vec<_>>();
-    FinalZonePtPlanV1::capture(state, &final_events, None, None, &inputs, &[]).map(Some)
+    FinalZonePtPlanV1::capture(
+        state,
+        &final_events,
+        None,
+        None,
+        &inputs,
+        &[],
+        checkpoint_triggers,
+    )
+    .map(Some)
 }
 
 fn halt_zone_pt_v1(state: &mut GameState, source: ObjectId) {
@@ -5912,6 +6216,7 @@ fn materialize_event_v1(
     let mut niv_source_departure = None;
     let mut curie_departure = None;
     let mut minsc_departure = None;
+    let mut full_text_departure = None;
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let historical = d
@@ -5929,6 +6234,38 @@ fn materialize_event_v1(
                     },
                     |facts| facts.deathtouch,
                 );
+            // Infect (CR 702.90, Vintage Cube wave C9a): damage dealt to a
+            // player gives poison counters instead of losing life; damage
+            // dealt to a creature puts -1/-1 counters on it instead of marking
+            // damage. Planeswalker loyalty damage is unchanged. Consult LKI
+            // (`historical`) when the source already left the battlefield.
+            let source_has_infect = cfg!(feature = "eternal-fixtures")
+                && d.amount > 0
+                && historical.map_or_else(
+                    || {
+                        state.objects.try_get(d.source).is_some()
+                            && crate::engine::has_effective_keyword(
+                                state,
+                                d.source,
+                                crate::card_def::Keywords::INFECT,
+                            )
+                    },
+                    |facts| {
+                        crate::card_def::CARD_DEFS
+                            .get(usize::from(facts.source.card_def))
+                            .is_some_and(|def| def.keywords.has(crate::card_def::Keywords::INFECT))
+                            && !state.engine.event_history.iter().any(|ev| {
+                                matches!(
+                                    ev,
+                                    CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                                        object,
+                                        zone_change_count,
+                                    } if *object == facts.source.source
+                                        && *zone_change_count == facts.source.zone_change_count
+                                )
+                            })
+                    },
+                );
             match d.target {
                 Target::Object(id) => {
                     let planeswalker = crate::engine::object_has_type(
@@ -5944,8 +6281,56 @@ fn materialize_event_v1(
                         id,
                         crate::card_def::CardType::Creature,
                     );
-                    let obj = state.objects.get_mut(id);
-                    if !planeswalker || creature {
+                    if source_has_infect && creature {
+                        if !crate::eternal_sideboard_s1n_v1::prevents_minus1_minus1_counters_on(
+                            state, id,
+                        ) {
+                            let source_controller = historical
+                                .map(|facts| facts.source.controller)
+                                .or_else(|| {
+                                    state.objects.try_get(d.source).map(|obj| obj.controller)
+                                })
+                                .unwrap_or(state.objects.get(id).controller);
+                            let origin = if d.is_combat {
+                                crate::doubling_season_v48::CounterOriginV48::Rule
+                            } else {
+                                crate::doubling_season_v48::CounterOriginV48::Effect
+                            };
+                            let placed = match crate::doubling_season_v48::counter_amount(
+                                state,
+                                id,
+                                source_controller,
+                                origin,
+                                d.amount,
+                            ) {
+                                Ok(count) => count,
+                                Err(_) => {
+                                    state.engine.halted = Some((
+                                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                        d.source,
+                                    ));
+                                    return None;
+                                }
+                            };
+                            let Some(next) = i16::try_from(placed).ok().and_then(|delta| {
+                                state
+                                    .objects
+                                    .get(id)
+                                    .counters
+                                    .minus1_minus1
+                                    .checked_add(delta)
+                            }) else {
+                                state.engine.halted = Some((
+                                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                    d.source,
+                                ));
+                                return None;
+                            };
+                            state.objects.get_mut(id).counters.minus1_minus1 = next;
+                        }
+                        state.objects.get_mut(id).v4.deathtouch_damage |= source_has_deathtouch;
+                    } else if !planeswalker || creature {
+                        let obj = state.objects.get_mut(id);
                         let Some(damage) = obj.damage.checked_add(d.amount.max(0) as u32) else {
                             state.engine.halted = Some((
                                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -5959,16 +6344,30 @@ fn materialize_event_v1(
                 }
                 Target::StackItem(_) => return None,
                 Target::Player(p) => {
-                    let lost = d.amount;
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    if lost > 0 {
-                        state.record_life_loss_v1(p);
+                    if source_has_infect {
+                        let source_controller = historical
+                            .map(|facts| facts.source.controller)
+                            .or_else(|| state.objects.try_get(d.source).map(|obj| obj.controller))
+                            .unwrap_or(p);
+                        let poison = u16::try_from(d.amount.max(0)).unwrap_or(u16::MAX);
+                        crate::standard_legends_v1::give_poison(
+                            state,
+                            source_controller,
+                            p,
+                            poison,
+                        );
+                    } else {
+                        let lost = d.amount;
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        if lost > 0 {
+                            state.record_life_loss_v1(p);
+                        }
+                        state.players[p.index()].life -= lost;
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        crate::standard_cards_v1::record_life(state, p, 0, lost);
                     }
-                    state.players[p.index()].life -= lost;
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    crate::standard_cards_v1::record_life(state, p, 0, lost);
                 }
             }
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -5981,6 +6380,10 @@ fn materialize_event_v1(
                 );
             } else {
                 crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
+            }
+            #[cfg(feature = "eternal-fixtures")]
+            if !mode.is_scene() {
+                crate::eternal_cube_c8a_v1::note_damage_dealt(state, d.target, d.amount);
             }
             CommittedEvent::Damage {
                 source: d.source,
@@ -5996,6 +6399,8 @@ fn materialize_event_v1(
             crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8a_v1::adjust_zone_change(state, &mut z);
             // Dauthi Voidwalker exiles instead, with a void counter.
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_e9b_v1::replace_zone_change(state, &mut z, !mode.is_scene());
@@ -6005,9 +6410,20 @@ fn materialize_event_v1(
             #[cfg(not(feature = "standard-magezero-fixtures"))]
             let _ = &mut z;
             let from = state.objects.get(z.object).zone;
+            let transformed_entry = match plan_transformed_entry_v1(state, &z) {
+                Ok(face) => face,
+                Err(()) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        z.object,
+                    ));
+                    return None;
+                }
+            };
             if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                 curie_departure = mode.curie_departure(state, z.object);
                 minsc_departure = mode.minsc_departure(state, z.object);
+                full_text_departure = mode.full_text_departure(state, z.object);
             }
             let departure_pt = mode.departure_pt(state, z.object);
             let departure_power = departure_pt.map(|pt| pt.0);
@@ -6041,8 +6457,20 @@ fn materialize_event_v1(
                 // (Vintage Cube wave C4c).
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
+                // Serra Paragon's granted dies trigger and C9b incarnation
+                // pruning (Vintage Cube wave C9b).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c9b_v1::note_departure(state, z.object, from, z.to_zone);
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c6a_v1::note_zone_change(
+                    state,
+                    z.object,
+                    from,
+                    z.to_zone,
+                    departure_power,
+                );
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_pauper_pf2c_v1::note_departure(
                     state,
                     z.object,
                     from,
@@ -6057,7 +6485,10 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield
                     && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
                         || crate::eternal_vintage_v1::active_copy(state, z.object)
-                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object))
+                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && (crate::eternal_cube_c8b_v1::active_copy(state, z.object)
+                                || crate::eternal_cube_c8c_v1::active_copy(state, z.object))))
                 {
                     let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                         source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -6146,14 +6577,25 @@ fn materialize_event_v1(
                     state.engine.event_log.push(marker.clone());
                     state.engine.event_history.push(marker);
                 }
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, true);
+                }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
-                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
+                        state, z.object,
+                    );
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6186,14 +6628,32 @@ fn materialize_event_v1(
                 crate::standard_keywords_v1::record_descended_zone_change_v1(
                     state, z.object, z.to_zone,
                 );
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_pauper_pf2c_v1::note_departure(
+                        state,
+                        z.object,
+                        from,
+                        z.to_zone,
+                        departure_power,
+                    );
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, false);
+                }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
-                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
+                        state, z.object,
+                    );
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6206,7 +6666,7 @@ fn materialize_event_v1(
                 z.preserve_known_identity,
                 z.library_insert_visibility,
                 z.force_battlefield_tapped,
-                z.battlefield_face_index,
+                transformed_entry,
                 z.battlefield_controller,
                 (
                     authority_observers,
@@ -6517,6 +6977,10 @@ fn materialize_event_v1(
                     state.engine.combat.attackers.push(object);
                 }
             }
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8b_v1::apply_pending_token_mods(state, object);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_pf2c_v1::apply_pending_token_prototyped(state, object);
             initialize_entry_counters(state, object, false, counter_input.as_ref());
             if season_entry_active {
                 crate::standard_cards_v1::initialize_entry_counters(
@@ -6619,6 +7083,7 @@ fn materialize_event_v1(
         niv_source_departure,
         curie_departure,
         minsc_departure,
+        full_text_departure,
     })
 }
 struct MaterializedEventV1 {
@@ -6627,6 +7092,7 @@ struct MaterializedEventV1 {
     niv_source_departure: Option<crate::state::AbilitySourceContractV4>,
     curie_departure: Option<crate::eternal_legacy_e7a_v1::curie::DepartureV1>,
     minsc_departure: Option<crate::eternal_vintage_e7b_v1::minsc::DepartureV1>,
+    full_text_departure: Option<crate::full_text_v1::DepartureV1>,
 }
 
 /// Runs the replace/prevent pass independently on every event in `events`
@@ -6787,6 +7253,9 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         state,
         crate::full_text_v1::DonorCheckSiteV1::BatchTail,
     );
+    // Hallow's life for the damage the batch's shields prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {
@@ -6973,6 +7442,17 @@ fn batch_with_aura_token_hosts_v1(
             token.initialization_v48.as_mut().unwrap().attached_to = Some(host);
         }
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let events = match crate::eternal_cube_c9c_v1::expand_doubled_tokens(state, events) {
+        Ok(expanded) => expanded,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
     if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
         || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
     {
@@ -7032,56 +7512,115 @@ fn batch_with_aura_token_hosts_v1(
         ));
         return;
     }
-    let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
-    if needs_final_zone_pt_plan_v1(state, &events) {
-        let mut replaced = state.clone();
+    // Hallow-covered and ordinary portions are still one simultaneous damage
+    // batch. Keep Nishoba's once-per-batch receipt across both phases. A closure
+    // makes every early return, including a cloned-world yield/failure, pass
+    // through the matching close on the currently installed world.
+    #[cfg(feature = "eternal-fixtures")]
+    let hallow_nishoba_batch =
+        crate::eternal_pauper_pf1c_v1::batch_has_covered_damage(state, &events)
+            && crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
+    (|| {
         #[cfg(feature = "eternal-fixtures")]
-        let nishoba_batch =
-            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(&mut replaced, &events);
-        let mut survivors = events
-            .into_iter()
-            .filter_map(|event| apply_replacements(&mut replaced, event))
-            .collect::<Vec<_>>();
+        let mut events = events;
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let prepared_damage = crate::eternal_prevention_order_v1::PreparedDamageBatchV1::default();
         #[cfg(feature = "eternal-fixtures")]
-        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(&mut replaced, nishoba_batch);
-        if let Some((_, source)) = replaced.engine.halted {
-            halt_zone_pt_v1(state, source);
-            return;
-        }
-        match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
-            Ok(true) => {}
-            Ok(false) => {
-                *state = replaced;
-                return;
-            }
-            Err(_) => {
-                halt_zone_pt_v1(state, ObjectId(0));
-                return;
-            }
-        }
-        // The plan reads the batch's final destinations.
-        pre_apply_batch_zone_replacements_v1(&mut replaced, &mut survivors);
-        let inputs = survivors
-            .iter()
-            .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
-            .collect::<Vec<_>>();
-        let plan = match FinalZonePtPlanV1::capture(
-            &replaced,
-            &survivors,
-            authority_batch
-                .as_ref()
-                .map(|batch| batch.observers.as_slice()),
-            None,
-            &inputs,
-            &attachments,
-        ) {
-            Ok(plan) => plan,
-            Err(source) => {
+        let prepared_damage =
+            match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &mut events) {
+                Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Suspended) => return,
+                Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Complete(plan)) => plan,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ObjectId(0),
+                    ));
+                    return;
+                }
+            };
+        let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+        if needs_final_zone_pt_plan_v1(state, &events) {
+            let mut replaced = state.clone();
+            #[cfg(feature = "eternal-fixtures")]
+            let nishoba_batch = crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(
+                &mut replaced,
+                &events,
+            );
+            let mut survivors = events
+                .into_iter()
+                .enumerate()
+                .filter_map(|(at, event)| prepared_damage.apply(&mut replaced, at, event))
+                .collect::<Vec<_>>();
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_premodern_p2c_v1::statics::end_damage_batch(
+                &mut replaced,
+                nishoba_batch,
+            );
+            if let Some((_, source)) = replaced.engine.halted {
                 halt_zone_pt_v1(state, source);
                 return;
             }
-        };
-        *state = replaced;
+            match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
+                Ok(true) => {}
+                Ok(false) => {
+                    *state = replaced;
+                    return;
+                }
+                Err(_) => {
+                    halt_zone_pt_v1(state, ObjectId(0));
+                    return;
+                }
+            }
+            // The plan reads the batch's final destinations.
+            pre_apply_batch_zone_replacements_v1(&mut replaced, &mut survivors);
+            let inputs = survivors
+                .iter()
+                .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
+                .collect::<Vec<_>>();
+            let plan = match FinalZonePtPlanV1::capture(
+                &replaced,
+                &survivors,
+                authority_batch
+                    .as_ref()
+                    .map(|batch| batch.observers.as_slice()),
+                None,
+                &inputs,
+                &attachments,
+                &[],
+            ) {
+                Ok(plan) => plan,
+                Err(source) => {
+                    halt_zone_pt_v1(state, source);
+                    return;
+                }
+            };
+            *state = replaced;
+            commit_batch_survivors(
+                state,
+                survivors,
+                authority_batch,
+                EntryBatchCommitContextV1 {
+                    garruk_batch,
+                    arahbo_batch,
+                    attachments,
+                    raid_history_start,
+                    token_input,
+                    token_requests,
+                },
+                Some(plan),
+            );
+            return;
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        let nishoba_batch =
+            crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
+        let survivors: Vec<ProposedEvent> = events
+            .into_iter()
+            .enumerate()
+            .filter_map(|(at, event)| prepared_damage.apply(state, at, event))
+            .collect();
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
         commit_batch_survivors(
             state,
             survivors,
@@ -7094,33 +7633,11 @@ fn batch_with_aura_token_hosts_v1(
                 token_input,
                 token_requests,
             },
-            Some(plan),
+            None,
         );
-        return;
-    }
+    })();
     #[cfg(feature = "eternal-fixtures")]
-    let nishoba_batch =
-        crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
-    let survivors: Vec<ProposedEvent> = events
-        .into_iter()
-        .filter_map(|e| apply_replacements(state, e))
-        .collect();
-    #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);
-    commit_batch_survivors(
-        state,
-        survivors,
-        authority_batch,
-        EntryBatchCommitContextV1 {
-            garruk_batch,
-            arahbo_batch,
-            attachments,
-            raid_history_start,
-            token_input,
-            token_requests,
-        },
-        None,
-    );
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, hallow_nishoba_batch);
 }
 /// The private owning driver has already finished every replacement choice.
 /// It cannot submit a foreign root, owner, source or recipient packet.
@@ -7310,6 +7827,7 @@ fn commit_batch_survivors_native(
             None,
             &planned_counter_inputs,
             &context.attachments,
+            &[],
         ) {
             Ok(plan) => Some(plan),
             Err(source) => {
@@ -7318,7 +7836,7 @@ fn commit_batch_survivors_native(
             }
         }
     } else {
-        FinalZonePtPlanV1::eternal_departures_only(state, &survivors)
+        FinalZonePtPlanV1::eternal_departures_only(state, &survivors, &[])
     };
     let conqueror_batch = crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state);
     let EntryBatchCommitContextV1 {
@@ -7346,7 +7864,12 @@ fn commit_batch_survivors_native(
     crate::source_power_activation_v1::bombardment::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
+    {
+        crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
+        crate::eternal_cube_c8c_v1::before_batch_departures(state, &survivors);
+        crate::eternal_cube_c9a_v1::before_batch_departures(state, &survivors);
+        crate::eternal_pauper_pf2c_v1::before_batch_departures(state, &survivors);
+    }
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is
@@ -7415,6 +7938,7 @@ fn commit_batch_survivors_native(
     };
     let greatwurm_history_start = state.engine.event_history.len();
     let mut progenitus_completions = Vec::new();
+    let mut blightsteel_shuffles = Vec::new();
     let mut donated_entries = Vec::new();
     let mut counter_inputs = planned_counter_inputs.into_iter();
     let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
@@ -7479,9 +8003,34 @@ fn commit_batch_survivors_native(
                     zone_plan.as_ref(),
                 ),
                 Some(&mut progenitus_completions),
+                Some(&mut blightsteel_shuffles),
             );
         }
     } else {
+        let blightsteel_removed = if cfg!(feature = "eternal-fixtures") {
+            survivors
+                .iter()
+                .filter_map(|event| match event {
+                    ProposedEvent::ZoneChange(change)
+                        if state.objects.try_get(change.object).is_some_and(|live| {
+                            live.zone == Zone::Battlefield
+                                && crate::eternal_cube_c9a_v1::is_blightsteel(live.card_def)
+                        }) =>
+                    {
+                        Some((
+                            change.object,
+                            !crate::continuous_characteristics_v1::printed_abilities_active(
+                                state,
+                                change.object,
+                            ),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        } else {
+            std::collections::BTreeMap::new()
+        };
         for event in survivors {
             let counter_input = counter_inputs
                 .next()
@@ -7491,10 +8040,14 @@ fn commit_batch_survivors_native(
                 .map(|captures| captures.next().expect("one capture per batch member"));
             let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().find(|snapshot|
                 matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)).cloned());
+            let blightsteel_ability_removed = match &event {
+                ProposedEvent::ZoneChange(z) => blightsteel_removed.get(&z.object).copied(),
+                _ => None,
+            };
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
-                None,
+                blightsteel_ability_removed,
                 captures,
                 authority_batch.as_mut(),
                 (
@@ -7510,6 +8063,7 @@ fn commit_batch_survivors_native(
                     zone_plan.as_ref(),
                 ),
                 Some(&mut progenitus_completions),
+                Some(&mut blightsteel_shuffles),
             );
         }
     }
@@ -7520,6 +8074,14 @@ fn commit_batch_survivors_native(
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
             return;
+        }
+        if !blightsteel_shuffles.is_empty() {
+            if let Err(source) =
+                crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, blightsteel_shuffles)
+            {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
         }
     }
     if graveyard_batch.is_some() {
@@ -7635,7 +8197,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         .copied()
         .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
         .collect::<Vec<_>>();
-    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events, &[]) {
         Ok(plan) => plan,
         Err(source) => {
             halt_zone_pt_v1(state, source);
@@ -7651,9 +8213,15 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         .collect::<Vec<_>>()
         .into_iter();
     let mut progenitus_completions = Vec::new();
+    let mut blightsteel_shuffles = Vec::new();
     let progenitus_removed = chosen
         .iter()
-        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .filter(|id| {
+            let card_def = state.objects.get(**id).card_def;
+            crate::progenitus_v1::definition(card_def)
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9a_v1::is_blightsteel(card_def))
+        })
         .map(|id| {
             (
                 *id,
@@ -7685,6 +8253,8 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
     );
     for &object in chosen {
         crate::source_power_activation_v1::bombardment::before_departure(state, object);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c9a_v1::before_departure(state, object, Zone::Graveyard, false);
     }
     let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
         chosen
@@ -7762,19 +8332,30 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 (None, None, None),
                 ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                 Some(&mut progenitus_completions),
+                Some(&mut blightsteel_shuffles),
             );
         }
     }
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
+        } else if !blightsteel_shuffles.is_empty() {
+            if let Err(source) =
+                crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, blightsteel_shuffles)
+            {
+                halt_zone_pt_v1(state, source);
+            }
         }
     }
     finish_graveyard_order_batch(state, graveyard_batch, None);
 }
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
-pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+pub(crate) fn commit_sba_death_batch_v1(
+    state: &mut GameState,
+    dying: Vec<ObjectId>,
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
+) {
     let planned_events = dying
         .iter()
         .copied()
@@ -7788,7 +8369,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         .map(|event| batch_graveyard_replacement_v1(state, event))
         .collect::<Vec<_>>()
         .into_iter();
-    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events, checkpoint_triggers) {
         Ok(plan) => plan,
         Err(source) => {
             halt_zone_pt_v1(state, source);
@@ -7815,9 +8396,15 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     }
     crate::linked_aura_operation_v1::begin_batch(state);
     let mut progenitus_completions = Vec::new();
+    let mut blightsteel_shuffles = Vec::new();
     let progenitus_removed = dying
         .iter()
-        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .filter(|id| {
+            let card_def = state.objects.get(**id).card_def;
+            crate::progenitus_v1::definition(card_def)
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9a_v1::is_blightsteel(card_def))
+        })
         .map(|id| {
             (
                 *id,
@@ -7849,6 +8436,8 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     );
     for &object in &dying {
         crate::source_power_activation_v1::bombardment::before_departure(state, object);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c9a_v1::before_departure(state, object, Zone::Graveyard, false);
     }
     let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
         dying
@@ -7873,7 +8462,8 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                 apply_batch_graveyard_replacement_v1(state, &mut event, replacement);
                 event
             };
-            if frozen_color.is_some() || zone_plan.is_some() {
+            if frozen_color.is_some() || zone_plan.is_some() || progenitus_removed.contains_key(&id)
+            {
                 let progenitus_ability_removed = progenitus_removed.get(&id).copied();
                 commit_with_entry_batch_and_source_color(
                     state,
@@ -7884,6 +8474,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                     (None, None, None),
                     ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                     Some(&mut progenitus_completions),
+                    Some(&mut blightsteel_shuffles),
                 );
             } else {
                 commit(state, event);
@@ -7892,6 +8483,13 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         if state.engine.halted.is_none() {
             if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
                 halt_zone_pt_v1(state, source);
+            } else if !blightsteel_shuffles.is_empty() {
+                if let Err(source) = crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(
+                    state,
+                    blightsteel_shuffles,
+                ) {
+                    halt_zone_pt_v1(state, source);
+                }
             }
         }
         crate::linked_aura_operation_v1::end_batch(state);
@@ -7943,11 +8541,18 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             (None, None, None),
             ((None, false), frozen_color, None, None, zone_plan.as_ref()),
             Some(&mut progenitus_completions),
+            Some(&mut blightsteel_shuffles),
         );
     }
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
+        } else if !blightsteel_shuffles.is_empty() {
+            if let Err(source) =
+                crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, blightsteel_shuffles)
+            {
+                halt_zone_pt_v1(state, source);
+            }
         }
     }
     crate::linked_aura_operation_v1::end_batch(state);
@@ -8325,6 +8930,54 @@ type MaterializedZoneEntryV1<'a> = (
     Option<i32>,
 );
 
+pub(crate) fn battlefield_back_face_v1(
+    definition: u16,
+) -> Option<&'static crate::card_def::TransformFaceDef> {
+    let face = crate::card_def::CARD_DEFS
+        .get(usize::from(definition))?
+        .transform_face
+        .as_ref()?;
+    (!face.types.iter().any(|kind| {
+        matches!(
+            kind,
+            crate::card_def::CardType::Instant | crate::card_def::CardType::Sorcery
+        )
+    }))
+    .then_some(face)
+}
+
+type TransformedEntryV1 = (u16, &'static crate::card_def::TransformFaceDef);
+
+fn plan_transformed_entry_v1(
+    state: &GameState,
+    change: &ZoneChangeProposed,
+) -> Result<Option<TransformedEntryV1>, ()> {
+    if change.to_zone != Zone::Battlefield {
+        return Ok(None);
+    }
+    let face_index = change.battlefield_face_index;
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let face_index = face_index.or_else(|| {
+        crate::standard_keywords_v1::enters_transformed_at_night(
+            state,
+            state.objects.get(change.object).card_def,
+        )
+        .then_some(1)
+    });
+    let Some(face_index) = face_index else {
+        return Ok(None);
+    };
+    if face_index != 1 {
+        return Err(());
+    }
+    let definition = crate::linked_aura_operation_v1::metamorph_mage_copy(state, change.object)
+        .map_or(state.objects.get(change.object).card_def, |copy| {
+            copy.copied.card_def
+        });
+    let face = battlefield_back_face_v1(definition).ok_or(())?;
+    Ok(Some((definition, face)))
+}
+
 /// Zone bookkeeping shared by every `MoveObject` effect leaf. "Hand ->
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
@@ -8338,29 +8991,23 @@ fn materialize_zone_change_v1(
     preserve_known_identity: bool,
     library_insert_visibility: LibraryInsertVisibility,
     force_battlefield_tapped: bool,
-    battlefield_face_index: Option<u8>,
+    transformed_entry: Option<TransformedEntryV1>,
     battlefield_controller: Option<PlayerId>,
     entry_context: MaterializedZoneEntryV1<'_>,
 ) {
     let (authority_observers, entering_characteristics, counter_input, requested_revival) =
         entry_context;
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
-    #[cfg(feature = "standard-magezero-fixtures")]
-    let battlefield_face_index = battlefield_face_index.or_else(|| {
-        (to_zone == Zone::Battlefield
-            && crate::standard_keywords_v1::enters_transformed_at_night(
-                state,
-                state.objects.get(id).card_def,
-            ))
-        .then_some(1)
-    });
+
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
     let metamorph_mage_copy = (to_zone == Zone::Battlefield)
         .then(|| crate::linked_aura_operation_v1::metamorph_mage_copy(state, id))
         .flatten();
-    let entry_definition =
-        metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def);
+    let entry_definition = transformed_entry.map_or_else(
+        || metamorph_mage_copy.map_or(state.objects.get(id).card_def, |copy| copy.copied.card_def),
+        |(definition, _)| definition,
+    );
     let source_face = state.objects.get(id).v4.face_down_v1;
     let source_face_down = source_face.is_some();
     let nine_lives_cast_entry = to_zone == Zone::Battlefield
@@ -8375,6 +9022,11 @@ fn materialize_zone_change_v1(
             .v4
             .spell_cast_origin
             .is_some_and(|origin| origin.finalized_method.is_some());
+    #[cfg(feature = "eternal-fixtures")]
+    let entered_prototyped = to_zone == Zone::Battlefield
+        && from_zone == Zone::Stack
+        && entering_face_down.is_none()
+        && crate::eternal_pauper_pf2c_v1::is_prototyped_stack_spell(state, id);
     // A resolving permanent enters under its spell controller (608.3),
     // including a spell cast from another player's exile through Etali.
     let battlefield_controller = battlefield_controller.or_else(|| {
@@ -8537,15 +9189,8 @@ fn materialize_zone_change_v1(
         obj.counters = Default::default();
         obj.attachments.clear();
         if to_zone == Zone::Battlefield {
-            if let Some(face_index) = battlefield_face_index {
-                let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-                let Some(face) = (face_index == 1)
-                    .then_some(def.transform_face.as_ref())
-                    .flatten()
-                else {
-                    panic!("transformed battlefield return requested an undefined face");
-                };
-                obj.v4.face_index = face_index;
+            if let Some((_, face)) = transformed_entry {
+                obj.v4.face_index = 1;
                 obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
                 obj.v4.effective_subtype_ids = face
                     .subtypes
@@ -8565,6 +9210,14 @@ fn materialize_zone_change_v1(
     }
     if let Some(copy) = metamorph_mage_copy {
         crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy);
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if from_zone == Zone::Battlefield && to_zone != Zone::Battlefield {
+        crate::eternal_pauper_pf2c_v1::clear_prototyped(state, id);
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if entered_prototyped && state.objects.get(id).zone == Zone::Battlefield {
+        crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, id);
     }
     if to_zone == Zone::Battlefield {
         if let Some(entry) = entering_characteristics {
@@ -8594,6 +9247,12 @@ fn materialize_zone_change_v1(
         // the battlefield, under the controller it entered under. A Moon
         // effect that already applies removes its printed entry rule (an
         // entry tapped for another reason stays tapped).
+        #[cfg(feature = "eternal-fixtures")]
+        let copied_entry_tapped = entering_face_down.is_none()
+            && crate::eternal_cube_c7a_v1::apply_pending_metamorph_entry_copy(state, id);
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let copied_entry_tapped = false;
+        let printed_entry_tapped = printed_entry_tapped || copied_entry_tapped;
         let controller = state.objects.get(id).controller;
         if printed_entry_tapped
             && !force_battlefield_tapped
@@ -8719,8 +9378,10 @@ fn materialize_zone_change_v1(
                         return;
                     }
                 }
-            } else {
+            } else if count > 0 {
                 count
+            } else {
+                state.objects.get(id).counters.plus1_plus1
             };
             state.objects.get_mut(id).counters.plus1_plus1 = total;
         }

@@ -39,7 +39,7 @@ pub mod statics;
 pub(crate) mod targets;
 
 use crate::card_def::{
-    card_id_by_name, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
+    card_id_by_name, CardDef, CardType, CostComponent, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
 use crate::effect::{
     EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, LibraryLookCount,
@@ -654,7 +654,8 @@ fn hand_cards(
 
 fn vial_hand_cards(state: &GameState, player: PlayerId, charge: i32) -> Vec<EffectObjectBinding> {
     hand_cards(state, player, |def| {
-        def.has_type(CardType::Creature) && i32::from(def.mana_value) == charge
+        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+            && i32::from(def.mana_value) == charge
     })
 }
 
@@ -707,7 +708,10 @@ pub(crate) fn validate_vial_hand_choice(
 fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     state
         .shuffle_library(player)
-        .map_err(|error| format!("{error:?}"))
+        .map_err(|error| format!("{error:?}"))?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
+    Ok(())
 }
 
 /// Puts `card` onto the battlefield under `controller`'s control, tapped
@@ -1346,7 +1350,8 @@ pub(crate) fn execute(op: &E8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let returns = definition(state, card.object).is_some_and(|def| {
-                !def.has_type(CardType::Creature) && !def.has_type(CardType::Land)
+                !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                    && !def.has_type(CardType::Land)
             });
             if returns {
                 event::propose_and_commit(
@@ -1880,7 +1885,7 @@ pub(crate) fn drive(
                     *host == emperor
                         && link_live_in(state, *card, Zone::Exile)
                         && definition(state, card.object)
-                            .is_some_and(|def| def.has_type(CardType::Creature))
+                            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .map(|(_, card)| bind(state, card.object))
                 .collect::<Vec<_>>();
@@ -2057,8 +2062,10 @@ pub(crate) fn drive(
             let recruiter = *op == E8aOpV1::RecruiterSearchV1;
             let cards = library_cards(state, controller, |def| {
                 if recruiter {
-                    def.has_type(CardType::Creature)
-                        && def.toughness.is_some_and(|toughness| toughness <= 2)
+                    (def.has_type(CardType::Creature)
+                        && def.toughness.is_some_and(|toughness| toughness <= 2))
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
                 } else {
                     def.subtypes.contains(&Subtype::Equipment)
                 }
@@ -2580,6 +2587,29 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
 /// game".
 pub(crate) fn first_spell_this_game(state: &GameState, player: PlayerId) -> bool {
     !read_state(state).is_some_and(|e8a| e8a.spells_cast[player.index()])
+}
+
+/// A graveyard permission determines the base cost. Bitter Triumph may
+/// still pay the life component printed on its existing alternative branch.
+pub(crate) fn graveyard_life_choice(def: &CardDef, zone: Zone, method: CastMethodV4) -> bool {
+    zone == Zone::Graveyard
+        && matches!(
+            method,
+            CastMethodV4::Normal | CastMethodV4::Flashback | CastMethodV4::Escape
+        )
+        && bitter_triumph_life_cost(def).is_some()
+}
+
+pub(crate) fn bitter_triumph_life_cost(def: &CardDef) -> Option<&'static [CostComponent]> {
+    if def.name != "Bitter Triumph" {
+        return None;
+    }
+    match def.alt_cost?.components {
+        [CostComponent::Mana(_), life @ ..] if matches!(life, [CostComponent::PayLife(3)]) => {
+            Some(life)
+        }
+        _ => None,
+    }
 }
 
 /// Bitter Triumph's "pay 3 life" branch is its alternative cost, which

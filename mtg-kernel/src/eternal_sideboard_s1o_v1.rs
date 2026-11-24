@@ -444,7 +444,9 @@ fn finish_gambit(
         return Err("a Stronghold Gambit card left its owner's hand".to_string());
     }
     let creature = |state: &GameState, object: ObjectId| {
-        CARD_DEFS[usize::from(state.objects.get(object).card_def)].has_type(CardType::Creature)
+        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(
+            &CARD_DEFS[usize::from(state.objects.get(object).card_def)],
+        )
     };
     let mana_value = |state: &GameState, object: ObjectId| {
         CARD_DEFS[usize::from(state.objects.get(object).card_def)].mana_value

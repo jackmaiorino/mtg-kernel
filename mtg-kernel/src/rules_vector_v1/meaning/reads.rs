@@ -788,6 +788,7 @@ pub(crate) fn permanent_filter_def(filter: PermanentFilterDef) -> (ObjF, Option<
         }
         PermanentFilterDef::Artifact => (ObjF::Typed(CardTypeF::Artifact), None),
         PermanentFilterDef::CreatureV1 => (ObjF::Typed(CardTypeF::Creature), None),
+        PermanentFilterDef::LandV1 => (ObjF::Typed(CardTypeF::Land), None),
         PermanentFilterDef::WithSubtypeV1(subtype) => {
             // Vocabulary gap: ObjF has no subtype refinement.
             let _ = subtype;

@@ -1131,6 +1131,108 @@ fn kappa_cannoneer_improvises_and_grows_unblockable_as_artifacts_enter() {
     assert_eq!(power_toughness(&state, kappa), (6, 6));
 }
 
+/// Census games 24000 and 25049 (and four more): Mishra's Workshop's mana is
+/// floating ("spend this mana only to cast artifact spells") when Kappa
+/// Cannoneer is cast. Before `02da53195` the improvise selection could not
+/// spend that mana, so improvise was offered with no answer. Each known
+/// payable position must offer Kappa with improvise, enter the artifact
+/// selection with a legal answer and finish the cast spending the Workshop
+/// mana.
+#[test]
+fn kappa_cannoneer_improvise_with_workshop_mana_always_has_an_answer() {
+    type Setup = (&'static [&'static str], &'static [&'static str]);
+    // (permanents tapped for mana before the cast, untapped permanents):
+    // census game 24000's board, census game 25049's, and a smaller one.
+    let variants: [Setup; 3] = [
+        (
+            &["Mishra's Workshop", "Mountain", "Mountain"],
+            &[
+                "Island",
+                "Thornspire Verge",
+                "Chrome Mox",
+                "Sword of the Meek",
+            ],
+        ),
+        (&["Mishra's Workshop"], &["Island", "Mountain", "Sol Ring"]),
+        (
+            &["Mishra's Workshop", "Mountain", "Mountain"],
+            &["Island", "Sword of the Meek"],
+        ),
+    ];
+    for (tapped, untapped) in variants {
+        let mut state = islands();
+        let tapped: Vec<ObjectId> = tapped
+            .iter()
+            .map(|name| put(&mut state, P0, name, Zone::Battlefield))
+            .collect();
+        let untapped_ids: Vec<ObjectId> = untapped
+            .iter()
+            .map(|name| put(&mut state, P0, name, Zone::Battlefield))
+            .collect();
+        let artifacts: Vec<ObjectId> = untapped_ids
+            .into_iter()
+            .filter(|&object| {
+                CARD_DEFS[state.objects.get(object).card_def as usize].has_type(CardType::Artifact)
+            })
+            .collect();
+        let kappa = put(&mut state, P0, "Kappa Cannoneer", Zone::Hand);
+        for source in tapped {
+            priority(&mut state);
+            act(&mut state, Action::ActivateManaAbility(source));
+        }
+        assert!(
+            !state.players[0].restricted_mana_pool.is_empty(),
+            "Workshop mana floats"
+        );
+        assert!(
+            castable(&mut state, kappa),
+            "{untapped:?}: Kappa is offered"
+        );
+        act(&mut state, Action::CastSpell(kappa));
+        match next(&mut state) {
+            Decision::ChooseCastMode { options, .. } => {
+                assert!(options.contains(&CastMode::Alternative), "{untapped:?}");
+                act(&mut state, Action::ChooseCastMode(CastMode::Alternative));
+            }
+            other => panic!("{untapped:?}: expected improvise to be offered, got {other:?}"),
+        }
+        let mut selected = 0;
+        loop {
+            match next(&mut state) {
+                Decision::ChooseEffectTargets {
+                    legal_targets,
+                    can_finish,
+                    ..
+                } => {
+                    assert!(
+                        can_finish || !legal_targets.is_empty(),
+                        "{untapped:?}: improvise offers no answer"
+                    );
+                    if let Some(&target) = legal_targets.first() {
+                        assert!(
+                            matches!(target, Target::Object(object) if artifacts.contains(&object)),
+                            "{untapped:?}: improvise taps an artifact"
+                        );
+                        act(&mut state, Action::ChooseEffectTarget(target));
+                        selected += 1;
+                    } else {
+                        act(&mut state, Action::FinishEffectSelection);
+                    }
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("{untapped:?}: unexpected {other:?}"),
+            }
+        }
+        assert!(selected > 0, "{untapped:?}: an artifact was improvised");
+        assert!(
+            state.players[0].restricted_mana_pool.is_empty(),
+            "{untapped:?}: the Workshop mana paid"
+        );
+        settle_first(&mut state);
+        assert_eq!(zone(&state, kappa), Zone::Battlefield, "{untapped:?}");
+    }
+}
+
 #[test]
 fn memory_guardian_costs_one_less_per_artifact() {
     let mut state = islands();
@@ -1507,6 +1609,95 @@ fn abhorrent_oculus_exiles_six_and_manifests_dread_each_opponent_upkeep() {
     assert_eq!(power_toughness(&state, face_down[0]), (2, 2));
     assert_eq!(state.players[0].graveyard.len(), 1, "the other card");
     assert_eq!(library_len(&state, P0), 18);
+}
+
+#[test]
+fn abhorrent_oculus_escape_requires_nine_distinct_graveyard_cards() {
+    for (order, first_count) in [(0, 6usize), (1, 3usize)] {
+        let mut state = islands();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let oculus = put(&mut state, P0, "Abhorrent Oculus", Zone::Graveyard);
+        let mut fodder: Vec<_> = (0..8)
+            .map(|_| put(&mut state, P0, "Island", Zone::Graveyard))
+            .collect();
+        pool(&mut state, P0, &[ManaColor::U], 2);
+        assert!(!castable(&mut state, oculus));
+        fodder.push(put(&mut state, P0, "Island", Zone::Graveyard));
+        cast(&mut state, oculus, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(order));
+        for (i, &id) in fodder.iter().enumerate() {
+            let expected = if i < first_count {
+                first_count - i
+            } else {
+                9 - i
+            };
+            assert!(
+                matches!(next(&mut state), Decision::ChooseCostTargets { candidates, remaining, .. }
+                if usize::from(remaining) == expected && candidates.contains(&id) && !candidates.contains(&oculus))
+            );
+            if i == first_count {
+                let before = state.clone();
+                assert!(engine::step(&mut state, Action::ChooseCostTarget(fodder[0])).is_err());
+                assert_eq!(state, before);
+            }
+            act(&mut state, Action::ChooseCostTarget(id));
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs.len(), 9);
+        settle_first(&mut state);
+        assert_eq!(zone(&state, oculus), Zone::Battlefield);
+        assert!(fodder.iter().all(|&id| zone(&state, id) == Zone::Exile));
+    }
+}
+
+#[test]
+fn abhorrent_oculus_retrace_can_exile_the_land_discarded_to_six() {
+    let mut state = islands();
+    put(&mut state, P0, "Six", Zone::Battlefield);
+    let oculus = put(&mut state, P0, "Abhorrent Oculus", Zone::Graveyard);
+    let fodder: Vec<_> = (0..5)
+        .map(|_| put(&mut state, P0, "Island", Zone::Graveyard))
+        .collect();
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    assert!(!castable(&mut state, oculus));
+    let land = put(&mut state, P0, "Island", Zone::Hand);
+    cast(&mut state, oculus, &[]);
+    assert!(
+        matches!(next(&mut state), Decision::ChooseCostTargets { candidates, .. } if candidates == [land])
+    );
+    act(&mut state, Action::ChooseCostTarget(land));
+    let mut restored: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    for game in [&mut state, &mut restored] {
+        for id in std::iter::once(land).chain(fodder.iter().copied()) {
+            assert!(
+                matches!(next(game), Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&id))
+            );
+            act(game, Action::ChooseCostTarget(id));
+        }
+        assert!(matches!(next(game), Decision::CastSpellOrPass { .. }));
+        let paid_land: Vec<_> = game
+            .stack
+            .last()
+            .unwrap()
+            .v4
+            .paid_cost_refs
+            .iter()
+            .filter(|r| r.object == land)
+            .map(|r| (r.zone, r.zone_change_count))
+            .collect();
+        assert_eq!(paid_land, [(Zone::Graveyard, 1), (Zone::Exile, 2)]);
+        settle_first(game);
+        assert_eq!(zone(game, oculus), Zone::Battlefield);
+    }
+    assert_eq!(state, restored);
 }
 
 #[test]

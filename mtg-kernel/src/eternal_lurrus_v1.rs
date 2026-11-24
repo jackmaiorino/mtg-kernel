@@ -323,6 +323,11 @@ pub fn companion_condition_met(companion: u16, deck: &[u16]) -> Option<bool> {
                     .is_some_and(|card| card.is_land || seen.insert(card.name))
             }))
         }
+        // Zirda, the Dawnwaker (wave C8c): "Each permanent card in your
+        // starting deck has an activated ability."
+        "Zirda, the Dawnwaker" => Some(crate::eternal_cube_c8c_v1::zirda_companion_condition_met(
+            deck,
+        )),
         _ => None,
     }
 }
@@ -559,7 +564,6 @@ fn definition_index(definition: &CardDef) -> Option<usize> {
 /// The flashback cost Snapcaster Mage gives an instant or sorcery card.
 pub(crate) fn granted_flashback_cost(definition: &CardDef) -> Option<&'static [CostComponent]> {
     if !cfg!(feature = "eternal-fixtures")
-        || definition.flashback.is_some()
         || !(definition.has_type(CardType::Instant) || definition.has_type(CardType::Sorcery))
     {
         return None;
@@ -570,11 +574,7 @@ pub(crate) fn granted_flashback_cost(definition: &CardDef) -> Option<&'static [C
 
 /// The escape cost Underworld Breach gives a nonland card.
 pub(crate) fn granted_escape_cost(definition: &CardDef) -> Option<&'static [CostComponent]> {
-    if !cfg!(feature = "eternal-fixtures")
-        || definition.escape.is_some()
-        || definition.is_land
-        || definition.is_token
-    {
+    if !cfg!(feature = "eternal-fixtures") || definition.is_land || definition.is_token {
         return None;
     }
     let index = definition_index(definition)?;

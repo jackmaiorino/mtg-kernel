@@ -631,7 +631,9 @@ New, each built once in the first wave that needs it:
   show a bound Undercity room like a bound Forgotten Realms room, as its
   venture source's trigger with the engine's legal targets. Infoset exports
   still refuse bound Undercity rooms.
-  Serra's Emissary's existing type choices still omit Dungeon.
+  Serra's Emissary appends Dungeon after its seven historical type choices.
+  Native room abilities check that protection at target selection and
+  resolution, including when the room outlasts its dungeon.
   Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
   native venture entry and published room ability. The Lair reveals and
   offers only cards actually drawn, and an immediate Jace win ends the
@@ -665,9 +667,11 @@ New, each built once in the first wave that needs it:
   capture; no copied Arcane Denial fixture exists yet. Ordinary
   pending and published triggers retain their public meaning through
   authenticated original source contracts; suspended
-  owned replacement choices require an observation successor. Native1330 exposed
-  start/resume guards and an unavailable copy fixture producer; both source fixes
-  are committed, with native requalification pending.
+  owned replacement choices require an observation successor. After the
+  start/resume and copy-fixture repairs, all nine Portent integration tests
+  passed at `e32ed55cf`, including a paid spell retargeted by Misdirection,
+  restore after a replacement choice, and a native copy's ordinary delayed
+  draw. [Hosted Eternal integration][s1-draw-native].
   The physical Standstill successor binds the exact finalized cast identity
   and SpellCast occurrence, original battlefield source, native trigger
   publication, and successful sacrifice marker plus source departure. The
@@ -682,10 +686,41 @@ New, each built once in the first wave that needs it:
   a copied bound receipt. Ordinary pending and published triggers retain existing
   observations; suspended owned replacement choices require an observation
   successor. Source review verified the ordinary V5/Human compatibility repair
-  and authenticated historical source projection. Native qualification of this
-  successor remains pending.
-  Generated draws from the remaining Premodern leaves, Arcane Denial and
-  Accumulated Knowledge still need their Jace/Hullbreacher origins.
+  and authenticated historical source projection. All seven Standstill
+  integration tests passed at `e32ed55cf`, including a sacrifice replaced by
+  exile, stale stacked triggers, and a Vialed Metamorph copying an animated
+  Standstill. [Hosted Eternal integration][s1-draw-native].
+  Accumulated Knowledge's physical paid spell now owns its two sequential
+  instructions. A native paid-row receipt binds the original root; completing
+  the first instruction captures the count in both graveyards for the second.
+  Later dredges cannot change that captured count. Each instruction applies
+  Riddler once and uses the common per-attempt replacement and terminal stop.
+  Actual paid both-seat fixtures cover first-draw milling of another Knowledge,
+  later milling after count capture, Jace/Hull without Dredge, ordinary V5/Human,
+  restore/tamper and a genuine Chandra spell copy's predecessor route. Copies'
+  replacement/count ownership remains outside this component.
+  Arcane Denial's physical paid successor records the actual counter target
+  and both controllers at resolution, then creates two separately ordered
+  delayed instructions at the next turn's upkeep. Native Commandeer control
+  and retarget endpoints extend the original payment binding. Both triggers
+  retain that spell incarnation after later source movement. The target's
+  controller chooses zero, one, or two draws; Denial's resolution controller
+  draws one. Each nonzero instruction applies Riddler once and uses the common
+  Started/Completed replacement and terminal-stop receipts. Legal uncounterable
+  targets still schedule; illegal targets do not. Ordinary pending triggers,
+  ordering, and the optional menu remain available in V5/Human; active owned
+  replacement progress requires a successor. The Human menu labels the three
+  authenticated delayed options without exporting their runtime programs.
+  Actual paid both-seat fixtures cover restore, control changes, retargeting,
+  APNAP, both instruction orders, source reentry, Dredge/Hull, Jace/Hull,
+  and source/controller/schedule/phase/count tampering. Native Chandra copies
+  retain the prior serialized schedule and ordinary draw behavior; their draw
+  replacement ownership and copied bound triggers are not qualified here.
+  These source additions do not promote any printing to Full. Rules basis:
+  Wizards' Comprehensive Rules 603.7b/d, 603.3b and 608.2b
+  (https://media.wizards.com/2026/downloads/MagicCompRules%2020260619.pdf).
+  Generated draws from other Premodern leaves still need their replacement
+  origins; the existing ordinary serialized delayed variant is retained.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
   dynamic draw instructions. Named draws and top-level fixed draw instructions
   from physical spells or printed triggers retain the adjusted count across
@@ -696,8 +731,11 @@ New, each built once in the first wave that needs it:
   the native return batch before validating the adjustment. A terminal Jace
   win stops the remaining attempts and skips Jewel's transfer. Earlier saved
   continuations keep their prior format. Both-seat paid fixtures cover
-  Dredge, Hullbreacher, Jace, restore and tampering. Native qualification is
-  pending. Wizards' Edge of Eternities release notes specify that Riddler
+  Dredge, Hullbreacher, Jace, restore and tampering. At `e32ed55cf`, the
+  paid two-seat cases passed for Jewel's Riddler-adjusted entry draw, a Jace
+  win before Jewel's combat transfer, and Outcome's adjusted draw count
+  through dredge and a Jace win. [Hosted Eternal integration][s1-draw-native].
+  Wizards' Edge of Eternities release notes specify that Riddler
   adjusts the whole instruction before individual draw replacements
   (https://magic.wizards.com/en/news/feature/edge-of-eternities-release-notes).
   Nested or dynamic suspended draws, copies, and turn-based draws with
@@ -757,7 +795,9 @@ New, each built once in the first wave that needs it:
   historical damage to the chosen source incarnation. A native Stack-to-Battlefield
   entry records the exact permanent that a chosen physical cast becomes, bound
   to its published cast identity and first committed departure; later blinks do
-  not retarget its shield. Virtual permanent spell copies still need this binding.
+  not retarget its shield. A virtual permanent spell starts on the stack with
+  its own object identity. Its shield follows that copy through its first
+  stack-to-battlefield move to the token it becomes.
   Wave P3g records departed sources' last-known color and marks the card Full (see P3g).
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
@@ -3433,6 +3473,122 @@ Ten cards stay out, each for a stated missing piece:
   Sublime Artificer (full copiable values for a token that becomes a copy); Chandra, Torch of
   Defiance (casting an exiled card for its mana cost).
 
+### C7: partial promotions, extended mana, evoke and linked durations
+
+Wave C7 adds 21 cards (promoting all four Partial cube cards and adding 17 missing cards), raising
+the cube to 504 of 540 Full with zero Partial cards remaining. Its three sub-modules chain after
+Pauper field wave Pf1c: C7a (`eternal_cube_c7a_v1`), C7b (`eternal_cube_c7b_v1`) and C7c
+(`eternal_cube_c7c_v1`), the new tail.
+
+- C7a: Hullbreacher (Partial to Full), Headliner Scarlett (Partial to Full), Gandalf, Goblins' Bane
+  (Partial to Full), Metamorphosis Fanatic (Partial to Full), Inti, Seneschal of the Sun, Malcolm,
+  Alluring Scoundrel, Chandra, Torch of Defiance, plus the Brain Freeze graveyard Storm fix
+  (issue #710).
+- C7b: Orcish Lumberjack, Urza, Lord High Artificer, Vivi Ornitier, Black Widow, Super Spy,
+  Soul-Scar Mage, Questing Beast, Palace Jailer.
+- C7c: Vibrance, Wistfulness, Tidehollow Sculler, The Wondrous Wasp, Woodfall Primus, Sanctum
+  Lurker, Guardian Scalelord.
+
+Engine changes shared with other cards:
+
+- Storm producing casts now accept genuine non-hand routes (Flashback, Escape, graveyard/exile
+  permissions, Adventure, Plot, Madness) matching their finalized cast method, and
+  `validate_spell_sourced_trigger` rejects bare `MaterializeStormCopies` without recursing.
+- Draw-step extra draws (Quantum Riddler) now run through the resumable replacement path so Jace
+  and Hullbreacher offer their choice after the exempt first draw; twelve Eternal draw leaves and
+  `RingLootV1` are included in the draw-replacement origin audit. Promoting Hullbreacher brings
+  `vintage-paradoxical-outcome` and `vintage-rug-control` into `PLAYABLE_75` (136 decks).
+- `rl::exile_play_permissions_public_v2` takes the acting observer and projects concealed face-down
+  exile permissions neutrally as `Play` to non-lookers, preserving opponent observation
+  indistinguishability for Headliner Scarlett and Flameshape; `PlayPermissionExpiry::AsLongAsExiled`
+  supports unbounded exile permissions and `PlayPermission::any_mana_type` adds spell-scoped
+  any-type mana spending (Black Widow).
+- Multi-card discard callers (cleanup, Time Stop cleanup, Breakthrough, Cabal Therapy, Verdict,
+  `DiscardUpToThenDraw`, and discard cost components) preserve batch boundaries for Inti.
+- Metamorphosis Fanatic's return offers a trigger-owned Phyrexian Metamorph as-enters copy choice
+  and applies the lifelink counter as the creature enters.
+- Extended mana ability costs and dynamic outputs (`TapSelfSacrificeControlledWithSubtypeV1`,
+  `TapUntappedControlledArtifactV1`, `NoneOwnTurnOnlyV1`, `SourcePowerAnyCombinationV1`),
+  noncombat damage-to-`-1/-1`-counters replacement (Soul-Scar Mage), combat damage cannot be
+  prevented static (Questing Beast), monarch-change release hook (Palace Jailer), per-color cast
+  mana tracking (Vibrance, Wistfulness), linked battlefield ability loss (The Wondrous Wasp),
+  CR 704.5q `+1/+1`/`-1/-1` counter cancellation after death SBAs (Woodfall Primus Persist),
+  planeswalker 0-loyalty SBA exemption and granted loyalty ability (Sanctum Lurker), Backup 1
+  granted attack triggers (Guardian Scalelord), and `Subtype::Spy` (stable id 750).
+
+### C8: adventure, DFCs, prepare, copies, bestow and library triggers
+
+Wave C8 adds 19 cards (plus `Regrowth`, `Green Insect Token`, and `Wan Shi Tong Spirit Token`),
+raising the cube to 523 of 540 Full (0 Partial, 17 Missing). Its three sub-modules chain after
+wave C7c: C8a (`eternal_cube_c8a_v1`), C8b (`eternal_cube_c8b_v1`) and C8c (`eternal_cube_c8c_v1`),
+the new tail.
+
+- C8a: Bonecrusher Giant (Stomp Adventure), Concealing Curtains (Revealing Eye), Jace, Vryn's
+  Prodigy (Jace, Telepath Unbound), Jennifer Walters (The Sensational She-Hulk), Emeritus of
+  Abundance (Regrowth prepare spell), Emeritus of Ideation (Ancestral Recall prepare spell).
+- C8b: Phantasmal Image, Superior Spider-Man, Vaultborn Tyrant, Saheeli, Sublime Artificer,
+  Springheart Nantuko (Green Insect Token), Detective's Phoenix.
+- C8c: Pyrogoyf, Elite Spellbinder, Wan Shi Tong, All-Knowing (Wan Shi Tong Spirit Token),
+  Wan Shi Tong, Librarian, Thieving Skydiver, Zirda, the Dawnwaker, Absorbing Man.
+
+Engine changes shared with other cards:
+
+- Prepare generalization (`eternal_vintage_e7b_v1`) now maps multiple prepared creatures to their
+  prepare spells while keeping standalone `Ancestral Recall` untouched; `StandardTargetV1` adds
+  `CardInOwnGraveyardV1`, `ControlledArtifactThenAnotherControlledArtifactOrCreatureV1`, and
+  `C8cV1(C8cTargetV1)` at the end of the enum.
+- As-enters copy exceptions and temporary copy effects cover Illusion + becomes-target sacrifice
+  (Phantasmal Image), graveyard Mind Swap with Layer 1 4/4 name/subtype overrides and reflexive
+  exile (Superior Spider-Man), nontoken dies artifact token copy (Vaultborn Tyrant), until-EOT
+  artifact copy (Saheeli), and until-your-next-turn 4/4 legendary Human Villain Vigilance copy
+  (Absorbing Man).
+- Non-X Bestow support adds graveyard Bestow and Collect Evidence 6 excluding the cast spell
+  (Detective's Phoenix), attached-host optional `{1}{G}` copy landfall (Springheart Nantuko), and
+  Bestow Enchantment-Aura spell types on the stack.
+- Extended spell/activation mechanics add Kicker `{X}` with `X >= 1` (Thieving Skydiver),
+  non-mana activated-ability `{2}` reduction floored at 1 mana plus companion validation (Zirda),
+  per-exile-incarnation `+{2}` cast tax (Elite Spellbinder), entering-creature damage source LKI
+  (Pyrogoyf), batched card-to-library triggers and opponent library-search hooks across search
+  sites (both Wan Shi Tong printings), and `Subtype::{Fox = 760, Gamma = 761, Saheeli = 762}`.
+
+### C9: final Vintage Cube completion (540 of 540 Full)
+
+Wave C9 adds the final 17 Vintage Cube cards (plus `Black Green Insect Token`), completing MTGO
+Vintage Cube (2026-10-07) coverage at 540 of 540 Full (0 Partial, 0 FDN only, 0 Missing). Its
+three sub-modules chain after wave C8c: C9a (`eternal_cube_c9a_v1`), C9b (`eternal_cube_c9b_v1`)
+and C9c (`eternal_cube_c9c_v1`), the new tail.
+
+- C9a: Aang, Swift Savior (Aang and La, Ocean's Fury), Badgermole Cub, Batroc the Leaper,
+  Blightsteel Colossus, Crabomination, Fear of Missing Out.
+- C9b: Figure of Destiny, Figure of Fable, Hexdrinker, Nadu, Winged Wisdom, Serra Paragon,
+  Swift Reconfiguration.
+- C9c: Elspeth, Storm Slayer, Grist, the Hunger Tide (Black Green Insect Token), Nissa, Who
+  Shakes the World, Tamiyo, Collector of Tales, Through the Breach.
+
+Engine changes shared with other cards:
+
+- New keywords, subtypes and target/choice variants: `Keywords::INFECT` (`1 << 20`, CR 702.90
+  combat and noncombat poison/counter damage), `Subtype::{Badger = 770, Mole = 771, Elspeth = 772,
+  Grist = 773, Nissa = 774}`, `StandardTargetV1::{C9aV1, C9cV1}`, and `E3ChoiceKindV1::{C9aV1, C9cV1}`.
+- C9a mechanics add airbend exile with permanent `{2}` alt-cost permission and Waterbend `{8}`
+  transform (Aang, Swift Savior), permanent 0/0 earthbend animation with delayed graveyard/exile
+  return and creature-mana triggered `{G}` (Badgermole Cub), Multikicker `{2}` with LKI batch
+  damage (Batroc the Leaper), reveal-and-shuffle graveyard replacement from anywhere (Blightsteel
+  Colossus), Emerge from artifact `{5}{B}{B}` and random 3-zone exile free cast (Crabomination),
+  and Delirium first-attack extra combat phases at `Step::EndCombat` (Fear of Missing Out).
+- C9b mechanics add timestamped hybrid class/PT/keyword forms and dynamic protection from
+  opponents (Figure of Destiny, Figure of Fable), sorcery-speed Level Up counters with static
+  level bands and protection from instants/everything (Hexdrinker), per-incarnation twice-per-turn
+  targeting grants (Nadu, Winged Wisdom), shared once-per-turn graveyard land/MV<=3 permanent
+  permissions with granted dies-exile-gain-2 triggers (Serra Paragon), and Layer 4/6 Vehicle
+  conversion with granted Crew 5 and combat removal on attachment (Swift Reconfiguration).
+- C9c mechanics add permanent token-doubling replacement (`2^n`, Elspeth, Storm Slayer), CR 604.3
+  non-battlefield 1/1 Insect Creature CDA across all non-battlefield queries (Grist, the Hunger
+  Tide), Forest triggered mana and permanent 0/0 Elemental land animation plus indestructible
+  lands emblem (Nissa, Who Shakes the World), opponent-effect discard/sacrifice shield (Tamiyo,
+  Collector of Tales), and Through the Breach hand-to-battlefield haste/end-step-sacrifice plus
+  generalized Splice onto Arcane `{2}{R}{R}`.
+
 ## Eternal rules precision closeout (#717)
 
 This records the finite [rules review checklist](https://github.com/jackmaiorino/mtg-kernel/issues/717)
@@ -3489,10 +3645,10 @@ tracked in #365.
   the 3-life choice as an alternative cost, so the caster cannot choose it while casting for
   granted flashback or a free cast. See [Choice between additional costs](#choice-between-additional-costs-715)
   for the actor-contract scope and the different treatment of Bone Shards and Demand Answers.
-  A graveyard cast that already stages one object payment can also lack a second selection.
-  The C6 review cites Six's retrace with Abhorrent Oculus's graveyard exile. The corresponding
-  Wrenn emblem case is a pitch selection where the cast offers it. #786 corrected the reported
-  non-completing Gurmag Angler and Avatar of Woe offers without adding a second object selection.
+  The #858 casting changes let Six or Wrenn's emblem combine retrace's land discard with eligible
+  object payments, including Abhorrent Oculus's graveyard exile under Six and Force of Will's
+  pitch cost under Wrenn's emblem. The #786 guard still withholds retrace with delve, including
+  Gurmag Angler. Avatar of Woe keeps its corrected graveyard discount.
 - **Divided damage.** Fire Covenant, Fire and Fury store one pick per point. A spell directing
   multiple picks at one object still has multiple entries, so the single-target Misdirection
   check can reject such a Fire Covenant or Fire. Fury uses the same allocation for a triggered
@@ -3614,3 +3770,5 @@ tracked in #365.
   share a simultaneous batch with other state-based deaths, the owner's order for simultaneous
   graveyard placement does not cover the Saga, and the sweep does not record the sacrifice
   event. The review's proposed repair is one simultaneous state-based batch.
+
+[s1-draw-native]: https://github.com/jackmaiorino/mtg-kernel/actions/runs/44686851543/job/136123153784

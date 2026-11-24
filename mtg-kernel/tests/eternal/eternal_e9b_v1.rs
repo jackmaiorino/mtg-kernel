@@ -1339,6 +1339,9 @@ fn arcane_denial_counters_and_both_players_draw_at_the_next_upkeep() {
     settled(&mut state);
     assert_eq!(zone(&state, bolt), Zone::Graveyard);
     assert_eq!(state.players[0].life, 20);
+    let hash = state.state_hash();
+    state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(state.state_hash(), hash);
     let hands = [state.players[0].hand.len(), state.players[1].hand.len()];
     run_until(
         &mut state,
@@ -1355,6 +1358,193 @@ fn arcane_denial_counters_and_both_players_draw_at_the_next_upkeep() {
     assert_eq!(state.players[0].hand.len(), hands[0] + 1, "you draw a card");
     // Two from Arcane Denial and one from the draw step.
     assert_eq!(state.players[1].hand.len(), hands[1] + 3);
+}
+
+#[test]
+fn paid_arcane_denial_retargeted_by_misdirection_draws_for_the_new_controller() {
+    for caster in [P0, P1] {
+        let opponent = caster.opponent();
+        let mut state = plains();
+        state.active_player = caster;
+        state.priority_player = caster;
+
+        let new_target = put(&mut state, caster, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::R], 0);
+        cast(&mut state, new_target, &[Target::Player(opponent)]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == caster
+        ));
+        act(&mut state, Action::Pass);
+        let old_target = put(&mut state, opponent, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, opponent, &[ManaColor::R], 0);
+        cast(&mut state, old_target, &[Target::Player(caster)]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == opponent
+        ));
+        act(&mut state, Action::Pass);
+
+        let denial = put(&mut state, caster, "Arcane Denial", Zone::Hand);
+        let misdirection = put(&mut state, caster, "Misdirection", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::U; 3], 4);
+        cast(&mut state, denial, &[Target::Object(old_target)]);
+        cast(&mut state, misdirection, &[Target::Object(denial)]);
+        let prompt = settle(&mut state).expect("Misdirection offers the new target");
+        assert!(matches!(
+            prompt,
+            Decision::ChooseEffectTargets { player, legal_targets, .. }
+                if player == caster && legal_targets.contains(&Target::Object(new_target))
+        ));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(new_target)),
+        );
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(zone(&state, misdirection), Zone::Graveyard);
+        let redirected = state.stack.iter().find(|row| row.source == denial).unwrap();
+        assert_eq!(redirected.targets, [Target::Object(new_target)]);
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(restored.state_hash(), state.state_hash());
+        for branch in [&mut state, &mut restored] {
+            settled(branch);
+            assert_eq!(zone(branch, denial), Zone::Graveyard);
+            assert_eq!(zone(branch, new_target), Zone::Graveyard);
+            assert_eq!(zone(branch, old_target), Zone::Graveyard);
+            assert_eq!(branch.players[caster.index()].life, 17);
+            assert_eq!(branch.players[opponent.index()].life, 20);
+
+            let hands = [branch.players[0].hand.len(), branch.players[1].hand.len()];
+            run_until(
+                branch,
+                |state| state.active_player == opponent && state.step == Step::Draw,
+                |_, decision| match decision {
+                    Decision::ChooseEffectOption {
+                        player,
+                        source,
+                        option_count: 3,
+                    } if *player == caster && *source == denial => {
+                        Some(Action::ChooseEffectOption(2))
+                    }
+                    _ => None,
+                },
+            );
+            assert_eq!(
+                branch.players[caster.index()].hand.len(),
+                hands[caster.index()] + 3
+            );
+            assert_eq!(
+                branch.players[opponent.index()].hand.len(),
+                hands[opponent.index()] + 1
+            );
+        }
+        assert_eq!(restored.state_hash(), state.state_hash());
+    }
+}
+
+#[test]
+fn copied_arcane_denial_restores_its_delayed_draw_replacements_both_seats() {
+    for caster in [P0, P1] {
+        let drawer = caster.opponent();
+        let mut state = game(&["Plains"; 4]);
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U; 3], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        pass_until(&mut state, |state| {
+            state.active_player == caster && state.step == Step::Main1
+        });
+
+        let chandra = put(&mut state, caster, "Chandra, Hope's Beacon", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::R, ManaColor::R], 4);
+        cast(&mut state, chandra, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, chandra), Zone::Battlefield);
+        put(&mut state, caster, "Hullbreacher", Zone::Battlefield);
+
+        state.priority_player = drawer;
+        let bolt = put(&mut state, drawer, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::R], 0);
+        cast(&mut state, bolt, &[Target::Player(caster)]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == drawer
+        ));
+        act(&mut state, Action::Pass);
+        let denial = put(&mut state, caster, "Arcane Denial", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::U], 1);
+        cast(&mut state, denial, &[Target::Object(bolt)]);
+
+        let retarget = settle(&mut state).expect("Chandra offers the copy's target");
+        assert!(matches!(
+            retarget,
+            Decision::ChooseEffectTargets { player, legal_targets, .. }
+                if player == caster && legal_targets.contains(&Target::Object(bolt))
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(bolt)));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let copy = state
+            .stack
+            .last()
+            .expect("the copied spell stays on the stack");
+        assert!(state.objects.get(copy.source).spell_copy_origin.is_some());
+        assert_eq!(copy.targets, [Target::Object(bolt)]);
+        let copy = copy.source;
+        settled(&mut state);
+        assert_eq!(zone(&state, bolt), Zone::Graveyard);
+        assert_eq!(zone(&state, denial), Zone::Graveyard);
+
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        assert_eq!(state.players[drawer.index()].library.len(), 4);
+        let caster_hand_before = state.players[caster.index()].hand.len();
+        pass_until(&mut state, |state| {
+            state.active_player == drawer && state.step == Step::Upkeep && !state.stack.is_empty()
+        });
+        let option = settle(&mut state).expect("the countered spell's controller may draw");
+        assert!(matches!(
+            option,
+            Decision::ChooseEffectOption { player, source, option_count: 3 }
+                if player == drawer && source == copy
+        ));
+        act(&mut state, Action::ChooseEffectOption(2));
+        let prompt = settle(&mut state).expect("Dredge competes for the first optional draw");
+        assert!(matches!(
+            &prompt,
+            Decision::ChooseEffectTargets {
+                player, source, legal_targets, can_finish: true, ..
+            } if *player == drawer && *source == copy && legal_targets.as_slice() == [Target::Object(thug)]
+        ));
+
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(next(&mut restored), prompt);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectTarget(Target::Object(thug)));
+            let second = settle(branch).expect("Jace competes with Hullbreacher after dredge");
+            assert!(matches!(
+                second,
+                Decision::ChooseEffectTargets {
+                    player, source, legal_targets, can_finish: true, ..
+                } if player == drawer && source == copy && legal_targets == [Target::Object(jace)]
+            ));
+            act(branch, Action::FinishEffectSelection);
+            settled(branch);
+            let player = &branch.players[drawer.index()];
+            assert_eq!(player.hand, [thug]);
+            assert!(player.library.is_empty());
+            assert_eq!(player.draws_this_turn, 0);
+            assert_eq!(
+                branch.players[caster.index()].hand.len(),
+                caster_hand_before + 1
+            );
+            assert_eq!(named(branch, caster, "Treasure Token").len(), 1);
+        }
+        assert_eq!(restored.state_hash(), state.state_hash());
+    }
 }
 
 #[test]

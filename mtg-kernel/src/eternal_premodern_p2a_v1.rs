@@ -1092,6 +1092,11 @@ pub(crate) fn drive(
             let Some(player) = legal_player_target(&ctx, state, 0, TargetSpec::AnyPlayer) else {
                 return Ok(false);
             };
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state, controller, player,
+            ) {
+                return Ok(false);
+            }
             let hand = state.players[player.index()]
                 .hand
                 .iter()
@@ -1198,6 +1203,7 @@ pub(crate) fn drive(
 /// graveyard, and `caster` gains 3 life for each land card among them.
 fn verdict_discard(state: &mut GameState, caster: PlayerId, cards: &[EffectObjectBinding]) {
     let mut lands = 0_i32;
+    let mut discarded = Vec::new();
     for card in cards {
         if !binding_live(state, *card) {
             continue;
@@ -1205,8 +1211,9 @@ fn verdict_discard(state: &mut GameState, caster: PlayerId, cards: &[EffectObjec
         if definition(state, card.object).is_some_and(|def| def.has_type(CardType::Land)) {
             lands += 1;
         }
-        crate::engine::commit_discarded_card(state, card.object);
+        discarded.push(card.object);
     }
+    crate::engine::commit_discarded_cards(state, &discarded);
     if lands > 0 {
         event::propose_and_commit(state, ProposedEvent::life_gain(caster, lands * 3));
     }

@@ -18,10 +18,11 @@ type GradientsAndGaugeV1 = (Vec<Vec<f32>>, ScorerBiasGaugeAccumulatorV1);
 type BackwardResultV1 = Result<GradientsAndGaugeV1, NativePolicyTrainErrorV1>;
 
 /// The gradients and gauge evidence, or None when no exact GPU learner is
-/// installed or this update is outside what it runs (another width, the V8
-/// pairing net or include column, packed inputs, the portable math, the
-/// no-state-digest contract, or an update too big for the device); the
-/// caller then runs its CPU backward, with the same bits.
+/// installed or this update is outside what it runs (another width, packed
+/// inputs, unproved platform libm tanhf, or an update too big for the device);
+/// the caller then runs its CPU backward, with the same bits. Supports Net-8
+/// (V3/V4/V7 and FlatV8 with pairing rows), `no_state_digest` / `no_digests`,
+/// and both `platform_libm` and `portable` math.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn gpu_exact_backward_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
@@ -31,17 +32,20 @@ pub(super) fn gpu_exact_backward_dims_v1<D: NetDimsV1>(
     value_coefficient: f32,
     input_config: NativePolicyValueModelConfigV1,
     math: TrainingMathV1,
-    no_state_digest: bool,
+    _no_state_digest: bool,
 ) -> Option<BackwardResultV1> {
+    let v8 = crate::native_policy_value_net_v1::v8_inclusion_v1::include_guard_v1(
+        input_config.action_feature_dim,
+    )
+    .is_some();
+    let expected_tensors = if v8 {
+        V8_PARAMETER_TENSOR_COUNT_V1
+    } else {
+        PARAMETER_TENSOR_COUNT
+    };
     if !is_net8_dims_v1::<D>()
-        || no_state_digest
-        || crate::native_policy_value_net_v1::v8_inclusion_v1::include_guard_v1(
-            input_config.action_feature_dim,
-        )
-        .is_some()
-        || parameters.len() != PARAMETER_TENSOR_COUNT
-        || !math.is_platform_libm()
-        || !crate::vector_tanh_v1::default_tanhf_environment_v1()
+        || parameters.len() != expected_tensors
+        || (math.is_platform_libm() && !crate::vector_tanh_v1::default_tanhf_environment_v1())
         || !crate::gpu_exact_v1::learner_installed_v1()
     {
         return None;
@@ -122,7 +126,8 @@ fn backward_v1(
         })
         .collect();
     let tensors: Vec<&[f32]> = parameters.iter().map(|p| p.values.as_slice()).collect();
-    let gradients = crate::gpu_exact_v1::learner_gradients_v1(input_config, &tensors, &substeps)
-        .map_err(|message| NativePolicyTrainErrorV1::GpuExactBackend { message })?;
+    let gradients =
+        crate::gpu_exact_v1::learner_gradients_v1(input_config, math, &tensors, &substeps)
+            .map_err(|message| NativePolicyTrainErrorV1::GpuExactBackend { message })?;
     Ok(gradients.map(|gradients| (gradients, gauge)))
 }

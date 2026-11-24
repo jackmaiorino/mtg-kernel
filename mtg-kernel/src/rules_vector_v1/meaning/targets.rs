@@ -782,6 +782,9 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::C1bV1(_)
         | S::C2cV1(_)
         | S::C4aV1(_)
+        | S::C8cV1(_)
+        | S::C9aV1(_)
+        | S::C9cV1(_)
         | S::S1oV1(_) => ObjF::AnyCard,
         S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
             ObjF::Permanent
@@ -808,6 +811,10 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::PermanentCardInOwnGraveyardThisTurnV1 => ObjF::Permanent,
         S::TappedCreatureV1 => creature(),
         S::UpToTwoLandsV1 => typed(CardType::Land),
+        S::OpponentPlaneswalkerV1 => typed(CardType::Planeswalker),
+        S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => ObjF::NonlandPermanent,
+        S::CardInOwnGraveyardV1 => ObjF::AnyCard,
+        S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => ObjF::Permanent,
     }
 }
 
@@ -896,6 +903,9 @@ pub(super) fn standard_target_origin(
         | S::C1bV1(_)
         | S::C2cV1(_)
         | S::C4aV1(_)
+        | S::C8cV1(_)
+        | S::C9aV1(_)
+        | S::C9cV1(_)
         | S::S1oV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
@@ -941,6 +951,12 @@ pub(super) fn standard_target_origin(
         S::PermanentCardInOwnGraveyardThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::TappedCreatureV1 => (Some(ZoneF::Battlefield), None),
         S::UpToTwoLandsV1 => (Some(ZoneF::Battlefield), None),
+        S::OpponentPlaneswalkerV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
+        S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1
+        | S::CardInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => {
+            (Some(ZoneF::Battlefield), Some(RelF::You))
+        }
     }
 }
 
@@ -999,6 +1015,9 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         | S::C1bV1(_)
         | S::C2cV1(_)
         | S::C4aV1(_)
+        | S::C8cV1(_)
+        | S::C9aV1(_)
+        | S::C9cV1(_)
         | S::S1oV1(_) => {
             // Wave S1d's filters (a power bound, flying, a land you control,
             // a distinct-type graveyard pair), wave C1c's pairs of
@@ -1467,6 +1486,20 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Land), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             out.target(TargetAtom::UpTo);
+        }
+        S::OpponentPlaneswalkerV1 => {
+            object(out, typed(CardType::Planeswalker), relation, zone);
+        }
+        S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => {
+            object(out, ObjF::NonlandPermanent, relation, zone);
+            out.atoms.push(Atom::Opaque);
+        }
+        S::CardInOwnGraveyardV1 => {
+            object(out, ObjF::AnyCard, relation, zone);
+        }
+        S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => {
+            object(out, ObjF::Permanent, relation, zone);
+            out.target(TargetAtom::MultipleTargets);
         }
     }
 }

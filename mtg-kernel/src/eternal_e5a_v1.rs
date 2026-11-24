@@ -72,7 +72,7 @@ pub struct E5aStateV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exile_if_dies: Vec<(ObjectLinkV4, TurnEffectV1)>,
     /// Serra's Emissaries and the card type each chose, as an index into
-    /// `PROTECTION_TYPES`.
+    /// `PROTECTION_TYPES`, with Dungeon appended at index 7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub emissary_types: Vec<(ObjectLinkV4, u8)>,
     /// Permanents Oko, Thief of Crowns's +1 made green 3/3 Elk creatures
@@ -264,6 +264,14 @@ pub enum E5aOpV1 {
     CouncilCopyV1,
     /// The Endstone's land-play trigger: draw a card.
     EndstoneDrawV1,
+    /// Kozilek's Command's graveyard exile after its draw mode in the same
+    /// resolution: `ExileGraveyardTargetsV1`, whose nonempty exile batch first
+    /// captures the triggers of the earlier draw while their sources are
+    /// still in the graveyard (CR 603.2).
+    ExileGraveyardTargetsAfterDrawV1 { first: u8, spec: TargetSpec },
+    /// Kozilek's Command's creature exile after its draw mode. Capture
+    /// earlier triggers while the legal target is still on the battlefield.
+    ExileCreatureAfterDrawV1 { slot: u8, spec: TargetSpec },
 }
 
 fn e5a(op: E5aOpV1) -> EffectOp {
@@ -431,7 +439,9 @@ fn noncreature_spells_cast_this_turn(state: &GameState, player: PlayerId) -> usi
         match event {
             CommittedEvent::UpkeepBegan { .. } => break,
             CommittedEvent::SpellCast { spell, controller } if *controller == player => {
-                if definition(state, *spell).is_some_and(|def| !def.has_type(CardType::Creature)) {
+                if definition(state, *spell).is_some_and(|def| {
+                    !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                }) {
                     count += 1;
                 }
             }
