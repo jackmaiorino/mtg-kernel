@@ -148,6 +148,7 @@ Each case's first completed sample is the reference. Every later sample's run tr
 
 - **timing**: a numeric field whose key ends in `_seconds`, `_nanos` or `_ns`, such as `update.json`'s `checkpoint_io_seconds`;
 - **provenance**: `git_commit`, `tracked_tree_sha256`, `implementation_sha256` or `git_clean` (the build identity in `run.json` and the engine identity in `complete.json` and `completion.json`), and only between samples of different builds;
+  this includes a whole top-level `engine` member (schema `mtg-kernel-engine-identity/v1`) that only one build's `complete.json` or `completion.json` carries, as when a build from before engine identities were recorded is compared with one from after; a differing `rules_version` stays a mismatch;
 - **pin**: the `sha256` of a run file that itself differs only in accepted fields.
 
 Any other difference is a mismatch and is listed, as is a missing or extra file. A mismatch also occurs when the per-iteration output identity or the checkpoint bytes differ. On a mismatch the driver exits 1. The checkpoints hold the full parameters and both Adam moments, and the trajectories hold the ordered decisions.
