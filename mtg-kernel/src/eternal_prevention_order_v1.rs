@@ -11,6 +11,7 @@ use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
 use crate::ids::PlayerId;
 use crate::linked_aura_operation_v1::{
     legacy_damage_order_v1, legacy_hallow_only_v1, legacy_sphere_order_v1,
+    soul_scar_damage_order_v1,
 };
 use crate::state::GameState;
 pub(crate) mod nomads_v1;
@@ -32,10 +33,22 @@ pub(crate) fn may_need_choice(state: &GameState) -> bool {
         return true;
     }
     cfg!(feature = "eternal-fixtures")
-        && !cannot_prevent(state)
-        && (circles::has_live_circle_shield(state)
-            || permanent_v1::may_need_choice(state)
-            || has_sphere_ojer(state))
+        && (soul_scar_may_need_choice(state)
+            || (!cannot_prevent(state)
+                && (circles::has_live_circle_shield(state)
+                    || permanent_v1::may_need_choice(state)
+                    || has_sphere_ojer(state))))
+}
+
+pub(crate) fn soul_scar_may_need_choice(state: &GameState) -> bool {
+    soul_scar_damage_order_v1()
+        && crate::eternal_e5a_v1::active_permanents(
+            state,
+            crate::eternal_cube_c7b_v1::SOUL_SCAR_MAGE,
+            None,
+        )
+        .next()
+        .is_some()
 }
 
 fn has_current_color_fog(state: &GameState) -> bool {
@@ -84,7 +97,30 @@ pub(crate) fn cannot_prevent_damage(state: &GameState, damage: &DamageProposed) 
             && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
 }
 
+pub(crate) fn soul_scar_competes(state: &GameState, damage: &DamageProposed) -> bool {
+    if !soul_scar_damage_order_v1()
+        || crate::eternal_cube_c7b_v1::noncombat_damage_replacement_source(state, damage).is_none()
+    {
+        return false;
+    }
+    let cannot_prevent = cannot_prevent_damage(state, damage);
+    Packet::new(damage)
+        .options(state)
+        .iter()
+        .any(|effect| match effect {
+            OrdinaryV1::SoulScar(_) => false,
+            OrdinaryV1::Nishoba(target) if cannot_prevent => {
+                permanent_v1::counter_can_be_removed(state, *target)
+            }
+            _ => true,
+        })
+        || (!cannot_prevent && circles::circle_shield_position(state, damage).is_some())
+}
+
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
+    if soul_scar_competes(state, damage) {
+        return true;
+    }
     if damage.amount <= 0 || cannot_prevent_damage(state, damage) {
         return false;
     }
@@ -93,6 +129,7 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
             && circles::circle_shield_position(state, damage).is_some()
             && full_prevention(state, damage);
     }
+
     if permanent_v1::eligible(state, damage) {
         return true;
     }
@@ -171,7 +208,11 @@ pub(crate) fn packet_options(
         }
     }
     if !legacy {
-        permanent_v1::coalesce_spent_nishoba(state, &mut options);
+        permanent_v1::coalesce_spent_nishoba(
+            state,
+            &mut options,
+            cannot_prevent_damage(state, &packet.damage),
+        );
         nomads_v1::normalize(state, packet, &mut options, competing_source);
     }
     options
@@ -279,7 +320,9 @@ impl PreparedDamageBatchV1 {
             return None;
         }
         #[cfg(feature = "eternal-fixtures")]
-        if crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage) {
+        if !soul_scar_damage_order_v1()
+            && crate::eternal_cube_c7b_v1::replace_noncombat_damage(state, damage)
+        {
             return None;
         }
         Some(event)

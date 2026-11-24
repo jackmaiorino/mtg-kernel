@@ -394,7 +394,10 @@ pub(crate) fn apply_entry_counters(
     let controller = live.controller;
     let creatures = super::graveyard_cards(state, controller)
         .into_iter()
-        .filter(|&card| definition(state, card).is_some_and(|def| def.has_type(CardType::Creature)))
+        .filter(|&card| {
+            definition(state, card)
+                .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
+        })
         .count();
     let Ok(count) = i32::try_from(creatures) else {
         return;

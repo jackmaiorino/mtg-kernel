@@ -654,7 +654,8 @@ fn hand_cards(
 
 fn vial_hand_cards(state: &GameState, player: PlayerId, charge: i32) -> Vec<EffectObjectBinding> {
     hand_cards(state, player, |def| {
-        def.has_type(CardType::Creature) && i32::from(def.mana_value) == charge
+        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+            && i32::from(def.mana_value) == charge
     })
 }
 
@@ -707,7 +708,10 @@ pub(crate) fn validate_vial_hand_choice(
 fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     state
         .shuffle_library(player)
-        .map_err(|error| format!("{error:?}"))
+        .map_err(|error| format!("{error:?}"))?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
+    Ok(())
 }
 
 /// Puts `card` onto the battlefield under `controller`'s control, tapped
@@ -1346,7 +1350,8 @@ pub(crate) fn execute(op: &E8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let returns = definition(state, card.object).is_some_and(|def| {
-                !def.has_type(CardType::Creature) && !def.has_type(CardType::Land)
+                !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                    && !def.has_type(CardType::Land)
             });
             if returns {
                 event::propose_and_commit(
@@ -1880,7 +1885,7 @@ pub(crate) fn drive(
                     *host == emperor
                         && link_live_in(state, *card, Zone::Exile)
                         && definition(state, card.object)
-                            .is_some_and(|def| def.has_type(CardType::Creature))
+                            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .map(|(_, card)| bind(state, card.object))
                 .collect::<Vec<_>>();
@@ -2057,8 +2062,10 @@ pub(crate) fn drive(
             let recruiter = *op == E8aOpV1::RecruiterSearchV1;
             let cards = library_cards(state, controller, |def| {
                 if recruiter {
-                    def.has_type(CardType::Creature)
-                        && def.toughness.is_some_and(|toughness| toughness <= 2)
+                    (def.has_type(CardType::Creature)
+                        && def.toughness.is_some_and(|toughness| toughness <= 2))
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
                 } else {
                     def.subtypes.contains(&Subtype::Equipment)
                 }

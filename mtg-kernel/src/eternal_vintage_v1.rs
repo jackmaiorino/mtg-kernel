@@ -1514,6 +1514,7 @@ pub(crate) fn activation_allowed(
         && crate::eternal_sideboard_s1q_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_cube_c5c_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_cube_c7c_v1::activation_allowed(state, source, name)
+        && crate::eternal_cube_c9a_v1::activation_allowed(state, source, name, ability_index)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -2095,6 +2096,7 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
         .any(|name| active_permanents(state, name, None).next().is_some()))
         || crate::eternal_legacy_e5b_v1::cast_prohibited(state, player)
         || crate::eternal_legacy_e9a_v1::statics::cast_prohibited(state, player)
+        || crate::eternal_cube_c8a_v1::cast_prohibited(state, player)
 }
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."
@@ -2190,7 +2192,7 @@ pub(crate) fn source_is_creature(state: &GameState, source: ObjectId) -> bool {
             Zone::Battlefield => crate::engine::object_has_type(state, source, CardType::Creature),
             Zone::Stack => CARD_DEFS
                 .get(live.card_def as usize)
-                .is_some_and(|def| def.has_type(CardType::Creature)),
+                .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def),
             _ => false,
         })
 }

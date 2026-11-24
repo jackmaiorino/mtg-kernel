@@ -157,11 +157,11 @@ pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     }
 }
 
-/// Sailors' Bane: "Ward {4}".
+/// Sailors' Bane: "Ward {4}", falling through to wave C8a.
 pub(super) fn ward_cost_for(name: &str) -> &'static str {
     match name {
         "Sailors' Bane" => "Some(WardCostDef::Generic(4))",
-        _ => "None",
+        _ => super::build_eternal_c8a_v1::ward_cost_for(name),
     }
 }
 

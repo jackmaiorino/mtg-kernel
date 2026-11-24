@@ -652,7 +652,8 @@ fn corpse_dance_resolve(ctx: &ExecCtx, state: &mut GameState) {
             let live = state.objects.get(card);
             live.owner == controller
                 && !live.v4.is_token
-                && definition(state, card).is_some_and(|def| def.has_type(CardType::Creature))
+                && definition(state, card)
+                    .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
         })
     else {
         return;

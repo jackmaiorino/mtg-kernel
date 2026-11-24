@@ -37730,6 +37730,1382 @@
    "complexity": "moderate",
    "mechanics": [],
    "java_file": "Mage.Sets/src/mage/cards/g/GuardianScalelord.java"
+  },
+  {
+   "name": "Bonecrusher Giant",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Giant"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "adventure",
+    "direct_damage",
+    "damage_cant_be_prevented",
+    "targeted_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BonecrusherGiant.java"
+  },
+  {
+   "name": "Concealing Curtains",
+   "engine_capability": "full",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Wall"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "defender",
+    "transform",
+    "menace",
+    "hand_disruption",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ConcealingCurtains.java"
+  },
+  {
+   "name": "Jace, Vryn's Prodigy",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 0,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "tap_ability",
+    "draw_card",
+    "discard",
+    "transform",
+    "planeswalker",
+    "loyalty_abilities",
+    "graveyard_casting",
+    "emblem",
+    "mill"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/j/JaceVrynsProdigy.java",
+   "starting_loyalty": 5
+  },
+  {
+   "name": "Jennifer Walters",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Advisor",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "spell_restriction",
+    "transform",
+    "modal_dfc",
+    "reach",
+    "trample",
+    "damage_trigger",
+    "direct_damage"
+   ]
+  },
+  {
+   "name": "Emeritus of Abundance",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Druid"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "vigilance",
+    "prepared",
+    "attack_trigger"
+   ]
+  },
+  {
+   "name": "Emeritus of Ideation",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "ward",
+    "prepared",
+    "attack_trigger",
+    "exile_graveyard"
+   ]
+  },
+  {
+   "name": "Phantasmal Image",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Illusion"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "clone",
+    "enters_as_copy",
+    "becomes_target_sacrifice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PhantasmalImage.java"
+  },
+  {
+   "name": "Superior Spider-Man",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}{B}",
+   "mana_value": 4,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spider",
+    "Human",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "clone",
+    "enters_as_copy",
+    "graveyard_exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SuperiorSpiderMan.java"
+  },
+  {
+   "name": "Vaultborn Tyrant",
+   "engine_capability": "full",
+   "mana_cost": "{5}{G}{G}",
+   "mana_value": 7,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dinosaur"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 6,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "trample",
+    "etb_trigger",
+    "life_gain",
+    "draw_card",
+    "dies_trigger",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/v/VaultbornTyrant.java"
+  },
+  {
+   "name": "Saheeli, Sublime Artificer",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
+   "mana_cost": "{1}{U/R}{U/R}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Saheeli"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "planeswalker",
+    "cast_trigger",
+    "token_creation",
+    "activated_ability",
+    "copy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SaheeliSublimeArtificer.java"
+  },
+  {
+   "name": "Springheart Nantuko",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Enchantment",
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect",
+    "Monk"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "bestow",
+    "landfall",
+    "token_creation",
+    "copy"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SpringheartNantuko.java"
+  },
+  {
+   "name": "Detective's Phoenix",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phoenix"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "bestow",
+    "collect_evidence",
+    "flying",
+    "haste",
+    "graveyard_cast"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DetectivesPhoenix.java"
+  },
+  {
+   "name": "Pyrogoyf",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Lhurgoyf"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "characteristic_defining",
+    "etb_trigger",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/Pyrogoyf.java"
+  },
+  {
+   "name": "Elite Spellbinder",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "hand_exile",
+    "cast_from_exile",
+    "cost_increase"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EliteSpellbinder.java"
+  },
+  {
+   "name": "Wan Shi Tong, All-Knowing",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird",
+    "Spirit"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "etb_trigger",
+    "library_tuck",
+    "triggered_ability",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WanShiTongAllKnowing.java"
+  },
+  {
+   "name": "Wan Shi Tong, Librarian",
+   "engine_capability": "full",
+   "mana_cost": "{X}{U}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird",
+    "Spirit"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "flying",
+    "vigilance",
+    "etb_trigger",
+    "counters",
+    "card_draw",
+    "triggered_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WanShiTongLibrarian.java"
+  },
+  {
+   "name": "Thieving Skydiver",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Merfolk",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "kicker",
+    "flying",
+    "etb_trigger",
+    "control_change",
+    "equipment"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThievingSkydiver.java"
+  },
+  {
+   "name": "Zirda, the Dawnwaker",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R/W}{R/W}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental",
+    "Fox"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "companion",
+    "cost_reduction",
+    "activated_ability",
+    "cant_block"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/z/ZirdaTheDawnwaker.java"
+  },
+  {
+   "name": "Absorbing Man",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Villain"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "vigilance",
+    "triggered_ability",
+    "copy"
+   ]
+  },
+  {
+   "name": "Regrowth",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "prepare_spell",
+    "graveyard_recursion"
+   ]
+  },
+  {
+   "name": "Green Insect Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Wan Shi Tong Spirit Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "blocking_restriction"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Aang, Swift Savior",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}{U}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Avatar",
+    "Ally"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "flying",
+    "etb_trigger",
+    "airbend",
+    "waterbend",
+    "transform",
+    "double_faced_card",
+    "attack_trigger",
+    "plus_one_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AangSwiftSavior.java"
+  },
+  {
+   "name": "Badgermole Cub",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Badger",
+    "Mole"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "earthbend",
+    "animate_land",
+    "plus_one_counters",
+    "delayed_trigger",
+    "triggered_mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BadgermoleCub.java"
+  },
+  {
+   "name": "Batroc the Leaper",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Villain"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "multikicker",
+    "enters_with_counters",
+    "etb_trigger",
+    "damage"
+   ]
+  },
+  {
+   "name": "Blightsteel Colossus",
+   "engine_capability": "full",
+   "mana_cost": "{12}",
+   "mana_value": 12,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Golem"
+   ],
+   "supertypes": [],
+   "power": 11,
+   "toughness": 11,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "trample",
+    "infect",
+    "indestructible",
+    "replacement_effect",
+    "shuffle_into_library"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BlightsteelColossus.java"
+  },
+  {
+   "name": "Crabomination",
+   "engine_capability": "full",
+   "mana_cost": "{4}{B}{B}",
+   "mana_value": 6,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Crab",
+    "Demon"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "emerge",
+    "alternative_cost",
+    "sacrifice",
+    "etb_trigger",
+    "exile",
+    "random",
+    "cast_without_mana_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/Crabomination.java"
+  },
+  {
+   "name": "Fear of Missing Out",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Enchantment",
+    "Creature"
+   ],
+   "subtypes": [
+    "Nightmare"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "etb_trigger",
+    "discard",
+    "draw",
+    "delirium",
+    "attack_trigger",
+    "untap",
+    "extra_combat_phase"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FearOfMissingOut.java"
+  },
+  {
+   "name": "Figure of Destiny",
+   "engine_capability": "full",
+   "mana_cost": "{R/W}",
+   "mana_value": 1,
+   "colors": [
+    "W",
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Kithkin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pt_override",
+    "subtype_change",
+    "flying",
+    "first_strike"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FigureOfDestiny.java"
+  },
+  {
+   "name": "Figure of Fable",
+   "engine_capability": "full",
+   "mana_cost": "{G/W}",
+   "mana_value": 1,
+   "colors": [
+    "W",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Kithkin"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "pt_override",
+    "subtype_change",
+    "protection"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FigureOfFable.java"
+  },
+  {
+   "name": "Hexdrinker",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Snake"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "level_up",
+    "counters",
+    "pt_override",
+    "protection"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/Hexdrinker.java"
+  },
+  {
+   "name": "Nadu, Winged Wisdom",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bird",
+    "Wizard"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "triggered_ability",
+    "targeted_trigger",
+    "reveal",
+    "ramp",
+    "card_advantage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NaduWingedWisdom.java"
+  },
+  {
+   "name": "Serra Paragon",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Angel"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "graveyard_play",
+    "graveyard_casting",
+    "dies_trigger",
+    "exile",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SerraParagon.java"
+  },
+  {
+   "name": "Swift Reconfiguration",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [
+    "Aura"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "aura",
+    "type_change",
+    "crew"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SwiftReconfiguration.java"
+  },
+  {
+   "name": "Elspeth, Storm Slayer",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
+   "mana_cost": "{3}{W}{W}",
+   "mana_value": 5,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Elspeth"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "token_doubling",
+    "token_creation",
+    "plus_one_counters",
+    "flying",
+    "destroy_target"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/ElspethStormSlayer.java"
+  },
+  {
+   "name": "Grist, the Hunger Tide",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
+   "mana_cost": "{1}{B}{G}",
+   "mana_value": 3,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Grist"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "characteristic_defining_ability",
+    "token_creation",
+    "mill",
+    "reflexive_trigger",
+    "sacrifice",
+    "destroy_target",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GristTheHungerTide.java"
+  },
+  {
+   "name": "Nissa, Who Shakes the World",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
+   "mana_cost": "{3}{G}{G}",
+   "mana_value": 5,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Nissa"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "triggered_mana_ability",
+    "plus_one_counters",
+    "untap",
+    "land_animation",
+    "vigilance",
+    "haste",
+    "emblem",
+    "emblem_indestructible",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NissaWhoShakesTheWorld.java"
+  },
+  {
+   "name": "Tamiyo, Collector of Tales",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
+   "mana_cost": "{2}{G}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Tamiyo"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "anti_discard_sacrifice_static",
+    "choose_card_name",
+    "library_reveal",
+    "return_from_graveyard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TamiyoCollectorOfTales.java"
+  },
+  {
+   "name": "Through the Breach",
+   "engine_capability": "full",
+   "mana_cost": "{4}{R}",
+   "mana_value": 5,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Arcane"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "put_onto_battlefield",
+    "haste",
+    "delayed_sacrifice",
+    "splice_onto_arcane"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThroughTheBreach.java"
+  },
+  {
+   "name": "Black Green Insect Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Insect"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectBlackGreenToken.java",
+   "is_token": true
   }
  ]
 }

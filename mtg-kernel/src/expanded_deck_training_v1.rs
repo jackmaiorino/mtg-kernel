@@ -4402,7 +4402,10 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     // checkpoints are admitted here like V4's.
     let contract = trajectory_contract_v1(t)?;
     if contract.input_contract_digest_v1().is_some() {
-        no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
+        no_state_digest_v1::check_trajectory_rows_v1(
+            &t.decisions,
+            contract.action_digest_off_v1(),
+        )?;
     }
     // W5: a row the search played replays the learner's own draw; the
     // update authenticates the played action against q.
@@ -6238,6 +6241,117 @@ fn execute_update_v1(
 
 #[allow(
     clippy::too_many_arguments,
+    reason = "isolates preparation locals from execute_update_inner_v1's stack frame"
+)]
+#[inline(never)]
+fn prepare_update_groups_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    preparation_workers: Option<usize>,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    row_cache: ordered_update_preparation::ReplayRowCacheV1,
+    defer_learner_rows: bool,
+) -> Result<
+    (
+        Vec<LearnerTensorGroupV1<'a>>,
+        Option<ordered_update_preparation::PreparationTelemetryV1>,
+        bool,
+    ),
+    String,
+> {
+    if let Some(workers) = preparation_workers {
+        if defer_learner_rows {
+            if let Ok(prepared) =
+                ordered_update_preparation::prepare_deferring_learner_rows_with_cache_v1(
+                    episodes,
+                    policy,
+                    learner,
+                    workers,
+                    max_prepared_tensor_mebibytes,
+                    max_groups,
+                    training_math,
+                    ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+                )
+            {
+                if !prepared.groups.is_empty() {
+                    return Ok((prepared.groups, Some(prepared.telemetry), true));
+                }
+            }
+        }
+        // Every CPU learner step below derives each learner row's outputs
+        // again with its tape forward and refuses a bit that differs from
+        // the stored row, so those rows may replay through the row cache.
+        // The CUDA steps compare within a tolerance and keep the reference.
+        // The other seat's rows keep it too, unless this process was asked
+        // to replay them through the row cache as well.
+        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
+            episodes,
+            policy,
+            learner,
+            workers,
+            max_prepared_tensor_mebibytes,
+            max_groups,
+            training_math,
+            row_cache,
+        )?;
+        Ok((prepared.groups, Some(prepared.telemetry), false))
+    } else {
+        let mut tensor_groups = Vec::new();
+        let mut opponent_cache =
+            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
+        for (episode_ordinal, episode) in episodes.iter().enumerate() {
+            let opponent = episode
+                .episode
+                .opponent
+                .as_ref()
+                .map(|s| opponent_cache.load(s))
+                .transpose()?;
+            validate_actual_behaviors_v1(episode, learner, opponent.as_ref().map(|o| &o.behavior))?;
+            tensor_groups.extend(replay_learner_groups_v1(
+                episode_ordinal,
+                episode,
+                policy,
+                opponent.as_ref().map(|o| &o.policy),
+            )?);
+        }
+        drop(opponent_cache);
+        Ok((tensor_groups, None, false))
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "isolates reference fallback replay from execute_update_inner_v1's stack frame"
+)]
+#[inline(never)]
+fn fallback_reference_preparation_v1(
+    episodes: &[ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    row_cache: ordered_update_preparation::ReplayRowCacheV1,
+) -> Result<(), String> {
+    let _ = ordered_update_preparation::prepare_with_row_cache_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        max_groups,
+        training_math,
+        row_cache,
+    )?;
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
     reason = "keeps the existing explicit update input contract"
 )]
 fn execute_update_inner_v1(
@@ -6676,57 +6790,6 @@ fn execute_update_inner_v1(
     }
     let input_read_seconds = update_started.elapsed().as_secs_f64();
     let replay_started = std::time::Instant::now();
-    // Recompute all actor-visible rows, including opponent decisions,
-    // before constructing learner groups. No private state is decoded.
-    let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        // Every CPU learner step below derives each learner row's outputs
-        // again with its tape forward and refuses a bit that differs from
-        // the stored row, so those rows may replay through the row cache.
-        // The CUDA steps compare within a tolerance and keep the reference.
-        // The other seat's rows keep it too, unless this process was asked
-        // to replay them through the row cache as well.
-        let row_cache = ordered_update_preparation::ReplayRowCacheV1::for_update_v1(
-            update_backend.is_cpu(),
-            ordered_update_preparation::replay_other_seat_rows_cached_v1(),
-        );
-        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
-            &episodes,
-            &policy,
-            &learner,
-            workers,
-            max_prepared_tensor_mebibytes,
-            ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
-            training_math,
-            row_cache,
-        )?;
-        (prepared.groups, Some(prepared.telemetry))
-    } else {
-        let mut tensor_groups = Vec::new();
-        let mut opponent_cache =
-            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
-        for (episode_ordinal, episode) in episodes.iter().enumerate() {
-            let opponent = episode
-                .episode
-                .opponent
-                .as_ref()
-                .map(|s| opponent_cache.load(s))
-                .transpose()?;
-            validate_actual_behaviors_v1(
-                episode,
-                &learner,
-                opponent.as_ref().map(|o| &o.behavior),
-            )?;
-            tensor_groups.extend(replay_learner_groups_v1(
-                episode_ordinal,
-                episode,
-                &policy,
-                opponent.as_ref().map(|o| &o.policy),
-            )?);
-        }
-        drop(opponent_cache);
-        (tensor_groups, None)
-    };
-    ensure(!tensor_groups.is_empty(), "no learner decisions")?;
     // One dispatch for the whole update: every trajectory in this batch was
     // already required (above) to share the live policy's own source_import
     // ancestry, which for a fresh origin carries the feature-contract digest
@@ -6738,6 +6801,53 @@ fn execute_update_inner_v1(
     // V8 inclusion net's V4-generation input config is FlatV8's.
     let flat_v8 = policy.feature_identity_v1().feature_contract_digest
         == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8;
+    // Ordinary CPU GAE updates recompute every learner row's forward tape and
+    // verify every logit and value bit (`validate_forward_output_bits_v1`)
+    // before mutating model or optimizer state. Deferring learner-row replay in
+    // preparation removes the redundant second forward pass while preserving
+    // exact outputs; on any failure we fall back to reference preparation so
+    // error text and earliest-group error precedence remain unchanged.
+    let defer_learner_rows = preparation_workers.is_some()
+        && matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+        && matches!(
+            loss_selection,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+        )
+        && (backward_execution.is_sequential() || generation == FreshLineageGenerationV1::V4)
+        && line_b.is_none()
+        && e_supported.is_none()
+        && soft_q.is_none()
+        && search_targets.is_none()
+        && ex1.is_none()
+        && semantics.is_none()
+        && crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok()
+        && (flat_v8
+            || !episodes.iter().any(|episode| {
+                episode.decisions.iter().any(|row| {
+                    row.actor == episode.episode.learner_seat
+                        && !row.tensor.pairing_node_indices.is_empty()
+                })
+            }));
+    let row_cache = ordered_update_preparation::ReplayRowCacheV1::for_update_v1(
+        update_backend.is_cpu(),
+        ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+    );
+    let max_groups = ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes);
+    // Recompute all actor-visible rows, including opponent decisions,
+    // before constructing learner groups. No private state is decoded.
+    let (tensor_groups, preparation_telemetry, used_deferred_learner_rows) =
+        prepare_update_groups_v1(
+            &episodes,
+            &policy,
+            &learner,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            max_groups,
+            training_math,
+            row_cache,
+            defer_learner_rows,
+        )?;
+    ensure(!tensor_groups.is_empty(), "no learner decisions")?;
     // Config-driven fixed-partition backward is a fresh-V4-lineage-only
     // option (`UpdateBackwardExecutionV1`). Any other combination is
     // rejected here, before any learner tensor is built, so a V3-generation
@@ -7248,8 +7358,8 @@ fn execute_update_inner_v1(
                     line_b_auxiliary = Some(auxiliary);
                     result
                 }
-                (ExpandedUpdateBackendV1::Cpu, _) => state
-                    .train_step_gae_card_projection_e1(
+                (ExpandedUpdateBackendV1::Cpu, _) => {
+                    match state.train_step_gae_card_projection_e1(
                         generation,
                         &groups,
                         &gae.value_targets,
@@ -7265,8 +7375,29 @@ fn execute_update_inner_v1(
                         preparation_workers.unwrap_or(1),
                         &mut gae_phase_recorder,
                         semantics.as_mut(),
-                    )
-                    .map_err(err)?,
+                    ) {
+                        Ok(result) => result,
+                        Err(step_err) => {
+                            if used_deferred_learner_rows {
+                                if let Some(workers) = preparation_workers {
+                                    // Reproduce reference replay error text and
+                                    // earliest-group precedence on invalid rows.
+                                    fallback_reference_preparation_v1(
+                                        &episodes,
+                                        &policy,
+                                        &learner,
+                                        workers,
+                                        max_prepared_tensor_mebibytes,
+                                        max_groups,
+                                        training_math,
+                                        row_cache,
+                                    )?;
+                                }
+                            }
+                            return Err(err(step_err));
+                        }
+                    }
+                }
                 (ExpandedUpdateBackendV1::Cuda { device_ordinal }, _)
                     if matches!(line_b_teacher, Some((_, Some(_)))) =>
                 {

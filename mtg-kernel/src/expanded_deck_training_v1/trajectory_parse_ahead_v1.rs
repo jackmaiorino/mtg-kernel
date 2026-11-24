@@ -52,6 +52,7 @@ impl CollectionTrajectoryFieldsV1 {
     /// a learner sampler or training math that is not a string counts as
     /// absent, and an input contract is read as written (an explicit `null`
     /// is not absent).
+    #[cfg(test)]
     pub(crate) fn of_document_v1(document: &Value) -> Self {
         let string = |field| {
             document
@@ -64,6 +65,186 @@ impl CollectionTrajectoryFieldsV1 {
             learner_sampler: string("learner_sampler"),
             training_math: string("training_math"),
             input_contract: document.get("input_contract").cloned(),
+        }
+    }
+
+    /// Parses only the validation fields from JSON bytes while still validating
+    /// the entire JSON document identically to `serde_json::from_slice::<Value>`
+    /// (every token, escape, number range, nesting limit, and trailing-data
+    /// check), without allocating a DOM for large ignored members such as
+    /// `decisions`.
+    pub(crate) fn parse_json_v1(bytes: &[u8]) -> Result<Self, String> {
+        struct StrictDiscardValueV1;
+
+        impl<'de> serde::de::Deserialize<'de> for StrictDiscardValueV1 {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                struct DiscardVisitorV1;
+
+                impl<'de> serde::de::Visitor<'de> for DiscardVisitorV1 {
+                    type Value = StrictDiscardValueV1;
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("any valid JSON value")
+                    }
+
+                    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                        Ok(StrictDiscardValueV1)
+                    }
+
+                    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+                        Ok(StrictDiscardValueV1)
+                    }
+
+                    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+                        Ok(StrictDiscardValueV1)
+                    }
+
+                    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                        Ok(StrictDiscardValueV1)
+                    }
+
+                    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+                        Ok(StrictDiscardValueV1)
+                    }
+
+                    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                        Ok(StrictDiscardValueV1)
+                    }
+
+                    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                        self,
+                        mut seq: A,
+                    ) -> Result<Self::Value, A::Error> {
+                        while seq.next_element::<StrictDiscardValueV1>()?.is_some() {}
+                        Ok(StrictDiscardValueV1)
+                    }
+
+                    fn visit_map<A: serde::de::MapAccess<'de>>(
+                        self,
+                        mut map: A,
+                    ) -> Result<Self::Value, A::Error> {
+                        while map
+                            .next_entry::<serde::de::IgnoredAny, StrictDiscardValueV1>()?
+                            .is_some()
+                        {}
+                        Ok(StrictDiscardValueV1)
+                    }
+                }
+
+                // `deserialize_any` runs serde_json's full number-range and
+                // string-escape validation (unlike `deserialize_ignored_any`,
+                // which skips floating-point overflow checks like `1e999999`),
+                // while allocating zero DOM nodes.
+                deserializer.deserialize_any(DiscardVisitorV1)
+            }
+        }
+
+        struct RootFieldsV1(CollectionTrajectoryFieldsV1);
+
+        impl<'de> serde::de::Deserialize<'de> for RootFieldsV1 {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                struct RootVisitorV1;
+
+                impl<'de> serde::de::Visitor<'de> for RootVisitorV1 {
+                    type Value = CollectionTrajectoryFieldsV1;
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("any valid JSON value")
+                    }
+
+                    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                        Ok(CollectionTrajectoryFieldsV1::empty_v1())
+                    }
+
+                    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+                        Ok(CollectionTrajectoryFieldsV1::empty_v1())
+                    }
+
+                    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+                        Ok(CollectionTrajectoryFieldsV1::empty_v1())
+                    }
+
+                    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                        Ok(CollectionTrajectoryFieldsV1::empty_v1())
+                    }
+
+                    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+                        Ok(CollectionTrajectoryFieldsV1::empty_v1())
+                    }
+
+                    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                        Ok(CollectionTrajectoryFieldsV1::empty_v1())
+                    }
+
+                    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                        self,
+                        mut seq: A,
+                    ) -> Result<Self::Value, A::Error> {
+                        while seq.next_element::<StrictDiscardValueV1>()?.is_some() {}
+                        Ok(CollectionTrajectoryFieldsV1::empty_v1())
+                    }
+
+                    fn visit_map<A: serde::de::MapAccess<'de>>(
+                        self,
+                        mut map: A,
+                    ) -> Result<Self::Value, A::Error> {
+                        let mut episode = Value::Null;
+                        let mut learner_sampler: Option<String> = None;
+                        let mut training_math: Option<String> = None;
+                        let mut input_contract: Option<Value> = None;
+                        while let Some(key) = map.next_key::<std::borrow::Cow<'de, str>>()? {
+                            match key.as_ref() {
+                                "episode" => {
+                                    episode = map.next_value::<Value>()?;
+                                }
+                                "learner_sampler" => {
+                                    let value = map.next_value::<Value>()?;
+                                    learner_sampler = value.as_str().map(str::to_owned);
+                                }
+                                "training_math" => {
+                                    let value = map.next_value::<Value>()?;
+                                    training_math = value.as_str().map(str::to_owned);
+                                }
+                                "input_contract" => {
+                                    input_contract = Some(map.next_value::<Value>()?);
+                                }
+                                _ => {
+                                    let _ = map.next_value::<StrictDiscardValueV1>()?;
+                                }
+                            }
+                        }
+                        Ok(CollectionTrajectoryFieldsV1 {
+                            episode,
+                            learner_sampler,
+                            training_math,
+                            input_contract,
+                        })
+                    }
+                }
+
+                deserializer
+                    .deserialize_any(RootVisitorV1)
+                    .map(RootFieldsV1)
+            }
+        }
+
+        serde_json::from_slice::<RootFieldsV1>(bytes)
+            .map(|parsed| parsed.0)
+            .map_err(err)
+    }
+
+    fn empty_v1() -> Self {
+        Self {
+            episode: Value::Null,
+            learner_sampler: None,
+            training_math: None,
+            input_contract: None,
         }
     }
 
@@ -107,9 +288,9 @@ fn parse_v1(kind: KindV1, bytes: &[u8]) -> Option<ParsedV1> {
     let bytes = record_envelope_v1::open_v1(bytes, MAX_FILE_BYTES).ok()?;
     let bytes = bytes.as_ref();
     match kind {
-        KindV1::CollectionFields => serde_json::from_slice::<Value>(bytes).ok().map(|document| {
-            ParsedV1::CollectionFields(CollectionTrajectoryFieldsV1::of_document_v1(&document))
-        }),
+        KindV1::CollectionFields => CollectionTrajectoryFieldsV1::parse_json_v1(bytes)
+            .ok()
+            .map(ParsedV1::CollectionFields),
         KindV1::Trajectory => serde_json::from_slice::<ExpandedTrajectoryV1>(bytes)
             .ok()
             .map(|trajectory| ParsedV1::Trajectory(Box::new(trajectory))),

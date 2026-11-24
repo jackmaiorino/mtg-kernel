@@ -276,7 +276,8 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
                 let card_live = state.objects.get(card);
                 card_live.owner == controller
                     && !card_live.v4.is_token
-                    && definition(state, card).is_some_and(|def| def.has_type(CardType::Creature))
+                    && definition(state, card)
+                        .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
             })
             .count() as i128;
         boost.0 += creatures;

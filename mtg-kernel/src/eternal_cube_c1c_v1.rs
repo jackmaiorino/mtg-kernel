@@ -463,6 +463,13 @@ pub(crate) fn execute(op: &C1cOpV1, ctx: &ExecCtx, state: &mut GameState) {
             // an ordinary discard event (Ox of Agonas' shape).
             let first = state.active_player;
             for player in [first, first.opponent()] {
+                if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                    state,
+                    ctx.controller,
+                    player,
+                ) {
+                    continue;
+                }
                 crate::eternal_legacy_e7a_v1::discard_controller_hand(state, player);
             }
         }
@@ -698,6 +705,13 @@ pub(crate) fn drive(
         else {
             return Ok(false);
         };
+        if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+            state,
+            continuation.ctx.controller,
+            player,
+        ) {
+            return Ok(false);
+        }
         let hand = state.players[player.index()].hand.clone();
         return match hand.as_slice() {
             [] => Ok(false),

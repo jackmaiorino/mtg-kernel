@@ -1082,6 +1082,7 @@ fn successor_keyword_names(keywords: card_def::Keywords) -> Result<String, Error
         (K::TOXIC_1, "toxic 1"),
         (K::SHROUD, "shroud"),
         (K::PROTECTION_FROM_EVERYTHING, "protection from everything"),
+        (K::INFECT, "infect"),
     ];
     let mask = known.iter().fold(0, |mask, (keyword, _)| mask | keyword.0);
     if keywords == K::NONE || keywords.0 & !mask != 0 {

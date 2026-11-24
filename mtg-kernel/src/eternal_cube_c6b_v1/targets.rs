@@ -1,7 +1,7 @@
 //! Own-graveyard targets for Fanatic and Night Nurse, following P3h's
 //! Auramancer filter and excluding tokens and spell copies.
 
-use crate::card_def::{CardType, CARD_DEFS};
+use crate::card_def::CARD_DEFS;
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardTargetV1;
 use crate::state::{GameState, Target, Zone};
@@ -32,7 +32,9 @@ pub(crate) fn target_matches(
                 super::permanent_card(live.card_def)
                     && super::entered_graveyard_this_turn(state, object)
             } else {
-                CARD_DEFS[usize::from(live.card_def)].has_type(CardType::Creature)
+                crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(
+                    &CARD_DEFS[usize::from(live.card_def)],
+                )
             }
     }))
 }

@@ -622,7 +622,7 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId, card: ObjectI
     let Some(def) = definition(state, card) else {
         return false;
     };
-    let noncreature = !def.types.contains(&CardType::Creature);
+    let noncreature = !crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def);
     if noncreature && noncreature_casts(state, player) >= 1 && any_active(state, DEAFENING_SILENCE)
     {
         return true;
@@ -683,6 +683,11 @@ fn selected_spell_name(def: &CardDef, method: CastMethodV4) -> Option<&'static s
         match def.alt_cost.map(|alt| alt.condition) {
             Some(crate::card_def::AltCostCondition::DisguiseFromHand) => return None,
             Some(crate::card_def::AltCostCondition::DisturbV1) => {
+                return def.transform_face.as_ref().map(|back| back.name);
+            }
+            Some(crate::card_def::AltCostCondition::Always)
+                if def.name == crate::eternal_cube_c8a_v1::JENNIFER_WALTERS =>
+            {
                 return def.transform_face.as_ref().map(|back| back.name);
             }
             _ => {}
@@ -947,6 +952,13 @@ fn run_tourach_discard(ctx: &ExecCtx, state: &mut GameState) {
     let Some(Target::Player(player)) = ctx.targets.first().copied() else {
         return;
     };
+    if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+        state,
+        ctx.controller,
+        player,
+    ) {
+        return;
+    }
     match state.random_hand_cards_v1(player, 2) {
         Ok(cards) => crate::engine::commit_discarded_cards(state, &cards),
         Err(_) => halt(state, ctx.source),

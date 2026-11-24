@@ -1369,7 +1369,7 @@ pub(crate) fn drive(
                 .copied()
                 .filter(|card| {
                     definition(state, card.object)
-                        .is_some_and(|def| def.has_type(CardType::Creature))
+                        .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .collect::<Vec<_>>();
             if creatures.is_empty() {
@@ -1420,7 +1420,7 @@ pub(crate) fn drive(
                 .filter(|&card| {
                     state.objects.get(card).zone == Zone::Graveyard
                         && definition(state, card)
-                            .is_some_and(|def| def.has_type(CardType::Creature))
+                            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .map(|card| bind(state, card))
                 .collect::<Vec<_>>();

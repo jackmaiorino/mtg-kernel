@@ -115,17 +115,18 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     }
 }
 
-/// Outland Liberator's back face, Frenzied Trapbreaker.
+/// Outland Liberator's back face, Frenzied Trapbreaker, falling through to
+/// wave C8a.
 pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Outland Liberator" => "Some(TransformFaceDef { name: \"Frenzied Trapbreaker\", types: &[CardType::Creature], subtypes: &[Subtype::Werewolf], colors: &[ManaColor::G], power: Some(3), toughness: Some(3), keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_c8a_v1::transform_face_for(name),
     }
 }
 
 pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Outland Liberator" => Some("Frenzied Trapbreaker"),
-        _ => None,
+        _ => super::build_eternal_c8a_v1::transform_face_name_for(name),
     }
 }

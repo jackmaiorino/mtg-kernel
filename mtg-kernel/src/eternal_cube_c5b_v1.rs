@@ -753,7 +753,8 @@ pub(crate) fn drive(
                 .copied()
                 .filter(|binding| {
                     definition(state, binding.object).is_some_and(|def| {
-                        def.has_type(CardType::Creature) || def.has_type(CardType::Land)
+                        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                            || def.has_type(CardType::Land)
                     })
                 })
                 .collect::<Vec<_>>();

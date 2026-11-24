@@ -1,9 +1,9 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C7c
 //! (evoke, linked exile/duration, persist, backup and Sanctum Lurker). Wave
-//! C7b's tables fall through to these, and this module is the tail of the
-//! recipe chains: its own defaults are the chains' base values. Runtime
-//! programs live in `src/eternal_cube_c7c_v1.rs`. Every row is keyed by a name
-//! that occurs only in the eternal registry.
+//! C7b's tables fall through to these, and these fall through to wave C8a's
+//! (`build_eternal_c8a_v1.rs`). Runtime programs live in
+//! `src/eternal_cube_c7c_v1.rs`. Every row is keyed by a name that occurs only
+//! in the eternal registry.
 
 use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 
@@ -25,29 +25,29 @@ const SANCTUM_LURKER: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Sanctum Lurker" => &SANCTUM_LURKER,
-        _ => &[],
+        _ => super::build_eternal_c8a_v1::activated_ability_recipes_for(name),
     }
 }
 
 /// All C7c cards are creature spells resolving through the default permanent
 /// entry program.
-pub(super) fn special_for(_name: &str) -> Option<Special> {
-    None
+pub(super) fn special_for(name: &str) -> Option<Special> {
+    super::build_eternal_c8a_v1::special_for(name)
 }
 
 /// No C7c card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_c8a_v1::kicker_cost_for(name)
 }
 
 /// No C7c card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_c8a_v1::attachment_for(name)
 }
 
 /// No C7c card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_c8a_v1::flashback_for(name)
 }
 
 /// Alternative costs: Evoke {R/G}{R/G} on Vibrance and Evoke {G/U}{G/U} on
@@ -56,7 +56,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Vibrance" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Hybrid(ManaColor::R, ManaColor::G), Pip::Hybrid(ManaColor::R, ManaColor::G)], generic: 0, x_count: 0 })], condition: AltCostCondition::Always })",
         "Wistfulness" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Hybrid(ManaColor::G, ManaColor::U), Pip::Hybrid(ManaColor::G, ManaColor::U)], generic: 0, x_count: 0 })], condition: AltCostCondition::Always })",
-        _ => "None",
+        _ => super::build_eternal_c8a_v1::alt_cost_for(name),
     }
 }
 
@@ -65,7 +65,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "The Wondrous Wasp" => &["Keywords::FLASH", "Keywords::FLYING"],
         "Woodfall Primus" => &["Keywords::TRAMPLE"],
         "Guardian Scalelord" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_c8a_v1::keywords_for(name),
     }
 }
 
@@ -79,6 +79,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Woodfall Primus" => "etb:target_noncreature_permanent:destroy;persist:dies_without_minus1_counters:return_under_owner_with_minus1_counter",
         "Sanctum Lurker" => "etb:empower_jace:1;static:controlled_planeswalkers_survive_zero_loyalty;static:controlled_planeswalkers_have_plus2_damage_each_opponent_1_gain_1",
         "Guardian Scalelord" => "backup:1:flying_and_attack_reanimate_until_end_of_turn;attacks:target_nonland_permanent_in_own_graveyard_mv_at_most_source_power:return_to_battlefield",
-        _ => "none",
+        _ => super::build_eternal_c8a_v1::trigger_recipe_for(name),
     }
 }

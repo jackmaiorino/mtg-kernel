@@ -56,6 +56,7 @@ use std::path::Path;
 pub const IMPORT_SCHEMA_V1: &str = "mtg-kernel-no-state-digest-import/v1";
 pub const CONVERSION_SCHEMA_V1: &str = "mtg-kernel-no-state-digest-conversion/v1";
 pub const CONTRACT_V1: &str = "no-state-digest-v1";
+pub const CONTRACT_NO_DIGESTS_V1: &str = "no-digests-v1";
 /// Input columns of `state_encoder.0.weight` that read the state digest:
 /// after the 123 explicit state features, before the 1,280 pooled objects.
 pub const STATE_DIGEST_COLUMNS_V1: std::ops::Range<usize> = 123..219;
@@ -63,6 +64,13 @@ pub const STATE_DIGEST_COLUMNS_V1: std::ops::Range<usize> = 123..219;
 pub const STATE_ENCODER_INPUT_V1: usize = 1_499;
 const STATE_ENCODER_WEIGHT: &str = "state_encoder.0.weight";
 const STATE_ENCODER_BIAS: &str = "state_encoder.0.bias";
+/// Input columns of `action_encoder.0.weight` that read the per-action digest:
+/// after the 99 explicit action features, before the 64 pooled action-ref dims.
+pub const ACTION_DIGEST_COLUMNS_V1: std::ops::Range<usize> = 99..195;
+/// The original action encoder's input width (195 action features + 64 hidden).
+pub const ACTION_ENCODER_INPUT_V1: usize = 259;
+const ACTION_ENCODER_WEIGHT: &str = "action_encoder.0.weight";
+const ACTION_ENCODER_BIAS: &str = "action_encoder.0.bias";
 
 /// A converted model's `play_import`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,20 +97,43 @@ pub struct NoStateDigestConversionV1 {
     pub contract: String,
     /// `[start, end)` of the removed `state_encoder.0.weight` input columns.
     pub state_digest_columns: [usize; 2],
+    /// `[start, end)` of the removed `action_encoder.0.weight` input columns
+    /// under `no-digests-v1`; omitted under `no-state-digest-v1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_digest_columns: Option<[usize; 2]>,
     pub base_play_import: PinnedFileV1,
     pub base_checkpoint: Option<PinnedFileV1>,
     pub base: NoStateDigestModelV1,
     /// The runtime model: the base with the digest columns at zero.
     pub converted: NoStateDigestModelV1,
-    /// The base checkpoint in the 1,403-wide layout (parameters and both
-    /// Adam moments with the columns removed), for later training work.
+    /// The base checkpoint in the narrowed layout (parameters and both
+    /// Adam moments with the digest columns removed), for later training work.
     /// Inference does not read it.
     pub converted_checkpoint: Option<PinnedFileV1>,
 }
 
-/// The converted model's feature contract digest.
+impl NoStateDigestConversionV1 {
+    fn drops_action_digest_v1(&self) -> bool {
+        self.contract == CONTRACT_NO_DIGESTS_V1
+    }
+}
+
+/// The converted model's feature contract digest (`no-state-digest-v1`).
 pub fn converted_contract_digest_v1(base: &str) -> String {
     sha(format!("{CONTRACT_V1}|{base}").as_bytes())
+}
+
+/// The converted model's feature contract digest (`no-digests-v1`).
+pub fn converted_no_digests_contract_digest_v1(base: &str) -> String {
+    sha(format!("{CONTRACT_NO_DIGESTS_V1}|{base}").as_bytes())
+}
+
+fn converted_contract_digest_for_v1(contract: &str, base: &str) -> Option<String> {
+    match contract {
+        CONTRACT_V1 => Some(converted_contract_digest_v1(base)),
+        CONTRACT_NO_DIGESTS_V1 => Some(converted_no_digests_contract_digest_v1(base)),
+        _ => None,
+    }
 }
 
 pub(super) fn check_enabled_v1() -> bool {
@@ -131,13 +162,25 @@ pub(super) fn with_check_for_test_v1<R>(check: bool, body: impl FnOnce() -> R) -
 }
 
 fn validate_conversion_v1(conversion: &NoStateDigestConversionV1) -> Result<(), String> {
+    let action_columns_ok = match conversion.contract.as_str() {
+        CONTRACT_V1 => conversion.action_digest_columns.is_none(),
+        CONTRACT_NO_DIGESTS_V1 => {
+            conversion.action_digest_columns
+                == Some([ACTION_DIGEST_COLUMNS_V1.start, ACTION_DIGEST_COLUMNS_V1.end])
+        }
+        _ => false,
+    };
+    let expected_digest = converted_contract_digest_for_v1(
+        &conversion.contract,
+        &conversion.base.feature_contract_digest,
+    );
     ensure(
         conversion.schema == CONVERSION_SCHEMA_V1
-            && conversion.contract == CONTRACT_V1
+            && action_columns_ok
             && conversion.state_digest_columns
                 == [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end]
-            && conversion.converted.feature_contract_digest
-                == converted_contract_digest_v1(&conversion.base.feature_contract_digest),
+            && expected_digest.as_deref()
+                == Some(conversion.converted.feature_contract_digest.as_str()),
         "unsupported no-state-digest conversion",
     )
 }
@@ -158,12 +201,23 @@ fn install_v1(
             && base.feature_contract_digest == conversion.base.feature_contract_digest,
         "the base model differs from the conversion record",
     )?;
-    policy.apply_no_state_digest_v1(
-        conversion.converted.feature_contract_digest.clone(),
-        STATE_DIGEST_COLUMNS_V1,
-        STATE_ENCODER_INPUT_V1,
-        check,
-    )?;
+    if conversion.drops_action_digest_v1() {
+        policy.apply_no_digests_v1(
+            conversion.converted.feature_contract_digest.clone(),
+            STATE_DIGEST_COLUMNS_V1,
+            STATE_ENCODER_INPUT_V1,
+            ACTION_DIGEST_COLUMNS_V1,
+            ACTION_ENCODER_INPUT_V1,
+            check,
+        )?;
+    } else {
+        policy.apply_no_state_digest_v1(
+            conversion.converted.feature_contract_digest.clone(),
+            STATE_DIGEST_COLUMNS_V1,
+            STATE_ENCODER_INPUT_V1,
+            check,
+        )?;
+    }
     ensure(
         policy.actual_model_identity_v1().model_parameter_sha256
             == conversion.converted.model_parameter_sha256,
@@ -180,6 +234,10 @@ pub struct InputContractRecordV1 {
     pub contract: String,
     /// `[start, end)` of the zeroed `state_encoder.0.weight` input columns.
     pub state_digest_columns: [usize; 2],
+    /// `[start, end)` of the zeroed `action_encoder.0.weight` input columns
+    /// under `no-digests-v1`; omitted under `no-state-digest-v1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_digest_columns: Option<[usize; 2]>,
     /// The conversion record the lineage started from. Two conversions of
     /// one import share the converted digest; this pin tells them apart.
     pub conversion: PinnedFileV1,
@@ -190,6 +248,19 @@ impl InputContractRecordV1 {
         Self {
             contract: CONTRACT_V1.into(),
             state_digest_columns: [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
+            action_digest_columns: None,
+            conversion,
+        }
+    }
+
+    fn of_no_digests_conversion_v1(conversion: PinnedFileV1) -> Self {
+        Self {
+            contract: CONTRACT_NO_DIGESTS_V1.into(),
+            state_digest_columns: [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
+            action_digest_columns: Some([
+                ACTION_DIGEST_COLUMNS_V1.start,
+                ACTION_DIGEST_COLUMNS_V1.end,
+            ]),
             conversion,
         }
     }
@@ -211,6 +282,7 @@ pub(crate) enum EffectiveContractV1 {
     NoStateDigest {
         converted_digest: String,
         conversion: PinnedFileV1,
+        action_digest_off: bool,
     },
 }
 
@@ -232,6 +304,16 @@ impl ResolvedContractV1 {
             EffectiveContractV1::NoStateDigest {
                 converted_digest, ..
             } => Some(converted_digest),
+        }
+    }
+
+    /// Whether the resolved contract also omits per-action digests (`no-digests-v1`).
+    pub(crate) fn action_digest_off_v1(&self) -> bool {
+        match &self.effective {
+            EffectiveContractV1::None => false,
+            EffectiveContractV1::NoStateDigest {
+                action_digest_off, ..
+            } => *action_digest_off,
         }
     }
 
@@ -342,16 +424,34 @@ pub(crate) fn resolve_contract_v1(
             effective: EffectiveContractV1::None,
         });
     };
+    let action_digest_off = match record.contract.as_str() {
+        CONTRACT_V1 => {
+            ensure(
+                record.action_digest_columns.is_none(),
+                "unsupported no-state-digest input contract",
+            )?;
+            false
+        }
+        CONTRACT_NO_DIGESTS_V1 => {
+            ensure(
+                record.action_digest_columns
+                    == Some([ACTION_DIGEST_COLUMNS_V1.start, ACTION_DIGEST_COLUMNS_V1.end]),
+                "unsupported no-state-digest input contract",
+            )?;
+            true
+        }
+        _ => return Err("unsupported no-state-digest input contract".into()),
+    };
     ensure(
-        record.contract == CONTRACT_V1
-            && record.state_digest_columns
-                == [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
+        record.state_digest_columns == [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
         "unsupported no-state-digest input contract",
     )?;
     let (generation, base_contract_digest, base_encoding_digest) = generations
         .into_iter()
         .find(|(_, base, base_encoding)| {
-            *base_encoding == encoding && converted_contract_digest_v1(base) == contract
+            *base_encoding == encoding
+                && converted_contract_digest_for_v1(&record.contract, base).as_deref()
+                    == Some(contract)
         })
         .ok_or("successor feature identity differs from its no-state-digest contract")?;
     ensure(
@@ -365,15 +465,20 @@ pub(crate) fn resolve_contract_v1(
         effective: EffectiveContractV1::NoStateDigest {
             converted_digest: contract.to_owned(),
             conversion: record.conversion.clone(),
+            action_digest_off,
         },
     })
 }
 
 /// Every stored row of a trajectory under the contract, opponent rows
 /// included, holds +0.0 (bits 0; -0.0 is refused too) in its state-digest
-/// inputs. With zero weight columns a nonzero input would still reproduce
-/// the recorded forward, but not the weight gradient's zero.
-pub(super) fn check_trajectory_rows_v1(decisions: &[DecisionRecordV1]) -> Result<(), String> {
+/// inputs (and in every action's action-digest inputs under `no-digests-v1`).
+/// With zero weight columns a nonzero input would still reproduce the recorded
+/// forward, but not the weight gradient's zero.
+pub(super) fn check_trajectory_rows_v1(
+    decisions: &[DecisionRecordV1],
+    action_digest_off: bool,
+) -> Result<(), String> {
     ensure(
         decisions.iter().all(|row| {
             row.tensor
@@ -382,7 +487,26 @@ pub(super) fn check_trajectory_rows_v1(decisions: &[DecisionRecordV1]) -> Result
                 .is_some_and(|digest| digest.iter().all(|bits| *bits == 0))
         }),
         "no-state-digest contract: a stored state-digest input is not +0.0",
-    )
+    )?;
+    if action_digest_off {
+        let row_width = crate::native_flat_tensorizer_v2::NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+        ensure(
+            decisions.iter().all(|row| {
+                row.tensor.action_features.len().is_multiple_of(row_width)
+                    && row
+                        .tensor
+                        .action_features
+                        .chunks_exact(row_width)
+                        .all(|action| {
+                            action
+                                .get(ACTION_DIGEST_COLUMNS_V1)
+                                .is_some_and(|digest| digest.iter().all(|bits| *bits == 0))
+                        })
+            }),
+            "no-digests contract: a stored action-digest input is not +0.0",
+        )?;
+    }
+    Ok(())
 }
 
 /// The `input_contract` member `policy`'s training records carry: None for
@@ -397,9 +521,11 @@ pub(crate) fn policy_contract_record_v1(
     let conversion = policy
         .input_contract_conversion_v1()
         .ok_or("a converted model without a pinned conversion writes no training records")?;
-    Ok(Some(InputContractRecordV1::of_conversion_v1(
-        conversion.clone(),
-    )))
+    Ok(Some(if policy.action_digest_off_v1() {
+        InputContractRecordV1::of_no_digests_conversion_v1(conversion.clone())
+    } else {
+        InputContractRecordV1::of_conversion_v1(conversion.clone())
+    }))
 }
 
 /// Whether `source`'s `play_import` is a [`NoStateDigestImportV1`]. A read
@@ -779,9 +905,15 @@ fn initialize_v1(
                 inputs,
                 None,
             )?;
-            state
-                .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
-                .map_err(err)?;
+            if conversion.drops_action_digest_v1() {
+                state
+                    .install_no_digests_v1(STATE_DIGEST_COLUMNS_V1, ACTION_DIGEST_COLUMNS_V1)
+                    .map_err(err)?;
+            } else {
+                state
+                    .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
+                    .map_err(err)?;
+            }
             let check = policy.no_state_digest_check_v1();
             return Ok((
                 policy,
@@ -844,9 +976,15 @@ fn initialize_v1(
         // continuation path keeps it.
         run_start_template = policy.duplicate_loaded_v1().ok();
     }
-    state
-        .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
-        .map_err(err)?;
+    if conversion.drops_action_digest_v1() {
+        state
+            .install_no_digests_v1(STATE_DIGEST_COLUMNS_V1, ACTION_DIGEST_COLUMNS_V1)
+            .map_err(err)?;
+    } else {
+        state
+            .install_no_state_digest_v1(STATE_DIGEST_COLUMNS_V1)
+            .map_err(err)?;
+    }
     // A base checkpoint that names a further file keeps every load full.
     if let Some(pin) = &conversion.base_checkpoint {
         if names_another_file_v1(&read_pinned_shared_v1(pin)?)? {
@@ -905,6 +1043,27 @@ fn convert_state_v1(
         for row in weight.values.chunks_exact_mut(STATE_ENCODER_INPUT_V1) {
             row[STATE_DIGEST_COLUMNS_V1].fill(0.0);
         }
+        if conversion.drops_action_digest_v1() {
+            let a_weight = list
+                .iter_mut()
+                .find(|parameter| parameter.name == ACTION_ENCODER_WEIGHT)
+                .ok_or("action encoder weight is missing")?;
+            ensure(
+                a_weight.shape
+                    == [
+                        a_weight.values.len() / ACTION_ENCODER_INPUT_V1,
+                        ACTION_ENCODER_INPUT_V1,
+                    ]
+                    && a_weight
+                        .values
+                        .len()
+                        .is_multiple_of(ACTION_ENCODER_INPUT_V1),
+                "action encoder width differs",
+            )?;
+            for row in a_weight.values.chunks_exact_mut(ACTION_ENCODER_INPUT_V1) {
+                row[ACTION_DIGEST_COLUMNS_V1].fill(0.0);
+            }
+        }
     }
     ensure(
         candidate
@@ -914,6 +1073,16 @@ fn convert_state_v1(
             .is_some_and(|bias| no_negative_zero_v1(&bias.values)),
         "a state encoder bias of -0.0 has no exact no-state-digest conversion",
     )?;
+    if conversion.drops_action_digest_v1() {
+        ensure(
+            candidate
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == ACTION_ENCODER_BIAS)
+                .is_some_and(|bias| no_negative_zero_v1(&bias.values)),
+            "an action encoder bias of -0.0 has no exact no-digests conversion",
+        )?;
+    }
     let mut converted =
         NativePolicyValueTrainStateV1::from_snapshot_v1(base_state.model_v1().clone(), &candidate)
             .map_err(err)?;
@@ -941,6 +1110,8 @@ fn convert_state_v1(
             &ConvertedCheckpointExpectationV1 {
                 schema: ordinary_checkpoint_schema_v1(policy.identity_v1()),
                 base_state_sha256: hex(&base.state_sha256_v1().map_err(err)?),
+                contract: &conversion.contract,
+                action_digest_off: conversion.drops_action_digest_v1(),
                 converted_contract: &conversion.converted.feature_contract_digest,
                 encoding: policy.feature_identity_v1().feature_encoding_digest,
                 training_math: base_state.training_math_v1(),
@@ -1042,10 +1213,15 @@ fn continue_state_v1(
 }
 
 /// The stored bits of a checkpoint's W, m and v digest columns are +0.0 and
-/// its state encoder bias has no -0.0.
+/// its encoder biases have no -0.0 (checking action_encoder too under
+/// `no-digests-v1`).
 pub(super) fn check_saved_columns_v1<T: CheckpointTensorV1>(
     saved: &ExpandedCheckpointV1<T>,
 ) -> Result<(), String> {
+    let action_digest_off = saved
+        .input_contract
+        .as_ref()
+        .is_some_and(|record| record.contract == CONTRACT_NO_DIGESTS_V1);
     for (list, what) in [
         (&saved.parameters, "parameter"),
         (&saved.first_moments, "first moment"),
@@ -1063,6 +1239,20 @@ pub(super) fn check_saved_columns_v1<T: CheckpointTensorV1>(
             ),
             &format!("no-state-digest contract: a stored state-digest {what} column is not +0.0"),
         )?;
+        if action_digest_off {
+            let a_weight = list
+                .iter()
+                .find(|parameter| parameter.name_v1() == ACTION_ENCODER_WEIGHT)
+                .ok_or("action encoder weight is missing")?;
+            ensure(
+                columns_are_positive_zero_v1(
+                    a_weight.values_f32_v1(),
+                    ACTION_ENCODER_INPUT_V1,
+                    ACTION_DIGEST_COLUMNS_V1,
+                ),
+                &format!("no-digests contract: a stored action-digest {what} column is not +0.0"),
+            )?;
+        }
     }
     let bias = saved
         .parameters
@@ -1072,7 +1262,22 @@ pub(super) fn check_saved_columns_v1<T: CheckpointTensorV1>(
     ensure(
         bias.values_u32_v1().iter().all(|bits| *bits != 0x8000_0000),
         "a state encoder bias of -0.0 has no exact no-state-digest conversion",
-    )
+    )?;
+    if action_digest_off {
+        let a_bias = saved
+            .parameters
+            .iter()
+            .find(|parameter| parameter.name_v1() == ACTION_ENCODER_BIAS)
+            .ok_or("action encoder bias is missing")?;
+        ensure(
+            a_bias
+                .values_u32_v1()
+                .iter()
+                .all(|bits| *bits != 0x8000_0000),
+            "an action encoder bias of -0.0 has no exact no-digests conversion",
+        )?;
+    }
+    Ok(())
 }
 
 /// The members of the 1,403-wide conversion artifact
@@ -1101,24 +1306,28 @@ struct ConvertedCheckpointViewV1 {
 struct ConvertedCheckpointContractV1 {
     contract: String,
     state_digest_columns: [usize; 2],
+    #[serde(default)]
+    action_digest_columns: Option<[usize; 2]>,
 }
 
-/// What the conversion's 1,403-wide checkpoint must record: the base
+/// What the conversion's narrowed checkpoint must record: the base
 /// checkpoint's schema and state, the converted contract beside the base
 /// encoding, and the base optimizer's training math.
 struct ConvertedCheckpointExpectationV1<'a> {
     schema: &'static str,
     base_state_sha256: String,
+    contract: &'a str,
+    action_digest_off: bool,
     converted_contract: &'a str,
     encoding: &'static str,
     training_math: TrainingMathV1,
 }
 
 /// Every kept bit of the converted parameters and both moments, with every
-/// tensor's exact shape (the state encoder weight and its moments 1,403
-/// wide), the Adam step, gauge anchor, training math and the artifact's
-/// identity, against the conversion's 1,403-wide checkpoint, which names the
-/// base state it was cut from.
+/// tensor's exact shape (the state encoder weight 1,403 wide, and under
+/// `no-digests-v1` the action encoder weight 163 wide), the Adam step, gauge
+/// anchor, training math and the artifact's identity, against the conversion's
+/// narrowed checkpoint.
 fn check_converted_checkpoint_v1(
     pin: &PinnedFileV1,
     expected: &ConvertedCheckpointExpectationV1<'_>,
@@ -1131,12 +1340,16 @@ fn check_converted_checkpoint_v1(
             && view.card_db_hash == format!("{KERNEL_CARDDB_HASH:016x}"),
         "the converted checkpoint's schema, encoding or card database differs",
     )?;
+    let expected_action_cols = expected
+        .action_digest_off
+        .then_some([ACTION_DIGEST_COLUMNS_V1.start, ACTION_DIGEST_COLUMNS_V1.end]);
     ensure(
         view.source_state_sha256 == expected.base_state_sha256
             && view.feature_contract_digest == expected.converted_contract
-            && view.input_contract.contract == CONTRACT_V1
+            && view.input_contract.contract == expected.contract
             && view.input_contract.state_digest_columns
                 == [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end]
+            && view.input_contract.action_digest_columns == expected_action_cols
             && view.adam_step == candidate.adam_step
             && view.scorer_bias_anchor_bits == candidate.scorer_bias_anchor_bits
             && view.training_math == expected.training_math,
@@ -1158,6 +1371,11 @@ fn check_converted_checkpoint_v1(
                     converted.values.len() / STATE_ENCODER_INPUT_V1,
                     STATE_ENCODER_INPUT_V1 - STATE_DIGEST_COLUMNS_V1.len(),
                 ];
+            } else if expected.action_digest_off && converted.name == ACTION_ENCODER_WEIGHT {
+                shape = vec![
+                    converted.values.len() / ACTION_ENCODER_INPUT_V1,
+                    ACTION_ENCODER_INPUT_V1 - ACTION_DIGEST_COLUMNS_V1.len(),
+                ];
             }
             ensure(
                 stored.shape == shape,
@@ -1171,6 +1389,17 @@ fn check_converted_checkpoint_v1(
                         row[..STATE_DIGEST_COLUMNS_V1.start]
                             .iter()
                             .chain(&row[STATE_DIGEST_COLUMNS_V1.end..])
+                            .map(|value| value.to_bits())
+                    })
+                    .collect()
+            } else if expected.action_digest_off && converted.name == ACTION_ENCODER_WEIGHT {
+                converted
+                    .values
+                    .chunks_exact(ACTION_ENCODER_INPUT_V1)
+                    .flat_map(|row| {
+                        row[..ACTION_DIGEST_COLUMNS_V1.start]
+                            .iter()
+                            .chain(&row[ACTION_DIGEST_COLUMNS_V1.end..])
                             .map(|value| value.to_bits())
                     })
                     .collect()
@@ -1209,16 +1438,17 @@ fn write_pinned_v1(directory: &Path, name: &str, bytes: &[u8]) -> Result<PinnedF
     Ok(pin)
 }
 
-/// Drops `columns` from every row of a `[rows, width]` JSON tensor entry.
-fn drop_columns_v1(entry: &mut Value, columns: std::ops::Range<usize>) -> Result<(), String> {
+/// Drops `columns` from every row of a `[rows, expected_width]` JSON tensor entry.
+fn drop_columns_v1(
+    entry: &mut Value,
+    expected_width: usize,
+    columns: std::ops::Range<usize>,
+) -> Result<(), String> {
     let shape: Vec<usize> = serde_json::from_value(entry["shape"].clone()).map_err(err)?;
     let &[rows, width] = shape.as_slice() else {
-        return Err("state encoder weight is not a matrix".into());
+        return Err("encoder weight is not a matrix".into());
     };
-    ensure(
-        width == STATE_ENCODER_INPUT_V1,
-        "state encoder width differs",
-    )?;
+    ensure(width == expected_width, "encoder width differs")?;
     let values = entry["values"].as_array().ok_or("tensor values missing")?;
     ensure(values.len() == rows * width, "tensor size differs")?;
     let kept: Vec<Value> = values
@@ -1235,12 +1465,14 @@ fn drop_columns_v1(entry: &mut Value, columns: std::ops::Range<usize>) -> Result
     Ok(())
 }
 
-/// The base checkpoint in the 1,403-wide layout, checked against the
+/// The base checkpoint in the narrowed layout, checked against the
 /// installed (zero-column) runtime parameters bit for bit.
 fn converted_checkpoint_bytes_v1(
     checkpoint: &[u8],
+    contract: &str,
     converted_contract: &str,
-    runtime_weight: &[f32],
+    runtime_state_weight: &[f32],
+    runtime_action_weight: Option<&[f32]>,
 ) -> Result<Vec<u8>, String> {
     ensure(
         !super::checkpoint_container_v1::is_container_v1(checkpoint),
@@ -1255,17 +1487,30 @@ fn converted_checkpoint_bytes_v1(
         let entries = value[list]
             .as_array_mut()
             .ok_or("checkpoint tensor list missing")?;
-        let mut found = 0;
+        let mut found_state = 0;
+        let mut found_action = 0;
         for entry in entries.iter_mut() {
             if entry["name"] == STATE_ENCODER_WEIGHT {
-                drop_columns_v1(entry, STATE_DIGEST_COLUMNS_V1)?;
-                found += 1;
+                drop_columns_v1(entry, STATE_ENCODER_INPUT_V1, STATE_DIGEST_COLUMNS_V1)?;
+                found_state += 1;
+            } else if runtime_action_weight.is_some() && entry["name"] == ACTION_ENCODER_WEIGHT {
+                drop_columns_v1(entry, ACTION_ENCODER_INPUT_V1, ACTION_DIGEST_COLUMNS_V1)?;
+                found_action += 1;
             }
         }
-        ensure(found == 1, "state encoder tensor not found exactly once")?;
+        ensure(
+            found_state == 1,
+            "state encoder tensor not found exactly once",
+        )?;
+        if runtime_action_weight.is_some() {
+            ensure(
+                found_action == 1,
+                "action encoder tensor not found exactly once",
+            )?;
+        }
     }
     // The kept parameter columns are the runtime's nonzero columns.
-    let kept_runtime: Vec<u32> = runtime_weight
+    let kept_runtime: Vec<u32> = runtime_state_weight
         .chunks_exact(STATE_ENCODER_INPUT_V1)
         .flat_map(|row| {
             row[..STATE_DIGEST_COLUMNS_V1.start]
@@ -1283,6 +1528,27 @@ fn converted_checkpoint_bytes_v1(
         stored == kept_runtime,
         "converted checkpoint differs from the runtime parameters",
     )?;
+    if let Some(action_weight) = runtime_action_weight {
+        let kept_action: Vec<u32> = action_weight
+            .chunks_exact(ACTION_ENCODER_INPUT_V1)
+            .flat_map(|row| {
+                row[..ACTION_DIGEST_COLUMNS_V1.start]
+                    .iter()
+                    .chain(&row[ACTION_DIGEST_COLUMNS_V1.end..])
+                    .map(|x| x.to_bits())
+            })
+            .collect();
+        let a_weight = value["parameters"]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|e| e["name"] == ACTION_ENCODER_WEIGHT))
+            .ok_or("action encoder parameters missing")?;
+        let stored_action: Vec<u32> =
+            serde_json::from_value(a_weight["values"].clone()).map_err(err)?;
+        ensure(
+            stored_action == kept_action,
+            "converted checkpoint action encoder differs from the runtime parameters",
+        )?;
+    }
     let object = value.as_object_mut().ok_or("checkpoint is not an object")?;
     object.remove("state_sha256");
     object.insert("source_state_sha256".into(), source_state);
@@ -1290,23 +1556,45 @@ fn converted_checkpoint_bytes_v1(
         "feature_contract_digest".into(),
         Value::from(converted_contract),
     );
-    object.insert(
-        "input_contract".into(),
+    let contract_meta = if runtime_action_weight.is_some() {
         serde_json::json!({
-            "contract": CONTRACT_V1,
+            "contract": contract,
             "state_digest_columns": [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
-        }),
-    );
+            "action_digest_columns": [ACTION_DIGEST_COLUMNS_V1.start, ACTION_DIGEST_COLUMNS_V1.end],
+        })
+    } else {
+        serde_json::json!({
+            "contract": contract,
+            "state_digest_columns": [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
+        })
+    };
+    object.insert("input_contract".into(), contract_meta);
     serde_json::to_vec(&value).map_err(err)
 }
 
-/// Converts the ordinary source at `source_path` into `out_dir`: the
-/// conversion record, the converted import and source, and (when the source
-/// has a checkpoint) the 1,403-wide checkpoint. The converted source is then
-/// loaded back and must install the same model.
+/// Converts the ordinary source at `source_path` into `out_dir` under
+/// `no-state-digest-v1` (zeroing state digest columns `123..219`).
 pub fn convert_no_state_digest_v1(
     source_path: &Path,
     out_dir: &Path,
+) -> Result<NoStateDigestOutputsV1, String> {
+    convert_input_contract_v1(source_path, out_dir, false)
+}
+
+/// Converts the ordinary source at `source_path` into `out_dir` under
+/// `no-digests-v1` (zeroing both state digest columns `123..219` and action
+/// digest columns `99..195`).
+pub fn convert_no_digests_v1(
+    source_path: &Path,
+    out_dir: &Path,
+) -> Result<NoStateDigestOutputsV1, String> {
+    convert_input_contract_v1(source_path, out_dir, true)
+}
+
+fn convert_input_contract_v1(
+    source_path: &Path,
+    out_dir: &Path,
+    drop_action_digest: bool,
 ) -> Result<NoStateDigestOutputsV1, String> {
     let source: ExpandedModelSourceV1 =
         serde_json::from_slice(&fs::read(source_path).map_err(err)?).map_err(err)?;
@@ -1316,42 +1604,79 @@ pub fn convert_no_state_digest_v1(
         "the source is already converted",
     )?;
     let base = policy.actual_model_identity_v1();
-    let converted_contract = converted_contract_digest_v1(&base.feature_contract_digest);
-    policy.apply_no_state_digest_v1(
-        converted_contract.clone(),
-        STATE_DIGEST_COLUMNS_V1,
-        STATE_ENCODER_INPUT_V1,
-        false,
-    )?;
+    let contract_name = if drop_action_digest {
+        CONTRACT_NO_DIGESTS_V1
+    } else {
+        CONTRACT_V1
+    };
+    let converted_contract = if drop_action_digest {
+        converted_no_digests_contract_digest_v1(&base.feature_contract_digest)
+    } else {
+        converted_contract_digest_v1(&base.feature_contract_digest)
+    };
+    if drop_action_digest {
+        policy.apply_no_digests_v1(
+            converted_contract.clone(),
+            STATE_DIGEST_COLUMNS_V1,
+            STATE_ENCODER_INPUT_V1,
+            ACTION_DIGEST_COLUMNS_V1,
+            ACTION_ENCODER_INPUT_V1,
+            false,
+        )?;
+    } else {
+        policy.apply_no_state_digest_v1(
+            converted_contract.clone(),
+            STATE_DIGEST_COLUMNS_V1,
+            STATE_ENCODER_INPUT_V1,
+            false,
+        )?;
+    }
     let converted = policy.actual_model_identity_v1();
     fs::create_dir_all(out_dir).map_err(err)?;
     let converted_checkpoint = match &source.checkpoint {
         None => None,
         Some(pin) => {
-            let runtime = policy
-                .training_parameters_v3()
-                .into_iter()
+            let params = policy.training_parameters_v3();
+            let runtime_state = params
+                .iter()
                 .find(|p| p.name == STATE_ENCODER_WEIGHT)
                 .ok_or("state encoder weight is missing")?;
+            let runtime_action = if drop_action_digest {
+                Some(
+                    params
+                        .iter()
+                        .find(|p| p.name == ACTION_ENCODER_WEIGHT)
+                        .ok_or("action encoder weight is missing")?
+                        .values
+                        .as_slice(),
+                )
+            } else {
+                None
+            };
             // A sealed checkpoint (`record_envelope_v1`) converts from its
             // record, with every check of a plain one.
             let sealed = read_pinned_bytes(pin)?;
             let bytes = converted_checkpoint_bytes_v1(
                 &super::record_envelope_v1::open_v1(&sealed, super::MAX_FILE_BYTES)?,
+                contract_name,
                 &converted_contract,
-                &runtime.values,
+                &runtime_state.values,
+                runtime_action,
             )?;
-            Some(write_pinned_v1(
-                out_dir,
-                "checkpoint-no-state-digest.json",
-                &bytes,
-            )?)
+            let filename = if drop_action_digest {
+                "checkpoint-no-digests.json"
+            } else {
+                "checkpoint-no-state-digest.json"
+            };
+            Some(write_pinned_v1(out_dir, filename, &bytes)?)
         }
     };
     let record = NoStateDigestConversionV1 {
         schema: CONVERSION_SCHEMA_V1.into(),
-        contract: CONTRACT_V1.into(),
+        contract: contract_name.into(),
         state_digest_columns: [STATE_DIGEST_COLUMNS_V1.start, STATE_DIGEST_COLUMNS_V1.end],
+        action_digest_columns: drop_action_digest
+            .then_some([ACTION_DIGEST_COLUMNS_V1.start, ACTION_DIGEST_COLUMNS_V1.end]),
         base_play_import: source.play_import.clone(),
         base_checkpoint: source.checkpoint.clone(),
         base: NoStateDigestModelV1 {
@@ -1395,6 +1720,7 @@ pub fn convert_no_state_digest_v1(
     let (reloaded, identity) = super::load_expanded_inference_v1(&converted_source)?;
     ensure(
         reloaded.input_contract_v1() == Some(record.converted.feature_contract_digest.as_str())
+            && reloaded.action_digest_off_v1() == drop_action_digest
             && identity.model.model_parameter_sha256 == record.converted.model_parameter_sha256,
         "the converted source does not reload as recorded",
     )?;
