@@ -44,11 +44,13 @@ pub(crate) fn protection_applies(state: &GameState, damage: &DamageProposed) -> 
                     damage.target,
                 )
             },
-            |facts| match damage.target {
-                Target::Object(target) => {
-                    crate::source_power_activation_v1::protected(state, facts, target)
-                }
-                _ => false,
+            |facts| {
+                event::historical_damage_prevented_by_protection(
+                    state,
+                    facts,
+                    damage.departed_types(),
+                    damage.target,
+                )
             },
         )
 }

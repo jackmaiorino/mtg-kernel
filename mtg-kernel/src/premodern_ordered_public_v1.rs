@@ -99,6 +99,12 @@ pub enum FullTextProgramV1 {
     KarmicGuideEcho,
     DevourerSacrifice,
     RavenousRatsDiscard,
+    AuramancerReturnEnchantment,
+    MonkRealistDestroyEnchantment,
+    UktabiOrangutanDestroyArtifact,
+    GhituSlingerDamage,
+    DonatedEcho,
+    XantidSwarmSilence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
