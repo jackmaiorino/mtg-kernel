@@ -1683,30 +1683,28 @@ fn ordered_register_refuses_volrath_without_profile_and_rl_session_refuses_outsi
     let island = card_id_by_name("Island").unwrap();
     let extrapolate = card_id_by_name("Extrapolate the Impossible").unwrap();
 
-    // Even when Volrath's Partial capability is waived (as once B2 flips it to
-    // Full), registering it without the ordered-graveyard profile is refused
-    // with `OrderedGraveyardSetup`.
+    // Volrath's Shapeshifter is Full and requires the ordered-graveyard
+    // profile: ordinary registration refuses it with `OrderedGraveyardSetup`,
+    // while ordered-graveyard registration admits it.
     let mut with_volrath = vec![island; 58];
     with_volrath.extend([volrath; 2]);
     assert!(matches!(
-        EternalRegisteredDeckV1::register_test_partial_volrath_v1(
+        EternalRegisteredDeckV1::new_v1(
             EternalFormatV1::Premodern,
             "ordinary-volrath",
             with_volrath.clone(),
             Vec::new(),
             None,
-            false,
         ),
         Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
             if reason.contains("Volrath's Shapeshifter")
     ));
-    EternalRegisteredDeckV1::register_test_partial_volrath_v1(
+    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
         EternalFormatV1::Premodern,
         "ordered-volrath",
         with_volrath,
         Vec::new(),
         None,
-        true,
     )
     .unwrap();
 

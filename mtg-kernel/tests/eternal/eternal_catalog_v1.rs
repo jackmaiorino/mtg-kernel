@@ -6,10 +6,15 @@
 //! reports shroud on permanents and players.
 #![cfg(feature = "eternal-fixtures")]
 
+use mtg_kernel::bo3_match::PlayDrawChoiceV1;
 use mtg_kernel::card_def::{
     card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError,
     TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
 };
+use mtg_kernel::eternal_bo3_v1::{
+    EternalBestOfThreeMatchV1, EternalFormatV1, EternalRegisteredDeckV1,
+};
+use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -23,7 +28,7 @@ use std::thread::available_parallelism;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 137] = [
+const PLAYABLE: [(&str, &str); 138] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -203,6 +208,7 @@ const PLAYABLE: [(&str, &str); 137] = [
     ("premodern", "premodern-survival"),
     ("premodern", "premodern-madness-threshold"),
     ("premodern", "premodern-reanimator"),
+    ("premodern", "premodern-full-english-breakfast"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -256,13 +262,10 @@ const PARTIAL_S1: [&str; 0] = [];
 /// Headliner Scarlett, Gandalf, Goblins' Bane and Metamorphosis Fanatic in C7a.
 const PARTIAL_CUBE: [&str; 0] = [];
 
-/// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
-/// only Partial definitions.
+/// The S1 and cube cards above (currently none) are the registry's only
+/// Partial definitions; Volrath's Shapeshifter became Full in step B2 (#460).
 pub(crate) fn expected_capability(name: &str) -> CardCapability {
-    if name == "Volrath's Shapeshifter"
-        || PARTIAL_S1.contains(&name)
-        || PARTIAL_CUBE.contains(&name)
-    {
+    if PARTIAL_S1.contains(&name) || PARTIAL_CUBE.contains(&name) {
         CardCapability::Partial
     } else {
         CardCapability::Full
@@ -318,11 +321,7 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
             "{name}"
         );
     }
-    for name in ["Volrath's Shapeshifter"]
-        .into_iter()
-        .chain(PARTIAL_S1)
-        .chain(PARTIAL_CUBE)
-    {
+    for name in PARTIAL_S1.into_iter().chain(PARTIAL_CUBE) {
         let id = card_id_by_name(name).unwrap();
         assert!(CARD_DEFS[usize::from(id)].is_executable());
         assert!(matches!(
@@ -335,6 +334,19 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
             }) if card_def == id && rejected == name
         ));
     }
+    let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
+    assert_eq!(
+        CARD_DEFS[usize::from(volrath)].capability,
+        CardCapability::Full
+    );
+    assert!(matches!(
+        preflight_fully_supported_deck(&[volrath]),
+        Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+            index: 0,
+            card_def,
+            name: "Volrath's Shapeshifter",
+        }) if card_def == volrath
+    ));
     println!("eternal catalog hash {KERNEL_CARDDB_HASH:#018x}");
 }
 
@@ -1354,6 +1366,71 @@ fn premodern_elves_snapshot_finishes_and_replays_in_both_seats() {
     }
 }
 
+fn requires_ordered_graveyard(deck: &SnapshotDeck) -> bool {
+    let (ids, _) = deck.deck.resolve_with_companion().unwrap();
+    matches!(
+        preflight_fully_supported_deck(&ids),
+        Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 { .. })
+    )
+}
+
+fn expand_rows(rows: &[CustomCardCountV1]) -> Vec<u16> {
+    rows.iter()
+        .flat_map(|row| {
+            let id = card_id_by_name(&row.name)
+                .unwrap_or_else(|| panic!("{} is in the eternal registry", row.name));
+            std::iter::repeat_n(id, row.count as usize)
+        })
+        .collect()
+}
+
+fn register_for_ordered_game_one(deck: &SnapshotDeck) -> EternalRegisteredDeckV1 {
+    let format = EternalFormatV1::from_snapshot_key(&deck.format).unwrap();
+    let mainboard = expand_rows(&deck.deck.cards);
+    // PLAYABLE plays game one only. Before step C2 lands Alter Reality,
+    // Replenish's sideboard cannot register, so fall back to an empty
+    // sideboard whenever a sideboard card is not yet Full.
+    let sideboard = if deck.sideboard.iter().all(|row| fully_supported(&row.name)) {
+        expand_rows(&deck.sideboard)
+    } else {
+        Vec::new()
+    };
+    let companion = deck
+        .deck
+        .companion
+        .as_deref()
+        .map(|name| card_id_by_name(name).unwrap());
+    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        format,
+        deck.archetype.clone(),
+        mainboard,
+        sideboard,
+        companion,
+    )
+    .unwrap_or_else(|error| panic!("{}: {error}", deck.archetype))
+}
+
+fn play_ordered_game_one(
+    first: &SnapshotDeck,
+    second: &SnapshotDeck,
+    seed: u64,
+    policy: Policy,
+) -> crate::eternal_bo3_v1::ordered::OrderedGame {
+    let pair = [
+        register_for_ordered_game_one(first),
+        register_for_ordered_game_one(second),
+    ];
+    let configs = [
+        pair[0].registered_configuration().clone(),
+        pair[1].registered_configuration().clone(),
+    ];
+    let mut bo3 = EternalBestOfThreeMatchV1::new_v1(pair, PlayerId::P0).unwrap();
+    let (_, owner) = bo3
+        .start_game_with_ordered_graveyard_v1(PlayerId::P0, PlayDrawChoiceV1::Play, configs, seed)
+        .unwrap();
+    crate::eternal_bo3_v1::ordered::play(owner, seed, policy)
+}
+
 #[test]
 fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     let decks: Vec<SnapshotDeck> = snapshot_decks()
@@ -1361,15 +1438,27 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
         .filter(|deck| PLAYABLE.contains(&(deck.format.as_str(), deck.archetype.as_str())))
         .collect();
     assert_eq!(decks.len(), PLAYABLE.len());
+    let mut ordered_decks = 0usize;
     for deck in &decks {
         let (ids, companion) = deck
             .deck
             .resolve_with_companion()
             .unwrap_or_else(|error| panic!("{}: {error}", deck.archetype));
-        preflight_fully_supported_deck(&ids)
-            .unwrap_or_else(|error| panic!("{}: {error:?}", deck.archetype));
+        if matches!(
+            preflight_fully_supported_deck(&ids),
+            Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 { .. })
+        ) {
+            ordered_decks += 1;
+        } else {
+            preflight_fully_supported_deck(&ids)
+                .unwrap_or_else(|error| panic!("{}: {error:?}", deck.archetype));
+        }
         assert_eq!(companion.is_some(), deck.deck.companion.is_some());
     }
+    assert!(
+        ordered_decks > 0,
+        "expected at least one PLAYABLE Shapeshifter deck"
+    );
     // Each deck plays the next one, so every deck takes both seats, once
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
@@ -1391,8 +1480,44 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // threads (`in_parallel`); everything below takes their results in this
     // loop's order.
     let outcomes = in_parallel(&games, |&(first, second, seed, policy)| {
-        let pair = [first.deck.clone(), second.deck.clone()];
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if requires_ordered_graveyard(first) || requires_ordered_graveyard(second) {
+                let game = play_ordered_game_one(first, second, seed, policy);
+                let replay = play_ordered_game_one(first, second, seed, policy);
+                assert_eq!(
+                    game.transcript_sha256, replay.transcript_sha256,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                assert_eq!(
+                    game.state_hash, replay.state_hash,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                assert_eq!(
+                    game.winner, replay.winner,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                let casts_by_seat = [0, 1].map(|seat| game.cast_cards[seat].values().sum());
+                return Game {
+                    transcript_sha256: game.transcript_sha256,
+                    action_counts: game.action_counts,
+                    casts_by_seat,
+                    companion_actions: 0,
+                    winner: game.winner,
+                    cast_cards: game.cast_cards,
+                    spell_modes: BTreeMap::new(),
+                    search_looks: [0; 2],
+                    overloaded_spells: 0,
+                    taxed_inclusions: 0,
+                    unpaid_exclusions: 0,
+                    circle_choices: 0,
+                    mage_choices: [0; 2],
+                    mage_held_names: 0,
+                };
+            }
+            let pair = [first.deck.clone(), second.deck.clone()];
             let game = play(pair.clone(), seed, policy);
             let replay = play(pair.clone(), seed, policy);
             assert_eq!(
