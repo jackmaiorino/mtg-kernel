@@ -3100,6 +3100,7 @@ fn apply_replacements_inner(
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented
             || crate::eternal_prevention_order_v1::soul_scar_competes(state, damage)
+            || crate::eternal_prevention_order_v1::unicorn_competes(state, damage)
         {
             use crate::eternal_prevention_order_v1::DamageResultV1;
             match crate::eternal_pauper_pf1c_v1::replace_damage(state, damage) {
@@ -3121,6 +3122,12 @@ fn apply_replacements_inner(
         if !damage_cannot_be_prevented
             && crate::eternal_premodern_p3a_v1::statics::sphere_of_law_prevents(state, damage)
         {
+            return None;
+        }
+        // Benevolent Unicorn (Pauper field wave Pf2c): CR 614.1a spell-damage
+        // replacement effect, unaffected by "damage can't be prevented".
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_pauper_pf2c_v1::unicorn_replaces_damage(state, damage) {
             return None;
         }
         if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
@@ -3192,6 +3199,15 @@ fn apply_replacements_inner(
             damage,
             damage_cannot_be_prevented,
         ) {
+            return None;
+        }
+    }
+    // Aurora Eidolon (Pauper field wave Pf2b): finite prevention shields.
+    #[cfg(feature = "eternal-fixtures")]
+    if let ProposedEvent::Damage(damage) = &mut proposed {
+        if !damage_cannot_be_prevented
+            && crate::eternal_pauper_pf2b_v1::aurora_prevents_damage(state, damage)
+        {
             return None;
         }
     }
@@ -6453,6 +6469,14 @@ fn materialize_event_v1(
                     z.to_zone,
                     departure_power,
                 );
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_pauper_pf2c_v1::note_departure(
+                    state,
+                    z.object,
+                    from,
+                    z.to_zone,
+                    departure_power,
+                );
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -6606,6 +6630,13 @@ fn materialize_event_v1(
                 );
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
+                    crate::eternal_pauper_pf2c_v1::note_departure(
+                        state,
+                        z.object,
+                        from,
+                        z.to_zone,
+                        departure_power,
+                    );
                     crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
                     crate::eternal_cube_c8c_v1::note_departure(state, z.object);
                     crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, false);
@@ -6948,6 +6979,8 @@ fn materialize_event_v1(
             }
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_cube_c8b_v1::apply_pending_token_mods(state, object);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_pauper_pf2c_v1::apply_pending_token_prototyped(state, object);
             initialize_entry_counters(state, object, false, counter_input.as_ref());
             if season_entry_active {
                 crate::standard_cards_v1::initialize_entry_counters(
@@ -7835,6 +7868,7 @@ fn commit_batch_survivors_native(
         crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
         crate::eternal_cube_c8c_v1::before_batch_departures(state, &survivors);
         crate::eternal_cube_c9a_v1::before_batch_departures(state, &survivors);
+        crate::eternal_pauper_pf2c_v1::before_batch_departures(state, &survivors);
     }
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
@@ -8988,6 +9022,11 @@ fn materialize_zone_change_v1(
             .v4
             .spell_cast_origin
             .is_some_and(|origin| origin.finalized_method.is_some());
+    #[cfg(feature = "eternal-fixtures")]
+    let entered_prototyped = to_zone == Zone::Battlefield
+        && from_zone == Zone::Stack
+        && entering_face_down.is_none()
+        && crate::eternal_pauper_pf2c_v1::is_prototyped_stack_spell(state, id);
     // A resolving permanent enters under its spell controller (608.3),
     // including a spell cast from another player's exile through Etali.
     let battlefield_controller = battlefield_controller.or_else(|| {
@@ -9171,6 +9210,14 @@ fn materialize_zone_change_v1(
     }
     if let Some(copy) = metamorph_mage_copy {
         crate::eternal_vintage_v1::retain_mage_copy_on_entry(state, copy);
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if from_zone == Zone::Battlefield && to_zone != Zone::Battlefield {
+        crate::eternal_pauper_pf2c_v1::clear_prototyped(state, id);
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if entered_prototyped && state.objects.get(id).zone == Zone::Battlefield {
+        crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, id);
     }
     if to_zone == Zone::Battlefield {
         if let Some(entry) = entering_characteristics {

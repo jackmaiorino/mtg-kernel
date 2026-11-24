@@ -556,6 +556,9 @@ pub enum Subtype {
     Elspeth = 772,
     Grist = 773,
     Nissa = 774,
+    /// Appended for Pauper field wave Pf2b (Pegasus Guardian and its Pegasus
+    /// token), stable id 780. A creature type.
+    Pegasus = 780,
 }
 
 impl Subtype {
@@ -985,6 +988,8 @@ impl Subtype {
         Subtype::Badger,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mole,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Pegasus,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1259,6 +1264,7 @@ impl Subtype {
             772 => Subtype::Elspeth,
             773 => Subtype::Grist,
             774 => Subtype::Nissa,
+            780 => Subtype::Pegasus,
             _ => return None,
         })
     }
@@ -1512,6 +1518,7 @@ impl Subtype {
             Subtype::Elspeth => false,
             Subtype::Grist => false,
             Subtype::Nissa => false,
+            Subtype::Pegasus => true,
         }
     }
 
@@ -1641,6 +1648,7 @@ impl Subtype {
                     | Subtype::Gamma
                     | Subtype::Badger
                     | Subtype::Mole
+                    | Subtype::Pegasus
             )
         {
             return true;
@@ -2670,6 +2678,10 @@ pub enum AltCostCondition {
     YourTurnV1,
     /// Boarding Action may pay its Beam me up cost only from its graveyard.
     BeamMeUpV1,
+    /// Prototype (CR 718): cast with the card's prototype mana cost, color,
+    /// mana value and base power/toughness on the stack and battlefield
+    /// (Boulderbranch Golem, Pauper field wave Pf2c).
+    PrototypeV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -4250,7 +4262,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x018a_a4f2_7088_c66b;
+        const EXPECTED_ETERNAL: u64 = 0x1dd0_c7ab_b0bc_2432;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
