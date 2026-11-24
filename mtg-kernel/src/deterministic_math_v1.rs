@@ -249,7 +249,7 @@
 //! ([`softmax_legal_action_weights_v1`]) that the model-guided search's
 //! evaluator calls directly, exactly mirroring this module's own existing
 //! split for `tanh_f32_v1`/`expm1_f64_v1`: one clean, oracle-verified
-//! `pub(crate)` entry point built from a private, domain-restricted
+//! `pub(crate)` entry point built from a shared, domain-restricted
 //! primitive, all of it libm-free and bit-order-pinned. Masking is not this
 //! module's concern (as with `expm1_f64_v1`, "no session/observation state
 //! is available here"): the caller already hands this function exactly the
@@ -299,7 +299,7 @@
 //! approximation of it.
 //!
 //! **The clamp floor.** By construction, every `x_i <= 0.0` (since
-//! `max_logit` is the true maximum). [`exp_f64_v1`] is a private,
+//! `max_logit` is the true maximum). [`exp_f64_v1`] is a shared,
 //! domain-restricted primitive, valid only for finite `x` in
 //! `[EXP_DOMAIN_FLOOR_V1, 0.0]`, mirroring `expm1_f64_v1`'s own bounded,
 //! not-general-purpose contract; [`softmax_legal_action_weights_v1`] clamps
@@ -527,7 +527,7 @@ unsafe fn tanh_f32_in_place_avx2_v1(values: &mut [f32]) {
 
 // ---------------------------------------------------------------------
 // Panel ruling extension (2026-08-16): softmax_legal_action_weights_v1 and
-// its private exp_f64_v1 primitive. See the module doc's own "Panel ruling
+// its shared exp_f64_v1 primitive. See the module doc's own "Panel ruling
 // extension" section above for the full rationale (why softmax replaces
 // the withdrawn sigmoid, why this function never divides by a sum, the
 // max-subtraction exactness argument, and the clamp-floor argument).
@@ -549,11 +549,10 @@ unsafe fn tanh_f32_in_place_avx2_v1(values: &mut [f32]) {
 /// argue precisely about a tight boundary. `k` (this function's own
 /// range-reduction integer, see [`exp_f64_v1`]'s doc) stays in `-174..=0`
 /// for this floor, still far inside `f64`'s normal exponent range.
-const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
+pub(crate) const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
 
-/// Private, domain-restricted deterministic `exp` (`e^x`). Valid only for
-/// finite `x` in `[EXP_DOMAIN_FLOOR_V1, 0.0]`; its only caller
-/// ([`softmax_legal_action_weights_v1`]) clamps to this domain before
+/// Domain-restricted deterministic `exp` (`e^x`). Valid only for
+/// finite `x` in `[EXP_DOMAIN_FLOOR_V1, 0.0]`. Callers clamp to this domain before
 /// calling, exactly as [`expm1_f64_v1`]'s own contract requires its own
 /// caller (`tanh_f32_v1`) to pre-guard its domain via branch structure
 /// rather than a runtime assertion. Not a general-purpose `exp` (no
@@ -617,7 +616,7 @@ const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
 /// rounded to within the oracle-verified contract goal below. See
 /// `exp_f64_v1_oracle_correctly_rounded_comparison_v1` for the committed,
 /// generation-script-provenanced measurement.
-fn exp_f64_v1(x: f64) -> f64 {
+pub(crate) fn exp_f64_v1(x: f64) -> f64 {
     let k_f = (x * EXPM1_INV_LN2_F64_V1).round();
     let k = k_f as i32;
     let k_as_f64 = f64::from(k);
@@ -641,6 +640,10 @@ fn exp_f64_v1(x: f64) -> f64 {
     let scale = f64::from_bits(scale_bits);
     scale * exp_r
 }
+
+/// Pinned natural log for finite softmax sums >= 1, identity
+/// `m4-ln-atanh23-f64-v1`. Shares the existing scalar atanh series.
+pub(crate) use crate::line_b_teacher_target_v1::ln_v1 as ln_f64_v1;
 
 /// Deterministic softmax-numerator conversion over one node's legal-action
 /// logits, in the caller's own ascending index order (`weights[i]`
@@ -1551,7 +1554,7 @@ mod tests {
     // discipline above (golden battery, dense-sweep hash, independent
     // oracle comparison, property tests), adapted to exp_f64_v1's own
     // `f64 -> f64` signature by comparing the one-rounding-to-f32 result
-    // its only caller (softmax_legal_action_weights_v1) actually produces,
+    // softmax_legal_action_weights_v1 actually produces,
     // exactly as tanh_f32_v1's own tests validate the f32-visible surface
     // rather than expm1_f64_v1's raw f64 internals directly.
     // -------------------------------------------------------------
