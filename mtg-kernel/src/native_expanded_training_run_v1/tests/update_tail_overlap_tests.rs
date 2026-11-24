@@ -92,7 +92,7 @@ pub(super) fn assert_same_tree_v1(case: &str, got: &Path, want: &Path, same_file
 
 /// `assert_same_tree_v1`, where a file for which `may_lack` holds may also be
 /// missing from either tree (it is compared when both have it).
-fn assert_same_tree_except_v1(
+pub(super) fn assert_same_tree_except_v1(
     case: &str,
     got: &Path,
     want: &Path,

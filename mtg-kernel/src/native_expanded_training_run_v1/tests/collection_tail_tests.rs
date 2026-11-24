@@ -7,8 +7,8 @@
 //! tree is moved aside), so documents that name it compare equal.
 
 use super::update_tail_overlap_tests::{
-    after_states_v1, assert_same_tree_v1, committed_v1, iteration_directory_v1, overlap_config_v1,
-    publication_root_v1, run_content_v1,
+    after_states_v1, assert_same_tree_except_v1, assert_same_tree_v1, committed_v1,
+    iteration_directory_v1, overlap_config_v1, publication_root_v1, run_content_v1,
 };
 use super::*;
 use crate::durable_publication_v1::crash_points_for_test_v1::{with_crash_point_v1, CrashPointV1};
@@ -1016,7 +1016,10 @@ fn collection_tail_stops_at_the_invocation_limit_like_the_serial_run() {
 /// apart from timing telemetry and the keys in the plan. Both runs crash in
 /// the same state and recover into the same attempt paths, so no path is
 /// normalized: an attempt the serial recovery does not make is itself a
-/// difference.
+/// difference. The one exemption is the workers' race inside an interrupted
+/// collection: a trajectory under an attempt with no `collection.json` in
+/// either tree may be present in one tree only (it is compared when both
+/// hold it, and against the uninterrupted run in every case).
 #[test]
 #[ignore = "slow: two crashed runs and their resumes per crash point; run before shipping a change to the collection tail"]
 fn collection_tail_crash_at_any_publication_resumes_to_the_serial_result() {
@@ -1127,11 +1130,43 @@ fn collection_tail_crash_at_any_publication_resumes_to_the_serial_result() {
             if !new_attempt {
                 assert_same_tree_v1(&format!("{case} resumed"), &directory, &reference, true);
             }
-            assert_same_tree_v1(
+            // The one race the comparison allows: a collection's workers
+            // publish their trajectories independently, and a failed
+            // publication stops only new games, so an interrupted collection
+            // (one whose attempt has no `collection.json` in either tree, the
+            // resume having made a new attempt) may hold any subset of its
+            // trajectories, in either run. Such a trajectory may be missing
+            // from either tree and is compared byte for byte when both hold
+            // it (and, above, against the uninterrupted run). Every other
+            // file is compared exactly.
+            let interrupted_trajectory = |path: &Path| {
+                let is_trajectory = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("episode-") && name.ends_with(".json"));
+                let Some(collect) = path.parent() else {
+                    return false;
+                };
+                let in_attempt = collect.file_name() == Some(std::ffi::OsStr::new("collect"))
+                    && collect
+                        .parent()
+                        .and_then(Path::file_name)
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("attempt-"));
+                is_trajectory
+                    && in_attempt
+                    && !directory.join(collect).join("collection.json").exists()
+                    && !serial_recovered
+                        .join(collect)
+                        .join("collection.json")
+                        .exists()
+            };
+            assert_same_tree_except_v1(
                 &format!("{case} recovered"),
                 &directory,
                 &serial_recovered,
                 true,
+                interrupted_trajectory,
             );
             fs::remove_dir_all(&directory).unwrap();
             fs::remove_dir_all(&serial_recovered).unwrap();
