@@ -187,7 +187,7 @@ LOOKALIKES = ["viewer", "viewer_tools/x.py", "viewerx/index.html", "mtg-kernel/s
               "python/tools/viewer_export_v1.py", "python/tests/test_viewer_uct_v1.py", "tools/viewer/x.py",
               "docs/design/viewer_spy_trace_v1.md", ".github/workflows/viewer.yml"]
 # Non-website changes the composition tests pair with the website files.
-OTHERS = [[], ["README.md"], ["docs/a.md", "docs/notes.txt"], ["mtg-kernel/src/engine.rs"], ["Cargo.lock"],
+OTHERS = [["README.md"], ["docs/a.md", "docs/notes.txt"], ["mtg-kernel/src/engine.rs"], ["Cargo.lock"],
           ["mtg-kernel/src/native_expanded_training_run_v1.rs"], ["mtg-kernel/src/bin/kernel_limited_match_v1.rs"],
           ["python/tools/foo.py"], ["python/tests/test_x.py", "README.md"], ["tools/stage4a/report.py"],
           ["tools/w5/chains.py"], ["tools/ci/hosted_fallback.py"], ["python/tools/foo.py", "tools/stage4a/a.py"],
@@ -197,7 +197,7 @@ OTHERS = [[], ["README.md"], ["docs/a.md", "docs/notes.txt"], ["mtg-kernel/src/e
 SAME_CHANGE = [WEBSITE + ["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fallback.py"], WEBSITE,
                WEBSITE + ["README.md"], WEBSITE + ["mtg-kernel/src/engine.rs"], WEBSITE + ["python/tools/foo.py"],
                WEBSITE + [".github/workflows/ci.yml"], WEBSITE + [".github/workflows/s-transformer-v1.yml"],
-               WEBSITE + ["data/eternal_v1/cards.json"]] + [WEBSITE + other for other in OTHERS] + OTHERS[1:]
+               WEBSITE + ["data/eternal_v1/cards.json"]] + [WEBSITE + other for other in OTHERS] + OTHERS
 RUST_SET = {"rust-quality", "rust-test-groups", "limited-build", "rust-limited-groups", "rust-tests",
             "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory"}
 PYTHON_SET = {"python-env-build", "python-tests"}
@@ -306,6 +306,12 @@ class Classifier:
         return self.scheduled("pull_request", paths, label=label) | self.scheduled("workflow_dispatch", pr_paths=paths)
 
 
+def without_website(change):
+    """The change without its website files; a website-only change is compared with a docs-only one (an empty file
+    list fails closed and runs everything)."""
+    return [path for path in change if not path.startswith("viewer/")] or ["README.md"]
+
+
 def classify_step():
     text = WORKFLOW.read_text(encoding="utf-8")
     return text.split("      - name: Classify changed paths\n", 1)[1].split("\n      - name: ", 1)[0]
@@ -372,7 +378,7 @@ class ViewerScopeTests(unittest.TestCase):
                 with self.subTest(change=change, label=label):
                     self.assertLessEqual(coverage(main.composition(change, label)),
                                          coverage(new.composition(change, label)))
-                    others = [path for path in change if not path.startswith("viewer/")]
+                    others = without_website(change)
                     self.assertEqual(new.composition(change, label), new.composition(others, label))
         # The pull request run alone covers less than main's only where main's run grew because of the website
         # files (website only, or with docs, Python, tools, ci-tools or workflow files: they made it Rust-relevant
@@ -381,7 +387,7 @@ class ViewerScopeTests(unittest.TestCase):
         # someone dispatches).
         lost_somewhere = []
         for change in SAME_CHANGE:
-            others = [path for path in change if not path.startswith("viewer/")]
+            others = without_website(change)
             with self.subTest(change=change):
                 now = coverage(new.scheduled("pull_request", change))
                 self.assertLessEqual(coverage(main.scheduled("pull_request", others)), now)
@@ -587,6 +593,145 @@ class ReferenceGuardTests(unittest.TestCase):
                     math.write_text(original + "\n" + added + "\n", encoding="utf-8")
                     self.assertEqual(ci_scope.training_reference_gaps(tmp)[0], expected)
         self.assertIn("run: python tools/ci/ci_scope.py check-references", WORKFLOW.read_text(encoding="utf-8"))
+
+
+SCOPE_SCRIPT = ROOT / "tools" / "ci" / "ci_scope.py"
+
+
+def run_scope(*args, stdin=b"", env=None, prelude=""):
+    """Run ci_scope.py's CLI in a fresh interpreter; prelude (Python) runs after the import, to break it."""
+    import subprocess
+    code = (f"import sys; sys.path.insert(0, {str(SCOPE_SCRIPT.parent)!r}); import ci_scope\n{prelude}\n"
+            f"sys.exit(ci_scope.main(['ci_scope.py', *{list(args)!r}]))")
+    environment = {k: v for k, v in os.environ.items() if k not in ("GITHUB_OUTPUT", "FULL_LABEL")}
+    environment.update(env or {})
+    return subprocess.run([sys.executable, "-c", code], input=stdin, env=environment, capture_output=True)
+
+
+class RelevanceCliTests(unittest.TestCase):
+    """Condition 1: both outputs or neither, as the last act. Condition 2: any error exits non-zero."""
+
+    def relevance(self, stdin, prelude="", label=None, output=True):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "output"
+            out.write_text("before=1\n", encoding="utf-8")
+            env = {"GITHUB_OUTPUT": str(out)} if output else {}
+            if label:
+                env["FULL_LABEL"] = label
+            result = run_scope("relevance", stdin=stdin, env=env, prelude=prelude)
+            return result, out.read_text(encoding="utf-8")
+
+    def test_relevance_writes_both_outputs_in_one_write_as_its_last_act(self):
+        import io
+        import unittest.mock
+        writes = []
+
+        class Recorder(io.StringIO):
+            def write(self, text):
+                writes.append(text)
+                return len(text)
+
+        stdin = unittest.mock.Mock()
+        stdin.buffer = io.BytesIO(b"mtg-kernel/src/engine.rs\0python/tools/foo.py\0")
+        with unittest.mock.patch.dict(os.environ, {"GITHUB_OUTPUT": "out", "FULL_LABEL": "false"}), \
+                unittest.mock.patch.object(sys, "stdin", stdin), \
+                unittest.mock.patch("builtins.open", lambda *a, **k: Recorder()), \
+                unittest.mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(ci_scope.main(["ci_scope.py", "relevance"]), 0)
+        self.assertEqual(writes, ["python_relevant=true\nrust_relevant=true\n"])
+
+    def test_relevance_crashing_midway_exits_non_zero_and_writes_nothing(self):
+        # Breaks the Rust rules: the crash comes after python relevance of the first path is computed.
+        result, written = self.relevance(b"python/tools/foo.py\0", prelude="ci_scope.RUST_RELEVANT_RULES = None")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(written, "before=1\n")
+        result, written = self.relevance(b"a\0", prelude="def boom(*a): raise RuntimeError('x')\nci_scope.relevance = boom")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(written, "before=1\n")
+
+    def test_relevance_without_github_output_exits_non_zero(self):
+        result, written = self.relevance(b"mtg-kernel/src/engine.rs\0", output=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b"GITHUB_OUTPUT is not set", result.stderr)
+
+    def test_an_empty_or_unreadable_path_list_fails_closed(self):
+        for stdin in (b"", b"\0", b"\0\0"):
+            with self.subTest(stdin=stdin):
+                result, written = self.relevance(stdin)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(written, "before=1\npython_relevant=true\nrust_relevant=true\n")
+                self.assertIn(b"fail closed", result.stdout)
+        self.assertEqual(Classifier().scheduled("pull_request", []), FULL_PR)
+        self.assertEqual(ci_scope.choose("pull_request", "pr", "", [], []), "all")
+
+    def test_odd_path_bytes_classify_like_the_shell_case(self):
+        # Not UTF-8, or a newline inside a path: shell case `*` matches any byte, newlines included.
+        for stdin, expected in ((b"mtg-kernel/\xff.rs\0", ("false", "true")), (b"viewer/\xff.html\0", ("false", "false")),
+                                (b"docs/a\nb.rs\0", ("false", "false")), (b"a.md\nmtg-kernel/x.rs\0", ("false", "true")),
+                                (b"tools/\xfe\ny.py\0", ("true", "false"))):
+            with self.subTest(stdin=stdin):
+                result, written = self.relevance(stdin)
+                self.assertEqual(result.returncode, 0)
+                python, rust = expected
+                self.assertEqual(written, f"before=1\npython_relevant={python}\nrust_relevant={rust}\n")
+
+    def test_bad_arguments_exit_non_zero(self):
+        for args in (["relevance", "extra"], ["pr-run", "extra"], ["file-scope", "extra"], ["no-such-command"], []):
+            with self.subTest(args=args):
+                result = run_scope(*args, env={"GITHUB_OUTPUT": os.devnull})
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn(b"whole-set", result.stdout)
+
+    def test_pr_run_prints_whole_set_only_when_every_check_passed(self):
+        engine = b'[[{"status": "modified", "filename": "mtg-kernel/src/engine.rs"}]]'
+        self.assertEqual(run_scope("pr-run", stdin=engine).stdout, b"whole-set\n")
+        for stdin, prelude in ((b"[[]]", ""), (b"", ""), (b"{", ""), (b"[[{}]]", ""), (b"\xff", ""),
+                               (engine, "def boom(*a): raise RuntimeError('x')\nci_scope.relevance = boom"),
+                               (engine, "ci_scope.RUST_RELEVANT_RULES = None")):
+            with self.subTest(stdin=stdin, prelude=prelude):
+                result = run_scope("pr-run", stdin=stdin, prelude=prelude)
+                self.assertNotIn(b"whole-set", result.stdout)
+                if stdin != b"[[]]":
+                    self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(run_scope("pr-run", stdin=b"[[]]").stdout, b"partial\n")
+
+
+class NonPullRequestEventTests(unittest.TestCase):
+    """Condition 3: pushes, tags and dispatches set both outputs themselves, before the classifier can run."""
+
+    def test_the_non_pull_request_branch_writes_both_outputs_and_exits_before_the_classifier(self):
+        step = classify_step()
+        branch = step[step.index('if [ "${{ github.event_name }}" != "pull_request" ]; then'):]
+        branch = branch[:branch.index("\n          fi\n")]
+        self.assertEqual(re.findall(r"^            (.*)$", branch, re.MULTILINE),
+                         ['echo "python_relevant=true" >> "$GITHUB_OUTPUT"',
+                          'echo "rust_relevant=true" >> "$GITHUB_OUTPUT"', "exit 0"])
+        self.assertLess(step.index(branch), step.index("ci_scope.py"))
+
+    def test_the_real_step_never_calls_the_classifier_for_other_events(self):
+        import subprocess
+        import tempfile
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_draft_light import BASH, workflow_step
+        for event in ("push", "workflow_dispatch", "schedule"):
+            with self.subTest(event=event), tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "output"
+                script = workflow_step("Classify changed paths").replace("${{ github.event_name }}", event).replace(
+                    "python3 tools/ci/ci_scope.py", "exit 97; :")
+                result = subprocess.run([BASH, "-eo", "pipefail", "-c", script], cwd=tmp, capture_output=True,
+                                        env=dict(os.environ, GITHUB_OUTPUT=Path(out).as_posix(),
+                                                 RUNNER_TEMP=Path(tmp).as_posix(), FULL_LABEL="false"))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(out.read_text(encoding="utf-8"), "python_relevant=true\nrust_relevant=true\n")
+        # The replacement is not vacuous: a pull request reaches it.
+        with tempfile.TemporaryDirectory() as tmp:
+            script = workflow_step("Classify changed paths").replace("${{ github.event_name }}", "pull_request").replace(
+                "python3 tools/ci/ci_scope.py", "exit 97; :").replace("git diff", ": git diff")
+            result = subprocess.run([BASH, "-eo", "pipefail", "-c", script], cwd=tmp, capture_output=True,
+                                    env=dict(os.environ, GITHUB_OUTPUT=(Path(tmp) / "o").as_posix(),
+                                             RUNNER_TEMP=Path(tmp).as_posix()))
+            self.assertEqual(result.returncode, 97)
 
 
 class MonitorTests(unittest.TestCase):

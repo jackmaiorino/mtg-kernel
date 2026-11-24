@@ -316,8 +316,9 @@ RUST_RELEVANT_RULES: list[tuple[tuple[str, ...], bool]] = [
 
 def relevance(paths: list[str], full_label: bool = False) -> tuple[bool, bool]:
     """(python_relevant, rust_relevant) of a pull request's paths. ci:full asks for the whole pull request set:
-    every Rust and Python job, whatever the paths. Patterns match like shell case patterns (`*` crosses `/`)."""
-    if full_label:
+    every Rust and Python job, whatever the paths. No paths (a diff that came back empty) fails closed: both.
+    Patterns match like shell case patterns (`*` crosses `/`)."""
+    if full_label or not paths:
         return True, True
     python = rust = False
     for path in paths:
@@ -387,7 +388,8 @@ def choose(event: str, group_set: str, input_scope: str, labels: list[str], file
         return input_scope if input_scope in DISPATCH_SCOPES else "all"
     if event != "pull_request" or group_set != "pr":
         return "all"
-    if "ci:full" in labels:
+    if "ci:full" in labels or not files:
+        # An empty file list (a diff that came back empty) fails closed, like relevance().
         return "all"
     # Labels never narrow a run: paths decide, ci:full widens.
     scope = scope_of_files(files)
@@ -468,7 +470,12 @@ def main(argv: list[str]) -> int:
             return 2
         print("\n".join(lines))
         return 0
+    if command in ("file-scope", "pr-run", "relevance") and len(argv) != 2:
+        print(f"{command} takes no arguments", file=sys.stderr)
+        return 2
     if command in ("file-scope", "pr-run"):
+        # pr-run prints whole-set only as its last act after every check passed; the dispatch step treats any
+        # other output, an error or no output as "run the full set".
         try:
             paths = pull_request_paths(json.load(sys.stdin.buffer))
         except ValueError as exc:
@@ -483,6 +490,13 @@ def main(argv: list[str]) -> int:
             print(scope_of_files(paths))
         return 0
     if command == "relevance":
+        # Both outputs or neither: every Rust job reads a missing rust_relevant as "not relevant" and would skip
+        # while this step stayed green. So any error exits non-zero (the detect job goes red), and the two lines
+        # are written in ONE write, as the last act, after the whole verdict is computed.
+        output = os.environ.get("GITHUB_OUTPUT")
+        if not output:
+            print("GITHUB_OUTPUT is not set: refusing to classify without a place for both outputs", file=sys.stderr)
+            return 2
         raw = sys.stdin.buffer.read().split(b"\0")
         files = [path.decode("utf-8", errors="surrogateescape") for path in raw if path]
         print("changed files:")
@@ -492,12 +506,12 @@ def main(argv: list[str]) -> int:
         python, rust = relevance(files, full_label)
         if full_label:
             print("ci:full: every Rust and Python job runs")
+        elif not files:
+            print("no changed files listed: every Rust and Python job runs (fail closed)")
         text = f"python_relevant={str(python).lower()}\nrust_relevant={str(rust).lower()}\n"
         print("verdict: " + text.replace("\n", " ").strip())
-        path = os.environ.get("GITHUB_OUTPUT")
-        if path:
-            with open(path, "a", encoding="utf-8") as out:
-                out.write(text)
+        with open(output, "a", encoding="utf-8") as out:
+            out.write(text)
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")
