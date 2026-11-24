@@ -42527,6 +42527,36 @@ mod tests {
         let forged = forged.clone();
         assert!(stack_targets_still_legal(&forged, &state).is_err());
     }
+
+    /// Review round 2, finding 3: the Iceberg's waterbend pricing applies
+    /// to its own printed waterbend abilities only, not to any cost an
+    /// Iceberg source pays (a granted ability, or a copy of a printed cost).
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn iceberg_waterbend_pricing_is_keyed_on_its_printed_abilities() {
+        let mut state = ready_game_in_main1(0);
+        let iceberg = put_on_battlefield(&mut state, PlayerId::P0, "Aang's Iceberg");
+        let def = &card_def::CARD_DEFS[usize::from(state.objects.get(iceberg).card_def)];
+        for ability in def.activated_abilities {
+            assert!(
+                crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, ability.cost)
+                    .is_some()
+            );
+        }
+        const GRANTED_FOUR: &[CostComponent] = &[CostComponent::Mana(Cost {
+            pips: &[],
+            generic: 4,
+            x_count: 0,
+        })];
+        assert!(
+            crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, GRANTED_FOUR).is_none()
+        );
+        let copied: Vec<CostComponent> = def.activated_abilities[1].cost.to_vec();
+        assert!(
+            crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, &copied).is_none(),
+            "a cost equal to a printed one but not that ability"
+        );
+    }
 }
 
 #[cfg(all(

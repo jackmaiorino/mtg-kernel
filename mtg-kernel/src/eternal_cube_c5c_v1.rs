@@ -373,20 +373,22 @@ pub(crate) fn activation_allowed(
 /// Aang's Iceberg's "Waterbend {3}".
 const ICEBERG_WATERBEND_GENERIC: u8 = 3;
 
-/// Whether `source` is an Aang's Iceberg and `components` one of its four
-/// waterbend payments.
+/// Whether `source` is an Aang's Iceberg and `components` is the cost of one
+/// of its own four printed waterbend abilities: the very cost slice of the
+/// definition (an activation passes its definition's `cost` through), so a
+/// granted ability, or any other cost an Iceberg pays, is priced as usual.
 fn iceberg_waterbend_components(
     state: &GameState,
     source: ObjectId,
     components: &[CostComponent],
 ) -> bool {
     cfg!(feature = "eternal-fixtures")
-        && definition(state, source).is_some_and(|def| def.name == AANGS_ICEBERG)
-        && components.iter().any(|component| {
-            matches!(
-                component,
-                CostComponent::Mana(_) | CostComponent::TapControlled { .. }
-            )
+        && definition(state, source).is_some_and(|def| {
+            def.name == AANGS_ICEBERG
+                && def
+                    .activated_abilities
+                    .iter()
+                    .any(|ability| std::ptr::eq(ability.cost, components))
         })
 }
 
