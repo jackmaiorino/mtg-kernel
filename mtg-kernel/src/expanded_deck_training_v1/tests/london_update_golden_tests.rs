@@ -31,11 +31,10 @@
 //! one pin per system. A pin still set to `PLACEHOLDER` fails with
 //! `expected PLACEHOLDER, computed <hex>`, which gives the value to pin.
 //!
-//! Like the other real-game training qualifications in this module (the
-//! two-game London training test and the 60-game V4 soak), both tests are
-//! `#[ignore]`d: the CI suites do not run ignored tests. Run them explicitly
-//! on a native host with
-//! `cargo test --release --locked -p mtg-kernel --lib london_update_golden_tests -- --ignored`.
+//! Unlike the other real-game training qualifications in this module, both
+//! tests run in CI (issue 921): a change to training results on these recipes
+//! must fail a check. Run them alone with
+//! `cargo test --release --locked -p mtg-kernel --lib london_update_golden_tests`.
 
 use super::*;
 use crate::priority_action_windows_v1::SeatPriorityWindowsV1;
