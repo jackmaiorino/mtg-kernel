@@ -143,19 +143,19 @@ fn fence_removes_fenced_cards_from_the_pool() {
 
 #[test]
 fn fence_on_a_gap_card_is_accepted_and_changes_nothing() {
+    // The committed gap record may be empty (every cube card Full), so the
+    // test makes its own: one cube card listed as missing.
     let (cube, gaps) = texts();
-    let gaps_json: Value = serde_json::from_str(&gaps).unwrap();
-    let gap_name = gaps_json
-        .as_object()
-        .unwrap()
-        .values()
-        .filter_map(Value::as_array)
-        .flatten()
-        .map(|name| name.as_str().unwrap())
-        .next()
-        .expect("a gap name");
+    let gap_name = pool().names()[0].clone();
+    let mut gaps_json: Value = serde_json::from_str(&gaps).unwrap();
+    gaps_json["missing"] = serde_json::json!([gap_name]);
+    let gaps = gaps_json.to_string();
     let unfenced = CubePool::from_json_texts(&cube, &gaps, None).unwrap();
-    let fence = fence_record(&[gap_name]);
+    assert!(
+        !unfenced.names().contains(&gap_name),
+        "the gap card is out of the pool"
+    );
+    let fence = fence_record(&[gap_name.as_str()]);
     assert_eq!(
         CubePool::from_json_texts(&cube, &gaps, Some(&fence)).unwrap(),
         unfenced
