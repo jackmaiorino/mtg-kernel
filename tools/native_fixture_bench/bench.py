@@ -55,10 +55,11 @@ ABBA = ("A", "B", "B", "A")
 # classes; anything else is a mismatch. Timing: a numeric leaf whose key ends
 # in one of these suffixes (wall-clock receipts such as update.json's
 # `checkpoint_io_seconds`; they never enter state or hashes). Provenance: the
-# build identity in run.json, only between samples of different builds. Pin:
+# build identity in run.json and the engine identity in complete.json and
+# completion.json, only between samples of different builds. Pin:
 # the sha256 of a run file that itself differs only in accounted fields.
 TIMING_SUFFIXES = ("_seconds", "_nanos", "_ns")
-PROVENANCE_KEYS = frozenset({"git_commit", "tracked_tree_sha256", "implementation_sha256"})
+PROVENANCE_KEYS = frozenset({"git_commit", "tracked_tree_sha256", "implementation_sha256", "git_clean"})
 JSON_DIFF_CAP = 64 << 20
 COLLECTED_DIFFERENCES = 10_000
 LISTED_DIFFERENCES = 20
