@@ -7991,9 +7991,30 @@ fn core_surface_action_candidates_fake_scoped_v50(
                     )?;
                 }
             }
-            Decision::ChooseEffectBoolean { player, source, .. } => {
+            Decision::ChooseEffectBoolean {
+                player,
+                source,
+                purpose,
+                ..
+            } => {
                 let actor = (*player).into();
-                let source = card_ref(state, *source)?;
+                // Under the public shroud contract (Limited schema 5) a Ward
+                // payment answer names the Ward source by the public
+                // incarnation its trigger showed (`ward_payments`), never by
+                // a zone it has since moved to: a bounced source put back
+                // into its owner's library (Brainstorm) stays hidden. Every
+                // other mode keeps the current reference.
+                let ward = matches!(
+                    purpose,
+                    crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. }
+                );
+                let source = match state.engine.pending_effect.as_ref() {
+                    Some(pending) if ward && state.public_shroud_v1 => {
+                        stack_source_ref(state, &pending.resolving_item)?
+                    }
+                    _ => card_ref(state, *source)?,
+                };
                 // Schema-v4's canonical Boolean ordering follows the
                 // existing ChooseKicker convention: false/No, then true/Yes.
                 // Legacy AIRL displays chooseUse as Yes then No; the semantic
