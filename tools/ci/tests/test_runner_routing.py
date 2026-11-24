@@ -679,9 +679,18 @@ class MatrixTests(unittest.TestCase):
     def test_a_part_trusts_only_a_build_of_its_own_commit(self):
         # The unpack step itself, run on three archives: a build of this checkout's commit is stamped as
         # current; a build of another commit, or one that names no commit, is thrown away with a warning.
-        parts = job_block("rust-eternal-integration-parts", "eternal-integration-inventory")
+        # The same step of the workspace library parts, with its own names.
+        suites = [(job_block("rust-eternal-integration-parts", "eternal-integration-inventory"), "Eternal integration",
+                   "eternal-integration"),
+                  (job_block("rust-workspace-lib-parts", "workspace-lib-inventory"), "workspace library",
+                   "workspace-lib")]
+        for parts, title, name in suites:
+            with self.subTest(suite=name):
+                self.check_unpack_step(parts, title, name)
+
+    def check_unpack_step(self, parts, title, name):
         step = next(step for step in parts.split("\n      - name: ")
-                    if step.startswith("Unpack the shared Eternal integration build as current output"))
+                    if step.startswith(f"Unpack the shared {title} build as current output"))
         script = textwrap.dedent(step.split("        run: |\n", 1)[1])
         self.assertNotIn("${{", script)
         own = "1" * 40
@@ -697,9 +706,9 @@ class MatrixTests(unittest.TestCase):
                 os.utime(built / "binary", (1, 1))
                 if marker:
                     (built / "mtg-ci-build-commit").write_text(marker + "\n", encoding="utf-8")
-                staging = root / "temp" / "shared-eternal-integration-build" / "eternal-integration-build-ubuntu-24.04-1"
+                staging = root / "temp" / f"shared-{name}-build" / f"{name}-build-ubuntu-24.04-1"
                 staging.mkdir(parents=True)
-                subprocess.run(["tar", "-cf", str(staging / "eternal-integration.tar"), "-C", str(root / "built"),
+                subprocess.run(["tar", "-cf", str(staging / f"{name}.tar"), "-C", str(root / "built"),
                                 "release"], check=True)
                 work = root / "work"
                 work.mkdir()
@@ -713,7 +722,7 @@ class MatrixTests(unittest.TestCase):
                     # Stamped after the checkout: no longer the archive's old time.
                     self.assertGreater((work / "target" / "release" / "binary").stat().st_mtime, 1_000_000)
                 else:
-                    self.assertIn("::warning::The shared Eternal integration build is of commit", result.stdout)
+                    self.assertIn(f"::warning::The shared {title} build is of commit", result.stdout)
                     self.assertFalse((work / "target").exists())
 
     def test_the_eternal_integration_jobs_run_where_the_group_ran_and_gate_the_merge(self):
