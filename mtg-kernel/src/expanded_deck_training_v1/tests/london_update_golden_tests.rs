@@ -209,7 +209,6 @@ fn assert_after_state_pinned_v1(label: &str, receipt: &Value, pinned: &str) {
 }
 
 #[test]
-#[ignore = "root-owned native qualification: 60 real London games and one prepared update"]
 fn flag_free_london_60_game_prepared_update_state_is_pinned() {
     let label = "flag-free";
     let receipt = london_60_game_update_receipt_v1(label, None, gae(PregameAdvantageV1::Gae));
@@ -218,7 +217,6 @@ fn flag_free_london_60_game_prepared_update_state_is_pinned() {
 }
 
 #[test]
-#[ignore = "root-owned native qualification: 60 real London games and one prepared update"]
 fn london_60_game_prepared_update_with_windows_and_terminal_pregame_state_is_pinned() {
     use SeatPriorityWindowsV1::ActionWindowsV1;
     let label = "windows-terminal";
