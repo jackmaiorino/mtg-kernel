@@ -15577,6 +15577,7 @@ pub(crate) mod tests {
     }
 
     mod field_coverage_probe_v1;
+    mod london_update_golden_tests;
     mod pauper_opening_tests;
     mod pregame_advantage_tests;
     mod priority_windows_tests;
