@@ -1116,6 +1116,115 @@ pub fn publish_new_bytes_bracketed_v1(
     )
 }
 
+/// Publishes an already-verified regular file `source_path` under `final_name`
+/// inside `parent` via a same-filesystem hard link, avoiding a full staging
+/// copy when the source lives on the same volume as `parent`.
+///
+/// Returns:
+/// - `Ok(Some(receipt))` after verifying `source_path` is a regular file,
+///   creating `final_name` without overwrite via `fs::hard_link`, syncing the
+///   file (Unix) and parent namespace, and recapturing `final_name` against
+///   `bytes` and the source object's identity;
+/// - `Ok(None)` when `source_path` cannot be hard-linked directly into `parent`
+///   (e.g. cross-device `EXDEV`, unsupported filesystem, or non-regular source
+///   path), signalling the caller to fall back to [`publish_new_bytes_v1`];
+/// - `Err(...)` on parent/child validation errors, final-name collision, or
+///   post-link verification/sync failure (never silently overwriting).
+pub fn publish_existing_verified_hardlink_v1(
+    parent: &ValidatedPublicationParentV1,
+    source_path: &Path,
+    final_name: impl AsRef<OsStr>,
+    bytes: &[u8],
+) -> Result<Option<DurablePublicationReceiptV1>, DurablePublicationErrorV1> {
+    let expectation = DurableFileExpectationV1::from_bytes(bytes)?;
+    let final_path = child_path_v1(parent, final_name.as_ref())?;
+    revalidate_parent_v1(parent)?;
+    if final_path.symlink_metadata().is_ok() {
+        return Err(DurablePublicationErrorV1::new(
+            DurablePublicationErrorKindV1::FinalCollision,
+            format!(
+                "final publication path already exists: {}",
+                final_path.display()
+            ),
+        ));
+    }
+    let Ok(source_meta) =
+        regular_path_metadata_v1(source_path, DurablePublicationErrorKindV1::FinalPublish)
+    else {
+        return Ok(None);
+    };
+    if source_meta.len() != expectation.exact_length {
+        return Ok(None);
+    }
+    let Ok(source_identity) = path_identity_v1(source_path, &source_meta) else {
+        return Ok(None);
+    };
+    match fs::hard_link(source_path, &final_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(DurablePublicationErrorV1::with_io(
+                DurablePublicationErrorKindV1::FinalCollision,
+                format!(
+                    "final publication path already exists: {}",
+                    final_path.display()
+                ),
+                error,
+            ));
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::CrossesDevices
+                    | io::ErrorKind::Unsupported
+                    | io::ErrorKind::PermissionDenied
+            ) || (cfg!(windows) && error.raw_os_error() == Some(17)) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => {
+            return Err(DurablePublicationErrorV1::with_io(
+                DurablePublicationErrorKindV1::FinalPublish,
+                format!(
+                    "cannot hard-link verified source {} to {}",
+                    source_path.display(),
+                    final_path.display()
+                ),
+                error,
+            ));
+        }
+    }
+    #[cfg(unix)]
+    {
+        let linked = File::open(&final_path).map_err(|error| {
+            DurablePublicationErrorV1::with_io(
+                DurablePublicationErrorKindV1::FinalVerification,
+                format!(
+                    "cannot open hard-linked file for sync {}",
+                    final_path.display()
+                ),
+                error,
+            )
+        })?;
+        linked.sync_all().map_err(|error| {
+            DurablePublicationErrorV1::with_io(
+                DurablePublicationErrorKindV1::StageSync,
+                format!("cannot sync hard-linked file {}", final_path.display()),
+                error,
+            )
+        })?;
+    }
+    sync_parent_namespace_v1(parent)?;
+    revalidate_parent_v1(parent)?;
+    recapture_exact_caller_bytes_v1(
+        &final_path,
+        source_identity,
+        expectation,
+        bytes,
+        DurablePublicationErrorKindV1::FinalVerification,
+    )?;
+    Ok(Some(receipt_v1(final_path, expectation)))
+}
+
 /// Which content readbacks a publication makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecaptureV1 {
@@ -2032,5 +2141,51 @@ mod tests {
                 "ordinary Windows name rejected: {allowed:?}"
             );
         }
+    }
+
+    #[test]
+    fn publish_existing_verified_hardlink_survives_source_removal_and_refuses_collisions() {
+        let src_dir = TestDirectoryV1::new("hardlink-src");
+        let dst_dir = TestDirectoryV1::new("hardlink-dst");
+        let payload = br#"{"episode":0,"decisions":[]}"#;
+        let src_path = src_dir.path().join("episode-0000.json");
+        fs::write(&src_path, payload).unwrap();
+
+        let parent = capture_existing_publication_parent_v1(dst_dir.path()).unwrap();
+        let receipt =
+            publish_existing_verified_hardlink_v1(&parent, &src_path, "episode-0000.json", payload)
+                .unwrap()
+                .expect("same-filesystem hardlink should succeed");
+        assert_eq!(receipt.exact_length(), payload.len() as u64);
+        assert_eq!(receipt.sha256(), sha256_v1(payload));
+
+        // Removing the staging source must leave the published final entry intact.
+        fs::remove_file(&src_path).unwrap();
+        assert_eq!(fs::read(receipt.final_path()).unwrap(), payload);
+
+        // Publishing to the same final name again must fail closed without overwrite.
+        let src_path2 = src_dir.path().join("episode-0000-again.json");
+        fs::write(&src_path2, payload).unwrap();
+        let collision = publish_existing_verified_hardlink_v1(
+            &parent,
+            &src_path2,
+            "episode-0000.json",
+            payload,
+        )
+        .unwrap_err();
+        assert_eq!(
+            collision.kind(),
+            DurablePublicationErrorKindV1::FinalCollision
+        );
+
+        // Mismatched length returns Ok(None) so caller falls back to copy publication.
+        assert!(publish_existing_verified_hardlink_v1(
+            &parent,
+            &src_path2,
+            "episode-0001.json",
+            b"short",
+        )
+        .unwrap()
+        .is_none());
     }
 }
