@@ -1823,7 +1823,7 @@ fn registered_feb_plays_best_of_three_against_psychatog_and_allure_mage_and_repl
             ("Impulse", 4),
             ("Frantic Search", 4),
             ("Seal of Cleansing", 4),
-            ("True Believer", 4),
+            ("Fact or Fiction", 4),
             ("Disenchant", 4),
         ]),
         ids(&[

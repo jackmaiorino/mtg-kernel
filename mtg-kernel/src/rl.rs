@@ -2003,6 +2003,14 @@ fn public_meddling_mage_names_v1(state: &GameState) -> Result<Vec<PublicMeddling
         .collect()
 }
 
+fn public_attack_count_v1(state: &GameState) -> Option<u32> {
+    if state.creatures_attacked_this_turn_v1() == 0 {
+        None
+    } else {
+        Some(state.creatures_attacked_this_turn_v1())
+    }
+}
+
 /// `public_shroud` is true only while building the schema 5 policy
 /// observation (`ObservationTextModeV2::PublicShroudV5Artifact`), which
 /// represents shroud. Every other observation refuses a permanent's or a
@@ -2299,8 +2307,7 @@ pub fn observe_premodern_ordered_registered_v1(
                 ];
                 flags.iter().any(|x| *x).then_some(flags)
             },
-            creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
-                .then(|| state.creatures_attacked_this_turn_v1()),
+            creatures_attacked_this_turn: public_attack_count_v1(state),
             restricted_mana: public_restricted_mana_v1(
                 state,
                 text_mode,
@@ -3221,8 +3228,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 ];
                 flags.iter().any(|x| *x).then_some(flags)
             },
-            creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
-                .then(|| state.creatures_attacked_this_turn_v1()),
+            creatures_attacked_this_turn: public_attack_count_v1(state),
             restricted_mana: public_restricted_mana_v1(
                 state,
                 text_mode,
