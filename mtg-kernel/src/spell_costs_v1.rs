@@ -929,7 +929,7 @@ fn selected_spell_mana_costs_with_escape(
     #[cfg(feature = "eternal-fixtures")]
     {
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
-            crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
+            crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, method, player),
         );
         // Sailors' Bane costs {1} less per instant, sorcery and Adventure
         // card in its owner's graveyard and exile (wave S1b).

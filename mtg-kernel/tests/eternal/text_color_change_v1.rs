@@ -20,8 +20,9 @@ use mtg_kernel::infoset_v1::{export_v2, ExportErrorV1, ExportInputV1, RefusalCod
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::policy_surface_v5::{PolicyDecisionV5, PolicySurfaceV5};
 use mtg_kernel::rl::{
-    enable_public_shroud_v1, observe_policy_v5, observe_premodern_ordered_v1, observe_v1,
-    policy_legal_action_candidates_v5, ActionSemanticV1, PlayerSeatV1, TargetRefV1,
+    enable_public_shroud_v1, observe_policy_v5, observe_premodern_ordered_registered_v1,
+    observe_premodern_ordered_v1, observe_v1, policy_legal_action_candidates_v5, ActionSemanticV1,
+    PlayerSeatV1, TargetRefV1,
 };
 use mtg_kernel::standard_cards_v1::StandardOpV1;
 use mtg_kernel::state::{
@@ -1678,8 +1679,54 @@ fn schema_5_projection_ordering_face_down_masking_actions_and_refusals() {
     let mut schema4 = state.clone();
     schema4.public_shroud_v1 = false;
     assert!(observe_policy_v5(&schema4, &PolicySurfaceV5::new(), P0, 0, 0, 0, 1).is_err());
-    // 3. Frozen PremodernOrderedV1Artifact
+    // 3. Frozen PremodernOrderedV1Artifact refuses it, while the registered ordered
+    // profile (`PremodernOrderedRegisteredV1Artifact`, §4.5) carries `text_color_changes`.
     assert!(observe_premodern_ordered_v1(&state, &HarnessSurfaceV2::new(), P0, 0).is_err());
+    let ids = vec![id("Island"); 20];
+    let mut reg_state = GameState::new_from_libraries_with_graveyard_order_v1(
+        &ids,
+        &ids,
+        |card_id| CARD_DEFS[card_id as usize].object_name.into(),
+        0x4331_0000_0002,
+        P0,
+    );
+    reg_state.active_player = P0;
+    reg_state.priority_player = P0;
+    reg_state.step = Step::Main1;
+    enable_public_shroud_v1(&mut reg_state);
+    let reg_piledriver = put(&mut reg_state, P0, "Goblin Piledriver", Zone::Battlefield);
+    let reg_clean =
+        observe_premodern_ordered_registered_v1(&reg_state, &HarnessSurfaceV2::new(), P0, 0)
+            .unwrap();
+    assert!(reg_clean
+        .stable
+        .as_ref()
+        .unwrap()
+        .projection
+        .text_color_changes
+        .is_none());
+    change(&mut reg_state, reg_piledriver, ManaColor::U, ManaColor::G);
+    assert!(observe_premodern_ordered_v1(&reg_state, &HarnessSurfaceV2::new(), P0, 0).is_err());
+    let reg_changed =
+        observe_premodern_ordered_registered_v1(&reg_state, &HarnessSurfaceV2::new(), P0, 0)
+            .unwrap();
+    let reg_rows = reg_changed
+        .stable
+        .as_ref()
+        .unwrap()
+        .projection
+        .text_color_changes
+        .as_ref()
+        .expect("registered ordered profile exposes text_color_changes");
+    assert_eq!(reg_rows.len(), 1);
+    assert_eq!(
+        (
+            reg_rows[0].object.arena_id,
+            reg_rows[0].from,
+            reg_rows[0].to
+        ),
+        (reg_piledriver.0, ManaColor::U, ManaColor::G)
+    );
     // 4. infoset_v1::export_v2 refuses with RefusalCodeV1::R3
     let deck = vec![id("Island"); 20];
     let export_err = export_v2(&ExportInputV1 {

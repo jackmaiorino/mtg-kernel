@@ -98,6 +98,12 @@ mod eternal_pauper_pf1a_v1;
 mod eternal_pauper_pf1b_v1;
 #[path = "eternal/eternal_pauper_pf1c_v1.rs"]
 mod eternal_pauper_pf1c_v1;
+#[path = "eternal/eternal_pauper_pf2a_v1.rs"]
+mod eternal_pauper_pf2a_v1;
+#[path = "eternal/eternal_pauper_pf2b_v1.rs"]
+mod eternal_pauper_pf2b_v1;
+#[path = "eternal/eternal_pauper_pf2c_v1.rs"]
+mod eternal_pauper_pf2c_v1;
 #[path = "eternal/eternal_premodern_p1a_v1.rs"]
 mod eternal_premodern_p1a_v1;
 #[path = "eternal/eternal_premodern_p1b_v1.rs"]
