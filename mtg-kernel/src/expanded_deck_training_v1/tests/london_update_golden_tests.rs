@@ -166,6 +166,7 @@ fn london_60_game_update_receipt_v1(
         training_math: TrainingMathV1::PlatformLibm,
         ex1: None,
         record_envelope: RecordEnvelopeV1::default(),
+        trajectory_format: crate::expanded_deck_training_v1::TrajectoryRecordFormatV1::Json,
         output_directory: root.join("collect"),
     })
     .unwrap_or_else(|error| panic!("{label}: collection failed: {error}"));
