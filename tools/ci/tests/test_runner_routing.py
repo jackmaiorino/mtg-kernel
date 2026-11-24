@@ -619,7 +619,21 @@ class MatrixTests(unittest.TestCase):
                          + ["eternal-standard"])
         # A part without a downloadable build compiles the suite itself instead of failing.
         self.assertIn("        continue-on-error: true\n", steps["Download the shared Eternal integration build"])
-        self.assertIn('if [ -z "$archive" ]; then', steps["Unpack the shared Eternal integration build as current output"])
+        unpack = steps["Unpack the shared Eternal integration build as current output"]
+        self.assertIn('if [ -z "$archive" ]; then', unpack)
+        # The build names its commit, and a part stamps the files as current only for its own checkout.
+        self.assertIn("git rev-parse HEAD > target/release/mtg-ci-build-commit\n          tar -cf eternal-integration.tar",
+                      build)
+        check = unpack.index('if [ "$built" != "$(git rev-parse HEAD)" ]; then')
+        self.assertLess(unpack.index('tar -xf "$archive" -C target'), check)
+        self.assertLess(check, unpack.index("rm -rf -- target\n            exit 0"))
+        self.assertLess(unpack.index("rm -rf -- target\n            exit 0"), unpack.index("find target -exec touch"))
+
+    def test_artifact_actions_are_pinned_by_commit(self):
+        for workflow in sorted(WORKFLOW.parent.glob("*.yml")):
+            for use in re.findall(r"uses: (actions/(?:upload|download)-artifact@\S+)", workflow.read_text(encoding="utf-8")):
+                with self.subTest(workflow=workflow.name, use=use):
+                    self.assertRegex(use, r"@[0-9a-f]{40}$")
         # The inventory job compares the build job's list with every part's executed names.
         self.assertIn(f"check_rust_integration_parts.py --listed eternal-integration-lists "
                       f"--parts eternal-integration-parts --count {ETERNAL_PARTS}", inventory)
