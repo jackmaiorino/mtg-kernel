@@ -122,7 +122,7 @@ jobs:
       # formatting and lint job.
       scope: ${{ steps.scope.outputs.scope }}
       # all: every job of the group set above. A scope name (trainer, tools,
-      # python, rules-limited, w5-tools, workflow, docs): only that scope's
+      # python, rules-limited, w5-tools, workflow, viewer, docs): only that scope's
       # jobs (tools/ci/ci_scope.py, docs/CI-SCOPES.md).
       checks: ${{ steps.checks.outputs.checks || 'all' }}
     steps:
@@ -235,10 +235,14 @@ jobs:
             # PowerShell scripts no crate source or test reads), docs, and
             # markdown are irrelevant. build.rs still hashes every tracked
             # file into its provenance digest; no test pins that value.
+            # viewer/** (the website, the ci_scope.py viewer scope) is
+            # neither: no crate source, Rust or Python test, or other
+            # workflow reads a file there, and viewer.yml builds and tests
+            # it on those paths.
             case "$f" in
               python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/check_rust_integration_parts.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
-              python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
+              python/tests/*|python/tools/*|tools/*|docs/*|*.md|viewer/*) : ;;
               *) rust_relevant=true ;;
             esac
           done < "$RUNNER_TEMP/ci-changed-paths"
@@ -333,8 +337,9 @@ jobs:
     name: Rust formatting and lint
     needs: detect-changes
     # Same path rule as the Rust test groups: a change that touches only
-    # docs, markdown, Python tests, non-embedded Python tools or top-level
-    # tools/** cannot change what rustfmt or Clippy see. Pushes to main
+    # docs, markdown, Python tests, non-embedded Python tools, top-level
+    # tools/** or the website (viewer/**) cannot change what rustfmt or
+    # Clippy see. Pushes to main
     # always run it. Windows-only group sets leave it to the run they
     # complement or rerun.
     if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope) && contains(fromJSON('["all", "trainer", "rules-limited"]'), needs.detect-changes.outputs.checks)

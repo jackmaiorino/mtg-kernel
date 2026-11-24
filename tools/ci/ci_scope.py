@@ -35,6 +35,10 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     # modules); those run the Python set, and w5-tools.yml still runs on them by its own paths.
     (("tools/w5/*", ".github/workflows/w5-tools.yml"), "w5-tools"),
     ((".github/workflows/*",), "workflow"),
+    # The website (viewer.yml builds, tests and publishes it). No crate source, Rust test, Python test or other
+    # workflow reads a file under viewer/; python/tools/viewer_* and python/tests/test_viewer_* are Python files
+    # and keep the Python set.
+    (("viewer/*",), "viewer"),
     # Tool directories whose tests all live beside them (no python/tests or python/tools module reads them);
     # every other tools/** directory has tests in python/tests and runs the Python set.
     (tuple(f"tools/{name}/*" for name in TOOLS_DIRS), "tools"),
@@ -84,6 +88,8 @@ SCOPES: dict[str, dict] = {
                       "summary": "formatting and Clippy, the shared Limited build and every Limited group, Linux "
                                  "(only Limited process binaries map here; Limited library code is engine code)"},
     "workflow": {"jobs": [], "summary": "nothing in ci.yml: the changed workflow runs itself on its own paths"},
+    "viewer": {"jobs": [], "summary": "nothing in ci.yml: viewer.yml builds and tests the website on these paths "
+                                      "(and publishes it from main)"},
     "docs": {"jobs": [], "summary": "nothing"},
 }
 SCOPED = [name for name in SCOPES if name != "pr"]

@@ -111,6 +111,12 @@ class DraftLightTests(unittest.TestCase):
             ("docs/café.md", "docs/updated.md", "false", "false", "docs"),
             ("docs/before.txt", "mtg-kernel/src/bin/kernel_limited_café.rs", "false", "true", "rules-limited"),
             ("tools/café.py", "mtg-kernel/src/bin/kernel_limited_café.rs", "true", "true", "all"),
+            # The website runs nothing of ci.yml alone or with docs; with other files they decide.
+            ("viewer/public/café.html", "README.md", "false", "false", "viewer"),
+            ("viewer/src/main.tsx", None, "false", "false", "viewer"),
+            ("viewer/index.html", "mtg-kernel/src/engine.rs", "false", "true", "all"),
+            ("viewer/index.html", "python/tools/café.py", "true", "false", "all"),
+            ("viewer_tools/café.py", None, "false", "true", "all"),
         ]
         if sys.platform != "win32":
             cases.append(('tools/"quoted"\nname.py', None, "true", "false", "python"))
