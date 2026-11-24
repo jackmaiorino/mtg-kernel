@@ -1528,7 +1528,7 @@ fn replay_general_input_v1(
             return Err("Genesis current-slot replay changed its exact color-entry owner".into());
         }
         checkpoint.engine.linked_aura_operation_v1.damage_order =
-            hallow_replay::checkpoint_marker();
+            hallow_replay::checkpoint_marker(original, &checkpoint);
         if let GeneralChoiceV36::HallowV1 { choice } = choice {
             checkpoint.engine.linked_aura_operation_v1.pending_hallow_v1 =
                 Some(Box::new(HallowCheckpointV1 {

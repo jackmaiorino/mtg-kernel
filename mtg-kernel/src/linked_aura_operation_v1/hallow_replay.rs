@@ -29,10 +29,26 @@ pub(crate) fn soul_scar_damage_order_v1() -> bool {
     cfg!(feature = "eternal-fixtures") && ORDER.with(|mode| mode.get().0 == Order::SoulScar)
 }
 
-pub(super) fn checkpoint_marker() -> Option<Order> {
-    cfg!(feature = "eternal-fixtures")
-        .then(|| ORDER.with(|mode| mode.get().1))
-        .flatten()
+fn soul_scar_present(state: &GameState) -> bool {
+    let Some(id) = crate::card_def::card_id_by_name(crate::eternal_cube_c7b_v1::SOUL_SCAR_MAGE)
+    else {
+        return false;
+    };
+    state
+        .objects
+        .iter()
+        .any(|(_, object)| object.card_def == id)
+}
+
+pub(super) fn checkpoint_marker(original: &GameState, checkpoint: &GameState) -> Option<Order> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    match ORDER.with(|mode| mode.get().1)? {
+        Order::SoulScar => (soul_scar_present(original) || soul_scar_present(checkpoint))
+            .then_some(Order::SoulScar),
+        other => Some(other),
+    }
 }
 
 pub(crate) fn legacy_hallow_only_v1() -> bool {
