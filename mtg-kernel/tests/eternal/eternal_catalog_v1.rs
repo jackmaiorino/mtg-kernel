@@ -1418,6 +1418,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
                     circle_choices: 0,
                     mage_choices: [0; 2],
                     mage_held_names: 0,
+                    // The ordered-graveyard session is not the schema 5
+                    // contract and reports no Ward payments.
+                    ward_payments: [0; 2],
                 };
             }
             let pair = [first.deck.clone(), second.deck.clone()];
