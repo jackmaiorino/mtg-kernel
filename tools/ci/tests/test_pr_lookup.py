@@ -74,8 +74,10 @@ def jobs(rows, run_id=7):
             for name, status, conclusion in rows]
 
 
-def run(run_id, created, event="pull_request", sha=HEAD, head_repo=REPOSITORY, path=".github/workflows/ci.yml"):
+def run(run_id, created="2026-11-24T10:00:00Z", event="pull_request", sha=HEAD, head_repo=REPOSITORY,
+        path=".github/workflows/ci.yml", status="in_progress", conclusion=None):
     return {"id": run_id, "event": event, "head_sha": sha, "path": path, "created_at": created,
+            "status": status, "conclusion": conclusion,
             "repository": {"full_name": REPOSITORY}, "head_repository": {"full_name": head_repo}}
 
 
@@ -141,14 +143,65 @@ class PrLookupTests(unittest.TestCase):
 class EvidenceTests(unittest.TestCase):
     """Point 1: the decision over literal job lists."""
 
-    def test_expanded_linux_rust_group_rows_in_any_state_show_the_whole_set(self):
-        self.assertTrue(pr_lookup.scheduled_linux_rust(jobs(READY_RUN_JOBS), 7))
+    def test_linux_rust_group_rows_finished_or_on_their_way_show_the_whole_set(self):
+        self.assertTrue(pr_lookup.scheduled_linux_rust(jobs(READY_RUN_JOBS), run(7)))
         for status, conclusion in (("queued", None), ("in_progress", None), ("completed", "success"),
-                                   ("completed", "failure"), ("completed", "cancelled"), ("waiting", None)):
+                                   ("completed", "failure"), ("waiting", None)):
             with self.subTest(status=status, conclusion=conclusion):
                 rows = [("Detect changed paths", "completed", "success"),
                         ("Rust tests (ubuntu-24.04, workspace-lib)", status, conclusion)]
-                self.assertTrue(pr_lookup.scheduled_linux_rust(jobs(rows), 7))
+                self.assertTrue(pr_lookup.scheduled_linux_rust(jobs(rows), run(7)))
+        # A run that ended by itself, green or red, with every group row finished.
+        done = [("Rust tests (ubuntu-24.04, workspace-lib)", "completed", "success"),
+                ("Rust tests (ubuntu-24.04, standard)", "completed", "failure")]
+        for conclusion in ("success", "failure"):
+            with self.subTest(run=conclusion):
+                self.assertTrue(pr_lookup.scheduled_linux_rust(jobs(done), run(7, status="completed",
+                                                                               conclusion=conclusion)))
+
+    def test_a_cancelled_or_unstarted_group_job_or_run_is_not_evidence(self):
+        good = ("Rust tests (ubuntu-24.04, workspace-lib)", "completed", "success")
+        # A group job that was cancelled, timed out, never started or ended in any other way, alone or
+        # beside good rows: nothing completes Linux Rust, so the dispatch must run the full set.
+        for conclusion in ("cancelled", "timed_out", "startup_failure", "neutral", "action_required", "stale", None):
+            for rows in ([("Rust tests (ubuntu-24.04, standard)", "completed", conclusion)],
+                         [good, ("Rust tests (ubuntu-24.04, standard)", "completed", conclusion)]):
+                with self.subTest(job=conclusion, rows=len(rows)):
+                    self.assertFalse(pr_lookup.scheduled_linux_rust(jobs(rows), run(7)))
+        # A run that was cancelled (a newer push, a manual cancel), timed out or failed to start, whatever
+        # its rows say; and a run in a state this code does not know.
+        for status, conclusion in (("completed", "cancelled"), ("completed", "timed_out"),
+                                   ("completed", "startup_failure"), ("completed", "skipped"),
+                                   ("completed", "action_required"), ("completed", None), ("unknown", None),
+                                   (None, None)):
+            with self.subTest(run=(status, conclusion)):
+                for rows in ([good], [("Rust tests (ubuntu-24.04, standard)", "queued", None)], READY_RUN_JOBS):
+                    self.assertFalse(pr_lookup.scheduled_linux_rust(jobs(rows), run(7, status=status,
+                                                                                    conclusion=conclusion)))
+        # A row still queued or running in a run that has already finished cannot be on its way anywhere.
+        for status in ("queued", "in_progress", "waiting"):
+            with self.subTest(job_status=status):
+                rows = [good, ("Rust tests (ubuntu-24.04, standard)", status, None)]
+                self.assertFalse(pr_lookup.scheduled_linux_rust(jobs(rows), run(7, status="completed",
+                                                                                conclusion="success")))
+        # A job in a state this code does not know.
+        self.assertFalse(pr_lookup.scheduled_linux_rust(
+            jobs([("Rust tests (ubuntu-24.04, standard)", "unknown", None)]), run(7)))
+        # Other jobs of the run may be cancelled or fail: only the Linux Rust group rows are the evidence.
+        self.assertTrue(pr_lookup.scheduled_linux_rust(
+            jobs([good, ("Rust tests (windows-2025, workspace-lib)", "completed", "cancelled"),
+                  ("Python tests (ubuntu-24.04, shard 0)", "completed", "timed_out")]), run(7)))
+
+    def test_a_cancelled_pull_request_run_gives_the_full_set_end_to_end(self):
+        cancelled = [("Rust tests (ubuntu-24.04, workspace-lib)", "completed", "cancelled"),
+                     ("Rust tests (ubuntu-24.04, standard)", "completed", "cancelled")]
+        self.assertEqual(decide([run(1, status="completed", conclusion="cancelled")], {1: jobs(cancelled, 1)})[0],
+                         "partial")
+        self.assertEqual(decide([run(1, status="completed", conclusion="cancelled")],
+                                {1: jobs(READY_RUN_JOBS, 1)})[0], "partial")
+        # Superseded by a newer push to the same head is not possible (a new push is a new head); a rerun
+        # after a cancel is the same run, latest attempt, and counts again once its rows are on their way.
+        self.assertEqual(decide([run(1)], {1: jobs(READY_RUN_JOBS, 1)})[0], "whole-set")
 
     def test_anything_else_is_not_shown(self):
         cases = {
@@ -167,10 +220,10 @@ class EvidenceTests(unittest.TestCase):
         }
         for name, rows in cases.items():
             with self.subTest(case=name):
-                self.assertFalse(pr_lookup.scheduled_linux_rust(jobs(rows), 7))
+                self.assertFalse(pr_lookup.scheduled_linux_rust(jobs(rows), run(7)))
         # Jobs of another run in the list are an error, never evidence.
         with self.assertRaises(ValueError):
-            pr_lookup.scheduled_linux_rust(jobs(READY_RUN_JOBS, run_id=8), 7)
+            pr_lookup.scheduled_linux_rust(jobs(READY_RUN_JOBS, run_id=8), run(7))
 
     def test_the_groups_are_the_rust_test_groups_matrix_and_no_other_job_shares_them(self):
         text = WORKFLOW.read_text(encoding="utf-8")

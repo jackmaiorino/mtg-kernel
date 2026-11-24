@@ -47,7 +47,8 @@ DRAFT_JOBS = [{"name": "Detect changed paths", "status": "completed", "conclusio
 
 def pr_runs(event="pull_request", head=HEAD, repo="fixture/repo"):
     return [{"id": 51, "event": event, "head_sha": head, "path": ".github/workflows/ci.yml",
-             "created_at": "2026-11-24T10:00:00Z", "repository": {"full_name": "fixture/repo"},
+             "created_at": "2026-11-24T10:00:00Z", "status": "in_progress", "conclusion": None,
+             "repository": {"full_name": "fixture/repo"},
              "head_repository": {"full_name": repo}}]
 
 
