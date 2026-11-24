@@ -1206,9 +1206,9 @@ pub(crate) mod crash_points_for_test_v1 {
     ) -> (R, usize, bool) {
         let _armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
         *PLAN.lock().unwrap_or_else(PoisonError::into_inner) = Some(PlanV1 {
-            root: root.to_path_buf(),
+            root: canonical_v1(root),
             crash,
-            crash_path,
+            crash_path: crash_path.map(|(path, point)| (canonical_v1(&path), point)),
             started: 0,
             target: None,
             crashed: false,
@@ -1220,6 +1220,34 @@ pub(crate) mod crash_points_for_test_v1 {
             .take()
             .expect("armed plan");
         (result, plan.started, plan.crashed)
+    }
+
+    /// `path` as the boundary hook names publications: publication parents
+    /// are canonicalized (on Windows the verbatim form, elsewhere with
+    /// links resolved), so a plan's root and target are too. The longest
+    /// existing prefix is canonicalized and the rest, not yet created by the
+    /// run, appended; a path with no existing prefix is kept as given. The
+    /// plan is process-wide, so publications of every thread of the run (the
+    /// next batch's collection beside an update included) are numbered and
+    /// crashable once their paths compare equal.
+    fn canonical_v1(path: &Path) -> PathBuf {
+        let mut existing = path;
+        let mut rest = Vec::new();
+        loop {
+            if let Ok(canonical) = std::fs::canonicalize(existing) {
+                return rest
+                    .iter()
+                    .rev()
+                    .fold(canonical, |joined, name| joined.join(name));
+            }
+            match (existing.parent(), existing.file_name()) {
+                (Some(parent), Some(name)) => {
+                    rest.push(name.to_os_string());
+                    existing = parent;
+                }
+                _ => return path.to_path_buf(),
+            }
+        }
     }
 
     fn crash_v1(detail: &str) -> DurablePublicationErrorV1 {

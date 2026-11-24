@@ -755,6 +755,21 @@ fn a_lag_run_crashed_at_any_publication_resumes_to_the_uninterrupted_result_v1()
         .collect();
     // Every file but the lock is a publication, so every one is a case.
     assert_eq!(published.len(), publications);
+    // Batches 1 and 2 are collected on the helper thread beside updates 0
+    // and 1: their trajectories and collection are cases too.
+    for iteration in ["000001", "000002"] {
+        let collect = Path::new("iterations")
+            .join(iteration)
+            .join("attempt-000000")
+            .join("collect");
+        for name in ["episode-0000.json", "episode-0001.json", "collection.json"] {
+            assert!(
+                published.contains(&collect.join(name)),
+                "{} is not swept",
+                collect.join(name).display()
+            );
+        }
+    }
     for relative in &published {
         for point in [CrashPointV1::BeforeFinal, CrashPointV1::AfterFinal] {
             let case = format!("{} {point:?}", relative.display());

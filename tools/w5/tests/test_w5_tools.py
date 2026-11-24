@@ -301,6 +301,86 @@ class RetentionTests(unittest.TestCase):
             self.assertFalse(any('lag' in r for r in plain_records))
             self.assertEqual(retention.behaviour_predecessors(plain_records, {64, 128}), set())
 
+    @staticmethod
+    def replay_tree(spec, root, lag=True):
+        """A replay output reproducing every hash, its receipts naming each update's source as the native trainer's
+        do (under the lag also its collection_policy_lag_v1 member); returns verify_replay's receipt."""
+        previous = spec['replay']['from']['checkpoint']
+        for i, item in enumerate(spec['replay']['expected']):
+            it = Path(root) / 'iterations' / f'{i:06d}'
+            it.mkdir(parents=True)
+            ck = it / 'checkpoint.json'
+            ck.write_text(f"replayed-{item['boundary']}")
+            pin = {'path': ck.as_posix(), 'sha256': retention.sha(ck)}
+            (it / 'u.json').write_text(json.dumps({'after_state_sha256': item['after_state_sha256'],
+                                                   'checkpoint': pin}))
+            receipt = {'update': {'path': (it / 'u.json').as_posix()},
+                       'source': {'play_import': {'path': 'import.json', 'sha256': 'i'}, 'checkpoint': previous}}
+            if lag:
+                receipt['collection_policy_lag_v1'] = {'lag': 1}
+            (it / 'complete.json').write_text(json.dumps(receipt))
+            previous = pin
+        return retention.verify_replay(spec, root)
+
+    def test_lag_endpoints_are_selected_and_pruned_with_their_behaviour_predecessor(self):
+        """Review round 2: under collection_policy_lag_v1 an intact endpoint whose behaviour predecessor was pruned
+        does not stand alone (a replay reconstructs the pair), and a replayed endpoint keeps the input its last
+        replayed update recorded: the chain's state after a one-update replay, the replay's own after a longer
+        one. Without the lag selection and pruning are unchanged."""
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=4, per_segment=64, complete_last=False, lag=True)
+            retention.apply(retention.plan(chain_path), Path(tmp) / 'log.jsonl')
+            chain, records = retention.index(chain_path)
+            by_boundary = {r['boundary']: r for r in records}
+            # State 63 survives as 64's predecessor, state 62 does not: 63 is no endpoint by itself.
+            self.assertTrue(retention.state_intact(by_boundary[63]['checkpoint']))
+            self.assertFalse(Path(by_boundary[62]['checkpoint']['path']).exists())
+            spec = retention.select(chain, records, r_usec=63_000)
+            self.assertEqual(spec['endpoint_boundary'], 63)
+            self.assertIsNotNone(spec['replay'])
+            self.assertEqual((spec['replay']['from']['boundary'], spec['replay']['updates']), (0, 63))
+            with self.assertRaises(SystemExit):
+                retention.prune_manifest(chain, records, 63)
+            # 64, whose predecessor 63 is intact, stands alone.
+            self.assertIsNone(retention.select(chain, records, r_usec=64_000)['replay'])
+
+            # A one-update replay of 65 from 64: the kept pair is the replayed 65 and the chain's 64.
+            spec = retention.select(chain, records, r_usec=65_000)
+            self.assertEqual((spec['replay']['from']['boundary'], spec['replay']['updates']), (64, 1))
+            receipt = self.replay_tree(spec, Path(tmp) / 'r65')
+            self.assertTrue(receipt['equal'])
+            self.assertEqual(receipt['endpoint_input_checkpoint'], by_boundary[64]['checkpoint'])
+            manifest = retention.prune_manifest(chain, records, 65, receipt)
+            self.assertEqual([k['boundary'] for k in manifest['keep']['selected_checkpoint']], [65])
+            self.assertEqual([(k['boundary'], k['path']) for k in manifest['keep']['behaviour_predecessor']],
+                             [(64, by_boundary[64]['checkpoint']['path'])])
+            self.assertNotIn(by_boundary[64]['checkpoint']['path'], [p['path'] for p in manifest['prune']])
+            # A two-update replay of 66: its predecessor is the replay's own state 65; the chain's 64 is pruned.
+            spec = retention.select(chain, records, r_usec=66_000)
+            self.assertEqual((spec['replay']['from']['boundary'], spec['replay']['updates']), (64, 2))
+            receipt = self.replay_tree(spec, Path(tmp) / 'r66')
+            manifest = retention.prune_manifest(chain, records, 66, receipt)
+            kept = manifest['keep']['behaviour_predecessor']
+            self.assertEqual([(k['boundary'], k.get('replayed')) for k in kept], [(65, True)])
+            self.assertTrue(kept[0]['path'].startswith((Path(tmp) / 'r66').as_posix()))
+            self.assertIn(by_boundary[64]['checkpoint']['path'], [p['path'] for p in manifest['prune']])
+            # A lag receipt without the endpoint's input is refused.
+            with self.assertRaises(SystemExit):
+                retention.prune_manifest(chain, records, 66, {k: v for k, v in receipt.items()
+                                                              if k != 'endpoint_input_checkpoint'})
+
+            # Without the lag: no predecessor is required, named or kept.
+            plain = make_chain(Path(tmp) / 'plain', 'X', segments=4, per_segment=64, complete_last=False)
+            retention.apply(retention.plan(plain), Path(tmp) / 'plain.jsonl')
+            chain, records = retention.index(plain)
+            self.assertIsNone(retention.select(chain, records, r_usec=64_000)['replay'])
+            spec = retention.select(chain, records, r_usec=65_000)
+            receipt = self.replay_tree(spec, Path(tmp) / 'plain-r65', lag=False)
+            self.assertTrue(receipt['equal'])
+            self.assertNotIn('endpoint_input_checkpoint', receipt)
+            manifest = retention.prune_manifest(chain, records, 65, receipt)
+            self.assertNotIn('behaviour_predecessor', manifest['keep'])
+
     def test_replay_refuses_history_relative_opponents(self):
         with tempfile.TemporaryDirectory() as tmp:
             chain_path = make_chain(tmp, 'X', segments=2, per_segment=64)

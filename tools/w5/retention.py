@@ -628,16 +628,21 @@ def decide(x_chain, x_records, c_chain, c_records, c_ended, x_running_s=None, no
 def select(chain, records, r_usec, weights=None):
     """The endpoint (first boundary at or past R): its checkpoint if still on disk, else its weights-only snapshot
     (`weights`: boundary to snapshot record), else the replay spec from the nearest kept full state at or before
-    it."""
+    it. Under `collection_policy_lag_v1` the endpoint stands alone only with its behaviour predecessor intact too
+    (a run from it plays its first batch there); otherwise the replay reconstructs the pair."""
     hit = first_at_or_past(records, r_usec)
     if not hit:
         raise SystemExit('stop: no boundary reaches R yet')
     endpoint = hit['boundary']
     by_boundary = {r['boundary']: r for r in records}
-    if state_intact(hit['checkpoint'], hit.get('state')):
+    paired = all(by_boundary.get(p) is not None and state_intact(by_boundary[p]['checkpoint'],
+                                                                 by_boundary[p].get('state'))
+                 for p in behaviour_predecessors(records, {endpoint}))
+    if paired and state_intact(hit['checkpoint'], hit.get('state')):
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'], 'replay': None}
     snap = (weights or {}).get(endpoint)
-    if snap and sha(snap['path']) == snap['sha256'] and snap['cut_from_state_sha256'] == hit['after_state_sha256']:
+    if paired and snap and sha(snap['path']) == snap['sha256'] and \
+            snap['cut_from_state_sha256'] == hit['after_state_sha256']:
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'],
                 'weights_snapshot': {k: snap[k] for k in ('path', 'sha256', 'parameters_sha256')}, 'replay': None}
     start = None
@@ -735,10 +740,11 @@ def replay_config(chain, spec, out_dir):
 def verify_replay(spec, replay_root):
     """Every replayed update must reproduce its recorded after-state hash."""
     expected = spec['replay']['expected']
-    got, checkpoint, state = [], None, None
+    got, checkpoint, state, receipt = [], None, None, {}
     for i, item in enumerate(expected):
         complete = Path(replay_root, 'iterations', f'{i:06d}', 'complete.json')
-        doc = read(read(complete)['update']['path']) if complete.exists() else {}
+        receipt = read(complete) if complete.exists() else {}
+        doc = read(receipt['update']['path']) if complete.exists() else {}
         got.append(doc.get('after_state_sha256'))
         checkpoint = doc.get('checkpoint')
         state = state_pin(doc)
@@ -746,11 +752,19 @@ def verify_replay(spec, replay_root):
     ok = all(equal) and len(got) == len(expected)
     if ok and not (checkpoint and state_intact(checkpoint, state)):
         ok = False
-    return {'schema': 'w5-replay-receipt/v1', 'endpoint_boundary': spec['endpoint_boundary'],
-            'from_boundary': spec['replay']['from']['boundary'], 'updates': len(expected),
-            'equal': ok, 'first_mismatch': None if all(equal) else expected[equal.index(False)]['boundary'],
-            'endpoint_after_state_sha256': got[-1] if got else None,
-            'endpoint_checkpoint': checkpoint if ok else None, 'endpoint_state': state if ok else None}
+    # Under collection_policy_lag_v1 the replayed endpoint is usable with the input its last update recorded (the
+    # replay's previous state, or its start state for a one-update replay), which must be intact too.
+    lag_input = (receipt.get('source') or {}).get('checkpoint') if receipt.get('collection_policy_lag_v1') else None
+    if ok and receipt.get('collection_policy_lag_v1') and not (lag_input and state_intact(lag_input)):
+        ok = False
+    out = {'schema': 'w5-replay-receipt/v1', 'endpoint_boundary': spec['endpoint_boundary'],
+           'from_boundary': spec['replay']['from']['boundary'], 'updates': len(expected),
+           'equal': ok, 'first_mismatch': None if all(equal) else expected[equal.index(False)]['boundary'],
+           'endpoint_after_state_sha256': got[-1] if got else None,
+           'endpoint_checkpoint': checkpoint if ok else None, 'endpoint_state': state if ok else None}
+    if lag_input is not None:
+        out['endpoint_input_checkpoint'] = lag_input if ok else None
+    return out
 
 
 def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weights=None):
@@ -758,7 +772,9 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
     snapshot on disk except the selected endpoint's; receipts (complete.json, update.json, ledgers, the snapshot
     index) are kept. The endpoint is kept as its full state when one is on disk, else its weights-only snapshot,
     else its verified replay (the replayed checkpoint, outside the chain's trees). Under `collection_policy_lag_v1`
-    an endpoint kept as its full state keeps its behaviour predecessor's beside it (`behaviour_predecessor`)."""
+    the kept endpoint keeps its behaviour predecessor beside it (`behaviour_predecessor`): the chain's state at b - 1,
+    or for a replayed endpoint the input its receipt names (in the chain or in the replay output); a selection
+    without it is refused."""
     prune, keep = [], []
     weights = weights or {}
     if replay_receipt is not None:
@@ -783,10 +799,29 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
                 item['part'] = part['part']
             keep.append(item)
     full_prune = []
-    endpoint = next((r for r in records if r['boundary'] == selected_boundary), None)
-    endpoint_full = not keep and endpoint is not None and state_intact(endpoint['checkpoint'], endpoint.get('state'))
-    predecessors = behaviour_predecessors(records, {selected_boundary}) if endpoint_full else set()
-    kept_predecessor = []
+    # Under collection_policy_lag_v1 the kept endpoint keeps its behaviour predecessor: the chain's state at
+    # b - 1, or for a replayed endpoint the input its last replayed update recorded (the chain's state, or the
+    # replay's own previous state), as its verified receipt names it.
+    needed = behaviour_predecessors(records, {selected_boundary})
+    predecessors, kept_predecessor = set(), []
+    if needed:
+        (before,) = needed
+        rec_before = next((r for r in records if r['boundary'] == before), None)
+        replayed_input = replay_receipt.get('endpoint_input_checkpoint') if keep else None
+        if keep and replayed_input is None:
+            raise SystemExit("stop: the replay receipt lacks the lag endpoint's input; rerun verify-replay")
+        if keep and not (rec_before is not None and Path(rec_before['checkpoint']['path']) == Path(
+                replayed_input['path'])):
+            if not state_intact(replayed_input):
+                raise SystemExit("stop: the replayed lag endpoint's input differs from its pin")
+            kept_predecessor.append({'boundary': before, 'kind': 'full',
+                                     'path': Path(replayed_input['path']).as_posix(), 'sha256': replayed_input['sha256'],
+                                     'bytes': Path(replayed_input['path']).stat().st_size, 'replayed': True})
+        else:
+            if rec_before is None or not state_intact(rec_before['checkpoint'], rec_before.get('state')):
+                raise SystemExit("stop: the selected lag endpoint's behaviour predecessor is not on disk (replay the "
+                                 'pair first)')
+            predecessors = needed
     for rec in records:
         parts = [p for p in record_parts(rec) if Path(p['path']).exists()]
         if not parts:
