@@ -56,6 +56,8 @@ POOLED_COLLECTION_TAIL_SOURCE = "3923ac1206b128ecd615959bf75c1a7550ebda0f"
 POOLED_POLICY_LAG_SOURCE = "3df6db5891fdd5635187c8fbb7cb2231b4515411"
 POOLED_TAIL_OVERLAP_FIX2_SOURCE = "9044b794edccbdda1f24a5057fd3e1bae0d27065"
 POOLED_TAIL_OVERLAP_FIX3_SOURCE = "b008c5efa1c3d67bd7701056f474752399e26c87"
+# The collection tail (levers 4 and 5) on the final update tail overlap head, for the bundle timing (this guard branch only).
+POOLED_COLLECTION_TAIL_V2_SOURCE = "9743806a7ecb50c6c6cbbf95d3d22f8ac4269930"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -88,6 +90,7 @@ SOURCES = (
     POOLED_POLICY_LAG_SOURCE,
     POOLED_TAIL_OVERLAP_FIX2_SOURCE,
     POOLED_TAIL_OVERLAP_FIX3_SOURCE,
+    POOLED_COLLECTION_TAIL_V2_SOURCE,
 )
 # The image follows the host (this guard branch only): the amd64 image for the portable x86-64 build (unchanged),
 # and on an arm64 hosted runner the linux/arm64 member of the python:3.12-slim-bookworm index 935c3c5b... that the
