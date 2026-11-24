@@ -650,6 +650,11 @@ fn eternal_trigger(t: crate::eternal_cards_v1::EternalTriggerV1) -> Result<Value
                 json!("CardsPutIntoLibraryFromAnywhereV1")
             }
         }}),
+        E::Pf2aV1(v) => json!({"Pf2aV1": match v {
+            crate::eternal_pauper_pf2a_v1::Pf2aTriggerV1::CardsLeaveYourGraveyardV1 => {
+                json!("CardsLeaveYourGraveyardV1")
+            }
+        }}),
         _ => return Err(unsupported()),
     })
 }

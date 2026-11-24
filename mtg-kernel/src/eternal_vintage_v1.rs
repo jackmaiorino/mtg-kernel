@@ -1082,6 +1082,8 @@ pub(crate) fn enter_as_copy(
         return;
     }
     let copied_def = original.card_def;
+    let copied_prototyped =
+        crate::eternal_pauper_pf2c_v1::is_prototyped_permanent(state, copied.object);
     use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1;
     match MetamorphCopyV1::capture(state, ctx, copied) {
         Ok(Some(copy)) => {
@@ -1122,6 +1124,9 @@ pub(crate) fn enter_as_copy(
     live.v4.effective_subtype_ids = base.effective_subtype_ids;
     let own_def = record.card_def;
     vintage_state(state).copies.push(record);
+    if copied_prototyped {
+        crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, host);
+    }
     crate::standard_cards_v1::note_copied_definitions(
         state,
         host,

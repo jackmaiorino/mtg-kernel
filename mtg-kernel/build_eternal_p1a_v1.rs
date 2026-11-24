@@ -405,6 +405,7 @@ pub(super) fn adventure_for(name: &str) -> &'static str {
         "Embereth Shieldbreaker" => super::build_eternal_c3a_v1::adventure_for(name),
         "Gandalf, Goblins' Bane" => super::build_eternal_c7a_v1::adventure_for(name),
         "Bonecrusher Giant" => super::build_eternal_c8a_v1::adventure_for(name),
+        "Pegasus Guardian" => super::build_eternal_pf2b_v1::adventure_for(name),
         _ => "None",
     }
 }
@@ -416,6 +417,7 @@ pub(super) fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRec
         "Embereth Shieldbreaker" => super::build_eternal_c3a_v1::adventure_effect_recipe_for(name),
         "Gandalf, Goblins' Bane" => super::build_eternal_c7a_v1::adventure_effect_recipe_for(name),
         "Bonecrusher Giant" => super::build_eternal_c8a_v1::adventure_effect_recipe_for(name),
+        "Pegasus Guardian" => super::build_eternal_pf2b_v1::adventure_effect_recipe_for(name),
         _ => None,
     }
 }
@@ -427,6 +429,7 @@ pub(super) fn adventure_face_name_for(name: &str) -> Option<&'static str> {
         "Embereth Shieldbreaker" => super::build_eternal_c3a_v1::adventure_face_name_for(name),
         "Gandalf, Goblins' Bane" => super::build_eternal_c7a_v1::adventure_face_name_for(name),
         "Bonecrusher Giant" => super::build_eternal_c8a_v1::adventure_face_name_for(name),
+        "Pegasus Guardian" => super::build_eternal_pf2b_v1::adventure_face_name_for(name),
         _ => None,
     }
 }
