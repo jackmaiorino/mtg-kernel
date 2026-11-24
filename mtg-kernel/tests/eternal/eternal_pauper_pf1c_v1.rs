@@ -4637,7 +4637,11 @@ fn public_escape_schema_4_keeps_the_refusal_and_its_bytes() {
                 if reason.contains("staged Escape") {
                     assert_eq!(
                         reason,
-                        "fail_closed:observation:policy schema v5 cannot represent a staged                          Escape graveyard-exile prefix; a versioned object-cost successor is                          required"
+                        concat!(
+                            "fail_closed:observation:policy schema v5 cannot represent a staged ",
+                            "Escape graveyard-exile prefix; a versioned object-cost successor is ",
+                            "required"
+                        )
                     );
                     refusals += 1;
                 }
@@ -4656,4 +4660,713 @@ fn public_escape_schema_4_keeps_the_refusal_and_its_bytes() {
     }
     println!("schema 4 Escape refusals: {refusals} of 12 games");
     assert!(refusals > 0, "no schema 4 game staged an Escape cast");
+}
+
+/// The nonland cards of the Vintage Cube list the census plays.
+fn cube_nonland_cards() -> Vec<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../data/cube_v1/mtgo_vintage_cube_20261007.json");
+    let cube: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    cube["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|card| card["name"].as_str().unwrap().to_owned())
+        .filter(|name| !def(name).is_land)
+        .collect()
+}
+
+/// A main phase where P0 controls Underworld Breach with `card` in its
+/// graveyard among varied fuel, plenty of mana, permanents to sacrifice,
+/// tap or return, and cards in hand; P1 has creatures, an artifact and an
+/// enchantment to target. With `opposing_spell`, P1's Lightning Bolt is on
+/// the stack.
+fn breach_board(card: &str, opposing_spell: bool) -> (GameState, ObjectId) {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    for name in [
+        "Llanowar Elves",
+        "Thraben Inspector",
+        "Mishra's Bauble",
+        "Island",
+        "Forest",
+        "Swamp",
+        "Mountain",
+        "Plains",
+    ] {
+        put(&mut state, P0, name, Zone::Battlefield);
+    }
+    for name in [
+        "Island",
+        "Lightning Bolt",
+        "Counterspell",
+        "Forest",
+        "Swamp",
+    ] {
+        put(&mut state, P0, name, Zone::Hand);
+    }
+    let spell = put(&mut state, P0, card, Zone::Graveyard);
+    for name in [
+        "Island",
+        "Lightning Bolt",
+        "Ponder",
+        "Mishra's Bauble",
+        "Llanowar Elves",
+        "Forest",
+        "Brainstorm",
+        "Swamp",
+        "Seal of Fire",
+    ] {
+        put(&mut state, P0, name, Zone::Graveyard);
+    }
+    for name in [
+        "Thraben Inspector",
+        "Llanowar Elves",
+        "Mishra's Bauble",
+        "Seal of Fire",
+    ] {
+        put(&mut state, P1, name, Zone::Battlefield);
+    }
+    for name in ["Island", "Lightning Bolt"] {
+        put(&mut state, P1, name, Zone::Hand);
+    }
+    if opposing_spell {
+        opponent_bolts(&mut state, Target::Player(P0));
+    }
+    let colors = [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ];
+    let colored: Vec<ManaColor> = colors.iter().cycle().take(20).copied().collect();
+    pool(&mut state, P0, &colored, 8);
+    (state, spell)
+}
+
+/// What one Breach-route cast through its staged payment showed.
+#[derive(Default)]
+struct SweepOutcome {
+    /// Public observations refused or malformed during the cast.
+    failures: Vec<String>,
+    /// Casts reversed after at least one staged choice.
+    aborts: Vec<String>,
+    /// Casts reversed before any staged choice (an offered cast with no
+    /// payable form).
+    silent_reversals: Vec<String>,
+    /// Casts that reached the stack.
+    casts: usize,
+    /// Staged decisions observed, by record stage.
+    stages: std::collections::BTreeMap<String, usize>,
+}
+
+/// Casts `card` from P0's graveyard and answers every staged choice with
+/// `policy` (`None` takes the first legal action, `Some(seed)` a seeded
+/// random one), observing P0's schema 5 view at each choice.
+fn sweep_breach_cast(
+    card: &str,
+    opposing_spell: bool,
+    policy: Option<u64>,
+    out: &mut SweepOutcome,
+) {
+    use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
+    let (mut state, spell) = breach_board(card, opposing_spell);
+    let castable = match engine::advance_until_decision(&mut state) {
+        Decision::CastSpellOrPass {
+            castable_spells, ..
+        } => castable_spells.contains(&spell),
+        _ => false,
+    };
+    if !castable {
+        return;
+    }
+    let label = format!("{card} (stack={opposing_spell}, policy={policy:?})");
+    if let Err(error) = engine::step(&mut state, Action::CastSpell(spell)) {
+        out.failures.push(format!("{label}: cast refused: {error}"));
+        return;
+    }
+    let mut random = policy.unwrap_or(0);
+    let mut choices = 0;
+    for _ in 0..96 {
+        let decision = engine::advance_until_decision(&mut state);
+        if state.engine.pending_cast.is_none() {
+            break;
+        }
+        if let Decision::Halted { .. } = decision {
+            out.failures
+                .push(format!("{label}: halted mid-cast {decision:?}"));
+            return;
+        }
+        let observation = match public_observation(&state) {
+            Ok(observation) => observation,
+            Err(error) => {
+                out.failures
+                    .push(format!("{label}: {error} at {decision:?}"));
+                return;
+            }
+        };
+        let staged = &observation["projection"]["staged_escape"];
+        let escaping = state.engine.pending_cast.as_ref().is_some_and(|p| {
+            p.source_contract.cast_method == mtg_kernel::state::CastMethodV4::Escape
+        });
+        match staged["stage"]["kind"].as_str() {
+            Some(kind) => *out.stages.entry(kind.to_owned()).or_default() += 1,
+            // A route menu whose provisional first route is not an escape
+            // keeps its unrecorded bytes.
+            None if !escaping => {
+                *out.stages
+                    .entry("unrecorded_route_menu".into())
+                    .or_default() += 1
+            }
+            None => {
+                out.failures
+                    .push(format!("{label}: no staged_escape record at {decision:?}"));
+                return;
+            }
+        }
+        if let Some(options) = staged["stage"]["x_options"].as_array() {
+            let Decision::ChooseEffectOption { option_count, .. } = decision else {
+                out.failures.push(format!(
+                    "{label}: x_options outside an X choice {decision:?}"
+                ));
+                return;
+            };
+            if options.len() != usize::from(option_count) {
+                out.failures.push(format!(
+                    "{label}: {} x_options for {option_count}",
+                    options.len()
+                ));
+                return;
+            }
+            *out.stages.entry("x_choice".into()).or_default() += 1;
+        }
+        let rows = match mtg_kernel::rl::legal_action_candidates_v1(
+            &SurfaceDecision::Decision(decision.clone()),
+            &state,
+        ) {
+            Ok(rows) if !rows.is_empty() => rows,
+            other => {
+                out.failures.push(format!(
+                    "{label}: no legal actions {other:?} at {decision:?}"
+                ));
+                return;
+            }
+        };
+        let index = match policy {
+            None => 0,
+            Some(_) => {
+                (crate::eternal_catalog_v1::splitmix64(&mut random) % rows.len() as u64) as usize
+            }
+        };
+        let SurfaceAction::Action(action) = rows[index].surface_action.clone() else {
+            out.failures
+                .push(format!("{label}: non-engine action at {decision:?}"));
+            return;
+        };
+        if let Err(error) = engine::step(&mut state, action.clone()) {
+            out.failures
+                .push(format!("{label}: offered {action:?} refused: {error}"));
+            return;
+        }
+        choices += 1;
+    }
+    if state.engine.pending_cast.is_some() {
+        out.failures.push(format!("{label}: cast still pending"));
+    } else if zone(&state, spell) == Zone::Stack {
+        out.casts += 1;
+        // After payment the record is gone.
+        let observation = public_observation(&state).unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert!(
+            !observation.to_string().contains("staged_escape"),
+            "{label}"
+        );
+    } else if choices > 0 {
+        out.aborts.push(label);
+    } else {
+        out.silent_reversals.push(label);
+    }
+}
+
+/// Every nonland Vintage Cube card cast through Underworld Breach, with first,
+/// random and opposing-stack choices: each staged choice has a schema 5
+/// public record, every offered action is accepted, and no cast is reversed
+/// after a staged choice.
+#[test]
+fn public_escape_every_cube_card_through_breach_stages_its_cost() {
+    let cards = cube_nonland_cards();
+    let mut out = SweepOutcome::default();
+    for card in &cards {
+        for opposing_spell in [false, true] {
+            for policy in [None, Some(1), Some(2), Some(3)] {
+                let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut one = SweepOutcome::default();
+                    sweep_breach_cast(card, opposing_spell, policy, &mut one);
+                    one
+                }));
+                match caught {
+                    Ok(one) => {
+                        out.failures.extend(one.failures);
+                        out.aborts.extend(one.aborts);
+                        out.silent_reversals.extend(one.silent_reversals);
+                        out.casts += one.casts;
+                        for (kind, count) in one.stages {
+                            *out.stages.entry(kind).or_default() += count;
+                        }
+                    }
+                    Err(_) => out.failures.push(format!(
+                        "{card} (stack={opposing_spell}, policy={policy:?}): panicked"
+                    )),
+                }
+            }
+        }
+    }
+    println!(
+        "{} cube cards, {} Breach casts reached the stack, stages {:?}",
+        cards.len(),
+        out.casts,
+        out.stages
+    );
+    for line in &out.aborts {
+        println!("abort: {line}");
+    }
+    for line in &out.silent_reversals {
+        println!("silent reversal: {line}");
+    }
+    for line in &out.failures {
+        println!("failure: {line}");
+    }
+    assert!(out.failures.is_empty(), "{} failures", out.failures.len());
+    assert!(out.aborts.is_empty(), "{} aborts", out.aborts.len());
+    assert!(out.casts > 300, "only {} casts", out.casts);
+}
+
+/// `player`'s schema 5 public policy observation of `state`, or the refusal.
+fn public_observation_for(state: &GameState, player: PlayerId) -> Result<Value, String> {
+    let mut state = state.clone();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+    mtg_kernel::rl::observe_policy_v5(&state, &surface, player, 0, 0, 0, 1)
+        .map(|observation| serde_json::to_value(observation).unwrap())
+        .map_err(|error| error.0)
+}
+
+const STAGED_ESCAPE_REFUSAL: &str = concat!(
+    "policy schema v5 cannot represent a staged Escape graveyard-exile prefix; ",
+    "a versioned object-cost successor is required"
+);
+
+/// Every card reference in `value` with this arena id.
+fn references_to(value: &Value, arena_id: u32) -> Vec<Value> {
+    let mut out = Vec::new();
+    match value {
+        Value::Object(map) => {
+            if map.get("arena_id").and_then(Value::as_u64) == Some(u64::from(arena_id)) {
+                out.push(value.clone());
+            }
+            for child in map.values() {
+                out.extend(references_to(child, arena_id));
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                out.extend(references_to(child, arena_id));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Bitter Triumph under Breach: while the caster still chooses between
+/// discarding a card and paying 3 life, the record owes no discard; each
+/// choice then fixes its own groups. The other seat is refused throughout,
+/// including after the private discard pick, and sees the exiled fuel once
+/// the cost is paid.
+#[test]
+fn public_escape_waits_for_bitter_triumphs_cost_choice_and_serves_only_the_caster() {
+    use engine::CastMode;
+    for discard_chosen in [true, false] {
+        let mut state = plains();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let source = put(&mut state, P0, "Bitter Triumph", Zone::Graveyard);
+        let spare = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        let target = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+        let fuel = ["Plains", "Island", "Forest", "Swamp"]
+            .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+        pool(&mut state, P0, &[ManaColor::B], 1);
+        cast(&mut state, source, &[Target::Object(target)]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseCastMode { options, .. }
+                if options == [CastMode::Normal, CastMode::Alternative]
+        ));
+        let stage = staged_escape(&state)["stage"].clone();
+        assert_eq!(stage["kind"], "paying");
+        assert_eq!(stage["costs_chosen"], false);
+        assert_eq!(
+            stage["cost_groups"],
+            serde_json::json!([{"kind": "ExileFromGraveyard", "escape": true, "count": 3,
+                "selected": []}])
+        );
+        assert_eq!(
+            public_observation_for(&state, P1).unwrap_err(),
+            STAGED_ESCAPE_REFUSAL
+        );
+        act(
+            &mut state,
+            Action::ChooseCastMode(if discard_chosen {
+                CastMode::Normal
+            } else {
+                CastMode::Alternative
+            }),
+        );
+        let mut exiled = Vec::new();
+        let mut discard_seen = false;
+        for _ in 0..12 {
+            let decision = next(&mut state);
+            if state.engine.pending_cast.is_none() {
+                break;
+            }
+            let stage = staged_escape(&state)["stage"].clone();
+            assert_eq!(stage["costs_chosen"], true);
+            let groups = stage["cost_groups"].as_array().unwrap().clone();
+            let discard = groups.iter().find(|group| group["escape"] == false);
+            assert_eq!(discard.is_some(), discard_chosen, "{stage}");
+            if let Some(discard) = discard {
+                assert_eq!(discard["kind"], "DiscardCards");
+                assert_eq!(discard["count"], 1);
+            }
+            assert_eq!(
+                public_observation_for(&state, P1).unwrap_err(),
+                STAGED_ESCAPE_REFUSAL
+            );
+            let action = match decision {
+                Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+                Decision::ChooseCostTargets {
+                    cost_kind: CostKind::DiscardCards,
+                    candidates,
+                    ..
+                } => {
+                    assert!(candidates.contains(&spare));
+                    discard_seen = true;
+                    Action::ChooseCostTarget(spare)
+                }
+                Decision::ChooseCostTargets {
+                    cost_kind: CostKind::ExileFromGraveyard,
+                    candidates,
+                    ..
+                } => {
+                    let card = *fuel.iter().find(|id| candidates.contains(id)).unwrap();
+                    exiled.push(card);
+                    Action::ChooseCostTarget(card)
+                }
+                other => panic!("unexpected Bitter Triumph decision {other:?}"),
+            };
+            act(&mut state, action);
+            if discard_seen && state.engine.pending_cast.is_some() {
+                // The private discard pick is staged: still the caster's only.
+                let staged = staged_escape(&state);
+                let discard = staged["stage"]["cost_groups"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|group| group["escape"] == false)
+                    .unwrap()
+                    .clone();
+                assert_eq!(selected_ids(&discard), ids(&[spare]));
+                assert_eq!(
+                    public_observation_for(&state, P1).unwrap_err(),
+                    STAGED_ESCAPE_REFUSAL
+                );
+            }
+        }
+        assert_eq!(discard_seen, discard_chosen);
+        assert!(state.engine.pending_cast.is_none());
+        assert_eq!(zone(&state, spare) == Zone::Hand, !discard_chosen);
+        // Paid: the other seat's view shows the exiled fuel in exile.
+        let seen = public_observation_for(&state, P1).unwrap();
+        assert!(!seen.to_string().contains("staged_escape"));
+        let exiled: Vec<ObjectId> = fuel
+            .iter()
+            .copied()
+            .filter(|&id| zone(&state, id) == Zone::Exile)
+            .collect();
+        assert_eq!(exiled.len(), 3);
+        for card in exiled {
+            assert!(references_to(&seen, card.0)
+                .iter()
+                .any(|reference| reference["zone"] == "Exile"));
+        }
+    }
+}
+
+/// The other seat is refused during the caster's route menu too.
+#[test]
+fn public_escape_route_menu_is_refused_to_the_other_seat() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let goyf = put(&mut state, P0, "Nethergoyf", Zone::Graveyard);
+    for name in [
+        "Island",
+        "Lightning Bolt",
+        "Ponder",
+        "Mishra's Bauble",
+        "Forest",
+    ] {
+        put(&mut state, P0, name, Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    cast(&mut state, goyf, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { .. }
+    ));
+    assert_eq!(staged_escape(&state)["stage"]["kind"], "choosing_route");
+    assert_eq!(
+        public_observation_for(&state, P1).unwrap_err(),
+        STAGED_ESCAPE_REFUSAL
+    );
+}
+
+/// Sickening Dreams under Breach announces X (here 2 or 3) before its
+/// discard X and escape exiles: the record lists the X each option
+/// announces and owes only the escape exile until X is chosen.
+#[test]
+fn public_escape_lists_the_x_options_before_a_discard_x_cost() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Sickening Dreams", Zone::Graveyard);
+    put(&mut state, P0, "Swamp", Zone::Graveyard);
+    let first = put(&mut state, P0, "Forest", Zone::Hand);
+    put(&mut state, P0, "Fiery Temper", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    let second = put(&mut state, P0, "Island", Zone::Hand);
+    cast(&mut state, spell, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            option_count: 2,
+            ..
+        }
+    ));
+    let stage = staged_escape(&state)["stage"].clone();
+    assert_eq!(stage["costs_chosen"], false);
+    assert_eq!(stage["x_options"], serde_json::json!([2, 3]));
+    assert_eq!(stage["cost_groups"].as_array().unwrap().len(), 1);
+    act(&mut state, Action::ChooseEffectOption(0));
+    payment_pick(&mut state, CostKind::DiscardCards, first);
+    let stage = staged_escape(&state)["stage"].clone();
+    assert_eq!(stage["costs_chosen"], true);
+    assert!(stage.get("x_options").is_none());
+    let groups = stage["cost_groups"].as_array().unwrap();
+    assert_eq!(groups[0]["kind"], "DiscardCards");
+    assert_eq!(groups[0]["count"], 2);
+    assert_eq!(selected_ids(&groups[0]), ids(&[first]));
+    assert_eq!(groups[1]["escape"], true);
+    assert_eq!(groups[1]["count"], 3);
+    payment_pick(&mut state, CostKind::DiscardCards, second);
+}
+
+/// A Breach-cast X spell chooses X after its exiles; the record lists the X
+/// each option announces (Walking Ballista).
+#[test]
+fn public_escape_lists_the_x_options_of_a_breach_cast_x_spell() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let ballista = put(&mut state, P0, "Walking Ballista", Zone::Graveyard);
+    let fuel = ["Island", "Forest", "Ponder", "Swamp"]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    pool(&mut state, P0, &[], 4);
+    cast(&mut state, ballista, &[]);
+    for &card in &fuel[..3] {
+        payment_pick(&mut state, CostKind::ExileFromGraveyard, card);
+    }
+    let Decision::ChooseEffectOption { option_count, .. } = next(&mut state) else {
+        panic!("missing the X choice")
+    };
+    let stage = staged_escape(&state)["stage"].clone();
+    assert_eq!(stage["costs_chosen"], true);
+    assert_eq!(selected_ids(&stage["cost_groups"][0]), ids(&fuel[..3]));
+    let options: Vec<u64> = stage["x_options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_u64().unwrap())
+        .collect();
+    assert_eq!(options.len(), usize::from(option_count));
+    assert_eq!(options, (0..=2).collect::<Vec<u64>>());
+    act(&mut state, Action::ChooseEffectOption(option_count - 1));
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_cast.is_none());
+    settle_first(&mut state);
+    let ballista_counters = state.objects.get(ballista).counters.clone();
+    assert_eq!(
+        zone(&state, ballista),
+        Zone::Battlefield,
+        "{ballista_counters:?}"
+    );
+}
+
+/// A route menu whose provisional first route is not an escape (Faithless
+/// Looting under Breach: printed flashback, then Breach) was never refused
+/// and keeps its bytes: no record there; the record appears once Breach is
+/// chosen.
+#[test]
+fn public_escape_keeps_a_flashback_first_route_menu_unrecorded() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let looting = put(&mut state, P0, "Faithless Looting", Zone::Graveyard);
+    for name in ["Island", "Forest", "Ponder", "Swamp"] {
+        put(&mut state, P0, name, Zone::Graveyard);
+    }
+    put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 2);
+    cast(&mut state, looting, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            option_count: 2,
+            ..
+        }
+    ));
+    let options = state
+        .engine
+        .event_history
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            mtg_kernel::event::CommittedEvent::SphinxLoreCastOptionsV1 { options } => {
+                Some(options.routes.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(options, [RouteV1::PrintedFlashback, RouteV1::Breach]);
+    // The legacy observation already accepted this state.
+    let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+    mtg_kernel::rl::observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1).unwrap();
+    assert!(staged_escape(&state).is_null());
+    act(&mut state, Action::ChooseEffectOption(1));
+    next(&mut state);
+    let staged = staged_escape(&state);
+    assert_eq!(staged["stage"]["breach_escape"], true);
+}
+
+/// A staged Escape snapshot restores to the same record, hash and next
+/// transition.
+#[test]
+fn public_escape_mid_payment_snapshot_restores_exactly() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let goyf = put(&mut state, P0, "Nethergoyf", Zone::Graveyard);
+    let fuel = [
+        "Island",
+        "Lightning Bolt",
+        "Ponder",
+        "Mishra's Bauble",
+        "Forest",
+    ]
+    .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    cast(&mut state, goyf, &[]);
+    next(&mut state);
+    act(&mut state, Action::ChooseEffectOption(1));
+    payment_pick(&mut state, CostKind::ExileFromGraveyard, fuel[0]);
+    let mut restored: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    assert_eq!(restored.state_hash(), state.state_hash());
+    assert_eq!(next(&mut restored), next(&mut state));
+    assert_eq!(
+        public_observation(&restored).unwrap(),
+        public_observation(&state).unwrap()
+    );
+    for game in [&mut state, &mut restored] {
+        payment_pick(game, CostKind::ExileFromGraveyard, fuel[1]);
+    }
+    assert_eq!(restored.state_hash(), state.state_hash());
+    assert_eq!(
+        public_observation(&restored).unwrap(),
+        public_observation(&state).unwrap()
+    );
+}
+
+/// Springheart Nantuko cast with Breach's escape is cast as its creature:
+/// escape and bestow are both alternative costs.
+#[test]
+fn public_escape_casts_a_bestow_card_as_its_creature() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let nantuko = put(&mut state, P0, "Springheart Nantuko", Zone::Graveyard);
+    let fuel = ["Island", "Forest", "Ponder", "Swamp"]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    pool(&mut state, P0, &[ManaColor::G], 4);
+    cast(&mut state, nantuko, &[]);
+    for &card in &fuel[..3] {
+        let decision = next(&mut state);
+        assert!(
+            matches!(decision, Decision::ChooseCostTargets { .. }),
+            "{decision:?}"
+        );
+        assert_eq!(staged_escape(&state)["stage"]["kind"], "paying");
+        act(&mut state, Action::ChooseCostTarget(card));
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert!(state.engine.pending_cast.is_none());
+    let item = state.stack.last().unwrap();
+    assert_eq!(item.source, nantuko);
+    assert_eq!(item.mode_chosen, 0);
+    assert!(public_observation(&state).is_ok());
+    settle_first(&mut state);
+    assert_eq!(zone(&state, nantuko), Zone::Battlefield);
+    assert!(state.objects.get(nantuko).attachments.is_empty());
+}
+
+/// Payments staged outside the object prefix have no record: Vitu-Ghazi
+/// Inspector's collect evidence (a Pauper card; no cube card reaches one
+/// under Breach) refuses rather than drops its picks.
+#[test]
+fn public_escape_refuses_collect_evidence_it_does_not_record() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let inspector = put(&mut state, P0, "Vitu-Ghazi Inspector", Zone::Graveyard);
+    for name in [
+        "Island",
+        "Forest",
+        "Ponder",
+        "Swamp",
+        "Mulldrifter",
+        "Exalted Angel",
+    ] {
+        put(&mut state, P0, name, Zone::Graveyard);
+    }
+    let colors = [ManaColor::W, ManaColor::G, ManaColor::U];
+    pool(&mut state, P0, &colors.repeat(3), 6);
+    cast(&mut state, inspector, &[]);
+    let mut refused = false;
+    for _ in 0..8 {
+        let decision = next(&mut state);
+        let Some(pending) = state.engine.pending_cast.as_ref() else {
+            break;
+        };
+        if pending.optional_additional_cost_paid == Some(true) {
+            let error = public_observation(&state).unwrap_err();
+            assert!(error.contains("collect evidence"), "{error}");
+            refused = true;
+            break;
+        }
+        staged_escape(&state);
+        let action = match decision {
+            Decision::ChooseEffectOption { .. }
+                if pending.optional_additional_cost_paid.is_none() =>
+            {
+                Action::ChooseEffectOption(1)
+            }
+            other => first_answer(other),
+        };
+        act(&mut state, action);
+    }
+    assert!(refused, "collect evidence was never chosen");
 }

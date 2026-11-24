@@ -1094,7 +1094,11 @@ pub struct PublicObservationProjectionV5 {
     /// The acting player's Escape cast while they stage it, under the public
     /// shroud contract (Limited schema 5): from its announcement until its
     /// costs are paid. Absent otherwise; every other observation refuses a
-    /// staged Escape cast.
+    /// staged Escape cast. A graveyard route menu whose provisional first
+    /// route is not an escape (Faithless Looting under Underworld Breach:
+    /// printed flashback, then Breach) has no record: such states were never
+    /// refused, so their bytes are kept; the record appears once Breach is
+    /// chosen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staged_escape: Option<PublicStagedEscapeV1>,
 }
@@ -1122,12 +1126,23 @@ pub enum PublicStagedEscapeStageV1 {
         /// Underworld Breach's escape (the card's mana cost and three other
         /// graveyard cards) rather than the card's printed escape cost.
         breach_escape: bool,
+        /// False while a choice that can add or change an object cost is
+        /// still open (kicker, spell mode, targets, cast mode, an optional or
+        /// alternative additional cost, an X that sets a cost): `cost_groups`
+        /// then holds only the escape exile, with nothing chosen.
+        costs_chosen: bool,
         /// False while the caster still orders two cost groups: the
         /// `choose_effect_option` action with `option_index` 0 pays
         /// `cost_groups` in the listed order, 1 pays the escape exile first.
         payment_order_chosen: bool,
         /// The object costs in payment order.
         cost_groups: Vec<PublicEscapeCostGroupV1>,
+        /// While X is being chosen: the X announced by the
+        /// `choose_effect_option` action with `option_index` i is
+        /// `x_options[i]`. Absent otherwise, and for the full-range X choice,
+        /// whose actions carry their value.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x_options: Option<Vec<u16>>,
     },
 }
 
@@ -1196,11 +1211,15 @@ fn public_staged_escape_v1(
         },
         engine::StagedEscapeV1::Paying {
             breach,
+            costs_chosen,
             order_chosen,
             groups,
+            x_options,
         } => PublicStagedEscapeStageV1::Paying {
             breach_escape: breach,
+            costs_chosen,
             payment_order_chosen: order_chosen,
+            x_options,
             cost_groups: groups
                 .into_iter()
                 .map(|group| {
