@@ -2244,9 +2244,14 @@ jobs:
           retention-days: 14
 
       # The compiled output for the next run's build job (the action saves
-      # only on main, tags and manual runs). The last part holds the same
-      # build as every part and is never the one with the plan's heaviest
-      # unit (part 0), so saving here delays nothing that waits.
+      # only on main, tags and manual runs, never for a pull request). The
+      # last part holds the same build as every part. The inventory job and
+      # the Rust gate wait for this part, save included, but it is never the
+      # part with the plan's heaviest unit (part 0, 17 simulated minutes on
+      # Windows, 8.4 on Linux, against 13.1 and 8.0 here), so the save delays
+      # them only by what it takes beyond that slack. Accepted: before the
+      # split the gate waited for the same save at the end of the one
+      # workspace-lib job, and saving from the build job would hold every part.
       - name: Save compiled test output
         if: success() && matrix.group == 'workspace-lib-3'
         uses: ./.github/actions/cargo-build-cache

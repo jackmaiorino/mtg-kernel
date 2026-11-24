@@ -158,7 +158,11 @@ def run_library_part(executable: str, index: int, count: int, executed_path: str
     print(f"Running workspace library part {index}/{count}: {len(selected)} tests", flush=True)
     returncode, reported = run_recorded(command)
     # A passing process must have reported each of its tests (more than once
-    # is a replayed line) and no test of another part.
+    # is a replayed line) and no test of another part. An ignored test reports
+    # "ignored" without running: the part never passes --include-ignored. The
+    # recorder's name pattern is \S+: a unit test's name is a module path of
+    # Rust identifiers, which hold no whitespace (only doctests have spaces,
+    # and --lib builds none); a name that did would fail the part, not pass.
     missing = sorted(set(selected) - set(reported))
     unexpected = sorted(set(reported) - set(selected))
     if not returncode and (missing or unexpected):
@@ -189,7 +193,14 @@ def run_library_part(executable: str, index: int, count: int, executed_path: str
 
 def run_tests(executable: str, arguments: list[str]) -> int:
     """The Cargo runner: one test executable of the workspace suite."""
-    if Path(executable).name.startswith("mtg_kernel-"):
+    library = Path(executable).name.startswith("mtg_kernel-")
+    if not library and (os.environ.get(LIST_ENV) or os.environ.get(SHARD_ENV)):
+        # Listing and parts cover the mtg-kernel library only. Another
+        # workspace library's tests would run in the build job and again in
+        # every part, and no inventory would record them: refuse instead.
+        raise ValueError(f"Only the mtg-kernel library's tests can be listed or run in parts, and Cargo also "
+                         f"ran {executable}: give that library a plan and an inventory first")
+    if library:
         if arguments:
             raise ValueError("Workspace library runner expects no test arguments")
         if os.environ.get(LIST_ENV):

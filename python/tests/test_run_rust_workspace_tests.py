@@ -14,6 +14,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import check_rust_integration_parts as inventory  # noqa: E402
+from run_rust_integration_tests import run_recorded as recorded_run  # noqa: E402
 import run_rust_workspace_tests as workspace  # noqa: E402
 
 # Cargo flags that select the library in test mode: the library has `test = true` and `bench = true` by
@@ -162,14 +163,21 @@ class LibraryPlanTests(unittest.TestCase):
 
 
 class LibraryPartTests(unittest.TestCase):
-    def run_part(self, index, count=4, reports=None, returncode=0, gate=(0, True)):
-        """(exit code, record, gate calls) of one part; `reports` maps the shard command to its result lines."""
+    def run_part(self, index, count=4, reports=None, returncode=0, gate=(0, True), recorder=None):
+        """(exit code, record, gate calls) of one part; `reports` maps the shard command to its result lines.
+
+        `recorder(selected names)` replaces the recorded run; self.commands keeps the commands run.
+        """
         first, second, third = plan_patches()
         listed = libtest(LIBRARY)
         gates = []
+        self.commands = []
 
         def run_recorded(command):
+            self.commands.append(command)
             selected = listed(None, *command[1:])
+            if recorder:
+                return recorder(selected)
             return returncode, (reports or (lambda names: names))(selected)
 
         def run_timing_gate(executable, count_listed):
@@ -195,6 +203,31 @@ class LibraryPartTests(unittest.TestCase):
             self.assertEqual(TIMING in record["executed"], index == 0)
             records.append(record)
         self.assertEqual(inventory.check(LIBRARY, records, 4), [])
+
+    def test_a_part_runs_its_filters_without_ignored_bodies(self):
+        # --include-ignored (or --ignored) would run ignored bodies while the selected names, and so the
+        # inventory, stayed the same.
+        for index in range(4):
+            self.run_part(index)
+            (command,) = self.commands
+            self.assertEqual(command[:3], ["mtg_kernel-1", "--skip", TIMING])
+            self.assertFalse({"--include-ignored", "--ignored", "--exact"} & set(command))
+            self.assertTrue(all(not word.startswith("-") for word in command[3:]))
+
+    def test_an_ignored_tests_result_line_is_its_report(self):
+        # libtest prints "ignored" for an ignored test it did not run; that line accounts for the test.
+        def recorder(selected):
+            script = "".join(f"print('test {name} ... ignored')\n" for name in selected[:1]) + \
+                "".join(f"print('test {name} ... ok')\n" for name in selected[1:])
+            fake = type("Out", (), {"flush": lambda self: None,
+                                    "buffer": type("Buffer", (), {"write": lambda self, raw: None,
+                                                                  "flush": lambda self: None})()})()
+            with patch.object(workspace.sys, "stdout", fake):
+                return recorded_run([sys.executable, "-c", script])
+
+        code, record, _ = self.run_part(1, recorder=recorder)
+        self.assertEqual((code, record["failed"]), (0, 0))
+        self.assertEqual(set(record["executed"]), set(self.run_part(1)[1]["executed"]))
 
     def test_a_selected_test_without_a_result_line_fails_the_part(self):
         code, record, gates = self.run_part(0, reports=lambda names: names[1:])
@@ -224,6 +257,62 @@ class LibraryPartTests(unittest.TestCase):
                 code, record, gates = self.run_part(0, gate=gate)
                 self.assertEqual((code, record["failed"]), (1, 1))
                 self.assertEqual(TIMING in record["executed"], gate[1])
+
+
+class FakePopen:
+    """A finished process: records the command and options it was started with."""
+    calls = []
+
+    def __init__(self, command, **options):
+        FakePopen.calls.append((command, options))
+        self.stdout = iter([b"test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out\n"])
+        self.returncode = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class TimingInvocationTests(unittest.TestCase):
+    COMMAND = ["mtg_kernel-1", TIMING, "--exact", "--include-ignored", "--test-threads=1", "--nocapture"]
+
+    def started(self, platform, unsplit=False):
+        """(command, options) the timing gate starts with on `platform`."""
+        FakePopen.calls = []
+        runs = []
+
+        def run(command, **options):
+            runs.append((command, options))
+            return type("Result", (), {"returncode": 0})()
+
+        fake = type("Out", (), {"flush": lambda self: None,
+                                "buffer": type("Buffer", (), {"write": lambda self, raw: None,
+                                                              "flush": lambda self: None})()})()
+        with patch.object(workspace.sys, "platform", platform), \
+                patch.object(workspace.subprocess, "HIGH_PRIORITY_CLASS", 0x80, create=True), \
+                patch.object(workspace.subprocess, "Popen", FakePopen), \
+                patch.object(workspace.subprocess, "run", run), patch.object(workspace.sys, "stdout", fake), \
+                patch("builtins.print"):
+            if unsplit:
+                self.assertEqual(workspace.run_library("mtg_kernel-1"), 0)
+                self.assertEqual(runs[0], (["mtg_kernel-1", "--skip", TIMING], {"check": False}))
+                (gate,) = runs[1:]
+                options = dict(gate[1])
+                options.pop("check")
+                return gate[0], options
+            self.assertEqual(workspace.run_timing_gate("mtg_kernel-1", 10), (0, False))
+            ((command, options),) = FakePopen.calls
+            options = dict(options)
+            options.pop("stdout")
+            return command, options
+
+    def test_the_gate_runs_alone_with_its_flags_at_high_priority_on_windows(self):
+        for unsplit in (False, True):
+            with self.subTest(unsplit=unsplit):
+                self.assertEqual(self.started("win32", unsplit), (self.COMMAND, {"creationflags": 0x80}))
+                self.assertEqual(self.started("linux", unsplit), (self.COMMAND, {}))
 
 
 class TimingGateTests(unittest.TestCase):
@@ -269,6 +358,40 @@ class LibraryRunnerTests(unittest.TestCase):
                     os.environ.pop(name, None)
             self.assertEqual(workspace.run_tests("target/release/deps/mtg_kernel-abc", []), 0)
         return calls
+
+    def test_another_library_is_refused_in_list_and_part_mode(self):
+        # Cargo runs every workspace library's tests for --workspace --lib. Only mtg-kernel's are listed,
+        # planned and inventoried, so another library's would run unrecorded in the build job and in every part.
+        ran = []
+        for environment in ({workspace.LIST_ENV: "list.json"},
+                            {workspace.SHARD_ENV: "[1, 4]", workspace.EXECUTED_ENV: "out.json"}):
+            with self.subTest(environment=environment), \
+                    patch.object(workspace.subprocess, "run", lambda *args, **_: ran.append(args)), \
+                    patch.object(workspace, "run_suite", lambda *args, **_: ran.append(args)), \
+                    patch.dict(os.environ, environment), \
+                    self.assertRaisesRegex(ValueError, "Only the mtg-kernel library's tests"):
+                workspace.run_tests("target/release/deps/other_lib-abc", [])
+        self.assertEqual(ran, [])
+
+    def test_an_unsplit_run_keeps_every_executable_as_before(self):
+        ran = []
+
+        def run(command, **_):
+            ran.append(command)
+            return type("Result", (), {"returncode": 0})()
+
+        with patch.object(workspace.subprocess, "run", run), \
+                patch.object(workspace, "run_suite", lambda executable, **_: ran.append(["suite", executable]) or 0), \
+                patch.object(workspace, "run_library", lambda executable: ran.append(["library", executable]) or 0), \
+                patch.dict(os.environ, {}):
+            for name in (workspace.LIST_ENV, workspace.SHARD_ENV, workspace.EXECUTED_ENV):
+                os.environ.pop(name, None)
+            for executable in ("deps/other_lib-abc", "deps/tool-abc", "deps/eternal_integration-abc",
+                               "deps/mtg_kernel-abc"):
+                self.assertEqual(workspace.run_tests(executable, []), 0)
+            self.assertEqual(workspace.run_tests("deps/bench-abc", ["--bench"]), 0)
+        self.assertEqual(ran, [["deps/other_lib-abc"], ["deps/tool-abc"], ["suite", "deps/eternal_integration-abc"],
+                               ["library", "deps/mtg_kernel-abc"], ["deps/bench-abc", "--bench"]])
 
     def test_the_cargo_runner_lists_runs_a_part_or_runs_everything(self):
         self.assertEqual(self.dispatch({workspace.LIST_ENV: "list.json"}),
