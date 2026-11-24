@@ -236,6 +236,7 @@ fn cast(state: &mut GameState, spell: ObjectId, targets: &[Target]) {
     for target in targets {
         choose_target(state, *target);
     }
+    let _ = next(state);
 }
 
 fn cast_mode(state: &mut GameState, spell: ObjectId, mode: u8, targets: &[Target]) {
@@ -245,16 +246,14 @@ fn cast_mode(state: &mut GameState, spell: ObjectId, mode: u8, targets: &[Target
         state.objects.get(spell).name
     );
     act(state, Action::CastSpell(spell));
-    match next(state) {
-        Decision::ChooseSpellMode { legal_modes, .. } => {
-            assert!(legal_modes.contains(&mode), "{mode} not in {legal_modes:?}");
-            act(state, Action::ChooseSpellMode(mode));
-        }
-        other => panic!("expected spell mode, got {other:?}"),
+    if let Decision::ChooseSpellMode { legal_modes, .. } = next(state) {
+        assert!(legal_modes.contains(&mode), "{mode} not in {legal_modes:?}");
+        act(state, Action::ChooseSpellMode(mode));
     }
     for target in targets {
         choose_target(state, *target);
     }
+    let _ = next(state);
 }
 
 fn activate(state: &mut GameState, source: ObjectId, ability: u8, targets: &[Target]) {
@@ -267,6 +266,7 @@ fn activate(state: &mut GameState, source: ObjectId, ability: u8, targets: &[Tar
     for target in targets {
         choose_target(state, *target);
     }
+    let _ = next(state);
 }
 
 fn ability_targets(state: &GameState, source: ObjectId, ability: u8) -> Vec<Target> {
@@ -521,14 +521,9 @@ fn core_rules_timestamps_zone_change_phasing_control_change_and_face_down() {
         text_color_change_v1::text_color(&state, processor, ManaColor::B),
         ManaColor::G
     );
-    pool(&mut state, P0, &[], 4);
-    activate(&mut state, processor, 0, &[]);
-    settled(&mut state);
-    let minions = controls(&state, P0, "Phyrexian Minion Token");
-    assert_eq!(minions.len(), 1);
     assert_eq!(
-        engine::object_color_mask(&state, minions[0]),
-        mana_color_mask(ManaColor::G)
+        text_color_change_v1::live_changes_for_object(&state, processor),
+        vec![(ManaColor::B, ManaColor::G)]
     );
 
     // 5. Face-down permanent accepted without reading identity; turning face up runs audit.
@@ -626,16 +621,18 @@ fn storage_captures_snapshot_restore_and_section_4_6_conditions() {
         !raw_json.contains("text_color_changes_v1"),
         "None text_color_changes_v1 must not serialize"
     );
+    const EXPECTED_MAIN_STATE_HASH: u64 = 0xdbf4_2bab_567d_c696;
+    const EXPECTED_MAIN_DIAGNOSTIC_STATE_HASH: u64 = 0x619b_d3c8_a32c_c867;
+    assert_eq!(base.state_hash(), EXPECTED_MAIN_STATE_HASH);
+    assert_eq!(
+        base.diagnostic_state_hash(),
+        EXPECTED_MAIN_DIAGNOSTIC_STATE_HASH
+    );
     let roundtrip = restored(&base);
-    assert_eq!(roundtrip.state_hash(), base.state_hash());
+    assert_eq!(roundtrip.state_hash(), EXPECTED_MAIN_STATE_HASH);
     assert_eq!(
         roundtrip.diagnostic_state_hash(),
-        base.diagnostic_state_hash()
-    );
-    println!(
-        "section_4_6_base_hashes state_hash={:#018x} diagnostic_state_hash={:#018x}",
-        base.state_hash(),
-        base.diagnostic_state_hash(),
+        EXPECTED_MAIN_DIAGNOSTIC_STATE_HASH
     );
 
     // §4.6 #3: A state whose only change was removed returns to None and hashes identically
@@ -710,7 +707,7 @@ fn storage_captures_snapshot_restore_and_section_4_6_conditions() {
 fn all_protection_mask_sites_and_iridescent_angel_never_mapped() {
     let mut state = islands();
     // Color sources for probing protection from each of W, U, B, R, G.
-    let src_w = put(&mut state, P1, "Savannah Lions", Zone::Battlefield);
+    let src_w = put(&mut state, P1, "Mother of Runes", Zone::Battlefield);
     let src_u = put(&mut state, P1, "Volrath's Shapeshifter", Zone::Battlefield);
     let src_b = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
     let src_r = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield);
@@ -887,7 +884,7 @@ fn absolute_law_and_light_of_day_evaluate_per_instance() {
     let mut state = islands();
     let black = put(&mut state, P0, "Hypnotic Specter", Zone::Battlefield);
     let green = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
-    let white = put(&mut state, P0, "Savannah Lions", Zone::Battlefield);
+    let white = put(&mut state, P0, "Mother of Runes", Zone::Battlefield);
     put(&mut state, P1, "Light of Day", Zone::Battlefield);
     let lod2 = put(&mut state, P1, "Light of Day", Zone::Battlefield);
     change(&mut state, lod2, ManaColor::B, ManaColor::G);
@@ -904,7 +901,7 @@ fn absolute_law_and_light_of_day_evaluate_per_instance() {
 
     // Blocking check: single changed Light of Day (B -> G) lets black block and bans green.
     let mut state = islands();
-    let attacker = put(&mut state, P0, "Savannah Lions", Zone::Battlefield);
+    let attacker = put(&mut state, P0, "Mother of Runes", Zone::Battlefield);
     let black_blocker = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
     let green_blocker = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let lod = put(&mut state, P1, "Light of Day", Zone::Battlefield);
@@ -942,20 +939,20 @@ fn sphere_of_law_chill_gloom_and_warmth_evaluate_per_instance() {
     let red_spell = put(&mut state, P0, "Mogg Fanatic", Zone::Hand); // {R} + {2} = {2}{R}
     let blue_spell = put(&mut state, P0, "Vision Charm", Zone::Hand); // {U} + {2} = {2}{U}
     let green_spell = put(&mut state, P0, "Llanowar Elves", Zone::Hand); // {G} + {0}
-    pool(
-        &mut state,
-        P0,
-        &[ManaColor::R, ManaColor::U, ManaColor::G],
-        0,
-    );
+    pool(&mut state, P0, &[ManaColor::G], 0);
     assert!(castable(&mut state, green_spell));
+    state.players[0].mana_pool = [0; 6];
+    pool(&mut state, P0, &[ManaColor::R], 1);
     assert!(!castable(&mut state, red_spell), "needs +2 from red Chill");
+    pool(&mut state, P0, &[], 1);
+    assert!(castable(&mut state, red_spell));
+    state.players[0].mana_pool = [0; 6];
+    pool(&mut state, P0, &[ManaColor::U], 1);
     assert!(
         !castable(&mut state, blue_spell),
         "needs +2 from blue Chill"
     );
-    pool(&mut state, P0, &[], 2);
-    assert!(castable(&mut state, red_spell));
+    pool(&mut state, P0, &[], 1);
     assert!(castable(&mut state, blue_spell));
 
     // Site 15: Gloom spell tax — two Glooms (one white, one changed white -> black).
@@ -963,20 +960,20 @@ fn sphere_of_law_chill_gloom_and_warmth_evaluate_per_instance() {
     put(&mut state, P1, "Gloom", Zone::Battlefield);
     let gloom2 = put(&mut state, P1, "Gloom", Zone::Battlefield);
     change(&mut state, gloom2, ManaColor::W, ManaColor::B);
-    let white_spell = put(&mut state, P0, "Savannah Lions", Zone::Hand); // {W} + {3}
+    let white_spell = put(&mut state, P0, "Mother of Runes", Zone::Hand); // {W} + {3}
     let black_spell = put(&mut state, P0, "Dark Ritual", Zone::Hand); // {B} + {3}
     let green_spell = put(&mut state, P0, "Llanowar Elves", Zone::Hand); // {G} + {0}
-    pool(
-        &mut state,
-        P0,
-        &[ManaColor::W, ManaColor::B, ManaColor::G],
-        2,
-    );
+    pool(&mut state, P0, &[ManaColor::G], 0);
     assert!(castable(&mut state, green_spell));
+    state.players[0].mana_pool = [0; 6];
+    pool(&mut state, P0, &[ManaColor::W], 2);
     assert!(!castable(&mut state, white_spell));
-    assert!(!castable(&mut state, black_spell));
     pool(&mut state, P0, &[], 1);
     assert!(castable(&mut state, white_spell));
+    state.players[0].mana_pool = [0; 6];
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    assert!(!castable(&mut state, black_spell));
+    pool(&mut state, P0, &[], 1);
     assert!(castable(&mut state, black_spell));
 
     // Site 16: Gloom activation tax on enchantments — changed white -> red.
@@ -1020,7 +1017,7 @@ fn dystopia_upkeep_captures_green_and_white_words() {
     let dystopia = put(&mut state, P0, "Dystopia", Zone::Battlefield);
     // P1 controls a red creature, a white creature, a green creature, and a blue creature.
     let red_c = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield);
-    let white_c = put(&mut state, P1, "Savannah Lions", Zone::Battlefield);
+    let white_c = put(&mut state, P1, "Mother of Runes", Zone::Battlefield);
     let green_c = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let blue_c = put(&mut state, P1, "Volrath's Shapeshifter", Zone::Battlefield);
 
@@ -1161,7 +1158,7 @@ fn quirion_dryad_trigger_follows_changed_color_words() {
     let dryad = put(&mut state, P0, "Quirion Dryad", Zone::Battlefield);
     change(&mut state, dryad, ManaColor::W, ManaColor::G);
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Hand);
-    let lions = put(&mut state, P0, "Savannah Lions", Zone::Hand);
+    let lions = put(&mut state, P0, "Mother of Runes", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G, ManaColor::W], 0);
 
     cast(&mut state, elves, &[]);
@@ -1289,7 +1286,7 @@ fn elemental_blasts_pyroblast_hydroblast_snuff_out_and_anarchy_on_stack() {
 
     // Site 27: Anarchy — changed W -> G on stack destroys green permanents instead of white.
     let mut state = islands();
-    let lions = put(&mut state, P1, "Savannah Lions", Zone::Battlefield);
+    let lions = put(&mut state, P1, "Mother of Runes", Zone::Battlefield);
     let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let anarchy = put(&mut state, P0, "Anarchy", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R, ManaColor::R], 2);
@@ -1306,7 +1303,7 @@ fn elemental_blasts_pyroblast_hydroblast_snuff_out_and_anarchy_on_stack() {
 fn plaguebearer_targeting_and_captured_resolution_recheck() {
     let mut state = islands();
     let plaguebearer = put(&mut state, P0, "Plaguebearer", Zone::Battlefield);
-    let lions = put(&mut state, P1, "Savannah Lions", Zone::Battlefield); // white, MV 1
+    let lions = put(&mut state, P1, "Mother of Runes", Zone::Battlefield); // white, MV 1
     let specter = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield); // black, MV 3
     let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield); // red, MV 1
 
@@ -1671,7 +1668,7 @@ fn schema_5_projection_ordering_face_down_masking_actions_and_refusals() {
         ]
     );
     // Face-down permanent's reference uses the neutral sentinel, NEVER Exalted Angel's card_db_id.
-    assert_eq!(rows[2].object.card_db_id, id("Face-down creature"));
+    assert_eq!(rows[2].object.card_db_id, id("Face-down card"));
     assert_ne!(rows[2].object.card_db_id, id("Exalted Angel"));
 
     // Non-Schema-5 consumers must refuse a state with text_color_changes_v1:

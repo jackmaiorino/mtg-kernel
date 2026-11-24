@@ -384,7 +384,7 @@ fn decoy(state: &mut GameState, player: PlayerId, color: CircleColorV1) -> Objec
     let name = match color {
         CircleColorV1::Blue => "Mulldrifter",
         CircleColorV1::Red => "Jackal Pup",
-        CircleColorV1::White => "Savannah Lions",
+        CircleColorV1::White => "Mother of Runes",
         CircleColorV1::Black => "Hypnotic Specter",
         CircleColorV1::Green => "Llanowar Elves",
     };

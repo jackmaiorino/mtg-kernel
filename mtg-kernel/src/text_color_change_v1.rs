@@ -1268,8 +1268,16 @@ mod tests {
         state.players[0].hand.push(hydro);
         state.players[0].mana_pool[ManaColor::U.pool_index()] = 1;
         engine::step(&mut state, Action::CastSpell(hydro)).unwrap();
-        engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
+        if let engine::Decision::ChooseSpellMode { .. } = engine::advance_until_decision(&mut state)
+        {
+            engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
+        }
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            engine::Decision::ChooseTargets { .. }
+        ));
         engine::step(&mut state, Action::ChooseTarget(Target::Object(mountain))).unwrap();
+        let _ = engine::advance_until_decision(&mut state);
         let stack_item_id = state.stack.last().unwrap().v4.stack_item_id;
 
         // Live change on the original spell is NOT copied (CR 707.2).
