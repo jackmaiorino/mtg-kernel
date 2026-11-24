@@ -52,16 +52,19 @@ const PREPARATION_WORKERS: usize = 12;
 /// Above the historical 256 MiB, which holds about ten games; the bound only
 /// refuses an oversized batch and does not change the update.
 const MAX_PREPARED_TENSOR_MEBIBYTES: usize = 2048;
-const PLACEHOLDER: &str = "PLACEHOLDER";
 
 #[cfg(target_os = "windows")]
-const FLAG_FREE_LONDON_60_STATE_SHA256_V1: &str = PLACEHOLDER;
+const FLAG_FREE_LONDON_60_STATE_SHA256_V1: &str =
+    "c998faaa0ca6ccf5474eff84f4d4eaac28ad91c7ea286a0bf59092f52003dd04";
 #[cfg(not(target_os = "windows"))]
-const FLAG_FREE_LONDON_60_STATE_SHA256_V1: &str = PLACEHOLDER;
+const FLAG_FREE_LONDON_60_STATE_SHA256_V1: &str =
+    "ef46087a88936a76b2e2cfbac168c7dd8bae801a03e4c8de36ac848fbf032cbe";
 #[cfg(target_os = "windows")]
-const WINDOWS_TERMINAL_LONDON_60_STATE_SHA256_V1: &str = PLACEHOLDER;
+const WINDOWS_TERMINAL_LONDON_60_STATE_SHA256_V1: &str =
+    "821650a659fc7b12f97bf4dce5e234837ed9eea3aa8b50538727ae8cd410a4ee";
 #[cfg(not(target_os = "windows"))]
-const WINDOWS_TERMINAL_LONDON_60_STATE_SHA256_V1: &str = PLACEHOLDER;
+const WINDOWS_TERMINAL_LONDON_60_STATE_SHA256_V1: &str =
+    "b5cf227cfeabf4fee63d3d4bfdc7076b8b5bdd5121a9f9072cea5a64d05c7497";
 
 fn deck(id: &str) -> ExpandedDeckListV1 {
     let registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
