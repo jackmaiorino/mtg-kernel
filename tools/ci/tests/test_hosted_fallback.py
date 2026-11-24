@@ -102,7 +102,8 @@ class FallbackTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         # the workflow accepts every value the script sends, and the fallback job hands it the set
         step = text[text.index("      - name: Choose the group set"):text.index("      - name: Classify changed paths")]
-        assert "--jq '.[] | .filename, (.previous_filename // empty)'" in step
+        assert '--paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"' in step
+        assert 'pr_files "$pr_number" | python3 tools/ci/ci_scope.py file-scope' in step
         for value in set(fb.FALLBACK_SCOPES.values()):
             assert value in step
         block = text[text.index("  hosted-fallback:"):]
@@ -116,9 +117,10 @@ class FallbackTests(unittest.TestCase):
         choice = "vars.MTG_CI_WINDOWS_RUNNER || '\"windows-2025\"'"
         assert text.count(choice) == 3
         assert text.count("inputs.windows_runner || " + choice) == 2
-        # the Rust groups first take the pull request slice's runner
+        # the Rust groups first take the pull request slice's runner (groups chosen within its budget)
         pr_slice = ("inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON("
-                    "vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || " + choice)
+                    "needs.detect-changes.outputs.pr_windows_groups || '[]'), matrix.group) && "
+                    "vars.MTG_CI_PR_WINDOWS_RUNNER) || " + choice)
         assert text.count(pr_slice) == 1
         block = text[text.index("  hosted-fallback:"):]
         assert "inputs.windows_runner == ''" in block.split("steps:")[0]

@@ -1002,9 +1002,7 @@ pub(crate) fn dragon_engine_rummage() -> EffectOp {
 
 pub(crate) fn discard_controller_hand(state: &mut GameState, player: PlayerId) {
     let hand = state.players[player.index()].hand.clone();
-    for card in hand {
-        crate::engine::commit_discarded_card(state, card);
-    }
+    crate::engine::commit_discarded_cards(state, &hand);
 }
 
 fn dreadnought_entry() -> EffectOp {
@@ -1648,19 +1646,11 @@ fn therapy(ctx: &ExecCtx, state: &mut GameState, named: u16) {
             return;
         }
     }
-    if crate::graveyard_order_v1::enabled(state) {
-        let discarded = hand
-            .into_iter()
-            .filter(|&card| definition(state, card).is_some_and(|def| def.object_name == name))
-            .collect::<Vec<_>>();
-        crate::engine::commit_discarded_cards(state, &discarded);
-    } else {
-        for card in hand {
-            if definition(state, card).is_some_and(|def| def.object_name == name) {
-                crate::engine::commit_discarded_card(state, card);
-            }
-        }
-    }
+    let discarded = hand
+        .into_iter()
+        .filter(|&card| definition(state, card).is_some_and(|def| def.object_name == name))
+        .collect::<Vec<_>>();
+    crate::engine::commit_discarded_cards(state, &discarded);
 }
 
 /// Echo of Eons: each player, in turn order, shuffles their hand and
@@ -1729,6 +1719,7 @@ fn galvanic_relay_effect(ctx: &ExecCtx, state: &mut GameState) {
     let land = CARD_DEFS[live.card_def as usize].is_land;
     let permission = crate::engine::PlayPermission {
         without_mana_cost: crate::engine::FreeCastV1::default(),
+        any_mana_type: Default::default(),
         object: top,
         holder: player,
         zone_change_generation: live.zone_change_count,
@@ -2519,10 +2510,8 @@ fn dark_depths_triggers(state: &mut GameState) {
             .stack
             .iter()
             .any(|item| item.inline_effect.as_ref() == Some(&effect))
-            || state
-                .engine
-                .pending_triggers
-                .iter()
+            || crate::optional_trigger_public_v1::held(state)
+                .into_iter()
                 .any(|trigger| trigger.effect == effect);
         if pending {
             continue;
@@ -2569,17 +2558,8 @@ pub(crate) fn animate_dead_leaves_source(
                 .and_then(|pending| item_source(&pending.resolving_item))
         })
         .or_else(|| {
-            state
-                .engine
-                .pending_triggers
-                .iter()
-                .find_map(pending_source)
-        })
-        .or_else(|| {
-            state
-                .pending_legend_rule_v1
-                .iter()
-                .flat_map(|pending| pending.waiting_triggers())
+            crate::optional_trigger_public_v1::held(state)
+                .into_iter()
                 .find_map(pending_source)
         })
 }

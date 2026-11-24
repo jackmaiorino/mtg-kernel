@@ -1270,6 +1270,7 @@ fn rl_contract_active_exile_permission_holder_and_expiry_are_public() {
         .exile_play_permissions
         .push(PlayPermission {
             without_mana_cost: mtg_kernel::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: bolt,
             holder: PlayerId::P0,
             zone_change_generation: 3,

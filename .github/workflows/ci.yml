@@ -88,9 +88,15 @@ jobs:
     #   gh variable set MTG_CI_DETECT_RUNNER -R mtg-kernel/mtg-kernel --body ''
     runs-on: ${{ vars.MTG_CI_DETECT_RUNNER && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(vars.MTG_CI_DETECT_RUNNER) || 'ubuntu-24.04' }}
     permissions:
+      actions: read
       contents: read
       pull-requests: read
     outputs:
+      # The pull request Windows groups that run on MTG_CI_PR_WINDOWS_RUNNER
+      # (see rust-test-groups), as a JSON list.
+      pr_windows_groups: ${{ steps.budget.outputs.groups }}
+      # The Linux groups that run on the Mac runners instead, as a JSON list.
+      mac_groups: ${{ steps.mac.outputs.groups }}
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
       # full: every group on both systems. pr: the pull request set (Windows
@@ -112,7 +118,7 @@ jobs:
       # third of all hosted runner time on 2026-11-11). Such a dispatch now
       # runs only the complement; together the two runs cover every group.
       - name: Check out merge ref with parents
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || vars.MTG_CI_MAC_GROUPS != ''
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 2
@@ -151,23 +157,25 @@ jobs:
             # with tools/ci/pr_lookup.py.
             if command -v gh > /dev/null 2>&1; then
               open_pr() {
-                gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-                  --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0] | "\(.number // "") \(.head.sha // "")"'
+                gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" |
+                  python3 tools/ci/pr_lookup.py ready-pr
               }
-              pr_files() { gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$1/files" --jq '.[] | .filename, (.previous_filename // empty)'; }
+              pr_files() { gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$1/files"; }
             else
               open_pr() { python3 tools/ci/pr_lookup.py open-pr-head; }
               pr_files() { python3 tools/ci/pr_lookup.py pr-files "$1"; }
             fi
             pr=$(open_pr) || pr=
-            read -r pr_number pr_head <<< "$pr"
+            read -r pr_number pr_head pr_base <<< "$pr"
             echo "open pull request ${pr_number:-none} head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
-            if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
+            if [ -n "$pr_base" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               # Its run covered the whole pull request set only if its files
               # did not narrow it to one scope (tools/ci/ci_scope.py).
               pr_scope=$(pr_files "$pr_number" | python3 tools/ci/ci_scope.py file-scope) || pr_scope=
               echo "its files map to: ${pr_scope:-unknown}"
-              if [ "$pr_scope" = pr ]; then
+              # File listing is live and paginated. Narrow only if the same
+              # PR is still ready with the same head and base after that read.
+              if [ "$pr_scope" = pr ] && rechecked=$(open_pr) && [ "$rechecked" = "$pr" ]; then
                 scope=windows-complement
               fi
             fi
@@ -188,12 +196,13 @@ jobs:
           fi
           # The PR checkout is the synthetic merge commit; HEAD^1 is the
           # base branch tip, so this diff is exactly the PR's file set.
-          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
-          echo "changed files:"; echo "$files"
+          # Keep both paths of a rename and preserve Git's raw path bytes.
+          git diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/ci-changed-paths"
+          echo "changed files:"
           python_relevant=false
           rust_relevant=false
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
+          while IFS= read -r -d '' f; do
+            printf '  %q\n' "$f"
             # Python jobs care about python sources/tools/tests, the data
             # artifacts they validate, workflow changes, and the pinned
             # interpreter/lock config. Top-level tools/** is Python only;
@@ -218,7 +227,7 @@ jobs:
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
             esac
-          done <<< "$files"
+          done < "$RUNNER_TEMP/ci-changed-paths"
           echo "python_relevant=$python_relevant" >> "$GITHUB_OUTPUT"
           echo "rust_relevant=$rust_relevant" >> "$GITHUB_OUTPUT"
           echo "verdict: python_relevant=$python_relevant rust_relevant=$rust_relevant"
@@ -237,10 +246,74 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            CHANGED_FILES=$(git diff --no-renames --name-only HEAD^1 HEAD)
-            export CHANGED_FILES
+            exec < "$RUNNER_TEMP/ci-changed-paths"
           fi
           python3 tools/ci/ci_scope.py choose
+
+      # MTG_CI_PR_WINDOWS_GROUPS names the groups to route, in order of
+      # preference; groups a pull request run does not have on Windows are
+      # skipped. With MTG_CI_PR_WINDOWS_SLOTS set, only as many route as the
+      # pool looks free: that many minus every unfinished job not on a
+      # GitHub-hosted image (Linux self-hosted jobs count too). Best effort, not a reservation: two runs that
+      # start together can both take the last free runner, and the later job
+      # then waits in GitHub's queue until that runner finishes a job (about
+      # an hour for a workspace group). Unset, every named group routes. An
+      # error or a slow lookup routes none. Rejected groups fall through to
+      # MTG_CI_WINDOWS_RUNNER, which stays hosted while the budget is used.
+      - name: Choose the self-hosted pull request groups
+        id: budget
+        timeout-minutes: 2
+        continue-on-error: true
+        if: steps.scope.outputs.scope == 'pr' && steps.classify.outputs.rust_relevant == 'true' && steps.checks.outputs.checks == 'all' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
+          PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}
+          PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}
+          # The Windows groups of the pr set (rust-test-groups matrix).
+          PR_ELIGIBLE: '["workspace-lib", "workspace-targets", "native-store", "native-store-1"]'
+        run: python3 tools/ci/self_hosted_budget.py
+
+      # MTG_CI_MAC_GROUPS (a JSON list, empty by default) names Linux groups
+      # that may run on the Mac runners (a Linux arm64 VM on the Mac Studio)
+      # instead of GitHub's hosted Linux runners; only names in MAC_ELIGIBLE,
+      # the groups with the same results there, can route, and each routed
+      # runs-on checks the variable again. Owner events from this repository
+      # only, as for every self-hosted runner. At most MTG_CI_MAC_SLOTS
+      # (default 3) jobs of all runs at once, and none while the Mac heartbeat
+      # (mac-heartbeat.yml) is stale or waiting for a runner, so runs that
+      # start while the Mac is off or busy stay on hosted runners. An error
+      # or a slow lookup routes none. A routed job cannot move: if the Mac
+      # goes down after this step (within one heartbeat interval, or while a
+      # later job such as the Python shards waits for its needs), that job
+      # waits for the Mac; cancel the run and clear the variable to rerun it
+      # on hosted runners.
+      # In runs-on, check the validated output first so a rejected JSON
+      # setting is never parsed again.
+      - name: Choose the Mac groups
+        id: mac
+        timeout-minutes: 2
+        continue-on-error: true
+        if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && vars.MTG_CI_MAC_GROUPS != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAC_GROUPS: ${{ vars.MTG_CI_MAC_GROUPS }}
+          MAC_SLOTS: ${{ vars.MTG_CI_MAC_SLOTS || '3' }}
+          # Same tests and outcomes on Linux arm64 as hosted at b36c5aefe
+          # (PR #876). Not here: groups that run Clippy with -D warnings
+          # (x86-only code is dead on arm64: eternal, trace, saved-input),
+          # workspace-lib (x86 state-hash and MXCSR pins), cuda (four x86-only
+          # tests compile out), the Limited-only shards (the shared case list
+          # is pinned to the x86-64 build) and limited-protocols (a cold
+          # self-hosted build exceeds its 15-minute step limits).
+          # limited-model-4 and -7 also stay hosted pending arm64 parity.
+          # Their compilers were killed in measurement run 44986774810.
+          MAC_ELIGIBLE: '["eternal-integration", "workspace-targets", "native-store", "standard", "limited-store", "limited", "limited-model", "limited-model-1", "limited-model-2", "limited-model-3", "limited-model-5", "limited-model-6", "limited-model-8", "limited-model-9", "limited-v5", "python-shard-0", "python-shard-1"]'
+          SCOPE: ${{ steps.scope.outputs.scope }}
+          CHECKS: ${{ steps.checks.outputs.checks || 'all' }}
+          PYTHON_RELEVANT: ${{ steps.classify.outputs.python_relevant }}
+          RUST_RELEVANT: ${{ steps.classify.outputs.rust_relevant }}
+        run: python3 tools/ci/mac_route.py
 
   rust-quality:
     name: Rust formatting and lint
@@ -428,13 +501,23 @@ jobs:
     # pause for any host reservation. Windows groups default to GitHub's
     # hosted runners: on the local pool they queued for over an hour behind
     # research claims. The repository variable routes them elsewhere, for
-    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Pull
-    # requests from forks never run on the self-hosted runners.
+    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Only
+    # events from this repository whose actor and triggering actor are both
+    # members of MTG_CI_SELF_HOSTED_ACTORS run on self-hosted runners: never a
+    # pull request from a fork or an unlisted account's push or re-run. The
+    # variable is a JSON list of account names written exactly as
+    # ["name1", "name2"] (double quotes, comma and one space): it must equal
+    # its own strings rejoined in that form, so any other spacing, quoting or
+    # a non-string member admits nobody (array contains() coerces true, null
+    # and numbers). A bracketed value that fromJSON rejects fails the job
+    # (closed: never self-hosted) until it is fixed or cleared.
     # On pull requests, the groups named in MTG_CI_PR_WINDOWS_GROUPS (a JSON
     # list, for example '["workspace-targets", "workspace-lib"]') run on
-    # MTG_CI_PR_WINDOWS_RUNNER instead: a few desktop runners can carry the
-    # slowest pull request groups, not every Windows job (2026-11-12: at 6
-    # CPUs and BelowNormal, workspace-targets took 54 min there, 113 hosted).
+    # MTG_CI_PR_WINDOWS_RUNNER instead, up to the free slots of
+    # MTG_CI_PR_WINDOWS_SLOTS (detect-changes chooses them): a few desktop
+    # runners can carry the slowest pull request groups, not every Windows
+    # job (2026-11-12: at 6 CPUs and BelowNormal, workspace-targets took 54
+    # min there, 113 hosted).
     # The Linux groups named in MTG_CI_LINUX_GROUPS (a JSON list, for example
     # '["eternal-integration"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on
     # labels, for example '["self-hosted", "mtg-ci-linux", "heavy"]') for
@@ -447,7 +530,7 @@ jobs:
     # each part by its own name: '["native-store"]' in
     # MTG_CI_PR_WINDOWS_GROUPS routes that group's first part and leaves
     # native-store-1 on MTG_CI_WINDOWS_RUNNER.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(needs.detect-changes.outputs.pr_windows_groups || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && contains(fromJSON(needs.detect-changes.outputs.mac_groups || '[]'), matrix.group) && contains(fromJSON(vars.MTG_CI_MAC_GROUPS || '[]'), matrix.group) && fromJSON('["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
@@ -1008,7 +1091,7 @@ jobs:
     # target directory instead of downloading the shared build; a routed
     # Limited-only shard still downloads the default library case list. Pull
     # requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && contains(fromJSON(needs.detect-changes.outputs.mac_groups || '[]'), matrix.group) && contains(fromJSON(vars.MTG_CI_MAC_GROUPS || '[]'), matrix.group) && fromJSON('["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # The Limited-only shards diff the default-feature library's case list
       # against the Limited build. The limited-build job now writes that list
@@ -1112,9 +1195,12 @@ jobs:
       - name: Use the runner's persistent target directory
         run: |
           if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
-            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
+            # Every Limited group builds the same feature set, so a runner
+            # keeps one target directory for all of them instead of one per
+            # group (sixteen full builds per runner).
+            target_dir="$MTG_CI_TARGET_ROOT/limited"
             if [ "$RUNNER_OS" = Windows ]; then
-              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/limited")"
             fi
             printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
             # With a persistent target directory, incremental compilation
@@ -1557,9 +1643,14 @@ jobs:
         shard: [0, 1, 2]
         exclude:
           - {os: ubuntu-24.04, shard: 2}
+        # Group names for MTG_CI_MAC_GROUPS, as in the Rust jobs.
+        include:
+          - {shard: 0, group: python-shard-0}
+          - {shard: 1, group: python-shard-1}
+          - {shard: 2, group: python-shard-2}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && startsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, '[') && endsWith(vars.MTG_CI_SELF_HOSTED_ACTORS, ']') && format('["{0}"]', join(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), '", "')) == vars.MTG_CI_SELF_HOSTED_ACTORS && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.actor) && contains(fromJSON(vars.MTG_CI_SELF_HOSTED_ACTORS), github.triggering_actor) && contains(fromJSON(needs.detect-changes.outputs.mac_groups || '[]'), matrix.group) && contains(fromJSON(vars.MTG_CI_MAC_GROUPS || '[]'), matrix.group) && fromJSON('["self-hosted", "Linux", "ARM64", "fleet-mac-linux"]') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/target/release/kernel_rl_env${{ matrix.os == 'windows-2025' && '.exe' || '' }}
       MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/target/release/agent_bridge_v1${{ matrix.os == 'windows-2025' && '.exe' || '' }}
@@ -1674,16 +1765,19 @@ jobs:
           uv run --no-sync python -m unittest discover -v -s tools/sd1/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/native_fixture_bench/tests -p 'test_*.py'
           uv run --no-sync python -m unittest discover -v -s tools/checkpoint_codec_bench/tests -p 'test_*.py'
+          uv run --no-sync python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'
 
       # A partial retry keeps the build job's artifact from the prior attempt;
       # take the newest attempt.
       - name: Download the shared Python test binaries
+        if: runner.arch != 'ARM64'
         uses: actions/download-artifact@v4
         with:
           pattern: python-env-${{ matrix.os }}-*
           path: ${{ runner.temp }}/python-env
 
       - name: Place the shared Python test binaries
+        if: runner.arch != 'ARM64'
         run: |
           staging="${RUNNER_TEMP:?}/python-env"
           if [ "$RUNNER_OS" = Windows ]; then
@@ -1694,6 +1788,24 @@ jobs:
           cp -R "$attempt"/. target/release/
           ls target/release/build/mtg-kernel-*/out
           chmod +x target/release/kernel_rl_env* target/release/agent_bridge_v1*
+          ls -l target/release
+
+      # The Mac runners (Linux arm64) cannot run the shared x86-64 binaries,
+      # so they build the same two in their persistent target directory and
+      # place them, with this build's generated sources, as the step above.
+      - name: Build the Python test binaries on an arm64 runner
+        if: runner.arch == 'ARM64'
+        run: |
+          target_dir="${MTG_CI_TARGET_ROOT:?}/python-env"
+          out_dir=$(CARGO_TARGET_DIR="$target_dir" CARGO_PROFILE_RELEASE_INCREMENTAL=true \
+            cargo build --release --locked --bin kernel_rl_env --bin agent_bridge_v1 --message-format=json-render-diagnostics |
+            jq -r 'select(.reason == "build-script-executed") | .out_dir | select(test("/build/mtg-kernel-[0-9a-f]+/out$"))')
+          test -d "$out_dir"
+          placed="target/release/build/$(basename "$(dirname "$out_dir")")/out"
+          mkdir -p "$placed"
+          cp "$out_dir"/*.rs "$placed/"
+          cp "$target_dir"/release/kernel_rl_env "$target_dir"/release/agent_bridge_v1 target/release/
+          ls target/release/build/mtg-kernel-*/out
           ls -l target/release
 
       - name: Validate agent bridge v1 golden transcripts
@@ -1827,9 +1939,12 @@ jobs:
   # step, logging MTG_CI_ADMISSION_TIMEOUT. A job cannot move to another runner
   # once one accepted it, so this hosted job dispatches the workflow again on
   # the same branch with Windows on hosted runners, limited to the Windows
-  # part of this run's group set. Real failures are not
-  # rerun, and a dispatched run never dispatches again. It runs only while a
-  # routing variable sends Windows jobs to the self-hosted pool.
+  # part of this run's group set. Real failures are not rerun, and a
+  # dispatched run never dispatches again. A self-hosted job stopped at its
+  # job timeout (for example while its CPU claim stayed suspended; GitHub
+  # then concludes it and the run cancelled) is not rerun: rerun it by hand.
+  # It runs only while a routing variable sends Windows jobs to the
+  # self-hosted pool.
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]

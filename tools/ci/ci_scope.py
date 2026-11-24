@@ -7,8 +7,10 @@ still runs on every merge (main, tags, release lines) as a monitor, so a scope o
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
-                              LABELS (JSON list), CHANGED_FILES (newline list); writes checks=<name> to GITHUB_OUTPUT
+                              LABELS (JSON list), and NUL-delimited paths on stdin for pull requests;
+                              writes checks=<name> to GITHUB_OUTPUT
                               and a summary (with the bit-identity rows for trainer) to GITHUB_STEP_SUMMARY.
+  ci_scope.py file-scope      print the scope of the JSON pages from the GitHub pull request files API on stdin.
   ci_scope.py commands SCOPE  print the shell commands a scope's local run executes, one per line.
   ci_scope.py trainer-filters [--shard N]  print the trainer scope's library test filters (or shard N's).
   ci_scope.py markdown        print docs/CI-SCOPES.md.
@@ -23,7 +25,7 @@ import sys
 # Each rule: (patterns, scope). The first rule naming a file decides it. "shared" files are read by both the
 # engine (or agents, search, ladder) and the trainer: a change there is mixed and runs the whole pull request
 # set, never a trainer-only check.
-TOOLS_DIRS = ["checkpoint_codec_bench", "native_fixture_bench", "sd1", "search_experiment", "stage4a", "t1_diagnosis"]
+TOOLS_DIRS = ["checkpoint_codec_bench", "cube_v1", "native_fixture_bench", "sd1", "search_experiment", "stage4a", "t1_diagnosis"]
 TRAINER_ROOTS = ["expanded_deck_training_v1", "native_expanded_training_run_v1", "native_policy_train_step_v1"]
 PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     (("data/*",), "pr"),
@@ -265,7 +267,7 @@ RULES_NOTE = ("Engine rules and card changes that alter play are never bit-ident
 TOOLS_COMMANDS = [f"uv run --no-sync python -m unittest discover -v -s tools/{name}/{sub} -p 'test_*.py'"
                   for name, sub in (("search_experiment", "tests"), ("stage4a", "tests"), ("t1_diagnosis", ""),
                                     ("sd1", "tests"), ("native_fixture_bench", "tests"),
-                                    ("checkpoint_codec_bench", "tests"))]
+                                    ("checkpoint_codec_bench", "tests"), ("cube_v1", "tests"))]
 TOOLS_COMMANDS = [c.replace("/ -p", " -p") for c in TOOLS_COMMANDS]
 
 
@@ -291,6 +293,25 @@ def scope_of_files(paths: list[str]) -> str:
         if only in SCOPES and only != "pr":
             return only
     return "pr"
+
+
+def pull_request_paths(pages: object) -> list[str]:
+    # GitHub's REST OpenAPI diff-entry.status enum.
+    statuses = ("added", "removed", "modified", "renamed", "copied", "changed", "unchanged")
+    if not isinstance(pages, list) or not pages or any(not isinstance(page, list) for page in pages):
+        raise ValueError("expected an array of file pages")
+    paths = []
+    for page in pages:
+        for entry in page:
+            if not isinstance(entry, dict) or entry.get("status") not in statuses:
+                raise ValueError("expected a changed-file object with a recognized status")
+            names = [entry.get("filename")]
+            if entry["status"] == "renamed" or "previous_filename" in entry:
+                names.append(entry.get("previous_filename"))
+            if any(not isinstance(name, str) or not name or "\0" in name for name in names):
+                raise ValueError("expected a nonempty filename for each changed path")
+            paths.extend(names)
+    return paths
 
 
 def choose(event: str, group_set: str, input_scope: str, labels: list[str], files: list[str]) -> str:
@@ -378,13 +399,21 @@ def main(argv: list[str]) -> int:
         print("\n".join(lines))
         return 0
     if command == "file-scope":
-        print(scope_of_files([line.strip() for line in sys.stdin if line.strip()]))
+        try:
+            paths = pull_request_paths(json.load(sys.stdin.buffer))
+        except ValueError as exc:
+            print(f"Invalid pull request files response: {exc}", file=sys.stderr)
+            return 2
+        print(scope_of_files(paths))
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")
-        files = [line for line in (os.environ.get("CHANGED_FILES") or "").splitlines() if line.strip()]
-        checks = choose(os.environ.get("EVENT", ""), os.environ.get("SCOPE", ""), os.environ.get("INPUT_SCOPE", ""),
-                        labels, files)
+        event = os.environ.get("EVENT", "")
+        files = []
+        if event == "pull_request":
+            paths = sys.stdin.buffer.read().split(b"\0")
+            files = [path.decode("utf-8", errors="surrogateescape") for path in paths if path]
+        checks = choose(event, os.environ.get("SCOPE", ""), os.environ.get("INPUT_SCOPE", ""), labels, files)
         lines = [f"checks: {checks}" + ("" if checks == "all" else f" ({SCOPES[checks]['summary']})")]
         if checks == "trainer":
             lines.append(trainer_record())

@@ -1470,6 +1470,7 @@ pub(crate) fn foretell(
     }
     let permission = crate::engine::PlayPermission {
         without_mana_cost: crate::engine::FreeCastV1::default(),
+        any_mana_type: Default::default(),
         object: source,
         holder: player,
         zone_change_generation: link.zone_change_count,

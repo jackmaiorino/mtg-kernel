@@ -859,6 +859,7 @@ fn exile_playable_this_turn(state: &mut GameState, player: PlayerId, card: Objec
         .exile_play_permissions
         .push(crate::engine::PlayPermission {
             without_mana_cost: crate::engine::FreeCastV1::default(),
+            any_mana_type: Default::default(),
             object: card,
             holder: player,
             zone_change_generation,

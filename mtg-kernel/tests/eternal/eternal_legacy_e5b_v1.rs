@@ -1774,6 +1774,102 @@ fn quantum_riddler_stops_remaining_extra_draws_when_an_extra_wins_both_seats() {
 }
 
 #[test]
+fn quantum_riddler_turn_draw_offers_jace_or_hullbreacher_after_the_exempt_draw_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = game(&["Island"; 3]);
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        cast_jace_for_riddler(&mut state, drawer);
+
+        let riddler = put(&mut state, drawer, "Quantum Riddler", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 3);
+        cast(&mut state, riddler, &[]);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseCastMode { spell, .. } if spell == riddler)
+        );
+        act(&mut state, Action::ChooseCastMode(CastMode::Normal));
+        settled(&mut state);
+        assert_eq!(state.players[drawer.index()].hand.len(), 2);
+        let island = state.players[drawer.index()].hand[0];
+        act(&mut state, Action::PlayLand(island));
+        settled(&mut state);
+        let [last_card] = state.players[drawer.index()].library.as_slice() else {
+            panic!("Riddler's entry should leave one card in the library");
+        };
+        let last_card = *last_card;
+
+        pass_until(&mut state, |s| {
+            s.active_player == opponent && s.step == Step::Main1
+        });
+        let hullbreacher = put(&mut state, opponent, "Hullbreacher", Zone::Hand);
+        pool(&mut state, opponent, &[ManaColor::U], 2);
+        cast(&mut state, hullbreacher, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, hullbreacher), Zone::Battlefield);
+        let start = state.engine.event_history.len();
+        pass_until(&mut state, |s| {
+            s.active_player == drawer && s.step == Step::Draw
+        });
+        let decision = next(&mut state);
+        assert_eq!(
+            riddler_draws_since(&state, start, drawer),
+            [Some(last_card)]
+        );
+        assert!(state.players[drawer.index()].library.is_empty());
+        assert!(state.players[drawer.index()].hand.contains(&last_card));
+        assert!(
+            named(&state, opponent, "Treasure Token").is_empty(),
+            "the extra draw needs its player's choice before Hullbreacher creates a Treasure"
+        );
+
+        let actions = match &decision {
+            Decision::ChooseEffectOption {
+                player,
+                option_count: 2,
+                ..
+            } if *player == drawer => {
+                vec![Action::ChooseEffectOption(0), Action::ChooseEffectOption(1)]
+            }
+            Decision::ChooseEffectTargets {
+                player,
+                legal_targets,
+                can_finish,
+                ..
+            } if *player == drawer => legal_targets
+                .iter()
+                .cloned()
+                .map(Action::ChooseEffectTarget)
+                .chain(can_finish.then_some(Action::FinishEffectSelection))
+                .collect(),
+            _ => panic!("expected the drawer's replacement choice, got {decision:?}"),
+        };
+        assert_eq!(actions.len(), 2);
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut outcomes = Vec::new();
+        for action in actions {
+            let mut original = state.clone();
+            let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+            for branch in [&mut original, &mut restored] {
+                assert_eq!(next(branch), decision);
+                act(branch, action.clone());
+            }
+            let after = next(&mut original);
+            assert_eq!(next(&mut restored), after);
+            assert_eq!(restored.state_hash(), original.state_hash());
+            let won = match after {
+                Decision::GameOver { winner: Some(p) } if p == drawer => true,
+                Decision::CastSpellOrPass { .. } => false,
+                other => panic!("unexpected outcome of the chosen replacement: {other:?}"),
+            };
+            outcomes.push((won, named(&original, opponent, "Treasure Token").len()));
+        }
+        outcomes.sort_unstable();
+        assert_eq!(outcomes, [(false, 1), (true, 0)]);
+    }
+}
+
+#[test]
 fn quantum_riddler_warps_and_is_exiled_at_the_end_step() {
     let mut state = islands();
     let riddler = put(&mut state, P0, "Quantum Riddler", Zone::Hand);

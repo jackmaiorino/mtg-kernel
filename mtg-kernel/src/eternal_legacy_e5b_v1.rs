@@ -30,8 +30,7 @@ use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{
-    AbilitySourceContractV4, GameState, ObjectLinkV4, SpellCastRouteV4, StackItemKind, Step,
-    Target, Zone,
+    AbilitySourceContractV4, GameState, ObjectLinkV4, StackItemKind, Step, Target, Zone,
 };
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
@@ -1106,7 +1105,7 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
                 casts.retain(|cast| cast.object != spell);
                 casts.push(link);
             }
-            Some(PHLAGE) if origin.route == SpellCastRouteV4::GraveyardEscape => {
+            Some(PHLAGE) if origin.route.is_escape() => {
                 let casts = &mut e5b_state(state).escaped_casts;
                 casts.retain(|cast| cast.object != spell);
                 casts.push(link);
@@ -1437,15 +1436,35 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
     if option == 1 {
         // spellbench-public-reveal: hand card revealed by the card rules.
         state.reveal_distinct_hand_card(player.opponent(), player, offer.object)?;
-        // The reveal is answered outside any event batch, so its trigger
-        // waits for the next placement directly.
+        // The reveal is answered outside any event batch, so keep it inside an
+        // unfinished resolution's deferred checkpoint or place it directly
+        // in APNAP order with any simultaneous pending triggers.
         let source = AbilitySourceContractV4::capture(state, offer.object);
         let trigger = queued_trigger(QueuedTriggerV1 {
             source,
             controller: player,
             op: E5bOpV1::MiracleV1,
         });
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::engine::mid_resolution_deferring(state)
+            || crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state)
+        {
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, vec![trigger]);
+            return Ok(true);
+        }
         state.engine.pending_triggers.push(trigger);
+        if state.engine.pending_triggers.len() > 1
+            && state
+                .engine
+                .pending_triggers
+                .iter()
+                .all(|pending| !pending.placement_ordered)
+        {
+            state.engine.pending_triggers = crate::trigger::order_apnap(
+                std::mem::take(&mut state.engine.pending_triggers),
+                state.active_player,
+            );
+        }
     }
     Ok(true)
 }

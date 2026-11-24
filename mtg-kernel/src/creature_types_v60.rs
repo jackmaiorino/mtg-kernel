@@ -646,6 +646,7 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         // A creature type newer than the pinned 2026-09-25 domain, so it has
         // no V60 choice index (Pauper field wave Pf1c).
         Subtype::Klingon => None,
+        Subtype::Spy => Some(CreatureTypeV60::Spy),
     }
 }
 

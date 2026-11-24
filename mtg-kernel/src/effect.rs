@@ -8021,8 +8021,14 @@ pub(crate) fn validated_definition_owned_root_effect(
                     .iter()
                     .any(|chapter| chapter() == *root)
             });
+        let is_eternal_delayed = cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cards_v1::delayed_effect_matches(
+                crate::card_def::CARD_DEFS[card_def as usize].name,
+                &root,
+            );
         if crate::standard_creature_choices_v1::trigger_target_spec(card_def, &root).is_none()
             && !is_saga_chapter
+            && !is_eternal_delayed
             && !crate::trigger::triggers_for(card_def)
                 .iter()
                 .any(|trigger| {
@@ -8172,18 +8178,58 @@ pub(crate) fn jace_draw_replacement_origin(
             );
     }
     let ctx = &pending.ctx;
+    let mut sibling_path = path;
     let (player, count, staged_below) = match resolved_definition_op_at(&root, path, ctx, state) {
         Some(EffectOp::DrawCards { player, count }) => (*player, *count, Vec::new()),
-        Some(leaf) => match leaf_staged_draw(leaf, path, ctx) {
+        Some(EffectOp::DrawCardsDynamic { player, count }) => {
+            let evaluated = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller);
+            (
+                *player,
+                u32::try_from(evaluated.max(0)).unwrap_or(0),
+                Vec::new(),
+            )
+        }
+        Some(EffectOp::DiscardUpToThenDraw { player, maximum }) => {
+            (*player, u32::from(*maximum), Vec::new())
+        }
+        Some(leaf) => match leaf_staged_draw(leaf, path, ctx, state) {
             Some(staged) => staged,
             None => return false,
         },
-        None => return false,
+        None => {
+            let Some((&branch, parent)) = path.split_last() else {
+                return false;
+            };
+            sibling_path = parent;
+            match (branch, resolved_definition_op_at(&root, parent, ctx, state)) {
+                (
+                    1,
+                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                        crate::eternal_cards_v1::EternalOpV1::OutsideGameV1(
+                            crate::eternal_outside_game_v1::OutsideGameOpV1::LearnV1,
+                        ),
+                    ))),
+                ) => (PlayerRef::Controller, 1, Vec::new()),
+                (
+                    1 | 2,
+                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                        crate::eternal_cards_v1::EternalOpV1::E9bV1(
+                            crate::eternal_e9b_v1::E9bOpV1::DenialMayDrawV1 { player },
+                        ),
+                    ))),
+                ) => (
+                    crate::eternal_e9b_v1::denial_drawer(ctx.controller, *player),
+                    u32::from(branch),
+                    Vec::new(),
+                ),
+                _ => return false,
+            }
+        }
     };
     if count == 0 || pending.ctx.resolve_player(player, state) != drawer {
         return false;
     }
-    nonland_sacrifice_payment_v1::remaining(&root, path).is_ok_and(|mut below| {
+    nonland_sacrifice_payment_v1::remaining(&root, sibling_path).is_ok_and(|mut below| {
         below.extend(staged_below);
         draw_remainder_matches(remaining, &below, path, player, count)
     })
@@ -8197,14 +8243,37 @@ fn leaf_staged_draw(
     leaf: &EffectOp,
     path: &[u16],
     ctx: &ExecCtx,
+    state: &GameState,
 ) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
     use crate::eternal_cards_v1::EternalOpV1 as E;
     use crate::eternal_cube_c1a_v1::C1aOpV1;
+    use crate::eternal_pauper_e8b_v1::E8bOpV1;
     use crate::eternal_pauper_pf1a_v1::Pf1aOpV1;
+    use crate::eternal_premodern_p1a_v1::P1aOpV1;
+    use crate::eternal_premodern_p3h_v1::P3hOpV1;
+    use crate::eternal_sideboard_s1b_v1::S1bOpV1;
     use crate::eternal_vintage_e7b_v1::E7bOpV1;
     use crate::standard_cards_v1::StandardOpV1;
-    let EffectOp::StandardV1(StandardOpV1::EternalV1(leaf)) = leaf else {
+    let EffectOp::StandardV1(standard) = leaf else {
         return None;
+    };
+    if let StandardOpV1::MayDiscardUpToThenDraw { player, count } = standard {
+        let resolved = ctx.resolve_player(*player, state);
+        let framed = if resolved == ctx.controller {
+            PlayerRef::Controller
+        } else {
+            PlayerRef::Opponent
+        };
+        return Some((framed, u32::from(*count), Vec::new()));
+    }
+    let StandardOpV1::EternalV1(leaf) = standard else {
+        return None;
+    };
+    let lose_life_frame = |player: PlayerRef, amount: i32| {
+        (amount > 0).then(|| EffectFrame::Program {
+            op: EffectOp::LoseLife { player, amount },
+            path: path.to_vec(),
+        })
     };
     match leaf {
         // Occult Epiphany: "Draw X cards, then discard X cards", the discard
@@ -8224,6 +8293,75 @@ fn leaf_staged_draw(
         }
         // K'un-Lun Warrior stages one draw at the leaf after payment.
         E::Pf1aV1(Pf1aOpV1::KunLunV1) => Some((PlayerRef::Controller, 1, Vec::new())),
+        // Sylvan Library stages two draws above its choose/put-back frame.
+        E::P1aV1(P1aOpV1::SylvanDrawV1) => {
+            let below = EffectFrame::Program {
+                op: EffectOp::StandardV1(StandardOpV1::EternalV1(E::P1aV1(
+                    P1aOpV1::SylvanLibraryV1,
+                ))),
+                path: path.to_vec(),
+            };
+            Some((PlayerRef::Controller, 2, vec![below]))
+        }
+        E::P1aV1(P1aOpV1::IceV1 | P1aOpV1::PortentUpkeepDrawV1) => {
+            Some((PlayerRef::Controller, 1, Vec::new()))
+        }
+        E::P1aV1(P1aOpV1::SkeletalScryingV1) => {
+            let x = u32::from(ctx.x_value);
+            let amount = i32::try_from(x).unwrap_or(i32::MAX);
+            Some((
+                PlayerRef::Controller,
+                x,
+                lose_life_frame(PlayerRef::Controller, amount)
+                    .into_iter()
+                    .collect(),
+            ))
+        }
+        E::P1aV1(P1aOpV1::GravebornMuseV1) => {
+            let zombies = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .filter(|&&object| {
+                    crate::engine::has_effective_subtype(
+                        state,
+                        object,
+                        crate::card_def::Subtype::Zombie,
+                    )
+                })
+                .count();
+            let count = u32::try_from(zombies).unwrap_or(u32::MAX);
+            let amount = i32::try_from(count).unwrap_or(i32::MAX);
+            Some((
+                PlayerRef::Controller,
+                count,
+                lose_life_frame(PlayerRef::Controller, amount)
+                    .into_iter()
+                    .collect(),
+            ))
+        }
+        E::P3hV1(P3hOpV1::DecreeOfPainV1) => Some((PlayerRef::Controller, u32::MAX, Vec::new())),
+        E::S1bV1(S1bOpV1::PeerV1) => {
+            let target = ctx.resolve_player(PlayerRef::Target(0), state);
+            let life = state.players[target.index()].life;
+            let lose = if life > 0 { (life + 1) / 2 } else { 0 };
+            Some((
+                PlayerRef::Target(0),
+                u32::MAX,
+                lose_life_frame(PlayerRef::Target(0), lose)
+                    .into_iter()
+                    .collect(),
+            ))
+        }
+        E::E8bV1(E8bOpV1::RingLootV1) => {
+            let below = EffectFrame::Program {
+                op: EffectOp::DiscardCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+                path: path.to_vec(),
+            };
+            Some((PlayerRef::Controller, 1, vec![below]))
+        }
         _ => None,
     }
 }
@@ -18703,6 +18841,7 @@ fn resume_library_partition_frame(
                                 play_or_cast: crate::engine::PlayOrCast::Cast,
                                 expiry: crate::engine::PlayPermissionExpiry::EndOfTurn,
                                 without_mana_cost: crate::engine::FreeCastV1(true),
+                                any_mana_type: Default::default(),
                             });
                     }
                 }
@@ -19128,6 +19267,8 @@ pub(crate) fn linked_hand_exile_kind(card_def: u16) -> Option<LinkedHandExileKin
         "Deep-Cavern Bat" => Some(LinkedHandExileKind::UntilSourceLeaves),
         #[cfg(feature = "eternal-fixtures")]
         "Thought-Knot Seer" => Some(LinkedHandExileKind::ExiledV1),
+        #[cfg(feature = "eternal-fixtures")]
+        "Tidehollow Sculler" => Some(LinkedHandExileKind::ReturnTrigger),
         _ => None,
     }
 }
@@ -21372,6 +21513,20 @@ fn execute_in_departure_scope_v1(
                             return;
                         }
                     }
+                } else if crate::full_text_v1::selected_donated_damage_trigger(
+                    state,
+                    &proof.owner.item,
+                ) {
+                    match crate::full_text_v1::departed_damage_loan(state, &proof.owner.item) {
+                        Ok(loan) => loan.map(EternalDamageLkiV1::for_full_text),
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
+                        }
+                    }
                 } else {
                     None
                 };
@@ -22597,6 +22752,7 @@ fn execute_in_departure_scope_v1(
             if warped && exiled.zone == Zone::Exile {
                 let permission = crate::engine::PlayPermission {
                     without_mana_cost: crate::engine::FreeCastV1::default(),
+                    any_mana_type: Default::default(),
                     object: object.object,
                     holder: owner,
                     zone_change_generation: exiled.zone_change_count,
@@ -24740,6 +24896,7 @@ fn execute_in_departure_scope_v1(
                     .exile_play_permissions
                     .push(crate::engine::PlayPermission {
                         without_mana_cost: crate::engine::FreeCastV1::default(),
+                        any_mana_type: Default::default(),
                         object: top,
                         holder: ctx.controller,
                         // Snapshot *after* the exile move above, so this
@@ -25308,8 +25465,14 @@ fn execute_in_departure_scope_v1(
                 return;
             };
             source.controller = ctx.controller;
+            #[cfg(feature = "eternal-fixtures")]
+            let previous = state.monarch;
             state.monarch = Some(ctx.controller);
             state.engine.monarch_source = Some(source);
+            #[cfg(feature = "eternal-fixtures")]
+            if previous != Some(ctx.controller) {
+                crate::eternal_cube_c7b_v1::note_became_monarch(state, ctx.controller);
+            }
         }
         EffectOp::ResolveMonarchTrigger { binding } => {
             if resolve_monarch_trigger(state, *binding).is_err() {
@@ -28588,6 +28751,10 @@ pub(crate) struct EternalDamageLkiV1(EternalDamageOriginV1);
 enum EternalDamageOriginV1 {
     Historical(crate::event::HistoricalDamageSourceV1),
     Live(ObjectId),
+    FullText {
+        facts: crate::event::HistoricalDamageSourceV1,
+        types: crate::source_type_hexproof_v1::SourceTypesV1,
+    },
 }
 
 impl std::hash::Hash for EternalDamageLkiV1 {
@@ -28598,6 +28765,11 @@ impl std::hash::Hash for EternalDamageLkiV1 {
                 std::hash::Hash::hash(b"native-live-damage/v1", state);
                 std::hash::Hash::hash(&source, state);
             }
+            EternalDamageOriginV1::FullText { facts, types } => {
+                std::hash::Hash::hash(b"full-text-damage/v1", state);
+                std::hash::Hash::hash(&facts, state);
+                std::hash::Hash::hash(&types, state);
+            }
         }
     }
 }
@@ -28607,17 +28779,33 @@ impl EternalDamageLkiV1 {
         Self(EternalDamageOriginV1::Historical(proof.facts()))
     }
 
+    pub(crate) fn for_full_text(loan: crate::full_text_v1::DamageLoanV1) -> Self {
+        Self(EternalDamageOriginV1::FullText {
+            facts: loan.facts(),
+            types: loan.types(),
+        })
+    }
+
     pub(crate) fn source(self) -> ObjectId {
         match self.0 {
-            EternalDamageOriginV1::Historical(facts) => facts.source.source,
+            EternalDamageOriginV1::Historical(facts)
+            | EternalDamageOriginV1::FullText { facts, .. } => facts.source.source,
             EternalDamageOriginV1::Live(source) => source,
         }
     }
 
     pub(crate) fn facts(self) -> Option<crate::event::HistoricalDamageSourceV1> {
         match self.0 {
-            EternalDamageOriginV1::Historical(facts) => Some(facts),
+            EternalDamageOriginV1::Historical(facts)
+            | EternalDamageOriginV1::FullText { facts, .. } => Some(facts),
             EternalDamageOriginV1::Live(_) => None,
+        }
+    }
+
+    pub(crate) fn departed_types(self) -> Option<crate::source_type_hexproof_v1::SourceTypesV1> {
+        match self.0 {
+            EternalDamageOriginV1::FullText { types, .. } => Some(types),
+            EternalDamageOriginV1::Historical(_) | EternalDamageOriginV1::Live(_) => None,
         }
     }
 }

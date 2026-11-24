@@ -5059,7 +5059,7 @@ fn sba_fixed_point_with_protected_triggers(
                 &dying,
                 protected_triggers,
             );
-            crate::event::commit_sba_death_batch_v1(state, dying);
+            crate::event::commit_sba_death_batch_v1(state, dying, protected_triggers);
             if (cfg!(feature = "eternal-fixtures") || crate::graveyard_order_v1::enabled(state))
                 && state.engine.halted.is_some()
             {
@@ -5069,6 +5069,41 @@ fn sba_fixed_point_with_protected_triggers(
                 return true;
             }
             changed = true;
+        }
+
+        // 704.5q: if a permanent has both a +1/+1 counter and a -1/-1 counter
+        // on it, N +1/+1 and N -1/-1 counters are removed from it, where N is
+        // the smaller of the number of +1/+1 and -1/-1 counters on it.
+        // Run after lethal/zero-toughness departures so simultaneous deaths
+        // preserve their exact counter LKI (704.8).
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            let cancelling: Vec<(ObjectId, i16)> = state
+                .objects
+                .iter()
+                .filter_map(|(id, obj)| {
+                    if obj.zone == Zone::Battlefield
+                        && obj.counters.plus1_plus1 > 0
+                        && obj.counters.minus1_minus1 > 0
+                    {
+                        i16::try_from(
+                            obj.counters
+                                .plus1_plus1
+                                .min(i32::from(obj.counters.minus1_minus1)),
+                        )
+                        .ok()
+                        .map(|cancel| (id, cancel))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for (id, cancel) in cancelling {
+                let counters = &mut state.objects.get_mut(id).counters;
+                counters.plus1_plus1 -= i32::from(cancel);
+                counters.minus1_minus1 -= cancel;
+                changed = true;
+            }
         }
 
         changed |= crate::controlled_creature_grants_v1::detach_illegal_nonauras(state);
@@ -5302,6 +5337,37 @@ pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<Pending
     waiting
 }
 
+/// `capture_triggers_without_sba` inside a resolution whose interpreter
+/// holds `resolving` outside the public stack. The row is loaned back at the
+/// position it returns to when the resolution suspends, so stack-identity
+/// bookkeeping read during collection (a Commandeered spell's original
+/// caster, a prepared copy's exile permission) sees the same stack as at a
+/// suspended prompt. A row already on the stack is not loaned again.
+pub(crate) fn capture_triggers_without_sba_owning(
+    state: &mut GameState,
+    resolving: &crate::state::StackItem,
+) -> Vec<PendingTrigger> {
+    if state.stack.iter().any(|row| row == resolving) {
+        return capture_triggers_without_sba(state);
+    }
+    let index = crate::engine::resolution_cast_v1::restore_index(state, resolving.v4.stack_item_id);
+    state.stack.insert(index, resolving.clone());
+    let loaned = state.stack.clone();
+    let captures = capture_triggers_without_sba(state);
+    if state.stack != loaned {
+        state.engine.halted.get_or_insert((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            resolving.source,
+        ));
+        if let Some(position) = state.stack.iter().position(|row| row == resolving) {
+            state.stack.remove(position);
+        }
+        return Vec::new();
+    }
+    state.stack.remove(index);
+    captures
+}
+
 pub(crate) fn collect_and_process_with_waiting(
     state: &mut GameState,
     waiting: Vec<PendingTrigger>,
@@ -5320,13 +5386,43 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
     {
         return (Vec::new(), false, false);
     }
-    waiting.extend(capture_triggers_without_sba(state));
+    #[cfg(feature = "eternal-fixtures")]
+    let dredge_deferred = crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state);
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let dredge_deferred = false;
+    #[cfg(feature = "eternal-fixtures")]
+    let eternal_checkpoint_hold = dredge_deferred || !waiting.is_empty();
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let eternal_checkpoint_hold = false;
+    #[cfg(feature = "eternal-fixtures")]
+    if eternal_checkpoint_hold {
+        crate::eternal_vintage_e7b_v1::dredge::stop_deferring(state);
+        if !waiting.is_empty() {
+            crate::eternal_vintage_e7b_v1::dredge::prepend_checkpoint_captures(
+                state,
+                std::mem::take(&mut waiting),
+            );
+        }
+    }
+    let pre_sba = capture_triggers_without_sba(state);
     // This checkpoint ends the resolving item's ownership of its kick marker.
     state.engine.pending_kicked_source = None;
     state.engine.battlemage_entry_v1.0 = None;
     if state.engine.halted.is_some() {
+        #[cfg(feature = "eternal-fixtures")]
+        if eternal_checkpoint_hold {
+            let _ = crate::eternal_vintage_e7b_v1::dredge::take_captures(state);
+        }
         return (Vec::new(), false, false);
     }
+    if eternal_checkpoint_hold {
+        #[cfg(feature = "eternal-fixtures")]
+        waiting.extend(crate::eternal_vintage_e7b_v1::dredge::take_captures(state));
+        if dredge_deferred {
+            waiting.append(&mut state.engine.pending_triggers);
+        }
+    }
+    waiting.extend(pre_sba);
     let mut new_triggers = waiting;
 
     // Conversely, SBAs can create new trigger events themselves. Lethal
@@ -5348,9 +5444,24 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
         state,
         &sba_events,
     ));
-    new_triggers.extend(triggers_from_events(state, &sba_events, None));
+    #[cfg(feature = "eternal-fixtures")]
+    if eternal_checkpoint_hold {
+        crate::eternal_vintage_e7b_v1::dredge::store_checkpoint_captures(
+            state,
+            std::mem::take(&mut new_triggers),
+        );
+    }
+    let post_sba = triggers_from_events(state, &sba_events, None);
+    #[cfg(feature = "eternal-fixtures")]
+    if eternal_checkpoint_hold {
+        new_triggers = crate::eternal_vintage_e7b_v1::dredge::take_captures(state);
+    }
+    new_triggers.extend(post_sba);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c6a_v1::clear_collected_exile_batches(state);
+    if dredge_deferred {
+        new_triggers.append(&mut state.engine.pending_triggers);
+    }
 
     // 603.3d: a triggered ability requiring targets is removed from the
     // stack-placement queue when no complete legal target assignment exists.

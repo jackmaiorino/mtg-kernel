@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 use std::hash::{Hash, Hasher};
 
 mod hallow_replay;
-pub(crate) use hallow_replay::legacy_hallow_only_v1;
+pub(crate) use hallow_replay::{
+    legacy_damage_order_v1, legacy_hallow_only_v1, legacy_sphere_order_v1,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationV1 {
@@ -155,9 +157,12 @@ pub enum GeneralChoiceV36 {
 /// entry-card consumer or changing the public target-selection vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HallowCheckpointV1 {
-    /// Keep the current Circle/global frontier through every answer.
+    /// Keep #866's Circle/global frontier through every answer.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub circle_global_order: bool,
+    /// New operations retain their replacement rules across every answer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub expanded_damage_order: bool,
     pub original: Box<GameState>,
     pub operation: OperationV1,
     pub answers: Vec<GeneralAnswerV36>,
@@ -1001,6 +1006,21 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn hallow_decision(choice: &HallowChoiceV1) -> Decision {
+    if let Some(redirect) = &choice.redirect_sources {
+        return Decision::ChooseEffectTargets {
+            player: choice.chooser,
+            source: redirect.receiver.object,
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            can_finish: false,
+            legal_targets: redirect
+                .sources
+                .iter()
+                .map(|source| Target::Object(source.object))
+                .collect(),
+        };
+    }
     if choice.mixed() {
         return Decision::ChooseEffectOption {
             player: choice.chooser,
@@ -1118,14 +1138,16 @@ fn request_hallow(
 pub(crate) fn prepare_hallow_batch(
     state: &mut GameState,
     events: &mut Vec<ProposedEvent>,
-) -> Result<bool, String> {
+) -> Result<crate::eternal_prevention_order_v1::BatchDamageResultV1, String> {
     if !(crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
         || crate::eternal_prevention_order_v1::may_need_choice(state))
         || !events
             .iter()
             .any(|event| matches!(event, ProposedEvent::Damage(_)))
     {
-        return Ok(false);
+        return Ok(
+            crate::eternal_prevention_order_v1::BatchDamageResultV1::Complete(Default::default()),
+        );
     }
     let runner = state
         .engine
@@ -1134,7 +1156,7 @@ pub(crate) fn prepare_hallow_batch(
         .as_mut()
         .ok_or("Hallow damage batch lacks its enclosing operation")?;
     if runner.checkpoint.is_some() {
-        return Ok(true);
+        return Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Suspended);
     }
     let batch = match runner.hallow_batch {
         None => 0,
@@ -1492,6 +1514,7 @@ fn replay_general_input_v1(
             checkpoint.engine.linked_aura_operation_v1.pending_hallow_v1 =
                 Some(Box::new(HallowCheckpointV1 {
                     circle_global_order: hallow_replay::stamp_circle_global(),
+                    expanded_damage_order: hallow_replay::stamp_checkpoint(),
                     original: Box::new(original.clone()),
                     operation: operation.clone(),
                     answers: answers.to_vec(),
@@ -2226,6 +2249,20 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
         validate_checkpoint_owners(state)?;
         let order = hallow_replay::recorded_order(state, pending)?;
         let prevention = match action {
+            Action::ChooseEffectTarget(Target::Object(id))
+                if pending.choice.redirect_sources.is_some() =>
+            {
+                let source = pending
+                    .choice
+                    .redirect_sources
+                    .as_ref()
+                    .unwrap()
+                    .sources
+                    .iter()
+                    .find(|source| source.object == id)
+                    .ok_or("damage source is outside the redirect menu")?;
+                HallowPreventionV1::RedirectSource(*source)
+            }
             Action::ChooseEffectTarget(Target::Player(beneficiary)) if !pending.choice.mixed() => {
                 HallowPreventionV1::Hallow(beneficiary)
             }

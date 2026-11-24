@@ -634,6 +634,14 @@ fn eternal_trigger(t: crate::eternal_cards_v1::EternalTriggerV1) -> Result<Value
             crate::eternal_cube_c6a_v1::C6aTriggerV1::EachEndStepIfCardLeftYourGraveyardV1 => "EachEndStepIfCardLeftYourGraveyardV1",
             crate::eternal_cube_c6a_v1::C6aTriggerV1::CardsExiledFromYourLibraryOrGraveyardV1 => "CardsExiledFromYourLibraryOrGraveyardV1",
         }}),
+        E::C7cV1(v) => json!({"C7cV1": match v {
+            crate::eternal_cube_c7c_v1::C7cTriggerV1::EntersIfColorSpentAtLeastV1 { color, amount } => {
+                json!({"EntersIfColorSpentAtLeastV1": {"color": color, "amount": amount}})
+            }
+            crate::eternal_cube_c7c_v1::C7cTriggerV1::DiesWithoutMinusOneCountersV1 => {
+                json!("DiesWithoutMinusOneCountersV1")
+            }
+        }}),
         _ => return Err(unsupported()),
     })
 }

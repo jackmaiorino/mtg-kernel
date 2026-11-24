@@ -9,7 +9,7 @@ use mtg_kernel::card_def::{
     CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
-use mtg_kernel::event::{propose_and_commit, ProposedEvent};
+use mtg_kernel::event::{propose_and_commit, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::{ManaColor, Pip};
@@ -1109,21 +1109,34 @@ fn pompous_battlemage_enters_prepared_and_its_improvised_act_copy_may_loot() {
 
 #[test]
 fn pompous_battlemage_improvised_act_draw_may_be_dredged() {
-    // "If you do, draw a card": the draw after the discard may be replaced by
-    // dredge (702.52), here Golgari Thug's dredge 4.
+    improvised_act_draw_dredged(P0);
+}
+
+#[test]
+fn pompous_battlemage_improvised_act_draw_may_be_dredged_by_p1() {
+    improvised_act_draw_dredged(P1);
+}
+
+/// "If you do, draw a card": the draw after the discard may be replaced by
+/// dredge (702.52), here Golgari Thug's dredge 4. The dredge captures the
+/// discard's triggers while the prepared copy is resolving; its exile cast
+/// permission must survive until the copy leaves the stack.
+fn improvised_act_draw_dredged(player: PlayerId) {
     let mut state = plains();
-    let battlemage = put(&mut state, P0, "Pompous Battlemage", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::R], 0);
+    state.active_player = player;
+    state.priority_player = player;
+    let battlemage = put(&mut state, player, "Pompous Battlemage", Zone::Hand);
+    pool(&mut state, player, &[ManaColor::R], 0);
     cast(&mut state, battlemage, &[]);
     settled(&mut state);
     let act = exile_copies(&state, "Improvised Act")[0];
-    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
-    let fodder = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::R], 0);
-    let library = state.players[0].library.len();
+    let thug = put(&mut state, player, "Golgari Thug", Zone::Graveyard);
+    let fodder = put(&mut state, player, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, player, &[ManaColor::R], 0);
+    let library = state.players[player.index()].library.len();
     cast(&mut state, act, &[]);
     let mut offered = Vec::new();
-    settle_with(&mut state, |_, decision| match decision {
+    settle_with(&mut state, |state, decision| match decision {
         Decision::ChooseEffectTargets { legal_targets, .. }
             if legal_targets.contains(&Target::Object(fodder)) =>
         {
@@ -1135,14 +1148,44 @@ fn pompous_battlemage_improvised_act_draw_may_be_dredged() {
             ..
         } => {
             offered.push((player, legal_targets));
+            assert!(state
+                .eternal_v1
+                .as_ref()
+                .unwrap()
+                .e7b
+                .prepare_copies
+                .contains(&act));
             Action::ChooseEffectTarget(Target::Object(thug))
         }
         other => first_answer(other),
     });
-    assert_eq!(offered, vec![(P0, vec![Target::Object(thug)])], "dredge");
+    assert_eq!(
+        offered,
+        vec![(player, vec![Target::Object(thug)])],
+        "dredge"
+    );
     assert_eq!(zone(&state, fodder), Zone::Graveyard, "discarded");
     assert_eq!(zone(&state, thug), Zone::Hand, "dredged instead of drawing");
-    assert_eq!(state.players[0].library.len(), library - 4);
+    assert_eq!(state.players[player.index()].library.len(), library - 4);
+    assert!(!state.exile.contains(&act));
+    assert!(!state.players[player.index()].graveyard.contains(&act));
+    assert!(!state.stack.iter().any(|item| item.source == act));
+    assert!(!state
+        .eternal_v1
+        .as_ref()
+        .unwrap()
+        .e7b
+        .prepare_copies
+        .contains(&act));
+    assert!(!state.engine.event_history.iter().any(|event| matches!(
+        event,
+        CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == act
+    )));
+    assert_eq!(
+        power_toughness(&state, battlemage),
+        (2, 2),
+        "prowess: the copy was a noncreature spell cast"
+    );
 }
 
 #[test]

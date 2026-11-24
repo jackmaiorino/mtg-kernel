@@ -206,6 +206,8 @@ pub(crate) mod continuous_source_frame_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
 pub mod creature_types_v60;
+#[cfg(feature = "eternal-fixtures")]
+pub mod cube_draft_v1;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
 pub mod embercleave_consumer_v1;
@@ -332,6 +334,12 @@ pub mod eternal_cube_c6a_v1;
 pub mod eternal_cube_c6b_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C6c).
 pub mod eternal_cube_c6c_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7a).
+pub mod eternal_cube_c7a_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7b).
+pub mod eternal_cube_c7b_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C7c).
+pub mod eternal_cube_c7c_v1;
 /// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
 /// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
 /// Mystic Forge).

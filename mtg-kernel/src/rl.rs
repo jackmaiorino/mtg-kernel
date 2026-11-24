@@ -2927,7 +2927,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             accept_crystal || ordered_full_text,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
-        exile_play_permissions: exile_play_permissions_public_v2(state)?,
+        exile_play_permissions: exile_play_permissions_public_v2(state, acting_player)?,
         engine_context: if accept_akroma {
             engine_context_v2_conqueror_inner_v49_fake_v50(
                 state,
@@ -6265,12 +6265,13 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             let definition = CARD_DEFS
                 .get(pending.source_contract.card_def as usize)
                 .ok_or_else(|| RlContractError("Escape source definition is absent".into()))?;
-            let escape = definition
-                .escape
-                .as_ref()
-                .ok_or_else(|| RlContractError("Escape cost definition is absent".into()))?;
+            let escape = if pending.source_contract.breach_escape() {
+                crate::eternal_lurrus_v1::granted_escape_cost(definition)
+            } else {
+                definition.escape.as_ref().map(|escape| escape.cost)
+            }
+            .ok_or_else(|| RlContractError("Escape cost definition is absent".into()))?;
             let required_count = escape
-                .cost
                 .iter()
                 .find_map(|component| match component {
                     crate::card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(count) => {
@@ -11495,14 +11496,16 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
             || state.engine.linked_exile_records[..index]
                 .iter()
                 .any(|other| {
+                    let allows_duplicate_source = until_leaves
+                        || matches!(
+                            definition.name,
+                            "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
+                        )
+                        || (cfg!(feature = "eternal-fixtures")
+                            && definition.name == "Tidehollow Sculler");
                     (other.exiled == record.exiled
                         && other.exiled_zone_change_count == record.exiled_zone_change_count)
-                        || (other.source == record.source
-                            && !until_leaves
-                            && !matches!(
-                                definition.name,
-                                "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
-                            ))
+                        || (other.source == record.source && !allows_duplicate_source)
                 })
         {
             return Err(RlContractError(
@@ -11517,6 +11520,9 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
         })?;
         let source_matches = match definition.name {
             "Mesmeric Fiend" | "Journey to Nowhere" => {
+                crate::engine::source_card_def_matches(state, record.source, source.card_def)
+            }
+            "Tidehollow Sculler" if cfg!(feature = "eternal-fixtures") => {
                 crate::engine::source_card_def_matches(state, record.source, source.card_def)
             }
             _ => source.card_def == record.source.card_def,
@@ -11979,22 +11985,37 @@ fn continuous_effects_common_v2(
     Ok(out)
 }
 
-fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPermissionPublicV2>> {
+fn exile_play_permissions_public_v2(
+    state: &GameState,
+    acting_player: PlayerId,
+) -> Result<Vec<ExilePlayPermissionPublicV2>> {
     let mut out = Vec::new();
     for perm in &state.engine.exile_play_permissions {
         // Validate this grant's incarnation. Looking up any active grant for
         // the same holder/object can incorrectly revive an older grant when
         // the card leaves exile and later returns with a fresh permission.
-        if perm.zone_change_generation != state.objects.get(perm.object).zone_change_count {
+        let obj = state.objects.get(perm.object);
+        if perm.zone_change_generation != obj.zone_change_count {
             continue;
         }
+        // Concealed face-down exiled cards (Headliner Scarlett, Gandalf's
+        // Flameshape) grant "play" for both lands and spells. Never leak
+        // whether a concealed card is a land or nonland to a non-looker.
+        let hidden_from_observer = obj
+            .v4
+            .face_down_v1
+            .is_some_and(|face| face.lookers & (1u8 << acting_player.index()) == 0);
         out.push(ExilePlayPermissionPublicV2 {
             without_mana_cost: perm.without_mana_cost,
             object: card_ref(state, perm.object)?,
             holder: perm.holder.into(),
-            play_or_cast: match perm.play_or_cast {
-                PlayOrCast::Play => PlayOrCastV2::Play,
-                PlayOrCast::Cast => PlayOrCastV2::Cast,
+            play_or_cast: if hidden_from_observer {
+                PlayOrCastV2::Play
+            } else {
+                match perm.play_or_cast {
+                    PlayOrCast::Play => PlayOrCastV2::Play,
+                    PlayOrCast::Cast => PlayOrCastV2::Cast,
+                }
             },
             zone_change_generation: perm.zone_change_generation,
             expiry: match perm.expiry {
@@ -12008,9 +12029,10 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
                     holder_turn_started,
                 },
                 // The frozen V2 projection has no unbounded expiry. Warp's
-                // later-turn permission is projected as a not-yet-started
-                // multi-turn permission, its nearest public meaning.
-                PlayPermissionExpiry::LaterTurn { .. } => {
+                // later-turn permission and Flameshape's unbounded permission
+                // are projected as a not-yet-started multi-turn permission,
+                // their nearest public meaning.
+                PlayPermissionExpiry::LaterTurn { .. } | PlayPermissionExpiry::AsLongAsExiled => {
                     PlayPermissionExpiryV2::UntilHoldersNextTurn {
                         holder_turn_started: false,
                     }
@@ -12407,6 +12429,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     .iter()
                     .flat_map(|pending| pending.waiting_triggers()),
             )
+            .chain(dredge_waiting_triggers(state))
             .map(|p| {
                 let prepared_source = match prepared_scope {
                     Some(CommonProjectionScopeV42::NextFiveV59) => {
@@ -14503,6 +14526,7 @@ fn owned_draw_pending_source_ref(
                 .iter()
                 .flat_map(|legend| legend.waiting_triggers()),
         )
+        .chain(dredge_waiting_triggers(state))
         .filter(|row| *row == pending)
         .count()
         != 1
@@ -14542,6 +14566,20 @@ fn owned_draw_pending_source_ref(
         zone,
         zone_change_count: generation,
     }))
+}
+
+pub(crate) fn dredge_waiting_triggers(
+    state: &GameState,
+) -> std::slice::Iter<'_, crate::trigger::PendingTrigger> {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        crate::eternal_vintage_e7b_v1::dredge::waiting_triggers(state).iter()
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    {
+        let _ = state;
+        [].iter()
+    }
 }
 
 fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {

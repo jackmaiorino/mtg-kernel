@@ -1,0 +1,4 @@
+[
+  {"name": "Fixture Fenced Spell", "reason": "excluded colourless spell for fence guarantee test"},
+  {"name": "Fixture Fenced Land", "reason": "excluded nonbasic land for fence guarantee test"}
+]
