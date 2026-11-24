@@ -362,15 +362,20 @@ class LibraryRunnerTests(unittest.TestCase):
     def test_another_library_is_refused_in_list_and_part_mode(self):
         # Cargo runs every workspace library's tests for --workspace --lib. Only mtg-kernel's are listed,
         # planned and inventoried, so another library's would run unrecorded in the build job and in every part.
+        # Near misses of mtg-kernel's executable (mtg_kernel-<hash>) are other libraries too.
         ran = []
         for environment in ({workspace.LIST_ENV: "list.json"},
                             {workspace.SHARD_ENV: "[1, 4]", workspace.EXECUTED_ENV: "out.json"}):
-            with self.subTest(environment=environment), \
-                    patch.object(workspace.subprocess, "run", lambda *args, **_: ran.append(args)), \
-                    patch.object(workspace, "run_suite", lambda *args, **_: ran.append(args)), \
-                    patch.dict(os.environ, environment), \
-                    self.assertRaisesRegex(ValueError, "Only the mtg-kernel library's tests"):
-                workspace.run_tests("target/release/deps/other_lib-abc", [])
+            for name in ("other_lib-abc", "mtg_kernel_extra-abc", "mtg_kernel", "mtg_kernelx-abc", "mtg-kernel-abc"):
+                with self.subTest(environment=environment, name=name), \
+                        patch.object(workspace.subprocess, "run", lambda *args, **_: ran.append(args)), \
+                        patch.object(workspace, "run_suite", lambda *args, **_: ran.append(args)), \
+                        patch.object(workspace, "list_library", lambda *args: ran.append(args) or 0), \
+                        patch.object(workspace, "run_library_part", lambda *args: ran.append(args) or 0), \
+                        patch.object(workspace, "run_library", lambda *args: ran.append(args) or 0), \
+                        patch.dict(os.environ, environment), \
+                        self.assertRaisesRegex(ValueError, "Only the mtg-kernel library's tests"):
+                    workspace.run_tests(f"target/release/deps/{name}", [])
         self.assertEqual(ran, [])
 
     def test_an_unsplit_run_keeps_every_executable_as_before(self):
