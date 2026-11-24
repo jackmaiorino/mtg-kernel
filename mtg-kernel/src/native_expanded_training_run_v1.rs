@@ -1918,6 +1918,54 @@ fn flat_identity_declared_v1(
     })
 }
 
+/// The engine identity recorded for a checkpoint this trainer wrote, read
+/// from the iteration receipt that commits it: the checkpoint sits in
+/// `iterations/N/attempt-A/update/` beside its `update.json`, which must pin
+/// it, and `iterations/N/complete.json` must pin that `update.json`. Paths
+/// are taken relative to the checkpoint, so a moved run still resolves.
+/// None for any other checkpoint, a receipt written before identities were
+/// recorded, or anything unreadable.
+fn recorded_checkpoint_engine_v1(checkpoint: &PinnedFileV1) -> Option<Value> {
+    let update_directory = checkpoint.path.parent()?;
+    let update_path = update_directory.join("update.json");
+    let metadata = fs::metadata(&update_path).ok()?;
+    if !metadata.is_file() || metadata.len() > SMALL_CAP {
+        return None;
+    }
+    let update_bytes = fs::read(&update_path).ok()?;
+    let update: Value = serde_json::from_slice(&update_bytes).ok()?;
+    if update["checkpoint"]["sha256"] != checkpoint.sha256.as_str() {
+        return None;
+    }
+    let receipt_path = update_directory.parent()?.parent()?.join("complete.json");
+    let receipt = read_json(&receipt_path, SMALL_CAP).ok()?;
+    if receipt["update"]["sha256"] != digest(&update_bytes) {
+        return None;
+    }
+    receipt.get("engine").cloned()
+}
+
+/// The one line a run prints when its start checkpoint's recorded engine is
+/// not `running` or is not recorded. A fresh start (no checkpoint) and a
+/// match print nothing. Recording only: the run continues either way.
+fn start_checkpoint_engine_note_v1(
+    source: &ExpandedModelSourceV1,
+    running: &Value,
+) -> Option<String> {
+    let checkpoint = source.checkpoint.as_ref()?;
+    let running_text = crate::engine_identity_v1::describe_engine_identity_v1(running);
+    match recorded_checkpoint_engine_v1(checkpoint) {
+        Some(recorded) if recorded == *running => None,
+        Some(recorded) => Some(format!(
+            "native expanded training: note: the start checkpoint was written by a different engine ({}); this build is {running_text}; continuing",
+            crate::engine_identity_v1::describe_engine_identity_v1(&recorded)
+        )),
+        None => Some(format!(
+            "native expanded training: note: the start checkpoint has no recorded engine identity; this build is {running_text}; continuing"
+        )),
+    }
+}
+
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
 /// only at completed iteration boundaries; it never changes the saved plan.
 pub fn run_native_expanded_training_v1(
@@ -1958,6 +2006,14 @@ pub fn run_native_expanded_training_v1(
         .map_err(err)?;
     lock.try_lock()
         .map_err(|e| format!("run already has an active writer or cannot lock: {e}"))?;
+    // Every completion record names the engine that wrote it, outside every
+    // digest (`engine_identity_v1`). A start checkpoint written by another
+    // engine, or by one that recorded none, is reported on stderr (stdout
+    // stays JSON lines) and never refused.
+    let engine = crate::engine_identity_v1::engine_identity_v1();
+    if let Some(note) = start_checkpoint_engine_note_v1(&config.initial_source, &engine) {
+        eprintln!("{note}");
+    }
     // A converted (no-state-digest) run loads its initial source before the
     // plan, which records its validated effective identity and contract. An
     // unconverted run keeps its plan bytes and loads afterwards, as before.
@@ -2390,7 +2446,7 @@ pub fn run_native_expanded_training_v1(
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
-            "output_identity":after});
+            "output_identity":after,"engine":engine});
         if config.record_process_cpu {
             receipt["driver_process_cpu_seconds"] =
                 json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
@@ -2458,17 +2514,28 @@ pub fn run_native_expanded_training_v1(
     let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
         "planned_iterations":config.iterations.len(),"iterations":receipts,"source":current,
         "actual_identity":current_identity,"device":"cpu","gpu_ordinal":null,
-        "loss_identity":config.loss_selection.loss_identity_v1(),"strength_claim":false});
+        "loss_identity":config.loss_selection.loss_identity_v1(),"strength_claim":false,
+        "engine":engine});
     config.update_backend.record_run_execution_v1(&mut result);
     record_loss_selection_execution(config, &mut result);
     record_collection_execution(config, &mut result);
     let final_path = root.join("completion.json");
     if complete {
         if final_path.exists() {
-            check(
-                read_json(&final_path, SMALL_CAP)? == result,
-                "saved run completion differs",
-            )?;
+            let saved = read_json(&final_path, SMALL_CAP)?;
+            // The completion names the engine that wrote it. run.json binds
+            // the commit and tracked tree, not the clean status, so a rerun by
+            // another build of the same plan keeps the saved engine rather
+            // than refusing on it.
+            match saved.get("engine") {
+                Some(recorded) => result["engine"] = recorded.clone(),
+                None => {
+                    if let Some(fields) = result.as_object_mut() {
+                        fields.remove("engine");
+                    }
+                }
+            }
+            check(saved == result, "saved run completion differs")?;
         } else {
             publish(root, "completion.json", &result)?;
         }
@@ -5616,7 +5683,38 @@ mod tests {
             let checkpoint = parse_pin(&update, "checkpoint").unwrap();
             let checkpoint = read_pin_bounded(&checkpoint, ARTIFACT_CAP).unwrap();
             assert_eq!(checkpoint["training_math"], "portable-math-v1");
+            // The iteration receipt names its engine; the update receipt, the
+            // checkpoint and the output identity (every digest) do not.
+            assert_eq!(
+                receipt["engine"],
+                crate::engine_identity_v1::engine_identity_v1()
+            );
+            assert!(receipt["output_identity"].get("engine").is_none());
+            assert!(update.get("engine").is_none());
+            assert!(checkpoint.get("engine").is_none());
         }
+        let engine = crate::engine_identity_v1::engine_identity_v1();
+        assert_eq!(result["engine"], engine);
+        let completion_path = config.output_directory.join("completion.json");
+        let mut saved = read_json(&completion_path, SMALL_CAP).unwrap();
+        assert_eq!(saved["engine"], engine);
+        // Starting from this build's own final checkpoint prints nothing;
+        // the same checkpoint under another running engine prints the line.
+        let last: ExpandedModelSourceV1 = serde_json::from_value(result["source"].clone()).unwrap();
+        assert_eq!(start_checkpoint_engine_note_v1(&last, &engine), None);
+        let mut other = engine.clone();
+        other["git_commit"] = json!("0".repeat(40));
+        let line = start_checkpoint_engine_note_v1(&last, &other).unwrap();
+        assert!(line.contains("different engine"), "{line}");
+        // A completion another build of the same plan wrote (here, with the
+        // other clean status, which run.json does not bind) is kept on a
+        // rerun, not refused, and the train state is unchanged.
+        saved["engine"]["git_clean"] = json!(!engine["git_clean"].as_bool().unwrap());
+        fs::write(&completion_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let rerun = run_native_expanded_training_v1(&config, None).unwrap();
+        assert_eq!(rerun["engine"], saved["engine"]);
+        assert_eq!(rerun["actual_identity"], result["actual_identity"]);
+        assert_eq!(read_json(&completion_path, SMALL_CAP).unwrap(), saved);
         let mut serial = config.clone();
         serial.collection_workers = 1;
         serial.preparation_workers = 1;
@@ -5640,6 +5738,103 @@ mod tests {
             result["actual_identity"]["state_sha256"],
             PORTABLE_PARALLEL_RUN_STATE_SHA256_V1
         );
+    }
+
+    /// mtg-kernel#921: a run starting from a checkpoint finds the engine its
+    /// iteration receipt recorded, and reports a different or missing one in
+    /// one line; a match or a fresh start reports nothing.
+    #[test]
+    fn start_checkpoint_engine_note_reports_a_different_or_missing_engine_only() {
+        let root = temporary_directory("engine-note");
+        let engine = crate::engine_identity_v1::engine_identity_v1();
+        let iteration = root.join("run").join("iterations").join("000003");
+        let update_directory = iteration.join("attempt-000001").join("update");
+        fs::create_dir_all(&update_directory).unwrap();
+        let checkpoint_bytes = br#"{"checkpoint":"fixture"}"#;
+        fs::write(update_directory.join("checkpoint.json"), checkpoint_bytes).unwrap();
+        let checkpoint = PinnedFileV1 {
+            path: update_directory.join("checkpoint.json"),
+            sha256: digest(checkpoint_bytes),
+        };
+        let update_bytes =
+            serde_json::to_vec(&json!({"complete":true,"checkpoint":checkpoint})).unwrap();
+        fs::write(update_directory.join("update.json"), &update_bytes).unwrap();
+        let update = PinnedFileV1 {
+            path: update_directory.join("update.json"),
+            sha256: digest(&update_bytes),
+        };
+        let write_receipt = |engine: Option<&Value>| {
+            let mut receipt = json!({"iteration":3,"update":update});
+            if let Some(engine) = engine {
+                receipt["engine"] = engine.clone();
+            }
+            fs::write(
+                iteration.join("complete.json"),
+                serde_json::to_vec(&receipt).unwrap(),
+            )
+            .unwrap();
+        };
+        let source = |checkpoint: Option<PinnedFileV1>| ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: root.join("descriptor.json"),
+                sha256: "0".repeat(64),
+            },
+            feature_transfer: crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: String::new(),
+                expected_feature_encoding_digest: String::new(),
+            },
+            checkpoint,
+            s_learner: None,
+            w_learner: None,
+        };
+        let note =
+            |source: &ExpandedModelSourceV1| start_checkpoint_engine_note_v1(source, &engine);
+        let unrecorded = |source: &ExpandedModelSourceV1| {
+            let line = note(source).expect("a line");
+            assert!(line.contains("no recorded engine identity"), "{line}");
+            assert!(line.contains(env!("MTG_KERNEL_BUILD_GIT_HEAD")), "{line}");
+        };
+        // A fresh start has no checkpoint to compare.
+        assert_eq!(note(&source(None)), None);
+        let started = source(Some(checkpoint.clone()));
+        // The iteration has not committed the checkpoint.
+        unrecorded(&started);
+        // The same engine: nothing.
+        write_receipt(Some(&engine));
+        assert_eq!(note(&started), None);
+        // Another engine: one line naming both.
+        let mut other = engine.clone();
+        other["git_commit"] = json!("f".repeat(40));
+        other["rules_version"] = json!(0);
+        write_receipt(Some(&other));
+        let line = note(&started).expect("a line");
+        assert!(line.contains("different engine"), "{line}");
+        assert!(line.contains(&"f".repeat(40)), "{line}");
+        assert!(line.contains("rules version 0"), "{line}");
+        assert!(line.contains(env!("MTG_KERNEL_BUILD_GIT_HEAD")), "{line}");
+        assert!(!line.contains('\n'), "{line}");
+        // A receipt written before engines were recorded.
+        write_receipt(None);
+        unrecorded(&started);
+        // A receipt or update that does not commit this checkpoint is not
+        // its record.
+        write_receipt(Some(&engine));
+        let mut changed = checkpoint.clone();
+        changed.sha256 = "1".repeat(64);
+        unrecorded(&source(Some(changed)));
+        let mut respaced = update_bytes.clone();
+        respaced.push(b'\n');
+        fs::write(update_directory.join("update.json"), &respaced).unwrap();
+        unrecorded(&started);
+        fs::write(update_directory.join("update.json"), &update_bytes).unwrap();
+        assert_eq!(note(&started), None);
+        // A checkpoint outside a run's layout.
+        let loose = root.join("loose-checkpoint.json");
+        fs::write(&loose, checkpoint_bytes).unwrap();
+        unrecorded(&source(Some(PinnedFileV1 {
+            path: loose,
+            sha256: digest(checkpoint_bytes),
+        })));
     }
 
     /// The portable math covers the CPU update without the recovery loss,
