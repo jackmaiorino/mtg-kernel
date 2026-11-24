@@ -7614,7 +7614,9 @@ pub(crate) fn validated_life_ward_observation_targeter(
 
 /// Legacy observations can infer the binding only when exactly one live item
 /// targets the Ward source. Keep this coverage restriction at their boundary,
-/// rather than halting the rules engine for successor-aware consumers.
+/// rather than halting the rules engine for successor-aware consumers. The
+/// schema 5 public contract reports each binding instead
+/// (`PublicObservationProjectionV5::ward_payments`) and skips this check.
 pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), String> {
     crate::engine::validate_legacy_variable_cast_targets(state)?;
     let pending = state

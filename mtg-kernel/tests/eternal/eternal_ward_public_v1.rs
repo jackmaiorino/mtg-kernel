@@ -329,23 +329,3 @@ fn schema_5_binds_each_generic_ward_trigger_when_two_spells_target_its_source() 
         )
     );
 }
-
-/// Temporary survey (not committed): the cube cards with Ward.
-#[test]
-fn survey_cube_ward_cards() {
-    let Ok(text) = std::fs::read_to_string("N:/cube-fence-20261124/census-f7bc/cube.json") else {
-        return;
-    };
-    let cube: Value = serde_json::from_str(&text).unwrap();
-    for card in cube["cards"].as_array().unwrap() {
-        let name = card["name"].as_str().unwrap();
-        if let Some(id) = mtg_kernel::card_def::card_id_by_name(name) {
-            let def = &CARD_DEFS[id as usize];
-            if def.ward_cost.is_some() || name == "Hexing Squelcher" {
-                eprintln!("WARD-SURVEY {name}: {:?}", def.ward_cost);
-            }
-        } else {
-            eprintln!("WARD-SURVEY missing {name}");
-        }
-    }
-}

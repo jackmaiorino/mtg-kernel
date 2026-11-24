@@ -375,6 +375,7 @@ fn build(
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
             meddling_mage_names: None,
+            ward_payments: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
