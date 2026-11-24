@@ -7037,7 +7037,11 @@ fn trigger_matches(
                 spell,
                 controller: caster,
             },
-        ) => *caster == controller && crate::engine::object_color_mask(state, *spell) & mask != 0,
+        ) => {
+            let effective_mask = crate::text_color_change_v1::text_color_mask(state, source, mask);
+            *caster == controller
+                && crate::engine::object_color_mask(state, *spell) & effective_mask != 0
+        }
         (
             TriggerCondition::CastSpellDuringOpponentsTurn,
             CommittedEvent::SpellCast {
