@@ -1020,6 +1020,9 @@ pub(crate) struct Game {
     /// acting player holds a card with that single spell name, which no
     /// action casts.
     pub(crate) mage_held_names: usize,
+    /// Decisions taken while an Escape cast is staged, whose observation
+    /// carries its `staged_escape` record.
+    pub(crate) staged_escape_decisions: usize,
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -1066,6 +1069,7 @@ pub(crate) fn play_observed(
     let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
     let mut circle_choices = 0;
     let (mut mage_choices, mut mage_held_names) = ([0; 2], 0);
+    let mut staged_escape_decisions = 0;
     let mut miracle_reveals = BTreeSet::new();
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
@@ -1133,10 +1137,20 @@ last actions:
                 circle_choices,
                 mage_choices,
                 mage_held_names,
+                staged_escape_decisions,
             };
         }
         let decision = &reply["decision"];
         collect_overloaded_spells(decision, &mut overloaded_spells);
+        // The schema 5 record is an object while an Escape cast is staged
+        // and otherwise absent from the reply bytes, never null.
+        let staged = decision["observation"]["projection"]["staged_escape"].is_object();
+        assert_eq!(
+            raw.contains("\"staged_escape\""),
+            staged,
+            "seed={seed}: {raw}"
+        );
+        staged_escape_decisions += usize::from(staged);
         // No noncreature spell over the caster's lands is offered while an
         // opponent controls Lavinia, Azorius Renegade (wave S1l).
         for action in decision["legal_actions"].as_array().unwrap() {
@@ -1367,6 +1381,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
     let mut companion_actions = 0;
+    let mut staged_escape_decisions = 0;
     // Every deck casts a spell in its two ranked games (one per seat); a
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1407,6 +1422,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             continue;
         };
         companion_actions += game.companion_actions;
+        staged_escape_decisions += game.staged_escape_decisions;
         if let Policy::Ranked = policy {
             *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
             *ranked_casts.entry(second.archetype.as_str()).or_default() += game.casts_by_seat[1];
@@ -1443,6 +1459,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
         companion_actions > 0,
         "no game put a companion into its owner's hand"
     );
+    // Escape casts are followed (Underworld Breach, Uro, Sleep of the Dead).
+    println!("staged Escape decisions: {staged_escape_decisions}");
+    assert!(staged_escape_decisions > 0, "no game staged an Escape cast");
 }
 
 /// A deck of `lands` and four copies of each of nine spells.

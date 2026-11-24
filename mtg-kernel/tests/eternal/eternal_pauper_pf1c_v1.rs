@@ -4169,6 +4169,13 @@ fn public_observation(state: &GameState) -> Result<Value, String> {
 fn staged_escape(state: &GameState) -> Value {
     let observation = public_observation(state).unwrap_or_else(|error| panic!("{error}"));
     let staged = observation["projection"]["staged_escape"].clone();
+    // Present exactly while the engine stages an Escape cast; otherwise the
+    // key is absent from the serialized bytes (not null, not empty).
+    let escaping = state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        pending.source_contract.cast_method == mtg_kernel::state::CastMethodV4::Escape
+    });
+    assert_eq!(staged.is_object(), escaping, "{staged}");
+    assert_eq!(observation.to_string().contains("staged_escape"), escaping);
     if !staged.is_null() {
         let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
         let legacy = mtg_kernel::rl::observe_policy_v5(state, &surface, P0, 0, 0, 0, 1);
@@ -4211,6 +4218,7 @@ fn public_escape_stages_nethergoyfs_printed_and_breach_costs() {
         ]
         .map(|name| put(&mut state, P0, name, Zone::Graveyard));
         pool(&mut state, P0, &[ManaColor::B], 2);
+        assert!(staged_escape(&state).is_null());
         cast(&mut state, goyf, &[]);
         let Decision::ChooseEffectOption { option_count, .. } = next(&mut state) else {
             panic!("missing cast route choice")
@@ -4498,11 +4506,9 @@ impl EscapeEvents {
     }
 }
 
-/// Escape cards and Underworld Breach play each other through public
-/// sessions, both seats, with ranked and seeded random actions. Every game
-/// follows its Escape casts to a natural end.
-#[test]
-fn public_escape_decks_finish_and_replay_through_public_sessions() {
+/// The Nethergoyf and Breach, Uro and Bloodbraid Challenger, and Phlage
+/// decks.
+fn escape_decks() -> [CustomDeckV1; 3] {
     let graveyard = crate::eternal_catalog_v1::stress_deck(
         &[("Swamp", 12), ("Mountain", 12)],
         [
@@ -4545,6 +4551,15 @@ fn public_escape_decks_finish_and_replay_through_public_sessions() {
             "Swords to Plowshares",
         ],
     );
+    [graveyard, titans, boros]
+}
+
+/// Escape cards and Underworld Breach play each other through public
+/// sessions, both seats, with ranked and seeded random actions. Every game
+/// follows its Escape casts to a natural end.
+#[test]
+fn public_escape_decks_finish_and_replay_through_public_sessions() {
+    let [graveyard, titans, boros] = escape_decks();
     let mut events = EscapeEvents::default();
     let mut games = 0;
     for (pair, seed) in [
@@ -4595,4 +4610,50 @@ fn public_escape_decks_finish_and_replay_through_public_sessions() {
         events.card_type_picks > 0,
         "no Nethergoyf escape exile was chosen"
     );
+}
+
+/// Schema 4 has no staged Escape record: the same decks keep their historical
+/// refusal there, and no reply carries the schema 5 field.
+#[test]
+fn public_escape_schema_4_keeps_the_refusal_and_its_bytes() {
+    use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
+    let [graveyard, titans, _] = escape_decks();
+    let mut refusals = 0;
+    for seed in 0..12_u64 {
+        let mut server = LimitedJsonlServerV1::new_with_london_mulligans_v1();
+        let mut request = serde_json::json!({"schema_version": 4, "request_type": "reset",
+            "request_id": "reset", "decks": [graveyard, titans], "episode_id": seed,
+            "env_seed": 0x4553_3400 + seed, "max_physical_decisions": 65536,
+            "max_policy_steps": 20000})
+        .to_string();
+        let mut random = 0x4553_3400 + seed;
+        for index in 0.. {
+            let raw = server.handle_line(&request);
+            assert!(!raw.contains("staged_escape"), "seed={seed}: {raw}");
+            let reply: Value = serde_json::from_str(&raw).unwrap();
+            assert_ne!(reply["response_type"], "error", "seed={seed}: {reply}");
+            if reply["response_type"] == "terminal" {
+                let reason = reply["terminal"]["terminal_reason"].as_str().unwrap();
+                if reason.contains("staged Escape") {
+                    assert_eq!(
+                        reason,
+                        "fail_closed:observation:policy schema v5 cannot represent a staged                          Escape graveyard-exile prefix; a versioned object-cost successor is                          required"
+                    );
+                    refusals += 1;
+                }
+                break;
+            }
+            let decision = &reply["decision"];
+            let actions = decision["legal_actions"].as_array().unwrap();
+            let pick = &actions[(crate::eternal_catalog_v1::splitmix64(&mut random)
+                % actions.len() as u64) as usize];
+            request = serde_json::json!({"schema_version": 4, "request_type": "step",
+                "request_id": format!("step-{index}"), "episode_id": decision["episode_id"],
+                "expected_step": decision["step"], "selected_index": pick["selected_index"],
+                "selected_action_id": pick["stable_id"]})
+            .to_string();
+        }
+    }
+    println!("schema 4 Escape refusals: {refusals} of 12 games");
+    assert!(refusals > 0, "no schema 4 game staged an Escape cast");
 }
