@@ -2348,6 +2348,8 @@ pub fn observe_premodern_ordered_registered_v1(
                 .then(|| public_meddling_mage_names_v1(state))
                 .transpose()?
                 .filter(|names| !names.is_empty()),
+            // This observation keeps refusing a game with extra turns.
+            turn_schedule: None,
         };
         Some(NumericRegisteredStableSceneV1 {
             projection,
