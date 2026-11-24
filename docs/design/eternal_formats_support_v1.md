@@ -1650,6 +1650,7 @@ reporting as E1 to E9:
 | P3e | Sideboard of Madness Threshold (Absolute Law, Kor Haven, Winter Orb) | 3 | Premodern full 75 66% to 68% |
 | P3f | Sideboard of Mono-Black Control (Contagion, Lurking Skirge, Phyrexian Processor) | 3 | Premodern full 75 68% to 70% |
 | P3g | Sideboards of Landstill and BW Control (Akroma's Vengeance, Arcane Laboratory, Circle of Protection: Red, Infest), and Circle of Protection: Blue's Full contract | 4 | Premodern full 75 70% to 78%; Pauper 85.1% to 91.0% |
+| Volrath Full (B2) | Volrath's Shapeshifter promoted from Partial to Full under the registered ordered-graveyard owner (`docs/design/premodern_shapeshifter_alter_reality_v1.md`) | 1 promoted | Premodern 304/305 Full; playable mainboards 87.0% to 90.0% (24/24); full 75 81.0% to 84.0% (23/24) |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -2398,6 +2399,19 @@ follows each card's current Oracle text, checked against XMage and rules 113.7a,
   replacements, departed-source Circle of Protection: Red prevention and Echo LKI), and plays two
   40-card decks built around the P3h cards through public schema-5 sessions in both seats under
   ranked and seeded random policies with replay checks.
+
+### Volrath's Shapeshifter Full (Step B2, #460)
+
+See `docs/design/premodern_shapeshifter_alter_reality_v1.md` for the complete Layer-3 donor contract,
+typed refusal (`UnsupportedMechanic::FullTextDonorOutsideSetV1`), registered Premodern
+ordered-graveyard owner (`mtg-kernel-premodern-ordered-registered/v1`), and schema-5 preflight
+refusal (`DeckPreflightError::RequiresOrderedGraveyardOwnerV1`). Following steps A1 (#768), A2
+(#793), and B1 (#927), step B2 flips `Volrath's Shapeshifter` from `partial` to `full` in
+`data/eternal_v1/cards_v1.json`, adds `premodern-full-english-breakfast` to `PLAYABLE` and
+`PLAYABLE_75` (routed through the in-process ordered driver), and updates the Premodern census on
+`data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json` to **304 of 305 distinct cards
+Full** (0 Partial, 1 Missing: `Alter Reality`), **90.0% of 90.0% playable mainboards** (24/24),
+and **84.0% full 75s** (23/24).
 
 ### S1n: Vintage Scam, Legacy Bant Control, Jeskai Control and LED Dredge sideboards
 
