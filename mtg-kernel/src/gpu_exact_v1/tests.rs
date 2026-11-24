@@ -934,6 +934,7 @@ fn net8_learner_persistent_buffers_match_fresh_buffers_across_resized_updates() 
             &device,
             &mut persistent,
             net.config_v1(),
+            crate::training_math_v1::TrainingMathV1::PlatformLibm,
             &tensor_refs,
             &substeps,
         )
@@ -942,6 +943,7 @@ fn net8_learner_persistent_buffers_match_fresh_buffers_across_resized_updates() 
             &device,
             &mut LearnerBuffersV1::default(),
             net.config_v1(),
+            crate::training_math_v1::TrainingMathV1::PlatformLibm,
             &tensor_refs,
             &substeps,
         )
@@ -1460,4 +1462,295 @@ fn s_gpu_learner_equals_cpu_gae_and_auxiliary_bit_for_bit() {
         .unwrap();
     // 2 GAE updates + 1 masked GAE + 1 auxiliary KL pass = 4 GPU learner calls.
     assert_eq!(updates_after - updates_before, 4);
+}
+
+/// Verifies `mtg_tanh_portable` matches `deterministic_math_v1::tanh_f32_v1`
+/// bit-for-bit across all 2^32 f32 bit patterns (including NaN, +/-inf,
+/// subnormals, signed zero, and both seams).
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn gpu_exact_portable_tanh_matches_cpu_on_all_f32_inputs() {
+    let device = ExactDeviceV1::open_v1(ordinal()).expect("open CUDA device");
+    assert!(device.portable_tanh_proved);
+    assert_eq!(
+        device
+            .portable_tanh_mismatch_v1()
+            .expect("portable tanh proof"),
+        None
+    );
+}
+
+/// Verifies GPU exact Net-8 backward unblocking for:
+/// 1. `TrainingMathV1::PortableV1`
+/// 2. `no_state_digest` (`install_no_state_digest_v1(123..219)`)
+/// 3. FlatV8 (`action_feature_dim = 196`, both with and without pairing rows,
+///    under both `PlatformLibm` and `PortableV1`).
+///
+/// Every case compares CPU reference (before GPU learner install) against GPU
+/// exact backward bit-for-bit on `after_state_sha256` and confirms the GPU
+/// learner update counter incremented.
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL)"]
+fn gpu_exact_net8_unblocked_for_portable_no_state_digest_and_v8_pairing() {
+    use crate::native_flat_tensorizer_v8::{
+        FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8, FEATURE_REGISTRY_VERSION_V8,
+        FEATURE_SCHEMA_VERSION_V8,
+    };
+    use crate::native_policy_train_step_v1::{
+        NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
+        NativePolicyValueTrainStateV1,
+    };
+    use crate::native_policy_value_net_v1::v8_inclusion_v1::{
+        V8_ACTION_FEATURE_DIM_V1, V8_MODEL_ARCHITECTURE_VERSION_V1,
+    };
+    use crate::native_policy_value_net_v1::ForwardActivationModeV1;
+    use crate::native_training_phase_diagnostic_v1::NativeTrainingPhaseRecorderV1;
+    use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+    use crate::training_math_v1::TrainingMathV1;
+
+    assert!(
+        !super::learner_installed_v1(),
+        "run CPU reference before installing global GPU learner"
+    );
+
+    let v4_schema = crate::native_flat_tensorizer_v4::schema_v4();
+    let v8_schema = NativeEncodedDecisionSchemaV1 {
+        version: FEATURE_SCHEMA_VERSION_V8,
+        registry_version: FEATURE_REGISTRY_VERSION_V8,
+        contract_digest: FEATURE_CONTRACT_DIGEST_V8,
+        encoding_digest: FEATURE_ENCODING_DIGEST_V8,
+        action_feature_dim: V8_ACTION_FEATURE_DIM_V1,
+        ..v4_schema
+    };
+
+    // Build synthetic V4 decisions (zeroed state-digest cols 123..219 so they
+    // also satisfy the no-state-digest contract) and synthetic V8 decisions
+    // (196-col actions with non-empty and empty pairing rows).
+    let make_decision = |seed: u64, v8: bool, with_pairs: bool| {
+        let mut d = random_decision_sized(seed, [24, 32, 16, 20]);
+        d.state[123..219].fill(0.0);
+        let actions = d.action_features.len() / 195;
+        let mut action_features = if v8 {
+            let mut wide = Vec::with_capacity(actions * V8_ACTION_FEATURE_DIM_V1);
+            for (a, row) in d.action_features.chunks_exact(195).enumerate() {
+                wide.extend_from_slice(row);
+                // Mix exact 0.0, -0.0, and 1.0 in column 195 to exercise the include guard.
+                wide.push(match a % 3 {
+                    0 => 0.0,
+                    1 => -0.0,
+                    _ => 1.0,
+                });
+            }
+            wide
+        } else {
+            d.action_features.clone()
+        };
+        // Avoid accidental non-finite values.
+        for x in &mut action_features {
+            if !x.is_finite() {
+                *x = 0.0;
+            }
+        }
+        let objects = d.object_card_ids.len();
+        let pairs = if v8 && with_pairs && objects >= 3 {
+            vec![0, 1, 2, 0, 1, 2]
+        } else {
+            Vec::new()
+        };
+        (d, action_features, pairs)
+    };
+
+    let v4_cases: Vec<_> = (0..4)
+        .map(|i| make_decision(900 + i, false, false))
+        .collect();
+    let v8_cases: Vec<_> = (0..4)
+        .map(|i| make_decision(950 + i, true, i % 2 == 0))
+        .collect();
+
+    fn build_view<'a>(
+        schema: NativeEncodedDecisionSchemaV1,
+        case: &'a (RandomDecision, Vec<f32>, Vec<i64>),
+        v8: bool,
+    ) -> NativeEncodedDecisionViewV1<'a> {
+        let mut view = NativeEncodedDecisionViewV1::from_slices_unvalidated(
+            schema,
+            &case.0.state,
+            &case.0.object_features,
+            &case.0.object_card_ids,
+            &case.0.object_groups,
+            &case.0.object_node_ids,
+            &case.0.edge_features,
+            &case.0.edge_sources,
+            &case.0.edge_targets,
+            &case.1,
+            &case.0.ref_features,
+            &case.0.ref_card_ids,
+            &case.0.ref_actions,
+            &case.0.ref_nodes,
+        );
+        if v8 {
+            view.pairing_node_indices = &case.2;
+        }
+        view
+    }
+
+    // Random V4 net with zeroed state-digest cols and no -0.0 state bias.
+    let mut base_v4 = random_net(1201);
+    {
+        let mut snap = base_v4.parameter_snapshot_v1();
+        for p in &mut snap {
+            if p.name == "state_encoder.0.weight" {
+                for row in p.values.chunks_exact_mut(1499) {
+                    row[123..219].fill(0.0);
+                }
+            } else if p.name == "state_encoder.0.bias" {
+                for v in &mut p.values {
+                    if v.to_bits() == 0x8000_0000 {
+                        *v = 0.0;
+                    }
+                }
+            }
+        }
+        base_v4.replace_parameter_snapshot_v1(&snap).unwrap();
+    }
+
+    // Random V8 net with nonzero include column and pairing encoder weights.
+    let mut base_v8 = NativePolicyValueNetV1::v8_inclusion_template_v1().unwrap();
+    {
+        let mut rng = SplitMix64::seed(1202);
+        let mut snap = base_v8.parameter_snapshot_v1();
+        for p in &mut snap {
+            for v in &mut p.values {
+                *v = unit(&mut rng) * 0.25;
+            }
+            if p.name == "card_embedding.weight" {
+                p.values[..16].fill(0.0);
+            }
+        }
+        base_v8.replace_parameter_snapshot_v1(&snap).unwrap();
+        assert_eq!(
+            base_v8.config_v1().model_architecture_version,
+            V8_MODEL_ARCHITECTURE_VERSION_V1
+        );
+    }
+
+    let run_case = |net: &NativePolicyValueNetV1,
+                    math: TrainingMathV1,
+                    no_state_digest: bool,
+                    v8: bool|
+     -> [u8; 32] {
+        let mut state = NativePolicyValueTrainStateV1::new_v1(net.clone()).unwrap();
+        state.set_training_math_v1(math);
+        if no_state_digest {
+            state.install_no_state_digest_v1(123..219).unwrap();
+        }
+        let act_mode = if math.is_platform_libm() {
+            ForwardActivationModeV1::LibmTanh
+        } else {
+            ForwardActivationModeV1::KernelDeterministicTanh
+        };
+        let cases = if v8 { &v8_cases } else { &v4_cases };
+        let views: Vec<_> = cases
+            .iter()
+            .map(|c| build_view(if v8 { v8_schema } else { v4_schema }, c, v8))
+            .collect();
+        let expected: Vec<_> = views
+            .iter()
+            .map(|&v| {
+                let out = if v8 {
+                    net.forward_feature_transfer_v8_mode(v, act_mode).unwrap()
+                } else {
+                    net.forward_feature_transfer_v4_mode(v, act_mode).unwrap()
+                };
+                (
+                    out.logits.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                    out.value.to_bits(),
+                )
+            })
+            .collect();
+        let substeps: Vec<Vec<NativePolicySubstepV1<'_>>> = views
+            .iter()
+            .zip(&expected)
+            .map(|(&v, (l_bits, v_bits))| {
+                vec![NativePolicySubstepV1 {
+                    forward: NativePolicyForwardInputV1::Encoded(Box::new(v)),
+                    selected_action_index: 0,
+                    expected_raw_action_logit_bits: l_bits,
+                    expected_value_bits: *v_bits,
+                }]
+            })
+            .collect();
+        let groups: Vec<_> = substeps
+            .iter()
+            .map(|s| NativePolicyPhysicalDecisionV1 {
+                substeps: s,
+                terminal_return: 1,
+                baseline_bits: 0,
+            })
+            .collect();
+        let value_targets = vec![0.5f32; groups.len()];
+        let advantages = vec![0.25f32; groups.len()];
+        let _res = state
+            .train_step_gae_feature_transfer_profiled_v1(
+                FreshLineageGenerationV1::V4,
+                &groups,
+                &value_targets,
+                &advantages,
+                0.5,
+                1e-4,
+                None,
+                1,
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+            )
+            .expect("gae step");
+        state.state_sha256_v1().expect("state sha256")
+    };
+
+    // 1. CPU reference before installing GPU learner.
+    let cpu_portable = run_case(&base_v4, TrainingMathV1::PortableV1, false, false);
+    let cpu_no_digest = run_case(&base_v4, TrainingMathV1::PlatformLibm, true, false);
+    let cpu_no_digest_portable = run_case(&base_v4, TrainingMathV1::PortableV1, true, false);
+    let cpu_v8_libm = run_case(&base_v8, TrainingMathV1::PlatformLibm, false, true);
+    let cpu_v8_portable = run_case(&base_v8, TrainingMathV1::PortableV1, false, true);
+
+    // 2. Install GPU learner and verify bit-exact match + GPU update execution.
+    super::install_learner_v1(ordinal()).expect("install GPU learner");
+    let before = super::learner_receipt_v1().unwrap()["updates"]
+        .as_u64()
+        .unwrap();
+
+    assert_eq!(
+        run_case(&base_v4, TrainingMathV1::PortableV1, false, false),
+        cpu_portable,
+        "portable math Net-8 GPU backward must match CPU bit-for-bit"
+    );
+    assert_eq!(
+        run_case(&base_v4, TrainingMathV1::PlatformLibm, true, false),
+        cpu_no_digest,
+        "no_state_digest Net-8 GPU backward must match CPU bit-for-bit"
+    );
+    assert_eq!(
+        run_case(&base_v4, TrainingMathV1::PortableV1, true, false),
+        cpu_no_digest_portable,
+        "no_state_digest + portable Net-8 GPU backward must match CPU bit-for-bit"
+    );
+    assert_eq!(
+        run_case(&base_v8, TrainingMathV1::PlatformLibm, false, true),
+        cpu_v8_libm,
+        "FlatV8 (libm) with pairing rows GPU backward must match CPU bit-for-bit"
+    );
+    assert_eq!(
+        run_case(&base_v8, TrainingMathV1::PortableV1, false, true),
+        cpu_v8_portable,
+        "FlatV8 (portable) with pairing rows GPU backward must match CPU bit-for-bit"
+    );
+
+    let after = super::learner_receipt_v1().unwrap()["updates"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(
+        after - before,
+        5,
+        "all 5 previously-refused Net-8 modes must execute on the GPU exact learner"
+    );
 }

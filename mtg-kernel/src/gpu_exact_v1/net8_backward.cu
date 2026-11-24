@@ -18,7 +18,8 @@
 
 enum MtgLayer {
     Y_OBJ1 = 0, Y_OBJ2, Y_EDGE1, Y_EDGE2, Y_NODE1, Y_NODE2, Y_STATE1, Y_STATE2,
-    Y_REF1, Y_REF2, Y_ACT1, Y_ACT2, Y_SCORER1, Y_SCORER2, Y_VALUE1, Y_VALUE2, Y_LAYERS
+    Y_REF1, Y_REF2, Y_ACT1, Y_ACT2, Y_SCORER1, Y_SCORER2, Y_VALUE1, Y_VALUE2,
+    Y_PAIR1, Y_PAIR2, Y_LAYERS
 };
 
 // d_in[r * k + i] = sum over o in order of d_out[r * n + o] * w[o * k + i],
@@ -72,9 +73,10 @@ struct MtgGrad {
     float *d2_node, *d1_node, *d_nin, *d_base, *d_epool;
     float *d_eh, *d2_edge, *d1_edge, *d_ein;
     float *d2_obj, *d1_obj, *d_oin;
+    float *d2_pair, *d1_pair, *d_pin;
 };
 
-__device__ MtgGrad mtg_carve_grad(float* g, int nobj, int nedge, int nref, int nact, MtgDims dims) {
+__device__ MtgGrad mtg_carve_grad(float* g, int nobj, int nedge, int nref, int nact, int npair, MtgDims dims) {
     const int H = MTG_HIDDEN;
     const int k_obj = dims.object_feature_dim + dims.embedding_dim;
     const int k_edge = dims.edge_feature_dim + 2 * H;
@@ -113,6 +115,9 @@ __device__ MtgGrad mtg_carve_grad(float* g, int nobj, int nedge, int nref, int n
     t.d2_obj = g;   g += (size_t)nobj * H;
     t.d1_obj = g;   g += (size_t)nobj * H;
     t.d_oin = g;    g += (size_t)nobj * k_obj;
+    t.d2_pair = g;  g += (size_t)npair * H;
+    t.d1_pair = g;  g += (size_t)npair * H;
+    t.d_pin = g;    g += (size_t)npair * 2 * H;
     return t;
 }
 
@@ -120,7 +125,7 @@ __device__ MtgGrad mtg_carve_grad(float* g, int nobj, int nedge, int nref, int n
 struct MtgTape {
     const float *obj_h1, *obj_base, *edge_h1, *edge_h, *edge_pooled, *node_h1, *obj_hidden;
     const float *group_pooled, *state_h1, *state_hidden, *ref_h1, *ref_h, *ref_pooled;
-    const float *act_h1, *act_h, *scorer_h, *value_h;
+    const float *act_h1, *act_h, *scorer_h, *value_h, *pair_h1;
 };
 
 __device__ MtgTape mtg_carve_tape(const float* s, int nobj, int nedge, int nref, int nact, MtgDims dims) {
@@ -143,7 +148,8 @@ __device__ MtgTape mtg_carve_tape(const float* s, int nobj, int nedge, int nref,
     t.act_h = s;        s += (size_t)nact * H;
     s += H;             // scorer state prefix
     t.scorer_h = s;     s += (size_t)nact * H;
-    t.value_h = s;
+    t.value_h = s;      s += H;
+    t.pair_h1 = s;
     return t;
 }
 
@@ -163,15 +169,19 @@ extern "C" __global__ void mtg_net8_reverse(const int* __restrict__ requests,
     const int* req = requests + (size_t)blockIdx.x * R_FIELDS;
     const int H = MTG_HIDDEN;
     const int nobj = req[R_OBJECTS], nedge = req[R_EDGES], nref = req[R_REFS], nact = req[R_ACTIONS];
+    const int npair = req[R_PAIRS];
     const int* groups = ints + req[R_GROUPS];
     const int* edge_src = ints + req[R_EDGE_SRC];
     const int* edge_tgt = ints + req[R_EDGE_TGT];
     const int* ref_node = ints + req[R_REF_NODE];
     const int* ref_action = ints + req[R_REF_ACTION];
+    const int* pair_blocker = ints + req[R_PAIR_BLOCKER];
+    const int* pair_attacker = ints + req[R_PAIR_ATTACKER];
+    const int nlayers = dims.include_guard_col >= 0 ? Y_LAYERS : Y_PAIR1;
     const float* w[Y_LAYERS];
-    for (int l = 0; l < Y_LAYERS; ++l) w[l] = params_torch + torch_layout[l];
+    for (int l = 0; l < nlayers; ++l) w[l] = params_torch + torch_layout[l];
     const MtgTape t = mtg_carve_tape(scratch + (size_t)req[R_SCRATCH], nobj, nedge, nref, nact, dims);
-    const MtgGrad d = mtg_carve_grad(grad_scratch + grad_offsets[blockIdx.x], nobj, nedge, nref, nact, dims);
+    const MtgGrad d = mtg_carve_grad(grad_scratch + grad_offsets[blockIdx.x], nobj, nedge, nref, nact, npair, dims);
     const int k_obj = dims.object_feature_dim + dims.embedding_dim;
     const int k_edge = dims.edge_feature_dim + 2 * H;
     const int k_state = dims.state_dim + dims.group_count * H;
@@ -269,6 +279,31 @@ extern "C" __global__ void mtg_net8_reverse(const int* __restrict__ requests,
                 const float* row = d.d_ein + (size_t)e * k_edge + dims.edge_feature_dim;
                 if (edge_src[e] == o) acc = __fadd_rn(acc, row[h]);
                 if (edge_tgt[e] == o) acc = __fadd_rn(acc, row[H + h]);
+            }
+            d.d_base[j] = acc;
+        }
+        __syncthreads();
+    }
+
+    // V8 pairing path (`v8_inclusion_v1`): after edges, before object encoder.
+    // Second layer has no activation; first layer has tanh.
+    if (npair > 0) {
+        for (int j = threadIdx.x; j < npair * H; j += blockDim.x) {
+            const int r = j / H, h = j % H;
+            d.d2_pair[j] = __fadd_rn(d.d_epool[(size_t)pair_blocker[r] * H + h],
+                                     d.d_epool[(size_t)pair_attacker[r] * H + h]);
+        }
+        __syncthreads();
+        mtg_input_grad_stage(npair, d.d2_pair, w[Y_PAIR2], H, H, d.d1_pair);
+        mtg_tanh_grad_stage(npair * H, d.d1_pair, t.pair_h1);
+        mtg_input_grad_stage(npair, d.d1_pair, w[Y_PAIR1], H, 2 * H, d.d_pin);
+        for (int j = threadIdx.x; j < nobj * H; j += blockDim.x) {
+            const int o = j / H, h = j % H;
+            float acc = d.d_base[j];
+            for (int r = 0; r < npair; ++r) {
+                const float* row = d.d_pin + (size_t)r * 2 * H;
+                if (pair_blocker[r] == o) acc = __fadd_rn(acc, row[h]);
+                if (pair_attacker[r] == o) acc = __fadd_rn(acc, row[H + h]);
             }
             d.d_base[j] = acc;
         }

@@ -285,13 +285,13 @@ enum ParsedV1 {
 /// A sealed file (`record_envelope_v1`) is parsed from its opened record
 /// bytes, as its readers parse it.
 fn parse_v1(kind: KindV1, bytes: &[u8]) -> Option<ParsedV1> {
-    let bytes = record_envelope_v1::open_v1(bytes, MAX_FILE_BYTES).ok()?;
-    let bytes = bytes.as_ref();
     match kind {
-        KindV1::CollectionFields => CollectionTrajectoryFieldsV1::parse_json_v1(bytes)
-            .ok()
-            .map(ParsedV1::CollectionFields),
-        KindV1::Trajectory => serde_json::from_slice::<ExpandedTrajectoryV1>(bytes)
+        KindV1::CollectionFields => {
+            super::trajectory_container_v1::read_any_collection_fields_v1(bytes, MAX_FILE_BYTES)
+                .ok()
+                .map(ParsedV1::CollectionFields)
+        }
+        KindV1::Trajectory => super::trajectory_container_v1::decode_any_v1(bytes, MAX_FILE_BYTES)
             .ok()
             .map(|trajectory| ParsedV1::Trajectory(Box::new(trajectory))),
     }

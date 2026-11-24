@@ -107,6 +107,7 @@ pub(crate) fn learner_installed_v1() -> bool {
 
 pub(crate) fn learner_gradients_v1(
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    math: crate::training_math_v1::TrainingMathV1,
     tensors: &[&[f32]],
     substeps: &[net8_learner::LearnerSubstepV1<'_>],
 ) -> Result<Option<Vec<Vec<f32>>>, String> {
@@ -121,7 +122,7 @@ pub(crate) fn learner_gradients_v1(
         device, buffers, ..
     } = &mut *learner;
     let gradients =
-        match net8_learner::net8_gradients_v1(device, buffers, config, tensors, substeps) {
+        match net8_learner::net8_gradients_v1(device, buffers, config, math, tensors, substeps) {
             Ok(gradients) => gradients,
             // Too big for the device: the caller's CPU backward gives the same bits.
             Err(error) if net8_learner::is_resource_error_v1(&error) => {

@@ -647,6 +647,13 @@ class AgentServiceTests(AgentCase):
         self.assertEqual((files["episode-0002.json"], files["episode-0003.json"]), (b"e2:7", b"e3:8"))
         pins = json.loads(files["collection.json"])["trajectories"]
         self.assertEqual([p["sha256"] for p in pins], [sha(b"e2:7"), sha(b"e3:8")])
+        code_gz, gz_bytes, err_gz = self.serve("fetch_shard", tag=TAG, compression="gzip1")
+        self.assertEqual(code_gz, 0, err_gz)
+        self.assertTrue(gz_bytes.startswith(b"\x1f\x8b"))
+        with tarfile.open(fileobj=io.BytesIO(gz_bytes), mode="r:gz") as archive:
+            gz_files = {m.name: archive.extractfile(m).read() for m in archive}
+        self.assertEqual(gz_files, files)
+        self.assertRefused(self.serve("fetch_shard", tag=TAG, compression="bzip2"), "unsupported fetch_shard compression")
         self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG)[1]), "removed")
         self.assertEqual([n for n in os.listdir(self.scratch) if not n.startswith(".")], [])
         self.assertEqual(os.listdir(self.scratch / ".run"), [], "the private command copy is gone")
@@ -947,6 +954,22 @@ class SafeExtractionTests(unittest.TestCase):
             self.assertTrue(pc._portable_name(name), name)
         for name in ("NUL", "nul.json", "COM9", "lpt1.x.y", "a.", "", ".x", "a b", "a\\b"):
             self.assertFalse(pc._portable_name(name), name)
+
+    def test_gzip1_archive_extracts_and_enforces_extracted_byte_cap(self):
+        archive = self.root / "shard.tar.gz"
+        payload = b"A" * 4096
+        with tarfile.open(archive, "w:gz", compresslevel=1) as tar:
+            entry = tarfile.TarInfo("episode-0000.json")
+            entry.size = len(payload)
+            tar.addfile(entry, io.BytesIO(payload))
+        local = self.root / "out-ok"
+        local.mkdir()
+        pc._extract_shard_archive(archive, local, compression="gzip1", max_bytes=4096)
+        self.assertEqual((local / "episode-0000.json").read_bytes(), payload)
+        local_capped = self.root / "out-capped"
+        local_capped.mkdir()
+        with self.assertRaisesRegex(RuntimeError, "extracted output bound"):
+            pc._extract_shard_archive(archive, local_capped, compression="gzip1", max_bytes=2048)
 
 
 class AgentTransportBoundsTests(unittest.TestCase):

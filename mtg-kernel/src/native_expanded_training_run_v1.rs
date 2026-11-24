@@ -512,6 +512,13 @@ pub struct NativeExpandedTrainingRunV1 {
     /// config and receipt is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_ledger: Option<ChainLedgerOptionsV1>,
+    /// Opt-in binary columnar trajectory container (`trajectory_container_v1`);
+    /// omitted for legacy JSON, preserving every existing config and identity.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::expanded_deck_training_v1::TrajectoryRecordFormatV1::is_json"
+    )]
+    pub trajectory_format: crate::expanded_deck_training_v1::TrajectoryRecordFormatV1,
     pub output_directory: PathBuf,
     // Last on purpose: serde also decodes a struct from a positional array, and a
     // trailing defaulted field keeps every earlier positional config valid.
@@ -685,6 +692,18 @@ impl NativeExpandedTrainingRunV1 {
                     && self.search_targets.is_none()),
             "record_envelope requires parallel collection and a prepared or EX1 CPU update, \
              without line (b), E, SQ1 or search targets",
+        )?;
+        check(
+            !self.trajectory_format.is_binary() || self.collection_workers > 1,
+            "trajectory_format binary modes require parallel collection (collection_workers > 1)",
+        )?;
+        check(
+            !self.trajectory_format.uses_zstd1_payload() || self.record_envelope.is_none(),
+            "binary_zstd1 trajectory format cannot be combined with record_envelope zstd1",
+        )?;
+        check(
+            !(self.trajectory_format.omits_opponent_tensors() && self.ex1.is_some()),
+            "learner-only trajectory format refuses EX1 collection",
         )?;
         if !self.training_math.is_platform_libm() {
             check(
@@ -1405,11 +1424,10 @@ fn validate_collection_episodes_bounded_v1(
                         Ok(fields)
                     }
                     None => {
-                        let record = crate::expanded_deck_training_v1::record_envelope_v1::open_v1(
+                        crate::expanded_deck_training_v1::trajectory_container_v1::read_any_collection_fields_v1(
                             &bytes,
                             ARTIFACT_CAP,
-                        )?;
-                        CollectionTrajectoryFieldsV1::parse_json_v1(&record)
+                        )
                     }
                 }
             })
@@ -1445,13 +1463,10 @@ fn validate_collection_episodes_bounded_v1(
                                             );
                                             Ok(fields)
                                         }
-                                        None => {
-                                            let record = crate::expanded_deck_training_v1::record_envelope_v1::open_v1(
-                                                &bytes,
-                                                ARTIFACT_CAP,
-                                            )?;
-                                            CollectionTrajectoryFieldsV1::parse_json_v1(&record)
-                                        }
+                                        None => crate::expanded_deck_training_v1::trajectory_container_v1::read_any_collection_fields_v1(
+                                            &bytes,
+                                            ARTIFACT_CAP,
+                                        ),
                                     }
                                 })();
                                 out.push((slot, res));
@@ -1810,6 +1825,7 @@ fn collection_command(
             training_math: config.training_math,
             ex1,
             record_envelope: config.record_envelope,
+            trajectory_format: config.trajectory_format,
             output_directory,
         }
     }
@@ -2831,6 +2847,7 @@ mod tests {
             ex1: None,
             record_process_cpu: false,
             chain_ledger: None,
+            trajectory_format: Default::default(),
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -4416,6 +4433,7 @@ mod tests {
                 ex1: None,
                 record_process_cpu: false,
                 chain_ledger: None,
+                trajectory_format: Default::default(),
                 output_directory,
             },
         )
