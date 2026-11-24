@@ -227,10 +227,10 @@ def coverage(scheduled):
 
 
 class Classifier:
-    """The classifier under test (version "new"); at faf2b093b ("faf": the same scope table and relevance, but a
-    default dispatch complemented every pull request whose scope was pr); or origin/main's before the viewer scope
-    ("main": no viewer rule, docs the only neutral scope, no viewer/* relevance rule, ci:full leaving the relevance
-    flags to the paths, and the faf dispatch rule)."""
+    """The classifier under test (version "new"); the default dispatch rule of 6df3f3fe0 ("6df", restated: scope pr
+    and Rust-relevant files); or origin/main's before the viewer scope ("main": no viewer rule, docs the only
+    neutral scope, no viewer/* relevance rule, ci:full leaving the relevance flags to the paths, and a default
+    dispatch that complemented every pull request whose scope was pr)."""
 
     def __init__(self, version="new"):
         self.version = version
@@ -426,22 +426,34 @@ class ViewerScopeTests(unittest.TestCase):
         self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/engine.rs"]), "windows-complement")
         self.assertEqual(new.dispatch_group_set(["mtg-kernel/src/native_expanded_training_run_v1.rs"]), "full")
 
-    def test_every_other_event_schedules_what_it_did_at_faf2b093b(self):
-        # Only a default dispatch at a ready pull request's head changed since faf2b093b, and only for changes
-        # whose pull request run scheduled no Rust job.
-        new, faf = Classifier(), Classifier("faf")
-        for change in SAME_CHANGE:
+    def test_pull_request_and_other_events_match_frozen_detect_outputs(self):
+        # detect-changes outputs (checks, python_relevant, rust_relevant) as faf2b093b produced them, frozen by
+        # hand: a ready, a draft and a labelled pull request for each change. Only the default dispatch at a ready
+        # pull request's head changed after faf2b093b (pr-run; see DifferentInventoryTests).
+        new = Classifier()
+        frozen = [
+            (["mtg-kernel/src/engine.rs"], ("all", False, True), ("all", False, True)),
+            (["mtg-kernel/src/native_expanded_training_run_v1.rs"], ("trainer", False, True), ("all", False, True)),
+            (["python/tools/foo.py"], ("python", True, False), ("all", True, False)),
+            (["tools/ci/hosted_fallback.py"], ("all", True, False), ("all", True, False)),
+            (["tools/w5/chains.py"], ("w5-tools", True, False), ("all", True, False)),
+            (["README.md"], ("docs", False, False), ("all", False, False)),
+            ([".github/workflows/viewer.yml"], ("workflow", True, True), ("all", True, True)),
+            (WEBSITE, ("viewer", False, False), ("all", False, False)),
+            (WEBSITE + ["python/tools/foo.py"], ("python", True, False), ("all", True, False)),
+            (WEBSITE + ["mtg-kernel/src/engine.rs"], ("all", False, True), ("all", False, True)),
+        ]
+        for change, ready, draft in frozen:
             with self.subTest(change=change):
-                for kwargs in ({}, {"draft": True}, {"label": True}):
-                    self.assertEqual(new.scheduled("pull_request", change, **kwargs),
-                                     faf.scheduled("pull_request", change, **kwargs))
-                for scope in ("", "trainer", "python"):
-                    self.assertEqual(new.scheduled("workflow_dispatch", input_scope=scope),
-                                     faf.scheduled("workflow_dispatch", input_scope=scope))
-                if new.dispatch_group_set(change) != faf.dispatch_group_set(change):
-                    self.assertEqual(new.dispatch_group_set(change), "full")
-                    self.assertTrue(not new.flags(change, False)[1] or any(p.startswith("viewer/") for p in change))
-        self.assertEqual(new.scheduled("push"), faf.scheduled("push"))
+                self.assertEqual((new.checks("pull_request", "pr", "", [], change), *new.flags(change, False)), ready)
+                self.assertEqual((new.checks("pull_request", "draft", "", [], change), *new.flags(change, False)), draft)
+                self.assertEqual((new.checks("pull_request", "pr", "", ["ci:full"], change), *new.flags(change, True)),
+                                 ("all", True, True))
+        for event, group_set, scope, checks in (("push", "full", "", "all"), ("workflow_dispatch", "full", "", "all"),
+                                                ("workflow_dispatch", "full", "trainer", "trainer"),
+                                                ("workflow_dispatch", "full", "viewer", "all")):
+            with self.subTest(event=event, scope=scope):
+                self.assertEqual(new.checks(event, group_set, scope, [], []), checks)
 
     def test_ci_full_runs_every_rust_and_python_job_whatever_the_paths(self):
         new, main = Classifier(), Classifier("main")
@@ -644,7 +656,7 @@ class DifferentInventoryTests(unittest.TestCase):
                     self.assertFalse(ci_scope.pr_run_is_whole_set(change))
         engine = b'[[{"status": "modified", "filename": "mtg-kernel/src/engine.rs"}, ' \
                  b'{"status": "modified", "filename": "viewer/index.html"}]]'
-        self.assertEqual(run_scope("pr-run", stdin=engine).stdout, b"partial\n")
+        self.assertEqual(stdout_lines(run_scope("pr-run", stdin=engine)), ["partial"])
 
     def test_lists_without_website_paths_are_decided_as_at_6df3f3fe0(self):
         new, before = Classifier(), Classifier("6df")
@@ -727,6 +739,11 @@ class FrozenBaselineTests(unittest.TestCase):
         self.assertIn(("Cargo.lock", False, True, None), FROZEN_RELEVANCE)
 
 
+def stdout_lines(result):
+    """A child's stdout as text lines (Windows prints CRLF)."""
+    return result.stdout.decode("utf-8", errors="replace").splitlines()
+
+
 class RelevanceCliTests(unittest.TestCase):
     """Condition 1: both outputs or neither, as the last act. Condition 2: any error exits non-zero."""
 
@@ -759,6 +776,55 @@ class RelevanceCliTests(unittest.TestCase):
                 unittest.mock.patch("sys.stdout", io.StringIO()):
             self.assertEqual(ci_scope.main(["ci_scope.py", "relevance"]), 0)
         self.assertEqual(writes, ["python_relevant=true\nrust_relevant=true\n"])
+
+    def test_nothing_follows_the_output_write_in_relevance(self):
+        import ast
+        tree = ast.parse(SCOPE_SCRIPT.read_text(encoding="utf-8"))
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+        (block,) = [node for node in ast.walk(main) if isinstance(node, ast.If)
+                    and ast.unparse(node.test) == "command == 'relevance'"]
+        *_, publish, done = block.body
+        self.assertIsInstance(publish, ast.With)
+        self.assertEqual(ast.unparse(publish.items[0].context_expr), "open(output, 'a', encoding='utf-8')")
+        self.assertEqual([ast.unparse(s) for s in publish.body], ["out.write(text)"])
+        self.assertEqual(ast.unparse(done), "return 0")
+        # The written text is computed before, from the whole verdict.
+        names = [ast.unparse(s) for s in block.body]
+        self.assertLess(names.index("python, rust = relevance(files, full_label)"),
+                        next(i for i, s in enumerate(names) if s.startswith("text = ")))
+
+    def test_output_file_failures_exit_non_zero(self):
+        # open fails, write fails, close (the flush) fails: each exits non-zero, so the step and the run are red.
+        fake = """
+class Broken:
+    def __init__(self, stage, real):
+        self.stage, self.real = stage, real
+    def __enter__(self):
+        return self
+    def write(self, text):
+        if self.stage == 'write':
+            self.real.write(text.split(chr(10))[0] + chr(10))   # a partial append, then the failure
+            self.real.close()
+            raise OSError(28, 'No space left on device')
+        return self.real.write(text)
+    def __exit__(self, *exc):
+        self.real.close()
+        if self.stage == 'close' and exc[0] is None:
+            raise OSError(28, 'No space left on device')
+import builtins
+def fake_open(path, *a, **k):
+    if STAGE == 'open':
+        raise PermissionError(13, 'denied')
+    return Broken(STAGE, builtins.open(path, *a, **k))
+ci_scope.open = fake_open
+"""
+        for stage in ("open", "write", "close"):
+            with self.subTest(stage=stage):
+                result, written = self.relevance(b"mtg-kernel/src/engine.rs\0", prelude=f"STAGE = {stage!r}" + fake)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("rust_relevant=", written if stage != "close" else "")
+        result, written = self.relevance(b"mtg-kernel/src/engine.rs\0", prelude="STAGE = 'none'" + fake)
+        self.assertEqual((result.returncode, written), (0, "before=1\npython_relevant=false\nrust_relevant=true\n"))
 
     def test_relevance_crashing_midway_exits_non_zero_and_writes_nothing(self):
         # Breaks the Rust rules: the crash comes after python relevance of the first path is computed.
@@ -807,7 +873,7 @@ class RelevanceCliTests(unittest.TestCase):
 
     def test_pr_run_prints_whole_set_only_when_every_check_passed(self):
         engine = b'[[{"status": "modified", "filename": "mtg-kernel/src/engine.rs"}]]'
-        self.assertEqual(run_scope("pr-run", stdin=engine).stdout, b"whole-set\n")
+        self.assertEqual(stdout_lines(run_scope("pr-run", stdin=engine)), ["whole-set"])
         for stdin, prelude in ((b"[[]]", ""), (b"", ""), (b"{", ""), (b"[[{}]]", ""), (b"\xff", ""),
                                (engine, "def boom(*a): raise RuntimeError('x')\nci_scope.relevance = boom"),
                                (engine, "ci_scope.RUST_RELEVANT_RULES = None")):
@@ -816,7 +882,7 @@ class RelevanceCliTests(unittest.TestCase):
                 self.assertNotIn(b"whole-set", result.stdout)
                 if stdin != b"[[]]":
                     self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(run_scope("pr-run", stdin=b"[[]]").stdout, b"partial\n")
+        self.assertEqual(stdout_lines(run_scope("pr-run", stdin=b"[[]]")), ["partial"])
 
 
 class NonPullRequestEventTests(unittest.TestCase):

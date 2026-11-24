@@ -2,12 +2,14 @@
 
 A ready pull request whose files all map to one scope runs only that scope's checks; files of more than one
 scope, or any file no rule names, run the whole pull request set. Docs and website files never decide (website
-files alone, with or without docs, are the viewer scope). The full matrix still runs on every push to main and
+files alone, with or without docs, are the viewer scope). Website files are relevant to no Rust or Python job, so
+a pull request run with website files plus Python, tools or CI tool files schedules no Rust job either (origin/main
+counted website files as Rust-relevant and ran the Rust set for those). The full matrix still runs on every push to main and
 every tag (and on a dispatch without `scope`, the way release lines are checked) as a monitor, so a scope only
 decides what gates a merge (collab HANDOFFS/20261117/COORD.md, "Standing rule, merges (2026-11-21 07:27 ET)").
 One exception: a dispatch without inputs at the head of a ready same-repository pull request whose own run
-scheduled the whole pull request set (scope pr and Rust-relevant files, `pr-run`) runs only the Windows groups
-that set leaves out; `full_matrix=true` runs every group anyway.
+scheduled the whole pull request set (scope pr, Rust-relevant files and no website file, `pr-run`) runs only the
+Windows groups that set leaves out; `full_matrix=true` runs every group anyway.
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
@@ -423,9 +425,11 @@ def markdown() -> str:
            "A ready pull request whose files all map to one scope runs only that scope's checks. Files of more than "
            "one scope, a shared file, or a file no rule names run the whole pull request set. Docs and website files "
            "never decide: website files alone (with or without docs) are `viewer`, and with other files those "
-           "files decide alone. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor "
+           "files decide alone. Website files are relevant to no Rust or Python job, so a pull request with website "
+           "files plus Python, tools or CI tool files schedules no Rust job either. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor "
            "(one exception: a dispatch without inputs at the head of a ready same-repository pull request whose own "
-           "run scheduled the whole pull request set, scope pr with Rust-relevant files, runs only the Windows groups "
+           "run scheduled the whole pull request set, scope pr with Rust-relevant files and no website file, runs only "
+           "the Windows groups "
            "that set leaves out; `full_matrix=true` runs every group anyway): pushes to a line share one concurrency "
            "group (one running, one waiting, a newer merge replaces the "
            "waiting one), and a red monitor's report names every merge it covers. `ci:full` on a pull request "
@@ -503,7 +507,12 @@ def main(argv: list[str]) -> int:
     if command == "relevance":
         # Both outputs or neither: every Rust job reads a missing rust_relevant as "not relevant" and would skip
         # while this step stayed green. So any error exits non-zero (the detect job goes red), and the two lines
-        # are written in ONE write, as the last act, after the whole verdict is computed.
+        # are written in ONE write, as the last act, after the whole verdict is computed (a test fails if any
+        # statement follows the write). A partial append is still possible if the write or the flush at close
+        # fails after some bytes (a full disk), leaving python_relevant without rust_relevant; but that failure
+        # raises, the step exits non-zero, detect-changes fails, and every job that needs it is skipped while the
+        # run is red: no green run can read the partial state as "not relevant". A temporary file would not help:
+        # publishing it into GITHUB_OUTPUT is again an append that can fail midway.
         output = os.environ.get("GITHUB_OUTPUT")
         if not output:
             print("GITHUB_OUTPUT is not set: refusing to classify without a place for both outputs", file=sys.stderr)
