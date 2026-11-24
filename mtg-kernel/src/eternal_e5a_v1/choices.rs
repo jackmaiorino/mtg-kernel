@@ -224,7 +224,7 @@ pub(crate) fn drive(
                 .filter(|&card| {
                     CARD_DEFS
                         .get(state.objects.get(card).card_def as usize)
-                        .is_some_and(|def| def.has_type(CardType::Creature))
+                        .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .map(|card| bind(state, card))
                 .collect::<Vec<_>>();

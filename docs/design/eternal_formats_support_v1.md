@@ -3522,6 +3522,44 @@ Engine changes shared with other cards:
   (Pyrogoyf), batched card-to-library triggers and opponent library-search hooks across search
   sites (both Wan Shi Tong printings), and `Subtype::{Fox = 760, Gamma = 761, Saheeli = 762}`.
 
+### C9: final Vintage Cube completion (540 of 540 Full)
+
+Wave C9 adds the final 17 Vintage Cube cards (plus `Black Green Insect Token`), completing MTGO
+Vintage Cube (2026-10-07) coverage at 540 of 540 Full (0 Partial, 0 FDN only, 0 Missing). Its
+three sub-modules chain after wave C8c: C9a (`eternal_cube_c9a_v1`), C9b (`eternal_cube_c9b_v1`)
+and C9c (`eternal_cube_c9c_v1`), the new tail.
+
+- C9a: Aang, Swift Savior (Aang and La, Ocean's Fury), Badgermole Cub, Batroc the Leaper,
+  Blightsteel Colossus, Crabomination, Fear of Missing Out.
+- C9b: Figure of Destiny, Figure of Fable, Hexdrinker, Nadu, Winged Wisdom, Serra Paragon,
+  Swift Reconfiguration.
+- C9c: Elspeth, Storm Slayer, Grist, the Hunger Tide (Black Green Insect Token), Nissa, Who
+  Shakes the World, Tamiyo, Collector of Tales, Through the Breach.
+
+Engine changes shared with other cards:
+
+- New keywords, subtypes and target/choice variants: `Keywords::INFECT` (`1 << 20`, CR 702.90
+  combat and noncombat poison/counter damage), `Subtype::{Badger = 770, Mole = 771, Elspeth = 772,
+  Grist = 773, Nissa = 774}`, `StandardTargetV1::{C9aV1, C9cV1}`, and `E3ChoiceKindV1::{C9aV1, C9cV1}`.
+- C9a mechanics add airbend exile with permanent `{2}` alt-cost permission and Waterbend `{8}`
+  transform (Aang, Swift Savior), permanent 0/0 earthbend animation with delayed graveyard/exile
+  return and creature-mana triggered `{G}` (Badgermole Cub), Multikicker `{2}` with LKI batch
+  damage (Batroc the Leaper), reveal-and-shuffle graveyard replacement from anywhere (Blightsteel
+  Colossus), Emerge from artifact `{5}{B}{B}` and random 3-zone exile free cast (Crabomination),
+  and Delirium first-attack extra combat phases at `Step::EndCombat` (Fear of Missing Out).
+- C9b mechanics add timestamped hybrid class/PT/keyword forms and dynamic protection from
+  opponents (Figure of Destiny, Figure of Fable), sorcery-speed Level Up counters with static
+  level bands and protection from instants/everything (Hexdrinker), per-incarnation twice-per-turn
+  targeting grants (Nadu, Winged Wisdom), shared once-per-turn graveyard land/MV<=3 permanent
+  permissions with granted dies-exile-gain-2 triggers (Serra Paragon), and Layer 4/6 Vehicle
+  conversion with granted Crew 5 and combat removal on attachment (Swift Reconfiguration).
+- C9c mechanics add permanent token-doubling replacement (`2^n`, Elspeth, Storm Slayer), CR 604.3
+  non-battlefield 1/1 Insect Creature CDA across all non-battlefield queries (Grist, the Hunger
+  Tide), Forest triggered mana and permanent 0/0 Elemental land animation plus indestructible
+  lands emblem (Nissa, Who Shakes the World), opponent-effect discard/sacrifice shield (Tamiyo,
+  Collector of Tales), and Through the Breach hand-to-battlefield haste/end-step-sacrifice plus
+  generalized Splice onto Arcane `{2}{R}{R}`.
+
 ## Eternal rules precision closeout (#717)
 
 This records the finite [rules review checklist](https://github.com/jackmaiorino/mtg-kernel/issues/717)

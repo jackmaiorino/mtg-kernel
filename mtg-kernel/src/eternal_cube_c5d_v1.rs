@@ -580,6 +580,13 @@ fn stage_balance(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     for (index, &player) in players.iter().enumerate() {
+        if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+            state,
+            continuation.ctx.controller,
+            player,
+        ) {
+            continue;
+        }
         let cards = balance_cards(state, player, part);
         if cards.len() <= keep {
             continue;
@@ -1085,9 +1092,16 @@ fn run_jar_return(ctx: &ExecCtx, state: &mut GameState, serial: u32) {
         return;
     };
     let record = c5d_state(state).jars.remove(position);
-    // Each player discards their hand, all at once.
+    // Each player discards their hand, all at once (respecting Tamiyo's static).
     let mut hands = Vec::new();
     for player in [state.active_player, state.active_player.opponent()] {
+        if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+            state,
+            ctx.controller,
+            player,
+        ) {
+            continue;
+        }
         hands.extend(
             state.players[player.index()]
                 .hand

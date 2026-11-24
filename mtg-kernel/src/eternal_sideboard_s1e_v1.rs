@@ -358,7 +358,7 @@ fn bound_timestamps(state: &GameState, object: ObjectId) -> Option<(u64, Option<
 
 /// The timestamp of the Unable to Scream attached to `host` whose
 /// abilities apply, the latest if several are.
-fn scream_timestamp(state: &GameState, host: ObjectId) -> Option<u64> {
+pub(crate) fn scream_timestamp(state: &GameState, host: ObjectId) -> Option<u64> {
     let object = state.objects.try_get(host)?;
     if object.zone != Zone::Battlefield || object.attachments.is_empty() {
         return None;
@@ -708,6 +708,13 @@ pub(crate) fn drive(
             // opponent chooses three (all of them with three or fewer), and
             // they are sacrificed at once, as annihilator's are.
             let opponent = continuation.ctx.controller.opponent();
+            if crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                opponent,
+            ) {
+                return Ok(false);
+            }
             let creatures = opponent_creatures(state, continuation.ctx.controller);
             if creatures.len() <= usize::from(PORTAL_SACRIFICES) {
                 sacrifice_all(state, opponent, &creatures);

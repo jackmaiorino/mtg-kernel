@@ -1352,7 +1352,13 @@ pub(crate) fn finish_selection(
             {
                 return Err("Revealing Eye chosen card left the opponent's hand".to_string());
             }
-            crate::engine::commit_discarded_card(state, card.object);
+            if !crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                continuation.ctx.controller,
+                *opponent,
+            ) {
+                crate::engine::commit_discarded_card(state, card.object);
+            }
             continuation.frames.push(EffectFrame::Program {
                 op: EffectOp::DrawCards {
                     player: PlayerRef::Target(0),

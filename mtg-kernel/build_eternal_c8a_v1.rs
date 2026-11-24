@@ -102,7 +102,7 @@ pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8>
     match name {
         "Concealing Curtains" | "Jennifer Walters" => Some(0),
         "Jace, Vryn's Prodigy" => Some(if index == 0 { 0 } else { 1 }),
-        _ => None,
+        _ => super::build_eternal_c9a_v1::activated_ability_face_for(name, index),
     }
 }
 
@@ -170,7 +170,7 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
         "Concealing Curtains" => "Some(TransformFaceDef { name: \"Revealing Eye\", types: &[CardType::Creature], subtypes: &[Subtype::Eye, Subtype::Horror], colors: &[ManaColor::B], power: Some(3), toughness: Some(4), keywords: Keywords::MENACE })",
         "Jace, Vryn's Prodigy" => "Some(TransformFaceDef { name: \"Jace, Telepath Unbound\", types: &[CardType::Planeswalker], subtypes: &[Subtype::Jace], colors: &[ManaColor::U], power: None, toughness: None, keywords: Keywords::NONE })",
         "Jennifer Walters" => "Some(TransformFaceDef { name: \"The Sensational She-Hulk\", types: &[CardType::Creature], subtypes: &[Subtype::Gamma, Subtype::Hero], colors: &[ManaColor::G, ManaColor::W], power: Some(6), toughness: Some(6), keywords: Keywords(Keywords::REACH.0 | Keywords::TRAMPLE.0) })",
-        _ => "None",
+        _ => super::build_eternal_c9a_v1::transform_face_for(name),
     }
 }
 
@@ -179,7 +179,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
         "Concealing Curtains" => Some("Revealing Eye"),
         "Jace, Vryn's Prodigy" => Some("Jace, Telepath Unbound"),
         "Jennifer Walters" => Some("The Sensational She-Hulk"),
-        _ => None,
+        _ => super::build_eternal_c9a_v1::transform_face_name_for(name),
     }
 }
 

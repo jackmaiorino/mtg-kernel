@@ -5116,6 +5116,9 @@ fn sba_fixed_point_with_protected_triggers(
             // Bestow Auras detach back into creatures when their host ceases to
             // be a legal creature (CR 702.103e, Vintage Cube wave C8b).
             changed |= crate::eternal_cube_c8b_v1::unattach_illegal_bestow(state);
+            // Equipment attached to a noncreature or protected host unattaches
+            // in SBAs (CR 704.5n / 702.16c, Vintage Cube wave C9b).
+            changed |= crate::eternal_cube_c9b_v1::unattach_illegal_equipment(state);
         }
         if !ordered_graveyard {
             let invalid_auras = state
@@ -6823,6 +6826,12 @@ pub(crate) fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'stat
         // CR 702.103b: a bestowed spell on the stack is an Aura enchantment,
         // not a creature spell.
         &[CardType::Enchantment]
+    } else if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c9c_v1::is_grist_card(definition.name)
+    {
+        // Grist, the Hunger Tide CDA (CR 604.3): Creature in addition to
+        // Planeswalker in every non-battlefield zone, including the stack.
+        &[CardType::Planeswalker, CardType::Creature]
     } else {
         definition.types
     }

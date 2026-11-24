@@ -4252,8 +4252,13 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             return;
         }
     }
-    if matches!(&event,ProposedEvent::CreateToken(t) if !crate::doubling_season_v48::sources(state,t.controller).is_empty())
-    {
+    if matches!(
+        &event,
+        ProposedEvent::CreateToken(t)
+            if !crate::doubling_season_v48::sources(state, t.controller).is_empty()
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9c_v1::token_doubler_count(state, t.controller) > 0)
+    ) {
         batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
@@ -4323,6 +4328,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             (None, None, None),
             ((None, false), None, input, None, Some(&plan)),
+            None,
             None,
         );
         if state.engine.halted.is_none() {
@@ -4551,6 +4557,7 @@ fn commit_with_ability_lki_and_entry_batch(
         (entry_batches.0, entry_batches.1, None),
         (entry_context, None, None, None, None),
         None,
+        None,
     );
 }
 
@@ -4652,6 +4659,7 @@ fn commit_with_entry_batch_and_source_color(
     ),
     entry_context: EntryContextWithSourceColorV1<'_>,
     mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
+    mut blightsteel_shuffles: Option<&mut Vec<(PlayerId, ObjectId)>>,
 ) {
     if !preflight_wide_life_v59(state, &event) {
         return;
@@ -4844,6 +4852,64 @@ fn commit_with_entry_batch_and_source_color(
             change.to_zone = Zone::Exile;
         }
     }
+    // Blightsteel Colossus (Vintage Cube wave C9a): if it would be put into a
+    // graveyard from anywhere, reveal it and shuffle it into its owner's
+    // library instead. Check after Fiery/Finality and skip if an active
+    // graveyard-exile replacement (Rest in Peace, Leyline of the Void, Dauthi
+    // Voidwalker, Yawgmoth's Will, Unearth, etc.) already redirects it, matching
+    // batch replacement ordering.
+    #[cfg(feature = "eternal-fixtures")]
+    let graveyard_redirected = match &event {
+        ProposedEvent::ZoneChange(change)
+            if change.to_zone == Zone::Graveyard
+                && state.objects.try_get(change.object).is_some_and(|live| {
+                    crate::eternal_cube_c9a_v1::is_blightsteel(live.card_def)
+                }) =>
+        {
+            let mut probe = change.clone();
+            crate::standard_keywords_v1::unearth_exile_instead(state, &mut probe);
+            crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut probe);
+            crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut probe);
+            crate::eternal_cube_c8a_v1::adjust_zone_change(state, &mut probe);
+            crate::eternal_e9b_v1::replace_zone_change(state, &mut probe, false);
+            crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut probe);
+            probe.to_zone != Zone::Graveyard
+        }
+        _ => false,
+    };
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let graveyard_redirected = false;
+    let blightsteel_shuffle = if graveyard_redirected {
+        None
+    } else {
+        crate::eternal_cube_c9a_v1::plan_blightsteel_shuffle(
+            state,
+            &event,
+            abilities_removed_before,
+        )
+    };
+    if let Some((owner, source, true)) = blightsteel_shuffle {
+        if let Some(queue) = blightsteel_shuffles.as_mut() {
+            queue.push((owner, source));
+        } else if let Err(source) =
+            crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, vec![(owner, source)])
+        {
+            halt_zone_pt_v1(state, source);
+        }
+        return;
+    }
+    let event = if blightsteel_shuffle.is_some() {
+        match event {
+            ProposedEvent::ZoneChange(mut change) => {
+                change.to_zone = Zone::Library;
+                change.library_insert_visibility = LibraryInsertVisibility::Public;
+                ProposedEvent::ZoneChange(change)
+            }
+            other => other,
+        }
+    } else {
+        event
+    };
     let local_zone_plan = if zone_plan.is_none()
         && needs_final_zone_pt_plan_v1(state, std::slice::from_ref(&event))
     {
@@ -5640,6 +5706,15 @@ fn commit_with_entry_batch_and_source_color(
             halt_zone_pt_v1(state, source);
         }
     }
+    if let Some((owner, source, false)) = blightsteel_shuffle {
+        if let Some(queue) = blightsteel_shuffles.as_mut() {
+            queue.push((owner, source));
+        } else if let Err(source) =
+            crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, vec![(owner, source)])
+        {
+            halt_zone_pt_v1(state, source);
+        }
+    }
 }
 
 fn initialize_materialized_entry_v1(
@@ -6143,6 +6218,38 @@ fn materialize_event_v1(
                     },
                     |facts| facts.deathtouch,
                 );
+            // Infect (CR 702.90, Vintage Cube wave C9a): damage dealt to a
+            // player gives poison counters instead of losing life; damage
+            // dealt to a creature puts -1/-1 counters on it instead of marking
+            // damage. Planeswalker loyalty damage is unchanged. Consult LKI
+            // (`historical`) when the source already left the battlefield.
+            let source_has_infect = cfg!(feature = "eternal-fixtures")
+                && d.amount > 0
+                && historical.map_or_else(
+                    || {
+                        state.objects.try_get(d.source).is_some()
+                            && crate::engine::has_effective_keyword(
+                                state,
+                                d.source,
+                                crate::card_def::Keywords::INFECT,
+                            )
+                    },
+                    |facts| {
+                        crate::card_def::CARD_DEFS
+                            .get(usize::from(facts.source.card_def))
+                            .is_some_and(|def| def.keywords.has(crate::card_def::Keywords::INFECT))
+                            && !state.engine.event_history.iter().any(|ev| {
+                                matches!(
+                                    ev,
+                                    CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                                        object,
+                                        zone_change_count,
+                                    } if *object == facts.source.source
+                                        && *zone_change_count == facts.source.zone_change_count
+                                )
+                            })
+                    },
+                );
             match d.target {
                 Target::Object(id) => {
                     let planeswalker = crate::engine::object_has_type(
@@ -6158,8 +6265,56 @@ fn materialize_event_v1(
                         id,
                         crate::card_def::CardType::Creature,
                     );
-                    let obj = state.objects.get_mut(id);
-                    if !planeswalker || creature {
+                    if source_has_infect && creature {
+                        if !crate::eternal_sideboard_s1n_v1::prevents_minus1_minus1_counters_on(
+                            state, id,
+                        ) {
+                            let source_controller = historical
+                                .map(|facts| facts.source.controller)
+                                .or_else(|| {
+                                    state.objects.try_get(d.source).map(|obj| obj.controller)
+                                })
+                                .unwrap_or(state.objects.get(id).controller);
+                            let origin = if d.is_combat {
+                                crate::doubling_season_v48::CounterOriginV48::Rule
+                            } else {
+                                crate::doubling_season_v48::CounterOriginV48::Effect
+                            };
+                            let placed = match crate::doubling_season_v48::counter_amount(
+                                state,
+                                id,
+                                source_controller,
+                                origin,
+                                d.amount,
+                            ) {
+                                Ok(count) => count,
+                                Err(_) => {
+                                    state.engine.halted = Some((
+                                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                        d.source,
+                                    ));
+                                    return None;
+                                }
+                            };
+                            let Some(next) = i16::try_from(placed).ok().and_then(|delta| {
+                                state
+                                    .objects
+                                    .get(id)
+                                    .counters
+                                    .minus1_minus1
+                                    .checked_add(delta)
+                            }) else {
+                                state.engine.halted = Some((
+                                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                    d.source,
+                                ));
+                                return None;
+                            };
+                            state.objects.get_mut(id).counters.minus1_minus1 = next;
+                        }
+                        state.objects.get_mut(id).v4.deathtouch_damage |= source_has_deathtouch;
+                    } else if !planeswalker || creature {
+                        let obj = state.objects.get_mut(id);
                         let Some(damage) = obj.damage.checked_add(d.amount.max(0) as u32) else {
                             state.engine.halted = Some((
                                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -6173,16 +6328,30 @@ fn materialize_event_v1(
                 }
                 Target::StackItem(_) => return None,
                 Target::Player(p) => {
-                    let lost = d.amount;
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    if lost > 0 {
-                        state.record_life_loss_v1(p);
+                    if source_has_infect {
+                        let source_controller = historical
+                            .map(|facts| facts.source.controller)
+                            .or_else(|| state.objects.try_get(d.source).map(|obj| obj.controller))
+                            .unwrap_or(p);
+                        let poison = u16::try_from(d.amount.max(0)).unwrap_or(u16::MAX);
+                        crate::standard_legends_v1::give_poison(
+                            state,
+                            source_controller,
+                            p,
+                            poison,
+                        );
+                    } else {
+                        let lost = d.amount;
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        if lost > 0 {
+                            state.record_life_loss_v1(p);
+                        }
+                        state.players[p.index()].life -= lost;
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        crate::standard_cards_v1::record_life(state, p, 0, lost);
                     }
-                    state.players[p.index()].life -= lost;
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    crate::standard_cards_v1::record_life(state, p, 0, lost);
                 }
             }
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -6272,6 +6441,10 @@ fn materialize_event_v1(
                 // (Vintage Cube wave C4c).
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
+                // Serra Paragon's granted dies trigger and C9b incarnation
+                // pruning (Vintage Cube wave C9b).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c9b_v1::note_departure(state, z.object, from, z.to_zone);
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c6a_v1::note_zone_change(
                     state,
@@ -6384,6 +6557,7 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield {
                     crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
                     crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, true);
                 }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
@@ -6434,6 +6608,7 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield {
                     crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
                     crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                    crate::eternal_cube_c9a_v1::before_departure(state, z.object, z.to_zone, false);
                 }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
@@ -7234,6 +7409,17 @@ fn batch_with_aura_token_hosts_v1(
             token.initialization_v48.as_mut().unwrap().attached_to = Some(host);
         }
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let events = match crate::eternal_cube_c9c_v1::expand_doubled_tokens(state, events) {
+        Ok(expanded) => expanded,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
     if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
         || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
     {
@@ -7648,6 +7834,7 @@ fn commit_batch_survivors_native(
     {
         crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
         crate::eternal_cube_c8c_v1::before_batch_departures(state, &survivors);
+        crate::eternal_cube_c9a_v1::before_batch_departures(state, &survivors);
     }
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
@@ -7717,6 +7904,7 @@ fn commit_batch_survivors_native(
     };
     let greatwurm_history_start = state.engine.event_history.len();
     let mut progenitus_completions = Vec::new();
+    let mut blightsteel_shuffles = Vec::new();
     let mut donated_entries = Vec::new();
     let mut counter_inputs = planned_counter_inputs.into_iter();
     let graveyard_batch = match crate::graveyard_order_v1::PreparedBatchV1::capture(
@@ -7781,9 +7969,34 @@ fn commit_batch_survivors_native(
                     zone_plan.as_ref(),
                 ),
                 Some(&mut progenitus_completions),
+                Some(&mut blightsteel_shuffles),
             );
         }
     } else {
+        let blightsteel_removed = if cfg!(feature = "eternal-fixtures") {
+            survivors
+                .iter()
+                .filter_map(|event| match event {
+                    ProposedEvent::ZoneChange(change)
+                        if state.objects.try_get(change.object).is_some_and(|live| {
+                            live.zone == Zone::Battlefield
+                                && crate::eternal_cube_c9a_v1::is_blightsteel(live.card_def)
+                        }) =>
+                    {
+                        Some((
+                            change.object,
+                            !crate::continuous_characteristics_v1::printed_abilities_active(
+                                state,
+                                change.object,
+                            ),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        } else {
+            std::collections::BTreeMap::new()
+        };
         for event in survivors {
             let counter_input = counter_inputs
                 .next()
@@ -7793,10 +8006,14 @@ fn commit_batch_survivors_native(
                 .map(|captures| captures.next().expect("one capture per batch member"));
             let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().find(|snapshot|
                 matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)).cloned());
+            let blightsteel_ability_removed = match &event {
+                ProposedEvent::ZoneChange(z) => blightsteel_removed.get(&z.object).copied(),
+                _ => None,
+            };
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
-                None,
+                blightsteel_ability_removed,
                 captures,
                 authority_batch.as_mut(),
                 (
@@ -7812,6 +8029,7 @@ fn commit_batch_survivors_native(
                     zone_plan.as_ref(),
                 ),
                 Some(&mut progenitus_completions),
+                Some(&mut blightsteel_shuffles),
             );
         }
     }
@@ -7822,6 +8040,14 @@ fn commit_batch_survivors_native(
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
             return;
+        }
+        if !blightsteel_shuffles.is_empty() {
+            if let Err(source) =
+                crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, blightsteel_shuffles)
+            {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
         }
     }
     if graveyard_batch.is_some() {
@@ -7953,9 +8179,15 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         .collect::<Vec<_>>()
         .into_iter();
     let mut progenitus_completions = Vec::new();
+    let mut blightsteel_shuffles = Vec::new();
     let progenitus_removed = chosen
         .iter()
-        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .filter(|id| {
+            let card_def = state.objects.get(**id).card_def;
+            crate::progenitus_v1::definition(card_def)
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9a_v1::is_blightsteel(card_def))
+        })
         .map(|id| {
             (
                 *id,
@@ -7987,6 +8219,8 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
     );
     for &object in chosen {
         crate::source_power_activation_v1::bombardment::before_departure(state, object);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c9a_v1::before_departure(state, object, Zone::Graveyard, false);
     }
     let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
         chosen
@@ -8064,12 +8298,19 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 (None, None, None),
                 ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                 Some(&mut progenitus_completions),
+                Some(&mut blightsteel_shuffles),
             );
         }
     }
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
+        } else if !blightsteel_shuffles.is_empty() {
+            if let Err(source) =
+                crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, blightsteel_shuffles)
+            {
+                halt_zone_pt_v1(state, source);
+            }
         }
     }
     finish_graveyard_order_batch(state, graveyard_batch, None);
@@ -8121,9 +8362,15 @@ pub(crate) fn commit_sba_death_batch_v1(
     }
     crate::linked_aura_operation_v1::begin_batch(state);
     let mut progenitus_completions = Vec::new();
+    let mut blightsteel_shuffles = Vec::new();
     let progenitus_removed = dying
         .iter()
-        .filter(|id| crate::progenitus_v1::definition(state.objects.get(**id).card_def))
+        .filter(|id| {
+            let card_def = state.objects.get(**id).card_def;
+            crate::progenitus_v1::definition(card_def)
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_cube_c9a_v1::is_blightsteel(card_def))
+        })
         .map(|id| {
             (
                 *id,
@@ -8155,6 +8402,8 @@ pub(crate) fn commit_sba_death_batch_v1(
     );
     for &object in &dying {
         crate::source_power_activation_v1::bombardment::before_departure(state, object);
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c9a_v1::before_departure(state, object, Zone::Graveyard, false);
     }
     let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
         dying
@@ -8179,7 +8428,8 @@ pub(crate) fn commit_sba_death_batch_v1(
                 apply_batch_graveyard_replacement_v1(state, &mut event, replacement);
                 event
             };
-            if frozen_color.is_some() || zone_plan.is_some() {
+            if frozen_color.is_some() || zone_plan.is_some() || progenitus_removed.contains_key(&id)
+            {
                 let progenitus_ability_removed = progenitus_removed.get(&id).copied();
                 commit_with_entry_batch_and_source_color(
                     state,
@@ -8190,6 +8440,7 @@ pub(crate) fn commit_sba_death_batch_v1(
                     (None, None, None),
                     ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                     Some(&mut progenitus_completions),
+                    Some(&mut blightsteel_shuffles),
                 );
             } else {
                 commit(state, event);
@@ -8198,6 +8449,13 @@ pub(crate) fn commit_sba_death_batch_v1(
         if state.engine.halted.is_none() {
             if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
                 halt_zone_pt_v1(state, source);
+            } else if !blightsteel_shuffles.is_empty() {
+                if let Err(source) = crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(
+                    state,
+                    blightsteel_shuffles,
+                ) {
+                    halt_zone_pt_v1(state, source);
+                }
             }
         }
         crate::linked_aura_operation_v1::end_batch(state);
@@ -8249,11 +8507,18 @@ pub(crate) fn commit_sba_death_batch_v1(
             (None, None, None),
             ((None, false), frozen_color, None, None, zone_plan.as_ref()),
             Some(&mut progenitus_completions),
+            Some(&mut blightsteel_shuffles),
         );
     }
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
+        } else if !blightsteel_shuffles.is_empty() {
+            if let Err(source) =
+                crate::eternal_cube_c9a_v1::finish_blightsteel_shuffles(state, blightsteel_shuffles)
+            {
+                halt_zone_pt_v1(state, source);
+            }
         }
     }
     crate::linked_aura_operation_v1::end_batch(state);
