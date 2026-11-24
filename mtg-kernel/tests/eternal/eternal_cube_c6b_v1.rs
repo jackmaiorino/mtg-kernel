@@ -496,7 +496,7 @@ fn ursine_printed_characteristics_and_pyrogoyf_unimplemented_boundary() {
     assert_eq!((card.power, card.toughness), (Some(3), Some(3)));
     assert_eq!(card.keywords, Keywords::TRAMPLE);
     assert!(!card.is_token);
-    assert!(card_id_by_name("Pyrogoyf").is_none());
+    assert_eq!(def("Pyrogoyf").capability, CardCapability::Full);
 }
 
 fn cast_ursine(state: &mut GameState) -> ObjectId {

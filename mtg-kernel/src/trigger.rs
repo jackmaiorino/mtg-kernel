@@ -5113,6 +5113,9 @@ fn sba_fixed_point_with_protected_triggers(
             // An Equipment that is also a creature (Iron Man Armor) can't
             // stay attached (Vintage Cube wave C4c).
             changed |= crate::eternal_cube_c4c_v1::unattach_animated_equipment(state);
+            // Bestow Auras detach back into creatures when their host ceases to
+            // be a legal creature (CR 702.103e, Vintage Cube wave C8b).
+            changed |= crate::eternal_cube_c8b_v1::unattach_illegal_bestow(state);
         }
         if !ordered_graveyard {
             let invalid_auras = state
@@ -5837,6 +5840,10 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_cube_c4b_v1::delayed_triggers(state, events));
         // Garruk observes declarations even when vigilance produces no tap event.
         new_triggers.extend(crate::eternal_cube_c6c_v1::delayed_triggers(state, events));
+        // Wan Shi Tong, Librarian queues opponent-search triggers even when a
+        // library search finds nothing and commits no zone-change event (C8c).
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cube_c8c_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;
@@ -6274,7 +6281,13 @@ fn triggers_from_events(
                             card.name,
                             def.condition,
                             obj.v4.is_token,
-                        ) {
+                        ) || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c8b_v1::suppress_token_death_copy(
+                                card.name,
+                                def.condition,
+                                obj.v4.is_token,
+                            ))
+                        {
                             continue;
                         }
                         // Triumph of Saint Katherine (eternal wave S1l): "put
@@ -6800,6 +6813,16 @@ pub(crate) fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'stat
             .map(|adventure| adventure.types)
             .or_else(|| crate::engine::supported_omen(definition).map(|omen| omen.types))
             .unwrap_or(&[])
+    } else if cfg!(feature = "eternal-fixtures")
+        && object
+            .v4
+            .spell_cast_origin
+            .and_then(|origin| origin.finalized_method)
+            == Some(crate::state::CastMethodV4::Bestow)
+    {
+        // CR 702.103b: a bestowed spell on the stack is an Aura enchantment,
+        // not a creature spell.
+        &[CardType::Enchantment]
     } else {
         definition.types
     }
@@ -6816,6 +6839,14 @@ fn selected_spell_has_subtype(state: &GameState, spell: ObjectId, subtype: Subty
         // Supported Adventure/Omen spell faces have no subtypes. Their
         // printed creature face must not supply subtype authority.
         false
+    } else if cfg!(feature = "eternal-fixtures")
+        && object
+            .v4
+            .spell_cast_origin
+            .and_then(|origin| origin.finalized_method)
+            == Some(crate::state::CastMethodV4::Bestow)
+    {
+        subtype == Subtype::Aura
     } else {
         subtype.is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, spell))
     }

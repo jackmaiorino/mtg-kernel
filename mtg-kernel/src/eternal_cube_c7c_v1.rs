@@ -504,8 +504,7 @@ const GUARDIAN_SCALELORD_TRIGGERS: [TriggeredAbilityDef; 2] = [
     trigger(TriggerCondition::Attacks, scalelord_attack),
 ];
 
-/// Triggered abilities of this module's cards, the tail of the trigger tables.
-pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+fn own_triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         VIBRANCE => &VIBRANCE_TRIGGERS,
         WISTFULNESS => &WISTFULNESS_TRIGGERS,
@@ -518,8 +517,18 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     }
 }
 
+/// Printed triggered abilities of this wave's cards, falling through to wave C8a.
+pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    let own = own_triggers_for(name);
+    if !own.is_empty() {
+        own
+    } else {
+        crate::eternal_cube_c8a_v1::triggers_for(name)
+    }
+}
+
 fn own_trigger_effect(name: &str, effect: &EffectOp) -> bool {
-    triggers_for(name)
+    own_triggers_for(name)
         .iter()
         .any(|def| (def.effect)() == *effect)
         || delayed_effect_matches(name, effect)

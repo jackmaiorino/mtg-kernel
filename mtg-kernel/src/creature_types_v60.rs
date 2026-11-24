@@ -647,6 +647,9 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         // no V60 choice index (Pauper field wave Pf1c).
         Subtype::Klingon => None,
         Subtype::Spy => Some(CreatureTypeV60::Spy),
+        Subtype::Fox => Some(CreatureTypeV60::Fox),
+        Subtype::Gamma => Some(CreatureTypeV60::Gamma),
+        Subtype::Saheeli => None,
     }
 }
 

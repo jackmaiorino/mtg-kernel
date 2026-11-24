@@ -1131,6 +1131,11 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 // (Pauper field wave Pf1c).
                 .saturating_add(crate::eternal_pauper_pf1c_v1::torch_target_tax(
                     state, targets,
+                ))
+                // Elite Spellbinder: a spell cast via its exile permission
+                // costs {2} more to cast (Vintage Cube wave C8c).
+                .saturating_add(crate::eternal_cube_c8c_v1::spellbinder_spell_tax(
+                    state, source, player,
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
@@ -1423,12 +1428,22 @@ fn selected_spell_quote_branch_grant_v1(
     {
         return None;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if kicked && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0) && x == 0 {
+        return None;
+    }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
-    // additional cost's discards (Premodern wave P1b), and a replicate,
-    // multikicker or splice count, which counts additional cost payments.
+    // additional cost's discards (Premodern wave P1b), a replicate,
+    // multikicker or splice count, which counts additional cost payments, and
+    // an X kicker cost paid on top of a free cast (Thieving Skydiver, wave C8c).
+    let x_is_additional_cost =
+        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
+            || super::announces_additional_cost_count(definition)
+            || (cfg!(feature = "eternal-fixtures")
+                && kicked
+                && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0));
     if x != 0
-        && !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
-        && !super::announces_additional_cost_count(definition)
+        && !x_is_additional_cost
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal
@@ -1451,6 +1466,13 @@ fn selected_spell_quote_branch_grant_v1(
     // Sneak and disturb: the costs each card may be cast for.
     #[cfg(feature = "eternal-fixtures")]
     if !crate::eternal_pauper_e6b_v1::quote_allowed(state, definition, source, origin_zone, method)
+        || !crate::eternal_cube_c8a_v1::quote_allowed(
+            state,
+            definition,
+            source,
+            origin_zone,
+            method,
+        )
     {
         return None;
     }
@@ -2079,7 +2101,9 @@ pub(super) fn prepare_final_spell_payment_v1(
     {
         Some(definition.optional_additional_cost?)
     } else {
-        None
+        super::pending_collect_evidence_minimum(definition, pending).map(|minimum_mana_value| {
+            super::OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }
+        })
     };
     let optional_objects = pending
         .optional_additional_cost_chosen

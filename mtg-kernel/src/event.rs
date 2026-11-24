@@ -6192,6 +6192,10 @@ fn materialize_event_v1(
             } else {
                 crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
             }
+            #[cfg(feature = "eternal-fixtures")]
+            if !mode.is_scene() {
+                crate::eternal_cube_c8a_v1::note_damage_dealt(state, d.target, d.amount);
+            }
             CommittedEvent::Damage {
                 source: d.source,
                 target: d.target,
@@ -6206,6 +6210,8 @@ fn materialize_event_v1(
             crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8a_v1::adjust_zone_change(state, &mut z);
             // Dauthi Voidwalker exiles instead, with a void counter.
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_e9b_v1::replace_zone_change(state, &mut z, !mode.is_scene());
@@ -6278,7 +6284,10 @@ fn materialize_event_v1(
                 if from == Zone::Battlefield
                     && (crate::standard_cards_v1::active_aegis_copy(state, z.object)
                         || crate::eternal_vintage_v1::active_copy(state, z.object)
-                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object))
+                        || crate::eternal_legacy_e7a_v1::active_copy(state, z.object)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && (crate::eternal_cube_c8b_v1::active_copy(state, z.object)
+                                || crate::eternal_cube_c8c_v1::active_copy(state, z.object))))
                 {
                     let marker = CommittedEvent::LeftBattlefieldCopyV1 {
                         source: crate::state::AbilitySourceContractV4::capture(state, z.object),
@@ -6367,14 +6376,24 @@ fn materialize_event_v1(
                     state.engine.event_log.push(marker.clone());
                     state.engine.event_history.push(marker);
                 }
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
-                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
+                        state, z.object,
+                    );
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6407,14 +6426,24 @@ fn materialize_event_v1(
                 crate::standard_keywords_v1::record_descended_zone_change_v1(
                     state, z.object, z.to_zone,
                 );
+                #[cfg(feature = "eternal-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::eternal_cube_c8b_v1::before_departure(state, z.object, z.to_zone);
+                    crate::eternal_cube_c8c_v1::note_departure(state, z.object);
+                }
                 #[cfg(feature = "limited-fdn-fixtures")]
                 if from == Zone::Battlefield {
                     crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
                 }
                 #[cfg(feature = "eternal-fixtures")]
                 if from == Zone::Battlefield {
-                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_temp_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8c_v1::end_copy_before_departure(state, z.object);
+                    crate::eternal_cube_c8b_v1::end_permanent_copy_before_departure(
+                        state, z.object,
+                    );
+                    crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
                     crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
@@ -6738,6 +6767,8 @@ fn materialize_event_v1(
                     state.engine.combat.attackers.push(object);
                 }
             }
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8b_v1::apply_pending_token_mods(state, object);
             initialize_entry_counters(state, object, false, counter_input.as_ref());
             if season_entry_active {
                 crate::standard_cards_v1::initialize_entry_counters(
@@ -7610,7 +7641,10 @@ fn commit_batch_survivors_native(
     crate::source_power_activation_v1::bombardment::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
     #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
+    {
+        crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
+        crate::eternal_cube_c8c_v1::before_batch_departures(state, &survivors);
+    }
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is
@@ -9028,8 +9062,10 @@ fn materialize_zone_change_v1(
                         return;
                     }
                 }
-            } else {
+            } else if count > 0 {
                 count
+            } else {
+                state.objects.get(id).counters.plus1_plus1
             };
             state.objects.get_mut(id).counters.plus1_plus1 = total;
         }
