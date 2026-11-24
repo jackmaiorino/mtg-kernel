@@ -1131,6 +1131,81 @@ fn kappa_cannoneer_improvises_and_grows_unblockable_as_artifacts_enter() {
     assert_eq!(power_toughness(&state, kappa), (6, 6));
 }
 
+/// Census games 24000 and 25049: Mishra's Workshop's mana is floating
+/// ("spend this mana only to cast artifact spells") when Kappa Cannoneer is
+/// cast. Choosing its improvise cost must lead to a payable selection, never
+/// to a decision without an answer.
+#[test]
+fn kappa_cannoneer_improvise_with_workshop_mana_always_has_an_answer() {
+    type Setup = (&'static [&'static str], &'static [&'static str]);
+    // (permanents tapped for mana before the cast, untapped permanents)
+    let variants: [Setup; 4] = [
+        (
+            &["Mishra's Workshop", "Mountain", "Mountain"],
+            &[
+                "Island",
+                "Thornspire Verge",
+                "Chrome Mox",
+                "Sword of the Meek",
+            ],
+        ),
+        (&["Mishra's Workshop"], &["Island", "Mountain", "Sol Ring"]),
+        (&["Mishra's Workshop"], &["Island", "Sol Ring"]),
+        (
+            &["Mishra's Workshop", "Mountain", "Mountain"],
+            &["Island", "Sword of the Meek"],
+        ),
+    ];
+    for (tapped, untapped) in variants {
+        let mut state = islands();
+        let tapped: Vec<ObjectId> = tapped
+            .iter()
+            .map(|name| put(&mut state, P0, name, Zone::Battlefield))
+            .collect();
+        for name in untapped {
+            put(&mut state, P0, name, Zone::Battlefield);
+        }
+        let kappa = put(&mut state, P0, "Kappa Cannoneer", Zone::Hand);
+        for source in tapped {
+            priority(&mut state);
+            act(&mut state, Action::ActivateManaAbility(source));
+        }
+        if !castable(&mut state, kappa) {
+            continue;
+        }
+        act(&mut state, Action::CastSpell(kappa));
+        let mut improvised = false;
+        for _ in 0..40 {
+            let decision = next(&mut state);
+            let action = match decision {
+                Decision::ChooseCastMode { ref options, .. }
+                    if options.contains(&CastMode::Alternative) =>
+                {
+                    improvised = true;
+                    Action::ChooseCastMode(CastMode::Alternative)
+                }
+                Decision::ChooseEffectTargets {
+                    ref legal_targets,
+                    can_finish,
+                    ..
+                } => {
+                    assert!(
+                        can_finish || !legal_targets.is_empty(),
+                        "{untapped:?}: improvise offers no answer: {decision:?}"
+                    );
+                    first_answer(decision)
+                }
+                Decision::CastSpellOrPass { .. } if zone(&state, kappa) != Zone::Hand => break,
+                other => first_answer(other),
+            };
+            act(&mut state, action);
+        }
+        eprintln!("KAPPA-VARIANT {untapped:?} improvised={improvised}");
+        settle_first(&mut state);
+        assert_eq!(zone(&state, kappa), Zone::Battlefield, "{untapped:?}");
+    }
+}
+
 #[test]
 fn memory_guardian_costs_one_less_per_artifact() {
     let mut state = islands();

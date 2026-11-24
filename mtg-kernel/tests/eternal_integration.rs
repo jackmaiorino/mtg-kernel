@@ -164,6 +164,8 @@ mod eternal_vintage_e4b_v1;
 mod eternal_vintage_e5a_v1;
 #[path = "eternal/eternal_vintage_e7b_v1.rs"]
 mod eternal_vintage_e7b_v1;
+#[path = "eternal/eternal_ward_public_v1.rs"]
+mod eternal_ward_public_v1;
 #[path = "eternal/hallow_overlap_v1.rs"]
 mod hallow_overlap_v1;
 #[path = "eternal/premodern_feb_jsonl_v1.rs"]
