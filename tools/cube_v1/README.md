@@ -34,11 +34,13 @@ Offline input tools for cube self-play training configs:
 
 4. **Canonical deck hash** (`deal.canonical_decks_sha256`): hashes a list of decks, each given as card names (`deal.card_names_by_id` and `deal.deck_card_names` translate card ids through a pool). Each deck is written as sorted `name count` lines followed by one empty line, LF line endings, UTF-8, and SHA-256 runs over that text, so card order, file formatting, line endings and provenance fields cannot change it.
 
-5. **M4 reads** (m4-interfaces/v1). Standard library only; the read constants come from a declaration file, never from defaults.
-   - `pod_record.py` loads and validates `mtg-kernel-cube-pod-record/v1`: every field, type and key order of the interface's section 4, ids, the halt ledger and the score rules. Scores +1, 0, -1 read as win fractions 1, 0.5, 0.
-   - `deal_common.py` deals the common opponent C(P): read (b)'s one-seat rule from the active pool minus all 45 cards of the pool P, key prefix `["cube_deal_common_v1", namespace, draft, seat, opponent, seed(...)]`, 4 game seeds `seed(["cube_deal_common_v1", namespace, draft, seat, opponent, slot])`. `deal.py` is unchanged.
-   - `read_plans.py` writes one explicit plan per draft (`mtg-kernel-cube-read-plan/v1`, `seat_rule` schedule, `max_replays` 0): read (b) on A1.5's dealer, seeds and seats; reads (c) and (b') and dose reads as paired builds against C(P).
-   - `readers.py --declaration DECL.json --read {a,a_early,b,b_prime,c,dose,aa} --look L --records ... [--plans ...]` writes one JSON report per read and look: input hashes, units, the statistic under the drop and both signed halt scorings, a draft- or pair-clustered percentile bootstrap, the void test and one verdict word (`win`, `loss`, `extend`, `not_won`, `void`; `symmetric` or `asymmetric` for the A/A; none for (b') and dose reads). A declaration without a signed A6 reads only the `test` namespace.
+5. **M4 reads** (m4-interfaces/v2, read plan v2, signed A6 part 1). Standard library only; the read constants come from a declaration file (`mtg-kernel-cube-read-declaration/v2`), never from defaults.
+   - `seeds_v1.py` ports `SplitMix64`, `derive_seed`, `game_seed`, `pod_pairings` and the seat coin from the Rust; `mtg-kernel/tests/cube_read_seed_goldens_v1.rs` pins the same constants on the Rust side.
+   - `pod_record.py` validates `mtg-kernel-cube-pod-record/v2`: every field, type and key order, read-pod seeds with their source names, the dealt builder pin, `q`, the halt ledger and score rules.
+   - `deal_common.py` deals C(P) (run-free dealer key) and gives its game seeds `seed([ns, "game", run, i, s, o, j(, q)])`. `deal.py` is unchanged.
+   - `read_plans.py` writes and checks plans (`mtg-kernel-cube-read-plan/v2`) for every family, prep requests, manifests and the frozen `panel.json`. `check_plan` regenerates a plan and requires identical bytes.
+   - `read_sets.py` opens a set directory: manifest, plans, prep acceptance (per-unit markers, byte identity across executions), the chosen execution (watchdog rerun rules), look allocation, restarts and panel verification.
+   - `readers.py --declaration DECL.json --read READ --look L --sets DIR... [--pool P --constants C]` writes one report per read and look, in exact rational arithmetic, with the drop and both signed completions, the A6.5 void rule and the signed disposition (`win`, `loss`, `extend`, `not_won`, `void`; `symmetric` or `failed` for the A/A; none for report-only reads). An unsigned declaration reads only the `test` namespace.
 
 6. **Tests**:
    ```bash

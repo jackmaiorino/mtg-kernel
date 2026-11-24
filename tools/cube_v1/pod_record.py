@@ -1,4 +1,4 @@
-"""Load and validate the cube pod record, `mtg-kernel-cube-pod-record/v1` (m4-interfaces/v1, section 4).
+"""Load and validate the cube pod record, `mtg-kernel-cube-pod-record/v2` (m4-interfaces/v2, section 4).
 
 Every field is checked for presence, type and key order, exactly as the frozen interface lists it.
 Unknown versions, missing or extra fields and inconsistent ids are rejected. Readers map the
@@ -20,8 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import deal  # noqa: E402
 
-POD_RECORD_SCHEMA = "mtg-kernel-cube-pod-record/v1"
-INTERFACES_VERSION = "m4-interfaces/v1"
+POD_RECORD_SCHEMA = "mtg-kernel-cube-pod-record/v2"
+INTERFACES_VERSION = "m4-interfaces/v2"
 DRAFT_RECORD_SCHEMA = "cube_draft_record/v1"
 
 SEATS = 8
@@ -37,12 +37,15 @@ U64 = (1 << 64) - 1
 NAME_RE = re.compile(r"^[a-z0-9-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
-USES = ("training", "shakedown", "dose", "read_a", "read_b", "paired_build", "sizing", "test")
-READ_USES = ("dose", "read_a", "read_b", "paired_build")
+USES = ("training", "shakedown", "dose", "read_a", "read_b", "paired_build", "sizing", "test", "client")
+# A read pod is any pod run from a read plan: these uses, plus a `test` pod built from a read plan
+# (one whose seeds carry the two source fields of change 3).
+READ_USES = ("dose", "read_a", "read_b", "paired_build", "sizing")
+CLIENT_NAMESPACE = "client-pods"
 CHAIR_ROLES = ("learning", "older", "fixture")
 PICKER_KINDS = ("uniform", "learned", "stated")
-# The interface gives `builder` as {kind, pin} for every deck. A dealt deck has no builder, so
-# its kind is "dealt" (an interpretation of section 4, row 11; see RESULT.md).
+# Field 11: builder kind uniform, learned or stated for a built deck, dealt for a dealt deck, whose
+# pin is {function, key} copied from the deck's `dealt` (change 6).
 BUILDER_KINDS = ("uniform", "learned", "stated")
 DEALT_BUILDER_KIND = "dealt"
 PILOT_KINDS = ("uniform", "checkpoint")
@@ -50,11 +53,11 @@ UNIFORM_DECODING = "uniform-index-splitmix64-v1"
 DECK_SOURCES = ("build", "dealt")
 GAME_ROLES = ("reference", "sibling", "cross", "read_b", "common")
 SEAT_RULES = ("coin", "schedule")
-PAIRED_KINDS = ("sibling", "candidate_stated", "current_initial")
+PAIRED_KINDS = ("sibling", "candidate_stated", "current_initial", "k1_last_b1_last")
 STATUSES = ("complete", "stopped")
 
 ROW_KINDS = ("pick", "count", "pointer", "type_set", "split")
-LEARNED_SAMPLER = "softmax-cdf-splitmix64-v1"
+LEARNED_SAMPLER = "softmax-cdf-splitmix64-v2"
 UNIFORM_SAMPLER = "uniform-index-splitmix64-v1"
 SAMPLERS = (LEARNED_SAMPLER, UNIFORM_SAMPLER)
 
@@ -87,6 +90,7 @@ RECORD_KEYS = (
     "stop",
 )
 SEEDS_KEYS = ("draft_seed", "pod_seed", "league_seed")
+READ_SEEDS_KEYS = SEEDS_KEYS + ("draft_seed_namespace", "pod_seed_namespace")
 PINS_KEYS = ("binary", "cube_list", "fence_record", "card_index", "cube_table")
 PILOT_KEYS = ("kind", "pin", "decoding")
 CAPS_KEYS = ("max_decisions", "max_physical_decisions", "max_policy_steps", "watchdog_seconds", "max_replays")
@@ -123,7 +127,7 @@ ATTEMPT_KEYS = (
     "stop_kind",
     "last_action_source",
 )
-PAIRED_KEYS = ("kind", "chair", "deck_x", "deck_y", "opponents", "games_x", "games_y")
+PAIRED_KEYS = ("kind", "chair", "deck_x", "deck_y", "opponents", "games_x", "games_y", "q")
 HALT_KEYS = ("game", "attempt", "stop_kind", "last_action_source", "deal_seed")
 STOP_KEYS = ("game", "pairing", "decks", "attempts")
 STOP_ATTEMPT_KEYS = ("deal_seed", "stop_kind", "last_action_source")
@@ -376,7 +380,8 @@ def _validate_deck(value: Any, path: str, index: int) -> dict[str, Any]:
     chair = _uint_or_null(deck["chair"], f"{path}.chair", U8)
     build = _uint_or_null(deck["build"], f"{path}.build", U8)
     builder = _object(deck["builder"], f"{path}.builder", KIND_PIN_KEYS)
-    _sha_or_null(builder["pin"], f"{path}.builder.pin")
+    if source == "build":
+        _sha_or_null(builder["pin"], f"{path}.builder.pin")
     _uint_or_null(deck["build_seed"], f"{path}.build_seed", U64)
     cards = _uint_list(deck["cards"], f"{path}.cards", U16)
     if len(cards) != DECK_CARDS:
@@ -407,6 +412,9 @@ def _validate_deck(value: Any, path: str, index: int) -> dict[str, Any]:
         dealt = _object(dealt, f"{path}.dealt", DEALT_KEYS)
         _string(dealt["function"], f"{path}.dealt.function")
         _list(dealt["key"], f"{path}.dealt.key")
+        if builder["pin"] != {"function": dealt["function"], "key": dealt["key"]} or list(builder["pin"]) != list(
+                DEALT_KEYS):
+            _fail(f"{path}.builder.pin", "a dealt deck's builder pin is {function, key}, copied from its dealt")
     return deck
 
 
@@ -453,12 +461,29 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
             _fail(f"{path}.{key}", f"must match [a-z0-9-]+, got {rec[key]!r}")
     pod_index = _uint(rec["pod_index"], f"{path}.pod_index", U64)
 
-    seeds = _object(rec["seeds"], f"{path}.seeds", SEEDS_KEYS)
-    expected = pod_seeds(rec["namespace"], rec["run"], pod_index)
+    if rec["use"] == "client" and rec["namespace"] != CLIENT_NAMESPACE:
+        _fail(f"{path}.namespace", f"client pods use namespace {CLIENT_NAMESPACE!r}")
+    if rec["namespace"] == CLIENT_NAMESPACE and rec["use"] != "client":
+        _fail(f"{path}.use", f"namespace {CLIENT_NAMESPACE!r} is reserved for client pods")
+    raw_seeds = rec["seeds"]
+    read_pod = rec["use"] in READ_USES or (
+        rec["use"] == "test" and isinstance(raw_seeds, dict) and "draft_seed_namespace" in raw_seeds)
+    seeds = _object(raw_seeds, f"{path}.seeds", READ_SEEDS_KEYS if read_pod else SEEDS_KEYS)
     for key in SEEDS_KEYS:
-        value = _uint_or_null(seeds[key], f"{path}.seeds.{key}", U64)
-        if value is not None and value != expected[key]:
-            _fail(f"{path}.seeds.{key}", f"{value} differs from seed([ns, {key[:-5]!r}, run, {pod_index}])")
+        _uint_or_null(seeds[key], f"{path}.seeds.{key}", U64)
+    if read_pod:
+        # Change 3: read seeds come from the plan, which the reader checks; never from pod_index.
+        for key in ("draft_seed", "pod_seed"):
+            _uint(seeds[key], f"{path}.seeds.{key}", U64)
+        for key in ("draft_seed_namespace", "pod_seed_namespace"):
+            if not (isinstance(seeds[key], str) and NAME_RE.match(seeds[key])):
+                _fail(f"{path}.seeds.{key}", f"must match [a-z0-9-]+, got {seeds[key]!r}")
+    elif rec["use"] != "client":
+        expected = pod_seeds(rec["namespace"], rec["run"], pod_index)
+        for key in SEEDS_KEYS:
+            value = seeds[key]
+            if value is not None and value != expected[key]:
+                _fail(f"{path}.seeds.{key}", f"{value} differs from seed([ns, {key[:-5]!r}, run, {pod_index}])")
 
     pins = _object(rec["pins"], f"{path}.pins", PINS_KEYS)
     for key in PINS_KEYS:
@@ -510,15 +535,19 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
         if game["game"] != i:
             _fail(f"{path}.games[{i}].game", f"must be {i} (games in logical order)")
         game_by_id[i] = game
-    if rec["use"] in READ_USES:
+    if read_pod:
         if max_replays != 0:
             _fail(f"{path}.caps.max_replays", "reads never replay: max_replays is 0")
         for i, game in enumerate(games):
-            if game["seat_rule"] != "schedule" and rec["use"] != "read_a":
-                _fail(f"{path}.games[{i}].seat_rule", "a read plan's games use seat_rule 'schedule'")
+            if game["seat_rule"] != "schedule":
+                _fail(f"{path}.games[{i}].seat_rule", "every game of a read pod uses seat_rule 'schedule'")
 
-    for i, pair in enumerate(_list(rec["paired_builds"], f"{path}.paired_builds")):
+    pairs = _list(rec["paired_builds"], f"{path}.paired_builds")
+    for i, pair in enumerate(pairs):
         _validate_paired(pair, f"{path}.paired_builds[{i}]", deck_by_id, game_by_id)
+    firsts = [pair["games_x"][0] for pair in pairs]
+    if firsts != sorted(firsts) or len(set(firsts)) != len(firsts):
+        _fail(f"{path}.paired_builds", "entries are ordered by the first game of games_x (change 4)")
 
     expected_halts = [
         (game["game"], attempt["attempt"], attempt["stop_kind"], attempt["last_action_source"], attempt["deal_seed"])
@@ -546,7 +575,16 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
         _uint_list(stop["decks"], f"{path}.stop.decks", U32)
         for k, entry in enumerate(_list(stop["attempts"], f"{path}.stop.attempts")):
             _object(entry, f"{path}.stop.attempts[{k}]", STOP_ATTEMPT_KEYS)
+            _uint(entry["deal_seed"], f"{path}.stop.attempts[{k}].deal_seed", U64)
+            if entry["stop_kind"] is not None:
+                _string(entry["stop_kind"], f"{path}.stop.attempts[{k}].stop_kind")
+            _uint_or_null(entry["last_action_source"], f"{path}.stop.attempts[{k}].last_action_source", U16)
     return rec
+
+
+def is_read_pod(record: dict[str, Any]) -> bool:
+    """A validated record is a read pod when its seeds carry the plan's source fields."""
+    return "draft_seed_namespace" in record["seeds"]
 
 
 def _validate_paired(
@@ -570,6 +608,7 @@ def _validate_paired(
     for deck_id in opponents:
         if deck_id not in deck_by_id:
             _fail(f"{path}.opponents", f"deck {deck_id} is not in the record")
+    _uint_or_null(pair["q"], f"{path}.q", U8)
     games_x = _uint_list(pair["games_x"], f"{path}.games_x", U32)
     games_y = _uint_list(pair["games_y"], f"{path}.games_y", U32)
     if len(games_x) != len(games_y) or not games_x:

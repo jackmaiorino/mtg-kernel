@@ -9,13 +9,13 @@ by the constants), with the same constants, from the active pool minus all 45 ca
 pool P. Basic lands are exempt from the exclusion. C(P) depends on P and the seeds only, never on
 a build of P, so every compared build of P faces one opponent that shares no card with either.
 
-Key prefix [proposed for A6]:
+Dealer key (A6.17, signed; run-free by design):
   ["cube_deal_common_v1", namespace, draft, seat, opponent,
    seed(["cube_deal_common_v1", namespace, draft, seat, opponent])]
-Game seeds of its 4 games [proposed for A6]:
-  seed(["cube_deal_common_v1", namespace, draft, seat, opponent, slot]) for slot 0 to 3; the
-  compared build sits in session seat 0 (on the play) in slots 0 and 2 and in seat 1 (on the draw)
-  in slots 1 and 3.
+Game seeds (A6.17 and read plan v1, section 3; they carry the run):
+  opponent 0 of (c), (b'), dose: seed([namespace, "game", run, draft, seat, 0, j]) for j = 0 to 3;
+  D13: seed([namespace, "game", run, draft, seat, o, j, q]) for o, j in 0, 1 and contrast q.
+The focal deck is session player 0 (on the play) at even j and player 1 at odd j.
 """
 
 from __future__ import annotations
@@ -134,15 +134,17 @@ def deal_common_opponent(
     }
 
 
-def common_games(namespace: str, draft: int, seat: int, opponent: int) -> list[dict[str, int]]:
-    """The 4 games every compared build of P plays against C(P): slot, game seed and the compared
-    build's session seat (0 on the play in slots 0 and 2, 1 on the draw in slots 1 and 3)."""
+def common_game_seed(namespace: str, run: str, draft: int, seat: int, opponent: int, slot: int,
+                     contrast: int | None = None) -> int:
+    """The game seed of slot j against C(P) at opponent o; D13 games append the contrast q."""
     _check_key(namespace, draft, seat, opponent)
-    return [
-        {
-            "slot": slot,
-            "game_seed": deal.seed([COMMON_KEY, namespace, draft, seat, opponent, slot]),
-            "build_seat": slot % 2,
-        }
-        for slot in range(COMMON_GAMES)
-    ]
+    if not isinstance(run, str) or not run:
+        raise ValueError(f"run must be a non-empty string, got {run!r}")
+    if not (_is_int(slot) and slot >= 0):
+        raise ValueError(f"slot must be an integer >= 0, got {slot!r}")
+    parts: list[Any] = [namespace, "game", run, draft, seat, opponent, slot]
+    if contrast is not None:
+        if not (_is_int(contrast) and contrast >= 0):
+            raise ValueError(f"contrast must be an integer >= 0, got {contrast!r}")
+        parts.append(contrast)
+    return deal.seed(parts)

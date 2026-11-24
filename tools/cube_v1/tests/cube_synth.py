@@ -1,14 +1,17 @@
-"""Synthetic pools, plans and pod records for the reader tests (namespace `test` only).
+"""Synthetic fixtures for the reader tests: pools, prep results, v2 pod records, plan and prep sets.
 
-Records are written to the frozen schema (mtg-kernel-cube-pod-record/v1) with uniform seats and a
-uniform pilot. Game results are chosen by the test, so every expected answer is known exactly.
+Everything is in namespace `test`, written to the frozen shapes (m4-interfaces/v2, read plan v2).
+Seats are uniform, the pilot is uniform, and game results are chosen by the test, so every expected
+answer is known exactly.
 """
 
 from __future__ import annotations
 
 import copy
-import random
+import hashlib
+import json
 from pathlib import Path
+import random
 import sys
 from typing import Any, Callable
 
@@ -18,30 +21,26 @@ sys.path.insert(0, str(CUBE_V1_DIR))
 import deal  # noqa: E402
 import pod_record  # noqa: E402
 import read_plans  # noqa: E402
+import read_sets  # noqa: E402
+import seeds_v1  # noqa: E402
 
 NS = "test"
-RUN = "synth"
 COLORS = deal.COLORS
 BASIC_BASE = 1000
 UNIFORM = {"kind": "uniform", "pin": None}
 STATED = {"kind": "stated", "pin": None}
-EVEN = (0, 2, 4, 6)
-ODD = (1, 3, 5, 7)
-
-CONSTANTS = {
-    "deck_size": 40,
-    "colours_per_seat": 2,
-    "nonland_spells": 23,
-    "nonbasic_lands": 1,
-    "basic_split": "even_first_colour_extra",
-    "pairs_per_update": 2,
-}
+PILOT = dict(read_plans.UNIFORM_PILOT)
+PINS = {k: hashlib.sha256(f"fixture-{k}".encode()).hexdigest() for k in pod_record.PINS_KEYS}
+CONSTANTS = {"deck_size": 40, "colours_per_seat": 2, "nonland_spells": 23, "nonbasic_lands": 3,
+             "basic_split": "even_first_colour_extra", "pairs_per_update": 2}
+BINARY = hashlib.sha256(b"fixture-binary").hexdigest()
+PLATFORM = "fixture-platform"
+WATCHDOG_END = {"kind": "terminal", "code": "watchdog", "classification": "watchdog", "reason": "watchdog_seconds"}
 
 
 def pool_doc() -> dict[str, Any]:
     """A synthetic active pool large enough for 8 disjoint 45-card pools and every deal."""
-    spells = []
-    cid = 1
+    spells, cid = [], 1
     for color in COLORS:
         for k in range(60):
             spells.append({"card_id": cid, "name": f"Synth {color} {k}", "colors": [color], "is_land": False})
@@ -49,59 +48,62 @@ def pool_doc() -> dict[str, Any]:
     for k in range(20):
         spells.append({"card_id": cid, "name": f"Synth Colourless {k}", "colors": [], "is_land": False})
         cid += 1
-    for k in range(20):
-        pair = [COLORS[k % 5], COLORS[(k + 1 + k // 5) % 5]]
-        if pair[0] == pair[1]:
-            pair = [COLORS[k % 5], COLORS[(k + 2) % 5]]
-        spells.append({"card_id": cid, "name": f"Synth Gold {k}", "colors": pair, "is_land": False})
-        cid += 1
     lands = []
-    for k in range(30):
+    for k in range(40):
         lands.append({"card_id": cid, "name": f"Synth Land {k}", "colors": [], "is_land": True})
         cid += 1
-    basics = [
-        {"card_id": BASIC_BASE + i, "name": f"Synth Basic {c}", "colors": [c], "is_land": True, "color": c}
-        for i, c in enumerate(COLORS)
-    ]
+    basics = [{"card_id": BASIC_BASE + i, "name": f"Synth Basic {c}", "colors": [c], "is_land": True, "color": c}
+              for i, c in enumerate(COLORS)]
     return {"kernel_carddb_hash": "00000000synthetic", "spells": spells, "nonbasic_lands": lands, "basics": basics}
 
 
-def draft_pools(draft: int) -> list[list[int]]:
-    """8 disjoint 45-card pools for a synthetic draft, in a seeded order."""
-    doc = pool_doc()
-    ids = [c["card_id"] for c in doc["spells"]] + [c["card_id"] for c in doc["nonbasic_lands"]]
-    rng = random.Random(deal.seed(["synth-pools", draft]))
-    picked = rng.sample(ids, 8 * 45)
+POOL = (pool_doc(), hashlib.sha256(read_plans.serialize(pool_doc()).encode()).hexdigest())
+CONST = (dict(CONSTANTS), hashlib.sha256(read_plans.serialize(CONSTANTS).encode()).hexdigest())
+DEALER = {"pool_doc": POOL[0], "constants_doc": CONST[0], "pool_sha256": POOL[1], "constants_sha256": CONST[1]}
+
+
+def draft_pools(draft_seed: int) -> list[list[int]]:
+    ids = [c["card_id"] for c in POOL[0]["spells"]] + [c["card_id"] for c in POOL[0]["nonbasic_lands"]]
+    picked = random.Random(draft_seed).sample(ids, 8 * 45)
     return [picked[45 * s: 45 * (s + 1)] for s in range(8)]
 
 
-def build_from_pool(pool: list[int], variant: int) -> list[int]:
-    """A 40-card deck of a pool: 23 nonbasic cards of the pool and 17 basics."""
+def draft_record(draft_seed: int, pools: list[list[int]] | None = None) -> dict[str, Any]:
+    return {"schema": "cube_draft_record/v1", "draft_seed": draft_seed, "packs": [[draft_seed % 7]], "picks": [],
+            "pools": pools or draft_pools(draft_seed)}
+
+
+ROW_VARIANT = {"candidate": 0, "current": 0, "b1_last": 0, "k1_last": 2, "initial": 3, "stated": 1}
+
+
+def build_from_pool(pool: list[int], row: str) -> list[int]:
+    """A 40-card deck of a pool: 23 nonbasic cards and 17 basics, varied by builder row."""
+    v = ROW_VARIANT[row]
     nonbasic = sorted(pool)
-    chosen = nonbasic[:23] if variant == 0 else nonbasic[-23:]
-    basics = [BASIC_BASE + (variant % 5)] * 9 + [BASIC_BASE + ((variant + 1) % 5)] * 8
+    chosen = nonbasic[v: v + 23]
+    basics = [BASIC_BASE + (v % 5)] * 9 + [BASIC_BASE + ((v + 1) % 5)] * 8
     return sorted(chosen + basics)
 
 
+def prep_result(request: dict[str, Any], request_sha: str) -> dict[str, Any]:
+    draft = draft_record(request["seeds"]["draft_seed"])
+    builds = []
+    for b in request["builds"]:
+        builds.append({**b, "build_seed": None if b["row"] == "stated" else deal.seed(["build", b["chair"], b["row"]]),
+                       "cards": build_from_pool(draft["pools"][b["chair"]], b["row"])})
+    return {"schema": read_plans.PLAN_SCHEMA, "kind": "prep_result", "request_sha256": request_sha,
+            "draft": draft, "builds": builds}
+
+
 def _row(kind: str, options: list[int], chosen: int, stream: int) -> dict[str, Any]:
-    return {
-        "kind": kind,
-        "sampler": pod_record.UNIFORM_SAMPLER,
-        "options": options,
-        "chosen": chosen,
-        "stream_values": [stream],
-        "logits_bits": None,
-        "p_chosen_bits": None,
-        "value_bits": None,
-    }
+    return {"kind": kind, "sampler": pod_record.UNIFORM_SAMPLER, "options": options, "chosen": chosen,
+            "stream_values": [stream], "logits_bits": None, "p_chosen_bits": None, "value_bits": None}
 
 
 def uniform_build_rows(cards: list[int], pool: list[int]) -> dict[str, Any]:
-    """BuildRows of the shape the uniform four-step builder writes, for a deck of `pool`."""
     basics = [c for c in cards if c >= BASIC_BASE]
     nonbasic = [c for c in cards if c < BASIC_BASE]
-    b = len(basics)
-    remaining = sorted(set(pool))
+    remaining = sorted(set(pool) | set(nonbasic))
     pointer = []
     for i, card in enumerate(nonbasic):
         pointer.append(_row("pointer", list(remaining), card, i))
@@ -110,188 +112,207 @@ def uniform_build_rows(cards: list[int], pool: list[int]) -> dict[str, Any]:
     for c in basics:
         mask |= 1 << (c - BASIC_BASE)
     bits = bin(mask).count("1")
-    type_set = None
-    split = []
-    if b:
-        options = [m for m in range(1, 32) if bin(m).count("1") <= b]
-        type_set = _row("type_set", options, mask, 99)
+    type_set, split = None, []
+    if basics:
+        type_set = _row("type_set", [m for m in range(1, 32) if bin(m).count("1") <= len(basics)], mask, 99)
         if bits >= 2:
             t_bits = [1 << i for i in range(5) if mask & (1 << i)]
-            split = [_row("split", t_bits, t_bits[i % len(t_bits)], 100 + i) for i in range(b - bits)]
-    return {"count": _row("count", list(range(41)), b, 98), "pointer": pointer, "type_set": type_set, "split": split}
+            split = [_row("split", t_bits, t_bits[i % len(t_bits)], 100 + i) for i in range(len(basics) - bits)]
+    return {"count": _row("count", list(range(41)), len(basics), 98), "pointer": pointer, "type_set": type_set,
+            "split": split}
 
 
-def _record_head(use: str, pod_index: int, pools: list[list[int]] | None, max_replays: int = 0) -> dict[str, Any]:
-    seeds = pod_record.pod_seeds(NS, RUN, pod_index)
-    draft = None
-    if pools is not None:
-        draft = {"schema": "cube_draft_record/v1", "draft_seed": seeds["draft_seed"], "packs": [], "picks": [],
-                 "pools": [list(p) for p in pools]}
-    return {
-        "schema": pod_record.POD_RECORD_SCHEMA,
-        "interfaces": pod_record.INTERFACES_VERSION,
-        "use": use,
-        "namespace": NS,
-        "run": RUN,
-        "pod_index": pod_index,
-        "seeds": {"draft_seed": seeds["draft_seed"], "pod_seed": seeds["pod_seed"], "league_seed": None},
-        "pins": {"binary": None, "cube_list": None, "fence_record": None, "card_index": None, "cube_table": None},
-        "pilot": {"kind": "uniform", "pin": None, "decoding": pod_record.UNIFORM_DECODING},
-        "caps": {"max_decisions": 16384, "max_physical_decisions": 16384, "max_policy_steps": 32768,
-                 "watchdog_seconds": 600, "max_replays": max_replays},
-        "draft": draft,
-        "chairs": [],
-        "decks": [],
-        "games": [],
-        "paired_builds": [],
-        "halts": [],
-        "status": "complete",
-        "stop": None,
-    }
+# ---------------------------------------------------------------------------------------------
+# Plans
 
 
-def _attempt(game_seed: int, result: str) -> dict[str, Any]:
-    """One attempt; `result` is p0, p1, draw, or halt (a decision-cap stop)."""
-    if result == "halt":
-        end = {"kind": "decision_cap"}
-    else:
-        winner = {"p0": 0, "p1": 1, "draw": None}[result]
-        end = {"kind": "natural", "winner_seat": winner, "reason": "synthetic"}
-    return {
-        "attempt": 0,
-        "deal_seed": game_seed,
-        "env_seed": deal.seed(["env", game_seed]),
-        "action_seed": deal.seed(["act", game_seed]),
-        "decisions": 100,
-        "physical_decisions": None,
-        "policy_steps": None,
-        "end": end,
-        "halted": result == "halt",
-        "stop_kind": pod_record.expected_stop_kind(end),
-        "last_action_source": None,
-    }
+def plan(family: str, unit: int, *, mirror: int | None = None, rotation: int | None = None,
+         mark: dict[str, Any] | None = None, prep: tuple[dict[str, Any], str] | None = None) -> dict[str, Any]:
+    rows = read_plans._rows(family)
+    builders = {r: dict(UNIFORM) for r in rows if r != "stated"}
+    kwargs: dict[str, Any] = {}
+    if read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13"):
+        kwargs = dict(DEALER)
+    return read_plans.build_plan(family, NS, unit, pins=PINS, pilot=PILOT,
+                                 picker=None if family == "dose" else dict(UNIFORM), builders=builders,
+                                 mirror=mirror, rotation=rotation, mark=mark, prep=prep, **kwargs)
 
 
-SCORES = {"p0": [1, -1], "p1": [-1, 1], "draw": [0, 0], "halt": None}
+def prep_request(prep_family: str, unit: int) -> dict[str, Any]:
+    rows = read_plans.PREP_ROWS[prep_family]
+    return read_plans.build_prep_request(prep_family, NS, unit, PINS,
+                                         None if prep_family in ("dose", "dose_panel") else dict(UNIFORM),
+                                         {r: dict(UNIFORM) for r in rows if r != "stated"})
 
 
-def side_result(result: str, position: int) -> str:
-    """Turn a result for the deck at `position` (win, loss, draw, halt) into p0, p1, draw or halt."""
-    if result in ("draw", "halt"):
-        return result
-    winner = position if result == "win" else 1 - position
-    return f"p{winner}"
+def prep_for(prep_family: str, unit: int) -> tuple[dict[str, Any], str, dict[str, Any], str]:
+    request = prep_request(prep_family, unit)
+    req_sha = read_plans.doc_sha256(request)
+    result = prep_result(request, req_sha)
+    return request, req_sha, result, read_plans.doc_sha256(result)
 
 
-def _finish(record: dict[str, Any]) -> dict[str, Any]:
-    record["halts"] = [
-        {"game": g["game"], "attempt": a["attempt"], "stop_kind": a["stop_kind"],
-         "last_action_source": a["last_action_source"], "deal_seed": a["deal_seed"]}
-        for g in record["games"] for a in g["attempts"] if a["halted"]
-    ]
-    return pod_record.validate_record(record)
+# ---------------------------------------------------------------------------------------------
+# Records
+
+Outcome = Any  # "win", "loss", "draw", "halt" (focal side), or ("halt", end, source, decisions)
 
 
-def _uniform_chairs(learning: tuple[int, ...] | None = None) -> list[dict[str, Any]]:
-    return [
-        {"chair": c, "role": "learning" if learning is None or c in learning else "fixture",
-         "picker": dict(UNIFORM), "pick_rows": []}
-        for c in range(8)
-    ]
+def _focal_deck(p: dict[str, Any], game: dict[str, Any]) -> int:
+    layout = read_plans.FAMILIES[p["family"]]["layout"]
+    if layout in ("a", "one", "all"):
+        learning = {c["chair"] for c in p["chairs"] if c["role"] == "learning"}
+        picks = [d for d, c in zip(game["decks"], game["chairs"]) if c in learning]
+        return picks[0] if picks else game["decks"][0]
+    return next(d for d in game["decks"] if p["decks"][d]["source"] == "build")
 
 
-def record_from_plan(plan: dict[str, Any], result_of: Callable[[dict[str, Any], int], str]) -> dict[str, Any]:
-    """Play a plan synthetically. `result_of(game, build_position)` gives the built deck's result
-    (win, loss, draw or halt), where build_position is the built deck's session seat."""
-    record = _record_head(plan["use"], plan["pod_index"], plan["pools"])
-    record["chairs"] = _uniform_chairs()
-    for deck in plan["decks"]:
-        entry = copy.deepcopy(deck)
-        rows = None
-        if deck["source"] == "build" and deck["builder"]["kind"] != "stated":
-            rows = uniform_build_rows(deck["cards"], plan["pools"][deck["chair"]])
-        record["decks"].append({
-            "deck": entry["deck"], "source": entry["source"], "chair": entry["chair"], "build": entry["build"],
-            "builder": entry["builder"], "build_seed": None if rows is None else deal.seed(["build", deck["deck"]]),
-            "cards": entry["cards"], "build_rows": rows, "dealt": entry["dealt"],
-        })
-    for game in plan["games"]:
-        position = next(i for i, d in enumerate(game["decks"]) if plan["decks"][d]["source"] == "build")
-        result = side_result(result_of(game, position), position)
-        entry = copy.deepcopy(game)
-        entry["attempts"] = [_attempt(game["game_seed"], result)]
-        entry["scores"] = SCORES[result]
-        record["games"].append(entry)
-    record["paired_builds"] = copy.deepcopy(plan["paired_builds"])
-    return _finish(record)
-
-
-def paired_plan(draft: int, use: str = "paired_build") -> dict[str, Any]:
-    pools = draft_pools(draft)
-    x = [build_from_pool(p, 0) for p in pools]
-    y = [build_from_pool(p, 1) for p in pools]
-    if use == "paired_build":
-        return read_plans.build_read_c_plan(pool_doc(), CONSTANTS, NS, RUN, draft, pools, x, y, UNIFORM)
-    return read_plans.build_paired_plan(pool_doc(), CONSTANTS, use, NS, RUN, draft, pools, x, y, UNIFORM,
-                                        {"kind": "uniform", "pin": "1" * 64})
-
-
-def read_b_plan(draft: int) -> dict[str, Any]:
-    pools = draft_pools(draft)
-    return read_plans.build_read_b_plan(pool_doc(), CONSTANTS, NS, RUN, draft, pools,
-                                        [build_from_pool(p, 0) for p in pools], UNIFORM)
-
-
-def pairings() -> list[tuple[int, int]]:
-    return [(i, j) for i in range(8) for j in range(i + 1, 8)]
-
-
-def read_a_pair(pair: int, result_of: Callable[[str, str, int, int], str],
-                cards_of: Callable[[str, int, str], list[int]] | None = None) -> list[dict[str, Any]]:
-    """The two pods of a read (a) pair: learned seats in the even chairs, then in the odd chairs.
-    `result_of(orientation, arm, pairing, learned_position)` is the learned seat's result.
-    `cards_of(orientation, chair, arm)` gives a deck's cards (default: the same in both pods)."""
-    pods = []
-    for orientation, learning in (("even", EVEN), ("odd", ODD)):
-        record = _record_head("read_a", pair, None)
-        record["chairs"] = _uniform_chairs(learning)
-        seeds = record["seeds"]
-        for chair in range(8):
-            for arm_index, arm in enumerate(("candidate", "stated")):
-                cards = (cards_of or (lambda o, c, a: _a_cards(c, a)))(orientation, chair, arm)
-                rows = uniform_build_rows(cards, [c for c in cards if c < BASIC_BASE] + [900 + chair]) \
-                    if arm == "candidate" else None
-                record["decks"].append({
-                    "deck": 2 * chair + arm_index, "source": "build", "chair": chair, "build": 0,
-                    "builder": dict(UNIFORM if arm == "candidate" else STATED),
-                    "build_seed": None if rows is None else deal.seed(["build", pair, chair]),
-                    "cards": cards, "build_rows": rows, "dealt": None,
-                })
-        game_id = 0
-        for arm_index, arm in enumerate(("candidate", "stated")):
-            for g, (i, j) in enumerate(pairings()):
-                if (i in learning) == (j in learning):
-                    continue
-                game_seed = deal.seed([seeds["pod_seed"], g])
-                chairs = [i, j] if deal.seed(["coin", game_seed]) % 2 == 0 else [j, i]
-                learned_position = 0 if chairs[0] in learning else 1
-                result = side_result(result_of(orientation, arm, g, learned_position), learned_position)
-                record["games"].append({
-                    "game": game_id, "group": g, "role": "cross", "pairing": g,
-                    "decks": [2 * chairs[0] + arm_index, 2 * chairs[1] + arm_index], "chairs": chairs,
-                    "seat_rule": "coin", "game_seed": game_seed, "episode": g,
-                    "attempts": [_attempt(game_seed, result)], "scores": SCORES[result],
-                })
-                game_id += 1
-        pods.append(_finish(record))
-    return pods
-
-
-def _a_cards(chair: int, arm: str) -> list[int]:
-    start = 1 + 23 * chair + (0 if arm == "candidate" else 200)
+def _a_cards(unit: int, chair: int, row: str) -> list[int]:
+    start = 1 + 23 * chair + (0 if row == "candidate" else 200) + unit % 3
     return sorted(list(range(start, start + 23)) + [BASIC_BASE] * 9 + [BASIC_BASE + 1] * 8)
 
 
+def record(p: dict[str, Any], outcome: Callable[[dict[str, Any], dict[str, Any], int], Outcome], *,
+           games: int | None = None, status: str = "complete") -> dict[str, Any]:
+    """Play a plan synthetically. `outcome(plan, game, focal_position)` gives the focal deck's result."""
+    pools = p["pools"] if p["pools"] is not None else draft_pools(p["seeds"]["draft_seed"])
+    rec: dict[str, Any] = {
+        "schema": pod_record.POD_RECORD_SCHEMA, "interfaces": pod_record.INTERFACES_VERSION, "use": p["use"],
+        "namespace": p["namespace"], "run": p["run"], "pod_index": p["pod_index"], "seeds": dict(p["seeds"]),
+        "pins": dict(p["pins"]), "pilot": dict(p["pilot"]), "caps": dict(p["caps"]),
+        "draft": draft_record(p["seeds"]["draft_seed"], pools),
+        "chairs": [{**c, "pick_rows": []} for c in p["chairs"]], "decks": [], "games": [], "paired_builds": [],
+        "halts": [], "status": status, "stop": None,
+    }
+    for d in p["decks"]:
+        cards = d["cards"] if d["cards"] is not None else _a_cards(p["unit"], d["chair"], d["row"])
+        rows = None
+        if d["source"] == "build" and d["builder"]["kind"] != "stated":
+            rows = uniform_build_rows(cards, pools[d["chair"]])
+        rec["decks"].append({"deck": d["deck"], "source": d["source"], "chair": d["chair"], "build": d["build"],
+                             "builder": copy.deepcopy(d["builder"]), "build_seed": None if rows is None else 7,
+                             "cards": cards, "build_rows": rows, "dealt": copy.deepcopy(d["dealt"])})
+    for g in p["games"][: games if games is not None else len(p["games"])]:
+        focal = _focal_deck(p, g)
+        pos = g["decks"].index(focal)
+        res = outcome(p, g, pos)
+        seeds = seeds_v1.attempt_seeds(g["game_seed"])
+        source, decisions = None, 100
+        if isinstance(res, tuple):
+            _, end, source, decisions = res
+        elif res == "halt":
+            end = {"kind": "decision_cap"}
+        else:
+            winner = None if res == "draw" else (pos if res == "win" else 1 - pos)
+            end = {"kind": "natural", "winner_seat": winner, "reason": "synthetic"}
+        halted = end["kind"] != "natural"
+        attempt = {**seeds, "attempt": 0}
+        attempt = {"attempt": 0, "deal_seed": seeds["deal_seed"], "env_seed": seeds["env_seed"],
+                   "action_seed": seeds["action_seed"], "decisions": decisions, "physical_decisions": None,
+                   "policy_steps": None, "end": end, "halted": halted, "stop_kind": pod_record.expected_stop_kind(end),
+                   "last_action_source": source}
+        scores = None
+        if not halted:
+            w = end["winner_seat"]
+            scores = [0, 0] if w is None else ([1, -1] if w == 0 else [-1, 1])
+        rec["games"].append({**{k: copy.deepcopy(g[k]) for k in read_plans.PLAN_GAME_KEYS}, "attempts": [attempt],
+                             "scores": scores})
+        rec["games"][-1] = {k: rec["games"][-1][k] for k in pod_record.GAME_KEYS}
+    rec["paired_builds"] = copy.deepcopy(p["paired_builds"])
+    rec["halts"] = [{"game": g["game"], "attempt": 0, "stop_kind": a["stop_kind"],
+                     "last_action_source": a["last_action_source"], "deal_seed": a["deal_seed"]}
+                    for g in rec["games"] for a in g["attempts"] if a["halted"]]
+    if status == "stopped":
+        last = rec["games"][-1] if rec["games"] else None
+        rec["stop"] = {"game": last["game"] if last else 0, "pairing": None, "decks": last["decks"] if last else [],
+                       "attempts": [{"deal_seed": a["deal_seed"], "stop_kind": a["stop_kind"],
+                                     "last_action_source": a["last_action_source"]} for a in
+                                    (last["attempts"] if last else [])]}
+    return pod_record.validate_record(rec)
+
+
+# ---------------------------------------------------------------------------------------------
+# Sets on disk
+
+
+def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name: str, units: range, decl_sha: str,
+                   *, executions: list[dict[str, Any]] | None = None, reserved: list[int] | None = None,
+                   panel_sha256: str | None = None) -> tuple[Path, dict[int, tuple[dict[str, Any], str]]]:
+    """A prep set with requests and executions. Each execution spec: {"ended", "units" (with markers),
+    "receipt" (bool), "tamper" (unit -> callable on the result)}. Default: one complete execution."""
+    requests, results = {}, {}
+    for u in units:
+        request, req_sha, result, res_sha = prep_for(prep_family, u)
+        requests[u], results[u] = (request, req_sha), (result, res_sha)
+    man = read_plans.build_manifest("prep", manifest_family, NS, set_name, decl_sha,
+                                    [(u, requests[u][1]) for u in units], units=[units.start, units.stop],
+                                    reserved=reserved, panel_sha256=panel_sha256)
+    executions = executions or [{"ended": "complete"}]
+    for e, spec in enumerate(executions):
+        man["executions"].append({"execution": e, "reason": "first" if e == 0 else "prep_retry", "expired_games": [],
+                                  "binary": BINARY, "platform": PLATFORM})
+    set_dir = read_plans.write_set(root, man, {f"requests/unit-{u}.json": requests[u][0] for u in units})
+    for e, spec in enumerate(executions):
+        exec_dir = set_dir / f"exec-{e}"
+        done_units = spec.get("units", list(units))
+        outputs = []
+        for u in done_units:
+            result = copy.deepcopy(results[u][0])
+            if u in spec.get("tamper", {}):
+                spec["tamper"][u](result)
+            text = read_plans.serialize(result)
+            (exec_dir / "prep").mkdir(parents=True, exist_ok=True)
+            (exec_dir / "prep" / f"unit-{u}.json").write_bytes(text.encode())
+            sha = hashlib.sha256(text.encode()).hexdigest()
+            if u not in spec.get("no_marker", ()):
+                marker = {"unit": u, "files": [{"file": f"prep/unit-{u}.json",
+                                                "sha256": spec.get("marker_sha", {}).get(u, sha)}]}
+                (exec_dir / "done").mkdir(parents=True, exist_ok=True)
+                (exec_dir / "done" / f"{u}.json").write_bytes(read_plans.serialize(marker).encode())
+            outputs.append({"unit": u, "sha256": sha, "status": "complete"})
+        if spec.get("receipt", True):
+            receipt = {"execution": e, "plan_set_sha256": man["plan_set_sha256"], "binary": BINARY,
+                       "platform": PLATFORM, "ended": spec["ended"], "outputs": outputs}
+            exec_dir.mkdir(parents=True, exist_ok=True)
+            (exec_dir / "execution.json").write_bytes(read_plans.serialize(receipt).encode())
+    (set_dir / "manifest.json").write_bytes(read_plans.serialize(man).encode())
+    out = {}
+    accepted = read_sets.accept_prep_set(set_dir) if executions[0].get("accept", True) else None
+    if accepted:
+        out = accepted["outputs"]
+    return set_dir, out
+
+
+def write_plan_set(root: Path, family: str, set_name: str, plans: list[dict[str, Any]], decl_sha: str, *,
+                   executions: list[dict[str, Any]], look: int | None = None, units: list[int],
+                   reserved: list[int] | None = None, pools_with: str | None = None, prep_set: str | None = None,
+                   panel_sha256: str | None = None, replaces: str | None = None,
+                   retired: list[list[int]] | None = None) -> Path:
+    """A plan set. Each execution spec: {"records": {pod_index: record}, "ended": ..., "expired": [...]}."""
+    files = {f"plans/pod-{p['pod_index']}.json": p for p in plans}
+    entries = [(p["pod_index"], read_plans.doc_sha256(p)) for p in plans]
+    man = read_plans.build_manifest("plans", family, NS, set_name, decl_sha, entries, look=look, units=units,
+                                    reserved=reserved, pools_with=pools_with, panel_sha256=panel_sha256,
+                                    prep_set=prep_set, replaces=replaces, retired=retired)
+    for e, spec in enumerate(executions):
+        man["executions"].append({"execution": e, "reason": "first" if e == 0 else "watchdog_rerun",
+                                  "expired_games": spec.get("entry_expired", []), "binary": BINARY,
+                                  "platform": PLATFORM})
+    set_dir = read_plans.write_set(root, man, files)
+    for e, spec in enumerate(executions):
+        exec_dir = set_dir / f"exec-{e}"
+        (exec_dir / "records").mkdir(parents=True, exist_ok=True)
+        listed = []
+        for i, rec in sorted(spec["records"].items()):
+            text = json.dumps(rec, indent=2)
+            (exec_dir / "records" / f"pod-{i}.json").write_bytes(text.encode())
+            listed.append({"pod_index": i, "sha256": hashlib.sha256(text.encode()).hexdigest(),
+                           "status": rec["status"]})
+        receipt = {"execution": e, "plan_set_sha256": man["plan_set_sha256"], "binary": BINARY,
+                   "platform": PLATFORM, "ended": spec.get("ended", "complete"), "records": listed}
+        (exec_dir / "execution.json").write_bytes(read_plans.serialize(receipt).encode())
+    return set_dir
+
+
 def unit_draw(*parts: Any) -> float:
-    """A deterministic uniform draw in [0, 1) from deal.seed."""
     return deal.seed(["synth-draw", *parts]) / float(1 << 63)

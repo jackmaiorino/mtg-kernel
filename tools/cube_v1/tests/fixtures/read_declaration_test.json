@@ -1,49 +1,119 @@
 {
-  "schema": "mtg-kernel-cube-read-declaration/v1",
-  "interfaces": "m4-interfaces/v1",
+  "schema": "mtg-kernel-cube-read-declaration/v2",
+  "interfaces": "m4-interfaces/v2",
+  "read_plan": "mtg-kernel-cube-read-plan/v2",
   "a6_sha256": null,
-  "draw_score": 0.5,
-  "bootstrap": {"resamples": 10000},
+  "resamples": 10000,
   "reads": {
     "a": {
       "namespace": "test",
-      "run": "synth",
-      "scale": "learned_minus_uniform",
-      "levels": [0.025, 0.025],
-      "win_if_lower_above": 0.0,
-      "loss_if_upper_below": 0.0,
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": 0.04,
       "extension_factor": 2,
-      "sizing": {"spread": null, "effect": 0.16, "z_level": 1.96, "z_power": 0.84, "floor": 2, "cap": 10000}
+      "n": 2,
+      "sizing": {
+        "delta": 0.06,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
     },
     "a_early": {
       "namespace": "test",
-      "run": "early",
-      "scale": "learned_minus_uniform",
-      "levels": [0.025, 0.025],
-      "win_if_lower_above": 0.0,
-      "loss_if_upper_below": 0.0,
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": 0.04,
       "extension_factor": 2,
-      "sizing": {"spread": null, "effect": 0.16, "z_level": 1.96, "z_power": 0.84, "floor": 2, "cap": 10000}
+      "n": 2,
+      "sizing": {
+        "delta": 0.06,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
     },
     "b": {
       "namespace": "test",
-      "run": "synth",
-      "levels": [0.025, 0.025],
-      "win_if_lower_above": 0.5,
-      "loss_if_upper_below": 0.5,
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": 0.52,
       "extension_factor": 2,
-      "sizing": {"spread": null, "effect": 0.05, "z_level": 1.96, "z_power": 0.84, "floor": 2, "cap": 10000}
+      "n": 2,
+      "sizing": {
+        "delta": 0.03,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
     },
     "c": {
       "namespace": "test",
-      "run": "synth",
-      "levels": [0.025, 0.025],
-      "win_if_lower_above": -0.02,
-      "loss_if_upper_below": -0.02,
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": -0.02,
       "extension_factor": 2,
-      "sizing": {"spread": null, "effect": 0.02, "z_level": 1.96, "z_power": 0.84, "floor": 2, "cap": 10000}
+      "n": 2,
+      "sizing": {
+        "delta": 0.02,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
     },
-    "dose": {"namespace": "test", "run": "synth", "panel_drafts": 4, "level": 0.025},
-    "aa": {"namespace": "test", "run": "synth", "pairs": 4, "level": 0.025}
+    "aa": {
+      "namespace": "test",
+      "pairs": 4
+    },
+    "dose": {
+      "namespace": "test",
+      "panel_drafts": 2,
+      "level": 0.025,
+      "panel_sha256": null
+    },
+    "d13": {
+      "namespace": "test",
+      "panel_drafts": 2,
+      "level": 0.025,
+      "panel_sha256": null
+    },
+    "a_one": {
+      "namespace": "test",
+      "level": 0.025
+    },
+    "a_early_one": {
+      "namespace": "test",
+      "level": 0.025
+    },
+    "a_all": {
+      "namespace": "test"
+    },
+    "a_early_all": {
+      "namespace": "test"
+    },
+    "size_a": {
+      "namespace": "test",
+      "units": 3
+    },
+    "size_a_early": {
+      "namespace": "test",
+      "units": 3
+    },
+    "size_b": {
+      "namespace": "test",
+      "units": 3
+    },
+    "size_c": {
+      "namespace": "test",
+      "units": 3
+    }
   }
 }

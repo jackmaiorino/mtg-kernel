@@ -1,19 +1,19 @@
-"""Tests of the M4 readers (D7, D7a): pod_record.py, deal_common.py, read_plans.py and readers.py.
+"""Tests of the M4 readers (D7, D7a) on m4-interfaces/v2, read plan v2 and the signed A6 (part 1).
 
-Every record here is synthetic, written to the frozen schema in the `test` namespace.
+Modules: seeds_v1.py, deal_common.py, pod_record.py, read_plans.py, read_sets.py and readers.py.
+Every record, plan and set is synthetic, in namespace `test` (tests/cube_synth.py).
 """
 
 from __future__ import annotations
 
 import copy
+from fractions import Fraction
 import hashlib
 import json
-import math
-from decimal import Decimal
 from pathlib import Path
+import re
 import sys
 import tempfile
-from typing import Callable
 import unittest
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -26,751 +26,895 @@ import deal  # noqa: E402
 import deal_common  # noqa: E402
 import pod_record  # noqa: E402
 import read_plans  # noqa: E402
+import read_sets  # noqa: E402
 import readers  # noqa: E402
+import seeds_v1  # noqa: E402
 
-FIXTURES_DIR = TESTS_DIR / "fixtures"
-D5_UNIFORM_FIXTURE = FIXTURES_DIR / "d5_uniform_pod_record.json"
-TEST_DECLARATION = FIXTURES_DIR / "read_declaration_test.json"
+FIXTURES = TESTS_DIR / "fixtures"
+DECLARATION = FIXTURES / "read_declaration_test.json"
+DECL, DECL_SHA = readers.load_declaration(DECLARATION)
+RUST_GOLDENS = CUBE_V1_DIR.parent.parent / "mtg-kernel" / "tests" / "cube_read_seed_goldens_v1.rs"
+D5_UNIFORM_FIXTURE = FIXTURES / "d5_uniform_pod_record.json"
+DEAL_PY_SHA256 = "0e60d49f40eb9509210f4e2f71e8d2cd7dac65e393696427043978556e5af497"
+F = Fraction
 
 
-def _declaration(**overrides) -> tuple[dict, str]:
-    """The fixture declaration, with section overrides given as {"c.sizing.spread": value}."""
-    doc = json.loads(TEST_DECLARATION.read_text(encoding="utf-8"), parse_float=Decimal)
-    for dotted, value in overrides.items():
-        node = doc["reads"]
+def exact(value: dict) -> Fraction:
+    num, den = value["exact"].split("/")
+    return Fraction(int(num), int(den))
+
+
+def interval(report: dict, stat: str, scoring: str = "drop") -> list[Fraction] | None:
+    got = report["statistics"][stat][scoring]["interval"]
+    return None if got is None else [exact(v) for v in got]
+
+
+def estimate(report: dict, stat: str, scoring: str = "drop") -> Fraction | None:
+    got = report["statistics"][stat][scoring]["estimate"]
+    return None if got is None else exact(got)
+
+
+def decl_with(**changes) -> dict:
+    """The fixture declaration with changes like {"c.n": 3}."""
+    decl = copy.deepcopy(DECL)
+    for dotted, value in changes.items():
+        node = decl["reads"]
         *head, last = dotted.split(".")
         for key in head:
             node = node[key]
         node[last] = value
-    return readers.validate_declaration(doc), "0" * 64
+    return decl
 
 
-def _files(records: list[dict]) -> list[tuple[list[dict], str]]:
-    return [([r], hashlib.sha256(json.dumps(r).encode()).hexdigest()) for r in records]
+def by_slot(results: dict[int, str], arm: int | None = None, other: str = "draw"):
+    """Outcome for dealer layouts: the focal result by slot j (and arm 0 x, 1 y for paired plans)."""
+    def outcome(p, g, pos):
+        j = g["group"] % 4 if p["family"] not in ("b", "size_b") else g["game"] % 4
+        a = g["game"] % 2
+        if arm is None or a == arm:
+            return results.get(j, other)
+        return other
+    return outcome
 
 
-def _plans(plans: list[dict]) -> list[tuple[dict, str]]:
-    return [(p, hashlib.sha256(json.dumps(p).encode()).hexdigest()) for p in plans]
+# ---------------------------------------------------------------------------------------------
+# Sets used by several tests
 
 
-def _c_records(count: int, planted_k: Callable | None = None, halts=None, kind: str = "paired_build"):
-    """(c)-shaped records with draft statistic k(d) / 64 exactly. Candidate games in slots 0 to 2
-    carry the planted difference (a win or loss instead of a draw); slot 3 carries results shared by
-    both coupled games, which cancel in the difference. `halts(d, seat, slot, arm)` halts a game."""
-    records, plans = [], []
-    for d in range(count):
-        plan = synth.paired_plan(d, kind)
-        k = planted_k(d)
-        changed = {}
-        for i in range(abs(k)):
-            seat, slot = i % 8, i // 8
-            changed[(seat, slot)] = "win" if k > 0 else "loss"
+def c_sets(root: Path, case: str, outcome, *, n: int = 2, look2: bool = False, family: str = "c",
+           look2_outcome=None) -> list[dict]:
+    """(c)-family look sets on a shared b_c prep set reserving [0, 3n)."""
+    prep_family = "b_c" if family in ("b", "c") else family
+    prep_name = f"fx-{prep_family}-{case}-d0-prep-0-{3 * n}"
+    _, outs = synth.write_prep_set(root, prep_family, prep_family, prep_name, range(0, 3 * n), DECL_SHA,
+                                   reserved=[0, 3 * n])
+    prep_set = f"test/v1/{prep_name}/exec-0"
+    plans1 = [synth.plan(family, u, prep=outs[u]) for u in range(n)]
+    set1 = synth.write_plan_set(root, family, f"fx-{family}-{case}-d0-look-1", plans1, DECL_SHA,
+                                executions=[{"records": {p["pod_index"]: synth.record(p, outcome) for p in plans1}}],
+                                look=1, units=[0, n], reserved=[0, 3 * n], prep_set=prep_set)
+    opened = [read_sets.open_plan_set(set1, DECL_SHA, pool=synth.POOL, constants=synth.CONST)]
+    if look2:
+        plans2 = [synth.plan(family, u, prep=outs[u]) for u in range(n, 3 * n)]
+        out2 = look2_outcome or outcome
+        set2 = synth.write_plan_set(root, family, f"fx-{family}-{case}-d0-look-2", plans2, DECL_SHA,
+                                    executions=[{"records": {p["pod_index"]: synth.record(p, out2) for p in plans2}}],
+                                    look=2, units=[n, 3 * n], pools_with=opened[0]["manifest"]["plan_set_sha256"],
+                                    prep_set=prep_set)
+        opened.append(read_sets.open_plan_set(set2, DECL_SHA, pool=synth.POOL, constants=synth.CONST))
+    return opened
 
-        def result_of(game, position, d=d, changed=changed):
-            seat, slot = game["group"] // 4, game["group"] % 4
-            arm = game["game"] % 2
-            if halts is not None and halts(d, seat, slot, arm):
-                return "halt"
-            if slot == 3:
-                return ("win", "loss", "draw")[(d + seat) % 3]
-            if arm == 0 and (seat, slot) in changed:
-                return changed[(seat, slot)]
+
+def a_sets(root: Path, family: str, case: str, outcome, *, units: int = 2, set_suffix: str = "look-1",
+           look: int | None = 1, executions=None) -> dict:
+    plans = [synth.plan(family, u, mirror=m) for u in range(units) for m in (0, 1)]
+    recs = {p["pod_index"]: synth.record(p, outcome) for p in plans}
+    reserved = [0, 3 * units] if look == 1 else None
+    set_dir = synth.write_plan_set(root, family, f"fx-{family}-{case}-d0-{set_suffix}", plans, DECL_SHA,
+                                   executions=executions or [{"records": recs}], look=look, units=[0, units],
+                                   reserved=reserved)
+    return read_sets.open_plan_set(set_dir, DECL_SHA)
+
+
+# ---------------------------------------------------------------------------------------------
+# Change 11: the Rust seed port
+
+
+class SeedPortTests(unittest.TestCase):
+    def test_splitmix64_published_vector(self):
+        rng = seeds_v1.SplitMix64(1234567)
+        self.assertEqual([rng.next_u64() for _ in range(5)],
+                         [6457827717110365317, 3203168211198807973, 9817491932198370423, 4593380528125082431,
+                          16408922859458223821])
+        self.assertEqual(seeds_v1.SplitMix64(0).next_u64(), 0xE220A8397B1DCDAF)
+
+    def test_pinned_python_goldens(self):
+        self.assertEqual(seeds_v1.derive_seed(0, seeds_v1.GAME, 3), 8375399752433882408)
+        self.assertEqual(seeds_v1.game_seed(1, 27), 9862851748266521902)
+        self.assertEqual(seeds_v1.pairing_seats(0, 5), (10808778974832213287, [0, 6]))
+        self.assertEqual(seeds_v1.attempt_seeds(seeds_v1.game_seed(0, 0)),
+                         {"deal_seed": 17342717373898743084, "env_seed": 4016630253392987778,
+                          "action_seed": 6801290846407491845})
+
+    def test_rust_golden_file_holds_the_same_constants(self):
+        text = RUST_GOLDENS.read_text(encoding="utf-8")
+        stream = {"Game": seeds_v1.GAME, "GameCoin": seeds_v1.GAME_COIN, "GameEnv": seeds_v1.GAME_ENV,
+                  "GameActions": seeds_v1.GAME_ACTIONS}
+        rows = re.findall(r"\((\d+), SeedStream::(\w+), (\d+), (\d+)\)", text)
+        self.assertGreater(len(rows), 20)
+        for parent, name, index, value in rows:
+            self.assertEqual(seeds_v1.derive_seed(int(parent), stream[name], int(index)), int(value))
+        for pod, g, a, b in re.findall(r"\((\d+), (\d+), \[(\d), (\d)\]\)", text):
+            self.assertEqual(seeds_v1.pairing_seats(int(pod), int(g))[1], [int(a), int(b)])
+
+    def test_pod_pairings_order(self):
+        pairs = seeds_v1.pod_pairings()
+        self.assertEqual(len(pairs), 28)
+        self.assertEqual(pairs[:3], [(0, 1), (0, 2), (0, 3)])
+        self.assertEqual(pairs, sorted(pairs))
+
+
+# ---------------------------------------------------------------------------------------------
+# Changes 2 to 10 and 12: plans
+
+
+class PlanFamilyTests(unittest.TestCase):
+    def test_every_family_regenerates_and_refuses_any_change(self):
+        cases = [("aa", {"mirror": 0}), ("a", {"mirror": 1}), ("a_early", {"mirror": 0}),
+                 ("size_a", {"mirror": 1}), ("size_a_early", {"mirror": 0}), ("a_one", {"rotation": 5}),
+                 ("a_early_one", {"rotation": 0}), ("a_all", {}), ("a_early_all", {})]
+        for family, kw in cases:
+            with self.subTest(family=family):
+                plan = synth.plan(family, 3, **kw)
+                read_plans.check_plan(plan)
+                for mutate in (lambda p: p["games"][0].update(episode=p["games"][0]["episode"] + 1),
+                               lambda p: p["games"][1].update(game_seed=1),
+                               lambda p: p["seeds"].update(pod_seed=1),
+                               lambda p: p["decks"][0].update(row="stated"),
+                               lambda p: p["chairs"][0].update(role="older")):
+                    bad = copy.deepcopy(plan)
+                    mutate(bad)
+                    with self.assertRaises(read_plans.PlanError):
+                        read_plans.check_plan(bad)
+        for family, prep_family in (("b", "b_c"), ("c", "b_c"), ("size_b", "size_b"), ("size_c", "size_c"),
+                                    ("dose", "dose"), ("d13", "d13")):
+            with self.subTest(family=family):
+                _, _, result, sha = synth.prep_for(prep_family, 4)
+                mark = {"dose": {"kind": "dose", "label": "pods-512", "ordinal": 0},
+                        "d13": {"kind": "pilot", "label": "p1", "ordinal": 0}}.get(family)
+                plan = synth.plan(family, 4, mark=mark, prep=(result, sha))
+                read_plans.check_plan(plan, (result, sha), **synth.DEALER)
+                bad = copy.deepcopy(plan)
+                bad["decks"][-1]["cards"][0] += 1
+                with self.assertRaises(read_plans.PlanError):
+                    read_plans.check_plan(bad, (result, sha), **synth.DEALER)
+                with self.assertRaisesRegex(read_plans.PlanError, "prep_sha256"):
+                    read_plans.check_plan(plan, (result, "0" * 64), **synth.DEALER)
+
+    def test_strict_shape(self):
+        plan = synth.plan("a", 0, mirror=0)
+        for mutate, pattern in ((lambda p: p.pop("rotation"), "missing"),
+                                (lambda p: p.update(extra=1), "extra"),
+                                (lambda p: p.update(schema="mtg-kernel-cube-read-plan/v1"), "schema"),
+                                (lambda p: p.update(family="z"), "family"),
+                                (lambda p: p["decks"][0].update(row="other"), "row"),
+                                (lambda p: p.update(unit=True), "u64")):
+            bad = copy.deepcopy(plan)
+            mutate(bad)
+            with self.assertRaisesRegex((read_plans.PlanError, pod_record.RecordError), pattern):
+                read_plans.check_plan(bad)
+
+    def test_identity_seeds_and_indices_by_family(self):
+        mk = lambda fam, ns, **kw: read_plans.build_plan(  # noqa: E731
+            fam, ns, 5, pins=synth.PINS, pilot=synth.PILOT, picker=dict(synth.UNIFORM),
+            builders={"candidate": dict(synth.UNIFORM)}, **kw)
+        even, odd = mk("a", "read-gate-a", mirror=0), mk("a", "read-gate-a", mirror=1)
+        self.assertEqual((even["pod_index"], odd["pod_index"], even["mirror_pods"]), (10, 11, [10, 11]))
+        self.assertEqual(even["seeds"], odd["seeds"])
+        self.assertEqual(even["seeds"]["draft_seed"], deal.seed(["read-gate-a", "draft", "v1", 5]))
+        read_plans.check_mirrors(even, odd)
+        self.assertEqual([c["role"] for c in odd["chairs"]][:2], ["fixture", "learning"])
+        one = mk("a_one", "read-gate-a-one", rotation=3)
+        self.assertEqual(one["pod_index"], 43)
+        self.assertEqual(one["seeds"]["draft_seed"], even["seeds"]["draft_seed"])
+        self.assertEqual(one["seeds"]["pod_seed"], deal.seed(["read-gate-a-one", "pod", "v1", 5, 3]))
+        self.assertEqual((one["seeds"]["draft_seed_namespace"], one["seeds"]["pod_seed_namespace"]),
+                         ("read-gate-a", "read-gate-a-one"))
+        self.assertEqual(len(one["games"]), 7)
+        allp = mk("a_all", "read-gate-a-all")
+        self.assertEqual((allp["pod_index"], len(allp["games"])), (5, 28))
+        self.assertEqual(allp["seeds"]["pod_seed"], deal.seed(["read-gate-a-all", "pod", "v1", 5]))
+        self.assertIsNone(even["seeds"]["league_seed"])
+        self.assertEqual(read_plans.seed_sources("b", "read-gate-b"), ("read-gate-pools", "read-gate-pools"))
+        self.assertEqual(read_plans.seed_sources("c", "read-gate-c"), ("read-gate-pools", "read-gate-pools"))
+        self.assertEqual(read_plans.seed_sources("size_c", "size-gate-c"), ("size-gate-c", "size-gate-c"))
+        with self.assertRaisesRegex(read_plans.PlanError, "plays in"):
+            mk("a", "read-gate-b", mirror=0)
+
+    def test_a_layout_games_coin_and_episodes(self):
+        plan = synth.plan("a", 0, mirror=0)
+        pod_seed = plan["seeds"]["pod_seed"]
+        cross = [g for g, (lo, hi) in enumerate(seeds_v1.pod_pairings()) if lo % 2 != hi % 2]
+        self.assertEqual(len(plan["games"]), 32)
+        for k, g in enumerate(cross):
+            for row in (0, 1):
+                game = plan["games"][2 * k + row]
+                g_seed, seats = seeds_v1.pairing_seats(pod_seed, g)
+                self.assertEqual((game["group"], game["pairing"], game["episode"], game["game_seed"]), (k, g, g, g_seed))
+                self.assertEqual(game["chairs"], seats)
+                self.assertEqual(game["decks"], [2 * seats[0] + row, 2 * seats[1] + row])
+        self.assertEqual([d["build"] for d in plan["decks"][:2]], [0, 1])
+        self.assertIsNone(plan["pools"])
+        self.assertIsNone(plan["decks"][0]["cards"])
+        self.assertEqual(plan["inputs"], {"pool_sha256": None, "constants_sha256": None})
+
+    def test_b_layout_equals_a15_and_episode_slots(self):
+        _, _, result, sha = synth.prep_for("b_c", 2)
+        plan = synth.plan("b", 2, prep=(result, sha))
+        for s in range(8):
+            deck = result["builds"][2 * s]["cards"]
+            x = 8 * 2 + s
+            ref = deal.build_read_b(synth.POOL[0], synth.CONSTANTS, deck, "test", "v1", x)
+            episodes = [e["episode"] for e in ref["iterations"][0]["episodes"]]
+            games = plan["games"][4 * s: 4 * s + 4]
+            self.assertEqual([g["game_seed"] for g in games], [e["seed"] for e in episodes])
+            self.assertEqual([g["decks"].index(2 * s) for g in games], [e["learner_seat"] for e in episodes])
+            self.assertEqual([g["episode"] for g in games], [0, 1, 2, 3])
+            for g, e in zip(games, episodes):
+                self.assertEqual([plan["decks"][d]["cards"] for d in g["decks"]], [d["mainboard"] for d in e["selected"]])
+            opp = plan["decks"][2 * s + 1]
+            self.assertEqual(opp["dealt"], {"function": "cube_deal_b_v1", "key": ["test", "v1", x]})
+            self.assertEqual(opp["builder"], {"kind": "dealt", "pin": opp["dealt"]})
+
+    def test_c_dose_and_d13_layouts(self):
+        _, _, result, sha = synth.prep_for("b_c", 1)
+        c = synth.plan("c", 1, prep=(result, sha))
+        b = synth.plan("b", 1, prep=(result, sha))
+        self.assertEqual((b["prep_sha256"], b["pools"]), (c["prep_sha256"], c["pools"]))
+        self.assertEqual(b["decks"][0]["cards"], c["decks"][0]["cards"])
+        self.assertEqual([c["decks"][k]["build"] for k in range(3)], [0, 1, None])
+        for j in range(4):
+            gx, gy = c["games"][2 * j], c["games"][2 * j + 1]
+            want = deal.seed(["test", "game", "v1", 1, 0, 0, j])
+            self.assertEqual((gx["game_seed"], gy["game_seed"], gx["episode"]), (want, want, j))
+            self.assertEqual(gx["decks"].index(0), j % 2)
+        self.assertEqual(c["decks"][2]["dealt"]["key"], ["test", 1, 0, 0])
+        pool = c["pools"][0]
+        self.assertFalse(set(c["decks"][2]["cards"]) & set(pool))
+        _, _, dres, dsha = synth.prep_for("dose", 1)
+        dose = synth.plan("dose", 1, mark={"kind": "dose", "label": "pods-512", "ordinal": 0}, prep=(dres, dsha))
+        self.assertEqual([dose["decks"][k]["build"] for k in (0, 1)], [0, 0])
+        self.assertEqual({c_["role"] for c_ in dose["chairs"]}, {"fixture"})
+        self.assertEqual(dose["paired_builds"][0]["kind"], "current_initial")
+        _, _, r13, s13 = synth.prep_for("d13", 1)
+        d13 = synth.plan("d13", 1, mark={"kind": "pilot", "label": "p1", "ordinal": 0}, prep=(r13, s13))
+        kinds = [(p["q"], p["kind"], p["deck_x"] % 6, p["deck_y"] % 6) for p in d13["paired_builds"][:3]]
+        self.assertEqual(kinds, [(0, "current_initial", 0, 1), (1, "k1_last_b1_last", 2, 0),
+                                 (2, "candidate_stated", 2, 3)])
+        firsts = [p["games_x"][0] for p in d13["paired_builds"]]
+        self.assertEqual(firsts, sorted(firsts))
+        g = d13["games"][2 * (12 * 0 + 4 * 2 + 2 * 1 + 1)]
+        self.assertEqual(g["game_seed"], deal.seed(["test", "game", "v1", 1, 0, 1, 1, 2]))
+        self.assertEqual([d13["decks"][k]["build"] for k in range(6)], [0, 0, 0, 1, None, None])
+
+    def test_prep_requests(self):
+        req = synth.prep_request("b_c", 0)
+        self.assertEqual(list(req), list(read_plans.PREP_REQUEST_KEYS))
+        self.assertEqual([(b["row"], b["build"]) for b in req["builds"][:2]], [("candidate", 0), ("stated", 1)])
+        self.assertEqual(synth.prep_request("dose_panel", 0)["builds"], [])
+        self.assertEqual(len(synth.prep_request("d13", 0)["builds"]), 32)
+        real = read_plans.build_prep_request("b_c", "read-gate-pools", 0, synth.PINS, dict(synth.UNIFORM),
+                                             {"candidate": dict(synth.UNIFORM)})
+        self.assertEqual(real["seeds"]["draft_seed"], deal.seed(["read-gate-pools", "draft", "v1", 0]))
+
+    def test_common_opponent_game_seed_and_unchanged_deal_py(self):
+        self.assertEqual(deal_common.common_game_seed("read-gate-c", "v1", 3, 5, 0, 2),
+                         deal.seed(["read-gate-c", "game", "v1", 3, 5, 0, 2]))
+        self.assertEqual(deal_common.common_game_seed("panel-k1", "v1", 3, 5, 1, 0, 2),
+                         deal.seed(["panel-k1", "game", "v1", 3, 5, 1, 0, 2]))
+        text = (CUBE_V1_DIR / "deal.py").read_bytes().replace(b"\r\n", b"\n")
+        self.assertEqual(hashlib.sha256(text).hexdigest(), DEAL_PY_SHA256)
+
+    def test_fixture_set_names(self):
+        for ok in ("fx-c-shared-d0", "fx-aa-mirrored-halt-d15", "fx-b-edge-undefined-d0-look-1",
+                   "fx-dose-provisional-d0-prep-panel"):
+            read_plans.check_set_name("test", ok.split("-")[1], ok)
+        for bad in ("fx-c-swap-d0", "fx-c-shared-d2", "look-1", "fx-c-shared-d0-look-3"):
+            with self.assertRaises(read_plans.PlanError):
+                read_plans.check_set_name("test", "c", bad)
+        read_plans.check_set_name("read-gate-c", "c", "look-1-restart-2")
+        with self.assertRaises(read_plans.PlanError):
+            read_plans.check_set_name("read-gate-c", "c", "fx-c-shared-d0")
+
+
+# ---------------------------------------------------------------------------------------------
+# Changes 1, 2, 6, 8, 9, 14, 16: records
+
+
+class RecordTests(unittest.TestCase):
+    def setUp(self):
+        _, _, self.result, self.sha = synth.prep_for("b_c", 0)
+        self.plan = synth.plan("c", 0, prep=(self.result, self.sha))
+        self.rec = synth.record(self.plan, by_slot({0: "win", 1: "loss"}))
+
+    def _rejects(self, mutate, pattern):
+        bad = copy.deepcopy(self.rec)
+        mutate(bad)
+        with self.assertRaisesRegex(pod_record.RecordError, pattern):
+            pod_record.validate_record(bad)
+
+    def test_v2_shape(self):
+        self.assertEqual(self.rec["schema"], "mtg-kernel-cube-pod-record/v2")
+        self.assertTrue(pod_record.is_read_pod(self.rec))
+        self._rejects(lambda r: r.update(schema="mtg-kernel-cube-pod-record/v1"), "unknown version")
+        self._rejects(lambda r: r.update(interfaces="m4-interfaces/v1"), "unknown version")
+        self._rejects(lambda r: r["seeds"].pop("pod_seed_namespace"), "missing")
+        self._rejects(lambda r: r["games"][0].update(seat_rule="coin"), "schedule")
+        self._rejects(lambda r: r["decks"][2]["builder"].update(pin=None), "builder pin")
+        self._rejects(lambda r: r["paired_builds"][0].pop("q"), "missing")
+        self._rejects(lambda r: r["paired_builds"].reverse(), "ordered")
+        self._rejects(lambda r: r.update(namespace="client-pods"), "reserved")
+        self._rejects(lambda r: r["caps"].update(max_replays=1), "max_replays")
+        self._rejects(lambda r: r["games"][0].update(scores=None), "scores")
+
+    def test_sampler_v2(self):
+        row = {"kind": "pick", "sampler": "softmax-cdf-splitmix64-v2", "options": [3, 5], "chosen": 5,
+               "stream_values": [9], "logits_bits": [1, 2], "p_chosen_bits": 4, "value_bits": 7}
+        pod_record._validate_row(row, "row", "pick")
+        row["sampler"] = "softmax-cdf-splitmix64-v1"
+        with self.assertRaises(pod_record.RecordError):
+            pod_record._validate_row(row, "row", "pick")
+
+    def test_record_against_plan(self):
+        read_plans.check_record_against_plan(self.rec, self.plan)
+        for mutate, pattern in ((lambda r: r["pins"].update(binary="0" * 64), "pins"),
+                                (lambda r: r["games"][3]["attempts"][0].update(env_seed=1), "attempt seeds"),
+                                (lambda r: r["chairs"][2].update(role="fixture"), "chair"),
+                                (lambda r: r["decks"][0].update(build=1), "build"),
+                                (lambda r: r["games"].pop(), "games")):
+            bad = copy.deepcopy(self.rec)
+            mutate(bad)
+            with self.assertRaisesRegex(pod_record.RecordError, pattern):
+                read_plans.check_record_against_plan(bad, self.plan)
+
+    def test_read_halt_is_one_attempt_null_score_and_a_ledger_row(self):
+        rec = synth.record(self.plan, by_slot({2: "halt"}, arm=0))
+        halted = [g for g in rec["games"] if g["scores"] is None]
+        self.assertEqual(len(halted), 8)
+        self.assertEqual(len(rec["halts"]), 8)
+        self.assertEqual(rec["status"], "complete")
+
+    def test_client_pods(self):
+        rec = copy.deepcopy(self.rec)
+        rec.update(use="client", namespace="client-pods")
+        rec["seeds"] = {"draft_seed": None, "pod_seed": None, "league_seed": None}
+        rec["draft"] = None
+        pod_record.validate_record(rec)
+        rec["namespace"] = "test"
+        with self.assertRaisesRegex(pod_record.RecordError, "client-pods"):
+            pod_record.validate_record(rec)
+
+
+# ---------------------------------------------------------------------------------------------
+# Read plan v2 change 1: prep acceptance
+
+
+class PrepAcceptanceTests(unittest.TestCase):
+    def _set(self, executions):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        executions[0].setdefault("accept", False)
+        set_dir, _ = synth.write_prep_set(Path(tmp.name), "size_c", "size_c", "fx-size_c-edge-reject-d0-prep-0-2",
+                                          range(0, 2), DECL_SHA, executions=executions)
+        return set_dir
+
+    def test_lowest_passing_execution_is_accepted(self):
+        self.assertEqual(read_sets.accept_prep_set(self._set([{"ended": "complete"}]))["execution"], 0)
+        two = self._set([{"ended": "complete"}, {"ended": "complete"}])
+        self.assertEqual(read_sets.accept_prep_set(two)["execution"], 0)
+
+    def test_a_died_execution_then_a_retry(self):
+        # exec-0 died with unit 0 complete (marker) and no receipt; exec-1 completes identically.
+        set_dir = self._set([{"ended": "interrupted", "units": [0], "receipt": False}, {"ended": "complete"}])
+        self.assertEqual(read_sets.accept_prep_set(set_dir)["execution"], 1)
+
+    def test_marker_rules(self):
+        for spec, pattern in (({"no_marker": [1]}, "marker"), ({"marker_sha": {0: "0" * 64}}, "marker")):
+            set_dir = self._set([{"ended": "complete", **spec}])
+            with self.assertRaisesRegex(read_sets.SetError, pattern):
+                read_sets.accept_prep_set(set_dir)
+        set_dir = self._set([{"ended": "complete", "no_marker": [1]}, {"ended": "complete"}])
+        self.assertEqual(read_sets.accept_prep_set(set_dir)["execution"], 1)
+
+    def test_byte_identity_across_attempts(self):
+        def tamper(result):
+            result["builds"][0]["build_seed"] = 12345
+        set_dir = self._set([{"ended": "interrupted", "units": [0], "receipt": False},
+                             {"ended": "complete", "tamper": {0: tamper}}])
+        with self.assertRaisesRegex(read_sets.SetError, "determinism failure"):
+            read_sets.accept_prep_set(set_dir)
+
+    def test_partial_output_without_marker_is_discarded(self):
+        def tamper(result):
+            result["builds"][0]["build_seed"] = 12345
+        set_dir = self._set([{"ended": "interrupted", "units": [0], "receipt": False, "no_marker": [0],
+                              "tamper": {0: tamper}}, {"ended": "complete"}])
+        self.assertEqual(read_sets.accept_prep_set(set_dir)["execution"], 1)
+
+
+# ---------------------------------------------------------------------------------------------
+# Change 15: executions, allocation, restarts, panels
+
+
+class ExecutionTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.plans = [synth.plan("a", u, mirror=m) for u in range(2) for m in (0, 1)]
+
+    def _write(self, case, executions):
+        return synth.write_plan_set(self.root, "a", f"fx-a-{case}-d0-look-1", self.plans, DECL_SHA,
+                                    executions=executions, look=1, units=[0, 2], reserved=[0, 6])
+
+    def _records(self, watchdog_game=None, upto=None):
+        def outcome(p, g, pos):
+            if watchdog_game is not None and p["pod_index"] == 1 and g["game"] == watchdog_game:
+                return ("halt", dict(synth.WATCHDOG_END), None, 50)
             return "draw"
+        out = {}
+        for p in self.plans:
+            if upto is not None and p["pod_index"] == 1:
+                out[1] = synth.record(p, outcome, games=upto + 1, status="stopped")
+            elif upto is not None and p["pod_index"] > 1:
+                continue
+            else:
+                out[p["pod_index"]] = synth.record(p, outcome)
+        return out
 
-        records.append(synth.record_from_plan(plan, result_of))
-        plans.append(plan)
-    return records, plans
+    def test_first_execution(self):
+        opened = read_sets.open_plan_set(self._write("swap", [{"records": self._records()}]), DECL_SHA)
+        self.assertEqual((opened["execution"], opened["void"]), (0, None))
+
+    def test_watchdog_rerun(self):
+        e0 = self._records(watchdog_game=3)
+        good = self._write("planted", [{"records": e0}, {"records": self._records(), "entry_expired": [[1, 3]]}])
+        opened = read_sets.open_plan_set(good, DECL_SHA)
+        self.assertEqual((opened["execution"], opened["void"]), (1, None))
+        self.assertEqual(opened["expired"], {"0": [[1, 3]], "1": []})
+        hang = self._write("halt-rows", [{"records": e0}, {"records": self._records(watchdog_game=3, upto=3),
+                                                           "ended": "watchdog_stop", "entry_expired": [[1, 3]]}])
+        self.assertIn("hang", read_sets.open_plan_set(hang, DECL_SHA)["void"])
+        other = self._write("edge-cut", [{"records": e0}, {"records": self._records(watchdog_game=5, upto=5),
+                                                           "ended": "watchdog_stop", "entry_expired": [[1, 3]]}])
+        self.assertIn("infrastructure", read_sets.open_plan_set(other, DECL_SHA)["void"])
+        pending = self._write("edge-empty", [{"records": e0}])
+        self.assertIn("rerun has not run", read_sets.open_plan_set(pending, DECL_SHA)["void"])
+        report = readers.run_read(DECL, DECL_SHA, "a", 1, [read_sets.open_plan_set(hang, DECL_SHA)])
+        self.assertEqual(report["verdict"], "void")
+
+    def test_interruption_and_refusals(self):
+        recs = self._records()
+        recs = {0: recs[0], 1: synth.record(self.plans[1], lambda p, g, pos: "draw", games=4, status="stopped")}
+        opened = read_sets.open_plan_set(self._write("swap", [{"records": recs, "ended": "interrupted"}]), DECL_SHA)
+        self.assertIn("interrupted", opened["void"])
+        with self.assertRaisesRegex(read_sets.SetError, "no watchdog halt"):
+            read_sets.open_plan_set(self._write("planted", [{"records": self._records()},
+                                                            {"records": self._records()}]), DECL_SHA)
+        set_dir = self._write("halt-rows", [{"records": self._records()}])
+        (set_dir / "exec-0" / "records" / "pod-0.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(read_sets.SetError, "hash"):
+            read_sets.open_plan_set(set_dir, DECL_SHA)
+        set_dir = self._write("edge-reject", [{"records": self._records()}])
+        with self.assertRaisesRegex(read_sets.SetError, "declaration"):
+            read_sets.open_plan_set(set_dir, "1" * 64)
 
 
+class AllocationTests(unittest.TestCase):
+    def test_looks_restarts_and_shared_prefix(self):
+        look1 = {"look": 1, "units": [0, 4], "reserved": [0, 12], "pools_with": None, "plan_set_sha256": "x" * 64,
+                 "set": "look-1", "replaces": None, "retired": []}
+        read_sets.check_look_allocation(look1, 1, 4)
+        look2 = {"look": 2, "units": [4, 12], "reserved": None, "pools_with": "x" * 64}
+        read_sets.check_look_allocation(look2, 2, 4, look1)
+        with self.assertRaises(read_sets.SetError):
+            read_sets.check_look_allocation({**look2, "units": [4, 8]}, 2, 4, look1)
+        with self.assertRaises(read_sets.SetError):
+            read_sets.check_look_allocation({**look1, "reserved": [0, 8]}, 1, 4)
+        restart = {"set": "look-1-restart-1", "replaces": "look-1", "units": [12, 16], "retired": [[4, 12]]}
+        read_sets.check_restart(look1, restart)
+        with self.assertRaises(read_sets.SetError):
+            read_sets.check_restart(look1, {**restart, "units": [8, 12]})
+        prep = {"set": "prep-0-12", "units": [0, 12], "reserved": [0, 12], "replaces": None, "retired": []}
+        new = {"set": "prep-0-12-restart-1", "units": [12, 24], "reserved": [12, 24], "replaces": "prep-0-12",
+               "retired": []}
+        read_sets.check_shared_prefix_restart([prep], new, 4, 3)
+        with self.assertRaises(read_sets.SetError):
+            read_sets.check_shared_prefix_restart([prep], {**new, "reserved": [12, 21]}, 4, 3)
 
-def _planted(value: float, spread_k: int = 4) -> Callable[[int], int]:
-    return lambda d: round(value * 64 + (spread_k if d % 2 == 0 else -spread_k))
+
+class PanelTests(unittest.TestCase):
+    def test_dose_panel_two_stages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = "fx-dose-provisional-d0"
+            stage1, outs = synth.write_prep_set(root, "dose_panel", "dose", f"{base}-prep-panel", range(0, 2), DECL_SHA)
+            man1 = read_sets.load_manifest(stage1)
+            self.assertIsNone(man1["panel_sha256"])  # prep-panel is exempt from pinned-panel checks
+            panel = read_plans.assemble_panel("dose", "test", man1, 0, outs, pins=synth.PINS, builders=None,
+                                              **synth.DEALER)
+            panel_dir = root / "test" / "v1" / f"{base}-panel"
+            panel_dir.mkdir(parents=True)
+            text = read_plans.serialize(panel)
+            (panel_dir / "panel.json").write_text(text, encoding="utf-8", newline="\n")
+            digest = hashlib.sha256(text.encode()).hexdigest()
+            prep_dir, pouts = synth.write_prep_set(root, "dose", "dose", f"{base}-prep-dose-0", range(0, 2), DECL_SHA,
+                                                   panel_sha256=digest)
+            read_sets.check_prep_dose_set(prep_dir, digest, pool=synth.POOL, constants=synth.CONST)
+            mark = {"kind": "dose", "label": "pods-512", "ordinal": 0}
+            plans = [synth.plan("dose", u, mark=mark, prep=pouts[u]) for u in range(2)]
+            for p in plans:
+                read_plans.check_plan_against_panel(p, panel)
+
+            def outcome(p, g, pos):
+                return "win" if g["game"] % 2 == 0 else ("halt" if g["game"] == 1 else "draw")
+            set_dir = synth.write_plan_set(root, "dose", f"{base}-dose-0", plans, DECL_SHA,
+                                           executions=[{"records": {p["pod_index"]: synth.record(p, outcome)
+                                                                    for p in plans}}],
+                                           units=[0, 2], panel_sha256=digest,
+                                           prep_set=f"test/v1/{base}-prep-dose-0/exec-0")
+            opened = read_sets.open_plan_set(set_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                             pinned_panel=digest)
+            report = readers.run_read(decl_with(**{"dose.panel_sha256": digest}), DECL_SHA, "dose", 0, [opened])
+            self.assertIsNone(report["verdict"])
+            lo, mid, hi = (estimate(report, "current_minus_initial", s) for s in ("lower", "drop", "upper"))
+            self.assertLess(lo, mid)
+            self.assertLess(mid, hi)
+            with self.assertRaisesRegex(read_sets.SetError, "pinned"):
+                read_sets.open_plan_set(set_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                        pinned_panel="0" * 64)
+            (panel_dir / "panel.json").write_text(text.replace('"run": "v1"', '"run": "v1" '), encoding="utf-8")
+            with self.assertRaisesRegex(read_sets.SetError, "hash"):
+                read_sets.open_plan_set(set_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                        pinned_panel=digest)
 
 
-class SeedAndIndexTests(unittest.TestCase):
-    def test_fast_resample_indices_equal_deal_seed(self):
-        root = readers.bootstrap_root("test", "c", 1)
-        self.assertEqual(root, deal.seed(["test", "bootstrap", "c", 1]))
-        for b in (0, 1, 9999):
-            idx = readers.resample_indices(root, b, 37)
-            self.assertEqual(idx, [deal.seed([root, b, t]) % 37 for t in range(37)])
+# ---------------------------------------------------------------------------------------------
+# A6 statistics: reads (b), (c), (b')
 
-    def test_percentile_interpolates_at_p_times_b_minus_one(self):
-        values = [float(v) for v in range(11)]
-        self.assertEqual(readers.percentile(values, 0.25), 2.5)
-        self.assertEqual(readers.percentile(values, 0.0), 0.0)
-        self.assertEqual(readers.percentile(values, 1.0), 10.0)
+
+class ReadBTests(unittest.TestCase):
+    def test_score_five_eighths_in_either_position(self):
+        unit = [[F(1), F(1), F(1, 2), F(0)]] * 8
+        self.assertEqual(readers.stat_pools(unit, "drop"), F(5, 8))
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = c_sets(Path(tmp), "score", by_slot({0: "win", 1: "win", 2: "draw", 3: "loss"}), family="b")
+            report = readers.run_read(DECL, DECL_SHA, "b", 1, opened)
+            self.assertEqual(estimate(report, "candidate_score"), F(5, 8))
+            positions = {g["decks"].index(0) for g in opened[0]["records"][0]["games"][:4]}
+            self.assertEqual(positions, {0, 1})
+
+    def test_halt_pool_lower_completion_voids_the_win(self):
+        outcome = by_slot({0: "win", 1: "win", 2: "loss", 3: "halt"})
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = c_sets(Path(tmp), "halt-pool", outcome, family="b", look2=True)
+            report = readers.run_read(DECL, DECL_SHA, "b", 1, opened[:1])
+            self.assertEqual([estimate(report, "candidate_score", s) for s in readers.SCORINGS],
+                             [F(2, 3), F(1, 2), F(3, 4)])
+            self.assertEqual(report["verdicts_by_scoring"], {"drop": "win", "lower": "loss", "upper": "win"})
+            self.assertEqual((report["verdict"], report["void"], report["next"]),
+                             ("extend", "verdicts differ", "extension"))
+            self.assertEqual(report["extension"], {"fresh_units": [2, 6], "pooled_units": 6})
+            second = readers.run_read(DECL, DECL_SHA, "b", 2, opened)
+            self.assertEqual((second["verdict"], second["next"]), ("void", "attempt_ends"))
+            self.assertEqual(second["units"], {"kind": "cluster", "first": 0, "end": 6})
+
+
+class ReadCTests(unittest.TestCase):
+    def test_candidate_halt_fixture(self):
+        outcome = by_slot({3: "halt"}, arm=0)
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = c_sets(Path(tmp), "halt-candidate", outcome, look2=True)
+            report = readers.run_read(DECL, DECL_SHA, "c", 1, opened[:1])
+            self.assertEqual([estimate(report, "candidate_minus_stated", s) for s in readers.SCORINGS],
+                             [F(0), F(-1, 8), F(1, 8)])
+            self.assertEqual(report["verdicts_by_scoring"]["drop"], "win")
+            self.assertEqual((report["verdict"], report["void"]), ("extend", "verdicts differ"))
+            self.assertEqual(readers.run_read(DECL, DECL_SHA, "c", 2, opened)["verdict"], "void")
+            bprime = readers.run_read(DECL, DECL_SHA, "b_prime", 1, opened[:1])
+            self.assertEqual([estimate(bprime, "stated_score", s) for s in readers.SCORINGS], [F(1, 2)] * 3)
+            self.assertIsNone(bprime["verdict"])
+
+    def test_stated_halt_reverse_sign_disposition(self):
+        """The reverse-sign fixture (A6.20, (c)): a stated-arm halt. The completions swap sides (a
+        stated halt is a stated win in the lower completion), the gate is void because the three
+        verdicts differ, and the signed disposition is the same as for a candidate halt: the first
+        look schedules the extension and the second look ends the attempt."""
+        outcome = by_slot({3: "halt"}, arm=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = c_sets(Path(tmp), "halt-stated", outcome, look2=True)
+            report = readers.run_read(DECL, DECL_SHA, "c", 1, opened[:1])
+            self.assertEqual([estimate(report, "candidate_minus_stated", s) for s in readers.SCORINGS],
+                             [F(0), F(-1, 8), F(1, 8)])
+            self.assertEqual(report["verdicts_by_scoring"], {"drop": "win", "lower": "loss", "upper": "win"})
+            self.assertEqual((report["verdict"], report["next"]), ("extend", "extension"))
+            second = readers.run_read(DECL, DECL_SHA, "c", 2, opened)
+            self.assertEqual((second["verdict"], second["next"]), ("void", "attempt_ends"))
+            bprime = readers.run_read(DECL, DECL_SHA, "b_prime", 1, opened[:1])
+            self.assertEqual([estimate(bprime, "stated_score", s) for s in readers.SCORINGS],
+                             [F(1, 2), F(3, 8), F(5, 8)])
+
+    def test_undefined_first_look_interval_ends_the_attempt(self):
+        """A (c) first look whose drop interval is undefined: draft 0 has every game halted, so some
+        resamples hold no defined draft. The read is void and the attempt ends (signed decision 2)."""
+        def outcome(p, g, pos):
+            return "halt" if p["unit"] == 0 else "draw"
+        with tempfile.TemporaryDirectory() as tmp:
+            report = readers.run_read(DECL, DECL_SHA, "c", 1, c_sets(Path(tmp), "edge-undefined", outcome))
+            self.assertIsNotNone(estimate(report, "candidate_minus_stated"))
+            self.assertIsNone(interval(report, "candidate_minus_stated"))
+            self.assertIsNotNone(interval(report, "candidate_minus_stated", "lower"))
+            self.assertEqual((report["verdict"], report["void"], report["next"]),
+                             ("void", "undefined drop interval", "attempt_ends"))
+            self.assertEqual(report["pools"]["empty"], 8)
+
+    def test_all_halted_and_equality_at_the_cut(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = readers.run_read(DECL, DECL_SHA, "c", 1, c_sets(Path(tmp), "edge-all-halted",
+                                                                     lambda p, g, pos: "halt"))
+            self.assertEqual(report["verdict"], "void")
+            self.assertIsNone(estimate(report, "candidate_minus_stated"))
+        self.assertEqual(readers.verdict_of([F(-1, 50), F(1)], F(-1, 50)), "inconclusive")
+        self.assertEqual(readers.verdict_of([F(-1), F(-1, 50)], F(-1, 50)), "inconclusive")
+        self.assertEqual(readers.verdict_of([F(-1, 51), F(1)], F(-1, 50)), "win")
+
+    def test_third_look_and_unrecorded_count(self):
+        with self.assertRaisesRegex(readers.ReadError, "look 3"):
+            readers.look_units(DECL["reads"]["c"], 3)
+        with self.assertRaisesRegex(readers.ReadError, "not recorded"):
+            readers.look_units(decl_with(**{"c.n": None})["reads"]["c"], 1)
+
+
+# ---------------------------------------------------------------------------------------------
+# A6 statistics: read (a), its A/A and companions
+
+
+class ReadATests(unittest.TestCase):
+    def test_planted_two_pair_candidate_row(self):
+        def outcome(p, g, pos):
+            if g["game"] % 2 == 1:
+                return "draw"
+            return "win" if p["unit"] == 1 or g["group"] < 4 else "loss"
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = a_sets(Path(tmp), "a", "planted", outcome)
+            report = readers.run_read(DECL, DECL_SHA, "a", 1, [opened])
+        units = readers.units_a(opened["records"], opened["plans"], range(2))
+        self.assertEqual([readers.stat_a_candidate(u, "drop") for u in units], [F(-1, 2), F(1)])
+        self.assertEqual(estimate(report, "candidate_edge"), F(1, 4))
+        self.assertEqual(estimate(report, "stated_edge"), F(0))
+        self.assertEqual(estimate(report, "interaction"), F(1, 4))
+        # The full 10,000-replicate histogram against an independent enumeration of ordered pairs.
+        edges = [F(-1, 2), F(1)]
+        counts = {}
+        for b in range(10_000):
+            pair = tuple(deal.seed(["bootstrap", "test", b, t]) % 2 for t in (0, 1))
+            counts[pair] = counts.get(pair, 0) + 1
+        values = sorted(v for pair, c in counts.items() for v in [(edges[pair[0]] + edges[pair[1]]) / 2] * c)
+        want = [readers.percentile(values, F(1, 40)), readers.percentile(values, F(39, 40))]
+        self.assertEqual(interval(report, "candidate_edge"), want)
+        self.assertLess(want[0], want[1])
+        self.assertEqual(len(counts), 4)
+
+    def test_halt_rows_interaction_bounds(self):
+        def outcome(p, g, pos):
+            return "halt" if (p["unit"], p["mirror"], g["group"]) == (0, 0, 0) else "draw"
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = a_sets(Path(tmp), "a", "halt-rows", outcome)
+        unit = readers.units_a(opened["records"], opened["plans"], range(1))[0]
+        self.assertEqual([readers.stat_a_interaction(unit, s) for s in readers.SCORINGS],
+                         [F(0), F(-2, 32), F(2, 32)])
+        self.assertEqual(readers.stat_a_candidate(unit, "lower"), F(-1, 32))
+
+    def test_focal_label_swap_negates(self):
+        unit = {"candidate": [F(1), F(0), F(1), F(1, 2)], "stated": [F(0), F(1, 2), F(1, 2), F(1, 2)]}
+        swapped = {k: [1 - w for w in v] for k, v in unit.items()}
+        for fn in (readers.stat_a_candidate, readers.stat_a_stated, readers.stat_a_interaction):
+            self.assertEqual(fn(swapped, "drop"), -fn(unit, "drop"))
+
+
+class AATests(unittest.TestCase):
+    @staticmethod
+    def symmetric(halt_in=None, source=None):
+        def outcome(p, g, pos):
+            r = synth.unit_draw("aa", p["unit"], g["game"])
+            if halt_in is not None and (p["unit"], g["game"]) == (0, 4) and p["mirror"] in halt_in:
+                src = source if (source is not None and p["mirror"] == 1) else 3
+                return ("halt", {"kind": "decision_cap"}, src, 77)
+            p0 = "draw" if r < 0.15 else ("p0" if r < 0.6 else "p1")
+            if p0 == "draw":
+                return "draw"
+            return "win" if (p0 == "p0") == (pos == 0) else "loss"
+        return outcome
+
+    def _read(self, outcome, case):
+        with tempfile.TemporaryDirectory() as tmp:
+            opened = a_sets(Path(tmp), "aa", case, outcome, units=4, set_suffix="fixed", look=None)
+            return readers.run_read(DECL, DECL_SHA, "aa", 1, [opened])
+
+    def test_exact_symmetry_with_a_mirrored_halt(self):
+        report = self._read(self.symmetric(halt_in=(0, 1)), "mirrored-halt")
+        self.assertTrue(report["symmetry"]["symmetric"], report["symmetry"])
+        self.assertEqual(report["verdict"], "symmetric")
+        self.assertEqual(report["games"]["halted"], 2)
+        for name in ("candidate_edge", "stated_edge", "interaction"):
+            self.assertEqual(estimate(report, name), F(0))
+            self.assertEqual(interval(report, name), [F(0), F(0)])
+
+    def test_unmirrored_halt_or_mismatched_halt_fails(self):
+        report = self._read(self.symmetric(halt_in=(1,)), "unmirrored")
+        self.assertEqual(report["verdict"], "failed")
+        self.assertIn("unmirrored halt", report["symmetry"]["problems"][0])
+        report = self._read(self.symmetric(halt_in=(0, 1), source=9), "unmirrored")
+        self.assertEqual(report["verdict"], "failed")
+        self.assertIn("stop kind, source or counts", report["symmetry"]["problems"][0])
+        self.assertEqual(estimate(report, "candidate_edge"), F(0))
+
+
+class CompanionTests(unittest.TestCase):
+    def test_one_seat_rotation_and_all_learned_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plans = [synth.plan("a_one", u, rotation=r) for u in range(2) for r in range(8)]
+            recs = {p["pod_index"]: synth.record(p, lambda p, g, pos: "win" if g["game"] < 4 else "loss")
+                    for p in plans}
+            set_dir = synth.write_plan_set(root, "a_one", "fx-a_one-rotation-d0-fixed", plans, DECL_SHA,
+                                           executions=[{"records": recs}], units=[0, 2])
+            report = readers.run_read(DECL, DECL_SHA, "a_one", 1, [read_sets.open_plan_set(set_dir, DECL_SHA)])
+            self.assertEqual(report["games"]["played"], 2 * 56)
+            self.assertEqual(estimate(report, "single_seat_edge"), F(2 * 32, 56) - 1)
+            plans = [synth.plan("a_all", u) for u in range(2)]
+            recs = {p["pod_index"]: synth.record(p, lambda p, g, pos: "halt" if g["game"] == 0 else "draw")
+                    for p in plans}
+            set_dir = synth.write_plan_set(root, "a_all", "fx-a_all-all-count-d0-fixed", plans, DECL_SHA,
+                                           executions=[{"records": recs}], units=[0, 2])
+            report = readers.run_read(DECL, DECL_SHA, "a_all", 1, [read_sets.open_plan_set(set_dir, DECL_SHA)])
+            self.assertEqual(report["completion"]["games"], {"played": 56, "completed": 54, "halted": 2})
+
+
+class D13Tests(unittest.TestCase):
+    def test_panel_contrasts_and_agreement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = "fx-d13-panel-d0"
+            stage1, outs = synth.write_prep_set(root, "d13", "d13", f"{base}-prep-panel", range(0, 2), DECL_SHA)
+            panel = read_plans.assemble_panel("d13", "test", read_sets.load_manifest(stage1), 0, outs,
+                                              pins=synth.PINS, builders={r: dict(synth.UNIFORM) for r in
+                                                                         ("b1_last", "initial", "k1_last")},
+                                              **synth.DEALER)
+            text = read_plans.serialize(panel)
+            (root / "test" / "v1" / f"{base}-panel").mkdir(parents=True)
+            (root / "test" / "v1" / f"{base}-panel" / "panel.json").write_text(text, encoding="utf-8", newline="\n")
+            digest = hashlib.sha256(text.encode()).hexdigest()
+            opened = []
+            for ordinal, x_wins in ((0, True), (1, False)):
+                mark = {"kind": "pilot", "label": f"pilot-{ordinal}", "ordinal": ordinal}
+                plans = [synth.plan("d13", u, mark=mark, prep=outs[u]) for u in range(2)]
+                outcome = (lambda xw: lambda p, g, pos: ("win" if xw else "loss") if g["game"] % 2 == 0 else "draw")(x_wins)
+                set_dir = synth.write_plan_set(
+                    root, "d13", f"{base}-pilot-{ordinal}", plans, DECL_SHA,
+                    executions=[{"records": {p["pod_index"]: synth.record(p, outcome) for p in plans}}],
+                    units=[0, 2], panel_sha256=digest, prep_set=f"test/v1/{base}-prep-panel/exec-0")
+                opened.append(read_sets.open_plan_set(set_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                                      pinned_panel=digest))
+            report = readers.run_read(decl_with(**{"d13.panel_sha256": digest}), DECL_SHA, "d13", 0, opened)
+            first = report["pilots"][0]["contrasts"]
+            self.assertEqual(set(first), {"current_initial", "k1_last_b1_last", "candidate_stated"})
+            self.assertEqual(exact(first["candidate_stated"]["drop"]["estimate"]), F(1, 2))
+            self.assertEqual(exact(report["pilots"][1]["contrasts"]["current_initial"]["drop"]["estimate"]), F(-1, 2))
+            self.assertEqual(report["agreement"][0], {"pilots": [0, 1], "contrast": "current_initial",
+                                                      "same_sign": 0, "jointly_defined": 32})
+
+
+# ---------------------------------------------------------------------------------------------
+# A6.18 sizing, declaration, determinism, D5 records
 
 
 class SizingTests(unittest.TestCase):
-    def test_formula_cap_floor_and_exact_rounding(self):
-        decl, _ = _declaration()
-        sizing = dict(decl["reads"]["c"]["sizing"])
-        sizing.update(spread=Decimal("0.0625"), effect=Decimal("0.02"), cap=10_000, floor=2)
-        self.assertEqual(readers.first_look_units(sizing), 77)  # ceil(8.75^2 = 76.5625)
-        # (2.8 x 0.09 / 0.036)^2 is exactly 49; binary floating point rounds above it and gives 50.
-        sizing.update(spread=Decimal("0.09"), effect=Decimal("0.036"))
-        self.assertEqual(math.ceil(((1.96 + 0.84) * 0.09 / 0.036) ** 2), 50)
-        self.assertEqual(readers.first_look_units(sizing), 49)
-        sizing.update(effect=Decimal("0.02"))
-        self.assertEqual(readers.first_look_units(sizing), 159)  # ceil(12.6^2 = 158.76)
-        sizing.update(cap=40)
-        self.assertEqual(readers.first_look_units(sizing), 40)
-        sizing.update(spread=Decimal("0.001"), cap=10_000, floor=5)
-        self.assertEqual(readers.first_look_units(sizing), 5)
+    def test_branches(self):
+        sizing = DECL["reads"]["c"]["sizing"]
+        out = readers.size_from_probe([F(1, 10), F(-1, 10), F(3, 10), F(-3, 10)], sizing)
+        # s^2 = 2/30 * ... computed exactly: (14/5)^2 * s^2 / (1/50)^2.
+        values = [F(1, 10), F(-1, 10), F(3, 10), F(-3, 10)]
+        s2 = sum(v * v for v in values) / 3
+        self.assertEqual(exact(out["n_raw"]), F(14, 5) ** 2 * s2 / F(1, 50) ** 2)
+        self.assertEqual((out["n"], out["flag"]), (512, "cap binds"))
+        small = readers.size_from_probe([F(1, 1000), F(-1, 1000), F(0)], sizing)
+        self.assertEqual((small["n"], small["flag"]), (128, "floor binds"))
+        mid = readers.size_from_probe([F(1, 10), F(-1, 10)], sizing)
+        # (14/5)^2 * (1/50) / (1/50)^2 = 392 exactly; binary floating point gives 391.99999999999994.
+        self.assertNotEqual((1.96 + 0.84) ** 2 * 0.02 / 0.02 ** 2, 392)
+        self.assertEqual((exact(mid["n_raw"]), mid["n"], mid["flag"]), (F(392), 392, None))
+        self.assertEqual(readers.size_from_probe([F(1, 5)] * 4, sizing)["flag"], "zero spread: the cap")
+        self.assertEqual(readers.size_from_probe([F(1, 5), None, F(0)], sizing)["flag"], "some units undefined: the cap")
+        self.assertIsNone(readers.size_from_probe([F(1, 5), None], sizing)["n"])
 
-    def test_extension_is_declared_multiple_and_third_look_refused(self):
-        decl, _ = _declaration(**{"c.sizing.spread": Decimal("0.05")})
-        section = decl["reads"]["c"]
-        self.assertEqual(readers.look_units(section, 1), 49)
-        self.assertEqual(readers.look_units(section, 2), 49 + 2 * 49)
-        with self.assertRaisesRegex(readers.ReadError, "at most 2 looks"):
-            readers.look_units(section, 3)
-
-    def test_unrecorded_spread_refuses_to_size(self):
-        decl, _ = _declaration(**{"c.sizing.spread": None})
-        with self.assertRaisesRegex(readers.ReadError, "not recorded"):
-            readers.look_units(decl["reads"]["c"], 1)
+    def test_size_c_probe_report_and_no_holdout_use(self):
+        def outcome(p, g, pos):
+            return "win" if (g["game"] % 2 == 0 and synth.unit_draw("sz", p["unit"], g["game"]) < 0.6) else "draw"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, outs = synth.write_prep_set(root, "size_c", "size_c", "fx-size_c-edge-sizing-d0-prep-0-3",
+                                           range(0, 3), DECL_SHA)
+            plans = [synth.plan("size_c", u, prep=outs[u]) for u in range(3)]
+            set_dir = synth.write_plan_set(root, "size_c", "fx-size_c-edge-sizing-d0-fixed", plans, DECL_SHA,
+                                           executions=[{"records": {p["pod_index"]: synth.record(p, outcome)
+                                                                    for p in plans}}],
+                                           units=[0, 3], prep_set="test/v1/fx-size_c-edge-sizing-d0-prep-0-3/exec-0")
+            opened = read_sets.open_plan_set(set_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            report = readers.run_read(DECL, DECL_SHA, "size_c", 1, [opened])
+            self.assertEqual(report["count"]["units_defined"], 3)
+            self.assertIn("within_draft_correlation", report["diagnostics"])
+            with self.assertRaisesRegex(readers.ReadError, "family size_c"):
+                readers.run_read(DECL, DECL_SHA, "c", 1, [opened])
 
 
 class DeclarationTests(unittest.TestCase):
     def _doc(self):
-        return json.loads(TEST_DECLARATION.read_text(encoding="utf-8"), parse_float=Decimal)
+        from decimal import Decimal
+        return json.loads(DECLARATION.read_text(encoding="utf-8"), parse_float=Decimal)
 
-    def test_fixture_declaration_is_valid_and_test_only(self):
-        decl, _ = readers.load_declaration(TEST_DECLARATION)
-        self.assertIsNone(decl["a6_sha256"])
-        self.assertEqual(decl["resamples"], 10_000)
-        for read in ("a", "a_early", "b", "c", "dose", "aa"):
-            self.assertEqual(decl["reads"][read]["namespace"], "test")
-
-    def test_rejects_missing_extra_and_mistyped_constants(self):
-        cases = []
-        doc = self._doc()
-        del doc["reads"]["c"]["sizing"]["cap"]
-        cases.append(doc)
-        doc = self._doc()
-        doc["reads"]["b"]["delta"] = Decimal("0.02")
-        cases.append(doc)
-        doc = self._doc()
-        doc["reads"]["c"]["extension_factor"] = True
-        cases.append(doc)
-        doc = self._doc()
-        doc["reads"]["c"]["levels"] = [Decimal("0.025")]
-        cases.append(doc)
-        doc = self._doc()
-        doc["reads"]["c"]["levels"] = [Decimal("0.025"), Decimal("0.6")]
-        cases.append(doc)
-        doc = self._doc()
-        doc["draw_score"] = Decimal("0.4")
-        cases.append(doc)
-        doc = self._doc()
-        doc["reads"]["c"]["loss_if_upper_below"] = Decimal("0.5")
-        cases.append(doc)
-        doc = self._doc()
-        doc["reads"]["a"]["scale"] = "learned_win_fraction"
-        cases.append(doc)
-        doc = self._doc()
-        doc["schema"] = "mtg-kernel-cube-read-declaration/v0"
-        cases.append(doc)
-        doc = self._doc()
-        doc["reads"]["c"]["sizing"]["effect"] = 0.02  # a float that bypassed exact parsing
-        cases.append(doc)
-        for i, doc in enumerate(cases):
-            with self.subTest(case=i), self.assertRaises(readers.DeclarationError):
+    def test_fixture_and_refusals(self):
+        self.assertEqual(DECL["reads"]["c"]["cut"], F(-1, 50))
+        self.assertEqual(DECL["reads"]["b"]["cut"], F(13, 25))
+        self.assertEqual(DECL["reads"]["a"]["levels"], [F(1, 40)] * 2)
+        for mutate in (lambda d: d["reads"]["c"].pop("n"), lambda d: d["reads"]["c"].update(extra=1),
+                       lambda d: d.update(read_plan="mtg-kernel-cube-read-plan/v1"),
+                       lambda d: d["reads"]["c"].update(namespace="read-gate-b"),
+                       lambda d: d["reads"]["c"]["sizing"].update(delta=0.02),
+                       lambda d: d["reads"]["c"].update(extension_factor=True)):
+            doc = self._doc()
+            mutate(doc)
+            with self.assertRaises(readers.DeclarationError):
                 readers.validate_declaration(doc)
 
-    def test_namespaces_single_use_outside_test(self):
-        doc = self._doc()
-        for read in ("a", "a_early", "b", "c", "dose", "aa"):
-            doc["reads"][read]["namespace"] = f"ns-{read.replace('_', '-')}"
-        doc["reads"]["c"]["namespace"] = "ns-b"
-        readers.validate_declaration(copy.deepcopy(doc))
-        doc["reads"]["dose"]["namespace"] = "ns-a"
-        with self.assertRaisesRegex(readers.DeclarationError, "already"):
-            readers.validate_declaration(doc)
-
     def test_unsigned_declaration_refuses_read_data(self):
-        decl, sha = _declaration(**{"c.namespace": "read-bc", "c.sizing.spread": Decimal("0.02")})
-        with self.assertRaisesRegex(readers.ReadError, "no signed A6"):
-            readers.run_read(decl, sha, "c", 1, [], [])
+        with self.assertRaisesRegex(readers.ReadError, "countersigned"):
+            readers.run_read(decl_with(**{"c.namespace": "read-gate-c"}), DECL_SHA, "c", 1, [])
 
-
-class CommonOpponentTests(unittest.TestCase):
-    def setUp(self):
-        self.pool_state = deal.validate_pool(synth.pool_doc())
-        self.constants = deal.validate_constants(synth.CONSTANTS)
-        self.basics = set(self.pool_state["basic_id_by_color"].values())
-
-    def test_fifty_pools_same_opponent_for_both_builds_and_no_shared_card(self):
-        checked = 0
-        for d in range(7):
-            plan = synth.paired_plan(d)
-            pools = synth.draft_pools(d)
-            # A plan built from other builds of the same pools deals the same C(P) on the same seeds.
-            other = read_plans.build_read_c_plan(
-                synth.pool_doc(), synth.CONSTANTS, synth.NS, synth.RUN, d, pools,
-                [synth.build_from_pool(p, 1) for p in pools], [synth.build_from_pool(p, 0) for p in pools],
-                synth.UNIFORM)
-            for seat, entry in enumerate(plan["paired_builds"]):
-                if checked == 50:
-                    break
-                checked += 1
-                games = {g["game"]: g for g in plan["games"]}
-                opp_x = {games[g]["decks"][1 - games[g]["decks"].index(entry["deck_x"])] for g in entry["games_x"]}
-                opp_y = {games[g]["decks"][1 - games[g]["decks"].index(entry["deck_y"])] for g in entry["games_y"]}
-                self.assertEqual(opp_x, opp_y)
-                self.assertEqual(opp_x, set(entry["opponents"]))
-                c_cards = plan["decks"][entry["opponents"][0]]["cards"]
-                self.assertEqual(c_cards, other["decks"][entry["opponents"][0]]["cards"])
-                self.assertEqual(
-                    [g["game_seed"] for g in plan["games"] if g["group"] // 4 == seat],
-                    [g["game_seed"] for g in other["games"] if g["group"] // 4 == seat])
-                self.assertFalse({c for c in c_cards if c not in self.basics} & set(pools[seat]))
-                direct = deal_common.deal_common_opponent(
-                    self.pool_state, self.constants, pools[seat], synth.NS, d, seat, 0)
-                self.assertEqual(direct["mainboard"], c_cards)
-                self.assertEqual(len(c_cards), 40)
-        self.assertEqual(checked, 50)
-
-    def test_rule_matches_one_read_b_seat_and_key_matters(self):
-        pool = synth.draft_pools(0)[0]
-        deck = deal_common.deal_common_opponent(self.pool_state, self.constants, pool, "test", 0, 0, 0)["mainboard"]
-        spells = {c["card_id"]: c for c in self.pool_state["spells"]}
-        colours = set()
-        for c in deck:
-            if c in self.basics:
-                colours.add(deal.COLORS[c - synth.BASIC_BASE])
-        self.assertEqual(len(colours), 2)
-        self.assertEqual(sum(1 for c in deck if c in spells), 23)
-        self.assertTrue(all(set(spells[c]["colors"]) <= colours for c in deck if c in spells))
-        self.assertEqual(sum(1 for c in deck if c in self.basics), 16)
-        keys = [("test", 0, 0, 1), ("test", 1, 0, 0), ("test", 0, 1, 0), ("other", 0, 0, 0)]
-        decks = {tuple(deal_common.deal_common_opponent(self.pool_state, self.constants, pool, *k)["mainboard"])
-                 for k in keys}
-        self.assertGreater(len(decks), 1)
-
-    def test_game_seeds_and_seats(self):
-        games = deal_common.common_games("test", 3, 5, 0)
-        self.assertEqual([g["game_seed"] for g in games],
-                         [deal.seed(["cube_deal_common_v1", "test", 3, 5, 0, s]) for s in range(4)])
-        self.assertEqual([g["build_seat"] for g in games], [0, 1, 0, 1])
-
-    def test_refuses_bad_pools(self):
-        pool = synth.draft_pools(0)[0]
-        for bad in (pool[:44], pool[:44] + [5000], pool[:44] + [pool[0]], "x"):
-            with self.assertRaises(ValueError):
-                deal_common.deal_common_opponent(self.pool_state, self.constants, bad, "test", 0, 0, 0)
-        with self.assertRaises(ValueError):
-            deal_common.deal_common_opponent(self.pool_state, self.constants, pool, "test", 0, 8, 0)
-
-    def test_deal_py_keeps_its_bytes(self):
-        # deal.py is pinned by A1.2; this job adds deal_common.py beside it and never edits it.
-        text = (CUBE_V1_DIR / "deal.py").read_bytes().replace(b"\r\n", b"\n")
-        self.assertEqual(hashlib.sha256(text).hexdigest(), DEAL_PY_SHA256)
-
-
-DEAL_PY_SHA256 = "0e60d49f40eb9509210f4e2f71e8d2cd7dac65e393696427043978556e5af497"
-
-
-class ReadBPlanTests(unittest.TestCase):
-    def test_seeds_seats_and_opponents_equal_build_read_b(self):
-        for d in (0, 3):
-            plan = synth.read_b_plan(d)
-            pools = synth.draft_pools(d)
-            for seat in range(8):
-                deck = synth.build_from_pool(pools[seat], 0)
-                index = read_plans.read_b_index(d, seat)
-                self.assertEqual(index, 8 * d + seat)
-                ref = deal.build_read_b(synth.pool_doc(), synth.CONSTANTS, deck, synth.NS, synth.RUN, index)
-                episodes = [e["episode"] for e in ref["iterations"][0]["episodes"]]
-                games = [g for g in plan["games"] if g["group"] // 4 == seat]
-                self.assertEqual([g["game_seed"] for g in games], [e["seed"] for e in episodes])
-                d_id = 2 * seat
-                self.assertEqual([g["decks"].index(d_id) for g in games], [e["learner_seat"] for e in episodes])
-                for g, e in zip(games, episodes):
-                    self.assertEqual(e["starting_player"], 0)
-                    cards = [plan["decks"][x]["cards"] for x in g["decks"]]
-                    self.assertEqual(cards, [deck_["mainboard"] for deck_ in e["selected"]])
-                self.assertEqual(plan["decks"][2 * seat + 1]["dealt"],
-                                 {"function": "cube_deal_b_v1", "key": [synth.NS, synth.RUN, index]})
-
-    def test_plan_refuses_a_deck_outside_its_pool(self):
-        pools = synth.draft_pools(0)
-        decks = [synth.build_from_pool(p, 0) for p in pools]
-        decks[2] = list(decks[1])
-        with self.assertRaisesRegex(ValueError, "pool holds it 0 times"):
-            read_plans.build_read_b_plan(synth.pool_doc(), synth.CONSTANTS, "test", "synth", 0, pools, decks,
-                                         synth.UNIFORM)
-
-
-class SchemaTests(unittest.TestCase):
-    def setUp(self):
-        self.plan = synth.paired_plan(0)
-        self.record = synth.record_from_plan(self.plan, lambda g, p: "win")
-
-    def _rejects(self, mutate, pattern):
-        rec = copy.deepcopy(self.record)
-        mutate(rec)
-        with self.assertRaisesRegex(pod_record.RecordError, pattern):
-            pod_record.validate_record(rec)
-
-    def test_valid_record_passes_and_keys_are_in_frozen_order(self):
-        pod_record.validate_record(copy.deepcopy(self.record))
-        self.assertEqual(list(self.record.keys()), list(pod_record.RECORD_KEYS))
-
-    def test_missing_extra_reordered_and_wrong_version(self):
-        self._rejects(lambda r: r.pop("halts"), "missing")
-        self._rejects(lambda r: r.update(extra=1), "extra")
-        self._rejects(lambda r: r["games"][0].pop("episode"), "missing")
-        self._rejects(lambda r: r["games"][0]["attempts"][0].update(note="x"), "extra")
-        self._rejects(lambda r: r["decks"][0].pop("dealt"), "missing")
-
-        def reorder(r):
-            r["seeds"] = {"pod_seed": r["seeds"]["pod_seed"], "draft_seed": r["seeds"]["draft_seed"],
-                          "league_seed": None}
-        self._rejects(reorder, "order")
-        self._rejects(lambda r: r.update(schema="mtg-kernel-cube-pod-record/v2"), "unknown version")
-        self._rejects(lambda r: r.update(interfaces="m4-interfaces/v2"), "unknown version")
-
-    def test_two_attempts_in_a_read_plan_game(self):
-        def two(r):
-            g = r["games"][0]
-            first = copy.deepcopy(g["attempts"][0])
-            first["end"] = {"kind": "decision_cap"}
-            first["halted"] = True
-            first["stop_kind"] = "decision_cap"
-            second = copy.deepcopy(g["attempts"][0])
-            second["attempt"] = 1
-            g["attempts"] = [first, second]
-            r["caps"]["max_replays"] = 3
-            r["halts"] = [{"game": 0, "attempt": 0, "stop_kind": "decision_cap", "last_action_source": None,
-                           "deal_seed": first["deal_seed"]}]
-        self._rejects(two, "exactly one attempt")
-
-    def test_types_ids_and_consistency(self):
-        self._rejects(lambda r: r.update(pod_index=True), "integer")
-        self._rejects(lambda r: r["decks"][1].update(deck=0), "its index")
-        self._rejects(lambda r: r["games"][0].update(chairs=[1, None]), "chair")
-        self._rejects(lambda r: r["games"][0].update(decks=[0, 99]), "not in the record")
-        self._rejects(lambda r: r["games"][0].update(scores=[0, 0]), "winner")
-        self._rejects(lambda r: r["games"][0].update(scores=[1, 1]), "scores")
-        self._rejects(lambda r: r["seeds"].update(draft_seed=5), "differs")
-        self._rejects(lambda r: r["decks"][0]["cards"].reverse(), "canonical")
-        self._rejects(lambda r: r["decks"][0].update(build_rows=None), "build rows")
-        def swap(r):
-            ys = r["paired_builds"][0]["games_y"]
-            ys[0], ys[2] = ys[2], ys[0]
-        self._rejects(swap, "not coupled")
-        self._rejects(lambda r: r["paired_builds"][0]["games_y"].reverse(), "different seats")
-        self._rejects(lambda r: r["games"][0]["attempts"][0].update(stop_kind="natural"), "stop_kind")
-        self._rejects(lambda r: r.update(namespace="Test"), "a-z0-9")
-
-    def test_halt_ledger_must_match(self):
-        plan = synth.paired_plan(1)
-        rec = synth.record_from_plan(plan, lambda g, p: "halt" if g["game"] == 5 else "loss")
-        self.assertEqual([h["game"] for h in rec["halts"]], [5])
-        rec["halts"] = []
-        with self.assertRaisesRegex(pod_record.RecordError, "ledger"):
-            pod_record.validate_record(rec)
-
-    def test_win_fractions_and_halted_game(self):
-        plan = synth.paired_plan(1)
-        rec = synth.record_from_plan(plan, lambda g, p: {0: "win", 1: "draw", 2: "loss"}.get(g["game"], "halt"))
-        fractions = [pod_record.win_fraction(rec["games"][g], rec["games"][g]["decks"][
-            [0, 1].index(next(i for i, d in enumerate(rec["games"][g]["decks"]) if d % 3 != 2))]) for g in range(4)]
-        self.assertEqual(fractions, [1.0, 0.5, 0.0, None])
-
-    def test_record_must_follow_its_plan(self):
-        rec = copy.deepcopy(self.record)
-        rec["games"][3]["game_seed"] += 1
-        rec["games"][2]["game_seed"] += 1
-        with self.assertRaisesRegex(pod_record.RecordError, "differs from the plan"):
-            read_plans.check_record_against_plan(rec, self.plan)
-
-    def test_load_records_accepts_one_record_or_an_array(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            one = Path(tmp) / "one.json"
-            many = Path(tmp) / "pods.json"
-            one.write_text(json.dumps(self.record), encoding="utf-8")
-            many.write_text(json.dumps([self.record, self.record]), encoding="utf-8")
-            self.assertEqual(len(pod_record.load_records(one)[0]), 1)
-            self.assertEqual(len(pod_record.load_records(many)[0]), 2)
-
-
-class ReadCTests(unittest.TestCase):
-    """(c): non-inferiority of candidate minus stated against C(P), by draft."""
-
-    SPREAD = Decimal("0.0625")  # the declared spread s of the planted draft statistics
-
-    def _read(self, records, plans, look=1, **overrides):
-        decl, sha = _declaration(**{"c.sizing.spread": self.SPREAD, **overrides})
-        return readers.run_read(decl, sha, "c", look, _files(records), _plans(plans))
-
-    def test_known_answers_at_the_helper_size(self):
-        decl, _ = _declaration(**{"c.sizing.spread": self.SPREAD})
-        n = readers.look_units(decl["reads"]["c"], 1)
-        self.assertEqual(n, 77)
-        expected = {0.0: "win", 0.05: "win", -0.05: "loss"}
-        for planted, word in expected.items():
-            records, plans = _c_records(n, _planted(planted))
-            report = self._read(records, plans)
-            with self.subTest(planted=planted):
-                self.assertEqual(report["verdict"], word, report["statistics"])
-                drop = report["statistics"]["candidate_minus_stated"]["drop"]
-                self.assertAlmostEqual(drop["estimate"], planted, delta=0.004)
-                self.assertEqual(drop["units_scored"], n)
-
-    def test_signed_imputation_voids_only_under_the_non_inferiority_sign(self):
-        n = 77
-        # 40 halted candidate games (one in each of the first 40 drafts, a draw otherwise).
-        records, plans = _c_records(n, _planted(0.0), halts=lambda d, s, slot, arm: d < 40 and (s, slot, arm) == (7, 2, 0))
-        report = self._read(records, plans)
-        by = report["verdicts_by_scoring"]
-        self.assertEqual(report["games"]["halted"], 40)
-        self.assertEqual(by["drop"], "win")
-        self.assertEqual(by["halts_against"], "inconclusive")  # candidate halts lost, stated halts won
-        self.assertEqual(by["halts_for"], "win")  # the reversed imputation keeps the verdict
-        self.assertEqual(report["void_test"]["tested"], ["halts_against"])
-        self.assertTrue(report["void_test"]["void"])
-        self.assertEqual(report["verdict"], "void")
-        # The same halts on fewer drafts cannot flip it: not void.
-        records, plans = _c_records(n, _planted(0.0), halts=lambda d, s, slot, arm: d < 4 and (s, slot, arm) == (7, 2, 0))
-        report = self._read(records, plans)
-        self.assertFalse(report["void_test"]["void"])
-        self.assertEqual(report["verdict"], "win")
-
-    def test_inferior_verdict_is_tested_under_the_reverse_imputation(self):
-        n = 77
-        halt = lambda d, s, slot, arm: d < 60 and (s, slot) in ((6, 2), (7, 2)) and arm == 0  # noqa: E731
-        records, plans = _c_records(n, _planted(-0.05), halts=halt)
-        report = self._read(records, plans)
-        self.assertEqual(report["verdicts_by_scoring"]["drop"], "loss")
-        self.assertEqual(report["void_test"]["tested"], ["halts_for"])
-        self.assertEqual(report["verdicts_by_scoring"]["halts_against"], "loss")
-        self.assertNotEqual(report["verdicts_by_scoring"]["halts_for"], "loss")
-        self.assertEqual(report["verdict"], "void")
-
-    def test_draft_clustering_widens_and_matches_the_analytic_error(self):
-        drafts = 40
-        rng_effect = [round(synth.unit_draw("effect", d) * 12) - 6 for d in range(drafts)]
-
-        def pool_half_points(d, seat):
-            return rng_effect[d] + (round(synth.unit_draw("noise", d, seat) * 2) - 1)
-
-        records, plans = [], []
-        for d in range(drafts):
-            plan = synth.paired_plan(d)
-            targets = {seat: pool_half_points(d, seat) for seat in range(8)}
-
-            def result_of(game, position, targets=targets):
-                seat, slot, arm = game["group"] // 4, game["group"] % 4, game["game"] % 2
-                m = targets[seat]
-                if m >= 0:
-                    c_h = 4 + (m + 1) // 2
-                    s_h = c_h - m
-                else:
-                    s_h = 4 + (-m + 1) // 2
-                    c_h = s_h + m
-                h = c_h if arm == 0 else s_h
-                wins, draws = h // 2, h % 2
-                return "win" if slot < wins else ("draw" if slot < wins + draws else "loss")
-
-            records.append(synth.record_from_plan(plan, result_of))
-            plans.append(plan)
-        decl, sha = _declaration(**{"c.sizing.spread": Decimal("0.0001"), "c.sizing.floor": drafts,
-                                    "c.sizing.cap": drafts})
-        report = readers.run_read(decl, sha, "c", 1, _files(records), _plans(plans))
-        drop = report["statistics"]["candidate_minus_stated"]["drop"]
-        width = drop["interval"][1] - drop["interval"][0]
-        # Per-pool differences are planted exactly: m / 8.
-        pools = [pool_half_points(d, s) / 8 for d in range(drafts) for s in range(8)]
-        draft_stats = [math.fsum(pools[8 * d: 8 * d + 8]) / 8 for d in range(drafts)]
-        self.assertAlmostEqual(drop["estimate"], math.fsum(draft_stats) / drafts, places=12)
-        se = drop["unit_spread"] / math.sqrt(drafts)
-        analytic = 2 * 1.959963984540054 * se
-        self.assertLess(abs(width / analytic - 1), 0.10, (width, analytic))
-        pool_interval = readers.bootstrap_interval(pools, readers.bootstrap_root("test", "pool-level", 1),
-                                                   10_000, 0.025)
-        self.assertLess(pool_interval[1] - pool_interval[0], width)
-
-    def test_two_looks_pool_both_looks_and_a_third_is_refused(self):
-        overrides = {"c.sizing.spread": Decimal("0.02")}
-        decl, sha = _declaration(**overrides)
-        n1 = readers.look_units(decl["reads"]["c"], 1)
-        n2 = readers.look_units(decl["reads"]["c"], 2)
-        self.assertEqual((n1, n2), (8, 24))
-        records, plans = _c_records(n2, _planted(0.0, spread_k=1))
-        first = readers.run_read(decl, sha, "c", 1, _files(records[:n1]), _plans(plans[:n1]))
-        second = readers.run_read(decl, sha, "c", 2, _files(records), _plans(plans))
-        self.assertEqual(first["units"]["count"], 8)
-        self.assertEqual(second["units"]["count"], 24)
-        self.assertEqual(second["bootstrap"]["level"], 0.025)
-        self.assertEqual(second["bootstrap"]["root_seed"], deal.seed(["test", "bootstrap", "c", 2]))
-        stats = [(1 if d % 2 == 0 else -1) / 64 for d in range(24)]
-        self.assertEqual(second["statistics"]["candidate_minus_stated"]["drop"]["estimate"],
-                         math.fsum(stats) / 24)
-        with self.assertRaisesRegex(readers.ReadError, "units without"):
-            readers.run_read(decl, sha, "c", 2, _files(records[:n1]), _plans(plans[:n1]))
-        with self.assertRaisesRegex(readers.ReadError, "beyond"):
-            readers.run_read(decl, sha, "c", 1, _files(records), _plans(plans))
-        with self.assertRaisesRegex(readers.ReadError, "look 3 is refused"):
-            readers.run_read(decl, sha, "c", 3, _files(records), _plans(plans))
-
-    def test_b_prime_reports_both_bounds_and_no_verdict(self):
-        records, plans = _c_records(8, _planted(0.0, 1),
-                                    halts=lambda d, s, slot, arm: arm == 1 and slot == 0 and s < 2)
-        decl, sha = _declaration(**{"c.sizing.spread": Decimal("0.02")})
-        report = readers.run_read(decl, sha, "b_prime", 1, _files(records), _plans(plans))
-        self.assertIsNone(report["verdict"])
-        block = report["statistics"]["stated_win_fraction"]
-        self.assertLess(block["halts_against"]["estimate"], block["drop"]["estimate"])
-        self.assertLess(block["drop"]["estimate"], block["halts_for"]["estimate"])
-        self.assertEqual(report["bootstrap"]["root_seed"], deal.seed(["test", "bootstrap", "b_prime", 1]))
-
-    def test_unit_with_every_game_halted(self):
-        records, plans = _c_records(8, _planted(0.0, 1), halts=lambda d, s, slot, arm: d == 0)
-        decl, sha = _declaration(**{"c.sizing.spread": Decimal("0.02")})
-        report = readers.run_read(decl, sha, "c", 1, _files(records), _plans(plans))
-        self.assertEqual(report["statistics"]["candidate_minus_stated"]["drop"]["units_scored"], 7)
-        self.assertEqual(report["statistics"]["candidate_minus_stated"]["halts_against"]["units_scored"], 8)
-
-
-class ReadBTests(unittest.TestCase):
-    def _records(self, count, p_win, halt=None):
-        records, plans = [], []
-        for d in range(count):
-            plan = synth.read_b_plan(d)
-
-            def result_of(game, position, d=d):
-                if halt is not None and halt(d, game["game"]):
-                    return "halt"
-                return "win" if synth.unit_draw("b", d, game["game"]) < p_win else "loss"
-
-            records.append(synth.record_from_plan(plan, result_of))
-            plans.append(plan)
-        return records, plans
-
-    def test_planted_win_and_loss(self):
-        decl, sha = _declaration(**{"b.sizing.spread": Decimal("0.1"), "b.sizing.effect": Decimal("0.1")})
-        n = readers.look_units(decl["reads"]["b"], 1)
-        self.assertEqual(n, 8)
-        for p, word in ((0.8, "win"), (0.2, "loss")):
-            records, plans = self._records(n, p)
-            report = readers.run_read(decl, sha, "b", 1, _files(records), _plans(plans))
-            self.assertEqual(report["verdict"], word)
-            self.assertEqual(report["thresholds"]["win_if_lower_above"], 0.5)
-
-    def test_halt_signs(self):
-        unit = [[1.0, None, 0.0, 1.0]] + [[0.5] * 4] * 7
-        self.assertEqual(readers._stat_b(unit, "drop"), (2 / 3 + 0.5 * 7) / 8)
-        self.assertEqual(readers._stat_b(unit, "halts_against"), (0.5 + 0.5 * 7) / 8)
-        self.assertEqual(readers._stat_b(unit, "halts_for"), (0.75 + 0.5 * 7) / 8)
-        decl, sha = _declaration(**{"b.sizing.spread": Decimal("0.1"), "b.sizing.effect": Decimal("0.1")})
-        records, plans = self._records(8, 0.8, halt=lambda d, g: g % 4 != 0)
-        report = readers.run_read(decl, sha, "b", 1, _files(records), _plans(plans))
-        self.assertEqual(report["verdicts_by_scoring"]["drop"], "win")
-        self.assertEqual(report["void_test"]["tested"], ["halts_against"])
-        self.assertEqual(report["verdict"], "void")
-
-    def test_record_from_another_read_is_refused(self):
-        records, plans = _c_records(8, _planted(0.0, 1))
-        decl, sha = _declaration(**{"b.sizing.spread": Decimal("0.1"), "b.sizing.effect": Decimal("0.1")})
-        with self.assertRaisesRegex(readers.ReadError, "use 'paired_build'"):
-            readers.run_read(decl, sha, "b", 1, _files(records), _plans(plans))
-
-
-class DoseTests(unittest.TestCase):
-    def test_dose_is_a_report_with_signed_bounds(self):
-        records, plans = [], []
-        for d in range(4):
-            plan = synth.paired_plan(d, "dose")
-
-            def result_of(game, position, d=d):
-                arm = game["game"] % 2
-                if game["game"] in (0, 1):
-                    return "halt"
-                return "win" if arm == 0 and synth.unit_draw("dose", d, game["game"]) < 0.7 else "draw"
-
-            records.append(synth.record_from_plan(plan, result_of))
-            plans.append(plan)
-        decl, sha = _declaration()
-        report = readers.run_read(decl, sha, "dose", 3, _files(records), _plans(plans))
-        self.assertIsNone(report["verdict"])
-        self.assertEqual(report["units"]["count"], 4)
-        block = report["statistics"]["current_minus_initial"]
-        self.assertLess(block["halts_against"]["estimate"], block["drop"]["estimate"])
-        self.assertLess(block["drop"]["estimate"], block["halts_for"]["estimate"])
-        self.assertEqual(report["bootstrap"]["root_seed"], deal.seed(["test", "bootstrap", "dose", 3]))
-
-
-class ReadATests(unittest.TestCase):
-    def _pairs(self, count, p_candidate, p_stated, halt=None):
-        records = []
-        for pair in range(count):
-            def result_of(orientation, arm, g, position, pair=pair):
-                if halt is not None and halt(pair, orientation, arm, g):
-                    return "halt"
-                p = p_candidate if arm == "candidate" else p_stated
-                return "win" if synth.unit_draw("a", pair, orientation, arm, g) < p else "loss"
-            records.extend(synth.read_a_pair(pair, result_of))
-        return records
-
-    def test_planted_asymmetry_is_detected(self):
-        decl, sha = _declaration(**{"a.sizing.spread": Decimal("0.2")})
-        n = readers.look_units(decl["reads"]["a"], 1)
-        self.assertEqual(n, 13)
-        report = readers.run_read(decl, sha, "a", 1, _files(self._pairs(n, 0.7, 0.5)), [])
-        self.assertEqual(report["verdict"], "win")
-        stats = report["statistics"]
-        self.assertGreater(stats["candidate_contrast"]["drop"]["interval"][0], 0.0)
-        self.assertLess(stats["stated_contrast"]["drop"]["interval"][0], 0.0)
-        self.assertGreater(stats["stated_contrast"]["drop"]["interval"][1], 0.0)
-        self.assertGreater(stats["contrast_difference"]["drop"]["estimate"], 0.2)
-        # A null effect is not a win.
-        report = readers.run_read(decl, sha, "a", 1, _files(self._pairs(n, 0.5, 0.5)), [])
-        self.assertIn(report["verdict"], ("extend", "loss"))
-
-    def test_difference_takes_opposite_imputations_in_its_two_arms(self):
-        unit = {"candidate": [1.0, None], "stated": [0.0, None]}
-        self.assertEqual(readers._stat_a_difference(unit, "drop"), 2.0)
-        self.assertEqual(readers._stat_a_difference(unit, "halts_against"), 0.0)
-        self.assertEqual(readers._stat_a_difference(unit, "halts_for"), 2.0)
-        # Imputing both arms the same way would give 1.0 here and bound nothing.
-        same = readers._contrast(unit["candidate"], "halts_against", 0.0) - readers._contrast(
-            unit["stated"], "halts_against", 0.0)
-        self.assertEqual(same, 1.0)
-        self.assertEqual(readers._stat_a_candidate(unit, "halts_against"), 0.0)
-        self.assertEqual(readers._stat_a_candidate(unit, "halts_for"), 1.0)
-
-    def test_early_pod_read_uses_its_own_section(self):
-        decl, sha = _declaration(**{"a_early.sizing.spread": Decimal("0.2"), "a_early.run": "synth"})
-        report = readers.run_read(decl, sha, "a_early", 1, _files(self._pairs(13, 0.7, 0.5)), [])
-        self.assertEqual(report["read"], "a_early")
-        self.assertEqual(report["bootstrap"]["root_seed"], deal.seed(["test", "bootstrap", "a_early", 1]))
-
-    def test_pair_shape_is_checked(self):
-        records = self._pairs(1, 0.5, 0.5)
-        decl, sha = _declaration(**{"aa.pairs": 1})
-        with self.assertRaisesRegex(readers.ReadError, "exactly 2"):
-            readers.run_read(decl, sha, "aa", 1, _files(records[:1]), [])
-        bad = copy.deepcopy(records)
-        bad[1]["chairs"][1]["role"] = "fixture"
-        bad[1]["chairs"][0]["role"] = "learning"
-        with self.assertRaisesRegex(readers.ReadError, "even chairs"):
-            readers.run_read(decl, sha, "aa", 1, _files(bad), [])
-
-
-class AATests(unittest.TestCase):
-    """Read (a)'s A/A: identical policies on role-swapped pairs, exact symmetry on a few pairs."""
-
-    @staticmethod
-    def _symmetric(pair, orientation, arm, g, position):
-        # Identical policies: the game depends on the pairing, builder and seats, not on the roles.
-        # `position` is the learned seat's session seat; the result is fixed for session seat 0.
-        r = synth.unit_draw("aa", pair, arm, g)
-        p0 = "halt" if r < 0.05 else ("draw" if r < 0.15 else ("win" if r < 0.6 else "loss"))
-        if p0 in ("halt", "draw") or position == 0:
-            return p0
-        return "loss" if p0 == "win" else "win"
-
-    def _records(self, pairs=4):
-        records = []
-        for pair in range(pairs):
-            records.extend(synth.read_a_pair(pair, lambda o, a, g, pos, pair=pair: self._symmetric(pair, o, a, g, pos)))
-        return records
-
-    def test_exact_symmetry_on_a_few_pairs(self):
-        records = self._records()
-        decl, sha = _declaration()
-        report = readers.run_read(decl, sha, "aa", 1, _files(records), [])
-        self.assertTrue(report["symmetry"]["symmetric"], report["symmetry"])
-        self.assertEqual(report["symmetry"]["games_checked"], 4 * 32)
-        self.assertEqual(report["verdict"], "symmetric")
-        self.assertGreater(report["games"]["halted"], 0)
-        for name in ("candidate_contrast", "stated_contrast", "contrast_difference"):
-            drop = report["statistics"][name]["drop"]
-            self.assertEqual(drop["estimate"], 0.0)
-            self.assertEqual(drop["interval"], [0.0, 0.0])
-        self.assertLess(report["statistics"]["candidate_contrast"]["halts_against"]["estimate"], 0.0)
-
-    def test_any_asymmetry_is_reported(self):
-        for case in ("score", "cards", "halt"):
-            records = self._records()
-            odd = next(r for r in records if r["pod_index"] == 2 and r["chairs"][1]["role"] == "learning")
-            game = next(g for g in odd["games"] if g["scores"] not in (None, [0, 0]))
-            if case == "score":
-                game["scores"] = [-s for s in game["scores"]]
-                end = game["attempts"][0]["end"]
-                end["winner_seat"] = 1 - end["winner_seat"]
-            elif case == "cards":
-                odd["decks"][game["decks"][0]]["cards"][0] = 7
-                odd["decks"][game["decks"][0]]["cards"].sort()
-            else:
-                attempt = game["attempts"][0]
-                attempt["end"] = {"kind": "panic", "message": "synthetic"}
-                attempt["halted"] = True
-                attempt["stop_kind"] = "panic"
-                game["scores"] = None
-                odd["halts"] = []
-                for g in odd["games"]:
-                    for a in g["attempts"]:
-                        if a["halted"]:
-                            odd["halts"].append({"game": g["game"], "attempt": 0, "stop_kind": a["stop_kind"],
-                                                 "last_action_source": None, "deal_seed": a["deal_seed"]})
-            pod_record.validate_record(odd)
-            decl, sha = _declaration()
-            report = readers.run_read(decl, sha, "aa", 1, _files(records), [])
-            with self.subTest(case=case):
-                self.assertFalse(report["symmetry"]["symmetric"])
-                self.assertEqual(report["verdict"], "asymmetric")
-                # A changed card changes every game of that deck (4 cross games); the others one game.
-                self.assertEqual(report["symmetry"]["mismatch_count"], 4 if case == "cards" else 1)
+    def test_fast_indices_equal_deal_seed(self):
+        for b in (0, 1, 9999):
+            self.assertEqual(readers.resample_indices("read-gate-c", b, 37),
+                             [deal.seed(["bootstrap", "read-gate-c", b, t]) % 37 for t in range(37)])
 
 
 class DeterminismTests(unittest.TestCase):
-    def test_reports_are_byte_identical(self):
-        records, plans = _c_records(8, _planted(0.0, 1), halts=lambda d, s, slot, arm: (d, s, slot) == (2, 3, 1))
-        decl, sha = _declaration(**{"c.sizing.spread": Decimal("0.02")})
-        first = readers.serialize_report(readers.run_read(decl, sha, "c", 1, _files(records), _plans(plans)))
-        shuffled = list(reversed(records))
-        second = readers.serialize_report(
-            readers.run_read(decl, sha, "c", 1, _files(shuffled), _plans(list(reversed(plans)))))
-        self.assertEqual(first, second)
-        # A pinned golden: any change to the seed rule, the unit order, the arithmetic or the report
-        # layout changes these bytes, and needs a declared new version.
-        self.assertEqual(hashlib.sha256(first.encode()).hexdigest(), REPORT_GOLDEN_SHA256)
+    def test_report_bytes_and_golden(self):
+        texts = []
+        for _ in range(2):
+            with tempfile.TemporaryDirectory() as tmp:
+                opened = c_sets(Path(tmp), "shared", by_slot({0: "win", 3: "halt"}, arm=0))
+                texts.append(readers.serialize_report(readers.run_read(DECL, DECL_SHA, "c", 1, opened)))
+        self.assertEqual(texts[0], texts[1])
+        self.assertEqual(hashlib.sha256(texts[0].encode()).hexdigest(), REPORT_GOLDEN_SHA256)
 
-    def test_cli_writes_identical_bytes(self):
-        records, plans = _c_records(8, _planted(0.0, 1))
+    def test_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            decl_doc = json.loads(TEST_DECLARATION.read_text(encoding="utf-8"))
-            decl_doc["reads"]["c"]["sizing"]["spread"] = 0.02
-            decl_path = tmp / "decl.json"
-            decl_path.write_text(json.dumps(decl_doc), encoding="utf-8")
-            (tmp / "pods.json").write_text(json.dumps(records), encoding="utf-8")
-            plan_paths = []
-            for i, plan in enumerate(plans):
-                path = tmp / f"plan{i}.json"
-                path.write_text(read_plans.serialize_plan(plan), encoding="utf-8")
-                plan_paths.append(str(path))
+            opened = c_sets(Path(tmp), "shared", by_slot({0: "win"}, arm=0))
+            pool, const = Path(tmp) / "pool.json", Path(tmp) / "constants.json"
+            pool.write_text(read_plans.serialize(synth.POOL[0]), encoding="utf-8", newline="\n")
+            const.write_text(read_plans.serialize(synth.CONST[0]), encoding="utf-8", newline="\n")
             outs = []
             for k in range(2):
-                out = tmp / f"report{k}.json"
-                args = ["--declaration", str(decl_path), "--read", "c", "--look", "1", "--records",
-                        str(tmp / "pods.json"), "--plans", *(plan_paths if k == 0 else plan_paths[::-1]),
-                        "--out", str(out)]
-                self.assertEqual(readers.main(args), 0)
+                out = Path(tmp) / f"r{k}.json"
+                self.assertEqual(readers.main(["--declaration", str(DECLARATION), "--read", "c", "--look", "1",
+                                               "--sets", str(opened[0]["set_dir"]), "--pool", str(pool),
+                                               "--constants", str(const), "--out", str(out)]), 0)
                 outs.append(out.read_bytes())
             self.assertEqual(outs[0], outs[1])
-            report = json.loads(outs[0])
-            self.assertEqual(report["declaration_sha256"], hashlib.sha256(decl_path.read_bytes()).hexdigest())
-            self.assertEqual(report["inputs"]["records"],
-                             [hashlib.sha256((tmp / "pods.json").read_bytes()).hexdigest()])
+            self.assertEqual(json.loads(outs[0])["verdict"], "win")
 
 
-REPORT_GOLDEN_SHA256 = "2a74cded447c82d5cbb8aa890e0bb8d7c7ab64b59c967c3d1e97f4196c46d8bb"
+REPORT_GOLDEN_SHA256 = "7d8d45591d8b19e6f8c3ae3986a6968b7fbb72eeb69b18f72c62d46c6cbb1707"
 
 
 class UniformPodRecordTests(unittest.TestCase):
@@ -778,8 +922,8 @@ class UniformPodRecordTests(unittest.TestCase):
                          "D5 has not yet produced a uniform pod record; its fixture is added when D5 lands")
     def test_parses_a_uniform_pod_record_from_d5(self):
         records, _ = pod_record.load_records(D5_UNIFORM_FIXTURE)
-        for record in records:
-            self.assertEqual(record["pilot"]["kind"], "uniform")
+        for rec in records:
+            self.assertEqual(rec["pilot"]["kind"], "uniform")
 
 
 if __name__ == "__main__":
