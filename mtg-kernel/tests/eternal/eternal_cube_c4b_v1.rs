@@ -1429,6 +1429,139 @@ fn reconfigure_and_copy(state: &mut GameState, host: ObjectId) {
     );
     settled(state);
     assert_eq!(state.objects.get(host).card_def, id("Jackal Pup"));
+
+/// Review round 1, finding 3: Chain Lightning cast with escape through
+/// Underworld Breach offers its copy (the escape payment's exiled cards are
+/// the parent's own paid costs; the copy carries none).
+#[test]
+fn chain_lightning_escaped_through_underworld_breach_offers_its_copy() {
+    let mut state = plains();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let chain = put(&mut state, P0, "Chain Lightning", Zone::Graveyard);
+    for _ in 0..3 {
+        put(&mut state, P0, "Plains", Zone::Graveyard);
+    }
+    put(&mut state, P1, "Mountain", Zone::Battlefield);
+    put(&mut state, P1, "Mountain", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(castable(&mut state, chain));
+    act(&mut state, Action::CastSpell(chain));
+    let mut offered = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Player(P1)) && !offered =>
+        {
+            Action::ChooseTarget(Target::Player(P1))
+        }
+        Decision::ChooseSpellCopyPayment { player, .. } if player == P1 => {
+            offered = true;
+            Action::ChooseSpellCopyPayment(true)
+        }
+        Decision::ChooseSpellCopyPayment { .. } => Action::ChooseSpellCopyPayment(false),
+        Decision::ChooseEffectOption { .. } if offered => Action::ChooseEffectOption(1),
+        Decision::ChooseSpellCopyRetarget { .. } => Action::ChooseSpellCopyRetarget(true),
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Player(P0)) =>
+        {
+            Action::ChooseTarget(Target::Player(P0))
+        }
+        other => first_answer(other),
+    });
+    assert!(offered, "the copy was offered");
+    assert_eq!(life(&state, P1), 17);
+    assert_eq!(life(&state, P0), 17, "the copy hit P0");
+    assert_eq!(state.exile.len(), 3, "the escape cost exiled three cards");
+}
+
+/// Wrenn and Six's emblem: "Instant and sorcery cards in your graveyard have
+/// retrace."
+fn retrace_emblem(state: &mut GameState) {
+    let player = state.active_player;
+    let wrenn = put(state, player, "Wrenn and Six", Zone::Hand);
+    pool(state, player, &[ManaColor::R, ManaColor::G], 0);
+    cast(state, wrenn, &[]);
+    settled(state);
+    mtg_kernel::planeswalker_v1::change_loyalty(state, wrenn, 4);
+    activate(state, wrenn, 2, &[]);
+    settled(state);
+}
+
+/// Chain Lightning cast with retrace (the discarded land is a route-owned
+/// paid cost) offers its copy.
+#[test]
+fn chain_lightning_retraced_with_the_wrenn_and_six_emblem_offers_its_copy() {
+    let mut state = plains();
+    retrace_emblem(&mut state);
+    let chain = put(&mut state, P0, "Chain Lightning", Zone::Graveyard);
+    let land = put(&mut state, P0, "Mountain", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(castable(&mut state, chain));
+    act(&mut state, Action::CastSpell(chain));
+    let mut offered = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellCopyPayment { player, .. } => {
+            assert_eq!(player, P1);
+            offered = true;
+            Action::ChooseSpellCopyPayment(false)
+        }
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Player(P1)) =>
+        {
+            Action::ChooseTarget(Target::Player(P1))
+        }
+        other => first_answer(other),
+    });
+    assert!(offered, "the copy was offered");
+    assert_eq!(life(&state, P1), 17);
+    assert_eq!(zone(&state, land), Zone::Graveyard, "discarded for retrace");
+    assert_eq!(zone(&state, chain), Zone::Graveyard);
+}
+
+/// Census stop `InvalidEffectContinuation` (cube fence, 2026-11-24, Chain
+/// Lightning games 4247, 9248): a Chain Lightning cast with flashback (here
+/// Snapcaster Mage's) halted as it offered its copy, because the copy
+/// continuation accepted only a parent cast from hand. The copy offer is the
+/// same whatever way the spell was cast (707.10), and the flashback card is
+/// exiled as it leaves the stack.
+#[test]
+fn chain_lightning_cast_with_flashback_offers_its_copy_and_is_exiled() {
+    for pay in [false, true] {
+        let mut state = plains();
+        let chain = put(&mut state, P0, "Chain Lightning", Zone::Graveyard);
+        let snapcaster = put(&mut state, P0, "Snapcaster Mage", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::U], 1);
+        cast(&mut state, snapcaster, &[]);
+        settle_choosing(&mut state, chain);
+        pool(&mut state, P0, &[ManaColor::R], 0);
+        put(&mut state, P1, "Mountain", Zone::Battlefield);
+        put(&mut state, P1, "Mountain", Zone::Battlefield);
+        cast(&mut state, chain, &[Target::Player(P1)]);
+        let mut offered = false;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseSpellCopyPayment { player, .. } if player == P1 => {
+                offered = true;
+                Action::ChooseSpellCopyPayment(pay)
+            }
+            // P0 cannot pay for a copy of the copy.
+            Decision::ChooseSpellCopyPayment { .. } => Action::ChooseSpellCopyPayment(false),
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+            Decision::ChooseSpellCopyRetarget { .. } => Action::ChooseSpellCopyRetarget(true),
+            Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Player(P0)) =>
+            {
+                Action::ChooseTarget(Target::Player(P0))
+            }
+            other => first_answer(other),
+        });
+        assert!(offered, "the copy was offered");
+        assert_eq!(life(&state, P1), 17);
+        assert_eq!(zone(&state, chain), Zone::Exile, "flashback exiles it");
+        if pay {
+            assert_eq!(life(&state, P0), 17, "the copy hit P0");
+        } else {
+            assert_eq!(life(&state, P0), 20);
+        }
+    }
 }
 
 #[test]

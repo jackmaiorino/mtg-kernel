@@ -30868,6 +30868,9 @@ fn expected_spell_copy(
     copy.is_copy = true;
     copy.is_flashback = false;
     copy.madness_offer = false;
+    // A copy is not cast: no cost was paid for it (707.10).
+    copy.discarded = Vec::new();
+    copy.v4.paid_cost_refs = Vec::new();
     copy
 }
 
@@ -31569,20 +31572,23 @@ pub(crate) fn validate_pending_spell_copy(
     // parent cast with flashback (a Chain Lightning given flashback by
     // Snapcaster Mage) offers it too; its copy is not a flashback spell
     // (`expected_spell_copy`), and the parent is exiled as it departs.
+    // Escape (Underworld Breach) and retrace (Wrenn and Six's emblem) are
+    // graveyard routes too; their exiled or discarded cards are the parent's
+    // own paid costs, already authenticated against its route by
+    // `validate_spell_stack_source` in `pending_spell_copy_parent`, and the
+    // copy carries none of them.
     let cast_with_flashback = parent.v4.cast_method == Some(CastMethodV4::Flashback);
     if parent.inline_effect.is_some()
-        || !parent.discarded.is_empty()
         || parent.is_flashback != cast_with_flashback
         || parent.madness_offer
         || parent.kicked
         || parent.mode_chosen != 0
         || !matches!(
             parent.v4.cast_method,
-            Some(CastMethodV4::Normal | CastMethodV4::Flashback)
+            Some(CastMethodV4::Normal | CastMethodV4::Flashback | CastMethodV4::Escape)
         )
         || parent.v4.face_index != 0
         || parent.v4.x_value != 0
-        || !parent.v4.paid_cost_refs.is_empty()
         || parent.v4.activated_ability_index.is_some()
     {
         return Err("the spell-copy continuation parent has invalid cast provenance".to_string());
