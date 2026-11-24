@@ -15,19 +15,22 @@ use mtg_kernel::rl::{ActionSemanticV1, PlayerSeatV1};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
-const MAX_STEPS: usize = 65_536;
+const MAX_STEPS: usize = 131_072;
 
 /// One registered ordered-graveyard game played to its natural terminal.
-pub(super) struct OrderedGame {
+pub(crate) struct OrderedGame {
     /// Every numeric observation, chosen numeric action, ordinal, and final
     /// state hash.
-    pub(super) transcript_sha256: String,
+    pub(crate) transcript_sha256: String,
     /// Final `GameState::state_hash` at natural `GameOver`.
-    pub(super) state_hash: u64,
+    pub(crate) state_hash: u64,
     /// The winning seat (`0` or `1`), or `None` for a drawn game.
-    pub(super) winner: Option<usize>,
+    pub(crate) winner: Option<usize>,
     /// Spells cast per seat, by card definition id.
-    pub(super) cast_cards: [BTreeMap<u16, usize>; 2],
+    pub(crate) cast_cards: [BTreeMap<u16, usize>; 2],
+    /// Chosen action counts keyed by `ActionSemanticV1` action kind (or
+    /// `"graveyard_order"` for ordered-graveyard batch choices).
+    pub(crate) action_counts: BTreeMap<String, usize>,
 }
 
 fn seat_index(seat: PlayerSeatV1) -> usize {
@@ -71,7 +74,7 @@ fn ranked_key(row: &NumericNativeActionV1, ordinal: usize) -> (u8, usize) {
 /// Plays `owner`, a registered ordered game started with
 /// `EternalBestOfThreeMatchV1::start_game_with_ordered_graveyard_v1`, to its
 /// natural terminal using numeric ordinals.
-pub(super) fn play(mut owner: FebSessionV1, seed: u64, policy: Policy) -> OrderedGame {
+pub(crate) fn play(mut owner: FebSessionV1, seed: u64, policy: Policy) -> OrderedGame {
     assert_eq!(owner.profile(), REGISTERED_PROFILE_V1);
     let mut random = match policy {
         Policy::Random(state) => state,
@@ -79,6 +82,7 @@ pub(super) fn play(mut owner: FebSessionV1, seed: u64, policy: Policy) -> Ordere
     };
     let mut transcript = Sha256::new();
     let mut cast_cards: [BTreeMap<u16, usize>; 2] = Default::default();
+    let mut action_counts: BTreeMap<String, usize> = BTreeMap::new();
     let started = std::time::Instant::now();
 
     for step in 0..=MAX_STEPS {
@@ -102,6 +106,7 @@ pub(super) fn play(mut owner: FebSessionV1, seed: u64, policy: Policy) -> Ordere
                     state_hash,
                     winner: winner.map(seat_index),
                     cast_cards,
+                    action_counts,
                 };
             }
             Ok(FebCurrentV1::RegisteredHaltV1 { mechanic, source }) => {
@@ -160,6 +165,9 @@ pub(super) fn play(mut owner: FebSessionV1, seed: u64, policy: Policy) -> Ordere
                     .expect("graveyard order menu carries order_choice")
                     .native_candidates;
                 assert_eq!(candidates.len(), actor_numeric.actions.len());
+                *action_counts
+                    .entry("graveyard_order".to_owned())
+                    .or_default() += 1;
                 match policy {
                     Policy::Ranked => 0,
                     Policy::Random(_) => {
@@ -223,6 +231,12 @@ pub(super) fn play(mut owner: FebSessionV1, seed: u64, policy: Policy) -> Ordere
                     *cast_cards[seat_index(*actor)]
                         .entry(source.card_db_id)
                         .or_default() += 1;
+                }
+                if let Some(kind) = serde_json::to_value(&actions[chosen].action.semantic).unwrap()
+                    ["action_kind"]
+                    .as_str()
+                {
+                    *action_counts.entry(kind.to_owned()).or_default() += 1;
                 }
                 chosen
             }
