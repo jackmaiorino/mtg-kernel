@@ -111,18 +111,23 @@ class DraftLightTests(unittest.TestCase):
             ("docs/café.md", "docs/updated.md", "false", "false", "docs"),
             ("docs/before.txt", "mtg-kernel/src/bin/kernel_limited_café.rs", "false", "true", "rules-limited"),
             ("tools/café.py", "mtg-kernel/src/bin/kernel_limited_café.rs", "true", "true", "all"),
-            # The website runs nothing of ci.yml alone or with docs; with other files they decide.
+            # The website schedules no Rust or Python job alone or with docs; with other files they decide alone.
             ("viewer/public/café.html", "README.md", "false", "false", "viewer"),
             ("viewer/src/main.tsx", None, "false", "false", "viewer"),
             ("viewer/index.html", "mtg-kernel/src/engine.rs", "false", "true", "all"),
-            ("viewer/index.html", "python/tools/café.py", "true", "false", "all"),
+            ("viewer/index.html", "python/tools/café.py", "true", "false", "python"),
             ("viewer_tools/café.py", None, "false", "true", "all"),
+            # ci:full runs every Rust and Python job whatever the paths.
+            ("viewer/src/main.tsx", None, "true", "true", "all", True),
+            ("viewer/public/café.html", "README.md", "true", "true", "all", True),
+            ("docs/café.md", None, "true", "true", "all", True),
+            ("python/tests/café.py", None, "true", "true", "all", True),
         ]
         if sys.platform != "win32":
             cases.append(('tools/"quoted"\nname.py', None, "true", "false", "python"))
 
-        for before, after, python, rust, scope in cases:
-            with self.subTest(before=before, after=after), tempfile.TemporaryDirectory() as scratch:
+        for before, after, python, rust, scope, *label in cases:
+            with self.subTest(before=before, after=after, label=label), tempfile.TemporaryDirectory() as scratch:
                 repo = Path(scratch)
                 env = os.environ.copy()
                 env.pop("GIT_CONFIG_COUNT", None)
@@ -149,7 +154,8 @@ class DraftLightTests(unittest.TestCase):
                 output = repo / "outputs"
                 env.update(RUNNER_TEMP=repo.as_posix(), GITHUB_OUTPUT=output.as_posix(),
                            GITHUB_STEP_SUMMARY=(repo / "summary").as_posix(), INPUT_SCOPE="", EVENT="pull_request",
-                           SCOPE="pr", LABELS="[]", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
+                           SCOPE="pr", LABELS='["ci:full"]' if label else "[]",
+                           FULL_LABEL="true" if label else "false", CI_TEST_PYTHON=Path(sys.executable).as_posix(),
                            CI_TEST_SCOPE=(WORKFLOW.parents[2] / "tools/ci/ci_scope.py").as_posix())
                 for rendered in (classify, checks):
                     subprocess.run([BASH, "-eo", "pipefail", "-c", rendered], cwd=repo, env=env, check=True,
@@ -185,6 +191,21 @@ class DraftLightTests(unittest.TestCase):
                     self.assertEqual(dispatch(repo, payload), ("scope=full", True))
             self.assertEqual(dispatch(repo, '[[{"status":"added","filename":"Cargo.lock"}]]', api_status=1),
                              ("scope=full", True))
+
+    def test_manual_dispatch_group_set_is_the_model_test_ci_scope_composes(self):
+        # The real "Choose the group set" step, at the head of a ready pull request with these files, chooses what
+        # test_ci_scope's Classifier.dispatch_group_set assumes (website files never change it).
+        import test_ci_scope
+        model = test_ci_scope.Classifier()
+        with tempfile.TemporaryDirectory() as scratch:
+            for other in test_ci_scope.OTHERS:
+                for paths in (other, test_ci_scope.WEBSITE + other):
+                    if not paths:
+                        continue
+                    with self.subTest(paths=paths):
+                        pages = json.dumps([[{"status": "modified", "filename": path} for path in paths]])
+                        self.assertEqual(dispatch(Path(scratch), pages),
+                                         (f"scope={model.dispatch_group_set(paths)}", True))
 
     def test_manual_dispatch_rechecks_ready_identity_after_files_with_both_backends(self):
         full_scope_files = '[[{"status":"modified","filename":"Cargo.lock"}]]'
