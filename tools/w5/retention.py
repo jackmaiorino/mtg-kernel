@@ -753,9 +753,14 @@ def verify_replay(spec, replay_root):
     if ok and not (checkpoint and state_intact(checkpoint, state)):
         ok = False
     # Under collection_policy_lag_v1 the replayed endpoint is usable with the input its last update recorded (the
-    # replay's previous state, or its start state for a one-update replay), which must be intact too.
+    # replay's previous state, or its start state for a one-update replay), which must be intact too. Boundary 1's
+    # input is the run's initial source, which may be an import alone (no checkpoint): no file is needed there.
     lag_input = (receipt.get('source') or {}).get('checkpoint') if receipt.get('collection_policy_lag_v1') else None
-    if ok and receipt.get('collection_policy_lag_v1') and not (lag_input and state_intact(lag_input)):
+    if lag_input is None:
+        lag_input_ok = spec['endpoint_boundary'] == 1
+    else:
+        lag_input_ok = state_intact(lag_input)
+    if ok and receipt.get('collection_policy_lag_v1') and not lag_input_ok:
         ok = False
     out = {'schema': 'w5-replay-receipt/v1', 'endpoint_boundary': spec['endpoint_boundary'],
            'from_boundary': spec['replay']['from']['boundary'], 'updates': len(expected),

@@ -381,6 +381,48 @@ class RetentionTests(unittest.TestCase):
             manifest = retention.prune_manifest(chain, records, 65, receipt)
             self.assertNotIn('behaviour_predecessor', manifest['keep'])
 
+    def test_a_lag_replay_to_boundary_one_needs_no_input_checkpoint(self):
+        """Review round 3: boundary 1's behaviour is the run's initial source, here an import with no checkpoint, so
+        its one-update replay verifies and is kept with no predecessor; a later endpoint whose replay names no input
+        checkpoint is still refused. Without the lag the same replay verifies as before."""
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=4, per_segment=64, complete_last=False, lag=True)
+            retention.apply(retention.plan(chain_path), Path(tmp) / 'log.jsonl')
+            chain, records = retention.index(chain_path)
+            spec = retention.select(chain, records, r_usec=1_000)
+            self.assertEqual(spec['endpoint_boundary'], 1)
+            self.assertEqual((spec['replay']['from'], spec['replay']['updates']),
+                             ({'boundary': 0, 'checkpoint': None}, 1))
+            receipt = self.replay_tree(spec, Path(tmp) / 'r1')
+            self.assertTrue(receipt['equal'])
+            self.assertIsNotNone(receipt['endpoint_checkpoint'])
+            self.assertNotIn('endpoint_input_checkpoint', receipt)
+            manifest = retention.prune_manifest(chain, records, 1, receipt)
+            self.assertEqual([k['boundary'] for k in manifest['keep']['selected_checkpoint']], [1])
+            self.assertNotIn('behaviour_predecessor', manifest['keep'])
+            # Past boundary 1 the input must be a checkpoint on disk: a receipt naming none is refused.
+            spec = retention.select(chain, records, r_usec=65_000)
+            self.assertEqual((spec['replay']['from']['boundary'], spec['replay']['updates']), (64, 1))
+            self.assertTrue(self.replay_tree(spec, Path(tmp) / 'r65')['equal'])
+            complete = Path(tmp) / 'r65' / 'iterations' / '000000' / 'complete.json'
+            doc = json.loads(complete.read_text())
+            doc['source']['checkpoint'] = None
+            complete.write_text(json.dumps(doc))
+            receipt = retention.verify_replay(spec, Path(tmp) / 'r65')
+            self.assertFalse(receipt['equal'])
+            self.assertIsNone(receipt['first_mismatch'])
+            with self.assertRaises(SystemExit):
+                retention.prune_manifest(chain, records, 65, receipt)
+
+            plain = make_chain(Path(tmp) / 'plain', 'X', segments=4, per_segment=64, complete_last=False)
+            retention.apply(retention.plan(plain), Path(tmp) / 'plain.jsonl')
+            chain, records = retention.index(plain)
+            spec = retention.select(chain, records, r_usec=1_000)
+            receipt = self.replay_tree(spec, Path(tmp) / 'plain-r1', lag=False)
+            self.assertTrue(receipt['equal'])
+            self.assertNotIn('endpoint_input_checkpoint', receipt)
+            self.assertNotIn('behaviour_predecessor', retention.prune_manifest(chain, records, 1, receipt)['keep'])
+
     def test_replay_refuses_history_relative_opponents(self):
         with tempfile.TemporaryDirectory() as tmp:
             chain_path = make_chain(tmp, 'X', segments=2, per_segment=64)
