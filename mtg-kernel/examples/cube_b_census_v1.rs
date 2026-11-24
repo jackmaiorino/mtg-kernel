@@ -1,0 +1,716 @@
+//! The cube B-run halt census (declarations A2 and B). Measurement only: no
+//! training, no model; uniform-random play over the legal menu.
+//!
+//! Modes (`eternal-fixtures` build):
+//! - `drafted`: drafts `[--draft-start, --draft-end)` of `--namespace` from
+//!   the fenced pool (`--cube`, `--gaps`, `--fence`); each draft plays its
+//!   28-game round robin ([`mtg_kernel::cube_b_census_v1`]).
+//! - `dealt`: the episodes `[--episode-start, --episode-end)` (default: all)
+//!   of a `tools/cube_v1/deal.py` schedule (`--schedule`), each played once
+//!   in schedule order.
+//!
+//! Writes `--out` (one JSONL line per game, in logical order) and `--record`
+//! (the run record: binary commit, card database hash, input hashes, caps,
+//! namespace and range). Both are created fresh, only when the run
+//! completes. The caps default to the A2.1 caps (driver decisions 16,384,
+//! physical decisions 16,384, policy steps 32,768); other caps are refused
+//! unless `--allow-non-a2-caps true` is given, and the record says which.
+//!
+//! The games run in `--workers` child processes (default 1) over contiguous
+//! index ranges, each game on a thread with a 256 MiB stack, and the parts
+//! are concatenated in index order, so the output bytes do not depend on the
+//! worker count or the host. When a worker process dies (a stack overflow,
+//! for example), the game it was playing is written as a `process_died`
+//! line and the worker restarts after it. A worker that makes no progress
+//! for `--watchdog-seconds` (default 600) is a hang (A2.1): the run stops
+//! with an error and writes no output; the batch is void.
+mtg_kernel::fast_global_allocator!();
+
+use mtg_kernel::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
+use mtg_kernel::cube_b_census_v1::{
+    play_drafted_range, DealtSchedule, DraftedPod, GameLine, ProcessDeath, A2_CAPS,
+    GAMES_PER_DRAFT, RUN_RECORD_SCHEMA,
+};
+use mtg_kernel::cube_draft_v1::{basic_land_ids, CubePool, GameCaps};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus};
+use std::time::{Duration, Instant};
+
+const WORKER_STACK_BYTES: usize = 256 << 20;
+const POLL: Duration = Duration::from_millis(500);
+
+type Fallible<T> = Result<T, String>;
+
+const VALUE_FLAGS: &[&str] = &[
+    "--mode",
+    "--namespace",
+    "--cube",
+    "--gaps",
+    "--fence",
+    "--draft-start",
+    "--draft-end",
+    "--schedule",
+    "--episode-start",
+    "--episode-end",
+    "--out",
+    "--record",
+    "--workers",
+    "--watchdog-seconds",
+    "--max-driver-decisions",
+    "--max-physical-decisions",
+    "--max-policy-steps",
+    "--allow-non-a2-caps",
+    // Set by the supervisor for its worker processes only.
+    "--worker-start",
+    "--worker-end",
+    "--worker-out",
+    "--worker-progress",
+];
+
+struct Args {
+    values: BTreeMap<String, String>,
+    /// The arguments as given, without the worker flags.
+    passthrough: Vec<String>,
+}
+
+impl Args {
+    fn parse(raw: Vec<String>) -> Fallible<Self> {
+        let mut values = BTreeMap::new();
+        let mut passthrough = Vec::new();
+        let mut items = raw.into_iter();
+        while let Some(name) = items.next() {
+            if !VALUE_FLAGS.contains(&name.as_str()) {
+                return Err(format!("unknown argument {name:?}"));
+            }
+            let value = items
+                .next()
+                .ok_or_else(|| format!("{name} needs a value"))?;
+            if !name.starts_with("--worker-") {
+                passthrough.push(name.clone());
+                passthrough.push(value.clone());
+            }
+            if values.insert(name.clone(), value).is_some() {
+                return Err(format!("{name} given twice"));
+            }
+        }
+        Ok(Args {
+            values,
+            passthrough,
+        })
+    }
+
+    fn get(&self, name: &str) -> Option<&str> {
+        self.values.get(name).map(String::as_str)
+    }
+
+    fn required(&self, name: &str) -> Fallible<&str> {
+        self.get(name).ok_or_else(|| format!("{name} is required"))
+    }
+
+    fn number(&self, name: &str) -> Fallible<Option<u64>> {
+        self.get(name)
+            .map(|text| {
+                text.parse::<u64>()
+                    .map_err(|error| format!("{name} {text:?}: {error}"))
+            })
+            .transpose()
+    }
+
+    fn forbid(&self, names: &[&str], mode: &str) -> Fallible<()> {
+        match names.iter().find(|name| self.values.contains_key(**name)) {
+            Some(name) => Err(format!("{name} does not apply to --mode {mode}")),
+            None => Ok(()),
+        }
+    }
+}
+
+fn read_bytes(path: &str) -> Fallible<Vec<u8>> {
+    std::fs::read(path).map_err(|error| format!("{path}: {error}"))
+}
+
+fn utf8(path: &str, bytes: &[u8]) -> Fallible<String> {
+    String::from_utf8(bytes.to_vec()).map_err(|error| format!("{path}: {error}"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn card_names(ids: impl IntoIterator<Item = u16>) -> Value {
+    let unique: BTreeSet<u16> = ids.into_iter().collect();
+    let names: serde_json::Map<String, Value> = unique
+        .into_iter()
+        .map(|id| (id.to_string(), json!(CARD_DEFS[usize::from(id)].name)))
+        .collect();
+    Value::Object(names)
+}
+
+/// What a run plays: the inputs, and how to play or bury one logical game.
+enum Source {
+    Drafted { pool: CubePool, namespace: String },
+    Dealt { schedule: DealtSchedule },
+}
+
+struct Run {
+    source: Source,
+    caps: GameCaps,
+    /// Logical index range of the run.
+    start: u64,
+    end: u64,
+    /// Logical indices per unit a worker range is aligned to (a draft's 28
+    /// games, or one episode).
+    unit: u64,
+    record: Value,
+}
+
+fn caps_from(args: &Args) -> Fallible<(GameCaps, bool)> {
+    let caps = GameCaps {
+        max_decisions: args
+            .number("--max-driver-decisions")?
+            .unwrap_or(A2_CAPS.max_decisions),
+        max_physical_decisions: args
+            .number("--max-physical-decisions")?
+            .unwrap_or(A2_CAPS.max_physical_decisions),
+        max_policy_steps: args
+            .number("--max-policy-steps")?
+            .unwrap_or(A2_CAPS.max_policy_steps),
+    };
+    let allow = match args.get("--allow-non-a2-caps") {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(other) => return Err(format!("--allow-non-a2-caps {other:?}: true or false")),
+    };
+    let a2 = caps == A2_CAPS;
+    if !a2 && !allow {
+        return Err(format!(
+            "caps {caps:?} are not the A2.1 caps {A2_CAPS:?}; pass --allow-non-a2-caps true for a non-census run"
+        ));
+    }
+    Ok((caps, a2))
+}
+
+fn load_run(args: &Args) -> Fallible<Run> {
+    let mode = args.required("--mode")?;
+    let (caps, a2) = caps_from(args)?;
+    let caps_record = json!({
+        "max_driver_decisions": caps.max_decisions,
+        "max_physical_decisions": caps.max_physical_decisions,
+        "max_policy_steps": caps.max_policy_steps,
+        "a2_caps": a2,
+    });
+    let card_db_hash = format!("{KERNEL_CARDDB_HASH:016x}");
+    let binary = json!({
+        "git_commit": env!("MTG_KERNEL_BUILD_GIT_HEAD"),
+        "git_tree": env!("MTG_KERNEL_BUILD_GIT_TREE"),
+        "git_clean": env!("MTG_KERNEL_BUILD_GIT_CLEAN"),
+    });
+    match mode {
+        "drafted" => {
+            args.forbid(&["--schedule", "--episode-start", "--episode-end"], mode)?;
+            let namespace = args.required("--namespace")?.to_owned();
+            let draft_start = args
+                .number("--draft-start")?
+                .ok_or("--draft-start is required")?;
+            let draft_end = args
+                .number("--draft-end")?
+                .ok_or("--draft-end is required")?;
+            if draft_end <= draft_start {
+                return Err("--draft-end must be greater than --draft-start".to_owned());
+            }
+            let start = draft_start
+                .checked_mul(GAMES_PER_DRAFT)
+                .ok_or("--draft-start is too large")?;
+            let end = draft_end
+                .checked_mul(GAMES_PER_DRAFT)
+                .ok_or("--draft-end is too large")?;
+            let (cube_path, gaps_path, fence_path) = (
+                args.required("--cube")?,
+                args.required("--gaps")?,
+                args.required("--fence")?,
+            );
+            let (cube, gaps, fence) = (
+                read_bytes(cube_path)?,
+                read_bytes(gaps_path)?,
+                read_bytes(fence_path)?,
+            );
+            let pool = CubePool::from_json_texts(
+                &utf8(cube_path, &cube)?,
+                &utf8(gaps_path, &gaps)?,
+                Some(&utf8(fence_path, &fence)?),
+            )
+            .map_err(|error| error.to_string())?;
+            let basics = basic_land_ids().map_err(|error| error.to_string())?;
+            let record = json!({
+                "schema": RUN_RECORD_SCHEMA,
+                "mode": mode,
+                "binary": binary,
+                "card_db_hash": card_db_hash,
+                "caps": caps_record,
+                "namespace": namespace,
+                "draft_start": draft_start,
+                "draft_end": draft_end,
+                "index_start": start,
+                "index_end": end,
+                "games": end - start,
+                "cube_list_sha256": sha256_hex(&cube),
+                "gap_record_sha256": sha256_hex(&gaps),
+                "fence_sha256": sha256_hex(&fence),
+                "pool_cards": pool.card_count(),
+                "worker_stack_bytes": WORKER_STACK_BYTES,
+                "card_names": card_names(pool.ids().iter().copied().chain(basics)),
+            });
+            Ok(Run {
+                source: Source::Drafted { pool, namespace },
+                caps,
+                start,
+                end,
+                unit: GAMES_PER_DRAFT,
+                record,
+            })
+        }
+        "dealt" => {
+            args.forbid(
+                &[
+                    "--namespace",
+                    "--cube",
+                    "--gaps",
+                    "--fence",
+                    "--draft-start",
+                    "--draft-end",
+                ],
+                mode,
+            )?;
+            let path = args.required("--schedule")?;
+            let bytes = read_bytes(path)?;
+            let schedule = mtg_kernel::cube_b_census_v1::parse_dealt_schedule(
+                &utf8(path, &bytes)?,
+                &card_db_hash,
+                &caps,
+            )?;
+            let count = schedule.episodes.len() as u64;
+            let start = args.number("--episode-start")?.unwrap_or(0);
+            let end = args.number("--episode-end")?.unwrap_or(count);
+            if end <= start || end > count {
+                return Err(format!(
+                    "episode range [{start}, {end}) is empty or outside the schedule's {count} episodes"
+                ));
+            }
+            let ids = schedule.episodes[start as usize..end as usize]
+                .iter()
+                .flat_map(|episode| episode.decks.iter())
+                .flat_map(|deck| deck.card_ids());
+            let record = json!({
+                "schema": RUN_RECORD_SCHEMA,
+                "mode": mode,
+                "binary": binary,
+                "card_db_hash": card_db_hash,
+                "caps": caps_record,
+                "namespace": schedule.namespace,
+                "schedule_sha256": sha256_hex(&bytes),
+                "schedule": {
+                    "schema": schedule.schema,
+                    "namespace": schedule.namespace,
+                    "run": schedule.run,
+                    "kernel_carddb_hash": schedule.kernel_carddb_hash,
+                    "pool_sha256": schedule.pool_sha256,
+                    "constants_sha256": schedule.constants_sha256,
+                    "episodes": count,
+                },
+                "episode_start": start,
+                "episode_end": end,
+                "index_start": start,
+                "index_end": end,
+                "games": end - start,
+                "worker_stack_bytes": WORKER_STACK_BYTES,
+                "card_names": card_names(ids),
+            });
+            Ok(Run {
+                source: Source::Dealt { schedule },
+                caps,
+                start,
+                end,
+                unit: 1,
+                record,
+            })
+        }
+        other => Err(format!("unknown --mode {other:?}: drafted or dealt")),
+    }
+}
+
+impl Run {
+    /// Plays `[start, end)` in order, writing each line before the next game
+    /// starts and naming the game in play in `progress` first.
+    fn play(&self, start: u64, end: u64, out: &mut File, progress: &Path) -> Fallible<()> {
+        let mut emit = |line: &GameLine| -> Fallible<()> {
+            let text = format!("{}\n", line.to_json_line());
+            out.write_all(text.as_bytes())
+                .and_then(|()| out.flush())
+                .map_err(|error| format!("writing a line: {error}"))?;
+            // The next game, so a death names it.
+            std::fs::write(progress, (line.index + 1).to_string())
+                .map_err(|error| format!("{}: {error}", progress.display()))
+        };
+        std::fs::write(progress, start.to_string())
+            .map_err(|error| format!("{}: {error}", progress.display()))?;
+        match &self.source {
+            Source::Drafted { pool, namespace } => {
+                play_drafted_range(pool, namespace, start, end, &self.caps, |line| {
+                    emit(line).map_err(StringError)
+                })
+                .map_err(|error| error.0)
+            }
+            Source::Dealt { schedule } => {
+                for index in start..end {
+                    emit(&schedule.episodes[index as usize].play(index, &self.caps))?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn death_line(&self, index: u64, death: ProcessDeath) -> Fallible<GameLine> {
+        match &self.source {
+            Source::Drafted { pool, namespace } => {
+                let pod = DraftedPod::prepare(pool, namespace, index / GAMES_PER_DRAFT)
+                    .map_err(|error| error.to_string())?;
+                pod.death((index % GAMES_PER_DRAFT) as usize, death)
+                    .map_err(|error| error.to_string())
+            }
+            Source::Dealt { schedule } => Ok(schedule.episodes[index as usize].death(index, death)),
+        }
+    }
+}
+
+/// A `String` error that a [`mtg_kernel::cube_draft_v1::CubeDraftError`]
+/// converts into, for [`play_drafted_range`].
+struct StringError(String);
+
+impl From<mtg_kernel::cube_draft_v1::CubeDraftError> for StringError {
+    fn from(error: mtg_kernel::cube_draft_v1::CubeDraftError) -> Self {
+        StringError(error.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Worker
+// ---------------------------------------------------------------------------
+
+fn worker(args: &Args) -> Fallible<()> {
+    let run = load_run(args)?;
+    let start = args
+        .number("--worker-start")?
+        .ok_or("--worker-start is required")?;
+    let end = args
+        .number("--worker-end")?
+        .ok_or("--worker-end is required")?;
+    if start >= end || start < run.start || end > run.end {
+        return Err(format!(
+            "worker range [{start}, {end}) is outside [{}, {})",
+            run.start, run.end
+        ));
+    }
+    let out_path = args.required("--worker-out")?;
+    let progress = PathBuf::from(args.required("--worker-progress")?);
+    let mut out = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(out_path)
+        .map_err(|error| format!("{out_path}: {error}"))?;
+    // A panic is a recorded game end, not a message.
+    std::panic::set_hook(Box::new(|_| {}));
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("cube-b-census".to_owned())
+            .stack_size(WORKER_STACK_BYTES)
+            .spawn_scoped(scope, || run.play(start, end, &mut out, &progress))
+            .map_err(|error| format!("spawning the game thread: {error}"))?
+            .join()
+            .map_err(|_| "the game thread panicked outside a game".to_owned())?
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Supervisor
+// ---------------------------------------------------------------------------
+
+struct Part {
+    start: u64,
+    end: u64,
+    /// The first index the current worker process has not yet written.
+    next: u64,
+    out: PathBuf,
+    progress: PathBuf,
+    child: Option<Child>,
+    /// What last showed progress, and when.
+    seen: (u64, String),
+    seen_at: Instant,
+}
+
+fn death_of(status: ExitStatus) -> ProcessDeath {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return ProcessDeath::Signal(signal);
+        }
+    }
+    ProcessDeath::Exit(status.code().map_or(u32::MAX, |code| code as u32))
+}
+
+/// Complete lines in `path`; a partial last line (a worker that died while
+/// writing) is cut off.
+fn complete_lines(path: &Path) -> Fallible<u64> {
+    let mut bytes = Vec::new();
+    match File::open(path) {
+        Ok(mut file) => {
+            file.read_to_end(&mut bytes)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    }
+    let kept = bytes
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map_or(0, |at| at + 1);
+    if kept < bytes.len() {
+        OpenOptions::new()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_len(kept as u64))
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+    }
+    Ok(bytes[..kept].iter().filter(|&&byte| byte == b'\n').count() as u64)
+}
+
+fn spawn(args: &Args, part: &Part) -> Fallible<Child> {
+    let exe = std::env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
+    Command::new(exe)
+        .args(&args.passthrough)
+        .arg("--worker-start")
+        .arg(part.next.to_string())
+        .arg("--worker-end")
+        .arg(part.end.to_string())
+        .arg("--worker-out")
+        .arg(&part.out)
+        .arg("--worker-progress")
+        .arg(&part.progress)
+        .spawn()
+        .map_err(|error| format!("spawning a worker: {error}"))
+}
+
+fn part_progress(part: &Part) -> (u64, String) {
+    let size = std::fs::metadata(&part.out).map_or(0, |meta| meta.len());
+    let current = std::fs::read_to_string(&part.progress).unwrap_or_default();
+    (size, current)
+}
+
+fn kill_all(parts: &mut [Part]) {
+    for part in parts.iter_mut() {
+        if let Some(child) = part.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn supervise(args: &Args) -> Fallible<()> {
+    let run = load_run(args)?;
+    let out = PathBuf::from(args.required("--out")?);
+    let record = PathBuf::from(args.required("--record")?);
+    for path in [&out, &record] {
+        if path.exists() {
+            return Err(format!(
+                "{} exists; outputs are created fresh",
+                path.display()
+            ));
+        }
+    }
+    let workers = args.number("--workers")?.unwrap_or(1).max(1);
+    let watchdog = Duration::from_secs(args.number("--watchdog-seconds")?.unwrap_or(600));
+    let units = (run.end - run.start) / run.unit;
+    let workers = workers.min(units);
+    let started = Instant::now();
+    let mut parts: Vec<Part> = (0..workers)
+        .map(|k| {
+            let start = run.start + run.unit * (units * k / workers);
+            let end = run.start + run.unit * (units * (k + 1) / workers);
+            let stem = out.as_os_str().to_owned();
+            let with = |suffix: &str| {
+                let mut path = stem.clone();
+                path.push(format!(".w{k:03}.{suffix}"));
+                PathBuf::from(path)
+            };
+            Part {
+                start,
+                end,
+                next: start,
+                out: with("part"),
+                progress: with("progress"),
+                child: None,
+                seen: (0, String::new()),
+                seen_at: Instant::now(),
+            }
+        })
+        .collect();
+    for part in &parts {
+        for path in [&part.out, &part.progress] {
+            if path.exists() {
+                return Err(format!("{} exists from an earlier run", path.display()));
+            }
+        }
+    }
+    for part in parts.iter_mut() {
+        part.child = Some(spawn(args, part)?);
+        part.seen_at = Instant::now();
+    }
+    let mut deaths = 0u64;
+    while parts.iter().any(|part| part.child.is_some()) {
+        std::thread::sleep(POLL);
+        for k in 0..parts.len() {
+            let Some(child) = parts[k].child.as_mut() else {
+                continue;
+            };
+            let status = match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    kill_all(&mut parts);
+                    return Err(format!("waiting for worker {k}: {error}"));
+                }
+            };
+            let part = &mut parts[k];
+            let Some(status) = status else {
+                let seen = part_progress(part);
+                if seen != part.seen {
+                    part.seen = seen;
+                    part.seen_at = Instant::now();
+                } else if part.seen_at.elapsed() > watchdog {
+                    let game = part.seen.1.clone();
+                    kill_all(&mut parts);
+                    return Err(format!(
+                        "hang: worker {k} made no progress for {}s at game {game}; the batch is void (A2.1), no output written",
+                        watchdog.as_secs()
+                    ));
+                }
+                continue;
+            };
+            part.child = None;
+            let written = part.start + complete_lines(&part.out)?;
+            if status.success() {
+                if written != part.end {
+                    let message = format!(
+                        "worker {k} exited cleanly after {written} of [{}, {})",
+                        part.start, part.end
+                    );
+                    kill_all(&mut parts);
+                    return Err(message);
+                }
+                continue;
+            }
+            // The worker names the game it starts before playing it; a
+            // death anywhere else (start-up, writing) stops the run.
+            let named = std::fs::read_to_string(&part.progress).unwrap_or_default();
+            if named.trim() != written.to_string() || written >= part.end || written < part.next {
+                kill_all(&mut parts);
+                return Err(format!(
+                    "worker {k} died ({status}) outside a game (progress {named:?}, written up to {written})"
+                ));
+            }
+            let death = death_of(status);
+            let line = run.death_line(written, death)?;
+            OpenOptions::new()
+                .append(true)
+                .open(&part.out)
+                .and_then(|mut file| {
+                    file.write_all(format!("{}\n", line.to_json_line()).as_bytes())
+                })
+                .map_err(|error| format!("{}: {error}", part.out.display()))?;
+            deaths += 1;
+            eprintln!(
+                "{}",
+                json!({"event": "process_died", "index": written, "stop_kind": death.stop_kind()})
+            );
+            part.next = written + 1;
+            if part.next < part.end {
+                part.child = Some(spawn(args, part)?);
+                part.seen_at = Instant::now();
+            }
+        }
+    }
+    let mut output =
+        File::create_new(&out).map_err(|error| format!("{}: {error}", out.display()))?;
+    let mut games = 0u64;
+    for part in &parts {
+        let file =
+            File::open(&part.out).map_err(|error| format!("{}: {error}", part.out.display()))?;
+        for line in BufReader::new(file).lines() {
+            let line = line.map_err(|error| format!("{}: {error}", part.out.display()))?;
+            let index = serde_json::from_str::<Value>(&line)
+                .ok()
+                .and_then(|row| row["index"].as_u64());
+            if index != Some(run.start + games) {
+                return Err(format!(
+                    "{}: line {games} has index {index:?}, expected {}",
+                    part.out.display(),
+                    run.start + games
+                ));
+            }
+            output
+                .write_all(format!("{line}\n").as_bytes())
+                .map_err(|error| format!("{}: {error}", out.display()))?;
+            games += 1;
+        }
+    }
+    if games != run.end - run.start {
+        return Err(format!("{games} lines, expected {}", run.end - run.start));
+    }
+    output
+        .flush()
+        .map_err(|error| format!("{}: {error}", out.display()))?;
+    let record_text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&run.record).expect("a run record is plain data")
+    );
+    std::fs::write(&record, record_text)
+        .map_err(|error| format!("{}: {error}", record.display()))?;
+    for part in &parts {
+        let _ = std::fs::remove_file(&part.out);
+        let _ = std::fs::remove_file(&part.progress);
+    }
+    let seconds = started.elapsed().as_secs_f64();
+    eprintln!(
+        "{}",
+        json!({"games": games, "process_deaths": deaths, "workers": workers,
+            "wall_seconds": seconds,
+            "games_per_core_hour": games as f64 / (seconds * workers as f64) * 3600.0,
+            "out": out.display().to_string(), "record": record.display().to_string()})
+    );
+    Ok(())
+}
+
+fn main() {
+    let result = Args::parse(std::env::args().skip(1).collect()).and_then(|args| {
+        if args.get("--worker-out").is_none() {
+            return supervise(&args);
+        }
+        let result = worker(&args);
+        if let (Err(error), Some(progress)) = (&result, args.get("--worker-progress")) {
+            // Not a number, so the supervisor stops the run instead of
+            // recording a process death.
+            let _ = std::fs::write(progress, format!("error: {error}"));
+        }
+        result
+    });
+    if let Err(error) = result {
+        eprintln!("cube_b_census_v1: {error}");
+        std::process::exit(2);
+    }
+}
