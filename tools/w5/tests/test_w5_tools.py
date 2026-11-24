@@ -57,12 +57,15 @@ S_RECORD = 'w5-s-learner-checkpoint/v1'
 
 
 def make_chain(tmp, arm, segments, per_segment, ledger_step=1000, t0=1.0e9, dt=60.0, complete_last=True,
-               s_learner=False):
+               s_learner=False, lag=False):
     """Synthetic segments: every update's complete.json, update.json and checkpoint file (with `s_learner`, an S
-    checkpoint record and the S container it pins)."""
+    checkpoint record and the S container it pins; with `lag`, configs and receipts of mtg-kernel's
+    collection_policy_lag_v1, each receipt naming its source and its batch's behaviour)."""
     tmp = Path(tmp)
     tmp.mkdir(parents=True, exist_ok=True)
     segs = []
+    parent = {'play_import': {'path': 'import.json', 'sha256': 'i'}, 'checkpoint': None}
+    sources = [parent]  # sources[u]: the source update u started from (u >= 1: update u - 1's checkpoint)
     for s in range(segments):
         root = tmp / f'{arm}-seg{s:03d}'
         cfg = {'output_directory': root.as_posix(), 'iterations': [{'episodes': [{'opponent': {'kind': 'current'}, 'tag': [s, i]}]}
@@ -72,6 +75,8 @@ def make_chain(tmp, arm, segments, per_segment, ledger_step=1000, t0=1.0e9, dt=6
                'chain_ledger': {'source': 'ledger.json'}}
         if arm != 'X':
             del cfg['ex1']
+        if lag:
+            cfg['collection_policy_lag_v1'] = 1
         cfg_path = tmp / f'{arm}-seg{s:03d}.json'
         cfg_path.write_text(json.dumps(cfg))
         for i in range(per_segment):
@@ -100,6 +105,12 @@ def make_chain(tmp, arm, segments, per_segment, ledger_step=1000, t0=1.0e9, dt=6
             receipt = {'update': {'path': (att / 'update' / 'update.json').as_posix()},
                        'chain_ledger': {'usec': (update + 1) * ledger_step, 'unix_seconds': t0 + (update + 1) * dt,
                                         'instance': 0}}
+            if lag:
+                behaviour = sources[max(update - 1, 0)]
+                receipt['source'] = sources[update]
+                receipt['collection_policy_lag_v1'] = {'lag': 1, 'behaviour': behaviour,
+                                                       'behaviour_state_sha256': f'h{max(update - 1, 0)}'}
+            sources.append(dict(parent, checkpoint=doc['checkpoint']))
             (it / 'complete.json').write_text(json.dumps(receipt))
         if s < segments - 1 or complete_last:
             (root / 'completion.json').write_text('{}')
@@ -243,6 +254,52 @@ class RetentionTests(unittest.TestCase):
                 retention.prune_manifest(chain, records, 101)
             with self.assertRaises(SystemExit):
                 retention.prune_manifest(chain, records, 101, receipt)
+
+    def test_lag_chains_keep_behaviour_predecessors_and_replays_carry_them(self):
+        """mtg-kernel collection_policy_lag_v1: a run from state b plays its first batch on state b - 1, so every
+        kept state keeps its predecessor, a replay starts only where the predecessor is on disk and carries it, and
+        the PRUNE manifest keeps the endpoint's. Without the lag nothing changes (the X test above)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            chain_path = make_chain(tmp, 'X', segments=4, per_segment=64, complete_last=False, lag=True)
+            _, records = retention.index(chain_path)
+            self.assertTrue(all(r['lag'] == 1 for r in records))
+            doc = retention.plan(chain_path)
+            # As without the lag, less the predecessors of the kept strides 64 and 128.
+            self.assertEqual({c['boundary'] for c in doc['checkpoints']}, set(range(1, 128)) - {63, 64, 127})
+            self.assertEqual(retention.plan(chain_path, None, retention.IndexCache(chain_path)), doc)
+            retention.apply(doc, Path(tmp) / 'log.jsonl')
+            chain, records = retention.index(chain_path)
+            by_boundary = {r['boundary']: r for r in records}
+            spec = retention.select(chain, records, r_usec=100_500)
+            self.assertEqual((spec['endpoint_boundary'], spec['replay']['from']['boundary']), (101, 64))
+            cfg = retention.replay_config(retention.load_chain(chain_path), spec, Path(tmp) / 'replay')
+            self.assertEqual(cfg['collection_policy_lag_v1'], 1)
+            # The carry is the source update 63 started from: state 63, on disk.
+            self.assertEqual(cfg['collection_policy_lag_carry_v1']['checkpoint'], by_boundary[63]['checkpoint'])
+            self.assertEqual(cfg['initial_source']['checkpoint'], by_boundary[64]['checkpoint'])
+            # A replay from the parent starts the lag afresh: no carry.
+            start = {'endpoint_boundary': 10, 'replay': {'chain': chain['chain'], 'updates': 10, 'expected': [],
+                                                         'from': {'boundary': 0, 'checkpoint': None}}}
+            self.assertNotIn('collection_policy_lag_carry_v1',
+                             retention.replay_config(retention.load_chain(chain_path), start, Path(tmp) / 'r0'))
+            # The endpoint kept as its full state keeps its predecessor; the look is protected with its own.
+            manifest = retention.prune_manifest(chain, records, 128)
+            self.assertEqual([k['boundary'] for k in manifest['keep']['selected_checkpoint']], [128])
+            self.assertEqual([k['boundary'] for k in manifest['keep']['behaviour_predecessor']], [127])
+            self.assertNotIn(127, [p['boundary'] for p in manifest['prune']])
+            self.assertEqual(retention.behaviour_predecessors(records, {1, 64, 129}), {63, 128})
+            # Without its predecessor a kept state is no replay start: state 63 gone, the replay runs from 0.
+            Path(by_boundary[63]['checkpoint']['path']).unlink()
+            spec = retention.select(chain, records, r_usec=100_500)
+            self.assertEqual(spec['replay']['from']['boundary'], 0)
+            # A carry whose state is gone is refused rather than replayed without the lag.
+            with self.assertRaises(SystemExit):
+                retention.lag_carry(chain, 64)
+            # A chain without the lag records none and keeps its old plan.
+            plain = make_chain(Path(tmp) / 'plain', 'X', segments=4, per_segment=64, complete_last=False)
+            _, plain_records = retention.index(plain)
+            self.assertFalse(any('lag' in r for r in plain_records))
+            self.assertEqual(retention.behaviour_predecessors(plain_records, {64, 128}), set())
 
     def test_replay_refuses_history_relative_opponents(self):
         with tempfile.TemporaryDirectory() as tmp:

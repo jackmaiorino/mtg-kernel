@@ -845,5 +845,138 @@ class ChainTests(unittest.TestCase):
         self.assertEqual([s['updates'] for s in chain['segments']], [3, 3])
 
 
+
+class LagChainTests(unittest.TestCase):
+    """mtg-kernel `collection_policy_lag_v1` through the chain controller with the stand-in trainer's lag model
+    (off in every chain until a signed declaration): every continuation carries the lag or is refused by name,
+    retention keeps each kept state's behaviour predecessor, and after actual pruning a replay and the chain's next
+    segment still reproduce the chain."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.node = Node(self.tmp.name)
+        env = mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_SLEEP': '0'})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def lag_plan(self, **arms):
+        """The plan path and plan of an unpaired Stage 0 C chain `c1` whose arms take a lag base; `arms` overrides
+        arm keys (per arm)."""
+        base = jwrite(self.node.t / 'lag-base.json', dict(base_doc(), collection_policy_lag_v1=1))
+        inputs = json.loads(self.node.inputs('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/lag1'}},
+                                             label='lag').read_text())
+        for name in ('C', 'F'):
+            inputs['arms'][name]['base'] = str(base)
+            inputs['arms'][name].update(arms.get(name, {}))
+        return chains.make_plan(jwrite(self.node.t / 'inputs-lag.json', inputs))
+
+    def run_segments(self, plan, count):
+        """`count` segments of c1 through the driver's own continuation (current_segment), each run to its end."""
+        arm = chains.load_arm(plan['arms']['C']['file']['path'])
+        man_path = Path(plan['chains']['c1']['manifest'])
+        ledger = self.node.ledger_source('c1')
+        for _ in range(count):
+            _, cfg_path, native = chains.current_segment(arm, json.loads(man_path.read_text()), man_path,
+                                                         str(ledger))
+            self.assertEqual(chains.run_trainer(arm, cfg_path)[0], 0)
+            self.assertTrue((native / 'completion.json').exists())
+        return arm, man_path, ledger
+
+    @staticmethod
+    def receipt(man, update):
+        """The receipt of global update `update` of a chain of one-update segments."""
+        return json.loads(Path(man['segments'][update]['root'], 'iterations', '000000', 'complete.json').read_text())
+
+    def test_a_lag_chain_carries_its_lag_and_replays_after_actual_pruning(self):
+        _, plan = self.lag_plan(C={'segment_updates': 1})
+        arm, man_path, ledger = self.run_segments(plan, 10)
+        chain, records = retention.index(man_path)
+        self.assertEqual([r['boundary'] for r in records], list(range(1, 11)))
+        self.assertTrue(all(r.get('lag') for r in records))
+        man = json.loads(man_path.read_text())
+        # Every continuation carries the source the previous segment's last update started from.
+        for s, seg in enumerate(man['segments']):
+            cfg = json.loads(Path(seg['config']).read_text())
+            self.assertEqual(cfg['collection_policy_lag_v1'], 1)
+            if s == 0:
+                self.assertNotIn('collection_policy_lag_carry_v1', cfg)
+            else:
+                self.assertEqual(cfg['collection_policy_lag_carry_v1'], self.receipt(man, s - 1)['source'])
+        # So the segmented chain reaches the states of one whole lag run (a fork at any segment would not).
+        whole = self.node.t / 'whole'
+        path = jwrite(self.node.t / 'whole.json', chains.arm_config(arm, 'w5/lag1', 0, 10, whole))
+        self.assertEqual(chains.run_trainer(arm, path)[0], 0)
+        states = [json.loads(Path(json.loads(p.read_text())['update']['path']).read_text())['after_state_sha256']
+                  for p in sorted((whole / 'iterations').glob('*/complete.json'))]
+        self.assertEqual(states, [r['after_state_sha256'] for r in records])
+        # A continuation without its carry is refused by name rather than started as a fork.
+        with self.assertRaises(chains.Stop) as refused:
+            chains.arm_config(arm, 'w5/lag1', 10, 1, self.node.t / 'fork',
+                              chains.next_source(man['segments'][-1]['root']))
+        self.assertIn('collection_policy_lag_v1 continuation needs its carry', str(refused.exception))
+
+        # Rolling retention at a stride of 4, actually applied: the strides 4 and 8, the latest (10) and each one's
+        # behaviour predecessor (3, 7, 9) keep their states; the rest are deleted.
+        with mock.patch.object(retention, 'FULL_STRIDE', 4):
+            doc = retention.plan(man_path)
+        self.assertEqual(sorted(c['boundary'] for c in doc['checkpoints']), [1, 2, 5, 6])
+        retention.apply(doc, self.node.t / 'retention.jsonl')
+        present = {r['boundary'] for r in records if Path(r['checkpoint']['path']).exists()}
+        self.assertEqual(present, {3, 4, 7, 8, 9, 10})
+        by_boundary = {r['boundary']: r for r in records}
+
+        # Boundary 6 is gone: its replay starts at the nearest kept state whose behaviour predecessor is on disk
+        # (4, carrying the source of update 3, which is state 3), and reproduces every recorded hash.
+        chain, records = retention.index(man_path)
+        spec = retention.select(chain, records, STEP_C * 6)
+        self.assertEqual(spec['endpoint_boundary'], 6)
+        self.assertEqual(spec['replay']['from']['boundary'], 4)
+        rdir = self.node.t / 'replay'
+        cfg = retention.replay_config(retention.load_chain(man_path), spec, rdir / 'native')
+        self.assertEqual(cfg['collection_policy_lag_carry_v1'], self.receipt(man, 3)['source'])
+        self.assertEqual(cfg['collection_policy_lag_carry_v1']['checkpoint'], by_boundary[3]['checkpoint'])
+        cfg_path = jwrite(rdir / 'config.json', cfg)
+        self.assertEqual(chains.run_trainer({'trainer': plan['trainer']}, cfg_path)[0], 0)
+        self.assertTrue(retention.verify_replay(spec, rdir / 'native')['equal'])
+
+        # The selected endpoint 10 keeps its behaviour predecessor in the PRUNE manifest.
+        manifest = retention.prune_manifest(chain, records, 10)
+        self.assertEqual([k['boundary'] for k in manifest['keep']['selected_checkpoint']], [10])
+        self.assertEqual([k['boundary'] for k in manifest['keep']['behaviour_predecessor']], [9])
+        self.assertNotIn(9, [p['boundary'] for p in manifest['prune']])
+
+        # The chain's next segment after the pruning carries state 9, still on disk, and runs.
+        _, cfg_path, native = chains.current_segment(arm, json.loads(man_path.read_text()), man_path, str(ledger))
+        self.assertEqual(json.loads(Path(cfg_path).read_text())['collection_policy_lag_carry_v1']['checkpoint'],
+                         by_boundary[9]['checkpoint'])
+        self.assertEqual(chains.run_trainer(arm, cfg_path)[0], 0)
+        self.assertTrue((native / 'completion.json').exists())
+
+    def test_a_lag_filler_of_one_update_segments_keeps_the_segment_of_its_carry(self):
+        _, plan = self.lag_plan(F={'segment_updates': 1})
+        arm = chains.load_arm(plan['arms']['F']['file']['path'])
+        out = self.node.root / 'fillers' / 'slot1'
+        calls = []
+        code = chains.run_filler(arm, out, 'w5/filler1', lambda: calls.append(1) or len(calls) > 4)
+        self.assertEqual(code, chains.EXIT_STOP)
+        run = next(out.glob('run-*'))
+        # Segment 3's carry was segment 2's source, segment 1's output: one more segment is kept than without it.
+        self.assertEqual(sorted(p.name for p in run.glob('seg-*')), ['seg-00002', 'seg-00003'])
+        for s in (1, 2, 3):
+            self.assertIn('collection_policy_lag_carry_v1',
+                          json.loads((run / 'segments' / f'seg-{s:05d}.json').read_text()))
+
+    def test_segcheck_carries_the_lag(self):
+        path, _ = self.lag_plan()
+        out = self.node.t / 'segcheck-lag.json'
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.main(['segcheck', '--plan', str(path), '--arm', 'C', '--out', str(out)]), 0)
+        # Two one-update segments (seg-b carrying the lag) reach the states of one two-update lag run.
+        record = json.loads(out.read_text())
+        self.assertTrue(record['pass'])
+        self.assertEqual(record['states_whole'], record['states_segmented'])
+
+
 if __name__ == '__main__':
     unittest.main()

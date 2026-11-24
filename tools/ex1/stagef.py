@@ -413,6 +413,11 @@ def next_source(native):
 
 
 def segment_config(full, start, n, native, source):
+    # Stage F segments pass no carry, so a chain under mtg-kernel's collection_policy_lag_v1 would silently start a
+    # fork at every segment: such a config is refused by name (tools/w5/chains.py carries the lag).
+    if full.get("collection_policy_lag_v1"):
+        raise SystemExit("stop: Stage F segments do not carry collection_policy_lag_v1; a lag chain runs under "
+                         "tools/w5/chains.py")
     cfg = {k: copy.deepcopy(v) for k, v in full.items() if k != "iterations"}
     cfg["iterations"] = copy.deepcopy(full["iterations"][start:start + n])
     cfg["output_directory"] = Path(native).as_posix()

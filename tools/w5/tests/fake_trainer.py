@@ -10,6 +10,15 @@ Knobs (the config's `fake` block, which the test base carries, then FAKE_<NAME> 
 burn_x (CPU seconds per update), sleep and sleep_x (seconds per update), cpu_step and cpu_step_x (usec added to
 the ledger source's cpu.stat file per update, for hosts without cgroups), fail_at (exit 1 before that global
 update).
+
+Under `collection_policy_lag_v1` (mtg-kernel docs/design/collection_policy_lag_v1.md), as the native trainer:
+each batch after a run's first is played on the source the previous update started from, the first on the
+config's `collection_policy_lag_carry_v1` or, without one, on the initial source; a carry must be the update input
+the initial checkpoint records; the behaviour's pinned file is checked; and every receipt records the lag. The
+behaviour's hash enters the checkpoint, so a continuation without its carry (a fork) reaches other states than the
+uninterrupted chain. A checkpoint's lag record (its update's input and behaviour, which name paths) is the sidecar
+`checkpoint.lag.json`, so a checkpoint's bytes stay free of paths and a segmented chain still reaches the states of
+one whole run.
 """
 import hashlib
 import json
@@ -53,11 +62,28 @@ def ledger(cfg, step):
     return record, source.get('stop_at_usec')
 
 
+LAG_RECORD = 'checkpoint.lag.json'  # a checkpoint's lag record, beside it
+
+
+def state_pin(source):
+    """The file a source's state is in: its checkpoint, or an S source's initial state."""
+    return source['checkpoint'] or source['s_learner']['initial']
+
+
 def main():
     cfg = json.loads(Path(sys.argv[1]).read_text())
     root = Path(cfg['output_directory'])
     x = bool(cfg.get('ex1'))
     source = cfg['initial_source']
+    lag = cfg.get('collection_policy_lag_v1') == 1
+    carry = cfg.get('collection_policy_lag_carry_v1')
+    if carry is not None:
+        assert lag, 'a lag carry without collection_policy_lag_v1'
+        assert source['checkpoint'], 'a lag carry needs an initial checkpoint'
+        sidecar = Path(source['checkpoint']['path']).with_name(LAG_RECORD)
+        record = json.loads(sidecar.read_text())['collection_policy_lag_v1'] if sidecar.exists() else None
+        assert record and record['input'] == carry, 'the carry is not the update input the checkpoint records'
+    previous = None  # the source the last completed update started from (the next batch's behaviour)
     recovered_stop = (json.loads(Path(cfg['chain_ledger']['source']).read_text()).get('stop_at_usec')
                       if cfg.get('chain_ledger') else None)
     stopped = False
@@ -66,6 +92,7 @@ def main():
         a = d / 'attempt-000000'
         if (d / 'complete.json').exists():
             done = json.loads((d / 'complete.json').read_text())
+            previous = done['source']
             source = dict(done['source'], checkpoint={'path': (a / 'update' / 'checkpoint.json').as_posix(),
                                                       'sha256': done['output_identity']['checkpoint_sha256']})
             if recovered_stop is not None and done.get('chain_ledger') and \
@@ -83,6 +110,11 @@ def main():
         # An S source at its initial train state has no checkpoint; `s_learner.initial` pins it (s_learner_v1.rs).
         pinned = source['checkpoint'] or source['s_learner']['initial']
         assert h(pinned['path']) == pinned['sha256'], 'source differs'
+        # Under the lag the batch is played on the previous update's source (the carry or the initial source for
+        # the first), whose pinned file is checked as the native collection's load checks it.
+        behaviour = (previous or carry or source) if lag else None
+        if lag:
+            assert h(state_pin(behaviour)['path']) == state_pin(behaviour)['sha256'], 'behaviour differs'
         # A named opponent with a checkpoint (a CG ladder member): its pin is checked, as the native collection
         # boundary does, and its hash enters the output checkpoint, so a chain's states depend on its roster.
         named = {o['id']: o.get('source') for o in cfg.get('opponents', [])}
@@ -104,6 +136,10 @@ def main():
         content = {'from': pinned['sha256'], 'ids': ids, 'search': (cfg.get('ex1') or {}).get('w5')}
         if played:
             content['opponents'] = played
+        if lag:
+            content['behaviour'] = state_pin(behaviour)['sha256']
+            (a / 'update' / LAG_RECORD).write_text(json.dumps(
+                {'collection_policy_lag_v1': {'lag': 1, 'input': source, 'behaviour': behaviour}}))
         ck.write_text(json.dumps(content))
         c = a / 'collect' / 'collection.json'
         collection = {'collection_elapsed_seconds': 0.1, 'trajectories': [{'path': ep.as_posix(), 'sha256': h(ep)}]}
@@ -119,9 +155,13 @@ def main():
                    'source': source, 'output_identity': {'checkpoint_sha256': h(ck)}}
         if record is not None:
             receipt['chain_ledger'] = record
+        if lag:
+            receipt['collection_policy_lag_v1'] = {'lag': 1, 'behaviour': behaviour,
+                                                   'behaviour_state_sha256': state_pin(behaviour)['sha256']}
         tmp = d / 'complete.json.tmp'
         tmp.write_text(json.dumps(receipt))
         os.replace(tmp, d / 'complete.json')
+        previous = source
         source = dict(source, checkpoint={'path': ck.as_posix(), 'sha256': h(ck)})
         print(json.dumps({'completed_iteration': i}), flush=True)
         stopped = stop is not None and record['usec'] >= stop

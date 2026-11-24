@@ -20,6 +20,10 @@ Rules (frozen in the design):
 - Full states: X chains keep every boundary b with b % 64 == 0. C chains keep b % 4096 == 0, and b % 64 == 0
   within the most recent 4,096 updates. Every other checkpoint is pruned once its segment and the next one are
   complete (a live segment resumes from its own checkpoints and the next segment's source).
+- Lag (mtg-kernel `collection_policy_lag_v1`, off in every chain until a signed declaration): a run from state b
+  (a resume, a continuation or a replay) plays its first batch on state b - 1, the input b's update recorded. Every
+  rule here that keeps b's full state keeps b - 1's too (`behaviour_predecessors`), a replay starts only where b - 1
+  is on disk, and its config carries it (`collection_policy_lag_carry_v1`, `lag_carry`).
 - Trajectories (`collect/episode-*.json` and their EX1/W5 search-target sidecars `collect/ex1-*.json`): kept for
   the most recent 64 complete segments (rolling).
 - Projection (C chain): R-hat(t) = CPU(t) + rate(last 24 h, or since launch) x (7 days - t).
@@ -188,11 +192,14 @@ def scan(chain, known):
             receipt = read(complete)
             doc = read(receipt['update']['path'])
             ledger = receipt.get('chain_ledger') or {}
-            new.append({'update': seg['offset'] + i, 'boundary': seg['offset'] + i + 1, 'segment': s, 'iteration': i,
-                        'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],
-                        'state': state_pin(doc),
-                        'ledger_usec': ledger.get('usec'), 'unix_seconds': ledger.get('unix_seconds'),
-                        'instance': ledger.get('instance')})
+            rec = {'update': seg['offset'] + i, 'boundary': seg['offset'] + i + 1, 'segment': s, 'iteration': i,
+                   'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],
+                   'state': state_pin(doc),
+                   'ledger_usec': ledger.get('usec'), 'unix_seconds': ledger.get('unix_seconds'),
+                   'instance': ledger.get('instance')}
+            if receipt.get('collection_policy_lag_v1'):
+                rec['lag'] = 1  # a run from this state plays its first batch on the one before (absent otherwise)
+            new.append(rec)
     return new
 
 
@@ -352,6 +359,14 @@ class IndexCache:
             self.active = [r for r in self.active if r['boundary'] not in self.settled]
 
 
+def behaviour_predecessors(records, boundaries):
+    """Under `collection_policy_lag_v1` a run from state b plays its first batch on state b - 1: the boundaries
+    b - 1 of the given lag boundaries b, which are kept wherever b is. The parent (b - 1 = 0) is outside the chain's
+    files and is never listed."""
+    lag = {r['boundary'] for r in records if r.get('lag')}
+    return {b - 1 for b in boundaries if b in lag and b >= 2}
+
+
 def keeps_full_state(arm, boundary, latest):
     """Whether boundary b keeps its full train state under the arm's strides."""
     if boundary % FULL_STRIDE:
@@ -474,6 +489,11 @@ def plan(chain_path, snapshot_from=None, cache=None):
             continue
         prunable.append(rec)
     pruned = {r['boundary'] for r in prunable}
+    # A kept lag state keeps its behaviour predecessor.
+    needed = behaviour_predecessors(records, {r['boundary'] for r in candidates if r['boundary'] not in pruned})
+    if needed:
+        prunable = [r for r in prunable if r['boundary'] not in needed]
+        pruned = {r['boundary'] for r in prunable}
     surviving = {Path(p['path']).as_posix() for r in candidates if r['boundary'] not in pruned
                  for p in record_parts(r)}
     seen, gone = set(), []
@@ -626,18 +646,45 @@ def select(chain, records, r_usec, weights=None):
             start = {'boundary': 0, 'checkpoint': None}
             break
         rec = by_boundary.get(b)
-        if rec and state_present(rec['checkpoint'], rec.get('state')):
-            start = {'boundary': b, 'checkpoint': rec['checkpoint']}
-            break
+        if not (rec and state_present(rec['checkpoint'], rec.get('state'))):
+            continue
+        # Under collection_policy_lag_v1 a replay from b also plays on b - 1, which must be on disk too.
+        if any(by_boundary.get(p) is None or not state_present(by_boundary[p]['checkpoint'],
+                                                               by_boundary[p].get('state'))
+               for p in behaviour_predecessors(records, {b})):
+            continue
+        start = {'boundary': b, 'checkpoint': rec['checkpoint']}
+        break
     expected = [{'boundary': b, 'after_state_sha256': by_boundary[b]['after_state_sha256']}
                 for b in range(start['boundary'] + 1, endpoint + 1)]
     return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'],
             'replay': {'chain': chain['chain'], 'from': start, 'updates': len(expected), 'expected': expected}}
 
 
+def lag_carry(chain, boundary):
+    """The `collection_policy_lag_v1` carry of a run from state `boundary` >= 1: the source the update to it
+    started from, as that update's receipt records it (the input its checkpoint names), with every file it pins on
+    disk."""
+    update = boundary - 1
+    seg = next((s for s in chain['segments'] if s['offset'] <= update < s['offset'] + s['updates']), None)
+    if seg is None:
+        raise SystemExit(f'stop: no segment holds update {update}')
+    receipt = read(Path(seg['root'], 'iterations', f"{update - seg['offset']:06d}", 'complete.json'))
+    if not receipt.get('collection_policy_lag_v1'):
+        raise SystemExit(f'stop: update {update} did not run under collection_policy_lag_v1, so a run from its '
+                         'state cannot carry the lag')
+    carry = receipt['source']
+    for p in (carry.get('checkpoint'), (carry.get('s_learner') or {}).get('initial')):
+        if p is not None and not (Path(p['path']).exists() and sha(p['path']) == p['sha256']):
+            raise SystemExit(f"stop: the lag carry of a run from boundary {boundary} ({p['path']}) is missing or "
+                             'differs from its pin')
+    return carry
+
+
 def replay_config(chain, spec, out_dir):
     """A segment config that replays boundaries from+1..endpoint: the chain's own iterations, the kept state as
-    its source, the global update offset of its first update, and no ledger. Opponent assignments that name the
+    its source (under `collection_policy_lag_v1` with its carry, `lag_carry`), the global update offset of its first
+    update, and no ledger. Opponent assignments that name the
     run's own history (`initial`, `completed_iteration`) resolve against a segment's source and iteration
     indices, so a replay that slices them is refused; every segment crossed must share one opponent roster and
     one source import."""
@@ -673,6 +720,11 @@ def replay_config(chain, spec, out_dir):
         source = dict(read_config(chain['segments'][0]['config'])['initial_source'])
     cfg['initial_source'] = source
     cfg['iterations'] = iterations
+    # collection_policy_lag_v1: the replay's first batch is played on the state before its source (the carry);
+    # a replay from the parent starts the lag afresh, as the chain did.
+    cfg.pop('collection_policy_lag_carry_v1', None)
+    if cfg.get('collection_policy_lag_v1') and first > 0:
+        cfg['collection_policy_lag_carry_v1'] = lag_carry(chain, first)
     if cfg.get('ex1'):
         cfg['ex1']['update_offset'] = first
     cfg.pop('chain_ledger', None)
@@ -705,7 +757,8 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
     """ARTIFACT-LAW PRUNE manifest after the pair's endpoint is fixed: every full state and every weights-only
     snapshot on disk except the selected endpoint's; receipts (complete.json, update.json, ledgers, the snapshot
     index) are kept. The endpoint is kept as its full state when one is on disk, else its weights-only snapshot,
-    else its verified replay (the replayed checkpoint, outside the chain's trees)."""
+    else its verified replay (the replayed checkpoint, outside the chain's trees). Under `collection_policy_lag_v1`
+    an endpoint kept as its full state keeps its behaviour predecessor's beside it (`behaviour_predecessor`)."""
     prune, keep = [], []
     weights = weights or {}
     if replay_receipt is not None:
@@ -730,6 +783,10 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
                 item['part'] = part['part']
             keep.append(item)
     full_prune = []
+    endpoint = next((r for r in records if r['boundary'] == selected_boundary), None)
+    endpoint_full = not keep and endpoint is not None and state_intact(endpoint['checkpoint'], endpoint.get('state'))
+    predecessors = behaviour_predecessors(records, {selected_boundary}) if endpoint_full else set()
+    kept_predecessor = []
     for rec in records:
         parts = [p for p in record_parts(rec) if Path(p['path']).exists()]
         if not parts:
@@ -737,14 +794,15 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
         # The endpoint's full state is kept only when every file still matches its pin (as selection requires).
         intact = rec['boundary'] == selected_boundary and not keep and state_intact(rec['checkpoint'],
                                                                                     rec.get('state'))
+        predecessor = rec['boundary'] in predecessors and state_intact(rec['checkpoint'], rec.get('state'))
         for part in parts:
             item = {'boundary': rec['boundary'], 'kind': 'full', 'path': part['path'], 'sha256': part['sha256'],
                     'bytes': Path(part['path']).stat().st_size}
             if part['part'] != 'checkpoint':
                 item['part'] = part['part']
-            (keep if intact else full_prune).append(item)
-    # A file the kept endpoint uses is never pruned, and no file is listed twice.
-    kept_paths, seen = {k['path'] for k in keep}, set()
+            (keep if intact else kept_predecessor if predecessor else full_prune).append(item)
+    # A file the kept endpoint (or its behaviour predecessor) uses is never pruned, and no file is listed twice.
+    kept_paths, seen = {k['path'] for k in keep + kept_predecessor}, set()
     for item in full_prune:
         if item['path'] not in kept_paths and item['path'] not in seen:
             seen.add(item['path'])
@@ -763,11 +821,13 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
     if not keep and selected_boundary != 0:
         raise SystemExit('stop: the selected endpoint is not on disk (replay it first)')
     by_kind = {k: sum(p['bytes'] for p in prune if p['kind'] == k) for k in ('full', 'weights')}
+    kept = {'selected_checkpoint': keep, 'receipts': 'every complete.json, update.json, ledger and the snapshot index'}
+    if kept_predecessor:
+        kept['behaviour_predecessor'] = kept_predecessor
     return {'schema': 'artifact-prune-manifest/v1', 'lane': 'w5', 'chain': chain['chain'], 'arm': chain['arm'],
             'reason': 'W5 section 2.2: the pair endpoint is fixed; non-selected full states and snapshots pruned',
-            'keep': {'selected_checkpoint': keep,
-                     'receipts': 'every complete.json, update.json, ledger and the snapshot index'},
-            'prune': prune, 'prune_bytes': sum(p['bytes'] for p in prune), 'prune_bytes_by_kind': by_kind}
+            'keep': kept, 'prune': prune, 'prune_bytes': sum(p['bytes'] for p in prune),
+            'prune_bytes_by_kind': by_kind}
 
 
 def tree_bytes(root):

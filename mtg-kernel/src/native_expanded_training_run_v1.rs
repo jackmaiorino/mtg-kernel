@@ -972,6 +972,14 @@ impl NativeExpandedTrainingRunV1 {
                 "collection_policy_lag_v1 requires the plain CPU GAE update, without line (b), \
                  E, SQ1, search targets, EX1 or an S learner",
             )?;
+            // Its Adam step takes two gradient buffers (the rest and the scaled
+            // announcement rows), not the single delayed gradient of the design.
+            check(
+                self.loss_selection
+                    .pregame_announcement_step_scale_v1()
+                    .is_none(),
+                "collection_policy_lag_v1 is not available with pregame_announcement_step_scale",
+            )?;
             for (index, iteration) in self.iterations.iter().enumerate() {
                 for scheduled in &iteration.episodes {
                     if let ExpandedOpponentAssignmentV1::CompletedIteration { index: completed } =
@@ -2158,6 +2166,13 @@ pub fn run_native_expanded_training_v1(
 ) -> Result<Value, String> {
     config.validate_v1()?;
     config.update_backend.require_compiled_v1()?;
+    // `collection_policy_lag_v1` trains on the CPU learner: an installed exact
+    // GPU learner is refused before anything is read or written.
+    check(
+        config.collection_policy_lag_v1 == 0
+            || !crate::expanded_deck_training_v1::exact_gpu_learner_installed_v1(),
+        "collection_policy_lag_v1 is not available with the exact GPU learner",
+    )?;
     // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
     // run is admitted before its first pinned read: a run without resident
     // reads is refused in a process that has them on instead of silently
@@ -2167,6 +2182,20 @@ pub fn run_native_expanded_training_v1(
     // resident run is accepted meanwhile).
     let mut reads = verified_bytes_cache_v1::global_v1()
         .enter_run_v1(config.verified_reads == VerifiedReadsV1::Resident)?;
+    // Only a play import's contents say a source is a registry transfer, which
+    // `collection_policy_lag_v1` refuses: the initial source's and the carry's
+    // play imports are read first, and the run refuses before any other input
+    // is loaded, anything is written or any batch is collected.
+    if config.collection_policy_lag_v1 == 1 {
+        for source in
+            std::iter::once(&config.initial_source).chain(&config.collection_policy_lag_carry_v1)
+        {
+            check(
+                !crate::expanded_deck_training_v1::is_registry_transfer_source_v1(source)?,
+                "collection_policy_lag_v1 is not available to registry-transfer sources",
+            )?;
+        }
+    }
     // Masked runs compare every update's frozen digest with the initial source's.
     let line_b_frozen_sha256 = config
         .line_b

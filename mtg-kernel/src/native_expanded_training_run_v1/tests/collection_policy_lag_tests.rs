@@ -37,6 +37,73 @@ fn lag_config_v1(label: &str, iterations: usize) -> NativeExpandedTrainingRunV1 
     config
 }
 
+/// `lag_config_v1` with `games` games an iteration, each against the current
+/// policy, with distinct ids and seeds and alternating starting players.
+fn lag_config_with_games_v1(
+    label: &str,
+    iterations: usize,
+    games: usize,
+) -> NativeExpandedTrainingRunV1 {
+    let mut config = lag_config_v1(label, iterations);
+    for (index, iteration) in config.iterations.iter_mut().enumerate() {
+        let template = iteration.episodes[0].clone();
+        iteration.episodes = (0..games)
+            .map(|game| {
+                let mut scheduled = template.clone();
+                scheduled.episode.id = format!("{label}-iter-{index}-game-{game}");
+                scheduled.episode.seed = template.episode.seed + 1_000 * game as u64;
+                scheduled.episode.starting_player = (game % 2) as u8;
+                scheduled
+            })
+            .collect();
+    }
+    config
+}
+
+/// Sets the test-only exact GPU learner stand-in on this thread for its
+/// lifetime, cleared again however the test ends.
+struct ExactGpuLearnerStandInV1;
+
+impl ExactGpuLearnerStandInV1 {
+    fn installed_v1() -> Self {
+        crate::expanded_deck_training_v1::set_exact_gpu_learner_for_test_v1(true);
+        Self
+    }
+}
+
+impl Drop for ExactGpuLearnerStandInV1 {
+    fn drop(&mut self) {
+        crate::expanded_deck_training_v1::set_exact_gpu_learner_for_test_v1(false);
+    }
+}
+
+/// An update command of `source` under the flag, its batch played on
+/// `behaviour`, into `output_directory`.
+fn lag_update_command_v1(
+    config: &NativeExpandedTrainingRunV1,
+    source: &ExpandedModelSourceV1,
+    behaviour: Option<&ExpandedModelSourceV1>,
+    trajectories: Vec<PinnedFileV1>,
+    output_directory: PathBuf,
+) -> ExpandedTrainingCommandV1 {
+    ExpandedTrainingCommandV1::Update {
+        line_b: None,
+        source: source.clone(),
+        trajectories,
+        learning_rate: config.learning_rate,
+        value_coefficient: config.value_coefficient,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: config.loss_selection,
+        training_math: config.training_math,
+        record_format: Default::default(),
+        collection_policy_lag_v1: behaviour.map(|behaviour| CollectionPolicyLagUpdateV1 {
+            behaviour: behaviour.clone(),
+        }),
+        output_directory,
+    }
+}
+
 /// A fresh output directory beside the config's own, named `name`.
 fn fresh_directory_v1(config: &NativeExpandedTrainingRunV1, name: &str) -> PathBuf {
     let directory = config.output_directory.with_file_name(name);
@@ -157,6 +224,127 @@ fn collection_policy_lag_keeps_today_wire_and_validates_its_scope_v1() {
     refused(
         carried,
         "collection_policy_lag_carry_v1 requires collection_policy_lag_v1",
+    );
+    // The pregame announcement step scale's Adam step takes two gradient
+    // buffers, not the single delayed gradient: refused with the flag, and
+    // admitted without it.
+    let mut announced = lag.clone();
+    announced.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::TerminalV1,
+        pregame_announcement_step_scale: Some(0.5),
+    };
+    refused(
+        announced.clone(),
+        "collection_policy_lag_v1 is not available with pregame_announcement_step_scale",
+    );
+    announced.collection_policy_lag_v1 = 0;
+    announced.validate_v1().unwrap();
+}
+
+/// An installed exact GPU learner is refused under the flag at run admission,
+/// before anything is read or written, and at update entry before any input
+/// is read, the first batch after a start included (its behaviour is its own
+/// source, so it takes no gradient point); today's recipe is not refused.
+#[test]
+fn the_exact_gpu_learner_is_refused_before_any_input_is_read_v1() {
+    let mut config = lag_config_v1("lag-gpu-learner", 2);
+    config.output_directory = fresh_directory_v1(&config, "run-gpu");
+    config.validate_v1().unwrap();
+    let _installed = ExactGpuLearnerStandInV1::installed_v1();
+    let error = run_native_expanded_training_v1(&config, None).unwrap_err();
+    assert!(
+        error.contains("not available with the exact GPU learner"),
+        "{error}"
+    );
+    assert!(!config.output_directory.exists());
+    // An update's first batch (behaviour = source) whose every input is
+    // missing: refused before any of them is read.
+    let missing = PinnedFileV1 {
+        path: config.output_directory.join("missing.json"),
+        sha256: "0".repeat(64),
+    };
+    let source = ExpandedModelSourceV1 {
+        play_import: missing.clone(),
+        checkpoint: Some(missing.clone()),
+        ..config.initial_source.clone()
+    };
+    let output = config.output_directory.join("update");
+    let first_batch = lag_update_command_v1(
+        &config,
+        &source,
+        Some(&source),
+        vec![missing.clone()],
+        output.clone(),
+    );
+    let error = execute_v1(first_batch).unwrap_err();
+    assert!(
+        error.contains("not available with the exact GPU learner"),
+        "{error}"
+    );
+    // Today's update reaches its inputs instead.
+    let today = lag_update_command_v1(&config, &source, None, vec![missing], output);
+    let error = execute_v1(today).unwrap_err();
+    assert!(!error.contains("GPU learner"), "{error}");
+}
+
+/// Only a play import's contents say a source is a registry transfer: under
+/// the flag the run reads its initial source's play import first and refuses
+/// such a source before loading anything else, writing anything or
+/// collecting; an update reads its source's and behaviour's play imports
+/// first and refuses before loading checkpoints or trajectories. The schema
+/// strings are the two registry-transfer source descriptors'.
+#[test]
+fn a_registry_transfer_source_is_refused_before_any_other_input_v1() {
+    let config = lag_config_v1("lag-registry-transfer", 2);
+    let directory = fresh_directory_v1(&config, "transfer-imports");
+    fs::create_dir_all(&directory).unwrap();
+    for schema in [
+        "mtg-kernel-expanded-registry-transfer-source/v1",
+        "mtg-kernel-expanded-fresh-registry-transfer-source/v1",
+    ] {
+        let name = format!("{}.json", schema.replace(['/', '-'], "_"));
+        let import = publish(&directory, &name, &json!({ "schema": schema })).unwrap();
+        // The checkpoint does not exist: reading it would fail otherwise.
+        let missing = PinnedFileV1 {
+            path: directory.join("missing-checkpoint.json"),
+            sha256: "0".repeat(64),
+        };
+        let source = ExpandedModelSourceV1 {
+            play_import: import,
+            checkpoint: Some(missing.clone()),
+            ..config.initial_source.clone()
+        };
+        let mut run = config.clone();
+        run.initial_source = source.clone();
+        run.output_directory = fresh_directory_v1(&config, "run-transfer");
+        run.validate_v1().unwrap();
+        let error = run_native_expanded_training_v1(&run, None).unwrap_err();
+        assert!(
+            error.contains("not available to registry-transfer sources"),
+            "{schema}: {error}"
+        );
+        assert!(!run.output_directory.exists(), "{schema}");
+        let update = lag_update_command_v1(
+            &config,
+            &source,
+            Some(&source),
+            vec![missing],
+            directory.join("update"),
+        );
+        let error = execute_v1(update).unwrap_err();
+        assert!(
+            error.contains("not available to registry-transfer sources"),
+            "{schema}: {error}"
+        );
+    }
+    // An ordinary source is not a registry transfer (its runs are the tests
+    // above).
+    assert!(
+        !crate::expanded_deck_training_v1::is_registry_transfer_source_v1(&config.initial_source)
+            .unwrap()
     );
 }
 
@@ -417,11 +605,12 @@ fn a_lag_chain_carries_across_segments_and_a_fork_starts_unlagged_v1() {
 }
 
 /// The same lag run trains the same states at one, two and twelve collection
-/// and preparation workers, and run twice in one directory it publishes the
-/// same bytes apart from timing telemetry.
+/// and preparation workers. Every batch has twelve games, so the twelve-worker
+/// run starts twelve collectors and twelve preparation workers, as its
+/// collection and update receipts record.
 #[test]
-fn a_lag_run_is_identical_run_to_run_and_across_worker_counts_v1() {
-    let base = lag_config_v1("lag-workers", 3);
+fn a_lag_run_trains_the_same_states_at_one_two_and_twelve_workers_v1() {
+    let base = lag_config_with_games_v1("lag-workers", 3, 12);
     let mut reference: Option<Vec<Value>> = None;
     for workers in [1usize, 2, 12] {
         let mut config = base.clone();
@@ -431,12 +620,50 @@ fn a_lag_run_is_identical_run_to_run_and_across_worker_counts_v1() {
         config.validate_v1().unwrap();
         let result = run_native_expanded_training_v1(&config, None).unwrap();
         assert_eq!(result["complete"], true);
+        for index in 0..3 {
+            let (_, collection, update) = documents_v1(&result, index);
+            let case = format!("{workers} workers, batch {index}");
+            assert_eq!(
+                collection["trajectories"].as_array().unwrap().len(),
+                12,
+                "{case}"
+            );
+            if workers == 1 {
+                // Serial collection and preparation record no worker counts.
+                assert!(
+                    collection.get("collection_workers_started").is_none(),
+                    "{case}"
+                );
+                assert!(update.get("update_preparation").is_none(), "{case}");
+            } else {
+                assert_eq!(
+                    collection["collection_workers_requested"], workers,
+                    "{case}"
+                );
+                assert_eq!(collection["collection_workers_started"], workers, "{case}");
+                assert_eq!(
+                    update["update_preparation"]["requested_workers"], workers,
+                    "{case}"
+                );
+                assert_eq!(
+                    update["update_preparation"]["started_workers"], workers,
+                    "{case}"
+                );
+            }
+        }
         let states = after_states_v1(&result);
         match &reference {
             None => reference = Some(states),
             Some(expected) => assert_eq!(&states, expected, "{workers} workers"),
         }
     }
+}
+
+/// Run twice in one directory, the same lag run publishes the same bytes
+/// apart from timing telemetry.
+#[test]
+fn a_lag_run_is_identical_run_to_run_v1() {
+    let base = lag_config_v1("lag-run-to-run", 3);
     let mut config = base.clone();
     config.output_directory = fresh_directory_v1(&base, "run-again");
     let first_directory = fresh_directory_v1(&base, "run-again-first");
@@ -444,7 +671,6 @@ fn a_lag_run_is_identical_run_to_run_and_across_worker_counts_v1() {
     fs::rename(&config.output_directory, &first_directory).unwrap();
     let second = run_native_expanded_training_v1(&config, None).unwrap();
     assert_eq!(first["actual_identity"], second["actual_identity"]);
-    assert_eq!(Some(after_states_v1(&second)), reference);
     let before = files_under_v1(&first_directory);
     let after = files_under_v1(&config.output_directory);
     assert_eq!(

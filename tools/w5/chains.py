@@ -53,6 +53,15 @@ the global update), its initial source the previous segment's last source with i
 driver writes the config, appends `{config, offset, root, updates}` to the manifest (atomic rewrite), and runs it.
 A chain has no planned length: C stops at its wall, X at R_i (or the cap); a filler runs until it is stopped.
 
+**Lag** (mtg-kernel `collection_policy_lag_v1` in an arm's base; off in every chain until a signed declaration).
+Each batch after a chain's first is played on the state before its update's input, so every continuation (a
+segment after the first, a filler's, segcheck's seg-b) passes `collection_policy_lag_carry_v1`, the source the
+previous segment's last update started from (`next_carry`), and one without it is refused by name rather than
+silently starting a fork. A run from state b reads state b - 1: rolling retention, the look and the PRUNE
+manifest's endpoint keep b - 1 wherever they keep b (`retention.behaviour_predecessors`), a scratch segment keeps
+its two newest full states while it runs and when it is persisted, a filler of one-update segments keeps one more
+segment, and a replay starts only where b - 1 is on disk and carries it (`retention.replay_config`).
+
 **In-box driver** (`_drive`, the chain process w5box meters; its own CPU, a few configs and hashes per segment,
 is part of the chain's ledger in every arm). Per segment: END, STOP (`<root>/STOP` or `chains/<name>/STOP`: stop
 at the next segment boundary; `w5box.py kill` stops at once) and byte guard admission (a fresh verdict whose
@@ -333,6 +342,30 @@ def next_source(native):
     return source
 
 
+def lagged(iteration):
+    """Whether an iteration's receipt names a `collection_policy_lag_v1` behaviour (mtg-kernel
+    docs/design/collection_policy_lag_v1.md): each batch after a chain's first is played on the state before its
+    update's input."""
+    return bool(read(Path(iteration) / 'complete.json').get('collection_policy_lag_v1'))
+
+
+def next_carry(native):
+    """The `collection_policy_lag_v1` carry of the run after this one: the source this run's last update started
+    from, as its receipt records it (the update input its output checkpoint names), with every file it pins
+    checked; None for a run without the lag. The next run's first batch is played on it; a lag-1 continuation
+    without it would start a fork."""
+    its = sorted(p for p in (Path(native) / 'iterations').iterdir() if (p / 'complete.json').exists())
+    require(its, f'{native} has no completed iteration')
+    complete = read(its[-1] / 'complete.json')
+    if not complete.get('collection_policy_lag_v1'):
+        return None
+    carry = copy.deepcopy(complete['source'])
+    for p in (carry.get('checkpoint'), (carry.get('s_learner') or {}).get('initial')):
+        require(p is None or (Path(p['path']).exists() and sha(p['path']) == p['sha256']),
+                f'the lag carry after {native} ({p and p["path"]}) is missing or differs from its pin')
+    return carry
+
+
 def quarantine(native, dest_root):
     """mtg-kernel#336: an iteration without complete.json is moved aside, so the run reruns it fresh. Its bulk
     (trajectories and their ex1 sidecars, checkpoints, S containers, and any staging file of an unfinished
@@ -356,11 +389,13 @@ def quarantine(native, dest_root):
     return moved
 
 
-def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_source=None, ladder=None):
+def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_source=None, ladder=None, carry=None):
     """The arm's segment config: EX1's construction keyed by the seed root (xact.build_config), sliced at the
     global update `offset`; `source` replaces the parent for every segment after the first. A CG arm's replaced
     episodes then play its ladder roster (pgrow.apply): `ladder` is the chain's verified ladder to date
-    (pgrow.ladder), by default the parent alone (a chain's first segments, segcheck)."""
+    (pgrow.ladder), by default the parent alone (a chain's first segments, segcheck). Under the base's
+    `collection_policy_lag_v1` every continuation also takes the previous segment's `carry` (next_carry) as its
+    `collection_policy_lag_carry_v1`, and one without a carry is refused (it would silently start a fork)."""
     x = arm['x'] or {}
     parent = read(arm['parent']['path'])
     cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
@@ -368,6 +403,14 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
                             ledger_source)
     if source is not None:
         cfg['initial_source'] = source
+        if cfg.get('collection_policy_lag_v1'):
+            require(carry is not None, 'a collection_policy_lag_v1 continuation needs its carry, and the previous '
+                    'segment recorded none')
+            cfg['collection_policy_lag_carry_v1'] = carry
+        else:
+            require(carry is None, 'a lag carry for a segment without collection_policy_lag_v1')
+    else:
+        require(carry is None, 'a lag carry for a segment that starts from the parent')
     if arm.get('record_envelope'):
         cfg['record_envelope'] = arm['record_envelope']
     if arm.get('verified_reads'):
@@ -887,8 +930,9 @@ def current_segment(arm, man, man_path, ledger_source):
         s = len(segs)
     native = cdir / f'seg-{s:05d}'
     source = next_source(segs[s - 1]['root']) if s > 0 else None
+    carry = next_carry(segs[s - 1]['root']) if s > 0 else None
     ladder = chain_ladder(arm, man, cdir, s * length) if arm.get('ladder') else None
-    cfg = arm_config(arm, man['seed_root'], s * length, length, native, source, ledger_source, ladder)
+    cfg = arm_config(arm, man['seed_root'], s * length, length, native, source, ledger_source, ladder, carry)
     path = cdir / 'segments' / f'seg-{s:05d}.json'
     if path.exists():
         require(read(path) == cfg, f'{path} differs from the segment config derived from the pins')
@@ -934,15 +978,25 @@ def scratch_bulk(path):
         base.endswith('.stage')
 
 
+def full_state_file(path):
+    """A checkpoint or an S container: the files of a full train state among a segment's bulk."""
+    return path.name == 'checkpoint.json' or path.suffix == '.bin'
+
+
 def reap(native):
-    """Deletes the transient bulk of every completed iteration except the newest; returns the number of files."""
+    """Deletes the transient bulk of every completed iteration except the newest; returns the number of files.
+    Under `collection_policy_lag_v1` the second newest keeps its full state too: the running update plays its
+    batch on it, and the next segment carries it."""
     its = Path(native) / 'iterations'
     if not its.exists():
         return 0
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists())
+    behaviour = done[-2] if len(done) >= 2 and lagged(done[-1]) else None
     n = 0
     for d in done[:-1]:
         for f in d.rglob('*'):
+            if d == behaviour and full_state_file(f):
+                continue
             if f.is_file() and not f.is_symlink() and scratch_bulk(f):
                 try:
                     f.unlink()
@@ -961,9 +1015,10 @@ def persist(arm, native, cdir):
     reap(native)
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
-    newest = done[-1] if done else None
-    keep = {}  # the newest full train state: relative path -> pinned sha256 (checkpoint, and an S container)
-    if newest is not None:
+    # The newest full train state, and under collection_policy_lag_v1 the one before it (the next segment's
+    # carry): relative path -> pinned sha256 (checkpoint, and an S container).
+    keep = {}
+    for newest in done[-2:] if len(done) >= 2 and lagged(done[-1]) else done[-1:]:
         complete = read(newest / 'complete.json')
         upd = attempt_dir(newest, complete) / 'update'
         doc = read(upd / 'update.json')
@@ -1224,7 +1279,8 @@ def drive_locked(a, arm, root, cdir, man_path):
 def run_filler(arm, out_root, seed_root, stop_check):
     """C-recipe RT1 from the C parent at update 0, unmeasured and discarded: earlier runs in `out_root` are
     removed, and each finished segment's predecessor is deleted (the rolling hot set is the live segment and its
-    source)."""
+    source). Under `collection_policy_lag_v1` each continuation carries the lag; with one-update segments the
+    carry lies in the segment before the source's, which then goes one segment later."""
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     for old in out_root.glob('run-*'):
@@ -1238,13 +1294,16 @@ def run_filler(arm, out_root, seed_root, stop_check):
             return EXIT_STOP
         native = run / f'seg-{s:05d}'
         source = next_source(run / f'seg-{s - 1:05d}') if s else None
+        carry = next_carry(run / f'seg-{s - 1:05d}') if s else None
         path = run / 'segments' / f'seg-{s:05d}.json'
-        write(path, arm_config(arm, seed_root, s * length, length, native, source))
+        cfg = arm_config(arm, seed_root, s * length, length, native, source, carry=carry)
+        write(path, cfg)
         code, _ = run_trainer(arm, path, None, run)
         if not (native / 'completion.json').exists():
             return code or 1
-        if s:
-            shutil.rmtree(run / f'seg-{s - 1:05d}')
+        gone = s - 2 if cfg.get('collection_policy_lag_v1') and length == 1 else s - 1
+        if gone >= 0 and s:
+            shutil.rmtree(run / f'seg-{gone:05d}')
         s += 1
 
 
@@ -1453,6 +1512,9 @@ def chain_info(root, name, caches=None):
 
 
 def protected_paths(info, boundaries):
+    """The files of the given boundaries' full states and, under `collection_policy_lag_v1`, of their behaviour
+    predecessors (retention.behaviour_predecessors)."""
+    boundaries = set(boundaries) | retention.behaviour_predecessors(info['records'], boundaries)
     out = set()
     for r in info['records']:
         if r['boundary'] in boundaries:
@@ -2288,7 +2350,8 @@ def segcheck(a):
 
     codes = [go(arm_config(arm, seed, 0, 2, out / 'whole'), 'whole'),
              go(arm_config(arm, seed, 0, 1, out / 'seg-a'), 'seg-a')]
-    codes.append(go(arm_config(arm, seed, 1, 1, out / 'seg-b', next_source(out / 'seg-a')), 'seg-b'))
+    codes.append(go(arm_config(arm, seed, 1, 1, out / 'seg-b', next_source(out / 'seg-a'),
+                               carry=next_carry(out / 'seg-a')), 'seg-b'))
     whole = list(qual.iterations(out / 'whole'))
     split = list(qual.iterations(out / 'seg-a')) + list(qual.iterations(out / 'seg-b'))
     states = ([u['after_state_sha256'] for _, u, _ in whole], [u['after_state_sha256'] for _, u, _ in split])

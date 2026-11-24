@@ -1664,6 +1664,59 @@ pub(crate) struct CollectionPolicyLagRecordV1 {
     pub(crate) behaviour_state_sha256: String,
 }
 
+// Test-only stand-in for an installed exact GPU learner, on this thread only,
+// so the refusals of `collection_policy_lag_v1` are tested without a device.
+#[cfg(test)]
+thread_local! {
+    static EXACT_GPU_LEARNER_FOR_TEST_V1: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_exact_gpu_learner_for_test_v1(installed: bool) {
+    EXACT_GPU_LEARNER_FOR_TEST_V1.with(|cell| cell.set(installed));
+}
+
+/// Whether this process trains through an installed exact GPU learner
+/// (`gpu_exact_v1`). `collection_policy_lag_v1` refuses one at run admission
+/// and at update entry, before any input is read, the first batch after a
+/// start or a fork included.
+pub(crate) fn exact_gpu_learner_installed_v1() -> bool {
+    #[cfg(test)]
+    if EXACT_GPU_LEARNER_FOR_TEST_V1.with(std::cell::Cell::get) {
+        return true;
+    }
+    #[cfg(feature = "gpu-exact-v1")]
+    {
+        crate::gpu_exact_v1::learner_installed_v1()
+    }
+    #[cfg(not(feature = "gpu-exact-v1"))]
+    {
+        false
+    }
+}
+
+/// Whether `source` is a registry-transfer source, imported or fresh. Only
+/// its play import's contents say so (their `schema`), so this reads that one
+/// pinned file and nothing else: `collection_policy_lag_v1` refuses such a
+/// source there, before any other input is loaded.
+pub(crate) fn is_registry_transfer_source_v1(
+    source: &ExpandedModelSourceV1,
+) -> Result<bool, String> {
+    #[derive(Deserialize)]
+    struct SchemaProbeV1 {
+        #[serde(default)]
+        schema: Option<String>,
+    }
+    let bytes = read_pinned_bytes(&source.play_import)?;
+    let probe: SchemaProbeV1 = serde_json::from_slice(&bytes).map_err(err)?;
+    Ok(matches!(
+        probe.schema.as_deref(),
+        Some(registry_transfer_source::SOURCE_SCHEMA)
+            | Some(fresh_registry_transfer_source::SOURCE_SCHEMA)
+    ))
+}
+
 /// A checkpoint's `collection_policy_lag_v1` member alone.
 #[derive(Deserialize)]
 struct CheckpointCollectionPolicyLagProbeV1 {
@@ -5225,8 +5278,13 @@ fn execute_update_inner_v1(
     )?;
     // `collection_policy_lag_v1` covers the plain CPU GAE update only
     // (docs/design/collection_policy_lag_v1.md); any other update refuses a
-    // behaviour before any work.
-    if collection_policy_lag.is_some() {
+    // behaviour before any input is read, its first batch after a start or a
+    // fork included.
+    if let Some(options) = &collection_policy_lag {
+        ensure(
+            !exact_gpu_learner_installed_v1(),
+            "collection_policy_lag_v1 is not available with the exact GPU learner",
+        )?;
         ensure(
             matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
                 && matches!(
@@ -5240,6 +5298,19 @@ fn execute_update_inner_v1(
                 && ex1.is_none()
                 && source.s_learner.is_none(),
             "collection_policy_lag_v1 requires the plain CPU GAE update",
+        )?;
+        ensure(
+            loss_selection
+                .pregame_announcement_step_scale_v1()
+                .is_none(),
+            "collection_policy_lag_v1 is not available with pregame_announcement_step_scale",
+        )?;
+        // Only a play import's contents say a source is a registry transfer:
+        // the source's and the behaviour's are the inputs read before this.
+        ensure(
+            !is_registry_transfer_source_v1(&source)?
+                && !is_registry_transfer_source_v1(&options.behaviour)?,
+            "collection_policy_lag_v1 is not available to registry-transfer sources",
         )?;
     }
     if let Some(options) = &ex1 {

@@ -732,10 +732,16 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // step), taken the same way.
         let gradient_point = self.gradient_point_mut_dims_v1().take();
         if gradient_point.is_some() {
-            // Only the plain GAE objective, on the CPU backward.
+            // Only the plain GAE objective with a single Adam gradient (no
+            // announcement step scale), on the CPU backward.
             if line_b.is_some() || exploration.is_some() || imitation {
                 return Err(NativePolicyTrainErrorV1::CollectionPolicyLag {
                     code: "collection-policy-lag-requires-plain-gae",
+                });
+            }
+            if announcement_scale.is_some() {
+                return Err(NativePolicyTrainErrorV1::CollectionPolicyLag {
+                    code: "collection-policy-lag-refuses-pregame-announcement-step",
                 });
             }
             #[cfg(feature = "gpu-exact-v1")]

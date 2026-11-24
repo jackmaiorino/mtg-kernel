@@ -209,6 +209,17 @@ class StageFTests(unittest.TestCase):
                          {k: v for k, v in full.items() if k not in ("iterations", "ex1", "initial_source",
                                                                       "output_directory")})
 
+    def test_a_lag_config_is_refused_by_name(self):
+        # Stage F segments pass no carry: under mtg-kernel's collection_policy_lag_v1 every segment would start a
+        # fork, so such a config is refused rather than run.
+        plan = self.make()
+        full = json.loads(Path(plan["chains"]["r2-p1-x"]["config"]["path"]).read_text())
+        source = {"checkpoint": {"path": "c.json", "sha256": "c" * 64}}
+        with self.assertRaises(SystemExit) as refused:
+            stagef.segment_config(dict(full, collection_policy_lag_v1=1), 0, 33, self.root / "n", source)
+        self.assertIn("collection_policy_lag_v1", str(refused.exception))
+        stagef.segment_config(full, 0, 33, self.root / "n", source)  # today's config is unchanged
+
     def test_plan_refusals(self):
         self.calibration.write_text(json.dumps(self.cal(dose={"r_star": 0.3, "kappa": 1.0})))
         with self.assertRaisesRegex(SystemExit, "not at r"):

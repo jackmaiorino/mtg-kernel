@@ -17,7 +17,7 @@ def write(path, data):
     return hashlib.sha256(data).hexdigest()
 
 
-def iteration(seg, i, done=True, s_state=False):
+def iteration(seg, i, done=True, s_state=False, lag=False):
     it = seg / 'iterations' / f'{i:06d}'
     att = it / 'attempt-000000'
     for j in range(3):
@@ -28,8 +28,11 @@ def iteration(seg, i, done=True, s_state=False):
         {'s_learner': {'state': {'path': (att / 'update' / 's-train-state.bin').as_posix(),
                                  'sha256': write(att / 'update' / 's-train-state.bin', f'S{i}'.encode() * 9)}}}).encode())
     if done:
-        write(it / 'complete.json', json.dumps({'update': {'path': (att / 'update' / 'update.json').as_posix()},
-                                                'output_identity': {'checkpoint_sha256': digest}}).encode())
+        receipt = {'update': {'path': (att / 'update' / 'update.json').as_posix()},
+                   'output_identity': {'checkpoint_sha256': digest}}
+        if lag:  # mtg-kernel collection_policy_lag_v1: the batch was played on the state before the update's input
+            receipt['collection_policy_lag_v1'] = {'lag': 1, 'behaviour': None, 'behaviour_state_sha256': 'b'}
+        write(it / 'complete.json', json.dumps(receipt).encode())
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'scratch segments are Linux only (rename onto an empty directory)')
@@ -90,6 +93,31 @@ class Scratch(unittest.TestCase):
         for i in range(3):
             self.assertIn(f'iterations/{i:06d}/complete.json', files)
         self.assertFalse((self.cdir / '.seg-00000.persist').exists())
+
+    def test_under_the_lag_reap_and_persist_keep_the_behaviour_predecessor(self):
+        """collection_policy_lag_v1: the running update plays its batch on the second newest state, and the next
+        segment carries it, so reaping and persisting keep its full state (not its trajectories)."""
+        for i in range(3):
+            iteration(self.target, i, lag=True)
+        iteration(self.target, 3, done=False, lag=True)
+        n = chains.reap(self.target)
+        self.assertEqual(n, 4 + 3)  # iteration 0's episodes and checkpoint, iteration 1's episodes
+
+        def att(root, i):
+            return root / 'iterations' / f'{i:06d}' / 'attempt-000000'
+        self.assertFalse((att(self.target, 0) / 'update' / 'checkpoint.json').exists())
+        self.assertTrue((att(self.target, 1) / 'update' / 'checkpoint.json').exists())
+        self.assertFalse(list(att(self.target, 1).rglob('episode-*')))
+        self.assertTrue((att(self.target, 2) / 'update' / 'checkpoint.json').exists())
+        write(self.target / 'run.json', b'{"run": 1}')
+        self.native.mkdir(parents=True)
+        self.mounts.add(self.native)
+        chains.persist(self.arm, self.native, self.cdir)
+        files = sorted(p.relative_to(self.native).as_posix() for p in self.native.rglob('*') if p.is_file())
+        self.assertEqual([f for f in files if f.endswith('checkpoint.json')],
+                         ['iterations/000001/attempt-000000/update/checkpoint.json',
+                          'iterations/000002/attempt-000000/update/checkpoint.json'])
+        self.assertFalse([f for f in files if 'episode-' in f])
 
     def test_persist_refuses_a_checkpoint_that_differs_from_its_pin(self):
         iteration(self.target, 0)
