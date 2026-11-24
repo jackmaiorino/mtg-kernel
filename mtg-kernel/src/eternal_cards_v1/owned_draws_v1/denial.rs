@@ -717,6 +717,46 @@ fn started(state: &GameState, at: usize) -> bool {
     rows(state)
         .any(|(_, row)| matches!(row, JournalV1::DrawStarted { queued_at, .. } if queued_at == at))
 }
+pub(crate) fn begin_choice(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    path: &[u16],
+    options: &[EffectOp],
+) -> Result<(), String> {
+    if pending
+        .resolving_item
+        .inline_effect
+        .as_ref()
+        .and_then(bound)
+        .is_none()
+        && !options.iter().any(|op| leaf_binding(op).is_some())
+    {
+        return Ok(());
+    }
+    let (at, source, drawer, optional) =
+        selected(state, pending).ok_or("Denial choice lost its original delayed trigger")?;
+    let item = pending.resolving_item.v4.stack_item_id;
+    let actual_root = root(at, source.controller, drawer, optional);
+    let matches_root = matches!(
+        &actual_root,
+        EffectOp::Choice { options: original, .. } if options == original.as_slice()
+    );
+    if !optional
+        || player != drawer
+        || !path.is_empty()
+        || !pending.frames.is_empty()
+        || !matches_root
+        || state.eternal_owned_draw_progress_v1.is_some()
+        || answer(state, at, item).is_some()
+        || has_started(state, item)
+        || started(state, at)
+        || state.stack.iter().any(|row| row.v4.stack_item_id == item)
+    {
+        return Err("Denial choice requires its popped native trigger row".into());
+    }
+    Ok(())
+}
 pub(crate) fn record_answer(
     state: &mut GameState,
     pending: &EffectContinuation,

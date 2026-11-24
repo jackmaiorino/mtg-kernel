@@ -16153,6 +16153,13 @@ fn drive_resumable_in_departure_scope_v1(
                 }
                 _ => {
                     let player = continuation.ctx.resolve_player(controller, state);
+                    crate::eternal_cards_v1::owned_draws_v1::denial::begin_choice(
+                        state,
+                        &continuation,
+                        player,
+                        &path,
+                        &options,
+                    )?;
                     continuation.choice = Some(PendingEffectChoice::ChooseOption {
                         player,
                         path,
