@@ -693,7 +693,7 @@ fn rooftop_percher_is_changeling_flyer_and_exiles_up_to_two_and_gains_life() {
     let mut picked = false;
     run_until(
         &mut state,
-        |s| picked && s.stack.len() == 1 && s.priority_player == P0,
+        |s| zone(s, percher) == Zone::Battlefield && s.stack.len() == 1 && s.priority_player == P0,
         |_, decision| match decision {
             Decision::ChooseTargets {
                 legal_targets,
@@ -712,6 +712,7 @@ fn rooftop_percher_is_changeling_flyer_and_exiles_up_to_two_and_gains_life() {
             _ => None,
         },
     );
+    assert!(picked, "Rooftop Percher ETB must have targeted gy");
     // Exile P1's graveyard with Nihil Spellbomb before Rooftop Percher's trigger resolves.
     activate(&mut state, spellbomb, 0, &[Target::Player(P1)]);
     settle_with(&mut state, |_, d| first_answer(d));
