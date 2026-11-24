@@ -503,14 +503,14 @@ fn is_companion_action(action: &Value) -> bool {
 }
 
 /// Whether the public session can follow this action. Policy observation v5
-/// fails closed while an Escape cast stages its graveyard exile (Sleep of the
-/// Dead, and every nonland card under Underworld Breach) and once an extra
-/// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
-/// Time Vault's ability), so these games never begin either; the engine
-/// paths are covered by the rules tests. Every other action is admitted:
-/// schema 5 reports shroud (Sylvan Safekeeper's ability, Argothian
-/// Enchantress, Sterling Grove, Solitary Confinement).
-fn session_can_follow(action: &Value, decision: &Value) -> bool {
+/// fails closed once an extra turn is scheduled (Emrakul, the Aeons Torn's
+/// cast trigger, Time Walk, Time Vault's ability), so these games never begin
+/// one; the engine paths are covered by the rules tests. Every other action
+/// is admitted: schema 5 reports shroud (Sylvan Safekeeper's ability,
+/// Argothian Enchantress, Sterling Grove, Solitary Confinement) and a staged
+/// Escape cast (Sleep of the Dead, Nethergoyf, and every nonland card under
+/// Underworld Breach).
+fn session_can_follow(action: &Value, _decision: &Value) -> bool {
     let s = &action["semantic"];
     if !matches!(
         s["action_kind"].as_str(),
@@ -521,17 +521,10 @@ fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let Some(id) = s["source"]["card_db_id"].as_u64() else {
         return true;
     };
-    let id = id as usize;
-    if matches!(
-        CARD_DEFS[id].name,
+    !matches!(
+        CARD_DEFS[id as usize].name,
         "Emrakul, the Aeons Torn" | "Time Walk" | "Time Vault"
-    ) {
-        return false;
-    }
-    s["action_kind"] != "cast_spell"
-        || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
-        || (CARD_DEFS[id].escape.is_none()
-            && !controls_named(decision, &s["actor"], "Underworld Breach"))
+    )
 }
 
 /// Whether this action chooses a Ward permanent as a target.
