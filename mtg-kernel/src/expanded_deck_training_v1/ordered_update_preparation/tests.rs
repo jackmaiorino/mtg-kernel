@@ -339,7 +339,8 @@ fn deferring_preparation_replays_and_counts_only_the_other_rows() {
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             MAX_GROUPS,
             LearnerRowsV1::Defer {
-                other_forwards: &other_forwards,
+                other_forwards: Some(&other_forwards),
+                other_row_cache: false,
             },
             |_| panic!("the current source reuses the learner"),
         )
@@ -982,4 +983,240 @@ fn sealed_batches_are_admitted_before_any_file_is_opened() {
         "trajectory batch exceeds 512 MiB CPU ingestion bound"
     );
     fs::remove_dir_all(&directory).unwrap();
+}
+
+/// Bounded per-opponent row cache keeps distinct opponent caches separated
+/// without exceeding `OTHER_ROW_CACHE_SLOTS_V1`, and `prepare_deferring_learner_rows_with_cache_v1`
+/// matches reference preparation groups bit for bit with or without opponent row caching.
+#[test]
+fn seat_row_caches_lru_and_deferred_cached_replay_match_reference() {
+    let mut caches = SeatRowCachesV1::default();
+    assert!(caches.other.is_empty());
+    for slot in 0..(OTHER_ROW_CACHE_SLOTS_V1 + 2) {
+        let _ = caches.other_for_v1(Some(slot));
+        assert!(caches.other.len() <= OTHER_ROW_CACHE_SLOTS_V1);
+        assert_eq!(caches.other[0].0, Some(slot));
+    }
+    // Re-accessing an older live key promotes it to MRU without evicting.
+    let promoted = Some(OTHER_ROW_CACHE_SLOTS_V1 - 1);
+    let _ = caches.other_for_v1(promoted);
+    assert_eq!(caches.other.len(), OTHER_ROW_CACHE_SLOTS_V1);
+    assert_eq!(caches.other[0].0, promoted);
+
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+    let (mut t, learner, _) = replay_fixture(&mut policy, None, 0, &[0, 1, 0, 1, 1, 0]);
+    t.schema = POPULATION_TRAJECTORY_SCHEMA.into();
+    t.episode.opponent = Some(learner.source.clone());
+    t.seat_behaviors = Some([learner.clone(), learner.clone()]);
+    validate_trajectory(&t).unwrap();
+
+    let reference = prepare_with_loader_v1(
+        std::slice::from_ref(&t),
+        &policy,
+        &learner,
+        2,
+        DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        ReplayRowCacheV1::Off,
+        |_| panic!("the current source reuses the learner"),
+    )
+    .unwrap();
+    for other_row_cache in [false, true] {
+        let deferred = prepare_counting_v1(
+            std::slice::from_ref(&t),
+            &policy,
+            &learner,
+            2,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_GROUPS,
+            LearnerRowsV1::Defer {
+                other_forwards: None,
+                other_row_cache,
+            },
+            |_| panic!("the current source reuses the learner"),
+        )
+        .unwrap();
+        assert_eq!(
+            group_bytes(&deferred.groups),
+            group_bytes(&reference.groups)
+        );
+        assert_eq!(deferred.telemetry.deferred_learner_rows, Some(3));
+    }
+}
+
+/// End-to-end prepared Net-8 CPU GAE update defers learner Forward #2, matches
+/// the serial reference update state bit for bit, and reproduces the exact
+/// reference replay error when a learner row is corrupted.
+#[test]
+fn net8_prepared_gae_update_defers_learner_replay_bit_exact_with_error_fallback() {
+    let run = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(net8_prepared_gae_update_defers_learner_replay_bit_exact_with_error_fallback_body)
+        .unwrap();
+    if let Err(payload) = run.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn net8_prepared_gae_update_defers_learner_replay_bit_exact_with_error_fallback_body() {
+    let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
+    let root = crate::test_temp_dir_v1::TempTestDir::new_v1("net8-deferred-gae");
+    let source_struct =
+        fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+            &root.join("source"),
+            feature_identity,
+            |_parameters| {},
+        );
+    let descriptor_path = root.join("descriptor.json");
+    let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+    fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+    let source = ExpandedModelSourceV1 {
+        play_import: PinnedFileV1 {
+            path: descriptor_path.canonicalize().unwrap(),
+            sha256: sha(&descriptor_bytes),
+        },
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+        },
+        checkpoint: None,
+        s_learner: None,
+        w_learner: None,
+    };
+    let deck = |id: &str| {
+        let registration =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+        let cards = registration.registered_configuration();
+        ExpandedDeckListV1 {
+            label: id.into(),
+            mainboard: cards.mainboard().to_vec(),
+            sideboard: cards.sideboard().to_vec(),
+        }
+    };
+    let decks = [deck("Affinity"), deck("Terror")];
+    let episodes = vec![ExpandedEpisodeV1 {
+        id: "net8-deferred-0".into(),
+        seed: 2_026_112_301,
+        starting_player: 0,
+        learner_seat: 0,
+        opponent: None,
+        opponent_kind: None,
+        opponent_search: None,
+        registered: decks.clone(),
+        selected: decks,
+        postboard: false,
+        max_physical_decisions: 100_000,
+        max_policy_steps: 1_000_000,
+        runtime_rules: None,
+        reset: None,
+        opening: None,
+        mulligan_modes: None,
+        priority_windows: None,
+        london_keep_offset: None,
+    }];
+    let collect_receipt = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
+        source: source.clone(),
+        episodes,
+        workers: 2,
+        output_directory: root.join("collect"),
+        max_non_natural_episode_fraction: 0.0,
+        collection_sampler: CollectionSamplerV1::Legacy,
+        training_math: TrainingMathV1::PlatformLibm,
+        ex1: None,
+        record_envelope: RecordEnvelopeV1::None,
+    })
+    .unwrap();
+    let trajectories: Vec<PinnedFileV1> =
+        serde_json::from_value(collect_receipt["trajectories"].clone()).unwrap();
+    let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+        pregame_advantage: Default::default(),
+    };
+    let serial_receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+        source: source.clone(),
+        trajectories: trajectories.clone(),
+        learning_rate: 1e-4,
+        value_coefficient: 0.5,
+        output_directory: root.join("update-serial"),
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        loss_selection: gae,
+        record_format: CheckpointRecordFormatV1::default(),
+        card_semantics: None,
+    })
+    .unwrap();
+    let prepared_receipt = execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
+        source: source.clone(),
+        trajectories: trajectories.clone(),
+        learning_rate: 1e-4,
+        value_coefficient: 0.5,
+        preparation_workers: 2,
+        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+        output_directory: root.join("update-prepared"),
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        loss_selection: gae,
+        record_format: CheckpointRecordFormatV1::default(),
+        record_envelope: RecordEnvelopeV1::None,
+        card_semantics: None,
+    })
+    .unwrap();
+    assert_eq!(
+        prepared_receipt["after_state_sha256"],
+        serial_receipt["after_state_sha256"]
+    );
+    assert!(
+        prepared_receipt["update_preparation"]["deferred_learner_rows"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
+
+    // Tamper one learner decision's stored value bits and confirm the deferred
+    // path falls back and surfaces the exact reference error.
+    let raw = fs::read(&trajectories[0].path).unwrap();
+    let mut traj: ExpandedTrajectoryV1 = serde_json::from_slice(&raw).unwrap();
+    let seat = traj.episode.learner_seat;
+    let learner_row = traj
+        .decisions
+        .iter_mut()
+        .find(|row| row.actor == seat)
+        .expect("at least one learner row");
+    learner_row.value ^= 1;
+    let bad_bytes = serde_json::to_vec(&traj).unwrap();
+    let bad_path = root.join("bad-episode.json");
+    fs::write(&bad_path, &bad_bytes).unwrap();
+    let bad_pin = PinnedFileV1 {
+        path: bad_path,
+        sha256: sha(&bad_bytes),
+    };
+    let prepared_err = execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
+        source,
+        trajectories: vec![bad_pin],
+        learning_rate: 1e-4,
+        value_coefficient: 0.5,
+        preparation_workers: 2,
+        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+        output_directory: root.join("update-bad"),
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        loss_selection: gae,
+        record_format: CheckpointRecordFormatV1::default(),
+        record_envelope: RecordEnvelopeV1::None,
+        card_semantics: None,
+    })
+    .unwrap_err();
+    assert!(
+        prepared_err.contains("stored tensor does not reproduce rollout outputs"),
+        "unexpected error: {prepared_err}"
+    );
 }

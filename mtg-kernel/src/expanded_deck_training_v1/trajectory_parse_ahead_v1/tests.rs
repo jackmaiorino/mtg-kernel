@@ -231,3 +231,57 @@ fn an_entry_is_never_charged_less_than_the_capacity_it_keeps_alive() {
     assert_eq!(held - state.retained_bytes, capacity);
     assert!(!state.entries.contains_key(key));
 }
+
+/// Differential check: `CollectionTrajectoryFieldsV1::parse_json_v1` returns
+/// the exact same fields as a full `serde_json::Value` parse across valid,
+/// edge-case, duplicate-key, non-object, and malformed documents.
+#[test]
+fn field_only_json_visitor_matches_full_value_parse_on_valid_and_malformed_inputs() {
+    let valid_cases: &[&[u8]] = &[
+        br#"{"episode":{"seed":1,"learner_seat":0},"learner_sampler":"unclamped","training_math":"portable","input_contract":{"kind":"no_state_digest_v1"},"decisions":[{"step":0,"tensor":{"state":[1,2,3]}}]}"#,
+        br#"{"episode":null,"learner_sampler":123,"training_math":null,"input_contract":null,"extra":[1,2,{"nested":"ok"}]}"#,
+        br#"{"decisions":[1,2,3]}"#,
+        // Duplicate keys: serde_json::Map keeps the last occurrence.
+        br#"{"episode":1,"episode":2,"learner_sampler":"first","learner_sampler":99,"training_math":"a","training_math":"b","input_contract":{"x":1},"input_contract":null}"#,
+        br#"[]"#,
+        br#"null"#,
+        br#"42"#,
+        br#""hello""#,
+        br#"true"#,
+    ];
+    for bytes in valid_cases {
+        let value: Value = serde_json::from_slice(bytes).unwrap();
+        let expected = CollectionTrajectoryFieldsV1::of_document_v1(&value);
+        let actual = CollectionTrajectoryFieldsV1::parse_json_v1(bytes).unwrap();
+        assert_eq!(
+            actual,
+            expected,
+            "mismatch on {}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+
+    let deep_open = "[".repeat(140);
+    let deep_close = "]".repeat(140);
+    let deep_doc = format!(r#"{{"episode":1,"decisions":{deep_open}0{deep_close}}}"#);
+    let malformed_cases: Vec<&[u8]> = vec![
+        br#"{"episode":1,"decisions":[1,2,]}"#,
+        br#"{"episode":1,"decisions":[1e999999]}"#,
+        br#"{"episode":1,"decisions":["bad\escape"]}"#,
+        br#"{"episode":1} trailing"#,
+        br#"{"episode":1,"decisions":[1,2"#,
+        deep_doc.as_bytes(),
+    ];
+    for bytes in malformed_cases {
+        assert!(
+            serde_json::from_slice::<Value>(bytes).is_err(),
+            "reference should reject {}",
+            String::from_utf8_lossy(bytes)
+        );
+        assert!(
+            CollectionTrajectoryFieldsV1::parse_json_v1(bytes).is_err(),
+            "visitor should reject {}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+}

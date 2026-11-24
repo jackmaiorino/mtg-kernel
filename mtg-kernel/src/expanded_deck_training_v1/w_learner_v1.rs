@@ -627,6 +627,106 @@ fn refuse_unsupported_v1(inputs: &WUpdateInputsV1) -> Result<(f32, f32), String>
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "isolates preparation locals from execute_w_update_v1's stack frame"
+)]
+#[inline(never)]
+fn prepare_w_update_groups_v1<'a>(
+    episodes: &'a [super::ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    preparation_workers: Option<usize>,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    defer_learner_rows: bool,
+) -> Result<
+    (
+        Vec<super::LearnerTensorGroupV1<'a>>,
+        Option<ordered_update_preparation::PreparationTelemetryV1>,
+        bool,
+    ),
+    String,
+> {
+    if let Some(workers) = preparation_workers {
+        if defer_learner_rows {
+            if let Ok(prepared) =
+                ordered_update_preparation::prepare_deferring_learner_rows_with_cache_v1(
+                    episodes,
+                    policy,
+                    learner,
+                    workers,
+                    max_prepared_tensor_mebibytes,
+                    max_groups,
+                    training_math,
+                    ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+                )
+            {
+                if !prepared.groups.is_empty() {
+                    return Ok((prepared.groups, Some(prepared.telemetry), true));
+                }
+            }
+        }
+        let prepared = ordered_update_preparation::prepare_v1(
+            episodes,
+            policy,
+            learner,
+            workers,
+            max_prepared_tensor_mebibytes,
+            max_groups,
+            training_math,
+        )?;
+        Ok((prepared.groups, Some(prepared.telemetry), false))
+    } else {
+        let mut tensor_groups = Vec::new();
+        let mut opponent_cache =
+            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
+        for (episode_ordinal, episode) in episodes.iter().enumerate() {
+            let opponent = episode
+                .episode
+                .opponent
+                .as_ref()
+                .map(|s| opponent_cache.load(s))
+                .transpose()?;
+            validate_actual_behaviors_v1(episode, learner, opponent.as_ref().map(|o| &o.behavior))?;
+            tensor_groups.extend(replay_learner_groups_v1(
+                episode_ordinal,
+                episode,
+                policy,
+                opponent.as_ref().map(|o| &o.policy),
+            )?);
+        }
+        Ok((tensor_groups, None, false))
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "isolates reference fallback replay from execute_w_update_v1's stack frame"
+)]
+#[inline(never)]
+fn fallback_w_reference_preparation_v1(
+    episodes: &[super::ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+) -> Result<(), String> {
+    let _ = ordered_update_preparation::prepare_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        max_groups,
+        training_math,
+    )?;
+    Ok(())
+}
+
 /// The wide update (see the module documentation). The caller has checked
 /// the batch size, the optimizer scalars and that the output does not exist.
 pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, String> {
@@ -716,43 +816,31 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     let input_read_seconds = started.elapsed().as_secs_f64();
     let replay_started = std::time::Instant::now();
     // The replay recomputes every actor-visible row: the learner's with the
-    // wide net, a net-8 opponent's with net-8.
-    let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared = ordered_update_preparation::prepare_v1(
+    // wide net, a net-8 opponent's with net-8. For prepared updates, the wide
+    // GAE step recomputes every learner row's forward tape and verifies every
+    // output bit before mutating state, so learner rows can be deferred with
+    // exact reference fallback on any error.
+    let defer_learner_rows = preparation_workers.is_some()
+        && crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok()
+        && episodes.iter().all(|episode| {
+            super::trajectory_contract_v1(episode)
+                .is_ok_and(|c| c.generation == FreshLineageGenerationV1::V4)
+                && !episode.decisions.iter().any(|row| {
+                    row.actor == episode.episode.learner_seat
+                        && !row.tensor.pairing_node_indices.is_empty()
+                })
+        });
+    let (tensor_groups, preparation_telemetry, used_deferred_learner_rows) =
+        prepare_w_update_groups_v1(
             &episodes,
             &policy,
             &learner,
-            workers,
+            preparation_workers,
             max_prepared_tensor_mebibytes,
             ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
             training_math,
+            defer_learner_rows,
         )?;
-        (prepared.groups, Some(prepared.telemetry))
-    } else {
-        let mut tensor_groups = Vec::new();
-        let mut opponent_cache =
-            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
-        for (episode_ordinal, episode) in episodes.iter().enumerate() {
-            let opponent = episode
-                .episode
-                .opponent
-                .as_ref()
-                .map(|s| opponent_cache.load(s))
-                .transpose()?;
-            validate_actual_behaviors_v1(
-                episode,
-                &learner,
-                opponent.as_ref().map(|o| &o.behavior),
-            )?;
-            tensor_groups.extend(replay_learner_groups_v1(
-                episode_ordinal,
-                episode,
-                &policy,
-                opponent.as_ref().map(|o| &o.policy),
-            )?);
-        }
-        (tensor_groups, None)
-    };
     ensure(!tensor_groups.is_empty(), "no learner decisions")?;
     let mut values = Vec::with_capacity(tensor_groups.len());
     for (index, (_, _, rows)) in tensor_groups.iter().enumerate() {
@@ -806,19 +894,35 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     );
     let learner_started = std::time::Instant::now();
     let learner_workers = preparation_workers.unwrap_or(1);
-    let step = state
-        .train_step_gae_feature_transfer_profiled_dims_v1(
-            FreshLineageGenerationV1::V4,
-            &groups,
-            &gae.value_targets,
-            &gae.advantages,
-            value_coefficient,
-            learning_rate,
-            None,
-            learner_workers,
-            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
-        )
-        .map_err(err)?;
+    let step = match state.train_step_gae_feature_transfer_profiled_dims_v1(
+        FreshLineageGenerationV1::V4,
+        &groups,
+        &gae.value_targets,
+        &gae.advantages,
+        value_coefficient,
+        learning_rate,
+        None,
+        learner_workers,
+        &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+    ) {
+        Ok(step) => step,
+        Err(step_err) => {
+            if used_deferred_learner_rows {
+                if let Some(workers) = preparation_workers {
+                    fallback_w_reference_preparation_v1(
+                        &episodes,
+                        &policy,
+                        &learner,
+                        workers,
+                        max_prepared_tensor_mebibytes,
+                        ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
+                        training_math,
+                    )?;
+                }
+            }
+            return Err(err(step_err));
+        }
+    };
     let learner_update_seconds = learner_started.elapsed().as_secs_f64();
     drop(groups);
     drop(substeps);
