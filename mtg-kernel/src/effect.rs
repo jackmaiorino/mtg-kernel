@@ -8240,6 +8240,14 @@ pub(crate) fn jace_draw_replacement_origin(
                     u32::from(branch),
                     Vec::new(),
                 ),
+                (
+                    0,
+                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                        crate::eternal_cards_v1::EternalOpV1::Pf2aV1(
+                            crate::eternal_pauper_pf2a_v1::Pf2aOpV1::ThrillingDiscoveryV1,
+                        ),
+                    ))),
+                ) => (PlayerRef::Controller, 3, Vec::new()),
                 _ => return false,
             }
         }
@@ -8311,6 +8319,14 @@ fn leaf_staged_draw(
         }
         // K'un-Lun Warrior stages one draw at the leaf after payment.
         E::Pf1aV1(Pf1aOpV1::KunLunV1) => Some((PlayerRef::Controller, 1, Vec::new())),
+        // Keep Watch stages one draw per attacking creature at resolution.
+        E::Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aOpV1::KeepWatchV1) => {
+            Some((PlayerRef::Controller, u32::MAX, Vec::new()))
+        }
+        // Flush Out stages two draws after its mandatory discard.
+        E::Pf2bV1(crate::eternal_pauper_pf2b_v1::Pf2bOpV1::FlushOutV1) => {
+            Some((PlayerRef::Controller, 2, Vec::new()))
+        }
         // Sylvan Library stages two draws above its choose/put-back frame.
         E::P1aV1(P1aOpV1::SylvanDrawV1) => {
             let below = EffectFrame::Program {

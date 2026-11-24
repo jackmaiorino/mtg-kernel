@@ -39106,6 +39106,681 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/InsectBlackGreenToken.java",
    "is_token": true
+  },
+  {
+   "name": "Radiant Grove",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [
+    "Forest",
+    "Plains"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [
+    "G",
+    "W"
+   ],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "dual_land",
+    "enters_tapped",
+    "mana_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RadiantGrove.java"
+  },
+  {
+   "name": "Escape Tunnel",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Land"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": true,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "library_search",
+    "unblockable"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EscapeTunnel.java"
+  },
+  {
+   "name": "Tuktuk Rubblefort",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Wall"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "defender",
+    "reach",
+    "haste_grant"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TuktukRubblefort.java"
+  },
+  {
+   "name": "Granger Guildmage",
+   "engine_capability": "full",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "damage",
+    "first_strike"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GrangerGuildmage.java"
+  },
+  {
+   "name": "Obsidian Acolyte",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "protection",
+    "activated_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/ObsidianAcolyte.java"
+  },
+  {
+   "name": "Spirit Mascot",
+   "engine_capability": "full",
+   "mana_cost": "{R}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit",
+    "Ox"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "graveyard_leave_trigger",
+    "plus_one_counters"
+   ]
+  },
+  {
+   "name": "Keep Watch",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KeepWatch.java"
+  },
+  {
+   "name": "Embrace the Paradox",
+   "engine_capability": "full",
+   "mana_cost": "{3}{G}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U",
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "draw_card",
+    "put_land_onto_battlefield"
+   ]
+  },
+  {
+   "name": "Thrilling Discovery",
+   "engine_capability": "full",
+   "mana_cost": "{R}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "life_gain",
+    "discard",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/ThrillingDiscovery.java"
+  },
+  {
+   "name": "Rites of Initiation",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "discard_random",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RitesOfInitiation.java"
+  },
+  {
+   "name": "Memory Leak",
+   "engine_capability": "full",
+   "mana_cost": "{2}{B}",
+   "mana_value": 3,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "hand_disruption",
+    "exile_graveyard",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MemoryLeak.java"
+  },
+  {
+   "name": "Gigadrowse",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "replicate",
+    "tap_permanent"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Gigadrowse.java"
+  },
+  {
+   "name": "Aurora Eidolon",
+   "engine_capability": "full",
+   "mana_cost": "{3}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "damage_prevention",
+    "graveyard_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/AuroraEidolon.java"
+  },
+  {
+   "name": "Sandstorm Eidolon",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "cant_block",
+    "graveyard_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SandstormEidolon.java"
+  },
+  {
+   "name": "Rooftop Percher",
+   "engine_capability": "full",
+   "mana_cost": "{5}",
+   "mana_value": 5,
+   "colors": [],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Shapeshifter"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "changeling",
+    "flying",
+    "etb_trigger",
+    "exile_graveyard",
+    "life_gain"
+   ]
+  },
+  {
+   "name": "Rift Sower",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elf",
+    "Druid"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [
+    "W",
+    "U",
+    "B",
+    "R",
+    "G"
+   ],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "mana_ability",
+    "tap_ability",
+    "any_color_mana",
+    "suspend"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/RiftSower.java"
+  },
+  {
+   "name": "Pegasus Guardian",
+   "engine_capability": "full",
+   "mana_cost": "{5}{W}",
+   "mana_value": 6,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Pegasus"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "end_step_trigger",
+    "token_creation",
+    "adventure",
+    "flicker"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PegasusGuardian.java"
+  },
+  {
+   "name": "Pegasus Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Pegasus"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flying"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/PegasusToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Stormshriek Feral",
+   "engine_capability": "full",
+   "mana_cost": "{4}{R}",
+   "mana_value": 5,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Dragon"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "flying",
+    "haste",
+    "activated_ability",
+    "pump",
+    "omen",
+    "discard",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StormshriekFeral.java"
+  },
+  {
+   "name": "Benevolent Unicorn",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Unicorn"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "damage_replacement"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BenevolentUnicorn.java"
+  },
+  {
+   "name": "Boulderbranch Golem",
+   "engine_capability": "full",
+   "mana_cost": "{7}",
+   "mana_value": 7,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Golem"
+   ],
+   "supertypes": [],
+   "power": 6,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "prototype",
+    "etb_trigger",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BoulderbranchGolem.java"
+  },
+  {
+   "name": "Inside Out",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U/R}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-field-20261121"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "pt_switch",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InsideOut.java"
   }
  ]
 }
