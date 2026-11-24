@@ -501,9 +501,25 @@ fn gigadrowse_taps_target_permanent_and_replicates_with_retargeting() {
     let mut retargets = vec![Target::Object(p_c), Target::Object(p_b)];
     settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseSpellCopyRetarget { .. } => Action::ChooseSpellCopyRetarget(true),
-        Decision::ChooseTargets { .. } => Action::ChooseTarget(retargets.pop().unwrap()),
+        Decision::ChooseEffectTargets { legal_targets, .. } => {
+            let next_target = retargets.pop().expect("two replicate retargets");
+            assert!(
+                legal_targets.contains(&next_target),
+                "{next_target:?} not in {legal_targets:?}"
+            );
+            Action::ChooseEffectTarget(next_target)
+        }
+        Decision::ChooseTargets { legal_targets, .. } => {
+            let next_target = retargets.pop().expect("two replicate retargets");
+            assert!(
+                legal_targets.contains(&next_target),
+                "{next_target:?} not in {legal_targets:?}"
+            );
+            Action::ChooseTarget(next_target)
+        }
         other => first_answer(other),
     });
+    assert!(retargets.is_empty(), "both replicate copies must retarget");
     assert!(state.objects.get(p_a).tapped);
     assert!(state.objects.get(p_b).tapped);
     assert!(state.objects.get(p_c).tapped);
@@ -514,7 +530,7 @@ fn gigadrowse_taps_target_permanent_and_replicates_with_retargeting() {
 
 #[test]
 fn aurora_eidolon_prevents_three_damage_respects_stomp_and_returns_on_multicolored_cast() {
-    // 1. Prevent next 3 damage across multiple packets (1 then 3 -> 0 then 1 dealt).
+    // 1. Prevent next 3 damage across multiple packets (2 then 3 -> 0 then 2 dealt).
     let mut state = plains();
     let aurora = put(&mut state, P0, "Aurora Eidolon", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::W], 0);
@@ -522,20 +538,21 @@ fn aurora_eidolon_prevents_three_damage_respects_stomp_and_returns_on_multicolor
     settled(&mut state);
     assert_eq!(zone(&state, aurora), Zone::Graveyard);
 
-    // 1 damage from End the Festivities -> completely prevented, 2 shield left.
+    // 2 damage from Shock -> completely prevented, 1 shield left.
     state.priority_player = P1;
-    let fest = put(&mut state, P1, "End the Festivities", Zone::Hand);
+    let shock = put(&mut state, P1, "Shock", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 0);
-    cast(&mut state, fest, &[]);
+    cast(&mut state, shock, &[Target::Player(P0)]);
     settled(&mut state);
     assert_eq!(life(&state, P0), 20);
 
-    // 3 damage from Lightning Bolt -> 2 prevented, 1 dealt!
+    // 3 damage from Lightning Bolt -> 1 prevented, 2 dealt!
+    state.priority_player = P1;
     let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 0);
     cast(&mut state, bolt, &[Target::Player(P0)]);
     settled(&mut state);
-    assert_eq!(life(&state, P0), 19);
+    assert_eq!(life(&state, P0), 18);
 
     // 2. Casting a monocolored spell does NOT trigger Aurora Eidolon in graveyard.
     state.priority_player = P0;

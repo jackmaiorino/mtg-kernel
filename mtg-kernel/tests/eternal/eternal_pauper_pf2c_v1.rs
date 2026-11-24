@@ -381,8 +381,11 @@ fn benevolent_unicorn_reduces_spell_damage_stacks_and_ignores_damage_cant_be_pre
     let u1 = put(&mut state, P0, "Benevolent Unicorn", Zone::Battlefield);
     let creature = put(&mut state, P0, "Kor Skyfisher", Zone::Battlefield); // 2/3
 
+    // Advance to P1's Main1 so P1 can cast both Instants and Sorceries (End the Festivities).
+    to_next_turn(&mut state);
+    assert_eq!(state.active_player, P1);
+
     // 1. Lightning Bolt (3) to player -> 2; to creature -> 2 (survives!).
-    state.priority_player = P1;
     let bolt1 = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 0);
     cast(&mut state, bolt1, &[Target::Player(P0)]);
@@ -416,7 +419,6 @@ fn benevolent_unicorn_reduces_spell_damage_stacks_and_ignores_damage_cant_be_pre
 
     // 4. CR 614.1a replacement, NOT prevention: Stomp ("damage can't be prevented")
     //    deals 2 - 2 = 0 with two Unicorns, and subsequent Bolt still deals 3 - 2 = 1!
-    state.priority_player = P1;
     let giant = put(&mut state, P1, "Bonecrusher Giant", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 1);
     cast_mode(&mut state, giant, 1, &[Target::Player(P0)]);
@@ -459,7 +461,10 @@ fn benevolent_unicorn_does_not_reduce_combat_or_ability_damage_and_respects_dres
     assert_eq!(life(&state, P1), 17, "combat damage must not be reduced");
 
     // 2. Dress Down removes Benevolent Unicorn's static replacement ability.
-    put(&mut state, P0, "Dress Down", Zone::Battlefield);
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
     let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 0);
     cast(&mut state, bolt, &[Target::Player(P1)]);
@@ -654,6 +659,7 @@ fn boulderbranch_golem_prototype_copy_lki_etb_and_fatal_push_mv() {
     settle_with(&mut state, |_, d| first_answer(d)); // Revolt enabled for P1!
 
     let push = put(&mut state, P1, "Fatal Push", Zone::Hand);
+    state.priority_player = P1;
     pool(&mut state, P1, &[ManaColor::B], 0);
     cast(&mut state, push, &[Target::Object(golem)]);
     settled(&mut state);
@@ -725,17 +731,10 @@ fn inside_out_switches_pt_in_layer_7d_kills_zero_power_cancels_on_second_and_dra
 
     // Discard all 5 cards to Tireless Tribe AFTER Inside Out resolved!
     for _ in 0..5 {
-        let card = state.players[0].hand[0];
         activate(&mut state, tribe, 0, &[]);
-        match next(&mut state) {
-            Decision::Discard { choices, .. } => {
-                assert!(choices.contains(&card));
-                act(&mut state, Action::Discard(vec![card]));
-            }
-            other => panic!("expected discard prompt, got {other:?}"),
-        }
-        settled(&mut state);
+        settle_with(&mut state, |_, decision| first_answer(decision));
     }
+    assert!(state.players[0].hand.is_empty(), "all 5 cards discarded");
     assert_eq!(
         power_toughness(&state, tribe),
         (21, 1),

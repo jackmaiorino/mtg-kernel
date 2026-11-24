@@ -428,6 +428,7 @@ fn escape_tunnel_fetches_basic_land_tapped_and_makes_small_creature_unblockable(
     assert!(!state.objects.get(tunnel).tapped, "enters untapped");
 
     activate(&mut state, tunnel, 0, &[]);
+    next(&mut state);
     assert_eq!(zone(&state, tunnel), Zone::Graveyard);
     settle_with(&mut state, |_, d| match d {
         Decision::ChooseEffectTargets { legal_targets, .. }
@@ -516,13 +517,17 @@ fn tuktuk_rubblefort_defends_reaches_and_grants_haste_to_controlled_creatures() 
     );
     assert_eq!(life(&state, P1), 18);
 
-    // Dress Down suppresses Rubblefort's haste grant.
-    let dress = put(&mut state, P1, "Dress Down", Zone::Battlefield);
+    // Dress Down suppresses Rubblefort's haste grant until Dress Down leaves at end step.
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
     assert!(!keyword(&state, bear, Keywords::HASTE));
-    state.objects.get_mut(dress).zone = Zone::Graveyard;
-    state.players[P1.index()]
-        .battlefield
-        .retain(|&o| o != dress);
+    run_until(
+        &mut state,
+        |s| zone(s, dress) == Zone::Graveyard,
+        |_, _| None,
+    );
     assert!(keyword(&state, bear, Keywords::HASTE));
 }
 
