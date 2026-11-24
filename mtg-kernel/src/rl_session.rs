@@ -18912,7 +18912,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause
         // as above. Old (wave-1) bytes: [0x45, 0x8c, 0xce, 0x40, 0xb7, 0x14,
         // 0x6d, 0x98, 0x81, 0x18, 0xc5, 0x49, 0x46, 0xeb, 0x92, 0x40]. New
         // value is this test's own live-computed commitment, read directly
@@ -18920,8 +18920,8 @@ mod tests {
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0x57, 0x66, 0x98, 0x62, 0x89, 0xda, 0x70, 0x3d, 0x25, 0xaf, 0x03, 0x20, 0x52, 0x38,
-                0x0c, 0xce,
+                0xd8, 0xc9, 0xc1, 0xd2, 0x8e, 0x91, 0x27, 0x08, 0xfd, 0x5f, 0x4c, 0x4c, 0x1a, 0x39,
+                0xfb, 0x65,
             ]
         );
     }
@@ -18977,7 +18977,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1) v1
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)). Old (wave-1) v1
         // bytes: [0xc3, 0xa8, 0x8d, 0xde, 0xbc, 0xbc, 0xc3, 0xf3, 0xcb, 0xac,
         // 0x00, 0x74, 0xda, 0xcd, 0x75, 0x5f]. New value is this test's own
         // live-computed commitment, read directly from a failing run (never
@@ -18985,8 +18985,8 @@ mod tests {
         assert_eq!(
             v1,
             [
-                0xf8, 0xca, 0x13, 0xd1, 0xd2, 0x16, 0xb6, 0x5a, 0xd7, 0x4d, 0x38, 0xf7, 0x46, 0x0b,
-                0x59, 0x21,
+                0x83, 0x60, 0x56, 0x29, 0x62, 0xed, 0xf5, 0x2d, 0x43, 0xaa, 0x70, 0xc2, 0x01, 0x2e,
+                0xe1, 0xbf,
             ]
         );
 
@@ -19022,7 +19022,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Old (wave-1)
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)). Old (wave-1)
         // bytes: [0xf4, 0x6a, 0x56, 0x15, 0x52, 0x37, 0x5e, 0xcf, 0xaa, 0x0b,
         // 0x8a, 0xbc, 0x76, 0xa4, 0xcd, 0x05]. New value is this test's own
         // live-computed commitment, read directly from a failing run (never
@@ -19030,8 +19030,8 @@ mod tests {
         assert_eq!(
             common_v2,
             [
-                0xd3, 0x9d, 0x49, 0xbd, 0xdb, 0x9a, 0xef, 0x4a, 0xb9, 0xfb, 0x0f, 0xec, 0xd0, 0x9b,
-                0x5e, 0x74,
+                0xa4, 0x58, 0xcf, 0x38, 0x26, 0xf7, 0xbf, 0xb8, 0x2c, 0xef, 0xa9, 0xcd, 0x03, 0xc9,
+                0x5c, 0x0f,
             ]
         );
         assert_ne!(common_v2, v1);
@@ -19693,7 +19693,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c). Per the cause key
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)). Per the cause key
         // above this table, only the two cause-A (policy) constants embed
         // KERNEL_CARDDB_HASH and move again; the two cause-B (core)
         // constants are `GameState::monarch`-shaped (wave 1 Task 11,
@@ -19718,7 +19718,7 @@ mod tests {
         eprintln!("current environment-v2 policy/core goldens: {v2_policy:#018x} {v2_full_core:#018x} {v2_fast_core:#018x}");
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0x2ad8_a53b_ecdc_221f,
+            0x1410_3c05_573a_9d85,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
@@ -19739,7 +19739,7 @@ mod tests {
         // Current merged-rule values observed in CI run 36812673206
         // (Linux job 110211057207); full and fast core paths agree exactly.
         assert_eq!(
-            v2_policy, 0x5c21_da67_5bad_fa2a,
+            v2_policy, 0x0b9e_f72f_a568_dd88,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
@@ -20170,7 +20170,7 @@ mod tests {
         // own re-pin comment.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0x2ad8_a53b_ecdc_221f
+            0x1410_3c05_573a_9d85
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
@@ -20358,7 +20358,7 @@ mod tests {
         // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x5c21_da67_5bad_fa2a,
+            0x0b9e_f72f_a568_dd88,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
@@ -20406,7 +20406,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x5c21_da67_5bad_fa2a
+            0x0b9e_f72f_a568_dd88
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
@@ -20696,14 +20696,14 @@ mod tests {
     /// Re-captured again for the Phase 1 card lane merge (2026-09): merging
     /// lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the Phase 1
     /// branch moved KERNEL_CARDDB_HASH again (from 0xde59_c501_e943_f3fd to
-    /// 0x064a_7c98_9255_ab3c), embedded in the same transcript. Old
+    /// 0x064a_..._ab3c (catalog v34)), embedded in the same transcript. Old
     /// (wave-1) value:
     /// "d0494851dbd7d944dab4cbca34e443ceedaf6a7269a0125cd1a7533c7b38f110". New
     /// value is this test's own live-computed digest, read directly from a
     /// failing run (never hand-typed).
     #[cfg(not(feature = "limited-fdn-fixtures"))]
     const V5_TRANSCRIPT_SHA256: &str =
-        "62208a3deec93510fe8595f23625d6cc4e604965d064350a2c1350955ac5266a";
+        "470e0a8e346cff59cbbfa38ae4c13c95eebf51e81f62c90fb36afe9ef5b4cb1f";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

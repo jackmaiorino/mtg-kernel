@@ -60,7 +60,7 @@
       ],
       "observation": {
         "acting_player": "p1",
-        "card_db_hash": 453311707236117308,
+        "card_db_hash": 1338052366727553641,
         "extensions": {
           "decision_local_library": null,
           "finalized_chosen_creature_costs": [],
@@ -4924,7 +4924,7 @@
       ],
       "observation": {
         "acting_player": "p1",
-        "card_db_hash": 453311707236117308,
+        "card_db_hash": 1338052366727553641,
         "extensions": {
           "decision_local_library": null,
           "finalized_chosen_creature_costs": [],
@@ -10192,7 +10192,7 @@
       ],
       "observation": {
         "acting_player": "p0",
-        "card_db_hash": 453311707236117308,
+        "card_db_hash": 1338052366727553641,
         "extensions": {
           "decision_local_library": null,
           "finalized_chosen_creature_costs": [],
@@ -15165,7 +15165,7 @@
       ],
       "observation": {
         "acting_player": "p1",
-        "card_db_hash": 453311707236117308,
+        "card_db_hash": 1338052366727553641,
         "extensions": {
           "decision_local_library": null,
           "finalized_chosen_creature_costs": [],

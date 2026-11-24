@@ -179,7 +179,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
 // it before any store written under this profile is used. See
 // `classify_catalog_profile_v1`'s doc comment for the tie rule this
 // byte-identical initial value requires against CURRENT.
-const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "064a7c989255ab3c";
+const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "1291b789c9aaa269";
 
 // Separate FDN batch A identity: the PAUPER_META_W1 card registry plus the
 // six appended FDN fixture definitions, built only under the
@@ -508,7 +508,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1: &str =
 // Native228's retained 496-definition export includes every frozen printing,
 // with 36 printing recipes still Partial. This is record identity only;
 // it does not authorize those cards, models, search, or training.
-const FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1: &str = "2430d3860838f596";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1: &str = "a575a06de7ac0729";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_FULL_POOL_PROVISIONAL_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
@@ -9053,7 +9053,7 @@ mod tests {
         ));
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1,
-            "2430d3860838f596"
+            "a575a06de7ac0729"
         );
     }
 
@@ -10158,7 +10158,7 @@ mod tests {
         );
         assert_eq!(
             sha256_hex(&run_bytes),
-            "45a792caf3ea9782f25977043dfa968fa296a39e52f8fa43716442901e0df5ea"
+            "a43db6d53fbdf036f08d15747597272082ed1e47431f7c7feb4e9eacd4068322"
         );
     }
 
@@ -10901,7 +10901,7 @@ mod tests {
         // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&bytes),
-            "45a792caf3ea9782f25977043dfa968fa296a39e52f8fa43716442901e0df5ea"
+            "a43db6d53fbdf036f08d15747597272082ed1e47431f7c7feb4e9eacd4068322"
         );
         assert!(!String::from_utf8(bytes)
             .unwrap()
@@ -11203,7 +11203,7 @@ mod tests {
         // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&legacy_bytes),
-            "45a792caf3ea9782f25977043dfa968fa296a39e52f8fa43716442901e0df5ea"
+            "a43db6d53fbdf036f08d15747597272082ed1e47431f7c7feb4e9eacd4068322"
         );
         assert!(!String::from_utf8(legacy_bytes)
             .unwrap()

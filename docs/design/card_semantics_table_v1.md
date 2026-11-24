@@ -23,7 +23,7 @@ The writer (`--write`, and `--cube --write` for the cube table below) takes an e
 
 ## The first table
 
-171 cards, 488 columns, card database `064a7c989255ab3c`. A card has 6 to 28 nonzero columns (median 14).
+171 cards, 488 columns, card database `1291b789c9aaa269`. A card has 6 to 28 nonzero columns (median 14).
 
 | Census | All tokens | Effect tokens (`leaf:`, `op:`, `cond:`) |
 | --- | ---: | ---: |

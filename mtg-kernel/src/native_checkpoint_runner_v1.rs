@@ -1416,7 +1416,7 @@ mod tests {
         // Re-baselined again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) value:
         // "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5".
         // This value is shared verbatim by
@@ -1426,7 +1426,7 @@ mod tests {
         // read directly from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "d77a82c7a9c4928803be6af2d42c494a37c93091dbafbcdd897d8fc9f2918fae"
+            "238b384b9f00f8e002a320e41bc59f7311cb684821076243d29294d737a22b98"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
@@ -1502,7 +1502,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) value:
         // "91020a9d924d1a53eeddc9cc59c72c72d7fff44cc10ddf61d775be00d4186778".
         // deck_hashes/episode_index/environment_seed/learner_seat above, and

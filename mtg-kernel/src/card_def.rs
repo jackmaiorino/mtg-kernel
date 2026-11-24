@@ -4286,14 +4286,14 @@ mod tests {
         // prior definitions. Version 33 folded in Fang Dragon's Adventure
         // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
         // `cant_be_blocked_by_monarchs_creatures` static flag.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x1291_b789_c9aa_a269);
     }
 
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x2430_d386_0838_f596;
+        const EXPECTED_FDN: u64 = 0xa575_a06d_e7ac_0729;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -4303,7 +4303,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x1dd0_c7ab_b0bc_2432;
+        const EXPECTED_ETERNAL: u64 = 0x208d_4c51_7eed_232b;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
