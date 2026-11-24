@@ -437,12 +437,17 @@ pub(super) fn adventure_allowed(state: &GameState, card: ObjectId, actor: Player
         && adventure_permission(state, card, o.zone_change_count)
             .map_or(o.owner == actor, |(_, holder)| holder == actor)
 }
-pub(super) fn adventure_contract(state: &GameState, source: StackSourceContractV4) -> bool {
+/// Whether `caster` held the Adventure exile permission this cast used: the
+/// foreign receipt's holder when one binds this exile incarnation, else the
+/// owner.
+pub(super) fn adventure_contract(
+    state: &GameState,
+    source: StackSourceContractV4,
+    caster: PlayerId,
+) -> bool {
     source.spell_cast_origin.is_some_and(|origin| {
         adventure_permission(state, source.source, origin.origin_zone_change_count)
-            .map_or(source.owner == source.controller, |(_, holder)| {
-                holder == source.controller
-            })
+            .map_or(source.owner == caster, |(_, holder)| holder == caster)
     })
 }
 fn push(state: &mut GameState, journal: JournalV72) -> u64 {
@@ -1503,7 +1508,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     SpellCastRouteV4::ResolvingEffectV1 { holder, .. } => {
                         holder == original.controller
                     }
-                    SpellCastRouteV4::AdventureExile => adventure_contract(state, *original),
+                    SpellCastRouteV4::AdventureExile => {
+                        adventure_contract(state, *original, original.controller)
+                    }
                     SpellCastRouteV4::Plotted { .. } => {
                         original.owner == original.controller
                             && original.cast_method == CastMethodV4::Plotted
@@ -1655,13 +1662,63 @@ pub(crate) fn sampler_stash_conflicts_v72(
         || source.attached_to.is_some_and(|r| pool.contains(&r.object)))
 }
 
+/// Whether the journal row at `at` records Tinybones custody. Every row does
+/// except a foreign Adventure receipt and its native reversal: those are
+/// written for any Adventure whose resolving spell was controlled by a player
+/// other than its owner, which an ordinary cast-from-exile grant (Ragavan,
+/// Fallen Shinobi, Etali) reaches without any Tinybones. Such a receipt is
+/// outside Tinybones only when it proves it: its Adventure-form cast records a
+/// present cast origin whose route is a known non-Tinybones grant held by the
+/// spell's controller. A missing or erased contract or origin, a Tinybones
+/// route, or any other route counts as Tinybones state, so the legacy boundary
+/// stays closed for it.
+fn tinybones_row(state: &GameState, at: usize, row: &JournalV72) -> bool {
+    match row {
+        JournalV72::ForeignAdventure { original, .. } => !original
+            .v4
+            .source_contract
+            .is_some_and(|s| known_grant_route(original, s)),
+        JournalV72::AdventureAborted { permission, .. } => match usize::try_from(*permission) {
+            Ok(earlier) if earlier < at => journal(state, *permission)
+                .ok()
+                .is_none_or(|root| tinybones_row(state, earlier, root)),
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+/// The routes by which a player other than the owner casts a card's
+/// Adventure form under an ordinary grant: an exile play permission, paid or
+/// free (Ragavan, Fallen Shinobi, Dauthi Voidwalker), a resolving instruction
+/// (Etali), or a library or graveyard cast grant. Each names its holder, who
+/// must be the spell's controller.
+fn known_grant_route(original: &StackItem, source: StackSourceContractV4) -> bool {
+    original.v4.cast_method == Some(CastMethodV4::Omen)
+        && source.cast_method == CastMethodV4::Omen
+        && source.controller == original.controller
+        && source
+            .spell_cast_origin
+            .is_some_and(|origin| match origin.route {
+                SpellCastRouteV4::ExilePermission { holder, .. }
+                | SpellCastRouteV4::ExileFreePermission { holder, .. }
+                | SpellCastRouteV4::ResolvingEffectV1 { holder, .. }
+                | SpellCastRouteV4::LibraryPermissionV1 { holder, .. }
+                | SpellCastRouteV4::GraveyardPermissionV1 { holder, .. } => {
+                    holder == source.controller
+                }
+                _ => false,
+            })
+}
+
 pub(crate) fn require_legacy(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
     if state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TinybonesV72])
-        .iter()
-        .any(|event| matches!(event, CommittedEvent::TinybonesV72 { .. }))
+        .of_kinds_v2(&[EventKindV1::TinybonesV72])
+        .any(|(at, event)| {
+            matches!(event, CommittedEvent::TinybonesV72 { journal } if tinybones_row(state, at, journal))
+        })
         || state.objects.iter().any(|(id, o)| {
             crate::optional_trigger_public_v1::visible_known(state, id, viewer, |card_id| {
                 definition(card_id)

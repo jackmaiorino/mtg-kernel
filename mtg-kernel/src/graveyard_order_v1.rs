@@ -106,7 +106,7 @@ struct RunnerV1 {
     invalid: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StateV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,10 +115,57 @@ pub(crate) struct StateV1 {
     runner: Option<Box<RunnerV1>>,
 }
 
+impl PartialEq for StateV1 {
+    fn eq(&self, other: &Self) -> bool {
+        self.pending == other.pending
+    }
+}
+
 impl StateV1 {
     pub(crate) fn is_empty(&self) -> bool {
         self.pending.is_none()
     }
+}
+
+pub(crate) fn has_runner(state: &GameState) -> bool {
+    state.engine.graveyard_order_v1.runner.is_some()
+}
+
+pub(crate) fn clear_runner_for_entry_checkpoint(state: &mut GameState) {
+    state.engine.graveyard_order_v1.runner = None;
+}
+
+pub(crate) fn copy_runner_for_entry_replay(from: &GameState, to: &mut GameState) {
+    to.engine.graveyard_order_v1.runner = from.engine.graveyard_order_v1.runner.clone();
+}
+
+pub(crate) fn begin_dry_run_runner(state: &mut GameState) -> bool {
+    if enabled(state) && state.engine.graveyard_order_v1.runner.is_none() {
+        state.engine.graveyard_order_v1.runner = Some(Box::new(RunnerV1 {
+            answers: Vec::new(),
+            consumed: 0,
+            checkpoint: None,
+            text_scenes: Vec::new(),
+            quoting: false,
+            invalid: false,
+        }));
+        true
+    } else {
+        false
+    }
+}
+
+pub(crate) fn finish_dry_run_runner(state: &mut GameState) -> Result<(), String> {
+    let runner = state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .take()
+        .ok_or("graveyard order dry-run lost its native runner")?;
+    if runner.checkpoint.is_some() || runner.invalid {
+        return Err("graveyard order dry-run unexpectedly suspended".into());
+    }
+    Ok(())
 }
 
 impl Hash for StateV1 {
@@ -170,10 +217,15 @@ fn replay(
     operation: &OperationV1,
     answers: &[AnswerV1],
 ) -> Result<(GameState, Option<Decision>), String> {
-    if !enabled(original) || original.engine.graveyard_order_v1 != StateV1::default() {
+    if !enabled(original)
+        || !original.engine.graveyard_order_v1.is_empty()
+        || original.engine.graveyard_order_v1.runner.is_some()
+    {
         return Err("graveyard order lost its original session and operation".into());
     }
-    if crate::linked_aura_operation_v1::has_pending(original) {
+    if crate::linked_aura_operation_v1::has_pending(original)
+        && !matches!(operation, OperationV1::Advance | OperationV1::Step(_))
+    {
         return Err("graveyard order cannot replay an unresolved linked entry operation".into());
     }
     let mut staged = original.clone();

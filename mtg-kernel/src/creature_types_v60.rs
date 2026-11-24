@@ -655,6 +655,7 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Elspeth => None,
         Subtype::Grist => None,
         Subtype::Nissa => None,
+        Subtype::Pegasus => Some(CreatureTypeV60::Pegasus),
     }
 }
 
