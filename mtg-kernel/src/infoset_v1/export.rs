@@ -948,6 +948,12 @@ fn export_versioned(
             "Meddling Mage named entry is unavailable in this infoset export",
         ));
     }
+    if crate::text_color_change_v1::requires_successor(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Text color-word replacement is unavailable in this infoset export",
+        ));
+    }
 
     crate::graveyard_order_v1::refuse_legacy(state)
         .map_err(|error| refuse(RefusalCodeV1::R2, error))?;

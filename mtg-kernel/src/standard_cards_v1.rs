@@ -984,6 +984,7 @@ pub(crate) fn legal_targets(
     target: StandardTargetV1,
     controller: PlayerId,
     source: Option<(ObjectId, u32)>,
+    text_color_origin: Option<crate::text_color_change_v1::TargetOriginV1>,
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
@@ -1053,9 +1054,12 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
-    if let Some(targets) =
-        crate::eternal_premodern_p3b_v1::targets::legal_targets(target, prefix, state)
-    {
+    if let Some(targets) = crate::eternal_premodern_p3b_v1::targets::legal_targets(
+        target,
+        text_color_origin,
+        prefix,
+        state,
+    ) {
         return targets;
     }
     if let Some(targets) =

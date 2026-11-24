@@ -183,3 +183,6 @@ mod knowledge_owned_draws_v1;
 
 #[path = "eternal/denial_owned_draws_v1.rs"]
 mod denial_owned_draws_v1;
+
+#[path = "eternal/text_color_change_v1.rs"]
+mod text_color_change_v1;

@@ -481,6 +481,8 @@ pub mod premodern_ordered_public_v1;
 pub mod rules_meaning_divine_v44;
 pub mod rules_meaning_zul_ashur_v1;
 mod sampled_history_v1;
+/// Layer-3 color-word text replacement for Alter Reality (issue #460).
+pub mod text_color_change_v1;
 pub mod zul_ashur_observation_v1;
 pub mod zul_ashur_public_v1;
 mod zul_ashur_v1;
