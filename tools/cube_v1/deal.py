@@ -102,6 +102,11 @@ def validate_constants(doc: Any) -> dict[str, Any]:
         raise ValueError(f"basic_split must be one of {ACCEPTED_BASIC_SPLITS}, got {basic_split!r}")
     if not (_is_int(pairs_per_update) and pairs_per_update >= 1):
         raise ValueError(f"pairs_per_update must be an integer >= 1, got {pairs_per_update!r}")
+    if pairs_per_update % 2 != 0:
+        raise ValueError(
+            f"pairs_per_update must be even, got {pairs_per_update}: the learner holds the first-drawn deck "
+            "in even pairs and the second-drawn deck in odd pairs, so an update balances only with an even count"
+        )
 
     return {
         "deck_size": deck_size,
@@ -446,6 +451,10 @@ def build_schedule(
         episodes: list[dict[str, Any]] = []
         for pair_index in range(pairs_per_update):
             deck_a, deck_b = deal_pair(pool_state, constants, namespace, run, update, pair_index)
+            # deck_a is drawn first, from the fuller pool. The learner holds deck_a in both slots of
+            # an even pair and deck_b in both slots of an odd pair. Seat 0 starts, so each deck is
+            # on the play once per pair.
+            learner_deck, opponent_deck = (deck_a, deck_b) if pair_index % 2 == 0 else (deck_b, deck_a)
             slot_a = 2 * pair_index
             slot_b = 2 * pair_index + 1
             episodes.append(
@@ -455,7 +464,7 @@ def build_schedule(
                     update=update,
                     slot=slot_a,
                     learner_seat=0,
-                    decks=[deck_a, deck_b],
+                    decks=[learner_deck, opponent_deck],
                     max_physical_decisions=eff_phys,
                     max_policy_steps=eff_steps,
                     extra_episode_fields=extra_episode_fields,
@@ -468,7 +477,7 @@ def build_schedule(
                     update=update,
                     slot=slot_b,
                     learner_seat=1,
-                    decks=[deck_b, deck_a],
+                    decks=[opponent_deck, learner_deck],
                     max_physical_decisions=eff_phys,
                     max_policy_steps=eff_steps,
                     extra_episode_fields=extra_episode_fields,

@@ -490,7 +490,7 @@ class DealGuaranteeTests(unittest.TestCase):
                 "nonland_spells": 5,
                 "nonbasic_lands": 2,
                 "basic_split": "even_first_colour_extra",
-                "pairs_per_update": 3,
+                "pairs_per_update": 2,
             },
             {
                 "deck_size": 8,
@@ -498,7 +498,7 @@ class DealGuaranteeTests(unittest.TestCase):
                 "nonland_spells": 4,
                 "nonbasic_lands": 0,
                 "basic_split": "even_first_colour_extra",
-                "pairs_per_update": 3,
+                "pairs_per_update": 2,
             },
         ]
         for idx, constants in enumerate(configs):
@@ -678,6 +678,60 @@ class DealGuaranteeTests(unittest.TestCase):
                 # Seed matches tools/ex1/qual.py::seed bit for bit.
                 self.assertEqual(ep0["seed"], qual.seed(["train", "order-check", update, 2 * p]))
                 self.assertEqual(ep1["seed"], qual.seed(["train", "order-check", update, 2 * p + 1]))
+
+    def test_learner_holds_first_and_second_drawn_decks_equally(self):
+        pool_state = deal.validate_pool(self.pool_doc)
+        constants = deal.validate_constants(self.constants_doc)
+        update_start, update_end = 3, 8
+        schedule = deal.build_schedule(
+            self.pool_doc,
+            self.constants_doc,
+            namespace="train",
+            run="balance",
+            update_start=update_start,
+            update_end=update_end,
+        )
+        held = {"first": 0, "second": 0}
+        for offset, iteration in enumerate(schedule["iterations"]):
+            update = update_start + offset
+            episodes = iteration["episodes"]
+            for p in range(constants["pairs_per_update"]):
+                deck_a, deck_b = deal.deal_pair(pool_state, constants, "train", "balance", update, p)
+                self.assertNotEqual(deck_a, deck_b)
+                ep0 = episodes[2 * p]["episode"]
+                ep1 = episodes[2 * p + 1]["episode"]
+                learner0 = ep0["registered"][ep0["learner_seat"]]
+                learner1 = ep1["registered"][ep1["learner_seat"]]
+                # The learner holds one deck in both slots: deck_a in even pairs, deck_b in odd pairs.
+                self.assertEqual(learner0, learner1)
+                self.assertEqual(learner0, deck_a if p % 2 == 0 else deck_b)
+                held["first" if learner0 == deck_a else "second"] += 1
+                # The opponent holds the other deck in both slots.
+                self.assertEqual(ep0["registered"][1 - ep0["learner_seat"]], deck_b if p % 2 == 0 else deck_a)
+                self.assertEqual(ep1["registered"][1 - ep1["learner_seat"]], deck_b if p % 2 == 0 else deck_a)
+                # Seat 0 starts: each deck is on the play exactly once per pair.
+                self.assertEqual(ep0["starting_player"], 0)
+                self.assertEqual(ep1["starting_player"], 0)
+                on_play = [ep0["registered"][0], ep1["registered"][0]]
+                self.assertIn(deck_a, on_play)
+                self.assertIn(deck_b, on_play)
+        pairs = (update_end - update_start) * constants["pairs_per_update"]
+        self.assertEqual(held, {"first": pairs // 2, "second": pairs // 2})
+
+    def test_refuses_odd_pairs_per_update(self):
+        for odd in (1, 3, 59):
+            with self.assertRaisesRegex(ValueError, "pairs_per_update must be even"):
+                deal.validate_constants(dict(self.constants_doc, pairs_per_update=odd))
+        with self.assertRaisesRegex(ValueError, "pairs_per_update must be even"):
+            deal.build_schedule(
+                self.pool_doc,
+                dict(self.constants_doc, pairs_per_update=3),
+                namespace="train",
+                run="odd",
+                update_start=0,
+                update_end=1,
+            )
+        self.assertEqual(deal.validate_constants(dict(self.constants_doc, pairs_per_update=60))["pairs_per_update"], 60)
 
     def test_refuses_invalid_or_incomplete_constants(self):
         for key in deal.REQUIRED_CONSTANT_KEYS:
