@@ -88,6 +88,7 @@ fn update(
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: source.clone(),
         trajectories,
         learning_rate: 1.0e-3,
@@ -207,6 +208,82 @@ fn s_learner_end_to_end_v1() {
         identity.model.weights_sha256
     );
 
+    // The London keep offset and the terminal pregame advantage are the
+    // net-8 update's, and S refuses both.
+    {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        use crate::rl_session::pauper_london_v1::{
+            PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningSeatRecordV1, PauperOpeningV1,
+        };
+        // Serial collection refuses offset episodes before anything loads.
+        let mut london = episode("s-london-offset", 2_026_110_303, None);
+        london.opening = Some(PauperOpeningV1::LondonV1);
+        london.mulligan_modes = Some([PauperMulliganModeV1::Learned; 2]);
+        london.london_keep_offset = Some(LondonKeepOffsetV1::Scalar(6.5));
+        let error = collect(&s, vec![london], root.join("refused-offset-collect")).unwrap_err();
+        assert!(
+            error.contains("an S learner collection refuses the London keep offset"),
+            "{error}"
+        );
+        // The update refuses an offset-carrying trajectory. S plays no London
+        // game, so a collected trajectory is relabelled as one (its rows are
+        // all in-game, so it still validates); nothing else in it changes.
+        let mut relabelled: super::super::ExpandedTrajectoryV1 =
+            read_pinned(&trajectories[0]).unwrap();
+        relabelled.episode.opening = Some(PauperOpeningV1::LondonV1);
+        relabelled.episode.mulligan_modes = Some([PauperMulliganModeV1::Learned; 2]);
+        relabelled.episode.london_keep_offset = Some(LondonKeepOffsetV1::Scalar(6.5));
+        let seat = PauperOpeningSeatRecordV1 {
+            mode: PauperMulliganModeV1::Learned,
+            mulligans_taken: 0,
+            kept_hand_size: 7,
+            exposed_pregame_decisions: 1,
+            forced_zero_card_keep: false,
+        };
+        relabelled.opening_record = Some(PauperOpeningRecordV1 {
+            opening: PauperOpeningV1::LondonV1,
+            seats: [seat.clone(), seat],
+        });
+        let bytes = serde_json::to_vec(&relabelled).unwrap();
+        let path = root.join("relabelled-london-offset.json");
+        fs::write(&path, &bytes).unwrap();
+        let pin = PinnedFileV1 {
+            path,
+            sha256: sha(&bytes),
+        };
+        let error = update(
+            &s,
+            vec![pin],
+            gae(),
+            CheckpointRecordFormatV1::V1,
+            root.join("refused-offset-update"),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("an S learner update refuses the London keep offset"),
+            "{error}"
+        );
+        // The update refuses the terminal mode before it reads anything.
+        let error = update(
+            &s,
+            trajectories.clone(),
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+                pregame_advantage: PregameAdvantageV1::TerminalV1,
+            },
+            CheckpointRecordFormatV1::V1,
+            root.join("refused-terminal-update"),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("an S learner refuses the terminal pregame advantage"),
+            "{error}"
+        );
+    }
+
     let updated = update(
         &s,
         trajectories.clone(),
@@ -290,16 +367,28 @@ fn s_learner_end_to_end_v1() {
             gamma: 0.99,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         },
         ExpandedLossSelectionV1::GaeAdvantageValueV1 {
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         },
         ExpandedLossSelectionV1::TerminalReinforceValueV3,
     ] {
         assert!(validate_update_loss_v1(&next, &loss).is_err());
     }
+    // The terminal pregame advantage is a net-8 London mode: refused here.
+    let terminal = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::TerminalV1,
+    };
+    assert!(validate_update_loss_v1(&next, &terminal)
+        .unwrap_err()
+        .contains("terminal pregame advantage"));
     validate_update_loss_v1(&net8, &ExpandedLossSelectionV1::TerminalReinforceValueV3).unwrap();
     // A continuation with other GAE settings is refused.
     assert!(update(
@@ -312,6 +401,7 @@ fn s_learner_end_to_end_v1() {
             gamma: 0.99,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         },
         CheckpointRecordFormatV1::V1,
         root.join("other-gamma"),
@@ -378,6 +468,7 @@ fn run_config(
     };
     let fixed = || ExpandedOpponentAssignmentV1::Fixed { id: "net8".into() };
     NativeExpandedTrainingRunV1 {
+        card_semantics: None,
         schema: "mtg-kernel-native-expanded-training-run/v1".into(),
         initial_source: initial_source.clone(),
         opponents: vec![NamedExpandedOpponentV1 {
@@ -422,6 +513,8 @@ fn run_config(
         preparation_workers: workers,
         max_non_natural_episode_fraction: 0.0,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes:
+            crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
         line_b: None,
@@ -502,6 +595,7 @@ fn s_learner_refusals_v1() {
     .contains("GAE loss"));
     assert!(refused(gae(), CheckpointRecordFormatV1::V2, "v2").contains("record format v2"));
     let error = execute_v1(ExpandedTrainingCommandV1::Update {
+        card_semantics: None,
         source: s.clone(),
         trajectories: fake.clone(),
         learning_rate: 1.0e-3,
@@ -995,6 +1089,8 @@ fn s_search_digest_skip_v1() {
             ex1,
             preparation_workers: None,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            max_trajectory_batch_mebibytes:
+                crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
             record_envelope: RecordEnvelopeV1::None,
             output_directory: root.join(format!("update-{label}")),
         })

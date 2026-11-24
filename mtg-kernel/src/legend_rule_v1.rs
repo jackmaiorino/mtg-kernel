@@ -259,15 +259,14 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
             candidates: group.objects.iter().map(|binding| binding.object).collect(),
         }));
     }
-    let pending = state.pending_legend_rule_v1.take().unwrap();
-    let mut graveyard = pending.pass.graveyard;
-    for (group, kept) in pending.pass.groups.iter().zip(pending.kept) {
+    let mut graveyard = pending.pass.graveyard.clone();
+    for (group, kept) in pending.pass.groups.iter().zip(&pending.kept) {
         graveyard.extend(
             group
                 .objects
                 .iter()
                 .copied()
-                .filter(|object| *object != kept),
+                .filter(|object| object != kept),
         );
     }
     graveyard.sort_by_key(|binding| binding.object);
@@ -278,8 +277,10 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
             .iter()
             .map(|binding| binding.object)
             .collect::<Vec<_>>(),
-        &pending.waiting_triggers,
+        &[],
     );
+    // The batch's departure observers need the held triggers before any
+    // permanent moves. Graveyard-order replay retains this same pass.
     event::propose_and_commit_batch(
         state,
         graveyard
@@ -287,6 +288,7 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
             .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Graveyard))
             .collect(),
     );
+    let pending = state.pending_legend_rule_v1.take().unwrap();
     if crate::graveyard_order_v1::paused(state)
         || ((cfg!(feature = "eternal-fixtures") || crate::graveyard_order_v1::enabled(state))
             && state.engine.halted.is_some())

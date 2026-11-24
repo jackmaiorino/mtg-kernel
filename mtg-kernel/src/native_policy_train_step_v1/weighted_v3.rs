@@ -178,6 +178,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("weighted loss")?;
         self.require_no_input_contract_v1("weighted loss")?;
+        self.require_no_london_keep_offset_v1()?;
         validate_weighted_inputs_v3(groups, group_weights)?;
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);

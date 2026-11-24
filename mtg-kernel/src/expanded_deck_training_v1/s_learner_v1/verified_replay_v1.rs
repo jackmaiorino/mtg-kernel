@@ -196,6 +196,7 @@ pub(super) fn prepared_gradient_v1(
     model: &SModelV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     options: OptionsV1,
     attempt: &mut VerifiedReplayAttemptV1,
 ) -> Result<PreparedGradientV1, ReplayErrorV1> {
@@ -233,6 +234,7 @@ pub(super) fn prepared_gradient_v1(
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        max_groups,
         options.training_math,
         &other_forwards,
     );

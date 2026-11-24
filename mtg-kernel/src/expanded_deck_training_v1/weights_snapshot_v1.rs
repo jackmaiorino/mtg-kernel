@@ -60,6 +60,10 @@ pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value,
     }
     let mut saved = parse_record_borrowed_v1(&bytes)?;
     ensure(
+        saved.card_semantics.is_none(),
+        "weights snapshot refuses card semantics",
+    )?;
+    ensure(
         !saved.schema.starts_with(WEIGHTS_SNAPSHOT_SCHEMA_PREFIX_V1),
         "the input is already a weights snapshot",
     )?;
@@ -386,6 +390,8 @@ mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -400,6 +406,7 @@ mod tests {
         let trajectories: Vec<PinnedFileV1> =
             serde_json::from_value(collection["trajectories"].clone()).unwrap();
         let update = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: source.clone(),
             trajectories,
             learning_rate: 0.0001,
@@ -410,6 +417,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             line_b: None,
             training_math: TrainingMathV1::PlatformLibm,

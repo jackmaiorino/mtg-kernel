@@ -73,6 +73,9 @@
 
 use crate::engine::{self, Action, Decision, OptionalCostChoice};
 use crate::ids::{ObjectId, PlayerId};
+use crate::priority_action_windows_v1::{
+    self as action_windows, PriorityOptionsV1, SeatPriorityWindowsV1,
+};
 use crate::state::{GameState, Step};
 pub use crate::surface::{
     harness_never_offers_priority, Suppression, SuppressionReason, SurfaceAction, SurfaceDecision,
@@ -460,6 +463,21 @@ pub struct HarnessSurfaceScalarsV1 {
 #[derive(Clone)]
 pub struct HarnessSurfaceV2 {
     priority_mode: PriorityModeV1,
+    /// Human play only (`set_engine_window_seats_v1`): a seat that is given
+    /// every engine priority window. `[false, false]` everywhere else, and
+    /// then nothing below reads it. Not part of the public context: no
+    /// observation, tensor or hash carries it. (The human bridge that sets
+    /// it lives on the London human release line; here only tests do.)
+    engine_window_seats: [bool; 2],
+    /// Training: each seat's priority-window rule
+    /// (`set_action_window_seats_v1`). `HarnessV2` for both seats everywhere
+    /// else, and then nothing below reads it. Not part of the public context:
+    /// the episode configuration records it.
+    action_windows: [SeatPriorityWindowsV1; 2],
+    /// Why `HarnessV2` would have passed the decision `next_decision` last
+    /// returned for its seat; None for every decision it would have
+    /// surfaced anyway.
+    engine_window: Option<SuppressionReason>,
     suppression_audit_mode: SuppressionAuditMode,
     suppression_counts: SuppressionCounts,
     suppressions: Vec<Suppression>,
@@ -845,6 +863,9 @@ impl HarnessSurfaceV2 {
             && std::env::var("REPLAY_DEBUG_SURFACE_WALK").is_ok();
         HarnessSurfaceV2 {
             priority_mode,
+            engine_window_seats: [false; 2],
+            action_windows: [SeatPriorityWindowsV1::HarnessV2; 2],
+            engine_window: None,
             suppression_audit_mode,
             suppression_counts: SuppressionCounts::default(),
             suppressions: Vec::new(),
@@ -871,6 +892,76 @@ impl HarnessSurfaceV2 {
 
     pub const fn priority_mode_v1(&self) -> PriorityModeV1 {
         self.priority_mode
+    }
+
+    /// Human play: give each flagged seat every engine priority window,
+    /// while the other seat keeps `HarnessV2` exactly.
+    ///
+    /// The `HarnessV2` arm of `next_decision` still runs in full for a
+    /// flagged seat, so the throttle and activity bookkeeping (which the
+    /// other seat's suppression and model input read) advances by the same
+    /// rules as before. Only the forced pass differs: the decision goes to
+    /// the seat instead. A flagged seat that answers Pass at such a window
+    /// therefore leaves the game exactly where the forced pass left it.
+    ///
+    /// What does differ: a returned window is a decision of its session (it
+    /// advances the session's step and decision counters and counts toward
+    /// its caps), and it is not a suppression, so the suppression audit
+    /// (`Full`, `CountOnly`) has no record of it.
+    ///
+    /// Refused under `EngineWindowsV1`, which already bypasses the arm for
+    /// both seats.
+    pub fn set_engine_window_seats_v1(&mut self, seats: [bool; 2]) -> Result<(), String> {
+        if seats != [false; 2] && self.priority_mode != PriorityModeV1::HarnessV2 {
+            return Err("per-seat engine windows need the HarnessV2 priority mode".to_string());
+        }
+        if (0..2).any(|seat| seats[seat] && !self.action_windows[seat].is_harness_v2()) {
+            return Err("a seat has either engine windows or an action-window rule".to_string());
+        }
+        self.engine_window_seats = seats;
+        Ok(())
+    }
+
+    /// Training: give each seat its priority-window rule (see
+    /// `priority_action_windows_v1`). The `HarnessV2` arm of `next_decision`
+    /// still runs in full for every seat; at each forced pass a seat whose
+    /// rule offers the window is handed it instead (as a flagged seat of
+    /// `set_engine_window_seats_v1` is), and an `ActionWindowsV1` seat's
+    /// mana-only window that fails the mana test is passed for it. Both seats
+    /// `HarnessV2` is today's surface exactly. Set before the first decision.
+    ///
+    /// Refused under `EngineWindowsV1`, and for a seat that already has
+    /// engine windows.
+    pub fn set_action_window_seats_v1(
+        &mut self,
+        rules: [SeatPriorityWindowsV1; 2],
+    ) -> Result<(), String> {
+        if rules.iter().any(|rule| !rule.is_harness_v2())
+            && self.priority_mode != PriorityModeV1::HarnessV2
+        {
+            return Err("action-window rules need the HarnessV2 priority mode".to_string());
+        }
+        if (0..2).any(|seat| self.engine_window_seats[seat] && !rules[seat].is_harness_v2()) {
+            return Err("a seat has either engine windows or an action-window rule".to_string());
+        }
+        self.action_windows = rules;
+        Ok(())
+    }
+
+    pub const fn action_window_seats_v1(&self) -> [SeatPriorityWindowsV1; 2] {
+        self.action_windows
+    }
+
+    pub const fn engine_window_seats_v1(&self) -> [bool; 2] {
+        self.engine_window_seats
+    }
+
+    /// The suppression `HarnessV2` would have applied to the decision last
+    /// returned by `next_decision`, when that decision was surfaced only
+    /// because its seat is flagged (`set_engine_window_seats_v1`) or on a
+    /// rule that offered it (`set_action_window_seats_v1`).
+    pub const fn engine_window_v1(&self) -> Option<SuppressionReason> {
+        self.engine_window
     }
 
     /// Returns reason counts without adding work to the `Full` or `Off` hot
@@ -1045,7 +1136,8 @@ impl HarnessSurfaceV2 {
     }
 
     fn next_decision_inner(&mut self, state: &mut GameState) -> SurfaceDecision {
-        loop {
+        self.engine_window = None;
+        'decisions: loop {
             if let Some(sd) = self.next_blockers_subdecision(state) {
                 return sd;
             }
@@ -1073,8 +1165,26 @@ impl HarnessSurfaceV2 {
                     mana_abilities,
                     land_drops,
                     activatable_abilities,
-                    ..
-                } if self.priority_mode == PriorityModeV1::HarnessV2 => {
+                    plot_actions,
+                } if self.priority_mode == PriorityModeV1::HarnessV2 => 'harness: {
+                    // A flagged seat (human play) is handed every decision
+                    // this arm would answer with a forced pass; see
+                    // `set_engine_window_seats_v1`. Each site leaves the arm
+                    // exactly where the forced pass did, before any later
+                    // bookkeeping of the arm.
+                    let own_windows = self.engine_window_seats[player.index()];
+                    // A seat on an action-window rule (training) is handed
+                    // the same decisions when its rule offers them; see
+                    // `set_action_window_seats_v1`.
+                    let rule = self.action_windows[player.index()];
+                    let options = PriorityOptionsV1 {
+                        player: *player,
+                        castable_spells,
+                        mana_abilities,
+                        land_drops,
+                        activatable_abilities,
+                        plot_actions,
+                    };
                     if self.stack_len_round_seen != Some(state.engine.priority_round) {
                         self.round_opening_stack_len = state.stack.len();
                         self.stack_len_round_seen = Some(state.engine.priority_round);
@@ -1206,6 +1316,10 @@ impl HarnessSurfaceV2 {
                         // never gets a chance to look "un-spent" for them
                         // (see `combat_priority_stack_len_seen`'s doc).
                         if stack_top_is_fresh_own_item || mana_ability_is_fresh_own_action {
+                            if own_windows || action_windows::offer_v1(rule, state, &options) {
+                                self.engine_window = Some(SuppressionReason::StackTopIsCastersOwn);
+                                break 'harness;
+                            }
                             engine::step(state, Action::Pass)
                                 .expect("Pass is always legal in an offered priority window");
                             self.record(
@@ -1214,7 +1328,7 @@ impl HarnessSurfaceV2 {
                                 before,
                                 state,
                             );
-                            continue;
+                            continue 'decisions;
                         }
                         // A new stack item appeared this round (either
                         // player's cast/activation) -- Java's `PlayerImpl.
@@ -1243,6 +1357,11 @@ impl HarnessSurfaceV2 {
                                 state.engine.mana_ability_activations;
                         }
                         if self.combat_priority_spent[player.index()] {
+                            if own_windows || action_windows::offer_v1(rule, state, &options) {
+                                self.engine_window =
+                                    Some(SuppressionReason::CombatPriorityActionSpent);
+                                break 'harness;
+                            }
                             engine::step(state, Action::Pass)
                                 .expect("Pass is always legal in an offered priority window");
                             self.record(
@@ -1251,10 +1370,14 @@ impl HarnessSurfaceV2 {
                                 before,
                                 state,
                             );
-                            continue;
+                            continue 'decisions;
                         }
                         self.combat_priority_spent[player.index()] = true;
                     } else if stack_top_is_fresh_own_item {
+                        if own_windows || action_windows::offer_v1(rule, state, &options) {
+                            self.engine_window = Some(SuppressionReason::StackTopIsCastersOwn);
+                            break 'harness;
+                        }
                         engine::step(state, Action::Pass)
                             .expect("Pass is always legal in an offered priority window");
                         self.record(
@@ -1263,7 +1386,7 @@ impl HarnessSurfaceV2 {
                             before,
                             state,
                         );
-                        continue;
+                        continue 'decisions;
                     }
                     let no_real_option = castable_spells.is_empty()
                         && mana_abilities.is_empty()
@@ -1271,19 +1394,37 @@ impl HarnessSurfaceV2 {
                         && activatable_abilities.is_empty();
                     let step_gated = harness_never_offers_priority(state.step);
                     if step_gated || no_real_option {
+                        let reason = if step_gated {
+                            SuppressionReason::StepGated
+                        } else {
+                            SuppressionReason::NoRealOption
+                        };
+                        if own_windows || action_windows::offer_v1(rule, state, &options) {
+                            self.engine_window = Some(reason);
+                            break 'harness;
+                        }
+                        engine::step(state, Action::Pass)
+                            .expect("Pass is always legal in an offered priority window");
+                        self.record(reason, || "Pass".to_string(), before, state);
+                        continue 'decisions;
+                    }
+                    // An `ActionWindowsV1` seat's mana-only window that fails
+                    // the mana test: passed for it, where HarnessV2 asks.
+                    // Recorded under `NoRealOption` (the audit's reasons are
+                    // HarnessV2's and stay fixed).
+                    if action_windows::withhold_v1(rule, state, &options) {
                         engine::step(state, Action::Pass)
                             .expect("Pass is always legal in an offered priority window");
                         self.record(
-                            if step_gated {
-                                SuppressionReason::StepGated
-                            } else {
-                                SuppressionReason::NoRealOption
+                            SuppressionReason::NoRealOption,
+                            || {
+                                "Pass (action windows: mana-only window, mana test failed)"
+                                    .to_string()
                             },
-                            || "Pass".to_string(),
                             before,
                             state,
                         );
-                        continue;
+                        continue 'decisions;
                     }
                 }
                 Decision::DeclareAttackers { eligible, .. } => {
@@ -1899,6 +2040,86 @@ mod tests {
         assert_eq!(s.reason, SuppressionReason::StepGated);
         assert_eq!(s.auto_action, "Pass");
         assert_ne!(s.state_hash_before, 0);
+    }
+
+    /// The per-seat hook (`set_engine_window_seats_v1`): a flagged seat is
+    /// handed the window `HarnessV2` passes for it, with the reason the
+    /// forced pass would have recorded and no suppression record; the other
+    /// seat keeps its forced pass.
+    #[test]
+    fn a_flagged_seat_is_handed_the_window_harness_v2_passes_for_it() {
+        let upkeep = || {
+            let mut state = empty_game();
+            state.step = Step::Upkeep;
+            state.priority_player = PlayerId::P0;
+            state.active_player = PlayerId::P0;
+            state
+        };
+
+        let mut state = upkeep();
+        let mut flagged = HarnessSurfaceV2::new();
+        assert_eq!(flagged.engine_window_seats_v1(), [false, false]);
+        flagged.set_engine_window_seats_v1([true, false]).unwrap();
+        assert_eq!(flagged.engine_window_seats_v1(), [true, false]);
+        let decision = flagged.next_decision(&mut state);
+        assert!(
+            matches!(
+                decision,
+                SurfaceDecision::Decision(Decision::CastSpellOrPass {
+                    player: PlayerId::P0,
+                    ..
+                })
+            ),
+            "{decision:?}"
+        );
+        assert_eq!(state.step, Step::Upkeep);
+        assert_eq!(
+            flagged.engine_window_v1(),
+            Some(SuppressionReason::StepGated)
+        );
+        assert!(flagged.suppressions().is_empty());
+
+        // P1 flagged: P0's upkeep window is still passed for it and
+        // recorded; P1 is then handed its own window of the same step.
+        let mut state = upkeep();
+        let mut other = HarnessSurfaceV2::new();
+        other.set_engine_window_seats_v1([false, true]).unwrap();
+        let decision = other.next_decision(&mut state);
+        assert!(
+            matches!(
+                decision,
+                SurfaceDecision::Decision(Decision::CastSpellOrPass {
+                    player: PlayerId::P1,
+                    ..
+                })
+            ),
+            "{decision:?}"
+        );
+        assert_eq!(state.step, Step::Upkeep);
+        assert_eq!(other.suppressions().len(), 1);
+        assert_eq!(other.suppressions()[0].reason, SuppressionReason::StepGated);
+        assert_eq!(other.engine_window_v1(), Some(SuppressionReason::StepGated));
+
+        // An unflagged surface reports no such window for anything it returns.
+        let mut state = upkeep();
+        let mut plain = HarnessSurfaceV2::new();
+        plain.next_decision(&mut state);
+        assert_eq!(plain.engine_window_v1(), None);
+    }
+
+    /// Per-seat engine windows are refused under `EngineWindowsV1`, which
+    /// bypasses the `HarnessV2` arm for both seats; clearing them is not.
+    #[test]
+    fn per_seat_engine_windows_need_the_harness_v2_priority_mode() {
+        let mut engine = HarnessSurfaceV2::new_with_priority_mode_v1(
+            PriorityModeV1::EngineWindowsV1,
+            SuppressionAuditMode::Off,
+        );
+        for seats in [[true, false], [false, true], [true, true]] {
+            assert!(engine.set_engine_window_seats_v1(seats).is_err());
+            assert_eq!(engine.engine_window_seats_v1(), [false, false]);
+        }
+        assert!(engine.set_engine_window_seats_v1([false, false]).is_ok());
     }
 
     /// Mirrors `surface::tests::declare_blockers_is_reshaped_per_attacker_and_skips_the_ineligible_one`.

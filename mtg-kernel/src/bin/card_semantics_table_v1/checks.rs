@@ -1,11 +1,18 @@
 //! Twin and far-pair similarity, the census, and the no-reader guarantee.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
 
+use mtg_kernel::card_def::{CardCapability, CardDef, CardType, CombatStaticRulesDef, CARD_DEFS};
+use mtg_kernel::trigger::triggers_for;
+
 use super::extract::EFFECT_FAMILIES;
 use super::table::{CardRow, Table};
+
+pub const LOW_DISTINCTIVENESS_MIN_NEIGHBORS: usize = 10;
+pub const LOW_DISTINCTIVENESS_OVERLAP_NUM: usize = 3;
+pub const LOW_DISTINCTIVENESS_OVERLAP_DEN: usize = 4;
 
 /// Similarity is the Jaccard index of the cards' nonzero (column, value)
 /// pairs, kept as an exact fraction. Equal vectors give 1.
@@ -391,10 +398,385 @@ pub fn mapping_report(after: &[CardRow], mapping: &super::mapping::Mapping) -> S
     report
 }
 
+/// Census report without pinned thresholds, for the Vintage Cube table.
+pub fn cube_census_report(before: &[CardRow], after: &[CardRow]) -> String {
+    let mut report = String::new();
+    let scopes: [(&str, TokenFilter); 2] =
+        [(PINNED[0].0, all_tokens), (PINNED[1].0, effect_tokens)];
+    for (scope, keep) in &scopes {
+        let b = census(before, keep);
+        let a = census(after, keep);
+        for (label, measured) in [("before mapping", b), ("after mapping", a)] {
+            writeln!(
+                report,
+                "{scope}, {label}: distinct tokens {}, tokens on exactly one card {}, cards with a token no other row shares {}, cards with no effect-tree token {}",
+                measured.distinct_tokens,
+                measured.tokens_on_one_card,
+                measured.cards_with_unshared_token,
+                measured.cards_without_effect_token,
+            )
+            .unwrap();
+        }
+    }
+    report
+}
+
+/// Asymmetric nonzero feature overlap of `a` against `b`:
+/// `(shared nonzero (col, val) pairs, nonzero pairs of a)`.
+#[cfg(test)]
+pub fn overlap(a: &[i64], b: &[i64]) -> (usize, usize) {
+    let mut shared = 0usize;
+    let mut nonzero_a = 0usize;
+    for (&x, &y) in a.iter().zip(b) {
+        if x != 0 {
+            nonzero_a += 1;
+            if x == y {
+                shared += 1;
+            }
+        }
+    }
+    (shared, nonzero_a)
+}
+
+/// Exact integer test for `shared / nonzero_a >= 0.75` (`3 / 4`).
+pub fn overlap_meets_threshold(shared: usize, nonzero_a: usize) -> bool {
+    nonzero_a > 0
+        && shared * LOW_DISTINCTIVENESS_OVERLAP_DEN >= nonzero_a * LOW_DISTINCTIVENESS_OVERLAP_NUM
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LowDistinctivenessRow {
+    pub name: String,
+    pub neighbors: usize,
+    pub nonzero: usize,
+}
+
+/// Rows `a` for which at least `LOW_DISTINCTIVENESS_MIN_NEIGHBORS` other rows
+/// `b` have `overlap(a, b) >= 0.75`.
+pub fn low_distinctiveness(table: &Table) -> Vec<LowDistinctivenessRow> {
+    let n = table.vectors.len();
+    let mut sparse: Vec<Vec<(usize, i64)>> = Vec::with_capacity(n);
+    let mut postings: HashMap<(usize, i64), Vec<usize>> = HashMap::new();
+    for (i, vector) in table.vectors.iter().enumerate() {
+        let mut pairs = Vec::new();
+        for (col, &val) in vector.iter().enumerate() {
+            if val != 0 {
+                pairs.push((col, val));
+                postings.entry((col, val)).or_default().push(i);
+            }
+        }
+        sparse.push(pairs);
+    }
+    let mut counts = vec![0usize; n];
+    let mut flagged = Vec::new();
+    for (i, pairs) in sparse.iter().enumerate() {
+        let nonzero = pairs.len();
+        if nonzero == 0 {
+            continue;
+        }
+        counts.fill(0);
+        for pair in pairs {
+            if let Some(rows) = postings.get(pair) {
+                for &j in rows {
+                    counts[j] += 1;
+                }
+            }
+        }
+        let neighbors = counts
+            .iter()
+            .enumerate()
+            .filter(|&(j, &shared)| j != i && overlap_meets_threshold(shared, nonzero))
+            .count();
+        if neighbors >= LOW_DISTINCTIVENESS_MIN_NEIGHBORS {
+            flagged.push(LowDistinctivenessRow {
+                name: table.rows[i].name.clone(),
+                neighbors,
+                nonzero,
+            });
+        }
+    }
+    flagged.sort_by(|a, b| {
+        b.neighbors
+            .cmp(&a.neighbors)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    flagged
+}
+
+fn has_mana_source(def: &CardDef) -> bool {
+    (def.mana_ability)().is_some()
+        || def.mana_ability_def.is_some()
+        || !def.mana_ability_choices.is_empty()
+        || !def.additional_mana_abilities.is_empty()
+        || !def.restricted_mana_abilities.is_empty()
+        || !def.produces_mana.is_empty()
+        || def.mana_ability_includes_chosen_color
+}
+
+/// Cost modifiers, entry rules and static rule fields of a definition
+/// (keywords are a separate fact).
+fn has_static_definition_rules(def: &CardDef) -> bool {
+    def.alt_cost.is_some()
+        || def.kicker_cost.is_some()
+        || def.additional_cost.is_some()
+        || def.optional_additional_cost.is_some()
+        || def.flashback.is_some()
+        || def.escape.is_some()
+        || def.madness_cost.is_some()
+        || def.plot_cost.is_some()
+        || def.delve
+        || def.generic_cost_reduction.is_some()
+        || def.ward_cost.is_some()
+        || def.spell_cannot_be_countered
+        || def.enters_battlefield_tapped
+        || def.enters_battlefield_tapped_unless.is_some()
+        || def.enters_tapped_unless_controller.is_some()
+        || def.enters_with_plus_one_counters.is_some()
+        || def.controlled_creature_grant.is_some()
+        || def.controlled_counter_keyword.is_some()
+        || def.game_outcome_protection_v1.is_some()
+        || def.damage_replacement_v1.is_some()
+        || def.token_counter_replacement_v48.is_some()
+        || !def.starting_life_self_bonuses_v1.is_empty()
+        || def.source_type_hexproof_v1.is_some()
+        || def.other_controlled_nontoken_death_v1.is_some()
+        || def.creature_type_entry_v1.is_some()
+        || def.chosen_color_creature_boost_v1.is_some()
+        || def.as_enters_color_choice_v1.is_some()
+        || def.as_enters_choose_color_other_than.is_some()
+        || def.changeling
+        || def.minimum_blockers > 1
+        || def.cant_be_blocked_by_monarchs_creatures
+        || def.combat_static_rules != CombatStaticRulesDef::NONE
+        || !def.activated_ability_generic_reductions.is_empty()
+        || def.animation.is_some()
+}
+
+/// What a definition establishes about a row with no effect-tree token.
+/// Each reason below states only what these facts establish.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DefinitionFacts {
+    pub partial: bool,
+    pub planeswalker: bool,
+    pub saga: bool,
+    pub transform_face: bool,
+    pub bestow: bool,
+    pub alternate_face: bool,
+    pub land: bool,
+    pub mana_ability: bool,
+    /// Equipment or Aura attachment data.
+    pub attachment: bool,
+    pub creature: bool,
+    pub artifact_or_enchantment: bool,
+    /// At least one printed keyword bit.
+    pub keywords: bool,
+    /// Cost modifiers, entry rules or static rule fields.
+    pub static_rules: bool,
+    /// Activated or triggered abilities, a spell program or spell modes.
+    pub abilities: bool,
+}
+
+impl DefinitionFacts {
+    pub fn of(def: &CardDef, has_triggers: bool) -> Self {
+        Self {
+            partial: def.capability == CardCapability::Partial,
+            planeswalker: def.has_type(CardType::Planeswalker) || def.starting_loyalty.is_some(),
+            saga: def.saga.is_some(),
+            transform_face: def.transform_face.is_some(),
+            bestow: def.bestow.is_some(),
+            alternate_face: def.adventure.is_some() || def.omen.is_some(),
+            land: def.is_land || def.has_type(CardType::Land),
+            mana_ability: has_mana_source(def),
+            attachment: def.equipment.is_some() || def.attachment.is_some(),
+            creature: def.has_type(CardType::Creature),
+            artifact_or_enchantment: def.has_type(CardType::Artifact)
+                || def.has_type(CardType::Enchantment),
+            keywords: def.keywords.0 != 0,
+            static_rules: has_static_definition_rules(def),
+            abilities: !def.activated_abilities.is_empty()
+                || has_triggers
+                || (def.spell_effect)().is_some()
+                || def.mode2.is_some()
+                || def.mode3.is_some()
+                || !def.additional_modes.is_empty(),
+        }
+    }
+
+    /// Whether the definition holds any rule besides its mana abilities.
+    pub fn has_other_rules(self) -> bool {
+        self.keywords || self.static_rules || self.abilities || self.attachment
+    }
+}
+
+/// Classifies a card with no effect-tree token (`leaf:`, `op:`, `cond:`) from
+/// its `CardDef` and triggers alone, never by card name.
+pub fn no_effect_token_reason(id: u16) -> &'static str {
+    let def = &CARD_DEFS[usize::from(id)];
+    no_effect_token_reason_for(DefinitionFacts::of(def, !triggers_for(id).is_empty()))
+}
+
+/// The reason for a row with no effect-tree token. A reason says "only" just
+/// when the definition holds nothing else this classifier checks.
+pub fn no_effect_token_reason_for(facts: DefinitionFacts) -> &'static str {
+    if facts.partial {
+        return "partial definition (no walked effect program in CardDef)";
+    }
+    if facts.planeswalker {
+        return "planeswalker loyalty abilities not walked";
+    }
+    if facts.saga {
+        return "saga chapter effects not walked";
+    }
+    if facts.transform_face {
+        return "transform back face not walked";
+    }
+    if facts.bestow {
+        return "bestow aura face not walked";
+    }
+    if facts.alternate_face {
+        return "alternate spell face with no effect-tree tokens";
+    }
+    if facts.land {
+        return if !facts.mana_ability {
+            "land with no mana ability in its definition"
+        } else if facts.has_other_rules() {
+            "land with a mana ability and other definition rules (keywords, costs, entry, static, attachment or abilities)"
+        } else {
+            "land with only a mana ability in its definition"
+        };
+    }
+    if facts.mana_ability {
+        return if facts.has_other_rules() {
+            "nonland permanent with a mana ability and other definition rules (keywords, costs, entry, static, attachment or abilities)"
+        } else {
+            "nonland permanent with only a mana ability in its definition"
+        };
+    }
+    if facts.attachment {
+        return "equipment or aura with no walked effect";
+    }
+    if facts.creature {
+        return if facts.keywords || facts.static_rules || facts.abilities {
+            "creature with keywords, costs, entry, static rules or abilities in its definition and no walked effect"
+        } else {
+            "creature with no keywords, costs, entry, static rules or abilities in its definition"
+        };
+    }
+    if facts.artifact_or_enchantment {
+        return "noncreature artifact or enchantment with no walked effect";
+    }
+    if facts.abilities {
+        "empty effect program"
+    } else {
+        "spell with no effect program in CardDef"
+    }
+}
+
+/// Groups rows with no effect-tree token (`leaf:`, `op:`, `cond:`) by reason.
+pub fn no_effect_token_groups(rows: &[CardRow]) -> BTreeMap<&'static str, Vec<String>> {
+    let mut groups: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+    for row in rows {
+        if row.tokens.effect_tree_token_count() == 0 {
+            groups
+                .entry(no_effect_token_reason(row.id))
+                .or_default()
+                .push(row.name.clone());
+        }
+    }
+    for cards in groups.values_mut() {
+        cards.sort();
+    }
+    groups
+}
+
+/// Full informational report for the Vintage Cube table (no pass/fail gates).
+pub fn cube_report(
+    table: &Table,
+    before: &[CardRow],
+    mapping: &super::mapping::Mapping,
+    pauper_vocab_len: usize,
+    not_implemented: &[String],
+) -> String {
+    let mut report = String::new();
+    let new_columns = table.vocabulary.len().saturating_sub(pauper_vocab_len);
+    writeln!(report, "rows {}", table.rows.len()).unwrap();
+    writeln!(report, "vector_width {}", table.vocabulary.len()).unwrap();
+    writeln!(report, "pauper_columns {pauper_vocab_len}").unwrap();
+    writeln!(report, "new_columns_beyond_pauper {new_columns}").unwrap();
+    writeln!(
+        report,
+        "not_implemented_cube_cards {}",
+        not_implemented.len()
+    )
+    .unwrap();
+
+    report.push_str(&cube_census_report(before, &table.rows));
+    report.push_str(&mapping_report(&table.rows, mapping));
+
+    let low = low_distinctiveness(table);
+    writeln!(
+        report,
+        "low-distinctiveness cards (at least {LOW_DISTINCTIVENESS_MIN_NEIGHBORS} other rows with overlap >= 0.75): {}",
+        low.len()
+    )
+    .unwrap();
+    for item in &low {
+        writeln!(
+            report,
+            "  {} ({} other rows, {} nonzero features)",
+            item.name, item.neighbors, item.nonzero
+        )
+        .unwrap();
+    }
+
+    let groups = no_effect_token_groups(&table.rows);
+    let no_effect_total: usize = groups.values().map(Vec::len).sum();
+    writeln!(
+        report,
+        "cards with no usable features (no leaf:, op:, or cond: token): {no_effect_total}"
+    )
+    .unwrap();
+    for (reason, cards) in &groups {
+        writeln!(report, "  {reason} ({}):", cards.len()).unwrap();
+        for name in cards {
+            writeln!(report, "    {name}").unwrap();
+        }
+    }
+
+    writeln!(
+        report,
+        "not implemented cube cards ({}):",
+        not_implemented.len()
+    )
+    .unwrap();
+    for name in not_implemented {
+        writeln!(report, "  {name}: not implemented").unwrap();
+    }
+
+    let mut debug_heads = BTreeSet::new();
+    for row in &table.rows {
+        debug_heads.extend(row.tokens.debug_heads.iter().cloned());
+    }
+    writeln!(
+        report,
+        "variant names read from a Debug head (enums without serde): {}",
+        debug_heads.len()
+    )
+    .unwrap();
+    for head in &debug_heads {
+        writeln!(report, "  {head}").unwrap();
+    }
+    report
+}
+
 /// The no-reader guarantee: no source outside this generator names the
 /// table, its directory or its generator.
 pub fn unreferenced(repo: &Path) -> Vec<String> {
-    let needles = ["card_semantics_table_v1", "card_semantics_v1"];
+    let needles = [
+        "card_semantics_table_v1",
+        "card_semantics_v1",
+        "cube_table_v1",
+    ];
     let roots = [
         "mtg-kernel/src",
         "mtg-kernel/tests",

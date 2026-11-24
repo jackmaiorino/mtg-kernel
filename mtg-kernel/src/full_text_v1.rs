@@ -14,6 +14,10 @@ use crate::effect::{EffectOp, PlayerRef};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_premodern_p2a_v1 as p2a;
 use crate::eternal_premodern_p2c_v1::{self as p2c, P2cOpV1};
+use crate::eternal_premodern_p2d_v1 as p2d;
+use crate::eternal_premodern_p3b_v1 as p3b;
+use crate::eternal_premodern_p3c_v1 as p3c;
+use crate::eternal_premodern_p3h_v1 as p3h;
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::Cost;
@@ -176,18 +180,6 @@ pub(crate) const LISTED_DONORS_V1: [&str; 8] = [
     "Meddling Mage",
 ];
 
-/// Listed additions whose only other battlefield text is an enters trigger
-/// that has no donated program yet. Until it lands, each is accepted like a
-/// part D card: on a Shapeshifter already on the battlefield nothing is lost,
-/// and a Shapeshifter entering with one on top is refused.
-pub(crate) const LISTED_ENTRY_PROGRAMS_PENDING_V1: [&str; 3] =
-    ["Auramancer", "Monk Realist", "Uktabi Orangutan"];
-
-/// Listed additions with battlefield text beyond an entry (Ghitu Slinger's
-/// echo, Xantid Swarm's attack trigger) whose donated programs have not
-/// landed yet. Until they do, each is refused like any unlisted donor.
-pub(crate) const LISTED_PROGRAMS_PENDING_V1: [&str; 2] = ["Ghitu Slinger", "Xantid Swarm"];
-
 /// Part C: every battlefield ability is a keyword in `CardDef.keywords`, and
 /// every other ability works only from the hand, from the graveyard, while
 /// the card is face down or as it is turned face up.
@@ -222,23 +214,19 @@ pub(crate) const ENTRY_ONLY_DONORS_V1: [&str; 5] = [
 const MEDDLING_MAGE: &str = "Meddling Mage";
 
 /// True for a card whose text a Shapeshifter already on the battlefield can
-/// have without losing any of it: parts A to D, less the listed additions
-/// whose programs are still pending.
+/// have without losing any of it: parts A to D.
 pub(crate) fn donor_supported(definition: &CardDef) -> bool {
     let name = definition.name;
-    !LISTED_PROGRAMS_PENDING_V1.contains(&name)
-        && (DONATED_PROGRAM_DONORS_V1.contains(&name)
-            || LISTED_DONORS_V1.contains(&name)
-            || GENERIC_TEXT_DONORS_V1.contains(&name)
-            || ENTRY_ONLY_DONORS_V1.contains(&name))
+    DONATED_PROGRAM_DONORS_V1.contains(&name)
+        || LISTED_DONORS_V1.contains(&name)
+        || GENERIC_TEXT_DONORS_V1.contains(&name)
+        || ENTRY_ONLY_DONORS_V1.contains(&name)
 }
 
 /// True for a supported card whose enters ability a Shapeshifter entering
 /// with it on top would lose.
 pub(crate) fn entry_refused(definition: &CardDef) -> bool {
-    entry_replacement_refused(definition)
-        || ENTRY_ONLY_DONORS_V1.contains(&definition.name)
-        || LISTED_ENTRY_PROGRAMS_PENDING_V1.contains(&definition.name)
+    entry_replacement_refused(definition) || ENTRY_ONLY_DONORS_V1.contains(&definition.name)
 }
 
 /// True when the enters ability lost at entry is a replacement effect that
@@ -566,6 +554,16 @@ pub enum DonatedTriggerKindV1 {
     KarmicGuideEcho { upkeep: u64, control: u64 },
     RavenousRatsEntered { entry: u64 },
     RavenousRatsEnteredAfterBatch { entry: u64, marker: u64 },
+    AuramancerEntered { entry: u64 },
+    AuramancerEnteredAfterBatch { entry: u64, marker: u64 },
+    MonkRealistEntered { entry: u64 },
+    MonkRealistEnteredAfterBatch { entry: u64, marker: u64 },
+    UktabiOrangutanEntered { entry: u64 },
+    UktabiOrangutanEnteredAfterBatch { entry: u64, marker: u64 },
+    GhituSlingerEntered { entry: u64 },
+    GhituSlingerEnteredAfterBatch { entry: u64, marker: u64 },
+    DonatedEcho { upkeep: u64, control: u64 },
+    XantidSwarmAttacked { attack: u64 },
 }
 
 impl DonatedTriggerKindV1 {
@@ -583,6 +581,22 @@ impl DonatedTriggerKindV1 {
             (p2a::RAVENOUS_RATS, Some(marker)) => {
                 Some(Self::RavenousRatsEnteredAfterBatch { entry, marker })
             }
+            (p3h::AURAMANCER, None) => Some(Self::AuramancerEntered { entry }),
+            (p3h::AURAMANCER, Some(marker)) => {
+                Some(Self::AuramancerEnteredAfterBatch { entry, marker })
+            }
+            (p3h::MONK_REALIST, None) => Some(Self::MonkRealistEntered { entry }),
+            (p3h::MONK_REALIST, Some(marker)) => {
+                Some(Self::MonkRealistEnteredAfterBatch { entry, marker })
+            }
+            (p3c::UKTABI_ORANGUTAN, None) => Some(Self::UktabiOrangutanEntered { entry }),
+            (p3c::UKTABI_ORANGUTAN, Some(marker)) => {
+                Some(Self::UktabiOrangutanEnteredAfterBatch { entry, marker })
+            }
+            (p3h::GHITU_SLINGER, None) => Some(Self::GhituSlingerEntered { entry }),
+            (p3h::GHITU_SLINGER, Some(marker)) => {
+                Some(Self::GhituSlingerEnteredAfterBatch { entry, marker })
+            }
             _ => None,
         }
     }
@@ -595,7 +609,45 @@ impl DonatedTriggerKindV1 {
             Self::RavenousRatsEntered { .. } | Self::RavenousRatsEnteredAfterBatch { .. } => {
                 TargetSpec::TargetOpponent
             }
+            Self::AuramancerEntered { .. } | Self::AuramancerEnteredAfterBatch { .. } => {
+                p3h::AURAMANCER_TARGET
+            }
+            Self::MonkRealistEntered { .. } | Self::MonkRealistEnteredAfterBatch { .. } => {
+                TargetSpec::EnchantmentPermanent
+            }
+            Self::UktabiOrangutanEntered { .. } | Self::UktabiOrangutanEnteredAfterBatch { .. } => {
+                TargetSpec::ArtifactPermanent
+            }
+            Self::GhituSlingerEntered { .. } | Self::GhituSlingerEnteredAfterBatch { .. } => {
+                TargetSpec::AnyTarget
+            }
             _ => TargetSpec::None,
+        }
+    }
+
+    fn immediate_entry(self) -> Option<u64> {
+        match self {
+            Self::PalinchronEntered { entry }
+            | Self::KarmicGuideEntered { entry }
+            | Self::RavenousRatsEntered { entry }
+            | Self::AuramancerEntered { entry }
+            | Self::MonkRealistEntered { entry }
+            | Self::UktabiOrangutanEntered { entry }
+            | Self::GhituSlingerEntered { entry } => Some(entry),
+            _ => None,
+        }
+    }
+
+    fn deferred_entry(self) -> Option<(u64, u64)> {
+        match self {
+            Self::PalinchronEnteredAfterBatch { entry, marker }
+            | Self::KarmicGuideEnteredAfterBatch { entry, marker }
+            | Self::RavenousRatsEnteredAfterBatch { entry, marker }
+            | Self::AuramancerEnteredAfterBatch { entry, marker }
+            | Self::MonkRealistEnteredAfterBatch { entry, marker }
+            | Self::UktabiOrangutanEnteredAfterBatch { entry, marker }
+            | Self::GhituSlingerEnteredAfterBatch { entry, marker } => Some((entry, marker)),
+            _ => None,
         }
     }
 }
@@ -626,33 +678,53 @@ impl DonatedTriggerCaptureV1 {
         {
             return Err("full-text trigger lost its original host or donor".into());
         }
+        let matches_entry = |entry: u64| {
+            usize::try_from(entry)
+                .ok()
+                .is_some_and(|index| entry_source(state, index) == Some(self.host.source))
+        };
         match self.kind {
             DonatedTriggerKindV1::PalinchronEntered { entry }
             | DonatedTriggerKindV1::PalinchronEnteredAfterBatch { entry, .. }
-                if donor.name == p2c::PALINCHRON
-                    && usize::try_from(entry).ok().is_some_and(|index| {
-                        entry_source(state, index) == Some(self.host.source)
-                    }) =>
+                if donor.name == p2c::PALINCHRON && matches_entry(entry) =>
             {
                 Ok(p2c::palinchron_enters())
             }
             DonatedTriggerKindV1::KarmicGuideEntered { entry }
             | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { entry, .. }
-                if donor.name == p2c::KARMIC_GUIDE
-                    && usize::try_from(entry).ok().is_some_and(|index| {
-                        entry_source(state, index) == Some(self.host.source)
-                    }) =>
+                if donor.name == p2c::KARMIC_GUIDE && matches_entry(entry) =>
             {
                 Ok(p2c::guide_enters())
             }
             DonatedTriggerKindV1::RavenousRatsEntered { entry }
             | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { entry, .. }
-                if donor.name == p2a::RAVENOUS_RATS
-                    && usize::try_from(entry).ok().is_some_and(|index| {
-                        entry_source(state, index) == Some(self.host.source)
-                    }) =>
+                if donor.name == p2a::RAVENOUS_RATS && matches_entry(entry) =>
             {
                 Ok(p2a::rats_enters())
+            }
+            DonatedTriggerKindV1::AuramancerEntered { entry }
+            | DonatedTriggerKindV1::AuramancerEnteredAfterBatch { entry, .. }
+                if donor.name == p3h::AURAMANCER && matches_entry(entry) =>
+            {
+                Ok(p3h::auramancer_enters())
+            }
+            DonatedTriggerKindV1::MonkRealistEntered { entry }
+            | DonatedTriggerKindV1::MonkRealistEnteredAfterBatch { entry, .. }
+                if donor.name == p3h::MONK_REALIST && matches_entry(entry) =>
+            {
+                Ok(p3h::monk_realist_enters())
+            }
+            DonatedTriggerKindV1::UktabiOrangutanEntered { entry }
+            | DonatedTriggerKindV1::UktabiOrangutanEnteredAfterBatch { entry, .. }
+                if donor.name == p3c::UKTABI_ORANGUTAN && matches_entry(entry) =>
+            {
+                Ok(p3c::orangutan_destroy())
+            }
+            DonatedTriggerKindV1::GhituSlingerEntered { entry }
+            | DonatedTriggerKindV1::GhituSlingerEnteredAfterBatch { entry, .. }
+                if donor.name == p3h::GHITU_SLINGER && matches_entry(entry) =>
+            {
+                Ok(p3h::ghitu_slinger_enters())
             }
             DonatedTriggerKindV1::DevourerPower { observed_power }
                 if donor.name == p2c::PHYREXIAN_DEVOURER && observed_power >= 7 =>
@@ -663,11 +735,42 @@ impl DonatedTriggerCaptureV1 {
                 if donor.name == p2c::KARMIC_GUIDE
                     && echo_custody(state, self.host, upkeep) == Some(control) =>
             {
-                Ok(crate::eternal_premodern_p2d_v1::donated_guide_echo_trigger())
+                Ok(p2d::donated_guide_echo_trigger())
+            }
+            DonatedTriggerKindV1::DonatedEcho { upkeep, control }
+                if donor.name != p2c::KARMIC_GUIDE
+                    && donor_supported(donor)
+                    && p2d::echo_cost(donor.name).is_some()
+                    && echo_custody(state, self.host, upkeep) == Some(control) =>
+            {
+                Ok(p2d::donated_echo_trigger(self.donor.card_def))
+            }
+            DonatedTriggerKindV1::XantidSwarmAttacked { attack }
+                if donor.name == p3b::XANTID_SWARM && attack_matches(state, attack, self.host) =>
+            {
+                Ok(p3b::xantid_attacks())
             }
             _ => Err("full-text trigger does not match its frozen donor and occurrence".into()),
         }
     }
+}
+
+fn attack_matches(state: &GameState, attack: u64, host: AbilitySourceContractV4) -> bool {
+    usize::try_from(attack)
+        .ok()
+        .and_then(|index| state.engine.event_history.get(index))
+        .is_some_and(|event| {
+            matches!(
+                *event,
+                CommittedEvent::DeclaredAttacker {
+                    source,
+                    source_zone_change_count,
+                    controller,
+                } if source == host.source
+                    && source_zone_change_count == host.zone_change_count
+                    && controller == host.controller
+            )
+        })
 }
 
 fn entry_source(state: &GameState, index: usize) -> Option<ObjectId> {
@@ -761,21 +864,57 @@ pub(crate) fn queue_upkeep_triggers(
     let upkeep = upkeep as u64;
     for source in state.players[player.index()].battlefield.clone() {
         let Some(text) = active_text(state, source).filter(|text| {
-            text.definition().name == p2c::KARMIC_GUIDE
+            p2d::echo_cost(text.definition().name).is_some()
                 && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
         }) else {
             continue;
         };
         if let Some(control) = echo_custody(state, text.host, upkeep) {
-            queue_donated_trigger(
-                state,
-                text,
-                DonatedTriggerKindV1::KarmicGuideEcho { upkeep, control },
-            )
-            .map_err(|_| source)?;
+            let kind = if text.definition().name == p2c::KARMIC_GUIDE {
+                DonatedTriggerKindV1::KarmicGuideEcho { upkeep, control }
+            } else {
+                DonatedTriggerKindV1::DonatedEcho { upkeep, control }
+            };
+            queue_donated_trigger(state, text, kind).map_err(|_| source)?;
         }
     }
     Ok(())
+}
+
+pub(crate) fn has_donated_attack_trigger(state: &GameState, source: ObjectId) -> bool {
+    crate::graveyard_order_v1::enabled(state)
+        && active_text(state, source).is_some_and(|text| {
+            text.definition().name == p3b::XANTID_SWARM
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        })
+}
+
+pub(crate) fn record_attack_trigger(
+    state: &mut GameState,
+    declaration: usize,
+) -> Result<(), ObjectId> {
+    if !cfg!(feature = "eternal-fixtures") || !crate::graveyard_order_v1::enabled(state) {
+        return Ok(());
+    }
+    let Some(CommittedEvent::DeclaredAttacker { source, .. }) =
+        state.engine.event_history.get(declaration)
+    else {
+        return Ok(());
+    };
+    let source = *source;
+    let Some(text) = active_text(state, source).filter(|text| {
+        text.definition().name == p3b::XANTID_SWARM
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+    }) else {
+        return Ok(());
+    };
+    let attack = u64::try_from(declaration).map_err(|_| source)?;
+    queue_donated_trigger(
+        state,
+        text,
+        DonatedTriggerKindV1::XantidSwarmAttacked { attack },
+    )
+    .map_err(|_| source)
 }
 
 fn queue_donated_trigger(
@@ -980,36 +1119,70 @@ fn trigger_record(state: &GameState, index: u64) -> Result<DonatedTriggerCapture
     let position = usize::try_from(index).map_err(|_| "full-text trigger index overflow")?;
     match state.engine.event_history.get(position) {
         Some(CommittedEvent::FullTextTriggerCapturedV1 { capture }) => {
-            match capture.kind {
-                DonatedTriggerKindV1::PalinchronEntered { entry }
-                | DonatedTriggerKindV1::KarmicGuideEntered { entry }
-                | DonatedTriggerKindV1::RavenousRatsEntered { entry } => {
-                    validate_entry_adjacency(state, entry, index, capture.host)?
+            if let Some(entry) = capture.kind.immediate_entry() {
+                validate_entry_adjacency(state, entry, index, capture.host)?;
+            } else if let Some((entry, marker)) = capture.kind.deferred_entry() {
+                let (original_entry, text) = batch_entry(state, marker)?;
+                if marker >= index
+                    || entry != original_entry
+                    || capture.host != text.host
+                    || capture.donor.source != text.donor.object
+                    || capture.donor.zone_change_count != text.donor.zone_change_count
+                    || capture.donor.card_def != text.text_definition
+                    || state
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| {
+                            matches!(
+                                event,
+                                CommittedEvent::FullTextTriggerCapturedV1 { capture }
+                                if capture.kind.deferred_entry().is_some_and(|(_, used)| used == marker)
+                            )
+                        })
+                        .count()
+                        != 1
+                {
+                    return Err(
+                        "donated entry differs from the native selected text marker".into(),
+                    );
                 }
-                DonatedTriggerKindV1::PalinchronEnteredAfterBatch { entry, marker }
-                | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { entry, marker }
-                | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { entry, marker } => {
-                    let (original_entry, text) = batch_entry(state, marker)?;
-                    if marker >= index || entry != original_entry || capture.host != text.host
-                        || capture.donor.source != text.donor.object
-                        || capture.donor.zone_change_count != text.donor.zone_change_count
-                        || capture.donor.card_def != text.text_definition
-                        || state.engine.event_history.iter().filter(|event| {
-                            matches!(event, CommittedEvent::FullTextTriggerCapturedV1 { capture }
-                                if matches!(capture.kind,
-                                    DonatedTriggerKindV1::PalinchronEnteredAfterBatch { marker: used, .. }
-                                    | DonatedTriggerKindV1::KarmicGuideEnteredAfterBatch { marker: used, .. }
-                                    | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { marker: used, .. }
-                                    if used == marker))
-                        }).count() != 1
-                    {
-                        return Err("donated entry differs from the native selected text marker".into());
+            } else {
+                match capture.kind {
+                    DonatedTriggerKindV1::DevourerPower { .. } => {}
+                    DonatedTriggerKindV1::KarmicGuideEcho { upkeep, .. }
+                    | DonatedTriggerKindV1::DonatedEcho { upkeep, .. }
+                        if upkeep < index => {}
+                    DonatedTriggerKindV1::KarmicGuideEcho { .. }
+                    | DonatedTriggerKindV1::DonatedEcho { .. } => {
+                        return Err("donated echo capture precedes its upkeep".into());
                     }
-                }
-                DonatedTriggerKindV1::DevourerPower { .. } => {}
-                DonatedTriggerKindV1::KarmicGuideEcho { upkeep, .. } if upkeep < index => {}
-                DonatedTriggerKindV1::KarmicGuideEcho { .. } => {
-                    return Err("donated echo capture precedes its upkeep".into());
+                    DonatedTriggerKindV1::XantidSwarmAttacked { attack }
+                        if attack < index
+                            && attack_matches(state, attack, capture.host)
+                            && state
+                                .engine
+                                .event_history
+                                .iter()
+                                .filter(|event| {
+                                    matches!(
+                                        event,
+                                        CommittedEvent::FullTextTriggerCapturedV1 { capture }
+                                        if matches!(
+                                            capture.kind,
+                                            DonatedTriggerKindV1::XantidSwarmAttacked { attack: used }
+                                                if used == attack
+                                        )
+                                    )
+                                })
+                                .count()
+                                == 1 => {}
+                    DonatedTriggerKindV1::XantidSwarmAttacked { .. } => {
+                        return Err(
+                            "donated attack capture lost its native attack declaration".into(),
+                        );
+                    }
+                    _ => unreachable!("entry variants handled above"),
                 }
             }
             Ok(**capture)
@@ -1027,6 +1200,329 @@ pub(crate) fn trigger_target_spec(
         .transpose()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DepartureV1 {
+    pub(crate) facts: crate::event::HistoricalDamageSourceV1,
+    pub(crate) types: crate::source_type_hexproof_v1::SourceTypesV1,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DamageLoanV1 {
+    facts: crate::event::HistoricalDamageSourceV1,
+    types: crate::source_type_hexproof_v1::SourceTypesV1,
+}
+
+impl DamageLoanV1 {
+    pub(crate) fn facts(self) -> crate::event::HistoricalDamageSourceV1 {
+        self.facts
+    }
+
+    pub(crate) fn types(self) -> crate::source_type_hexproof_v1::SourceTypesV1 {
+        self.types
+    }
+}
+
+fn tracks_host_departure(kind: DonatedTriggerKindV1) -> bool {
+    matches!(
+        kind,
+        DonatedTriggerKindV1::GhituSlingerEntered { .. }
+            | DonatedTriggerKindV1::GhituSlingerEnteredAfterBatch { .. }
+            | DonatedTriggerKindV1::MonkRealistEntered { .. }
+            | DonatedTriggerKindV1::MonkRealistEnteredAfterBatch { .. }
+            | DonatedTriggerKindV1::UktabiOrangutanEntered { .. }
+            | DonatedTriggerKindV1::UktabiOrangutanEnteredAfterBatch { .. }
+    )
+}
+
+pub(crate) fn departure(
+    state: &GameState,
+    object: ObjectId,
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
+) -> Option<DepartureV1> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    let live = state.objects.try_get(object)?;
+    if live.zone != Zone::Battlefield
+        || live.v4.face_down_v1.is_some()
+        || !CARD_DEFS
+            .get(usize::from(live.card_def))
+            .is_some_and(owns_definition)
+    {
+        return None;
+    }
+    let waiting_capture = |effect: &EffectOp| {
+        trigger_index(effect).is_some_and(|index| {
+            usize::try_from(index)
+                .ok()
+                .and_then(|pos| state.engine.event_history.get(pos))
+                .is_some_and(|event| {
+                    matches!(
+                        event,
+                        CommittedEvent::FullTextTriggerCapturedV1 { capture }
+                        if tracks_host_departure(capture.kind)
+                            && capture.host.source == object
+                            && capture.host.zone == Zone::Battlefield
+                            && capture.host.zone_change_count == live.zone_change_count
+                            && capture.host.owner == live.owner
+                            && capture.host.card_def == live.card_def
+                    )
+                })
+        })
+    };
+    let waiting = state.eternal_v1.as_ref().is_some_and(|eternal| {
+        eternal
+            .p1a
+            .queued_triggers
+            .iter()
+            .any(|queued| waiting_capture(&queued.effect))
+    }) || checkpoint_triggers
+        .iter()
+        .any(|pending| waiting_capture(&pending.effect))
+        || crate::optional_trigger_public_v1::held(state)
+            .into_iter()
+            .any(|pending| waiting_capture(&pending.effect))
+        || state
+            .stack
+            .iter()
+            .any(|item| item.inline_effect.as_ref().is_some_and(waiting_capture))
+        || state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            pending
+                .resolving_item
+                .inline_effect
+                .as_ref()
+                .is_some_and(waiting_capture)
+        });
+    if !waiting {
+        return None;
+    }
+    Some(DepartureV1 {
+        facts: crate::source_power_activation_v1::capture_damage_source(state, object),
+        types: crate::source_type_hexproof_v1::current_types(state, object).ok()?,
+    })
+}
+
+pub(crate) fn capture_batch(
+    state: &GameState,
+    events: &[crate::event::ProposedEvent],
+    checkpoint_triggers: &[crate::trigger::PendingTrigger],
+) -> Vec<DepartureV1> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return Vec::new();
+    }
+    let mut seen = Vec::new();
+    let mut out = Vec::new();
+    for event in events {
+        if let crate::event::ProposedEvent::ZoneChange(change) = event {
+            if change.to_zone != Zone::Battlefield && !seen.contains(&change.object) {
+                seen.push(change.object);
+                if let Some(dep) = departure(state, change.object, checkpoint_triggers) {
+                    out.push(dep);
+                }
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn record_departure(state: &mut GameState, at: usize, departure: DepartureV1) {
+    crate::eternal_cards_v1::owned_draws_v1::record(
+        state,
+        crate::eternal_cards_v1::owned_draws_v1::JournalV1::FullTextDeparture { at, departure },
+    );
+}
+
+fn departed_source_for_capture(
+    state: &GameState,
+    capture: DonatedTriggerCaptureV1,
+) -> Result<Option<DepartureV1>, String> {
+    if !tracks_host_departure(capture.kind) {
+        return Ok(None);
+    }
+    let live = state
+        .objects
+        .try_get(capture.host.source)
+        .ok_or("full-text trigger lost its physical host")?;
+    if live.zone == Zone::Battlefield && live.zone_change_count == capture.host.zone_change_count {
+        return Ok(None);
+    }
+    let mut departures = state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::EternalOwnedDrawV1])
+        .filter_map(|(index, event)| {
+            let CommittedEvent::EternalOwnedDrawV1 { journal } = event else {
+                return None;
+            };
+            let crate::eternal_cards_v1::owned_draws_v1::JournalV1::FullTextDeparture {
+                at,
+                departure,
+            } = **journal
+            else {
+                return None;
+            };
+            let facts = departure.facts;
+            (departure.types.valid()
+                && facts.source.source == capture.host.source
+                && facts.source.zone_change_count == capture.host.zone_change_count
+                && facts.source.owner == capture.host.owner
+                && facts.source.card_def == capture.host.card_def
+                && facts.source.zone == Zone::Battlefield
+                && at.checked_add(1) == Some(index)
+                && matches!(
+                    state.engine.event_history.get(at),
+                    Some(CommittedEvent::ZoneChange {
+                        object,
+                        from: Zone::Battlefield,
+                        to,
+                        controller_before,
+                    }) if *object == capture.host.source
+                        && *to != Zone::Battlefield
+                        && *controller_before == facts.source.controller
+                ))
+            .then_some(departure)
+        });
+    let dep = departures
+        .next()
+        .ok_or("full-text trigger lost its departed host characteristics")?;
+    if departures.next().is_some() {
+        return Err("full-text trigger has duplicate host departure evidence".into());
+    }
+    Ok(Some(dep))
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TriggerSourceV1 {
+    LiveOnBattlefield,
+    Departed(DepartureV1),
+}
+
+pub(crate) fn a2_trigger_source(
+    state: &GameState,
+    effect: &EffectOp,
+) -> Option<Result<TriggerSourceV1, String>> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    let index = trigger_index(effect)?;
+    let capture = match trigger_record(state, index) {
+        Ok(capture) => capture,
+        Err(err) => return Some(Err(err)),
+    };
+    if !tracks_host_departure(capture.kind) {
+        return None;
+    }
+    match departed_source_for_capture(state, capture) {
+        Ok(Some(departure)) => Some(Ok(TriggerSourceV1::Departed(departure))),
+        Ok(None) => Some(Ok(TriggerSourceV1::LiveOnBattlefield)),
+        Err(err) => Some(Err(err)),
+    }
+}
+
+pub(crate) fn departed_trigger_legal_targets(
+    state: &GameState,
+    spec: TargetSpec,
+    targets_chosen: &[crate::state::Target],
+    controller: PlayerId,
+    departure: DepartureV1,
+) -> Vec<crate::state::Target> {
+    let facts = departure.facts;
+    let colors = facts.color_mask;
+    crate::engine::legal_targets_for_controller(spec, targets_chosen, controller, state)
+        .into_iter()
+        .filter(|target| {
+            !crate::eternal_cards_v1::e3::veil_protects_from_colors(
+                state, *target, controller, colors,
+            ) && !crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                state,
+                *target,
+                departure.types,
+            ) && match *target {
+                crate::state::Target::Object(id) => !(crate::source_power_activation_v1::protected(
+                    state, facts, id,
+                ) || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_pauper_e6b_v1::protected_from_colors(state, id, colors))
+                    || (cfg!(feature = "eternal-fixtures")
+                        && (colors & 0x1f).count_ones() > 1
+                        && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(
+                            state, id,
+                        ))
+                    || (cfg!(feature = "eternal-fixtures")
+                        && departure.types.contains(CardType::Creature)
+                        && crate::eternal_vintage_v1::protected_from_creatures(state, id))
+                    || (cfg!(feature = "eternal-fixtures")
+                        && departure.types.contains(CardType::Artifact)
+                        && crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(
+                            state, id,
+                        ))
+                    || (crate::source_type_hexproof_v1::enabled()
+                        && crate::source_type_hexproof_v1::active_rule(state, id, controller)
+                            .is_some_and(|rule| {
+                                crate::source_type_hexproof_v1::protects(rule, departure.types)
+                            }))
+                    || crate::standard_legends_v1::hexproof_from_historical_color(
+                        state, id, colors, controller,
+                    )),
+                crate::state::Target::Player(_) => true,
+                crate::state::Target::StackItem(_) => false,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn selected_donated_damage_trigger(state: &GameState, item: &StackItem) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && item
+            .inline_effect
+            .as_ref()
+            .and_then(trigger_index)
+            .and_then(|index| trigger_record(state, index).ok())
+            .is_some_and(|capture| {
+                matches!(
+                    capture.kind,
+                    DonatedTriggerKindV1::GhituSlingerEntered { .. }
+                        | DonatedTriggerKindV1::GhituSlingerEnteredAfterBatch { .. }
+                )
+            })
+}
+
+pub(crate) fn departed_damage_trigger_needs_lki(state: &GameState, item: &StackItem) -> bool {
+    selected_donated_damage_trigger(state, item)
+        && item.v4.ability_source_contract.is_some_and(|source| {
+            state.objects.try_get(item.source).is_none_or(|live| {
+                live.zone != source.zone || live.zone_change_count != source.zone_change_count
+            })
+        })
+}
+
+pub(crate) fn departed_damage_loan(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<DamageLoanV1>, String> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return Ok(None);
+    }
+    let Some(index) = item.inline_effect.as_ref().and_then(trigger_index) else {
+        return Ok(None);
+    };
+    trigger_program(state, item)?;
+    let captured = trigger_record(state, index)?;
+    if !matches!(
+        captured.kind,
+        DonatedTriggerKindV1::GhituSlingerEntered { .. }
+            | DonatedTriggerKindV1::GhituSlingerEnteredAfterBatch { .. }
+    ) {
+        return Ok(None);
+    }
+    Ok(
+        departed_source_for_capture(state, captured)?.map(|dep| DamageLoanV1 {
+            facts: dep.facts,
+            types: dep.types,
+        }),
+    )
+}
+
 pub(crate) fn trigger_program(
     state: &GameState,
     item: &StackItem,
@@ -1035,6 +1531,7 @@ pub(crate) fn trigger_program(
         return Ok(None);
     };
     let captured = trigger_record(state, index)?;
+    departed_source_for_capture(state, captured)?;
     let target = captured.kind.target_spec();
     if !cfg!(feature = "eternal-fixtures")
         || item.kind != StackItemKind::TriggeredAbility
@@ -1374,7 +1871,10 @@ pub(crate) fn public_producers(
             )?);
         }
     }
-    for (ordinal, pending) in state.engine.pending_triggers.iter().enumerate() {
+    for (ordinal, pending) in crate::optional_trigger_public_v1::held(state)
+        .into_iter()
+        .enumerate()
+    {
         if let Some(index) = trigger_index(&pending.effect) {
             crate::engine::validate_pending_trigger_identity(state, pending)?;
             let record = trigger_record(state, index)?;
@@ -1443,6 +1943,24 @@ fn trigger_producer(
         | DonatedTriggerKindV1::RavenousRatsEnteredAfterBatch { .. } => {
             FullTextProgramV1::RavenousRatsDiscard
         }
+        DonatedTriggerKindV1::AuramancerEntered { .. }
+        | DonatedTriggerKindV1::AuramancerEnteredAfterBatch { .. } => {
+            FullTextProgramV1::AuramancerReturnEnchantment
+        }
+        DonatedTriggerKindV1::MonkRealistEntered { .. }
+        | DonatedTriggerKindV1::MonkRealistEnteredAfterBatch { .. } => {
+            FullTextProgramV1::MonkRealistDestroyEnchantment
+        }
+        DonatedTriggerKindV1::UktabiOrangutanEntered { .. }
+        | DonatedTriggerKindV1::UktabiOrangutanEnteredAfterBatch { .. } => {
+            FullTextProgramV1::UktabiOrangutanDestroyArtifact
+        }
+        DonatedTriggerKindV1::GhituSlingerEntered { .. }
+        | DonatedTriggerKindV1::GhituSlingerEnteredAfterBatch { .. } => {
+            FullTextProgramV1::GhituSlingerDamage
+        }
+        DonatedTriggerKindV1::DonatedEcho { .. } => FullTextProgramV1::DonatedEcho,
+        DonatedTriggerKindV1::XantidSwarmAttacked { .. } => FullTextProgramV1::XantidSwarmSilence,
     };
     FullTextProducerV1 {
         stage,
@@ -1484,16 +2002,19 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
             EventKindV1::FullTextBatchEntryV1,
             EventKindV1::FullTextRestrictedUseV1,
             EventKindV1::OrderedGraveyardControlGainedV1,
+            EventKindV1::EternalOwnedDrawV1,
         ])
         .iter()
-        .any(|event| {
-            matches!(
-                event,
-                CommittedEvent::FullTextTriggerCapturedV1 { .. }
-                    | CommittedEvent::FullTextBatchEntryV1 { .. }
-                    | CommittedEvent::FullTextRestrictedUseV1 { .. }
-                    | CommittedEvent::OrderedGraveyardControlGainedV1 { .. }
-            )
+        .any(|event| match event {
+            CommittedEvent::FullTextTriggerCapturedV1 { .. }
+            | CommittedEvent::FullTextBatchEntryV1 { .. }
+            | CommittedEvent::FullTextRestrictedUseV1 { .. }
+            | CommittedEvent::OrderedGraveyardControlGainedV1 { .. } => true,
+            CommittedEvent::EternalOwnedDrawV1 { journal } => matches!(
+                **journal,
+                crate::eternal_cards_v1::owned_draws_v1::JournalV1::FullTextDeparture { .. }
+            ),
+            _ => false,
         })
     {
         return Err(
