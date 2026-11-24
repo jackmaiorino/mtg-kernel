@@ -3957,6 +3957,12 @@ pub(crate) fn stack_spell_mana_value(state: &GameState, item: &StackItem) -> u16
         return value;
     }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(value) =
+        crate::eternal_pauper_pf2c_v1::prototype_stack_mana_value(def, item.v4.cast_method)
+    {
+        return value;
+    }
     if item.v4.cast_method == Some(CastMethodV4::Omen) {
         if let Some((cost, _)) = def.omen_spell_form() {
             return u16::from(cost.generic)
@@ -9076,7 +9082,7 @@ fn alt_cost_condition_met(
     state: &GameState,
 ) -> bool {
     match condition {
-        card_def::AltCostCondition::Always => true,
+        card_def::AltCostCondition::Always | card_def::AltCostCondition::PrototypeV1 => true,
         card_def::AltCostCondition::BattlefieldCreatureCountAtLeast(minimum) => {
             state
                 .objects
@@ -25203,6 +25209,11 @@ fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
         }
     };
     state.engine.until_end_of_turn.clear();
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        crate::eternal_pauper_pf2b_v1::cleanup_end_of_turn(state);
+        crate::eternal_pauper_pf2c_v1::cleanup_end_of_turn(state);
+    }
     if crate::fake_your_own_death_v50::spell_custody::finish_cleanup(state, fake_cleanup).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Err(());
@@ -25868,6 +25879,10 @@ fn unpainted_object_color_mask(state: &GameState, id: ObjectId) -> u8 {
         if object.v4.face_down_v1.is_some() {
             0
         } else {
+            #[cfg(feature = "eternal-fixtures")]
+            if let Some(mask) = crate::eternal_pauper_pf2c_v1::prototype_color_mask(state, id) {
+                return mask;
+            }
             #[cfg(feature = "standard-magezero-fixtures")]
             if let Some((_, _, color)) = crate::standard_cards_v1::room_characteristics(state, id) {
                 return color;
@@ -25931,6 +25946,11 @@ pub fn object_mana_value(state: &GameState, id: ObjectId) -> u16 {
         {
             return stack_spell_mana_value(state, item);
         }
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(value) = crate::eternal_pauper_pf2c_v1::prototype_battlefield_mana_value(state, id)
+    {
+        return value;
     }
     if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
         return definition.mana_value;
@@ -26113,6 +26133,10 @@ fn checked_base_power_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>,
             if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
                 return definition.power.map(i32::from);
             }
+            #[cfg(feature = "eternal-fixtures")]
+            if let Some((power, _)) = crate::eternal_pauper_pf2c_v1::prototype_base_pt(state, id) {
+                return Some(power);
+            }
             card_def::CARD_DEFS[obj.card_def as usize]
                 .power_for_face(obj.v4.face_index)
                 .map(i32::from)
@@ -26169,6 +26193,12 @@ fn checked_base_toughness_v1(state: &GameState, id: ObjectId) -> Result<Option<i
             if let Some(definition) = crate::full_text_v1::active_definition(state, id) {
                 return definition.toughness.map(i32::from);
             }
+            #[cfg(feature = "eternal-fixtures")]
+            if let Some((_, toughness)) =
+                crate::eternal_pauper_pf2c_v1::prototype_base_pt(state, id)
+            {
+                return Some(toughness);
+            }
             card_def::CARD_DEFS[obj.card_def as usize]
                 .toughness_for_face(obj.v4.face_index)
                 .map(i32::from)
@@ -26190,15 +26220,20 @@ pub(crate) fn checked_effective_pt(state: &GameState, id: ObjectId) -> Result<(i
 
 /// Preflight the additive exact-incarnation temporary boost without installing
 /// a timestamp or modifier. All existing layer predicates run in the same query.
+/// Layer 7d P/T switches (CR 613.4d, Inside Out) apply after all Layer 7a-7c
+/// base and modifier calculations, including `proposed`.
 pub(crate) fn checked_effective_pt_with_boost(
     state: &GameState,
     id: ObjectId,
     proposed: (i32, i32),
 ) -> Result<(i32, i32), String> {
-    Ok((
-        checked_effective_stat(state, id, false, proposed.0)?,
-        checked_effective_stat(state, id, true, proposed.1)?,
-    ))
+    let raw_power = checked_effective_stat(state, id, false, proposed.0)?;
+    let raw_toughness = checked_effective_stat(state, id, true, proposed.1)?;
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_pf2c_v1::is_pt_switched(state, id) {
+        return Ok((raw_toughness, raw_power));
+    }
+    Ok((raw_power, raw_toughness))
 }
 
 // One evaluator, parameterized by axis so legacy single-stat queries do not
@@ -26361,11 +26396,19 @@ pub(crate) fn halt_on_invalid_battlefield_pt(state: &mut GameState) -> bool {
 /// temporary boost installation and SBA use the checked query instead. Other
 /// direct legacy callers still require a state within the native PT envelope.
 pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
-    checked_effective_stat(state, id, false, 0).expect("native PT envelope must be validated")
+    #[cfg(feature = "eternal-fixtures")]
+    let switched = crate::eternal_pauper_pf2c_v1::is_pt_switched(state, id);
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let switched = false;
+    checked_effective_stat(state, id, switched, 0).expect("native PT envelope must be validated")
 }
 
 pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
-    checked_effective_stat(state, id, true, 0).expect("native PT envelope must be validated")
+    #[cfg(feature = "eternal-fixtures")]
+    let switched = crate::eternal_pauper_pf2c_v1::is_pt_switched(state, id);
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let switched = false;
+    checked_effective_stat(state, id, !switched, 0).expect("native PT envelope must be validated")
 }
 
 pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16, Keywords)> {

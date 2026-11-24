@@ -1801,9 +1801,17 @@ pub(crate) fn activation_allowed(state: &GameState, name: &str, ability_index: u
 pub(crate) fn spell_cost_reduction(
     state: &GameState,
     definition: &CardDef,
+    method: CastMethodV4,
     player: PlayerId,
 ) -> u32 {
-    let colors = crate::card_def::mana_colors_mask(definition.colors);
+    let colors = if method == CastMethodV4::Alternative {
+        crate::eternal_pauper_pf2c_v1::prototype_profile(definition).map_or_else(
+            || crate::card_def::mana_colors_mask(definition.colors),
+            |profile| profile.color_mask,
+        )
+    } else {
+        crate::card_def::mana_colors_mask(definition.colors)
+    };
     if colors == 0 {
         return 0;
     }
