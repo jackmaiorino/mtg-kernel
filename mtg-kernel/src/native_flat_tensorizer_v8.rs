@@ -49,6 +49,11 @@ impl NativeFlatTensorizerV8 {
         self.v7.set_state_digest_v1(on);
     }
 
+    /// See `NativeFlatTensorizerV2::set_action_digest_v1`.
+    pub(crate) fn set_action_digest_v1(&mut self, on: bool) {
+        self.v7.set_action_digest_v1(on);
+    }
+
     /// Fills `common` (196-wide action rows) and `pairing` transactionally:
     /// on an error both keep their previous decision.
     pub(crate) fn fill(

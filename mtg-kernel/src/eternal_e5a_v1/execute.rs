@@ -84,6 +84,51 @@ fn draw(ctx: &ExecCtx, state: &mut GameState, player: PlayerRef, count: u32) {
     crate::effect::execute(&EffectOp::DrawCards { player, count }, ctx, state);
 }
 
+/// Kozilek's Command: the chosen creature, if still legal and at most X.
+pub(super) fn creature_to_exile(
+    ctx: &ExecCtx,
+    state: &GameState,
+    slot: u8,
+    spec: TargetSpec,
+) -> Option<ObjectId> {
+    let object = legal_permanent(ctx, state, usize::from(slot), spec)?;
+    (crate::engine::object_has_type(state, object, CardType::Creature)
+        && crate::engine::object_mana_value(state, object) <= ctx.x_value)
+        .then_some(object)
+}
+
+/// Kozilek's Command: the graveyard targets from `first` on that are still
+/// the chosen incarnations and legal, at most X of them.
+pub(super) fn graveyard_targets(
+    ctx: &ExecCtx,
+    state: &GameState,
+    first: u8,
+    spec: TargetSpec,
+) -> Vec<ObjectId> {
+    (usize::from(first)..ctx.targets.len())
+        .filter_map(|index| match legal_target(ctx, state, index, spec) {
+            Some(Target::Object(card)) if state.objects.get(card).zone == Zone::Graveyard => {
+                Some(card)
+            }
+            _ => None,
+        })
+        .take(usize::from(ctx.x_value))
+        .collect()
+}
+
+/// Exiles `cards` from graveyards as one batch.
+pub(super) fn exile_graveyard_targets(state: &mut GameState, cards: Vec<ObjectId>) {
+    if !cards.is_empty() {
+        event::propose_and_commit_batch(
+            state,
+            cards
+                .into_iter()
+                .map(|card| ProposedEvent::zone_change(card, Zone::Exile))
+                .collect(),
+        );
+    }
+}
+
 pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         E5aOpV1::DrawThenSourceOnTopV1 => {
@@ -183,36 +228,14 @@ pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         E5aOpV1::ExileCreatureManaValueAtMostXV1 { slot, spec } => {
-            let Some(object) = legal_permanent(ctx, state, usize::from(*slot), *spec) else {
-                return;
-            };
-            if crate::engine::object_has_type(state, object, CardType::Creature)
-                && crate::engine::object_mana_value(state, object) <= ctx.x_value
-            {
+            if let Some(object) = creature_to_exile(ctx, state, *slot, *spec) {
                 event::propose_and_commit(state, ProposedEvent::zone_change(object, Zone::Exile));
             }
         }
-        E5aOpV1::ExileGraveyardTargetsV1 { first, spec } => {
-            let exiled = (usize::from(*first)..ctx.targets.len())
-                .filter_map(|index| match legal_target(ctx, state, index, *spec) {
-                    Some(Target::Object(card))
-                        if state.objects.get(card).zone == Zone::Graveyard =>
-                    {
-                        Some(card)
-                    }
-                    _ => None,
-                })
-                .take(usize::from(ctx.x_value))
-                .collect::<Vec<_>>();
-            if !exiled.is_empty() {
-                event::propose_and_commit_batch(
-                    state,
-                    exiled
-                        .into_iter()
-                        .map(|card| ProposedEvent::zone_change(card, Zone::Exile))
-                        .collect(),
-                );
-            }
+        E5aOpV1::ExileGraveyardTargetsV1 { first, spec }
+        | E5aOpV1::ExileGraveyardTargetsAfterDrawV1 { first, spec } => {
+            let exiled = graveyard_targets(ctx, state, *first, *spec);
+            exile_graveyard_targets(state, exiled);
         }
         E5aOpV1::ExileColoredTargetV1 => {
             if let Some(object) = legal_permanent(
@@ -364,8 +387,9 @@ pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | E5aOpV1::OathV1 { .. }
         | E5aOpV1::FlashV1
         | E5aOpV1::BeseechV1
-        | E5aOpV1::VampiricV1 => {
-            // Choice leaves run only inside the resumable interpreter.
+        | E5aOpV1::VampiricV1
+        | E5aOpV1::ExileCreatureAfterDrawV1 { .. } => {
+            // These leaves require the resumable interpreter.
             halt(state, ctx.source);
         }
     }
@@ -380,7 +404,7 @@ fn oath_reveal(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     let found = library.iter().position(|&card| {
         crate::card_def::CARD_DEFS
             .get(state.objects.get(card).card_def as usize)
-            .is_some_and(|def| def.has_type(CardType::Creature))
+            .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
     });
     let revealed = found.map_or(library.len(), |index| index + 1);
     // spellbench-public-reveal: public reveal to both players.

@@ -1393,6 +1393,7 @@ fn caves_exile_top(ctx: &ExecCtx, state: &mut GameState) {
             without_mana_cost: crate::engine::FreeCastV1(
                 completed && play_or_cast == crate::engine::PlayOrCast::Cast,
             ),
+            any_mana_type: Default::default(),
             object: top,
             holder: player,
             zone_change_generation,
@@ -1529,9 +1530,7 @@ pub(crate) fn drive(
                 return Ok(false);
             }
             if keep == 0 {
-                for card in hand {
-                    crate::engine::commit_discarded_card(state, card);
-                }
+                crate::engine::commit_discarded_cards(state, &hand);
                 return Ok(false);
             }
             let bindings = hand.iter().map(|&card| bind(state, card)).collect();
@@ -1556,13 +1555,16 @@ pub(crate) fn drive(
                 .copied()
                 .filter(|&card| {
                     definition(state, card).is_some_and(|def| {
-                        def.has_type(CardType::Creature) && def.mana_value <= maximum
+                        crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def(def)
+                            && def.mana_value <= maximum
                     }) && statics::card_has_color(state, card, ManaColor::G)
                 })
                 .map(|card| bind(state, card))
                 .collect::<Vec<_>>();
             if cards.is_empty() {
                 shuffle(state, controller)?;
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c8c_v1::note_library_searched(state, controller);
                 return Ok(false);
             }
             offer(
@@ -1729,11 +1731,11 @@ pub(crate) fn finish_selection(
                 .iter()
                 .map(|binding| binding.object)
                 .collect::<Vec<_>>();
-            for card in hand_cards(state, player) {
-                if !kept.contains(&card) {
-                    crate::engine::commit_discarded_card(state, card);
-                }
-            }
+            let discarded = hand_cards(state, player)
+                .into_iter()
+                .filter(|card| !kept.contains(card))
+                .collect::<Vec<_>>();
+            crate::engine::commit_discarded_cards(state, &discarded);
             Ok(false)
         }
         E9aChoiceV1::ZenithSearchV1 => {
@@ -1741,13 +1743,22 @@ pub(crate) fn finish_selection(
                 put_onto_battlefield(state, card.object, player, false);
             }
             shuffle(state, player)?;
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c8c_v1::note_library_searched(state, player);
             Ok(false)
         }
         E9aChoiceV1::InquisitionDiscardV1 => {
             let Some(card) = chosen else {
                 return Err("Inquisition of Kozilek chooses a card".to_string());
             };
-            if state.objects.get(card.object).zone == Zone::Hand {
+            let live = state.objects.get(card.object);
+            if live.zone == Zone::Hand
+                && !crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                    state,
+                    continuation.ctx.controller,
+                    live.owner,
+                )
+            {
                 crate::engine::commit_discarded_card(state, card.object);
             }
             Ok(false)
@@ -1775,6 +1786,7 @@ pub(crate) fn finish_selection(
                 .exile_play_permissions
                 .push(crate::engine::PlayPermission {
                     without_mana_cost: crate::engine::FreeCastV1::default(),
+                    any_mana_type: Default::default(),
                     object: card.object,
                     holder,
                     zone_change_generation: card.expected_zone_change_count,

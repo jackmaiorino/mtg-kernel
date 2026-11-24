@@ -207,6 +207,8 @@ fn change_loyalty_with_origin(
 pub(crate) fn zero_loyalty(state: &GameState, object: ObjectId) -> bool {
     engine::object_has_type(state, object, CardType::Planeswalker)
         && loyalty(state, object).unwrap_or(0) == 0
+        && !(cfg!(feature = "eternal-fixtures")
+            && crate::eternal_cube_c7c_v1::planeswalker_survives_zero_loyalty(state, object))
 }
 
 /// Counters may be placed on a permanent even when it is not a planeswalker.

@@ -1082,6 +1082,8 @@ pub(crate) fn enter_as_copy(
         return;
     }
     let copied_def = original.card_def;
+    let copied_prototyped =
+        crate::eternal_pauper_pf2c_v1::is_prototyped_permanent(state, copied.object);
     use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1;
     match MetamorphCopyV1::capture(state, ctx, copied) {
         Ok(Some(copy)) => {
@@ -1122,6 +1124,9 @@ pub(crate) fn enter_as_copy(
     live.v4.effective_subtype_ids = base.effective_subtype_ids;
     let own_def = record.card_def;
     vintage_state(state).copies.push(record);
+    if copied_prototyped {
+        crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, host);
+    }
     crate::standard_cards_v1::note_copied_definitions(
         state,
         host,
@@ -1170,6 +1175,45 @@ pub(crate) fn paid_metamorph_copy_is_suppressed(state: &GameState, ctx: &ExecCtx
         })
         && crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(ctx.source))
             .is_some()
+}
+
+/// Applies Phyrexian Metamorph's as-enters copy modification during entry
+/// initialization (`apply_entry_counters`), before entry observers, copied
+/// entry counters, and ETB triggers run. Used when an effect such as
+/// Metamorphosis Fanatic returns Metamorph to the battlefield.
+pub(crate) fn apply_metamorph_entry_copy(state: &mut GameState, host: ObjectId, copied_def: u16) {
+    if state
+        .objects
+        .try_get(host)
+        .is_none_or(|live| live.zone != Zone::Battlefield)
+    {
+        return;
+    }
+    let link = live_link(state, host);
+    let live = state.objects.get_mut(host);
+    let record = CopyV1 {
+        host: link,
+        card_def: live.card_def,
+        name: std::mem::take(&mut live.name),
+        color_mask: live.v4.effective_color_mask,
+        subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
+    };
+    let base = crate::state::ObjectStateV4::from_card_def(copied_def);
+    live.card_def = copied_def;
+    live.name = CARD_DEFS[copied_def as usize].object_name.into();
+    live.v4.effective_color_mask = base.effective_color_mask;
+    live.v4.effective_subtype_ids = base.effective_subtype_ids;
+    let own_def = record.card_def;
+    vintage_state(state).copies.push(record);
+    crate::standard_cards_v1::note_copied_definitions(
+        state,
+        host,
+        link.zone_change_count,
+        &[own_def, copied_def],
+    );
+    if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
+        state.objects.get_mut(host).tapped = true;
+    }
 }
 
 /// Retain Metamorph's physical printing before any entry observer sees the
@@ -1474,6 +1518,8 @@ pub(crate) fn activation_allowed(
         && crate::eternal_cube_c2b_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_sideboard_s1q_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_cube_c5c_v1::activation_allowed(state, source, name, ability_index)
+        && crate::eternal_cube_c7c_v1::activation_allowed(state, source, name)
+        && crate::eternal_cube_c9a_v1::activation_allowed(state, source, name, ability_index)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -2055,6 +2101,7 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
         .any(|name| active_permanents(state, name, None).next().is_some()))
         || crate::eternal_legacy_e5b_v1::cast_prohibited(state, player)
         || crate::eternal_legacy_e9a_v1::statics::cast_prohibited(state, player)
+        || crate::eternal_cube_c8a_v1::cast_prohibited(state, player)
 }
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."
@@ -2150,7 +2197,7 @@ pub(crate) fn source_is_creature(state: &GameState, source: ObjectId) -> bool {
             Zone::Battlefield => crate::engine::object_has_type(state, source, CardType::Creature),
             Zone::Stack => CARD_DEFS
                 .get(live.card_def as usize)
-                .is_some_and(|def| def.has_type(CardType::Creature)),
+                .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def),
             _ => false,
         })
 }

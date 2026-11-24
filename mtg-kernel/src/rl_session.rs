@@ -5595,6 +5595,14 @@ impl FastActorSessionV1 {
         context: Option<crate::policy_surface_v5::SurfaceContextV1>,
     ) -> FastActorSessionV1 {
         let mut surface = PolicySurfaceV5::new_for_session();
+        // The template's per-seat priority-window rules are session
+        // configuration, like its contract mode: without them the import
+        // would pass a window the template's rule hands its seat. Both seats
+        // `HarnessV2` (every session without the episode field) changes
+        // nothing here.
+        surface
+            .set_action_window_seats_v1(template.surface.harness_surface().action_window_seats_v1())
+            .expect("a fresh session surface accepts any priority-window rules");
         // The decision marks (lead ruling 7 (a)) carry over when the state
         // continues the template's committed stream (a fixture's edited
         // restart); otherwise they start empty.
@@ -6091,6 +6099,13 @@ impl RlEpisodeSessionV1 {
             crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
             })?;
+        }
+        if let Some(outside) = &outside_the_game {
+            for cards in outside {
+                crate::card_def::preflight_outside_the_game(cards).map_err(|error| {
+                    session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+                })?;
+            }
         }
         for cards in card_ids {
             crate::rl::require_declared_cards_for_scope(
@@ -6994,7 +7009,9 @@ impl RlEpisodeSessionV1 {
             return;
         }
 
-        if self.state.extra_turn_v1.is_some() {
+        // The schema 5 public contract reports the turn schedule in its
+        // policy observation, so its session follows extra turns.
+        if self.state.extra_turn_v1.is_some() && !self.state.public_shroud_v1 {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
                 self.deck_hashes,
@@ -7536,7 +7553,33 @@ impl FastActorSessionV1 {
         mainboards: [Vec<u16>; 2],
         starting_player: PlayerId,
     ) -> Result<Self, RlSessionError> {
-        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_and_windows_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    /// `..._with_starting_player_v1` with each seat's priority-window rule
+    /// (`HarnessSurfaceV2::set_action_window_seats_v1`), set before the first
+    /// advance. Both `HarnessV2` is that reset exactly.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_and_windows_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
             episode_id,
             pair_environment_seed,
             max_physical_decisions,
@@ -7544,6 +7587,7 @@ impl FastActorSessionV1 {
             deck_ids,
             mainboards,
             Some(starting_player),
+            windows,
         )
     }
 
@@ -7556,11 +7600,38 @@ impl FastActorSessionV1 {
         mainboards: [Vec<u16>; 2],
         starting_player: Option<PlayerId>,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
             starting_player,
         )?;
+        let mut surface = PolicySurfaceV5::new_for_session();
+        surface
+            .set_action_window_seats_v1(windows)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = FastActorSessionV1 {
             deck_ids,
             deck_hashes,
@@ -7568,7 +7639,7 @@ impl FastActorSessionV1 {
             max_physical_decisions,
             max_policy_steps,
             state,
-            surface: PolicySurfaceV5::new_for_session(),
+            surface,
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,
@@ -7584,6 +7655,23 @@ impl FastActorSessionV1 {
         };
         session.advance_to_decision_or_terminal();
         Ok(session)
+    }
+
+    /// Tests: each seat's priority-window rule on this session's surface.
+    #[cfg(test)]
+    pub(crate) fn priority_windows_for_test_v1(
+        &self,
+    ) -> [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2] {
+        self.surface.harness_surface().action_window_seats_v1()
+    }
+
+    /// Tests: why `HarnessV2` would have passed the pending decision for its
+    /// seat, when it is a priority window the seat's rule handed it instead.
+    #[cfg(test)]
+    pub(crate) fn added_priority_window_for_test_v1(
+        &self,
+    ) -> Option<crate::surface::SuppressionReason> {
+        self.surface.engine_window_v1()
     }
 
     fn reset_with_decks_and_limits_in_flat_action_mode(
@@ -21481,6 +21569,9 @@ pub use chandra_v74::{ChandraDecisionV74, ChandraSessionV74, ChandraSnapshotV74}
 mod eternal_actor_v1;
 pub(crate) mod kaito_v75;
 mod limited_return_v1;
+// Birchlore Rangers is in the eternal catalog only.
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod priority_windows_two_object_tests;
 pub use eternal_actor_v1::{EternalActorDecisionV1, EternalActorSessionV1, EternalActorSnapshotV1};
 #[cfg(feature = "limited-fdn-fixtures")]
 mod rules_only_v1;

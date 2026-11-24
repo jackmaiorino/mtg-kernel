@@ -327,6 +327,7 @@ fn retargeted_chain_lightning_copy_triggers_ward_and_only_the_copy_ceases() {
         }
     ));
     engine::step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     let copy = state
         .engine
         .pending_spell_copy

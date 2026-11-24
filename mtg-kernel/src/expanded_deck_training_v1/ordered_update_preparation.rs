@@ -34,6 +34,43 @@ pub(crate) fn validate_max_prepared_tensor_mebibytes_v1(mebibytes: usize) -> Res
         "max_prepared_tensor_mebibytes must be in 64..=4096",
     )
 }
+/// Bound on the record bytes (decompressed, for sealed files) of one prepared
+/// update's trajectory batch. The historical constant (`MAX_BATCH_BYTES`,
+/// 512 MiB) is the default; it is config-driven through
+/// `max_trajectory_batch_mebibytes` on the run config and the prepared update
+/// command, so an update can carry more than about 190 games of about
+/// 2.7 MiB each without changing any existing config (absent means 512 and is
+/// never serialized). Admitted range 1..=4096 MiB: in bytes at most 2^32, so
+/// every sum and comparison against it, all in u64, cannot overflow. It
+/// bounds only the batch total; each file keeps its own 512 MiB bound
+/// (`MAX_FILE_BYTES`), and parse-ahead keeps its fixed retention.
+pub(crate) const DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES: usize = 512;
+pub(crate) const MAX_TRAJECTORY_BATCH_MEBIBYTES: usize = 4096;
+const _: () = assert!((DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES as u64) << 20 == MAX_BATCH_BYTES);
+
+pub(crate) fn validate_max_trajectory_batch_mebibytes_v1(mebibytes: usize) -> Result<(), String> {
+    ensure(
+        (1..=MAX_TRAJECTORY_BATCH_MEBIBYTES).contains(&mebibytes),
+        "max_trajectory_batch_mebibytes must be in 1..=4096",
+    )
+}
+
+/// The batch bound in bytes of a validated `max_trajectory_batch_mebibytes`.
+pub(crate) fn trajectory_batch_bytes_v1(mebibytes: usize) -> u64 {
+    (mebibytes as u64) << 20
+}
+
+/// The physical-group bound of a prepared update whose trajectory batch bound
+/// is `batch_bytes`: the historical 65,536 up to the default batch bound, and
+/// above it in proportion (128 groups per MiB), so a raised
+/// `max_trajectory_batch_mebibytes` admits the games it admits (a 480-game
+/// update has about 64,000). At most 524,288 for 4,096 MiB. The groups' rows
+/// stay bounded by `max_prepared_tensor_mebibytes`.
+pub(crate) fn preparation_groups_bound_v1(batch_bytes: u64) -> usize {
+    let scaled =
+        (MAX_GROUPS as u64).saturating_mul(batch_bytes.max(MAX_BATCH_BYTES)) / MAX_BATCH_BYTES;
+    usize::try_from(scaled).unwrap_or(usize::MAX)
+}
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) fn validate_preparation_workers_v1(workers: usize) -> Result<(), String> {
@@ -125,6 +162,7 @@ pub(super) fn decoded_payload_bytes(t: &TensorBitsV1) -> Result<usize, String> {
 fn plan_v1(
     episodes: &[ExpandedTrajectoryV1],
     max_decoded_tensor_bytes: usize,
+    max_groups: usize,
 ) -> Result<(Vec<GroupJobV1>, Vec<ExpandedModelSourceV1>, usize), String> {
     ensure(
         !episodes.is_empty() && episodes.len() <= 1024,
@@ -167,10 +205,9 @@ fn plan_v1(
                     ));
                 }
             }
-            ensure(
-                jobs.len() < MAX_GROUPS,
-                "preparation exceeds 65536 physical groups",
-            )?;
+            if jobs.len() >= max_groups {
+                return Err(format!("preparation exceeds {max_groups} physical groups"));
+            }
             jobs.push(GroupJobV1 {
                 episode: episode_index,
                 start,
@@ -191,7 +228,23 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     job_count: usize,
     work: F,
 ) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
-    ordered_jobs_with_state_v1(workers, job_count, || (), |_, ordinal| work(ordinal))
+    ordered_jobs_bounded_v1(workers, job_count, MAX_GROUPS, work)
+}
+
+/// [`ordered_jobs_v1`] admitting up to `max_jobs` jobs.
+fn ordered_jobs_bounded_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
+    workers: usize,
+    job_count: usize,
+    max_jobs: usize,
+    work: F,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
+    ordered_jobs_with_state_bounded_v1(
+        workers,
+        job_count,
+        max_jobs,
+        || (),
+        |_, ordinal| work(ordinal),
+    )
 }
 
 /// [`ordered_jobs_v1`] whose jobs also get their worker's own state: made by
@@ -201,6 +254,7 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
 /// caches. A worker takes no job after one of its own fails or panics (every
 /// later ordinal is past the first error), so no job sees state such a job
 /// left behind.
+#[cfg(test)]
 fn ordered_jobs_with_state_v1<S, T, M, F>(
     workers: usize,
     job_count: usize,
@@ -212,9 +266,27 @@ where
     M: Fn() -> S + Sync,
     F: Fn(&mut S, usize) -> Result<T, String> + Sync,
 {
+    ordered_jobs_with_state_bounded_v1(workers, job_count, MAX_GROUPS, state, work)
+}
+
+/// [`ordered_jobs_bounded_v1`] whose jobs also get their worker's own state:
+/// made by `state` on that worker's thread, handed to each of its jobs in turn
+/// and dropped there.
+fn ordered_jobs_with_state_bounded_v1<S, T, M, F>(
+    workers: usize,
+    job_count: usize,
+    max_jobs: usize,
+    state: M,
+    work: F,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String>
+where
+    T: Send,
+    M: Fn() -> S + Sync,
+    F: Fn(&mut S, usize) -> Result<T, String> + Sync,
+{
     validate_preparation_workers_v1(workers)?;
     ensure(
-        job_count > 0 && job_count <= MAX_GROUPS,
+        job_count > 0 && job_count <= max_jobs,
         "invalid preparation job count",
     )?;
     let next = AtomicUsize::new(0);
@@ -304,33 +376,38 @@ where
 
 /// The same bounded, ordered worker executor for independent pinned input reads.
 /// Numeric replay and optimizer work still begin only after all inputs validate.
+#[cfg(test)]
 pub(super) fn read_trajectories_v1(
     pins: &[PinnedFileV1],
     workers: usize,
+) -> Result<Vec<(u64, ExpandedTrajectoryV1)>, String> {
+    read_trajectories_bounded_v1(pins, workers, MAX_BATCH_BYTES)
+}
+
+/// Reads and parses pinned trajectories in order within the batch bound `batch_bytes`.
+pub(super) fn read_trajectories_bounded_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+    batch_bytes: u64,
 ) -> Result<Vec<(u64, ExpandedTrajectoryV1)>, String> {
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
     let parsed_ahead = AtomicUsize::new(0);
     // Sealed files (`record_envelope_v1`) open only within the batch bound,
     // decided in pin order before any is opened.
-    let admitted = record_envelope_v1::admit_batch_v1(
-        pins.iter().map(|pin| pin.path.as_path()),
-        MAX_BATCH_BYTES,
-    )?;
+    let admitted =
+        record_envelope_v1::admit_batch_v1(pins.iter().map(|pin| pin.path.as_path()), batch_bytes)?;
     let read = |ordinal: usize| {
         let bytes = super::read_pinned_shared_v1(&pins[ordinal])?;
         admitted[ordinal].check_v1(&bytes)?;
-        let length = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?;
+        let length = super::trajectory_container_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?;
         let episode =
             match trajectory_parse_ahead_v1::take_trajectory_v1(&pins[ordinal].sha256, &bytes) {
                 Some(episode) => {
                     parsed_ahead.fetch_add(1, Ordering::Relaxed);
                     episode
                 }
-                None => {
-                    serde_json::from_slice(&record_envelope_v1::open_v1(&bytes, MAX_FILE_BYTES)?)
-                        .map_err(err)?
-                }
+                None => super::trajectory_container_v1::decode_any_v1(&bytes, MAX_FILE_BYTES)?,
             };
         // The batch bound counts record bytes, sealed (`record_envelope_v1`)
         // or not.
@@ -1000,15 +1077,39 @@ fn replay_other_seat_setting_v1(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
-/// A replay worker's row caches, one for each seat's rows. A group is one
-/// seat's rows, the seats are scored by different models whenever the
-/// opponent is not the current learner, and a `ReplayForwardRowsV1` keeps
-/// one model's rows at a time: with one storage, alternating seats would
-/// empty it at every group. Storage that is never used holds nothing.
+/// Maximum distinct opponent models cached simultaneously per replay worker
+/// when `ReplayRowCacheV1::AllRows` or deferred-replay other-seat caching is
+/// active. Keeps multi-opponent rosters from thrashing one slot while bounding
+/// per-worker memory.
+const OTHER_ROW_CACHE_SLOTS_V1: usize = 4;
+
+/// A replay worker's row caches, one for the learner seat and a small bounded
+/// LRU of opponent-model caches keyed by opponent source index (`job.opponent`).
+/// A `ReplayForwardRowsV1` keeps one model's rows at a time; with one shared
+/// opponent slot, alternating opponent sources in a multi-opponent roster would
+/// empty it on every switch. Unused slots allocate nothing.
 #[derive(Default)]
 struct SeatRowCachesV1 {
     learner: ReplayForwardRowsV1,
-    other: ReplayForwardRowsV1,
+    other: Vec<(Option<usize>, ReplayForwardRowsV1)>,
+}
+
+impl SeatRowCachesV1 {
+    fn other_for_v1(&mut self, opponent: Option<usize>) -> &mut ReplayForwardRowsV1 {
+        if let Some(pos) = self.other.iter().position(|(key, _)| *key == opponent) {
+            if pos != 0 {
+                let entry = self.other.remove(pos);
+                self.other.insert(0, entry);
+            }
+            return &mut self.other[0].1;
+        }
+        if self.other.len() >= OTHER_ROW_CACHE_SLOTS_V1 {
+            self.other.pop();
+        }
+        self.other
+            .insert(0, (opponent, ReplayForwardRowsV1::default()));
+        &mut self.other[0].1
+    }
 }
 
 /// The prepared replay with every row through the reference forward.
@@ -1018,6 +1119,7 @@ pub(super) fn prepare_v1<'a>(
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     training_math: TrainingMathV1,
 ) -> Result<PreparedGroupsV1<'a>, String> {
     prepare_with_row_cache_v1(
@@ -1026,6 +1128,7 @@ pub(super) fn prepare_v1<'a>(
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        max_groups,
         training_math,
         ReplayRowCacheV1::Off,
     )
@@ -1033,12 +1136,17 @@ pub(super) fn prepare_v1<'a>(
 
 /// [`prepare_v1`] with `row_cache`'s rows replayed through each worker's
 /// exact row cache: the same groups, telemetry and errors.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_v1's inputs, the group bound and the row cache choice"
+)]
 pub(super) fn prepare_with_row_cache_v1<'a>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     training_math: TrainingMathV1,
     row_cache: ReplayRowCacheV1,
 ) -> Result<PreparedGroupsV1<'a>, String> {
@@ -1048,6 +1156,7 @@ pub(super) fn prepare_with_row_cache_v1<'a>(
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        max_groups,
         training_math,
         LearnerRowsV1::Replay(row_cache),
     )
@@ -1060,12 +1169,17 @@ pub(super) fn prepare_with_row_cache_v1<'a>(
 /// `other_forwards` counts their forwards, also when preparation fails. Its
 /// errors are not the reference's: a learner row's failure surfaces only in
 /// the learner, so a caller reports the reference's error instead.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_v1's inputs, the group bound and the other-row counter"
+)]
 pub(super) fn prepare_deferring_learner_rows_v1<'a>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     training_math: TrainingMathV1,
     other_forwards: &AtomicU64,
 ) -> Result<PreparedGroupsV1<'a>, String> {
@@ -1075,8 +1189,48 @@ pub(super) fn prepare_deferring_learner_rows_v1<'a>(
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        max_groups,
         training_math,
-        LearnerRowsV1::Defer { other_forwards },
+        LearnerRowsV1::Defer {
+            other_forwards: Some(other_forwards),
+            other_row_cache: false,
+        },
+    )
+}
+
+/// [`prepare_deferring_learner_rows_v1`] for CPU GAE updates (Net-8 and wide)
+/// whose learner step recomputes every learner row's forward tape and checks
+/// every output bit (`validate_forward_output_bits_v1`) before mutating state.
+/// When `other_row_cache` is true, opponent rows replay through each worker's
+/// bounded per-opponent exact row cache. On any failure, the caller falls back
+/// to [`prepare_with_row_cache_v1`] so error text and earliest-group precedence
+/// stay identical to the reference.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_v1's inputs, the group bound, and opponent row caching"
+)]
+pub(super) fn prepare_deferring_learner_rows_with_cache_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    other_row_cache: bool,
+) -> Result<PreparedGroupsV1<'a>, String> {
+    prepare_loading_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        max_groups,
+        training_math,
+        LearnerRowsV1::Defer {
+            other_forwards: None,
+            other_row_cache,
+        },
     )
 }
 
@@ -1085,16 +1239,26 @@ pub(super) fn prepare_deferring_learner_rows_v1<'a>(
 enum LearnerRowsV1<'c> {
     /// Replayed and checked, through the forward `ReplayRowCacheV1` picks.
     Replay(ReplayRowCacheV1),
-    /// Decoded only; `other_forwards` counts the other rows' forwards.
-    Defer { other_forwards: &'c AtomicU64 },
+    /// Decoded only; `other_forwards` optionally counts the other rows'
+    /// forwards, and `other_row_cache` enables exact per-opponent row caching
+    /// for the other seat's rows.
+    Defer {
+        other_forwards: Option<&'c AtomicU64>,
+        other_row_cache: bool,
+    },
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_v1's inputs, the group bound and the learner-row mode"
+)]
 fn prepare_loading_v1<'a>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     training_math: TrainingMathV1,
     learner_rows: LearnerRowsV1<'_>,
 ) -> Result<PreparedGroupsV1<'a>, String> {
@@ -1105,6 +1269,7 @@ fn prepare_loading_v1<'a>(
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        max_groups,
         learner_rows,
         |source| {
             let (mut loaded, hit) = load_opponent_cached_v1(source, true)?;
@@ -1136,17 +1301,23 @@ where
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        MAX_GROUPS,
         LearnerRowsV1::Replay(row_cache),
         load,
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_v1's inputs, the group bound, learner-row mode and opponent loader"
+)]
 fn prepare_counting_v1<'a, F>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     learner_replay: LearnerRowsV1<'_>,
     mut load: F,
 ) -> Result<PreparedGroupsV1<'a>, String>
@@ -1157,7 +1328,7 @@ where
     validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
     let max_decoded_tensor_bytes = max_prepared_tensor_mebibytes * MEBIBYTE;
     let started = Instant::now();
-    let (jobs, sources, payload) = plan_v1(episodes, max_decoded_tensor_bytes)?;
+    let (jobs, sources, payload) = plan_v1(episodes, max_decoded_tensor_bytes, max_groups)?;
     let planning = started.elapsed().as_secs_f64();
     let loading_started = Instant::now();
     let mut loads = 0;
@@ -1234,26 +1405,45 @@ where
         } else {
             s_update_profile::StageV1::ReplayOtherRow
         };
-        // A deferring preparation replays only the other seat's rows, each
-        // through the reference forward; the learner's are left to the
-        // verified learner.
-        let (row_cache, other_forwards) = match learner_replay {
-            LearnerRowsV1::Replay(row_cache) => (row_cache, None),
-            LearnerRowsV1::Defer { other_forwards } => {
-                (ReplayRowCacheV1::Off, Some(other_forwards))
-            }
+        // A deferring preparation replays only the other seat's rows; the
+        // learner's rows are left to the verified learner step.
+        let (defer_learner, row_cache, other_forwards) = match learner_replay {
+            LearnerRowsV1::Replay(row_cache) => (false, row_cache, None),
+            LearnerRowsV1::Defer {
+                other_forwards,
+                other_row_cache,
+            } => (
+                true,
+                if other_row_cache {
+                    ReplayRowCacheV1::AllRows
+                } else {
+                    ReplayRowCacheV1::Off
+                },
+                other_forwards,
+            ),
         };
-        let mut cache = row_cache
-            .caches_v1(learner_rows)
-            .then_some(if learner_rows {
-                &mut caches.learner
-            } else {
-                &mut caches.other
-            });
+        let mut cache = if defer_learner && learner_rows {
+            None
+        } else {
+            row_cache.caches_v1(learner_rows).then(|| {
+                if learner_rows {
+                    &mut caches.learner
+                } else {
+                    caches.other_for_v1(job.opponent)
+                }
+            })
+        };
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
+            if trajectory.opponent_tensors_omitted && !learner_rows {
+                ensure(
+                    row.tensor.is_empty_v1(),
+                    "learner-only trajectory carries unexpected opponent tensor",
+                )?;
+                continue;
+            }
             let common = row.tensor.tensor();
-            if learner_rows && other_forwards.is_some() {
+            if learner_rows && defer_learner {
                 rows.push((row, common));
                 continue;
             }
@@ -1286,8 +1476,13 @@ where
             ))
         })
     };
-    let (ordered, worker_timings) =
-        ordered_jobs_with_state_v1(workers, jobs.len(), SeatRowCachesV1::default, replay_group)?;
+    let (ordered, worker_timings) = ordered_jobs_with_state_bounded_v1(
+        workers,
+        jobs.len(),
+        max_groups,
+        SeatRowCachesV1::default,
+        replay_group,
+    )?;
     let replay = replay_started.elapsed().as_secs_f64();
     drop(opponents);
     let groups: Vec<LearnerTensorGroupV1<'a>> = ordered.into_iter().flatten().collect();

@@ -127,7 +127,7 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         if spell.is_copy || def.optional_additional_cost != Some(kind) {
             return Err("copy snapshot additional cost changed".into());
         }
-        validate_optional_additional_paid_refs(kind, spell.controller, &spell.v4.paid_cost_refs)?;
+        spell_optional_paid_refs(spell, def, kind)?;
     }
     for (index, (&target, &contract)) in spell
         .targets
@@ -171,6 +171,7 @@ pub(crate) fn copy_snapshot_legal_targets(
         controller,
         Some(TargetingSource {
             dungeon_colors: None,
+            full_text_departure: None,
             types_override: None,
             object: spell.source,
             card_def: source.card_def,

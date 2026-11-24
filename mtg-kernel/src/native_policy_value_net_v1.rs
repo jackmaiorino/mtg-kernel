@@ -1727,13 +1727,43 @@ fn apply_two_layer_tanh_rows_v1(
 fn linear_rows_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Vec<f32> {
     debug_assert_eq!(input.len(), rows * linear.input_dim);
     debug_assert_eq!(linear.weight_t.len(), linear.weight.len());
-    let mut output = Vec::with_capacity(rows * linear.output_dim);
-    for input_row in input.chunks_exact(linear.input_dim).take(rows) {
-        let begin = output.len();
-        output.extend_from_slice(&linear.bias);
-        accumulate_linear_row_v1(linear, input_row, 0, &mut output[begin..]);
-    }
+    let mut output = vec![0.0; rows * linear.output_dim];
+    accumulate_linear_rows_v1(linear, input, rows, 0, &linear.bias, &mut output);
     output
+}
+
+/// Evaluates `rows` independent rows of `linear` starting from `first_input`,
+/// each initialized to `init_row`, writing into `output` (`rows * output_dim`).
+/// Each output element is still one sequential non-FMA f32 sum in ascending
+/// input order, bit-identical to calling `accumulate_linear_row_v1` per row.
+fn accumulate_linear_rows_v1(
+    linear: &LinearV1,
+    input: &[f32],
+    rows: usize,
+    first_input: usize,
+    init_row: &[f32],
+    output: &mut [f32],
+) {
+    let output_dim = linear.output_dim;
+    let slice_input_dim = if rows == 0 { 0 } else { input.len() / rows };
+    debug_assert_eq!(input.len(), rows * slice_input_dim);
+    debug_assert_eq!(output.len(), rows * output_dim);
+    debug_assert_eq!(init_row.len(), output_dim);
+    debug_assert!(first_input + slice_input_dim <= linear.input_dim);
+    if rows == 0 {
+        return;
+    }
+    let weights =
+        &linear.weight_t[first_input * output_dim..(first_input + slice_input_dim) * output_dim];
+    accumulate_input_major_rows_v1(
+        weights,
+        linear.weight_finite,
+        slice_input_dim,
+        output_dim,
+        init_row,
+        input,
+        output,
+    );
 }
 
 /// Adds `input_row[k] * weight[o][first_input + k]` to `accumulator[o]` for
@@ -1741,9 +1771,10 @@ fn linear_rows_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Vec<f32> {
 /// input order (bias first), exactly as the [output, input] loop computes it;
 /// only independent outputs are interleaved.
 ///
-/// On x86-64 CPUs with AVX2 the same loop runs with 8-wide vectors. AVX2 does
-/// not enable FMA, so each product is still rounded before its add and the
-/// result is bit-identical; only the vector width changes.
+/// On x86-64 CPUs with AVX-512F or AVX2 the same loop runs with 16-wide or
+/// 8-wide vectors. Neither target feature enables FMA, so each product is
+/// still rounded before its add and the result is bit-identical; only the
+/// vector width changes.
 fn accumulate_linear_row_v1(
     linear: &LinearV1,
     input_row: &[f32],
@@ -1751,11 +1782,29 @@ fn accumulate_linear_row_v1(
     accumulator: &mut [f32],
 ) {
     #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: AVX2 support was detected at run time just above.
-        unsafe { accumulate_linear_row_avx2_v1(linear, input_row, first_input, accumulator) };
-        return;
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            // SAFETY: AVX-512F support was detected at run time just above.
+            unsafe { accumulate_linear_row_avx512_v1(linear, input_row, first_input, accumulator) };
+            return;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 support was detected at run time just above.
+            unsafe { accumulate_linear_row_avx2_v1(linear, input_row, first_input, accumulator) };
+            return;
+        }
     }
+    accumulate_linear_row_body_v1(linear, input_row, first_input, accumulator);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn accumulate_linear_row_avx512_v1(
+    linear: &LinearV1,
+    input_row: &[f32],
+    first_input: usize,
+    accumulator: &mut [f32],
+) {
     accumulate_linear_row_body_v1(linear, input_row, first_input, accumulator);
 }
 
@@ -1926,13 +1975,19 @@ pub(crate) fn no_negative_zero_or_nan_v1(values: &[f32]) -> bool {
     })
 }
 
-/// Whether this thread's floating-point state is the pinned one: round to
-/// nearest, with denormals neither read nor flushed as zero.
+/// Whether this thread's floating-point state is the pinned one, in which
+/// the kernels may leave out zero terms and unread input-gradient columns:
+/// round to nearest, with denormals neither read nor flushed as zero, and
+/// every floating-point exception masked, so that an operation left out
+/// cannot change an error path (an unmasked exception could trap on the
+/// reference's operation). Sticky exception flags are not compared
+/// (`mxcsr_exceptions_masked_v1`). Other targets keep every operation.
 #[inline(always)]
 pub(crate) fn rounds_to_nearest_v1() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok()
+            && deterministic_math_v1::mxcsr_exceptions_masked_v1()
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -1954,13 +2009,38 @@ pub(crate) fn accumulate_input_major_row_v1(
 ) {
     assert_eq!(weight_t.len(), input_row.len() * accumulator.len());
     #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: AVX2 support was detected at run time just above.
-        unsafe {
-            accumulate_input_major_row_avx2_v1(weight_t, weights_finite, input_row, accumulator)
-        };
-        return;
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            // SAFETY: AVX-512F support was detected at run time just above.
+            unsafe {
+                accumulate_input_major_row_avx512_v1(
+                    weight_t,
+                    weights_finite,
+                    input_row,
+                    accumulator,
+                )
+            };
+            return;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 support was detected at run time just above.
+            unsafe {
+                accumulate_input_major_row_avx2_v1(weight_t, weights_finite, input_row, accumulator)
+            };
+            return;
+        }
     }
+    accumulate_input_major_row_body_v1(weight_t, weights_finite, input_row, accumulator);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn accumulate_input_major_row_avx512_v1(
+    weight_t: &[f32],
+    weights_finite: bool,
+    input_row: &[f32],
+    accumulator: &mut [f32],
+) {
     accumulate_input_major_row_body_v1(weight_t, weights_finite, input_row, accumulator);
 }
 
@@ -1973,6 +2053,418 @@ unsafe fn accumulate_input_major_row_avx2_v1(
     accumulator: &mut [f32],
 ) {
     accumulate_input_major_row_body_v1(weight_t, weights_finite, input_row, accumulator);
+}
+
+/// Multi-row sibling of [`accumulate_input_major_row_v1`]: computes
+/// `output[r][o] = init_row[o] + sum_k input[r][k] * weight_t[k * output_dim + o]`
+/// for every row `r` in `0..rows`, tiling 4 independent rows at a time against
+/// shared weight loads while keeping every output's exact ascending non-FMA
+/// summation order.
+pub(crate) fn accumulate_input_major_rows_v1(
+    weight_t: &[f32],
+    weights_finite: bool,
+    input_dim: usize,
+    output_dim: usize,
+    init_row: &[f32],
+    input: &[f32],
+    output: &mut [f32],
+) {
+    assert_eq!(init_row.len(), output_dim);
+    assert_eq!(weight_t.len(), input_dim * output_dim);
+    let rows = if output_dim == 0 {
+        0
+    } else {
+        output.len() / output_dim
+    };
+    assert_eq!(output.len(), rows * output_dim);
+    assert_eq!(input.len(), rows * input_dim);
+    if rows == 0 {
+        return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            // SAFETY: AVX-512F support was detected at run time just above.
+            unsafe {
+                accumulate_input_major_rows_avx512_v1(
+                    weight_t,
+                    weights_finite,
+                    input_dim,
+                    output_dim,
+                    init_row,
+                    input,
+                    output,
+                )
+            };
+            return;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: AVX2 support was detected at run time just above.
+            unsafe {
+                accumulate_input_major_rows_avx2_v1(
+                    weight_t,
+                    weights_finite,
+                    input_dim,
+                    output_dim,
+                    init_row,
+                    input,
+                    output,
+                )
+            };
+            return;
+        }
+    }
+    accumulate_input_major_rows_body_v1::<16, 16>(
+        weight_t,
+        weights_finite,
+        input_dim,
+        output_dim,
+        init_row,
+        input,
+        output,
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn accumulate_input_major_rows_avx512_v1(
+    weight_t: &[f32],
+    weights_finite: bool,
+    input_dim: usize,
+    output_dim: usize,
+    init_row: &[f32],
+    input: &[f32],
+    output: &mut [f32],
+) {
+    // 4 rows x 64 f32 = 16 ZMM accumulators (fits in 32 ZMMs with 0 spills);
+    // for W_HIDDEN_DIM_V1 = 128, 4 rows x 32 f32 = 8 ZMM accumulators.
+    accumulate_input_major_rows_body_v1::<64, 32>(
+        weight_t,
+        weights_finite,
+        input_dim,
+        output_dim,
+        init_row,
+        input,
+        output,
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn accumulate_input_major_rows_avx2_v1(
+    weight_t: &[f32],
+    weights_finite: bool,
+    input_dim: usize,
+    output_dim: usize,
+    init_row: &[f32],
+    input: &[f32],
+    output: &mut [f32],
+) {
+    // 4 rows x 16 f32 = 8 YMM accumulators (fits in 16 YMMs with 0 spills,
+    // and 16 f32 = one 64-byte cache line per k).
+    accumulate_input_major_rows_body_v1::<16, 16>(
+        weight_t,
+        weights_finite,
+        input_dim,
+        output_dim,
+        init_row,
+        input,
+        output,
+    );
+}
+
+#[inline(always)]
+fn accumulate_input_major_rows_body_v1<const TILE_64: usize, const TILE_128: usize>(
+    weight_t: &[f32],
+    weights_finite: bool,
+    input_dim: usize,
+    output_dim: usize,
+    init_row: &[f32],
+    input: &[f32],
+    output: &mut [f32],
+) {
+    match output_dim {
+        HIDDEN_DIM_V1 => accumulate_fixed_width_rows_v1::<HIDDEN_DIM_V1, TILE_64>(
+            weight_t,
+            weights_finite,
+            input_dim,
+            init_row,
+            input,
+            output,
+        ),
+        W_HIDDEN_DIM_V1 => accumulate_fixed_width_rows_v1::<W_HIDDEN_DIM_V1, TILE_128>(
+            weight_t,
+            weights_finite,
+            input_dim,
+            init_row,
+            input,
+            output,
+        ),
+        _ => {
+            for (input_row, output_row) in input
+                .chunks_exact(input_dim)
+                .zip(output.chunks_exact_mut(output_dim))
+            {
+                output_row.copy_from_slice(init_row);
+                for (&value, weight_row) in input_row.iter().zip(weight_t.chunks_exact(output_dim))
+                {
+                    for (sum, &weight) in output_row.iter_mut().zip(weight_row) {
+                        *sum += value * weight;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn accumulate_fixed_width_rows_v1<const N: usize, const TILE_C: usize>(
+    weight_t: &[f32],
+    weights_finite: bool,
+    input_dim: usize,
+    init_row: &[f32],
+    input: &[f32],
+    output: &mut [f32],
+) {
+    let rows = output.len() / N;
+    let init_safe_for_zero_skip =
+        weights_finite && no_negative_zero_or_nan_v1(init_row) && rounds_to_nearest_v1();
+    let mut row = 0;
+    while row + 4 <= rows {
+        let in_base = row * input_dim;
+        let tile_in = &input[in_base..in_base + 4 * input_dim];
+        let out_base = row * N;
+        let tile_out = &mut output[out_base..out_base + 4 * N];
+        match classify_4row_tile_v1(init_safe_for_zero_skip, input_dim, tile_in) {
+            Tile4ModeV1::Dense => {
+                accumulate_4rows_dense_v1::<N, TILE_C>(
+                    weight_t, input_dim, init_row, tile_in, tile_out,
+                );
+            }
+            Tile4ModeV1::CorrelatedSparse => {
+                accumulate_4rows_sparse_v1::<N, TILE_C>(
+                    weight_t, input_dim, init_row, tile_in, tile_out,
+                );
+            }
+            Tile4ModeV1::DisjointSparse => {
+                for r in 0..4 {
+                    let input_row = &tile_in[r * input_dim..(r + 1) * input_dim];
+                    let output_row = &mut tile_out[r * N..(r + 1) * N];
+                    output_row.copy_from_slice(init_row);
+                    accumulate_nonzero_inputs_v1::<N>(weight_t, input_row, output_row);
+                }
+            }
+        }
+        row += 4;
+    }
+    while row < rows {
+        let input_row = &input[row * input_dim..(row + 1) * input_dim];
+        let output_row = &mut output[row * N..(row + 1) * N];
+        output_row.copy_from_slice(init_row);
+        accumulate_fixed_width_v1::<N>(weight_t, weights_finite, input_row, output_row);
+        row += 1;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tile4ModeV1 {
+    Dense,
+    CorrelatedSparse,
+    DisjointSparse,
+}
+
+#[inline(always)]
+fn classify_4row_tile_v1(
+    init_safe_for_zero_skip: bool,
+    input_dim: usize,
+    tile_in: &[f32],
+) -> Tile4ModeV1 {
+    if !init_safe_for_zero_skip || input_dim == 0 {
+        return Tile4ModeV1::Dense;
+    }
+    let r0 = &tile_in[0..input_dim];
+    let r1 = &tile_in[input_dim..2 * input_dim];
+    let r2 = &tile_in[2 * input_dim..3 * input_dim];
+    let r3 = &tile_in[3 * input_dim..4 * input_dim];
+    let mut not_finite = 0u32;
+    let mut nonzero_entries = 0u32;
+    let mut union_nonzeros = 0u32;
+    for k in 0..input_dim {
+        let v0 = r0[k];
+        let v1 = r1[k];
+        let v2 = r2[k];
+        let v3 = r3[k];
+        not_finite += u32::from(!v0.is_finite())
+            + u32::from(!v1.is_finite())
+            + u32::from(!v2.is_finite())
+            + u32::from(!v3.is_finite());
+        let nz0 = u32::from(v0 != 0.0);
+        let nz1 = u32::from(v1 != 0.0);
+        let nz2 = u32::from(v2 != 0.0);
+        let nz3 = u32::from(v3 != 0.0);
+        let sum_nz = nz0 + nz1 + nz2 + nz3;
+        nonzero_entries += sum_nz;
+        union_nonzeros += u32::from(sum_nz != 0);
+    }
+    if not_finite != 0 {
+        return Tile4ModeV1::Dense;
+    }
+    // If on average fewer than 2 of the 4 rows are active at each active `k`
+    // (disjoint/uncorrelated sparsity), per-row zero-skipping avoids multiplying
+    // inactive rows against the shared weight strip.
+    if (union_nonzeros as usize) * 2 > nonzero_entries as usize {
+        return Tile4ModeV1::DisjointSparse;
+    }
+    let all_zero_cols = input_dim - union_nonzeros as usize;
+    if all_zero_cols * ZERO_INPUT_SHARE_DIVISOR_V1 >= input_dim {
+        Tile4ModeV1::CorrelatedSparse
+    } else {
+        Tile4ModeV1::Dense
+    }
+}
+
+#[inline(always)]
+fn accumulate_4rows_dense_v1<const N: usize, const C: usize>(
+    weight_t: &[f32],
+    input_dim: usize,
+    init_row: &[f32],
+    tile_in: &[f32],
+    tile_out: &mut [f32],
+) {
+    let r0 = &tile_in[0..input_dim];
+    let r1 = &tile_in[input_dim..2 * input_dim];
+    let r2 = &tile_in[2 * input_dim..3 * input_dim];
+    let r3 = &tile_in[3 * input_dim..4 * input_dim];
+    let mut col = 0;
+    while col < N {
+        let init_strip: [f32; C] = init_row[col..col + C].try_into().expect("strip width");
+        let mut s0 = init_strip;
+        let mut s1 = init_strip;
+        let mut s2 = init_strip;
+        let mut s3 = init_strip;
+        for k in 0..input_dim {
+            let v0 = r0[k];
+            let v1 = r1[k];
+            let v2 = r2[k];
+            let v3 = r3[k];
+            let w: &[f32; C] = weight_t[k * N + col..k * N + col + C]
+                .try_into()
+                .expect("weight strip");
+            for o in 0..C {
+                let wk = w[o];
+                s0[o] += v0 * wk;
+                s1[o] += v1 * wk;
+                s2[o] += v2 * wk;
+                s3[o] += v3 * wk;
+            }
+        }
+        tile_out[col..col + C].copy_from_slice(&s0);
+        tile_out[N + col..N + col + C].copy_from_slice(&s1);
+        tile_out[2 * N + col..2 * N + col + C].copy_from_slice(&s2);
+        tile_out[3 * N + col..3 * N + col + C].copy_from_slice(&s3);
+        col += C;
+    }
+}
+
+#[inline(always)]
+fn accumulate_4rows_sparse_v1<const N: usize, const C: usize>(
+    weight_t: &[f32],
+    input_dim: usize,
+    init_row: &[f32],
+    tile_in: &[f32],
+    tile_out: &mut [f32],
+) {
+    let r0 = &tile_in[0..input_dim];
+    let r1 = &tile_in[input_dim..2 * input_dim];
+    let r2 = &tile_in[2 * input_dim..3 * input_dim];
+    let r3 = &tile_in[3 * input_dim..4 * input_dim];
+    if N == C {
+        let init_strip: [f32; C] = init_row[0..C].try_into().expect("strip width");
+        let mut s0 = init_strip;
+        let mut s1 = init_strip;
+        let mut s2 = init_strip;
+        let mut s3 = init_strip;
+        for k in 0..input_dim {
+            let v0 = r0[k];
+            let v1 = r1[k];
+            let v2 = r2[k];
+            let v3 = r3[k];
+            if v0 == 0.0 && v1 == 0.0 && v2 == 0.0 && v3 == 0.0 {
+                continue;
+            }
+            let w: &[f32; C] = weight_t[k * N..k * N + C].try_into().expect("weight strip");
+            for o in 0..C {
+                let wk = w[o];
+                s0[o] += v0 * wk;
+                s1[o] += v1 * wk;
+                s2[o] += v2 * wk;
+                s3[o] += v3 * wk;
+            }
+        }
+        tile_out[0..C].copy_from_slice(&s0);
+        tile_out[N..N + C].copy_from_slice(&s1);
+        tile_out[2 * N..2 * N + C].copy_from_slice(&s2);
+        tile_out[3 * N..3 * N + C].copy_from_slice(&s3);
+        return;
+    }
+    // Scan `tile_in` once per 4-row tile into a compact L1-resident active-k
+    // buffer so all output strips run branchlessly over the active columns only.
+    for r in 0..4 {
+        tile_out[r * N..(r + 1) * N].copy_from_slice(init_row);
+    }
+    const ACTIVE_CHUNK: usize = 64;
+    let mut active = [(0usize, 0.0f32, 0.0f32, 0.0f32, 0.0f32); ACTIVE_CHUNK];
+    let mut active_len = 0usize;
+    let flush = |active: &[(usize, f32, f32, f32, f32)], tile_out: &mut [f32]| {
+        let mut col = 0;
+        while col < N {
+            let mut s0: [f32; C] = tile_out[col..col + C].try_into().expect("strip width");
+            let mut s1: [f32; C] = tile_out[N + col..N + col + C]
+                .try_into()
+                .expect("strip width");
+            let mut s2: [f32; C] = tile_out[2 * N + col..2 * N + col + C]
+                .try_into()
+                .expect("strip width");
+            let mut s3: [f32; C] = tile_out[3 * N + col..3 * N + col + C]
+                .try_into()
+                .expect("strip width");
+            for &(k, v0, v1, v2, v3) in active {
+                let w: &[f32; C] = weight_t[k * N + col..k * N + col + C]
+                    .try_into()
+                    .expect("weight strip");
+                for o in 0..C {
+                    let wk = w[o];
+                    s0[o] += v0 * wk;
+                    s1[o] += v1 * wk;
+                    s2[o] += v2 * wk;
+                    s3[o] += v3 * wk;
+                }
+            }
+            tile_out[col..col + C].copy_from_slice(&s0);
+            tile_out[N + col..N + col + C].copy_from_slice(&s1);
+            tile_out[2 * N + col..2 * N + col + C].copy_from_slice(&s2);
+            tile_out[3 * N + col..3 * N + col + C].copy_from_slice(&s3);
+            col += C;
+        }
+    };
+    for k in 0..input_dim {
+        let v0 = r0[k];
+        let v1 = r1[k];
+        let v2 = r2[k];
+        let v3 = r3[k];
+        if v0 == 0.0 && v1 == 0.0 && v2 == 0.0 && v3 == 0.0 {
+            continue;
+        }
+        active[active_len] = (k, v0, v1, v2, v3);
+        active_len += 1;
+        if active_len == ACTIVE_CHUNK {
+            flush(&active[..active_len], tile_out);
+            active_len = 0;
+        }
+    }
+    if active_len > 0 {
+        flush(&active[..active_len], tile_out);
+    }
 }
 
 #[inline(always)]
@@ -2018,12 +2510,16 @@ fn scorer_first_rows_v1(
     let action_dim = scorer_first.input_dim - state_dim;
     let mut state_prefix = scorer_first.bias.clone();
     accumulate_linear_row_v1(scorer_first, state_hidden, 0, &mut state_prefix);
-    let mut output = Vec::with_capacity(action_hidden.len() / action_dim * scorer_first.output_dim);
-    for action_row in action_hidden.chunks_exact(action_dim) {
-        let begin = output.len();
-        output.extend_from_slice(&state_prefix);
-        accumulate_linear_row_v1(scorer_first, action_row, state_dim, &mut output[begin..]);
-    }
+    let rows = action_hidden.len() / action_dim;
+    let mut output = vec![0.0; rows * scorer_first.output_dim];
+    accumulate_linear_rows_v1(
+        scorer_first,
+        action_hidden,
+        rows,
+        state_dim,
+        &state_prefix,
+        &mut output,
+    );
     output
 }
 
@@ -4814,6 +5310,294 @@ mod validity_scan_tests {
             assert!(
                 all_finite_and_not_negative_v1(&values),
                 "position={position}"
+            );
+        }
+    }
+
+    #[test]
+    fn tiled_multi_row_accumulation_matches_scalar_reference_bit_for_bit() {
+        let bits = |xs: &[f32]| xs.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+        let mut rng = SplitMix64::seed(0x9090_BEEF_1234_5678);
+        let next_f32 = |rng: &mut SplitMix64| -> f32 {
+            let u = rng.next_u64();
+            ((u as i32) as f32) * 1e-9
+        };
+        let make_linear =
+            |input_dim: usize, output_dim: usize, weight: Vec<f32>, bias: Vec<f32>| {
+                LinearV1 {
+                    input_dim,
+                    output_dim,
+                    weight,
+                    bias,
+                    weight_t: Vec::new(),
+                    weight_finite: false,
+                }
+                .with_transposed_weight_v1()
+            };
+        for output_dim in [1usize, 17, HIDDEN_DIM_V1, W_HIDDEN_DIM_V1] {
+            let input_dim = 43usize;
+            let mut weight = Vec::with_capacity(output_dim * input_dim);
+            for _ in 0..output_dim * input_dim {
+                weight.push(next_f32(&mut rng));
+            }
+            let mut bias = Vec::with_capacity(output_dim);
+            for _ in 0..output_dim {
+                bias.push(next_f32(&mut rng));
+            }
+            let linear = make_linear(input_dim, output_dim, weight, bias);
+            for rows in [0usize, 1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17] {
+                for sparsity in [0u64, 50, 90, 100] {
+                    let mut input = Vec::with_capacity(rows * input_dim);
+                    for _ in 0..rows * input_dim {
+                        if (rng.next_u64() % 100) < sparsity {
+                            input.push(if (rng.next_u64() & 1) == 0 { 0.0 } else { -0.0 });
+                        } else {
+                            input.push(next_f32(&mut rng));
+                        }
+                    }
+                    let reference = linear_rows_reference_v1(&linear, &input, rows);
+                    let dispatched = linear_rows_v1(&linear, &input, rows);
+                    assert_eq!(
+                        bits(&dispatched),
+                        bits(&reference),
+                        "rows={rows} output_dim={output_dim} sparsity={sparsity}"
+                    );
+                    // Also verify the AVX-512 tile widths (64/32) on portable path.
+                    let mut tiled_wide = vec![0.0; rows * output_dim];
+                    accumulate_input_major_rows_body_v1::<64, 32>(
+                        &linear.weight_t,
+                        linear.weight_finite,
+                        input_dim,
+                        output_dim,
+                        &linear.bias,
+                        &input,
+                        &mut tiled_wide,
+                    );
+                    assert_eq!(
+                        bits(&tiled_wide),
+                        bits(&reference),
+                        "wide tile rows={rows} output_dim={output_dim} sparsity={sparsity}"
+                    );
+                }
+            }
+        }
+
+        // Edge cases: -0.0 in bias, non-finite inputs, subnormals, overflow, and non-finite weights.
+        for output_dim in [HIDDEN_DIM_V1, W_HIDDEN_DIM_V1] {
+            let input_dim = 19usize;
+            let rows = 5usize;
+            let weight: Vec<f32> = (0..output_dim * input_dim)
+                .map(|i| ((i as i32 % 17) - 8) as f32 * 0.25)
+                .collect();
+            let mut bias = vec![0.0f32; output_dim];
+            bias[0] = -0.0;
+            bias[output_dim - 1] = f32::from_bits(1);
+            let linear = make_linear(input_dim, output_dim, weight, bias);
+            let mut input = vec![0.0f32; rows * input_dim];
+            input[0] = -0.0;
+            input[input_dim + 1] = f32::INFINITY;
+            input[2 * input_dim + 2] = f32::NEG_INFINITY;
+            input[3 * input_dim + 3] = f32::NAN;
+            input[4 * input_dim + 4] = f32::MAX;
+            let reference = linear_rows_reference_v1(&linear, &input, rows);
+            let dispatched = linear_rows_v1(&linear, &input, rows);
+            assert_eq!(
+                bits(&dispatched),
+                bits(&reference),
+                "edge cases output_dim={output_dim}"
+            );
+            // Explicitly test `weights_finite = false`: zero input * inf weight must
+            // produce NaN (never zero-skipped).
+            let mut nonfinite = linear.clone();
+            nonfinite.weight[0] = f32::INFINITY;
+            nonfinite.weight_t[0] = f32::INFINITY;
+            nonfinite.weight_finite = false;
+            let zero_input = vec![0.0f32; rows * input_dim];
+            let nf_ref = linear_rows_reference_v1(&nonfinite, &zero_input, rows);
+            let nf_disp = linear_rows_v1(&nonfinite, &zero_input, rows);
+            assert!(nf_ref[0].is_nan());
+            assert_eq!(
+                nf_disp.iter().map(|v| v.is_nan()).collect::<Vec<_>>(),
+                nf_ref.iter().map(|v| v.is_nan()).collect::<Vec<_>>(),
+                "nonfinite weights_finite=false output_dim={output_dim}"
+            );
+            for (a, b) in nf_disp.iter().zip(&nf_ref) {
+                if !a.is_nan() {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                }
+            }
+            // Exercise correlated-sparse (active columns shared across rows) and
+            // disjoint-sparse (one active row per column) classification paths.
+            let mut corr_in = vec![0.0f32; rows * input_dim];
+            let mut disj_in = vec![0.0f32; rows * input_dim];
+            for r in 0..rows {
+                for k in 0..input_dim {
+                    if k % 4 == 0 {
+                        corr_in[r * input_dim + k] = ((r + k + 1) as f32) * 0.125;
+                    }
+                    if (r + k) % 4 == 0 {
+                        disj_in[r * input_dim + k] = ((r + k + 1) as f32) * 0.125;
+                    }
+                }
+            }
+            for pat in [&corr_in, &disj_in] {
+                let p_ref = linear_rows_reference_v1(&linear, pat, rows);
+                let p_disp = linear_rows_v1(&linear, pat, rows);
+                assert_eq!(bits(&p_disp), bits(&p_ref));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "micro-benchmark for #909 tiled multi-row vs single-row kernels"]
+    fn bench_tiled_multi_row_vs_single_row_v1() {
+        let mut rng = SplitMix64::seed(0x9090_BEEF_CAFE_0001);
+        for (label, input_dim, output_dim, rows, iters, pattern) in [
+            (
+                "net8-hidden dense (64x64, 32 rows)",
+                64usize,
+                HIDDEN_DIM_V1,
+                32usize,
+                25_000usize,
+                0u8,
+            ),
+            (
+                "w128-hidden dense (128x128, 16 rows)",
+                128,
+                W_HIDDEN_DIM_V1,
+                16,
+                15_000,
+                0,
+            ),
+            (
+                "net8-obj corr-sparse (64x85, 32 rows)",
+                85,
+                HIDDEN_DIM_V1,
+                32,
+                20_000,
+                1,
+            ),
+            (
+                "net8-act corr-sparse (64x259, 16 rows)",
+                259,
+                HIDDEN_DIM_V1,
+                16,
+                20_000,
+                1,
+            ),
+            (
+                "net8-edge corr-sparse (64x146, 48 rows)",
+                146,
+                HIDDEN_DIM_V1,
+                48,
+                10_000,
+                1,
+            ),
+            (
+                "w128-act corr-sparse (128x323, 16 rows)",
+                323,
+                W_HIDDEN_DIM_V1,
+                16,
+                10_000,
+                1,
+            ),
+            (
+                "w128-act disjoint-sparse (128x323, 16 rows)",
+                323,
+                W_HIDDEN_DIM_V1,
+                16,
+                10_000,
+                2,
+            ),
+        ] {
+            let weight: Vec<f32> = (0..output_dim * input_dim)
+                .map(|_| ((rng.next_u64() as i32) as f32) * 1e-10)
+                .collect();
+            let bias: Vec<f32> = (0..output_dim)
+                .map(|_| ((rng.next_u64() as i32) as f32) * 1e-10)
+                .collect();
+            let linear = LinearV1 {
+                input_dim,
+                output_dim,
+                weight,
+                bias,
+                weight_t: Vec::new(),
+                weight_finite: false,
+            }
+            .with_transposed_weight_v1();
+            let mut input = vec![0.0f32; rows * input_dim];
+            for r in 0..rows {
+                for k in 0..input_dim {
+                    let active = match pattern {
+                        0 => true,
+                        1 => k % 4 == 0,
+                        _ => (r * input_dim + k) % 4 == 0,
+                    };
+                    if active {
+                        input[r * input_dim + k] = ((rng.next_u64() as i32) as f32) * 1e-10;
+                    }
+                }
+            }
+            let mut single_out = vec![0.0f32; rows * output_dim];
+            let mut tiled_out = vec![0.0f32; rows * output_dim];
+            // Warmup & verify bit-identity
+            for r in 0..rows {
+                let dst = &mut single_out[r * output_dim..(r + 1) * output_dim];
+                dst.copy_from_slice(&linear.bias);
+                accumulate_input_major_row_v1(
+                    &linear.weight_t,
+                    linear.weight_finite,
+                    &input[r * input_dim..(r + 1) * input_dim],
+                    dst,
+                );
+            }
+            accumulate_input_major_rows_v1(
+                &linear.weight_t,
+                linear.weight_finite,
+                input_dim,
+                output_dim,
+                &linear.bias,
+                &input,
+                &mut tiled_out,
+            );
+            assert_eq!(
+                single_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                tiled_out.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+            );
+
+            let t0 = std::time::Instant::now();
+            for _ in 0..iters {
+                for r in 0..rows {
+                    let dst = &mut single_out[r * output_dim..(r + 1) * output_dim];
+                    dst.copy_from_slice(&linear.bias);
+                    accumulate_input_major_row_v1(
+                        &linear.weight_t,
+                        linear.weight_finite,
+                        &input[r * input_dim..(r + 1) * input_dim],
+                        dst,
+                    );
+                }
+                std::hint::black_box(&single_out);
+            }
+            let single_ms = t0.elapsed().as_secs_f64() * 1e3;
+
+            let t1 = std::time::Instant::now();
+            for _ in 0..iters {
+                accumulate_input_major_rows_v1(
+                    &linear.weight_t,
+                    linear.weight_finite,
+                    input_dim,
+                    output_dim,
+                    &linear.bias,
+                    &input,
+                    &mut tiled_out,
+                );
+                std::hint::black_box(&tiled_out);
+            }
+            let tiled_ms = t1.elapsed().as_secs_f64() * 1e3;
+            eprintln!(
+                "{label}: single={single_ms:.2} ms, tiled={tiled_ms:.2} ms, speedup={:.2}x",
+                single_ms / tiled_ms
             );
         }
     }

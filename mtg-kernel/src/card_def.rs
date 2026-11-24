@@ -533,12 +533,41 @@ pub enum Subtype {
     /// Vintage Cube wave C6c planeswalker type.
     Narset = 720,
     Garruk = 721,
+    /// Appended for Pauper field wave Pf1c (Boarding Action's Klingon
+    /// Warrior token), stable id 740 from the 740 to 749 range reserved for
+    /// wave W1. A creature type.
+    Klingon = 740,
+    /// Appended for Vintage Cube wave C7 (Black Widow, Super Spy), stable id
+    /// 750. A creature type.
+    Spy = 750,
+    /// Appended for Vintage Cube wave C8 (Zirda, the Dawnwaker; Jennifer
+    /// Walters // The Sensational She-Hulk; Saheeli, Sublime Artificer),
+    /// stable ids 760 to 762. Fox and Gamma are creature types; Saheeli is a
+    /// planeswalker type.
+    Fox = 760,
+    Gamma = 761,
+    Saheeli = 762,
+    /// Appended for Vintage Cube wave C9 (Badgermole Cub; Elspeth, Storm Slayer;
+    /// Grist, the Hunger Tide; Nissa, Who Shakes the World), stable ids 770 to
+    /// 774. Badger and Mole are creature types; Elspeth, Grist, and Nissa are
+    /// planeswalker types.
+    Badger = 770,
+    Mole = 771,
+    Elspeth = 772,
+    Grist = 773,
+    Nissa = 774,
+    /// Appended for Pauper field wave Pf2b (Pegasus Guardian and its Pegasus
+    /// token), stable id 780. A creature type.
+    Pegasus = 780,
 }
 
 impl Subtype {
     /// Every creature type represented by the checked-in pool, in stable-id
     /// order. Case-distinct registry spellings remain separate because their
     /// existing ids and subtype queries are intentionally preserved.
+    /// Klingon (Pauper field wave Pf1c) is listed in eternal builds, so
+    /// changelings have it (CR 702.73a); like the Doctor addition, this
+    /// changes changelings' materialized subtype lists in eternal builds.
     pub const CREATURE_TYPES: &'static [Subtype] = &[
         Subtype::Ape,
         Subtype::BirdAllCaps,
@@ -947,6 +976,20 @@ impl Subtype {
         Subtype::Mount,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Doctor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Klingon,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Spy,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Fox,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Gamma,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Badger,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mole,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Pegasus,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1211,6 +1254,17 @@ impl Subtype {
             710 => Subtype::Doctor,
             720 => Subtype::Narset,
             721 => Subtype::Garruk,
+            740 => Subtype::Klingon,
+            750 => Subtype::Spy,
+            760 => Subtype::Fox,
+            761 => Subtype::Gamma,
+            762 => Subtype::Saheeli,
+            770 => Subtype::Badger,
+            771 => Subtype::Mole,
+            772 => Subtype::Elspeth,
+            773 => Subtype::Grist,
+            774 => Subtype::Nissa,
+            780 => Subtype::Pegasus,
             _ => return None,
         })
     }
@@ -1454,6 +1508,17 @@ impl Subtype {
             Subtype::Doctor => true,
             Subtype::Narset => false,
             Subtype::Garruk => false,
+            Subtype::Klingon => true,
+            Subtype::Spy => true,
+            Subtype::Fox => true,
+            Subtype::Gamma => true,
+            Subtype::Saheeli => false,
+            Subtype::Badger => true,
+            Subtype::Mole => true,
+            Subtype::Elspeth => false,
+            Subtype::Grist => false,
+            Subtype::Nissa => false,
+            Subtype::Pegasus => true,
         }
     }
 
@@ -1577,6 +1642,13 @@ impl Subtype {
                     | Subtype::Horse
                     | Subtype::Mount
                     | Subtype::Doctor
+                    | Subtype::Klingon
+                    | Subtype::Spy
+                    | Subtype::Fox
+                    | Subtype::Gamma
+                    | Subtype::Badger
+                    | Subtype::Mole
+                    | Subtype::Pegasus
             )
         {
             return true;
@@ -1817,9 +1889,8 @@ pub enum TargetSpec {
     /// may come from different graveyards.
     UpToTwoCardsInGraveyards,
     /// Exactly one battlefield creature other than the targeting spell or
-    /// ability's own source incarnation. Journey to Nowhere is the first
-    /// consumer. The source-relative exclusion is applied by the caller so
-    /// the stable target vocabulary remains card-name-neutral.
+    /// ability's own source incarnation. Older snapshots also used this
+    /// tag for Journey to Nowhere's "target creature" trigger.
     CreatureOtherThanSource,
     /// Zero or one tapped creature on either battlefield. Cryogen Relic may
     /// activate without a target, but any selected target must be tapped.
@@ -2091,6 +2162,10 @@ impl Keywords {
     pub const SHROUD: Keywords = Keywords(1 << 18);
     /// Protection from every object (702.16j), not a color-quality shortcut.
     pub const PROTECTION_FROM_EVERYTHING: Keywords = Keywords(1 << 19);
+    /// Infect (702.90): deals damage to creatures as -1/-1 counters and to
+    /// players as poison counters. Appended for Vintage Cube wave C9a
+    /// (Blightsteel Colossus).
+    pub const INFECT: Keywords = Keywords(1 << 20);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -2151,6 +2226,9 @@ pub enum PermanentFilterDef {
     /// A permanent with this effective subtype (Wirewood Symbiote's "Return an
     /// Elf you control to its owner's hand"). Appended for Premodern wave P2b.
     WithSubtypeV1(Subtype),
+    /// A land (Deprive's "return a land you control to its owner's hand").
+    /// Appended for Pauper field wave Pf1b.
+    LandV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2598,6 +2676,12 @@ pub enum AltCostCondition {
     /// "If it's your turn" (Mine Collapse, Vintage Cube wave C1c). Appended
     /// for the eternal catalog.
     YourTurnV1,
+    /// Boarding Action may pay its Beam me up cost only from its graveyard.
+    BeamMeUpV1,
+    /// Prototype (CR 718): cast with the card's prototype mana cost, color,
+    /// mana value and base power/toughness on the stack and battlefield
+    /// (Boulderbranch Golem, Pauper field wave Pf2c).
+    PrototypeV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -2723,6 +2807,19 @@ pub enum ManaAbilityCostDef {
     /// Tap two untapped controlled permanents of this effective subtype.
     /// Neither payment is the tap symbol, so either creature may be sick.
     TapTwoControlledPermanentsWithSubtypeV1(Subtype),
+    /// "{T}, Sacrifice a Forest" (Orcish Lumberjack): taps the source and
+    /// sacrifices a controlled permanent with this effective subtype.
+    /// Appended for Vintage Cube wave C7b.
+    TapSelfSacrificeControlledWithSubtypeV1(Subtype),
+    /// "Tap an untapped artifact you control" (Urza, Lord High Artificer):
+    /// taps any untapped controlled artifact without the tap symbol, so
+    /// summoning sickness does not restrict either Urza or the artifact.
+    /// Appended for Vintage Cube wave C7b.
+    TapUntappedControlledArtifactV1,
+    /// "{0}: ... Activate only during your turn" (Vivi Ornitier): no tap or
+    /// object cost, payable only while its controller is the active player.
+    /// Appended for Vintage Cube wave C7b.
+    NoneOwnTurnOnlyV1,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -2744,6 +2841,12 @@ pub enum ManaAbilityAmountDef {
     /// Chalice). Appended for the eternal catalog. It reads the source, so
     /// `rich_mana_ability_amount_for_source_v1` evaluates it.
     ChargeCountersOnSourceV1,
+    /// X mana in any combination of the two listed colors, where X is the
+    /// source's effective power clamped at 0 (Vivi Ornitier). The primary
+    /// action color identifies the ability, and when X > 0 the split is
+    /// chosen immediately without using the stack. Appended for Vintage Cube
+    /// wave C7b.
+    SourcePowerAnyCombinationV1(&'static [ManaColor]),
 }
 
 /// A reusable integer derived from current game state. All consumers sample
@@ -3775,6 +3878,11 @@ pub enum DeckPreflightError {
         card_def: u16,
         name: &'static str,
     },
+    RequiresOrderedGraveyardOwnerV1 {
+        index: usize,
+        card_def: u16,
+        name: &'static str,
+    },
 }
 
 impl fmt::Display for DeckPreflightError {
@@ -3808,6 +3916,14 @@ impl fmt::Display for DeckPreflightError {
                 f,
                 "deck card {index} ({name}, definition {card_def}) requires the native opening profile"
             ),
+            DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index,
+                card_def,
+                name,
+            } => write!(
+                f,
+                "deck card {index} ({name}, definition {card_def}) requires the ordered graveyard owner"
+            ),
         }
     }
 }
@@ -3815,7 +3931,8 @@ impl fmt::Display for DeckPreflightError {
 impl std::error::Error for DeckPreflightError {}
 
 /// Admits explicitly `Full` printings to ordinary environment construction.
-/// Printings requiring the native opening owner use its separate registration.
+/// Printings requiring the native opening owner or the ordered graveyard owner
+/// use their separate registrations.
 pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
     for (index, &card_def) in card_defs.iter().enumerate() {
         let Some(def) = CARD_DEFS.get(card_def as usize) else {
@@ -3838,6 +3955,31 @@ pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPrefl
         }
         if crate::eternal_opening_v1::requires_native_opening(def) {
             return Err(DeckPreflightError::RequiresNativeOpening {
+                index,
+                card_def,
+                name: def.name,
+            });
+        }
+        if crate::full_text_v1::owns_definition(def) {
+            return Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index,
+                card_def,
+                name: def.name,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Refuses cards outside the game that require the ordered graveyard owner,
+/// and checks nothing else so existing outside-the-game inputs are unchanged.
+pub fn preflight_outside_the_game(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
+    for (index, &card_def) in card_defs.iter().enumerate() {
+        let Some(def) = CARD_DEFS.get(card_def as usize) else {
+            continue;
+        };
+        if crate::full_text_v1::owns_definition(def) {
+            return Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
                 index,
                 card_def,
                 name: def.name,
@@ -4159,7 +4301,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xebfe_d3ef_2973_d7ff;
+        const EXPECTED_ETERNAL: u64 = 0x1dd0_c7ab_b0bc_2432;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
@@ -4629,6 +4771,31 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    #[cfg(feature = "eternal-fixtures")]
+    fn preflight_outside_the_game_refuses_volrath_and_accepts_other_cards() {
+        let forest = card_id_by_name("Forest").unwrap();
+        let extrapolate = card_id_by_name("Extrapolate the Impossible").unwrap();
+        let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
+
+        assert!(preflight_outside_the_game(&[forest, extrapolate]).is_ok());
+        let error = preflight_outside_the_game(&[forest, volrath]).unwrap_err();
+        assert_eq!(
+            error,
+            DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index: 1,
+                card_def: volrath,
+                name: "Volrath's Shapeshifter",
+            }
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("requires the ordered graveyard owner"),
+            "{error}"
+        );
     }
 
     #[test]

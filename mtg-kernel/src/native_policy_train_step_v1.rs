@@ -37,6 +37,7 @@ use crate::native_policy_value_net_v1::v8_inclusion_v1::{
 };
 use crate::native_policy_value_net_v1::{
     accumulate_input_major_row_v1,
+    accumulate_input_major_rows_v1,
     all_finite_and_not_negative_v1,
     all_finite_v1,
     no_negative_zero_or_nan_v1,
@@ -86,6 +87,7 @@ use std::thread;
 
 mod accumulate_transposed_v1;
 mod archive_distillation_v1;
+pub mod card_projection_e1;
 mod carryover_probe_v1;
 mod e_supported_policy_v1;
 mod exact_parallel_backward_v1;
@@ -1295,6 +1297,11 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     LineBAuxiliary {
         code: &'static str,
     },
+    /// London keep offset (`london_keep_offset_v1`) refusal: a set offset on
+    /// a loss other than the CPU GAE loss, or a malformed pregame decision.
+    LondonKeepOffset {
+        code: &'static str,
+    },
     EmptyBatch,
     EmptyPhysicalDecision {
         group_index: usize,
@@ -1623,6 +1630,17 @@ mod live_train_state_v1 {
         /// and both moments at +0.0 and the state encoder bias free of -0.0, and
         /// every thread of the step's arithmetic verifies the pinned MXCSR.
         pub(super) no_state_digest_columns: Option<std::ops::Range<usize>>,
+        /// The London keep offset of the next GAE step's batch
+        /// (`expanded_deck_training_v1::london_keep_offset_v1`): subtracted from
+        /// each announcement's mulligan logit (the entry for the acting seat's own
+        /// mulligan count) inside the log-softmax, never from a parameter. Set by the update for one step and cleared after it; not
+        /// part of the state digest, snapshot or checkpoint. None (the default)
+        /// is every existing step, bit for bit.
+        pub(super) london_keep_offset:
+            Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>,
+        /// Optional action-digest columns of `action_encoder.0.weight` under
+        /// `no-digests-v1`, kept at +0.0 across weights and Adam moments.
+        pub(super) no_action_digest_columns: Option<std::ops::Range<usize>>,
         /// Test-only: workers dirty their own MXCSR before verifying it.
         #[cfg(test)]
         pub(super) dirty_worker_mxcsr_for_test: bool,
@@ -1634,6 +1652,9 @@ mod live_train_state_v1 {
     pub(crate) struct NativePolicyValueTrainStateDimsV1<D: NetDimsV1> {
         fields: LiveTrainStateFieldsV1<D>,
         cached_state_sha256: MemoizedDigestV1<[u8; 32]>,
+        /// Admission metadata from the checkpoint load, retained by source-cache
+        /// clones. Not optimizer state and never used for projection arithmetic.
+        pub(crate) loaded_card_semantics: Option<super::card_projection_e1::CardSemanticsSectionV1>,
     }
 
     impl<D: NetDimsV1> std::ops::Deref for NativePolicyValueTrainStateDimsV1<D> {
@@ -1649,6 +1670,7 @@ mod live_train_state_v1 {
             Self {
                 fields,
                 cached_state_sha256: MemoizedDigestV1::new_v1(),
+                loaded_card_semantics: None,
             }
         }
 
@@ -1674,9 +1696,28 @@ mod live_train_state_v1 {
         pub(super) fn set_no_state_digest_columns_dims_v1(
             &mut self,
             columns: std::ops::Range<usize>,
+            action_columns: Option<std::ops::Range<usize>>,
         ) {
-            // `no_state_digest_columns` is outside the state digest and snapshot.
+            // Input contract columns are outside the state digest and snapshot.
             self.fields.no_state_digest_columns = Some(columns);
+            self.fields.no_action_digest_columns = action_columns;
+        }
+
+        pub(super) fn set_london_keep_offset_dims_v1(
+            &mut self,
+            offset: Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>,
+        ) {
+            // `london_keep_offset` is outside the state digest and snapshot.
+            self.fields.london_keep_offset = offset;
+        }
+
+        /// Takes the London keep offset out, leaving none set.
+        pub(super) fn take_london_keep_offset_dims_v1(
+            &mut self,
+        ) -> Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>
+        {
+            // `london_keep_offset` is outside the state digest and snapshot.
+            self.fields.london_keep_offset.take()
         }
 
         #[cfg(test)]
@@ -1796,15 +1837,18 @@ fn check_no_state_digest_state_v1(
 ) -> Result<(), NativePolicyTrainErrorV1> {
     check_no_state_digest_state_dims_v1::<Net8DimsV1>(
         columns,
+        None,
         parameters,
         first_moments,
         second_moments,
     )
 }
 
-/// [`check_no_state_digest_state_v1`] at the dims `D`.
+/// [`check_no_state_digest_state_v1`] at the dims `D`, optionally checking
+/// action-digest columns of `action_encoder.0.weight` (`no-digests-v1`).
 fn check_no_state_digest_state_dims_v1<D: NetDimsV1>(
     columns: &std::ops::Range<usize>,
+    action_columns: Option<&std::ops::Range<usize>>,
     parameters: &[NativeNamedParameterV1],
     first_moments: &[Vec<f32>],
     second_moments: &[Vec<f32>],
@@ -1820,28 +1864,80 @@ fn check_no_state_digest_state_dims_v1<D: NetDimsV1>(
     {
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
-    let clear = |values: Option<&Vec<f32>>| {
-        values.is_some_and(|values| {
-            columns_are_positive_zero_v1(values, D::STATE_ENCODER_INPUT, columns.clone())
-        })
+    let clear = |values: Option<&Vec<f32>>, width: usize, range: &std::ops::Range<usize>| {
+        values.is_some_and(|values| columns_are_positive_zero_v1(values, width, range.clone()))
     };
-    let code =
+    let state_code =
         if !columns_are_positive_zero_v1(&weight.values, D::STATE_ENCODER_INPUT, columns.clone()) {
-            "no-state-digest-weight-column-not-positive-zero"
-        } else if !clear(first_moments.get(STATE_FIRST_WEIGHT)) {
-            "no-state-digest-first-moment-column-not-positive-zero"
-        } else if !clear(second_moments.get(STATE_FIRST_WEIGHT)) {
-            "no-state-digest-second-moment-column-not-positive-zero"
+            Some("no-state-digest-weight-column-not-positive-zero")
+        } else if !clear(
+            first_moments.get(STATE_FIRST_WEIGHT),
+            D::STATE_ENCODER_INPUT,
+            columns,
+        ) {
+            Some("no-state-digest-first-moment-column-not-positive-zero")
+        } else if !clear(
+            second_moments.get(STATE_FIRST_WEIGHT),
+            D::STATE_ENCODER_INPUT,
+            columns,
+        ) {
+            Some("no-state-digest-second-moment-column-not-positive-zero")
         } else if bias
             .values
             .iter()
             .any(|value| value.to_bits() == 0x8000_0000)
         {
-            "no-state-digest-negative-zero-state-encoder-bias"
+            Some("no-state-digest-negative-zero-state-encoder-bias")
         } else {
-            return Ok(());
+            None
         };
-    Err(NativePolicyTrainErrorV1::NoStateDigestInvariant { code })
+    if let Some(code) = state_code {
+        return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant { code });
+    }
+    if let Some(action_cols) = action_columns {
+        let (Some(a_weight), Some(a_bias)) = (
+            parameters.get(ACTION_FIRST_WEIGHT),
+            parameters.get(ACTION_FIRST_BIAS),
+        ) else {
+            return Err(NativePolicyTrainErrorV1::ParameterManifest);
+        };
+        if a_weight.name != EXPECTED_PARAMETER_NAMES[ACTION_FIRST_WEIGHT]
+            || a_bias.name != EXPECTED_PARAMETER_NAMES[ACTION_FIRST_BIAS]
+        {
+            return Err(NativePolicyTrainErrorV1::ParameterManifest);
+        }
+        let action_code = if !columns_are_positive_zero_v1(
+            &a_weight.values,
+            D::ACTION_ENCODER_INPUT,
+            action_cols.clone(),
+        ) {
+            Some("no-digests-action-weight-column-not-positive-zero")
+        } else if !clear(
+            first_moments.get(ACTION_FIRST_WEIGHT),
+            D::ACTION_ENCODER_INPUT,
+            action_cols,
+        ) {
+            Some("no-digests-action-first-moment-column-not-positive-zero")
+        } else if !clear(
+            second_moments.get(ACTION_FIRST_WEIGHT),
+            D::ACTION_ENCODER_INPUT,
+            action_cols,
+        ) {
+            Some("no-digests-action-second-moment-column-not-positive-zero")
+        } else if a_bias
+            .values
+            .iter()
+            .any(|value| value.to_bits() == 0x8000_0000)
+        {
+            Some("no-digests-negative-zero-action-encoder-bias")
+        } else {
+            None
+        };
+        if let Some(code) = action_code {
+            return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant { code });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -1873,6 +1969,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             scorer_bias_anchor_bits,
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
+            london_keep_offset: None,
+            no_action_digest_columns: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         });
@@ -1907,6 +2005,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             scorer_bias_anchor_bits,
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
+            london_keep_offset: None,
+            no_action_digest_columns: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         });
@@ -1916,6 +2016,36 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
 
     pub(crate) fn model_dims_v1(&self) -> &D::Net {
         &self.model
+    }
+
+    /// Sets (or clears) the London keep offset of the next GAE step. Only the
+    /// CPU GAE loss reads it; every other loss refuses a set offset.
+    pub(crate) fn set_london_keep_offset_v1(
+        &mut self,
+        offset: Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>,
+    ) {
+        self.set_london_keep_offset_dims_v1(offset);
+    }
+
+    pub(crate) fn london_keep_offset_v1(
+        &self,
+    ) -> Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1> {
+        self.london_keep_offset
+    }
+
+    /// Refuses a learner path that is not the plain CPU GAE step while a London
+    /// keep offset is set, and clears the setting either way: the offset lives
+    /// for one plain GAE step only (`london_keep_offset_v1`).
+    pub(crate) fn require_no_london_keep_offset_v1(
+        &mut self,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        if self.take_london_keep_offset_dims_v1().is_some() {
+            Err(NativePolicyTrainErrorV1::LondonKeepOffset {
+                code: "london-keep-offset-requires-plain-gae",
+            })
+        } else {
+            Ok(())
+        }
     }
 
     pub(crate) fn adam_step_dims_v1(&self) -> u64 {
@@ -1930,11 +2060,27 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         self.training_math
     }
 
-    /// Only net-8 trains under the no-state-digest contract (design section
-    /// 2.1); any other architecture refuses it unchanged.
+    /// Only net-8 trains under the no-state-digest / no-digests contract
+    /// (design section 2.1); any other architecture refuses it unchanged.
     pub(crate) fn install_no_state_digest_dims_v1(
         &mut self,
         columns: std::ops::Range<usize>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.install_input_contract_dims_v1(columns, None)
+    }
+
+    pub(crate) fn install_no_digests_dims_v1(
+        &mut self,
+        state_columns: std::ops::Range<usize>,
+        action_columns: std::ops::Range<usize>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.install_input_contract_dims_v1(state_columns, Some(action_columns))
+    }
+
+    fn install_input_contract_dims_v1(
+        &mut self,
+        columns: std::ops::Range<usize>,
+        action_columns: Option<std::ops::Range<usize>>,
     ) -> Result<(), NativePolicyTrainErrorV1> {
         refuse_for_architecture_v1::<D>("no-state-digest install")?;
         if self.no_state_digest_columns.is_some() {
@@ -1947,14 +2093,22 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 code: "no-state-digest-columns-out-of-range",
             });
         }
+        if let Some(ref action_cols) = action_columns {
+            if action_cols.is_empty() || action_cols.end > ACTION_FEATURE_DIM_V1 {
+                return Err(NativePolicyTrainErrorV1::NoStateDigestInvariant {
+                    code: "no-digests-action-columns-out-of-range",
+                });
+            }
+        }
         let parameters = self.model.parameter_snapshot_v1();
         check_no_state_digest_state_dims_v1::<D>(
             &columns,
+            action_columns.as_ref(),
             &parameters,
             &self.first_moments,
             &self.second_moments,
         )?;
-        self.set_no_state_digest_columns_dims_v1(columns);
+        self.set_no_state_digest_columns_dims_v1(columns, action_columns);
         Ok(())
     }
 
@@ -1980,6 +2134,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             None => Ok(()),
             Some(columns) => check_no_state_digest_state_dims_v1::<D>(
                 columns,
+                self.no_action_digest_columns.as_ref(),
                 parameters,
                 first_moments,
                 second_moments,
@@ -2044,7 +2199,10 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         let mut candidate = Self::from_snapshot_dims_v1(self.model.clone(), snapshot)?;
         candidate.set_training_math_dims_v1(self.training_math);
         if let Some(columns) = &self.no_state_digest_columns {
-            candidate.install_no_state_digest_dims_v1(columns.clone())?;
+            candidate.install_input_contract_dims_v1(
+                columns.clone(),
+                self.no_action_digest_columns.clone(),
+            )?;
         }
         #[cfg(test)]
         {
@@ -2241,6 +2399,8 @@ impl NativePolicyValueTrainStateV1 {
             scorer_bias_anchor_bits,
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
+            london_keep_offset: None,
+            no_action_digest_columns: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         });
@@ -2293,9 +2453,25 @@ impl NativePolicyValueTrainStateV1 {
         self.install_no_state_digest_dims_v1(columns)
     }
 
+    /// Trains under `no-digests-v1`: keeps both state-digest columns of
+    /// `state_encoder.0.weight` and action-digest columns of
+    /// `action_encoder.0.weight` at +0.0 across weights and Adam moments.
+    pub(crate) fn install_no_digests_v1(
+        &mut self,
+        state_columns: std::ops::Range<usize>,
+        action_columns: std::ops::Range<usize>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        self.install_no_digests_dims_v1(state_columns, action_columns)
+    }
+
     /// The installed contract's state-digest columns, if any.
     pub(crate) fn no_state_digest_columns_v1(&self) -> Option<std::ops::Range<usize>> {
         self.no_state_digest_columns.clone()
+    }
+
+    /// The installed contract's action-digest columns, if any (`no-digests-v1`).
+    pub(crate) fn no_action_digest_columns_v1(&self) -> Option<std::ops::Range<usize>> {
+        self.no_action_digest_columns.clone()
     }
 
     /// Refuses a learner path the no-state-digest contract does not cover.
@@ -2672,6 +2848,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v3(
             self,
             groups,
@@ -2701,6 +2878,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v4(
             self,
             groups,
@@ -2724,6 +2902,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v3(
             self,
             groups,
@@ -2748,6 +2927,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v4(
             self,
             groups,
@@ -2782,6 +2962,7 @@ impl NativePolicyValueTrainStateV1 {
     > {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
             self,
             matches!(
@@ -3161,6 +3342,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
         input_config: NativePolicyValueModelConfigV1,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        // The terminal-reinforce loss never takes a London keep offset.
+        self.require_no_london_keep_offset_v1()?;
         // The wide refusal list (design section 2.1), before any forward work.
         if !is_net8_dims_v1::<D>() {
             if groups
@@ -6319,30 +6502,49 @@ fn linear_forward_into_arena_guarded_v1(
         let (input_arena, output_arena) = arena.split_at_mut(output.start);
         let input = input.values_v1(input_arena);
         let output_values = &mut output_arena[..output.len];
-        for row in 0..rows {
-            let input_row = &input[row * input_dim..(row + 1) * input_dim];
-            let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
-            match (input_major, guard) {
-                (Some((weight_t, finite)), None) => {
-                    output_row.copy_from_slice(bias);
-                    accumulate_input_major_row_v1(weight_t, finite, input_row, output_row);
-                }
-                (Some((weight_t, finite)), Some(column)) => {
-                    output_row.copy_from_slice(bias);
-                    let (before, rest) = weight_t.split_at(column * output_dim);
-                    let (guarded, after) = rest.split_at(output_dim);
-                    accumulate_input_major_row_v1(before, finite, &input_row[..column], output_row);
-                    add_nonzero_products_v1(output_row, input_row[column], guarded);
-                    accumulate_input_major_row_v1(
-                        after,
-                        finite,
-                        &input_row[column + 1..],
-                        output_row,
-                    );
-                }
-                (None, None) => linear_forward_ordered_v1(weight, bias, input_row, output_row),
-                (None, Some(column)) => {
-                    linear_forward_guarded_v1(weight, bias, input_row, column, output_row)
+        match (input_major, guard) {
+            (Some((weight_t, finite)), None) => {
+                accumulate_input_major_rows_v1(
+                    weight_t,
+                    finite,
+                    input_dim,
+                    output_dim,
+                    bias,
+                    input,
+                    output_values,
+                );
+            }
+            _ => {
+                for row in 0..rows {
+                    let input_row = &input[row * input_dim..(row + 1) * input_dim];
+                    let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
+                    match (input_major, guard) {
+                        (Some((weight_t, finite)), Some(column)) => {
+                            output_row.copy_from_slice(bias);
+                            let (before, rest) = weight_t.split_at(column * output_dim);
+                            let (guarded, after) = rest.split_at(output_dim);
+                            accumulate_input_major_row_v1(
+                                before,
+                                finite,
+                                &input_row[..column],
+                                output_row,
+                            );
+                            add_nonzero_products_v1(output_row, input_row[column], guarded);
+                            accumulate_input_major_row_v1(
+                                after,
+                                finite,
+                                &input_row[column + 1..],
+                                output_row,
+                            );
+                        }
+                        (None, None) => {
+                            linear_forward_ordered_v1(weight, bias, input_row, output_row)
+                        }
+                        (None, Some(column)) => {
+                            linear_forward_guarded_v1(weight, bias, input_row, column, output_row)
+                        }
+                        (Some(_), None) => unreachable!(),
+                    }
                 }
             }
         }

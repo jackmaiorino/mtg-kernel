@@ -710,6 +710,23 @@ impl FastActorSessionV1 {
         )?.into_flat_action_v3())
     }
 
+    /// The training reset above with each seat's priority-window rule.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
+        episode_id: u64,
+        seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
+        Ok(Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_and_windows_v1(
+            episode_id, seed, max_physical_decisions, max_policy_steps, deck_ids, mainboards, starting_player, windows,
+        )?.into_flat_action_v3())
+    }
+
     pub fn reset_with_decks_and_limits_flat_action_v3(
         episode_id: u64,
         seed: u64,
@@ -791,7 +808,21 @@ impl FastActorSessionV1 {
         })
     }
 
+    /// The observation the FlatV3 scorer encodes: the raw observation below
+    /// with an unread per-turn attack count omitted
+    /// (`flat_action_v4::attack_count_v1`, #454).
     pub(crate) fn flat_policy_observation_v3(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<ObservationV6, FlatActionDecisionSliceErrorV1> {
+        let mut observation = self.flat_policy_observation_raw_v3(expected)?;
+        super::flat_action_v4::attack_count_v1::omit_unread_attack_count_v1(&mut observation)?;
+        Ok(observation)
+    }
+
+    /// The shared flat entry's observation, unchanged, for every consumer
+    /// that is not a scorer (human adapters, traces, diagnostics).
+    pub(crate) fn flat_policy_observation_raw_v3(
         &self,
         expected: FastActorDecisionV1,
     ) -> Result<ObservationV6, FlatActionDecisionSliceErrorV1> {
@@ -832,7 +863,7 @@ impl FastActorSessionV1 {
         if PlayerSeatV1::from(current.actor) != human_seat {
             return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
         }
-        let observation = self.flat_policy_observation_v3(expected)?;
+        let observation = self.flat_policy_observation_raw_v3(expected)?;
         let actions = current
             .candidates
             .iter()

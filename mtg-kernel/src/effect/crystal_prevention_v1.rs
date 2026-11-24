@@ -1427,6 +1427,11 @@ pub(crate) fn acquire_owner(
     {
         return Err("Crystal execution cannot retain the departed Bombardment source loan".into());
     }
+    if crate::full_text_v1::departed_damage_trigger_needs_lki(state, item) {
+        return Err(
+            "Crystal execution cannot retain the departed full-text damage source loan".into(),
+        );
+    }
     validate(state)?;
     if state
         .stack
@@ -5209,13 +5214,14 @@ fn validate_batch_commit_execution(
     let capture = batch_capture_at(state, commit.capture, &answer.before.path)?;
     validate_multiplier_batch_gains(state, capture, &commit.outcomes, previous_index, index)
 }
-fn cannot_prevent(state: &GameState) -> bool {
+fn cannot_prevent(state: &GameState, damage: &DamageProposed) -> bool {
     state.engine.until_end_of_turn.iter().any(|e| {
         matches!(
             e,
             crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
         )
-    })
+    }) || (cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c7b_v1::combat_damage_cannot_be_prevented(state, damage))
 }
 pub(crate) fn applicable(state: &GameState, damage: &DamageProposed) -> Vec<PreventionV1> {
     applicable_after(state, damage, &Default::default())
@@ -5235,7 +5241,7 @@ fn applicable_after(
         return Vec::new();
     }
     let mut options = Vec::new();
-    if !cannot_prevent(state) {
+    if !cannot_prevent(state, damage) {
         if let Target::Object(target) = damage.target {
             if !damage.is_combat {
                 options.extend(
@@ -5245,9 +5251,12 @@ fn applicable_after(
                 );
             }
             let protected = match damage.historical_facts(state) {
-                Ok(Some(facts)) => {
-                    crate::source_power_activation_v1::protected(state, facts, target)
-                }
+                Ok(Some(facts)) => crate::event::historical_damage_prevented_by_protection(
+                    state,
+                    facts,
+                    damage.departed_types(),
+                    damage.target,
+                ),
                 Ok(None) => crate::engine::damage_is_prevented_by_protection(
                     state,
                     damage.source,

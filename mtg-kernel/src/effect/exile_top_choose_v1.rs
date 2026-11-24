@@ -574,6 +574,7 @@ pub(crate) fn grant_selected(
     consume_capture_record(state, binding, Some(chosen));
     let permission = crate::engine::PlayPermission {
         without_mana_cost: crate::engine::FreeCastV1::default(),
+        any_mana_type: Default::default(),
         object: chosen.object,
         holder: binding.player,
         zone_change_generation: chosen.expected_zone_change_count,

@@ -1864,6 +1864,9 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
     ),
     NativePolicyTrainErrorV1,
 > {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     if v4 {
         state.validate_cuda_feature_transfer_update_v4(
             groups,
@@ -1921,6 +1924,9 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v3(
     learning_rate: f32,
     device_ordinal: usize,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     state.validate_cuda_feature_transfer_update_v3(
         groups,
         value_coefficient,
@@ -1965,6 +1971,9 @@ pub(crate) fn train_step_cuda_burn_dense_gae_feature_transfer_v4(
     learning_rate: f32,
     device_ordinal: usize,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     state.validate_cuda_feature_transfer_update_v4(
         groups,
         value_coefficient,
@@ -2003,6 +2012,9 @@ pub(crate) fn train_step_cuda_terminal_imitation_v4(
     learning_rate: f32,
     device_ordinal: usize,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     state.validate_cuda_feature_transfer_coefficients_v4(
         groups,
         0.0,
@@ -2033,6 +2045,9 @@ pub(crate) fn train_step_cuda_burn_dense_v1(
     value_coefficient: f32,
     learning_rate: f32,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     let snapshot = state
         .snapshot_v1()
         .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
@@ -2074,6 +2089,9 @@ pub(crate) fn train_step_cuda_burn_dense_feature_transfer_v3(
     learning_rate: f32,
     device_ordinal: usize,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     train_step_cuda_burn_dense_feature_transfer_inner_v3(
         state,
         groups,
@@ -2147,6 +2165,9 @@ pub(crate) fn train_step_cuda_burn_dense_feature_transfer_v4(
     learning_rate: f32,
     device_ordinal: usize,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     state.validate_cuda_feature_transfer_update_v4(
         groups,
         value_coefficient,
@@ -2198,6 +2219,9 @@ pub(crate) fn train_step_cuda_burn_dense_feature_transfer_capture_numerics_v3(
     learning_rate: f32,
     device_ordinal: usize,
 ) -> Result<V3CudaNumericalCaptureV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     state.validate_cuda_feature_transfer_update_v3(
         groups,
         value_coefficient,
@@ -2254,6 +2278,9 @@ pub(crate) fn train_step_cuda_burn_dense_policy_anchor_v1(
     value_coefficient: f32,
     learning_rate: f32,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     if policy_anchor_coefficient.to_bits() == 0 {
         return train_step_cuda_burn_dense_v1(state, groups, value_coefficient, learning_rate);
     }
@@ -2304,6 +2331,9 @@ pub(crate) fn train_step_cuda_burn_dense_capture_named_gradients_v1(
     value_coefficient: f32,
     learning_rate: f32,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     let snapshot = state
         .snapshot_v1()
         .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {
@@ -2362,6 +2392,9 @@ pub(crate) fn train_step_cuda_burn_dense_wide_v1(
     value_coefficient: f32,
     learning_rate: f32,
 ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    // The London keep offset trains only on the plain CPU GAE step: refuse (and clear) it before any
+    // snapshot or device work, since a snapshot omits it.
+    state.require_no_london_keep_offset_v1()?;
     let snapshot = state
         .snapshot_v1()
         .map_err(|_| NativePolicyTrainErrorV1::CudaBackend {

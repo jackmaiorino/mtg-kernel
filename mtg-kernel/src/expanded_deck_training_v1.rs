@@ -5,6 +5,7 @@
 pub mod archive_distillation_v1;
 pub mod b_width_prescreen_v1;
 pub(crate) mod cache_diagnostics_v1;
+pub mod card_wave_transfer_v1;
 pub mod e_supported_teacher_v1;
 pub mod ex1_collect_v1;
 pub mod ex1_update_v1;
@@ -106,7 +107,9 @@ pub(crate) use bootstrapped_advantage_v1::{
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 pub(crate) use ordered_update_preparation::{
-    validate_max_prepared_tensor_mebibytes_v1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    preparation_groups_bound_v1, trajectory_batch_bytes_v1,
+    validate_max_prepared_tensor_mebibytes_v1, validate_max_trajectory_batch_mebibytes_v1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 
 fn default_max_prepared_tensor_mebibytes() -> usize {
@@ -115,6 +118,14 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+}
+
+fn default_max_trajectory_batch_mebibytes() -> usize {
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
+
+fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
 }
 /// The opt-in checkpoint codec benchmark (mtg-kernel#596): measurement only.
 #[cfg(feature = "checkpoint-codec-bench-v1")]
@@ -127,16 +138,26 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 pub(crate) mod loaded_source_profile_v1;
+pub(crate) mod london_keep_offset_v1;
 pub(crate) mod opponent_cache_diagnostics_v1;
 #[cfg(test)]
 pub(crate) mod pool_fixture_v1;
 pub mod portable_chain_v1;
 pub mod record_envelope_v1;
+pub mod trajectory_container_v1;
+pub use trajectory_container_v1::TrajectoryRecordFormatV1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
+pub use crate::native_policy_train_step_v1::card_projection_e1::CardSemanticsConfigV1;
+use crate::native_policy_train_step_v1::card_projection_e1::{
+    checkpoint_hash_v1, CardSemanticsSectionV1, CardSemanticsV1,
+};
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
+pub(crate) mod card_semantics_e1;
+pub use card_semantics_e1::tool_json_v1 as card_semantics_tool_json_v1;
+pub(crate) use card_semantics_e1::validate_update_v1 as validate_card_semantics_run_v1;
 use checkpoint_container_v1::{BorrowedParameterBitsV1, ParameterBitsRefV1};
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub use record_envelope_v1::RecordEnvelopeV1;
@@ -313,6 +334,11 @@ pub enum ExpandedLossSelectionV1 {
         gamma: f32,
         lambda: f32,
         entropy_coefficient: f32,
+        /// How the London pregame rows' advantage is formed
+        /// ([`PregameAdvantageV1`]); absent is the default GAE, so every
+        /// existing config, manifest and receipt keeps its bytes.
+        #[serde(default, skip_serializing_if = "PregameAdvantageV1::is_gae")]
+        pregame_advantage: PregameAdvantageV1,
     },
     GaeUniformKlRecoveryV1 {
         gamma: f32,
@@ -323,7 +349,53 @@ pub enum ExpandedLossSelectionV1 {
     },
 }
 
+/// How an update forms the advantage and value target of the London pregame
+/// rows (keep or mulligan announcements and put-back decisions: the learner's
+/// physical decisions whose first tensor has state column 89 set).
+///
+/// `Gae` (the default, never written) is the update's ordinary bootstrapped
+/// GAE for every row. `TerminalV1` keeps that for every in-game row, bit for
+/// bit, and gives each pregame row the advantage `R - V` and the value target
+/// `R`, where `R` is the game's terminal win/loss result for the learner seat
+/// and `V` the row's own value estimate: no bootstrap through the later value
+/// estimates. Nothing in it decays; it is the terminal result alone.
+/// `ExpandedLossSelectionV1::GaeAdvantageValueV1` carries it, so the choice is
+/// part of every command, run manifest and run identity that records the loss
+/// selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PregameAdvantageV1 {
+    #[default]
+    Gae,
+    TerminalV1,
+}
+
+impl PregameAdvantageV1 {
+    pub(crate) fn is_gae(&self) -> bool {
+        matches!(self, Self::Gae)
+    }
+
+    /// The receipt string of a non-default mode.
+    pub(crate) fn name_v1(&self) -> &'static str {
+        match self {
+            Self::Gae => "gae",
+            Self::TerminalV1 => "terminal_v1",
+        }
+    }
+}
+
 impl ExpandedLossSelectionV1 {
+    /// The pregame advantage mode this selection names (`Gae` for every loss
+    /// but the plain GAE one).
+    pub(crate) fn pregame_advantage_v1(&self) -> PregameAdvantageV1 {
+        match self {
+            Self::GaeAdvantageValueV1 {
+                pregame_advantage, ..
+            } => *pregame_advantage,
+            _ => PregameAdvantageV1::Gae,
+        }
+    }
+
     pub(crate) fn is_terminal_reinforce_value_v3(&self) -> bool {
         matches!(self, Self::TerminalReinforceValueV3)
     }
@@ -348,10 +420,15 @@ impl ExpandedLossSelectionV1 {
                 gamma,
                 lambda,
                 entropy_coefficient,
+                pregame_advantage,
             } => {
                 ensure(
                     gamma.is_finite() && (0.0..=1.0).contains(gamma),
                     "gae gamma must be finite in 0.0..=1.0",
+                )?;
+                ensure(
+                    pregame_advantage.is_gae() || gamma.to_bits() == 1.0_f32.to_bits(),
+                    "the terminal pregame advantage requires gamma exactly 1.0",
                 )?;
                 ensure(
                     lambda.is_finite() && (0.0..=1.0).contains(lambda),
@@ -582,19 +659,62 @@ pub(crate) fn load_expanded_update_inference_v1(
     learning_rate: f32,
     value_coefficient: f32,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
+    load_expanded_update_bound_projection_v1(
+        source,
+        trajectories,
+        learning_rate,
+        value_coefficient,
+        None,
+    )
+    .map(|(identity, _)| identity)
+}
+
+pub(crate) fn load_expanded_update_bound_projection_v1(
+    source: &ExpandedModelSourceV1,
+    trajectories: &[PinnedFileV1],
+    learning_rate: f32,
+    value_coefficient: f32,
+    before_projection: Option<&CardSemanticsV1>,
+) -> Result<(ExpandedInferenceIdentityV1, Option<CardSemanticsV1>), String> {
     let inputs = CheckpointInputExpectationV1 {
         trajectories,
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
     };
     if source.s_learner.is_some() {
-        return s_learner_v1::load_update_inference_v1(source, &inputs);
+        ensure(
+            before_projection.is_none(),
+            "card semantics refuses S learner",
+        )?;
+        return s_learner_v1::load_update_inference_v1(source, &inputs)
+            .map(|identity| (identity, None));
     }
     if source.w_learner.is_some() {
-        return w_learner_v1::load_update_inference_v1(source, &inputs);
+        ensure(
+            before_projection.is_none(),
+            "card semantics refuses wide learner",
+        )?;
+        return w_learner_v1::load_update_inference_v1(source, &inputs)
+            .map(|identity| (identity, None));
     }
     let bytes = read_pinned_shared_v1(&source.play_import)?;
-    load_update_identity_from_source_bytes_v1(source, &bytes, &inputs)
+    let (identity, section) = load_update_identity_from_source_bytes_v1(source, &bytes, &inputs)?;
+    let binding = before_projection.map(CardSemanticsV1::binding_v1);
+    card_semantics_e1::validate_binding_v1(section.as_ref(), binding)?;
+    let mut projection = before_projection.cloned();
+    if let Some(projection) = &mut projection {
+        let expected_step = projection
+            .p_step_v1()
+            .checked_add(1)
+            .ok_or("card semantics step overflow")?;
+        let saved = section.as_ref().ok_or("missing card semantics section")?;
+        projection.restore_v1(saved)?;
+        ensure(
+            saved.p_step == expected_step,
+            "card semantics update does not advance exactly one P step",
+        )?;
+    }
+    Ok((identity, projection))
 }
 
 struct CheckpointInputExpectationV1<'a> {
@@ -725,6 +845,10 @@ pub(crate) fn load_ordinary_bo3_parent_v1(
         .map_err(err)?;
     let record = read_checkpoint_record_v1(pin)?;
     let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
+    ensure(
+        saved.card_semantics.is_none(),
+        "BO3 transition refuses card semantics",
+    )?;
     ensure(
         saved.training_math.is_platform_libm(),
         "BO3 transition does not support portable training math",
@@ -1588,6 +1712,23 @@ pub struct ExpandedEpisodeV1 {
     /// Per-physical-seat mulligan modes, present exactly when `opening` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
+    /// Some gives each physical seat a priority-window rule
+    /// (`priority_action_windows_v1`: `"harness-v2"`, `"action-windows-v1"`,
+    /// `"action-windows-end-step-v1"`), set on the surface before the first
+    /// decision. Refused with a reset start and with a search opponent. None
+    /// keeps every prior serialized byte and today's surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_windows: Option<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2]>,
+    /// Some subtracts a logit offset (each number at most 1e6 and an f64
+    /// holding exactly an f32 value) from the mulligan row of every London
+    /// announcement, in collection, record validation and the update
+    /// (`london_keep_offset_v1`): one positive number for every announcement,
+    /// or seven numbers, one per number of mulligans the acting seat has
+    /// already taken (0 to 6). Those rows are drawn from the unclamped softmax
+    /// sampler. Only with `opening`. None keeps every prior serialized byte
+    /// and every behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub london_keep_offset: Option<london_keep_offset_v1::LondonKeepOffsetV1>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1648,6 +1789,27 @@ pub struct ExpandedResetStartV1 {
 }
 
 impl ExpandedEpisodeV1 {
+    /// Each seat's priority-window rule; both `HarnessV2` when the field is
+    /// absent. Refused with a reset start (its recorded prefix was played on
+    /// today's surface) and with a search opponent (its simulations build
+    /// their own sessions).
+    pub(crate) fn priority_windows_v1(
+        &self,
+    ) -> Result<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2], String> {
+        let Some(windows) = self.priority_windows else {
+            return Ok([crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2]);
+        };
+        ensure(
+            self.reset.is_none(),
+            "priority_windows is refused with a reset start",
+        )?;
+        ensure(
+            self.opponent_search.is_none(),
+            "priority_windows is refused with a search opponent",
+        )?;
+        Ok(windows)
+    }
+
     /// The opt-in opening's own refusals (design section 3). The feature
     /// identity refusal needs the loaded policies and is checked by the
     /// collector (`require_opening_feature_identity_v1`).
@@ -1657,8 +1819,14 @@ impl ExpandedEpisodeV1 {
             "mulligan modes are present exactly when an opening is",
         )?;
         let Some(modes) = self.mulligan_modes else {
-            return Ok(());
+            return ensure(
+                self.london_keep_offset.is_none(),
+                "london_keep_offset requires a London opening",
+            );
         };
+        if let Some(offset) = self.london_keep_offset {
+            offset.resolve_v1()?;
+        }
         ensure(
             self.reset.is_none(),
             "an opening is refused with a reset start (recorded prefixes predate London)",
@@ -1719,6 +1887,10 @@ impl ExpandedEpisodeV1 {
 
     fn configurations_checked_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
         self.validate_opening_v1()?;
+        // The priority-window rules' own refusals, with the episode's other
+        // field checks: a collection is refused before any of its games is
+        // played, not at the first session its refused episode builds.
+        self.priority_windows_v1()?;
         ensure(
             self.opponent_search.is_none() || self.opponent.is_some(),
             "search opponent requires an explicit opponent model",
@@ -1793,9 +1965,9 @@ fn floats(values: &[u32]) -> Vec<f32> {
     values.iter().map(|x| f32::from_bits(*x)).collect()
 }
 impl TensorBitsV1 {
-    /// No tensor at all: an unscored V3 forced singleton records none.
-    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    fn empty() -> Self {
+    /// Empty tensor (used for unscored forced singletons or omitted opponent
+    /// tensors under `TrajectoryRecordFormatV1::BinaryZstd1LearnerOnly`).
+    pub(super) fn empty_v1() -> Self {
         Self {
             state: Vec::new(),
             object_features: Vec::new(),
@@ -1814,8 +1986,7 @@ impl TensorBitsV1 {
         }
     }
 
-    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty_v1(&self) -> bool {
         self.state.is_empty()
             && self.object_features.is_empty()
             && self.object_card_ids.is_empty()
@@ -1830,6 +2001,17 @@ impl TensorBitsV1 {
             && self.action_ref_action_indices.is_empty()
             && self.action_ref_node_indices.is_empty()
             && self.pairing_node_indices.is_empty()
+    }
+
+    /// No tensor at all: an unscored V3 forced singleton records none.
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn empty() -> Self {
+        Self::empty_v1()
+    }
+
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    fn is_empty(&self) -> bool {
+        self.is_empty_v1()
     }
 
     /// Generic over the shared inner tensor, not `NativeFlatDecisionTensorV3`
@@ -2019,6 +2201,11 @@ struct ExpandedTrajectoryV1 {
     /// update authenticates every entry against the collection's record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     search_played: Option<Vec<SearchPlayedRowV1>>,
+    /// True when opponent decisions retain action/logit/value metadata but omit
+    /// `TensorBitsV1` (`TrajectoryRecordFormatV1::BinaryZstd1LearnerOnly`).
+    /// Absent when false, preserving all legacy JSON bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    opponent_tensors_omitted: bool,
 }
 
 /// One learner row the search played (`w5-xact-v1`).
@@ -2185,6 +2372,12 @@ pub(crate) struct ExpandedCheckpointV1<T = ParameterBitsV1> {
     card_db_hash: String,
     source_import: PlayPolicyOriginV1,
     state_sha256: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "card_semantics_e1::deserialize_present_v1"
+    )]
+    card_semantics: Option<CardSemanticsSectionV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     e_supported: Option<Value>,
     /// SQ1's continuation identity and packet pin; absent otherwise.
@@ -2271,6 +2464,11 @@ fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), Str
 /// `Some(Value::Null)`, as `Value::get` returned it.
 #[derive(Deserialize)]
 struct CheckpointESupportedProbeV1 {
+    #[serde(
+        default,
+        deserialize_with = "card_semantics_e1::deserialize_present_v1"
+    )]
+    card_semantics: Option<CardSemanticsSectionV1>,
     #[serde(default, deserialize_with = "present_value_v1")]
     e_supported: Option<Value>,
     #[serde(default, deserialize_with = "present_value_v1")]
@@ -2294,6 +2492,12 @@ fn initialize(
 ) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
     let (policy, state) = initialize_any_math_v1(source)?;
     refuse_portable_math_v1(&policy)?;
+    // Legacy learners cannot silently drop a folded projection on resume.
+    // Collection and ordinary inference use their dedicated loaders.
+    ensure(
+        state.loaded_card_semantics.is_none(),
+        "card semantics checkpoint requires explicit training configuration",
+    )?;
     Ok((policy, state))
 }
 
@@ -2413,11 +2617,15 @@ pub(crate) struct LoadedRunInitialV1 {
 /// Validates a run's initial source under `math` and, when `want_carried` is
 /// true and the source is a verifiable net-8 learner, returns the single owned
 /// `CarriedLearnerV1` without cloning `NativePolicyValueTrainStateV1`.
+/// A run with card semantics loads the train state either way: its
+/// checkpoint section is restored from that load into the run's projection,
+/// the table the run's validation loaded once (`card_semantics_e1`).
 #[inline(never)]
 pub(crate) fn load_initial_for_run_v1(
     source: &ExpandedModelSourceV1,
     math: TrainingMathV1,
     want_carried: bool,
+    semantics: &mut Option<CardSemanticsV1>,
 ) -> Result<LoadedRunInitialV1, String> {
     let build_response = |policy: &FrozenPlayPolicyV1,
                           identity: ExpandedInferenceIdentityV1,
@@ -2434,7 +2642,16 @@ pub(crate) fn load_initial_for_run_v1(
             carried,
         })
     };
-    if !want_carried || source.s_learner.is_some() || source.w_learner.is_some() {
+    if source.s_learner.is_some() || source.w_learner.is_some() {
+        ensure(
+            semantics.is_none(),
+            "card semantics refuses S and wide learners",
+        )?;
+    }
+    if (!want_carried && semantics.is_none())
+        || source.s_learner.is_some()
+        || source.w_learner.is_some()
+    {
         let (policy, identity) = load_expanded_inference_bound_v1(source, math)?;
         return build_response(&policy, identity, None);
     }
@@ -2452,12 +2669,23 @@ pub(crate) fn load_initial_for_run_v1(
         _ => false,
     };
     if delegates_to_inference {
+        ensure(
+            semantics.is_none(),
+            "card semantics requires an ordinary 33-tensor learner",
+        )?;
         let (mut policy, identity) = load_expanded_inference_from_bytes_v1(source, &bytes)?;
         bind_opponent_math_v1(source, &mut policy, math)?;
         return build_response(&policy, identity, None);
     }
     let loaded =
         load_learner_from_source_bytes_v1(source, &bytes, None, CacheRememberV1::PolicyOnly)?;
+    card_semantics_e1::admit_run_initial_v1(
+        source,
+        &loaded.policy,
+        &loaded.state,
+        loaded.transfer.is_some(),
+        semantics,
+    )?;
     if source.checkpoint.is_some() {
         ensure(
             loaded.policy.training_math_v1() == math,
@@ -2465,7 +2693,10 @@ pub(crate) fn load_initial_for_run_v1(
         )?;
     }
     let response = build_response(&loaded.policy, loaded.identity.clone(), None)?;
-    let carried = match (loaded.transfer.is_none(), loaded.verifiable_kind) {
+    let carried = match (
+        want_carried && loaded.transfer.is_none(),
+        loaded.verifiable_kind,
+    ) {
         (true, Some(kind)) => Some(CarriedLearnerV1(Box::new(CarriedLearnerInnerV1 {
             source: source.clone(),
             descriptor_bytes: bytes.as_ref().clone(),
@@ -2648,54 +2879,48 @@ fn load_train_policy_and_identity_v1(
     Ok((loaded.policy, loaded.identity, loaded.transfer))
 }
 
+/// The update's validated identity and its checkpoint's card-semantics
+/// section: from the cache entry on a hit, from the loaded train state
+/// otherwise, so the caller checks the section without another read.
 #[inline(never)]
 fn load_update_identity_from_source_bytes_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
     inputs: &CheckpointInputExpectationV1<'_>,
-) -> Result<ExpandedInferenceIdentityV1, String> {
+) -> Result<loaded_source_cache_v1::IdentityAndSectionV1, String> {
     check_net8_learner_source_v1(source)?;
-    if flat_v8_requested_v1(source)? {
+    let loaded = if flat_v8_requested_v1(source)? {
         let pin = source
             .checkpoint
             .as_ref()
             .ok_or("a FlatV8 source requires its V8 checkpoint")?;
-        if let Some(identity) =
+        if let Some(hit) =
             loaded_source_cache_v1::lookup_flat_checkpoint_identity_v1(source, bytes, Some(inputs))?
         {
-            return Ok(identity);
+            return Ok(hit);
         }
-        return Ok(load_flat_v8_uncached_v1(
+        load_flat_v8_uncached_v1(
             source,
             pin,
             bytes,
             Some(inputs),
             CacheRememberV1::PolicyOnly,
         )?
-        .identity);
-    }
-    if flat_v7_transfer_requested_v1(source)? {
-        if let Some(identity) =
+    } else if flat_v7_transfer_requested_v1(source)? {
+        if let Some(hit) =
             loaded_source_cache_v1::lookup_flat_checkpoint_identity_v1(source, bytes, Some(inputs))?
         {
-            return Ok(identity);
+            return Ok(hit);
         }
-        return Ok(load_flat_v7_uncached_v1(
-            source,
-            bytes,
-            Some(inputs),
-            CacheRememberV1::PolicyOnly,
-        )?
-        .identity);
-    }
-    if let Some(identity) = loaded_source_cache_v1::lookup_identity_v1(source, bytes, Some(inputs))?
-    {
-        return Ok(identity);
-    }
-    Ok(
+        load_flat_v7_uncached_v1(source, bytes, Some(inputs), CacheRememberV1::PolicyOnly)?
+    } else {
+        if let Some(hit) = loaded_source_cache_v1::lookup_identity_v1(source, bytes, Some(inputs))?
+        {
+            return Ok(hit);
+        }
         load_nonflat_uncached_v1(source, bytes, Some(inputs), CacheRememberV1::PolicyOnly)?
-            .identity,
-    )
+    };
+    Ok((loaded.identity, loaded.state.loaded_card_semantics))
 }
 
 #[inline(never)]
@@ -3281,7 +3506,7 @@ fn restore_checkpoint_fields_v1<T: CheckpointTensorV1>(
     let tensors = checkpoint_tensors_v1(saved, &model)?;
     let state_sha256 = tensors.state_sha256_v1().map_err(err)?;
     ensure(
-        hex(&state_sha256) == saved.state_sha256,
+        checkpoint_hash_v1(&state_sha256, saved.card_semantics.as_ref())? == saved.state_sha256,
         "checkpoint state hash differs",
     )?;
     // Validate the model's gauge anchor and full optimizer state before the
@@ -3289,6 +3514,7 @@ fn restore_checkpoint_fields_v1<T: CheckpointTensorV1>(
     let mut state = NativePolicyValueTrainStateV1::from_tensors_v1(model, &tensors).map_err(err)?;
     policy.replace_training_parameters_v3(&state.model_v1().parameter_snapshot_v1())?;
     // Inference and probes run a checkpoint under the math it trained with.
+    state.loaded_card_semantics = saved.card_semantics.clone();
     state.set_training_math_v1(saved.training_math);
     state.record_verified_state_sha256_v1(state_sha256);
     policy.set_training_math_v1(saved.training_math);
@@ -3314,6 +3540,16 @@ fn check_checkpoint_fields_v1<T: CheckpointTensorV1>(
         saved.source_import == *policy.identity_v1(),
         "checkpoint warm-start provenance differs",
     )?;
+    check_checkpoint_loss_fields_v1(saved)
+}
+
+/// The restore's checks of a checkpoint's loss and the scalars that loss
+/// requires, which read the checkpoint alone: every restore runs them last
+/// ([`check_checkpoint_fields_v1`]), and the card-wave transfer runs them on
+/// the checkpoint it carries (`card_wave_transfer_v1`).
+fn check_checkpoint_loss_fields_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
+) -> Result<(), String> {
     ensure(
         saved.loss_identity == "terminal_reinforce_value/v3"
             || saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1
@@ -3474,10 +3710,11 @@ fn episode_session_v1(
 ) -> Result<FastActorSessionV1, String> {
     let (steps, physical) = episode.reset_offsets_v1();
     let game_seed = episode.reset.as_ref().map_or(episode.seed, |r| r.game_seed);
+    let windows = episode.priority_windows_v1()?;
     let mut session = if let Some(modes) = episode.mulligan_modes {
         // `opening` (London v1) with its refusals; never a reset start.
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_pauper_london_v1(
+        FastActorSessionV1::reset_pauper_london_windows_v1(
             1,
             game_seed,
             episode.max_physical_decisions,
@@ -3486,13 +3723,14 @@ fn episode_session_v1(
             configs.each_ref().map(|d| d.mainboard().to_vec()),
             PlayerId(episode.starting_player),
             modes,
+            windows,
         )
         .map_err(err)?
     } else {
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
         1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player), windows).map_err(err)?
     };
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
@@ -3574,9 +3812,20 @@ fn collect_episode(
 fn collect_episode_hooked_v1(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
+    opponent: Option<&mut LoadedOpponentV1>,
+    episode: &ExpandedEpisodeV1,
+    hook: Option<&mut ex1_collect_v1::Ex1EpisodeHookV1>,
+) -> Result<ExpandedTrajectoryV1, CollectEpisodeErrorV1> {
+    collect_episode_hooked_with_options_v1(policy, learner, opponent, episode, hook, false)
+}
+
+fn collect_episode_hooked_with_options_v1(
+    policy: &mut FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
     mut opponent: Option<&mut LoadedOpponentV1>,
     episode: &ExpandedEpisodeV1,
     mut hook: Option<&mut ex1_collect_v1::Ex1EpisodeHookV1>,
+    omit_opponent_tensors: bool,
 ) -> Result<ExpandedTrajectoryV1, CollectEpisodeErrorV1> {
     let configs = episode.configurations()?;
     ensure(
@@ -3667,6 +3916,7 @@ fn collect_episode_hooked_v1(
                     input_contract,
                     opening_record: session.pauper_opening_record_v1().cloned(),
                     search_played: (!search_played.is_empty()).then_some(search_played),
+                    opponent_tensors_omitted: omit_opponent_tensors,
                 };
                 validate_trajectory(&result)?;
                 return Ok(result);
@@ -3693,27 +3943,42 @@ fn collect_episode_hooked_v1(
                     Some(hook) if hook.hooks_v1(&d) => Some(hook.before_select_v1(&session, d)?),
                     _ => None,
                 };
-                let (selected, scores, tensor_bits) =
-                    if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
-                        let (selected, scores, tensor) =
-                            acting.select_with_training_tensor_v4(&session)?;
-                        // FlatV8 rows also record their pairing relation.
-                        let bits = if acting.feature_identity_v1().feature_contract_digest
-                            == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
-                        {
-                            TensorBitsV1::from_tensor_v8(
-                                &tensor.common,
-                                acting.last_scored_pairing_v8()?,
-                            )
-                        } else {
-                            TensorBitsV1::from_tensor(&tensor.common)
-                        };
-                        (selected, scores, bits)
+                let record_tensor =
+                    !(omit_opponent_tensors && seat(d.acting_player) != episode.learner_seat);
+                let (selected, scores, tensor_bits) = if acting.feature_identity_v1().generation
+                    == FreshLineageGenerationV1::V4
+                {
+                    let (selected, scores, tensor) = acting.select_with_training_tensor_offset_v4(
+                        &session,
+                        episode
+                            .london_keep_offset
+                            .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
+                            .transpose()?,
+                    )?;
+                    // FlatV8 rows also record their pairing relation.
+                    let bits = if !record_tensor {
+                        TensorBitsV1::empty_v1()
+                    } else if acting.feature_identity_v1().feature_contract_digest
+                        == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
+                    {
+                        TensorBitsV1::from_tensor_v8(
+                            &tensor.common,
+                            acting.last_scored_pairing_v8()?,
+                        )
                     } else {
-                        let (selected, scores, tensor) =
-                            acting.select_with_training_tensor_v3(&session)?;
-                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        TensorBitsV1::from_tensor(&tensor.common)
                     };
+                    (selected, scores, bits)
+                } else {
+                    let (selected, scores, tensor) =
+                        acting.select_with_training_tensor_v3(&session)?;
+                    let bits = if !record_tensor {
+                        TensorBitsV1::empty_v1()
+                    } else {
+                        TensorBitsV1::from_tensor(&tensor.common)
+                    };
+                    (selected, scores, bits)
+                };
                 let logits = bits(&scores.logits);
                 let played = match (hook.as_deref_mut(), pending) {
                     (Some(hook), Some(pending)) => {
@@ -3747,6 +4012,28 @@ fn collect_episode_hooked_v1(
             }
         }
     }
+}
+
+/// The London keep offset shared by every trajectory of an update batch,
+/// compared as seven f32 bit patterns (a scalar is seven equal entries); a
+/// batch mixing values (or offset and no offset) is refused.
+fn batch_london_keep_offset_v1(
+    offsets: impl IntoIterator<Item = Option<london_keep_offset_v1::LondonKeepOffsetV1>>,
+) -> Result<Option<london_keep_offset_v1::OffsetVectorV1>, String> {
+    let mut values = offsets
+        .into_iter()
+        .map(|offset| offset.map(|offset| offset.resolve_v1()).transpose());
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    let first = first?;
+    for value in values {
+        ensure(
+            value?.map(|offset| offset.bits()) == first.map(|offset| offset.bits()),
+            "an update batch mixes London keep offsets",
+        )?;
+    }
+    Ok(first)
 }
 
 /// One non-natural collection attempt, preserved for audit even though it is
@@ -3981,11 +4268,34 @@ type TolerantCollectionV1 = (
 fn collect_episode_tolerant_v1(
     policy: &mut FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
+    opponent: Option<&mut LoadedOpponentV1>,
+    episode: &ExpandedEpisodeV1,
+    slot: usize,
+    max_non_natural_episode_fraction: f32,
+    ex1: Option<&ex1_collect_v1::Ex1CollectOptionsV1>,
+) -> Result<TolerantCollectionV1, (String, Vec<NonNaturalLedgerEntryV1>)> {
+    collect_episode_tolerant_with_options_v1(
+        policy,
+        learner,
+        opponent,
+        episode,
+        slot,
+        max_non_natural_episode_fraction,
+        ex1,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_episode_tolerant_with_options_v1(
+    policy: &mut FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
     mut opponent: Option<&mut LoadedOpponentV1>,
     episode: &ExpandedEpisodeV1,
     slot: usize,
     max_non_natural_episode_fraction: f32,
     ex1: Option<&ex1_collect_v1::Ex1CollectOptionsV1>,
+    omit_opponent_tensors: bool,
 ) -> Result<TolerantCollectionV1, (String, Vec<NonNaturalLedgerEntryV1>)> {
     let mut ledger = Vec::new();
     let mut attempt_episode = episode.clone();
@@ -4000,12 +4310,13 @@ fn collect_episode_tolerant_v1(
             .transpose()
             .map_err(|error| (error, std::mem::take(&mut ledger)))?;
         let reborrowed_opponent = opponent.as_deref_mut();
-        let outcome = collect_episode_hooked_v1(
+        let outcome = collect_episode_hooked_with_options_v1(
             policy,
             learner,
             reborrowed_opponent,
             &attempt_episode,
             hook.as_mut(),
+            omit_opponent_tensors,
         );
         let outcome = match outcome {
             Ok(trajectory) if seed_is_forced_non_natural_for_test_v1(attempt_episode.seed) => Err(
@@ -4152,8 +4463,33 @@ fn validate_trajectory(t: &ExpandedTrajectoryV1) -> Result<(), String> {
     // and have no no-state-digest conversion, so their updates, replays and
     // checkpoints are admitted here like V4's.
     let contract = trajectory_contract_v1(t)?;
+    if t.opponent_tensors_omitted {
+        for row in &t.decisions {
+            let is_learner = row.actor == t.episode.learner_seat;
+            ensure(
+                row.tensor.is_empty_v1() != is_learner,
+                "learner-only trajectory violates seat tensor presence",
+            )?;
+        }
+    }
     if contract.input_contract_digest_v1().is_some() {
-        no_state_digest_v1::check_trajectory_rows_v1(&t.decisions)?;
+        if t.opponent_tensors_omitted {
+            let learner_rows: Vec<DecisionRecordV1> = t
+                .decisions
+                .iter()
+                .filter(|row| row.actor == t.episode.learner_seat)
+                .cloned()
+                .collect();
+            no_state_digest_v1::check_trajectory_rows_v1(
+                &learner_rows,
+                contract.action_digest_off_v1(),
+            )?;
+        } else {
+            no_state_digest_v1::check_trajectory_rows_v1(
+                &t.decisions,
+                contract.action_digest_off_v1(),
+            )?;
+        }
     }
     // W5: a row the search played replays the learner's own draw; the
     // update authenticates the played action against q.
@@ -4403,7 +4739,35 @@ fn validate_episode_records_with_search_v1(
             let logits = match draw {
                 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
                 SeatRowDrawV1::None => continue,
-                SeatRowDrawV1::Logits => floats(&row.logits),
+                SeatRowDrawV1::Logits => {
+                    let raw = floats(&row.logits);
+                    // The London keep offset (`london_keep_offset_v1`): the
+                    // draw was made from the offset logits; the stored
+                    // logits stay raw.
+                    // An adjusted row was drawn from the unclamped sampler.
+                    match episode
+                        .london_keep_offset
+                        .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
+                        .transpose()?
+                    {
+                        Some(offset) => {
+                            let tensor = row.tensor.tensor();
+                            match london_keep_offset_v1::offset_logits_v1(
+                                &raw,
+                                &tensor.state,
+                                &tensor.action_features,
+                                &offset,
+                            )? {
+                                Some(adjusted) => {
+                                    use_unclamped = true;
+                                    adjusted
+                                }
+                                None => raw,
+                            }
+                        }
+                        None => raw,
+                    }
+                }
                 SeatRowDrawV1::Singleton => vec![0.0],
             };
             let bits = rng[row.actor as usize].next_u64();
@@ -4513,6 +4877,13 @@ fn replay_learner_groups_v1<'a>(
     let mut groups = Vec::new();
     let mut group = Vec::new();
     visit_serial_replay_rows_v1(t, learner, opponent, |generation, acting, row| {
+        if t.opponent_tensors_omitted && row.actor != t.episode.learner_seat {
+            ensure(
+                row.tensor.is_empty_v1(),
+                "learner-only trajectory carries unexpected opponent tensor",
+            )?;
+            return Ok::<_, String>(());
+        }
         let common = row.tensor.tensor();
         let stage = if row.actor == t.episode.learner_seat {
             S_UPDATE_REPLAY_LEARNER_ROW_V1
@@ -4643,6 +5014,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// existing command keeps its bytes and publishes plain JSON.
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
+        /// The opt-in trajectory container format (`trajectory_container_v1`);
+        /// omitted for the default (`json`), preserving existing command bytes.
+        #[serde(default, skip_serializing_if = "TrajectoryRecordFormatV1::is_json")]
+        trajectory_format: TrajectoryRecordFormatV1,
         output_directory: PathBuf,
     },
     Update {
@@ -4682,6 +5057,14 @@ pub enum ExpandedTrainingCommandV1 {
         #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
         record_format: CheckpointRecordFormatV1,
         output_directory: PathBuf,
+        // Trailing on purpose: a positional command from before this option
+        // still decodes.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "card_semantics_e1::deserialize_present_v1"
+        )]
+        card_semantics: Option<CardSemanticsConfigV1>,
     },
     /// Opt-in execution of ordinary one-worker CPU S GAE with a bounded
     /// authenticated replay tape. The run driver does not select this mode.
@@ -4714,6 +5097,12 @@ pub enum ExpandedTrainingCommandV1 {
         max_prepared_tensor_mebibytes: usize,
         tape_cap_bytes: usize,
         output_directory: PathBuf,
+        /// As `UpdatePrepared`'s; absent means the historical 512.
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
     /// sequential reference remain unchanged; backward and Adam are identical.
@@ -4763,6 +5152,23 @@ pub enum ExpandedTrainingCommandV1 {
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
+        /// Trajectory batch bound for this prepared update in MiB (record
+        /// bytes, decompressed for sealed files); absent means the historical
+        /// 512 (byte-identical wire for every existing command). See
+        /// `ordered_update_preparation`.
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
+        // Trailing on purpose: a positional command from before this option
+        // still decodes.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "card_semantics_e1::deserialize_present_v1"
+        )]
+        card_semantics: Option<CardSemanticsConfigV1>,
     },
     /// Separate E policy supervision, full Adam and unchanged sampler.
     ESupportedUpdate {
@@ -4817,6 +5223,11 @@ pub enum ExpandedTrainingCommandV1 {
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
     },
     /// SQ1's target diagnostic (design section 6.1): construction and
     /// independent assessment censuses at each case's root.
@@ -4970,12 +5381,14 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             Some(teacher),
             None,
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
             carried_update,
             from_run,
             want_next_carried,
@@ -4999,12 +5412,14 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             Some(teacher),
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
             carried_update,
             from_run,
             want_next_carried,
@@ -5028,6 +5443,7 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -5036,6 +5452,7 @@ fn execute_command_v1(
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
             None,
             carried_update,
             from_run,
@@ -5050,6 +5467,7 @@ fn execute_command_v1(
             ex1,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             record_envelope,
             output_directory,
         } => {
@@ -5064,8 +5482,13 @@ fn execute_command_v1(
                     max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
                     "max_prepared_tensor_mebibytes applies to prepared updates only",
                 )?;
+                ensure(
+                    max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                    "max_trajectory_batch_mebibytes applies to prepared updates only",
+                )?;
             }
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
             execute_update_inner_v1(
                 source,
                 trajectories,
@@ -5077,6 +5500,7 @@ fn execute_command_v1(
                 output_directory,
                 preparation_workers,
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 None,
                 None,
                 None,
@@ -5085,6 +5509,7 @@ fn execute_command_v1(
                 TrainingMathV1::PlatformLibm,
                 CheckpointRecordFormatV1::V1,
                 record_envelope,
+                None,
                 None,
                 carried_update,
                 from_run,
@@ -5210,6 +5635,7 @@ fn execute_command_v1(
             training_math,
             ex1,
             record_envelope,
+            trajectory_format,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
@@ -5220,6 +5646,7 @@ fn execute_command_v1(
             training_math,
             ex1,
             record_envelope,
+            trajectory_format,
             output_directory,
             carried_collect,
         )
@@ -5250,11 +5677,23 @@ fn execute_command_v1(
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
+                ensure(
+                    episodes
+                        .iter()
+                        .all(|episode| episode.london_keep_offset.is_none()),
+                    "an S learner collection refuses the London keep offset",
+                )?;
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else if source.w_learner.is_some() {
                 ensure(
                     ex1.is_none(),
                     "a wide learner refuses EX1 and W5 search collection",
+                )?;
+                ensure(
+                    episodes
+                        .iter()
+                        .all(|episode| episode.london_keep_offset.is_none()),
+                    "a wide learner collection refuses the London keep offset",
                 )?;
                 w_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
@@ -5371,6 +5810,7 @@ fn execute_command_v1(
         }
         ExpandedTrainingCommandV1::Update {
             source,
+            card_semantics,
             trajectories,
             learning_rate,
             value_coefficient,
@@ -5392,18 +5832,21 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             line_b,
             None,
             None,
             training_math,
             record_format,
             RecordEnvelopeV1::None,
+            card_semantics,
             carried_update,
             from_run,
             want_next_carried,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
+            card_semantics,
             trajectories,
             learning_rate,
             value_coefficient,
@@ -5412,6 +5855,7 @@ fn execute_command_v1(
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             line_b,
             training_math,
             record_format,
@@ -5420,6 +5864,13 @@ fn execute_command_v1(
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
+            // As on the run config: one preparation worker keeps the default.
+            ensure(
+                preparation_workers > 1
+                    || max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
+            )?;
             execute_update_v1(
                 source,
                 trajectories,
@@ -5431,12 +5882,14 @@ fn execute_command_v1(
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 line_b,
                 None,
                 None,
                 training_math,
                 record_format,
                 record_envelope,
+                card_semantics,
                 carried_update,
                 from_run,
                 want_next_carried,
@@ -5461,6 +5914,7 @@ fn execute_command_v1(
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -5469,6 +5923,7 @@ fn execute_command_v1(
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::default(),
             RecordEnvelopeV1::None,
+            None,
             Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
             carried_update,
             from_run,
@@ -5482,11 +5937,19 @@ fn execute_command_v1(
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             tape_cap_bytes,
             output_directory,
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
+            // As on the run config: one preparation worker keeps the default.
+            ensure(
+                preparation_workers > 1
+                    || max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
+            )?;
             execute_update_inner_v1(
                 source,
                 trajectories,
@@ -5498,6 +5961,7 @@ fn execute_command_v1(
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 None,
                 None,
                 None,
@@ -5506,6 +5970,7 @@ fn execute_command_v1(
                 TrainingMathV1::PlatformLibm,
                 CheckpointRecordFormatV1::default(),
                 RecordEnvelopeV1::None,
+                None,
                 Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
                 carried_update,
                 from_run,
@@ -5561,6 +6026,21 @@ struct GaeTargetsV1 {
     value_targets: Vec<f32>,
     advantages: Vec<f32>,
     statistics: AdvantageStatisticsV1,
+    /// Present exactly under `PregameAdvantageV1::TerminalV1`.
+    pregame: Option<PregameAdvantageReceiptV1>,
+}
+
+/// What the terminal pregame advantage changed, for the update receipt (a key
+/// `pregame_advantage`, written only when the mode is on): the mode, how many
+/// learner decisions were pregame rows, and the mean raw (before
+/// normalization) advantage of those rows under the terminal result and under
+/// the default GAE. A mean over no pregame rows is null.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+struct PregameAdvantageReceiptV1 {
+    mode: &'static str,
+    pregame_groups: usize,
+    raw_terminal_mean: Option<f32>,
+    raw_default_mean: Option<f32>,
 }
 
 /// Computes this update's GAE value targets and normalized advantages from
@@ -5611,6 +6091,36 @@ fn compute_gae_targets_of_values_v1(
     gamma: f32,
     lambda: f32,
 ) -> Result<GaeTargetsV1, String> {
+    let advantage_and_target =
+        gae_pairs_of_values_v1(values, terminal_returns, episode_ordinals, gamma, lambda)?;
+    let raw_advantages: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(advantage, _)| *advantage)
+        .collect();
+    let value_targets: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(_, value_target)| *value_target)
+        .collect();
+    let (advantages, statistics) =
+        normalize_advantages_v1(&raw_advantages, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1)?;
+    Ok(GaeTargetsV1 {
+        value_targets,
+        advantages,
+        statistics,
+        pregame: None,
+    })
+}
+
+/// Every group's raw `(advantage, value_target)` under the ordinary GAE, one
+/// episode at a time (the part of [`compute_gae_targets_of_values_v1`] before
+/// the whole-update normalization).
+fn gae_pairs_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<Vec<(f32, f32)>, String> {
     ensure(
         values.len() == episode_ordinals.len() && terminal_returns.len() == values.len(),
         "gae group and episode-ordinal counts differ",
@@ -5641,20 +6151,133 @@ fn compute_gae_targets_of_values_v1(
         advantage_and_target[start..end].copy_from_slice(&episode_results);
         start = end;
     }
-    let raw_advantages: Vec<f32> = advantage_and_target
+    Ok(advantage_and_target)
+}
+
+/// [`compute_gae_targets_v1`] under a pregame advantage mode. `Gae` is that
+/// function. `TerminalV1` ([`terminal_pregame_targets_of_values_v1`]) marks
+/// each group a pregame row from its first substep's tensor: state column 89
+/// (the London pregame stage) set, which holds for announcements and
+/// put-back decisions alike.
+fn compute_gae_targets_with_pregame_v1(
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+    pregame_advantage: PregameAdvantageV1,
+) -> Result<GaeTargetsV1, String> {
+    if pregame_advantage.is_gae() {
+        return compute_gae_targets_v1(groups, episode_ordinals, gamma, lambda);
+    }
+    ensure(
+        groups.len() == episode_ordinals.len(),
+        "gae group and episode-ordinal counts differ",
+    )?;
+    let mut values = Vec::with_capacity(groups.len());
+    let mut pregame = Vec::with_capacity(groups.len());
+    for (index, group) in groups.iter().enumerate() {
+        let first = group
+            .substeps
+            .first()
+            .ok_or_else(|| format!("gae group {index} has no substeps"))?;
+        values.push(f32::from_bits(first.expected_value_bits));
+        let NativePolicyForwardInputV1::Encoded(encoded) = &first.forward else {
+            return Err("the terminal pregame advantage requires encoded decision input".into());
+        };
+        pregame.push(
+            encoded
+                .state
+                .get(london_keep_offset_v1::PREGAME_STATE_COLUMN_V1)
+                .copied()
+                == Some(1.0),
+        );
+    }
+    let terminal_returns: Vec<i8> = groups.iter().map(|group| group.terminal_return).collect();
+    terminal_pregame_targets_of_values_v1(
+        &values,
+        &terminal_returns,
+        &pregame,
+        episode_ordinals,
+        gamma,
+        lambda,
+    )
+}
+
+/// The terminal pregame advantage (`PregameAdvantageV1::TerminalV1`) on each
+/// group's first-substep value, terminal return and pregame mark.
+///
+/// Every row first gets the ordinary GAE advantage and value target. Each
+/// pregame row is then overwritten with `(R - V, R)`: `R` its game's terminal
+/// result for the learner seat, `V` its own value estimate, nothing
+/// bootstrapped through any later value. The recursion runs backward from the
+/// end of an episode and the pregame rows open it, so no in-game row reads
+/// them: in-game raw advantages and targets stay as the default mode computed
+/// them (a pregame row after an in-game row of its episode is refused, since
+/// that would break this). Mean and std come from the default series (all rows
+/// before the overwrite) and are applied to every row, so in-game rows
+/// normalize bit for bit as in the default mode; the statistics in the receipt
+/// describe the final series. Requires gamma exactly 1.0.
+fn terminal_pregame_targets_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    pregame: &[bool],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<GaeTargetsV1, String> {
+    ensure(
+        gamma.to_bits() == 1.0_f32.to_bits(),
+        "the terminal pregame advantage requires gamma exactly 1.0",
+    )?;
+    ensure(
+        pregame.len() == values.len(),
+        "gae group and pregame-mark counts differ",
+    )?;
+    let default_pairs =
+        gae_pairs_of_values_v1(values, terminal_returns, episode_ordinals, gamma, lambda)?;
+    for index in 1..values.len() {
+        ensure(
+            !(pregame[index]
+                && !pregame[index - 1]
+                && episode_ordinals[index] == episode_ordinals[index - 1]),
+            "a pregame decision follows an in-game decision of its episode",
+        )?;
+    }
+    let mut pairs = default_pairs.clone();
+    let mut pregame_groups = 0usize;
+    let mut terminal_sum = 0.0f32;
+    let mut default_sum = 0.0f32;
+    for index in 0..values.len() {
+        if pregame[index] {
+            let result = f32::from(terminal_returns[index]);
+            pairs[index] = (result - values[index], result);
+            pregame_groups += 1;
+            terminal_sum += pairs[index].0;
+            default_sum += default_pairs[index].0;
+        }
+    }
+    let default_raw: Vec<f32> = default_pairs
         .iter()
         .map(|(advantage, _)| *advantage)
         .collect();
-    let value_targets: Vec<f32> = advantage_and_target
-        .iter()
-        .map(|(_, value_target)| *value_target)
-        .collect();
-    let (advantages, statistics) =
-        normalize_advantages_v1(&raw_advantages, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1)?;
+    let final_raw: Vec<f32> = pairs.iter().map(|(advantage, _)| *advantage).collect();
+    let value_targets: Vec<f32> = pairs.iter().map(|(_, target)| *target).collect();
+    let (advantages, statistics) = bootstrapped_advantage_v1::normalize_advantages_against_v1(
+        &final_raw,
+        &default_raw,
+        GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1,
+    )?;
+    let mean = |sum: f32| (pregame_groups > 0).then(|| sum / pregame_groups as f32);
     Ok(GaeTargetsV1 {
         value_targets,
         advantages,
         statistics,
+        pregame: Some(PregameAdvantageReceiptV1 {
+            mode: PregameAdvantageV1::TerminalV1.name_v1(),
+            pregame_groups,
+            raw_terminal_mean: mean(terminal_sum),
+            raw_default_mean: mean(default_sum),
+        }),
     })
 }
 
@@ -5673,12 +6296,14 @@ fn execute_update_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    card_semantics: Option<CardSemanticsConfigV1>,
     carried: Option<CarriedLearnerV1>,
     from_run: bool,
     want_next_carried: bool,
@@ -5694,6 +6319,7 @@ fn execute_update_v1(
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         line_b,
         e_supported,
         soft_q,
@@ -5702,11 +6328,123 @@ fn execute_update_v1(
         training_math,
         record_format,
         record_envelope,
+        card_semantics,
         None,
         carried,
         from_run,
         want_next_carried,
     )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "isolates preparation locals from execute_update_inner_v1's stack frame"
+)]
+#[inline(never)]
+fn prepare_update_groups_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    preparation_workers: Option<usize>,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    row_cache: ordered_update_preparation::ReplayRowCacheV1,
+    defer_learner_rows: bool,
+) -> Result<
+    (
+        Vec<LearnerTensorGroupV1<'a>>,
+        Option<ordered_update_preparation::PreparationTelemetryV1>,
+        bool,
+    ),
+    String,
+> {
+    if let Some(workers) = preparation_workers {
+        if defer_learner_rows {
+            if let Ok(prepared) =
+                ordered_update_preparation::prepare_deferring_learner_rows_with_cache_v1(
+                    episodes,
+                    policy,
+                    learner,
+                    workers,
+                    max_prepared_tensor_mebibytes,
+                    max_groups,
+                    training_math,
+                    ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+                )
+            {
+                if !prepared.groups.is_empty() {
+                    return Ok((prepared.groups, Some(prepared.telemetry), true));
+                }
+            }
+        }
+        // Every CPU learner step below derives each learner row's outputs
+        // again with its tape forward and refuses a bit that differs from
+        // the stored row, so those rows may replay through the row cache.
+        // The CUDA steps compare within a tolerance and keep the reference.
+        // The other seat's rows keep it too, unless this process was asked
+        // to replay them through the row cache as well.
+        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
+            episodes,
+            policy,
+            learner,
+            workers,
+            max_prepared_tensor_mebibytes,
+            max_groups,
+            training_math,
+            row_cache,
+        )?;
+        Ok((prepared.groups, Some(prepared.telemetry), false))
+    } else {
+        let mut tensor_groups = Vec::new();
+        let mut opponent_cache =
+            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
+        for (episode_ordinal, episode) in episodes.iter().enumerate() {
+            let opponent = episode
+                .episode
+                .opponent
+                .as_ref()
+                .map(|s| opponent_cache.load(s))
+                .transpose()?;
+            validate_actual_behaviors_v1(episode, learner, opponent.as_ref().map(|o| &o.behavior))?;
+            tensor_groups.extend(replay_learner_groups_v1(
+                episode_ordinal,
+                episode,
+                policy,
+                opponent.as_ref().map(|o| &o.policy),
+            )?);
+        }
+        drop(opponent_cache);
+        Ok((tensor_groups, None, false))
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "isolates reference fallback replay from execute_update_inner_v1's stack frame"
+)]
+#[inline(never)]
+fn fallback_reference_preparation_v1(
+    episodes: &[ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    row_cache: ordered_update_preparation::ReplayRowCacheV1,
+) -> Result<(), String> {
+    let _ = ordered_update_preparation::prepare_with_row_cache_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        max_groups,
+        training_math,
+        row_cache,
+    )?;
+    Ok(())
 }
 
 #[allow(
@@ -5724,6 +6462,7 @@ fn execute_update_inner_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
@@ -5732,11 +6471,23 @@ fn execute_update_inner_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    card_semantics: Option<CardSemanticsConfigV1>,
     verified_replay: Option<s_learner_v1::VerifiedReplayOptionsV1>,
     carried: Option<CarriedLearnerV1>,
     from_run: bool,
     want_next_carried: bool,
 ) -> Result<(Value, Option<PendingCarriedLearnerV1>), String> {
+    card_semantics_e1::validate_update_v1(
+        card_semantics.as_ref(),
+        &source,
+        update_backend,
+        &loss_selection,
+        line_b.is_some()
+            || e_supported.is_some()
+            || soft_q.is_some()
+            || search_targets.is_some()
+            || ex1.is_some(),
+    )?;
     let update_started = std::time::Instant::now();
     ensure(
         verified_replay.is_none() || source.s_learner.is_some(),
@@ -5825,6 +6576,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_batch_bytes,
             unsupported: w_learner_v1::WUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
@@ -5852,6 +6604,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_batch_bytes,
             verified_replay,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
@@ -5867,6 +6620,7 @@ fn execute_update_inner_v1(
         })
         .map(|value| (value, None));
     }
+    let mut saved_semantics = None;
     if let Some(pin) = &source.checkpoint {
         let saved: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(pin)?;
         if let Some(identity) = &saved.e_supported {
@@ -5882,6 +6636,7 @@ fn execute_update_inner_v1(
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
             check_pinned_v1(&packet)?;
         }
+        saved_semantics = saved.card_semantics;
         ex1_update_v1::check_continuation_v1(saved.ex1.as_ref(), ex1.as_ref())?;
         if let Some(identity) = &saved.search_targets {
             search_targets_v1::check_continuation_v1(identity, search_targets.as_ref())?;
@@ -5924,6 +6679,21 @@ fn execute_update_inner_v1(
                 loaded.transfer,
             ))
         })?;
+    if card_semantics.is_some() {
+        ensure(
+            transfer.is_none()
+                && policy.input_contract_v1().is_none()
+                && state.model_v1().parameter_snapshot_v1().len() == 33,
+            "card semantics requires an ordinary 33-tensor learner",
+        )?;
+    }
+
+    let mut semantics = card_semantics_e1::load_training_v1(
+        &source,
+        card_semantics.as_ref(),
+        saved_semantics.as_ref(),
+    )?;
+
     bind_training_math_v1(
         &source,
         transfer.as_ref(),
@@ -6021,12 +6791,58 @@ fn execute_update_inner_v1(
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
+    }
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
+    // The London keep offset (`london_keep_offset_v1`): one value per update,
+    // carried by every trajectory of the batch (its episodes are one
+    // iteration of a schedule), and only on the plain CPU GAE update.
+    let london_keep_offset = batch_london_keep_offset_v1(
+        episodes
+            .iter()
+            .map(|trajectory| trajectory.episode.london_keep_offset),
+    )?;
+    if london_keep_offset.is_some() {
         ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "london_keep_offset trains only on the plain CPU GAE update",
         )?;
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    state.set_london_keep_offset_v1(london_keep_offset);
+    // The terminal pregame advantage (`PregameAdvantageV1`): the plain CPU GAE
+    // update only, on London episodes only.
+    if !loss_selection.pregame_advantage_v1().is_gae() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "the terminal pregame advantage trains only on the plain CPU GAE update",
+        )?;
+        ensure(
+            episodes
+                .iter()
+                .all(|trajectory| trajectory.episode.opening.is_some()),
+            "the terminal pregame advantage requires a London opening on every episode",
+        )?;
+    }
     // Rows the search played are authenticated and masked only by a W5
     // update; every other update refuses them.
     ensure(
@@ -6071,56 +6887,6 @@ fn execute_update_inner_v1(
     }
     let input_read_seconds = update_started.elapsed().as_secs_f64();
     let replay_started = std::time::Instant::now();
-    // Recompute all actor-visible rows, including opponent decisions,
-    // before constructing learner groups. No private state is decoded.
-    let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        // Every CPU learner step below derives each learner row's outputs
-        // again with its tape forward and refuses a bit that differs from
-        // the stored row, so those rows may replay through the row cache.
-        // The CUDA steps compare within a tolerance and keep the reference.
-        // The other seat's rows keep it too, unless this process was asked
-        // to replay them through the row cache as well.
-        let row_cache = ordered_update_preparation::ReplayRowCacheV1::for_update_v1(
-            update_backend.is_cpu(),
-            ordered_update_preparation::replay_other_seat_rows_cached_v1(),
-        );
-        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
-            &episodes,
-            &policy,
-            &learner,
-            workers,
-            max_prepared_tensor_mebibytes,
-            training_math,
-            row_cache,
-        )?;
-        (prepared.groups, Some(prepared.telemetry))
-    } else {
-        let mut tensor_groups = Vec::new();
-        let mut opponent_cache =
-            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
-        for (episode_ordinal, episode) in episodes.iter().enumerate() {
-            let opponent = episode
-                .episode
-                .opponent
-                .as_ref()
-                .map(|s| opponent_cache.load(s))
-                .transpose()?;
-            validate_actual_behaviors_v1(
-                episode,
-                &learner,
-                opponent.as_ref().map(|o| &o.behavior),
-            )?;
-            tensor_groups.extend(replay_learner_groups_v1(
-                episode_ordinal,
-                episode,
-                &policy,
-                opponent.as_ref().map(|o| &o.policy),
-            )?);
-        }
-        drop(opponent_cache);
-        (tensor_groups, None)
-    };
-    ensure(!tensor_groups.is_empty(), "no learner decisions")?;
     // One dispatch for the whole update: every trajectory in this batch was
     // already required (above) to share the live policy's own source_import
     // ancestry, which for a fresh origin carries the feature-contract digest
@@ -6132,6 +6898,53 @@ fn execute_update_inner_v1(
     // V8 inclusion net's V4-generation input config is FlatV8's.
     let flat_v8 = policy.feature_identity_v1().feature_contract_digest
         == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8;
+    // Ordinary CPU GAE updates recompute every learner row's forward tape and
+    // verify every logit and value bit (`validate_forward_output_bits_v1`)
+    // before mutating model or optimizer state. Deferring learner-row replay in
+    // preparation removes the redundant second forward pass while preserving
+    // exact outputs; on any failure we fall back to reference preparation so
+    // error text and earliest-group error precedence remain unchanged.
+    let defer_learner_rows = preparation_workers.is_some()
+        && matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+        && matches!(
+            loss_selection,
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+        )
+        && (backward_execution.is_sequential() || generation == FreshLineageGenerationV1::V4)
+        && line_b.is_none()
+        && e_supported.is_none()
+        && soft_q.is_none()
+        && search_targets.is_none()
+        && ex1.is_none()
+        && semantics.is_none()
+        && crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok()
+        && (flat_v8
+            || !episodes.iter().any(|episode| {
+                episode.decisions.iter().any(|row| {
+                    row.actor == episode.episode.learner_seat
+                        && !row.tensor.pairing_node_indices.is_empty()
+                })
+            }));
+    let row_cache = ordered_update_preparation::ReplayRowCacheV1::for_update_v1(
+        update_backend.is_cpu(),
+        ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+    );
+    let max_groups = ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes);
+    // Recompute all actor-visible rows, including opponent decisions,
+    // before constructing learner groups. No private state is decoded.
+    let (tensor_groups, preparation_telemetry, used_deferred_learner_rows) =
+        prepare_update_groups_v1(
+            &episodes,
+            &policy,
+            &learner,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            max_groups,
+            training_math,
+            row_cache,
+            defer_learner_rows,
+        )?;
+    ensure(!tensor_groups.is_empty(), "no learner decisions")?;
     // Config-driven fixed-partition backward is a fresh-V4-lineage-only
     // option (`UpdateBackwardExecutionV1`). Any other combination is
     // rejected here, before any learner tensor is built, so a V3-generation
@@ -6201,8 +7014,19 @@ fn execute_update_inner_v1(
     // stay byte-identical (design section 2/6).
     let gae_targets = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
-        ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, lambda, .. }
-        | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma,
+            lambda,
+            pregame_advantage,
+            ..
+        } => Some(compute_gae_targets_with_pregame_v1(
+            &groups,
+            &episode_ordinals,
+            *gamma,
+            *lambda,
+            *pregame_advantage,
+        )?),
+        ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
             compute_gae_targets_v1(&groups, &episode_ordinals, *gamma, *lambda)?,
         ),
     };
@@ -6631,8 +7455,8 @@ fn execute_update_inner_v1(
                     line_b_auxiliary = Some(auxiliary);
                     result
                 }
-                (ExpandedUpdateBackendV1::Cpu, _) => state
-                    .train_step_gae_feature_transfer_profiled_v1(
+                (ExpandedUpdateBackendV1::Cpu, _) => {
+                    match state.train_step_gae_card_projection_e1(
                         generation,
                         &groups,
                         &gae.value_targets,
@@ -6647,8 +7471,30 @@ fn execute_update_inner_v1(
                         },
                         preparation_workers.unwrap_or(1),
                         &mut gae_phase_recorder,
-                    )
-                    .map_err(err)?,
+                        semantics.as_mut(),
+                    ) {
+                        Ok(result) => result,
+                        Err(step_err) => {
+                            if used_deferred_learner_rows {
+                                if let Some(workers) = preparation_workers {
+                                    // Reproduce reference replay error text and
+                                    // earliest-group precedence on invalid rows.
+                                    fallback_reference_preparation_v1(
+                                        &episodes,
+                                        &policy,
+                                        &learner,
+                                        workers,
+                                        max_prepared_tensor_mebibytes,
+                                        max_groups,
+                                        training_math,
+                                        row_cache,
+                                    )?;
+                                }
+                            }
+                            return Err(err(step_err));
+                        }
+                    }
+                }
                 (ExpandedUpdateBackendV1::Cuda { device_ordinal }, _)
                     if matches!(line_b_teacher, Some((_, Some(_)))) =>
                 {
@@ -6833,6 +7679,8 @@ fn execute_update_inner_v1(
         }
         None => None,
     };
+    // The offset lived for this update's step only.
+    state.set_london_keep_offset_v1(None);
     let checkpoint_started = std::time::Instant::now();
     // The checkpoint records the live state's tensors where the state holds
     // them, after the snapshot's validation, under the state's own digest.
@@ -6884,7 +7732,15 @@ fn execute_update_inner_v1(
         feature_encoding_digest: policy.feature_identity_v1().feature_encoding_digest.into(),
         card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         source_import: policy.identity_v1().clone(),
-        state_sha256: after.clone(),
+        // Flag off: the digest computed above, unchanged and not recomputed.
+        state_sha256: match &semantics {
+            None => after.clone(),
+            Some(semantics) => checkpoint_hash_v1(
+                &state.state_sha256_v1().map_err(err)?,
+                Some(&semantics.section_v1()),
+            )?,
+        },
+        card_semantics: semantics.as_ref().map(CardSemanticsV1::section_v1),
         e_supported:e_supported.as_ref().map(|options|json!({
             "continuation":e_supported_teacher_v1::continuation_identity(options),"packet":e_packet_pin})),
         soft_q:soft_q.as_ref().map(|options|json!({
@@ -6975,6 +7831,14 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
+    // A container's metadata view is its JSON document (`metadata_view_v1`,
+    // sealed or not): kept for the next update's metadata probe of this pin.
+    let metadata_document = match record_format {
+        CheckpointRecordFormatV1::V2 => {
+            Some(checkpoint_container_v1::document_v1(&record)?.to_vec())
+        }
+        CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => None,
+    };
     let checkpoint_pin = publish_json_shared_v1(
         &output_directory,
         "checkpoint.json",
@@ -7040,6 +7904,9 @@ fn execute_update_inner_v1(
         )?;
         (resumed_bytes, restored_load)
     };
+    if let Some(document) = metadata_document {
+        checkpoint_metadata_memo_v1::remember_v1(&checkpoint_pin.sha256, &document);
+    }
     let pending_carried = match (
         want_next_carried && restored_load.transfer.is_none(),
         restored_load.verifiable_kind,
@@ -7055,6 +7922,9 @@ fn execute_update_inner_v1(
         _ => None,
     };
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
+    if let Some(section) = semantics.as_ref().map(CardSemanticsV1::section_v1) {
+        result["card_semantics"] = json!({"binding": section.binding});
+    }
     if let Some(mut exploration) = exploration_report {
         let gauge = &update.scorer_bias_gauge;
         exploration["scorer_bias_gauge"] = json!({
@@ -7113,6 +7983,11 @@ fn execute_update_inner_v1(
     // receipts gain zero new keys.
     if let Some(gae) = &gae_targets {
         result["advantage_statistics"] = json!(gae.statistics);
+        // Present only under the terminal pregame advantage, so a default
+        // receipt gains no key.
+        if let Some(pregame) = &gae.pregame {
+            result["pregame_advantage"] = json!(pregame);
+        }
     }
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
@@ -7213,19 +8088,30 @@ fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+#[cfg(test)]
 fn read_trajectory_batch_v1(
     pins: &[PinnedFileV1],
     workers: usize,
 ) -> Result<Vec<ExpandedTrajectoryV1>, String> {
-    let decoded = ordered_update_preparation::read_trajectories_v1(pins, workers)?;
+    read_trajectory_batch_bounded_v1(pins, workers, MAX_BATCH_BYTES)
+}
+
+/// Reads and parses a trajectory batch within the update's batch bound in bytes
+/// (`max_trajectory_batch_mebibytes`; [`MAX_BATCH_BYTES`] by default).
+fn read_trajectory_batch_bounded_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+    max_batch_bytes: u64,
+) -> Result<Vec<ExpandedTrajectoryV1>, String> {
+    let decoded =
+        ordered_update_preparation::read_trajectories_bounded_v1(pins, workers, max_batch_bytes)?;
     let mut total = 0u64;
     let mut episodes = Vec::with_capacity(decoded.len());
     for (bytes, episode) in decoded {
         total = total.checked_add(bytes).ok_or("batch size overflow")?;
-        ensure(
-            total <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
         episodes.push(episode);
     }
     Ok(episodes)
@@ -7301,13 +8187,98 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
     checkpoint
 }
 
+#[cfg(test)]
+thread_local! {
+    static CHECKPOINT_METADATA_READS_FOR_TEST_V1: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn take_checkpoint_metadata_reads_for_test_v1() -> usize {
+    CHECKPOINT_METADATA_READS_FOR_TEST_V1.with(|count| count.replace(0))
+}
+
 /// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
 /// container's small JSON document, never from its tensor sections.
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
+    #[cfg(test)]
+    CHECKPOINT_METADATA_READS_FOR_TEST_V1.with(|count| count.set(count.get() + 1));
+    // The pinned file's check runs every time; only its view, a pure function
+    // of the checked bytes, may come from the memo.
     let bytes = read_pinned_shared_v1(pin)?;
-    serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
+    if let Some(document) = checkpoint_metadata_memo_v1::lookup_v1(&pin.sha256) {
+        return serde_json::from_slice(&document).map_err(err);
+    }
+    let view = checkpoint_container_v1::metadata_view_v1(&bytes)?;
+    checkpoint_metadata_memo_v1::remember_v1(&pin.sha256, &view);
+    serde_json::from_slice(&view).map_err(err)
+}
+
+/// Metadata views (`checkpoint_container_v1::metadata_view_v1`) of checkpoint
+/// files this process checked, by their pinned SHA-256: a view is a pure
+/// function of the file's bytes, so a probe of the same pin (after the same
+/// file check) parses the remembered view instead of opening the envelope and
+/// container again. Only views up to 1 MiB are kept: a container's JSON
+/// document, not a production v1 JSON checkpoint (about 20 MB, whose view is
+/// the whole file). Invocation-local, never persisted.
+mod checkpoint_metadata_memo_v1 {
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    /// The newest checkpoints a run probes: its current one and the one before.
+    const ENTRIES_V1: usize = 4;
+    /// A view larger than this is a v1 JSON checkpoint's whole file.
+    const MAX_VIEW_BYTES_V1: usize = 1 << 20;
+
+    type EntriesV1 = VecDeque<(String, Arc<Vec<u8>>)>;
+
+    #[cfg(not(test))]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        use std::sync::{Mutex, PoisonError};
+        static ENTRIES: Mutex<EntriesV1> = Mutex::new(VecDeque::new());
+        f(&mut ENTRIES.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Unit tests run in parallel threads: each keeps its own entries.
+    #[cfg(test)]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        thread_local! {
+            static ENTRIES: std::cell::RefCell<EntriesV1> = const {
+                std::cell::RefCell::new(VecDeque::new())
+            };
+        }
+        ENTRIES.with(|entries| f(&mut entries.borrow_mut()))
+    }
+
+    pub(super) fn lookup_v1(sha256: &str) -> Option<Arc<Vec<u8>>> {
+        with_entries_v1(|entries| {
+            let index = entries.iter().position(|(key, _)| key == sha256)?;
+            let entry = entries.remove(index)?;
+            let view = Arc::clone(&entry.1);
+            entries.push_back(entry);
+            Some(view)
+        })
+    }
+
+    pub(super) fn remember_v1(sha256: &str, view: &[u8]) {
+        if view.len() > MAX_VIEW_BYTES_V1 {
+            return;
+        }
+        let view = view.to_vec();
+        with_entries_v1(|entries| {
+            entries.retain(|(key, _)| key != sha256);
+            while entries.len() >= ENTRIES_V1 {
+                entries.pop_front();
+            }
+            entries.push_back((sha256.to_owned(), Arc::new(view)));
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_for_test_v1() {
+        with_entries_v1(VecDeque::clear);
+    }
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
@@ -7757,6 +8728,9 @@ mod registry_evolution_dispatch_tests;
 mod warm_cuda_timing_tests;
 
 #[cfg(test)]
+mod trajectory_batch_bound_tests;
+
+#[cfg(test)]
 pub(crate) mod tests {
     // Current rules/catalog baseline observed in PR112 CI run 36807239038.
     // CPU libm last bits differ between MSVC and Linux GNU; equality remains exact.
@@ -8118,6 +9092,7 @@ pub(crate) mod tests {
         let mut state =
             NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
         policy.replace_training_parameters_v3(&snapshot.parameters)?;
+        state.loaded_card_semantics = saved.card_semantics.clone();
         state.set_training_math_v1(saved.training_math);
         policy.set_training_math_v1(saved.training_math);
         Ok(state)
@@ -8586,6 +9561,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         }
     }
 
@@ -8658,6 +9635,7 @@ pub(crate) mod tests {
             input_contract: None,
             opening_record: None,
             search_played: None,
+            opponent_tensors_omitted: false,
             configuration_sha256: configs.each_ref().map(|c| hex(&c.mainboard_sha256_v1())),
             terminal: RlSessionTerminalV1 {
                 schema_version: RL_SESSION_SCHEMA_VERSION,
@@ -8895,6 +9873,7 @@ pub(crate) mod tests {
             .unwrap()
             .values[16] = 0.4375;
         let saved = ExpandedCheckpointV1 {
+            card_semantics: None,
             schema: CHECKPOINT_SCHEMA.into(),
             feature_contract_digest: FEATURE_CONTRACT_DIGEST_V3.into(),
             feature_encoding_digest: FEATURE_ENCODING_DIGEST_V3.into(),
@@ -9121,6 +10100,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -9231,6 +10212,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -9371,6 +10354,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -9512,6 +10497,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -9651,6 +10638,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -9773,6 +10762,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -9908,6 +10899,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10055,6 +11048,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10192,6 +11187,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10346,6 +11343,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10502,6 +11501,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10544,6 +11545,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         }
     }
 
@@ -11666,6 +12669,8 @@ pub(crate) mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                priority_windows: None,
+                london_keep_offset: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -11726,6 +12731,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -11769,6 +12776,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -11893,6 +12902,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -11951,6 +12962,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -11995,6 +13008,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -12054,6 +13069,8 @@ pub(crate) mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                priority_windows: None,
+                london_keep_offset: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -12128,6 +13145,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -12164,6 +13183,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -12218,6 +13239,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -12255,6 +13278,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -12402,6 +13427,8 @@ pub(crate) mod tests {
                 opening: opening.then_some(PauperOpeningV1::LondonV1),
                 mulligan_modes: opening
                     .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
+                priority_windows: None,
+                london_keep_offset: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -12415,6 +13442,7 @@ pub(crate) mod tests {
             let trajectories: Vec<PinnedFileV1> =
                 serde_json::from_value(collect_result["trajectories"].clone()).unwrap();
             let update_result = execute_v1(ExpandedTrainingCommandV1::Update {
+                card_semantics: None,
                 line_b: None,
                 source: source.clone(),
                 trajectories,
@@ -12571,6 +13599,7 @@ pub(crate) mod tests {
                 gamma: 1.0,
                 lambda: 0.95,
                 entropy_coefficient: 0.0,
+                pregame_advantage: PregameAdvantageV1::default(),
             },
             TrainingMathV1::PlatformLibm,
         )
@@ -12781,6 +13810,8 @@ pub(crate) mod tests {
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
+                    priority_windows: None,
+                    london_keep_offset: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -12791,6 +13822,7 @@ pub(crate) mod tests {
         };
         let update = |trajectories, math, name: &str| {
             execute_v1(ExpandedTrainingCommandV1::Update {
+                card_semantics: None,
                 line_b: None,
                 source: source.clone(),
                 trajectories,
@@ -13130,6 +14162,7 @@ pub(crate) mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: PregameAdvantageV1::default(),
         }
     }
 
@@ -13208,6 +14241,8 @@ pub(crate) mod tests {
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
+                    priority_windows: None,
+                    london_keep_offset: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -13220,6 +14255,7 @@ pub(crate) mod tests {
                 })
                 .unwrap();
                 let receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+                    card_semantics: None,
                     source: source.clone(),
                     trajectories: serde_json::from_value(collected["trajectories"].clone())
                         .unwrap(),
@@ -13356,6 +14392,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -13480,6 +14518,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -13947,6 +14987,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -13977,6 +15019,7 @@ pub(crate) mod tests {
         };
         let update = |label: &str, teacher: Option<LineBTeacherOptionsV1>| {
             execute_v1(ExpandedTrainingCommandV1::Update {
+                card_semantics: None,
                 source: source.clone(),
                 trajectories: trajectories.clone(),
                 learning_rate: 0.0003,
@@ -14423,6 +15466,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -14447,6 +15492,7 @@ pub(crate) mod tests {
             selection_transition_cap: 128,
         };
         let ordinary = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: source.clone(),
             trajectories: trajectories.clone(),
             learning_rate: 0.0001,
@@ -14571,6 +15617,8 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -14757,7 +15805,11 @@ pub(crate) mod tests {
         assert_eq!(err, "checkpoint state hash differs");
     }
 
+    mod field_coverage_probe_v1;
+    mod london_update_golden_tests;
     mod pauper_opening_tests;
+    mod pregame_advantage_tests;
+    mod priority_windows_tests;
     mod reset_start_tests;
     mod v8_inclusion_tests;
     mod widening_b512_tests;

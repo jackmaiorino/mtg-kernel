@@ -194,6 +194,38 @@ class ThroughputTests(unittest.TestCase):
             box, box['chains']['c1']))
         self.assertEqual(len(guard['in_box_cpu_per_wall']), 2)
 
+    def test_throughput_cli_defaults_to_one_phase_for_one_box(self):
+        path, _ = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 2, 'seed_root': 'oc/c1'}},
+                                 label='one-box', independent=True, box_slots=[2])
+        out = self.node.t / 'one-box.json'
+        argv = ['throughput', '--plan', str(path), '--arm', 'C', '--label', 'tq', '--updates', '8',
+                '--out', str(out)]
+        throughput_run = chains.throughput_run
+
+        def run_with_stand_in(*args, **kwargs):
+            return throughput_run(*args, spawn=stand_in_spawn(self.node), launcher=lambda _: None,
+                                  poll=0.02, **kwargs)
+
+        with mock.patch.object(chains, 'sys', wraps=sys) as system, \
+                mock.patch.object(chains, 'throughput_run', side_effect=run_with_stand_in), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            # The real launcher is Linux-only. The stand-in uses the same plan and guard on either OS.
+            system.platform = 'linux'
+            for invalid in ('1,1', '0', '2', '', 'one'):
+                with self.subTest(counts=invalid):
+                    self.assertEqual(chains.main(argv + ['--counts', invalid]), w5box.EXIT_REFUSED)
+            self.assertIn('phase box counts must rise from 1', errors.getvalue())
+            self.assertIn('phase box counts must be comma-separated integers', errors.getvalue())
+            self.assertFalse(out.exists())
+            self.assertEqual(chains.main(argv), 0)
+
+        record = json.loads(out.read_text())
+        self.assertEqual(record['qualification']['counts'], [1])
+        self.assertEqual([p['concurrent_boxes'] for p in record['phases']], [1])
+        self.assertEqual([box['slot'] for box in record['phases'][0]['boxes']], [2])
+        self.assertEqual(record['phases'][0]['durable']['updates'], 8)
+        self.assertEqual(record['summary']['full_node_speedup'], 1.0)
+
     def test_node_frozen_time_is_not_in_box_wall(self):
         path, _ = self.target()
         # A node freeze recorded by w5box's enforcement over the whole window is subtracted from the wall.

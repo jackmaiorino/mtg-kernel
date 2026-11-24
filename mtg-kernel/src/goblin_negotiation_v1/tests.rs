@@ -620,6 +620,7 @@ fn genuine_foreign_owned_exile_permission_cast_keeps_captured_controller_for_exc
             .exile_play_permissions
             .push(engine::PlayPermission {
                 without_mana_cost: Default::default(),
+                any_mana_type: Default::default(),
                 object: spell,
                 holder: actor,
                 zone_change_generation: s.objects.get(spell).zone_change_count,

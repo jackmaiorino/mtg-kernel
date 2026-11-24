@@ -9,10 +9,10 @@ use mtg_kernel::card_def::{
     Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
-use mtg_kernel::event::{self, ProposedEvent};
+use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -692,6 +692,59 @@ fn the_draw_step_draw_may_be_dredged() {
 }
 
 #[test]
+fn riddler_draw_step_holds_the_first_dredge_trigger_across_the_second_choice() {
+    let mut state = islands();
+    for _ in 0..2 {
+        put(&mut state, P0, "Quantum Riddler", Zone::Battlefield);
+    }
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let narcomoeba = put(&mut state, P0, "Narcomoeba", Zone::Library);
+
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Draw
+    });
+    assert!(state.players[P0.index()].hand.is_empty());
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption { player: P0, source, option_count: 3 }
+            if source == imp
+    ));
+    act(&mut state, Action::ChooseEffectOption(1));
+    assert!(hand_contains(&state, P0, imp));
+    assert_eq!(zone(&state, narcomoeba), Zone::Graveyard);
+
+    let second_choice = next(&mut state);
+    assert!(matches!(
+        second_choice,
+        Decision::ChooseEffectOption { player: P0, source, option_count: 2 }
+            if source == thug
+    ));
+    assert!(state.engine.pending_triggers.is_empty());
+    assert!(state.stack.is_empty());
+
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(next(&mut restored), second_choice);
+    assert_eq!(restored.state_hash(), state.state_hash());
+    for branch in [&mut state, &mut restored] {
+        act(branch, Action::ChooseEffectOption(1));
+        assert!(hand_contains(branch, P0, thug));
+        assert_eq!(branch.players[P0.index()].hand.len(), 3);
+        assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+        assert!(matches!(
+            branch.stack.as_slice(),
+            [trigger] if trigger.kind == StackItemKind::TriggeredAbility
+                && trigger.source == narcomoeba && trigger.controller == P0
+        ));
+        assert!(branch.engine.pending_triggers.is_empty());
+        settle_picking(branch, 1, None);
+        assert_eq!(zone(branch, narcomoeba), Zone::Battlefield);
+    }
+    assert_eq!(restored.state_hash(), state.state_hash());
+}
+
+#[test]
 fn golgari_grave_troll_enters_with_counters_and_regenerates() {
     let mut state = islands();
     for name in ["Golgari Thug", "Narcomoeba", "Island"] {
@@ -1160,6 +1213,67 @@ fn commandeer_exiles_two_blue_cards_takes_a_spell_and_may_retarget_it() {
     assert_eq!(state.players[1].life, 17, "the stolen Bolt hit its caster");
 }
 
+fn commandeered_pursue_the_past_dredges(caster: PlayerId) {
+    let mut state = islands();
+    if caster == P1 {
+        opponents_main_phase(&mut state);
+    }
+    let drawer = caster.opponent();
+    let pursue = put(&mut state, caster, "Pursue the Past", Zone::Hand);
+    let commandeer = put(&mut state, drawer, "Commandeer", Zone::Hand);
+    let fodder = put(&mut state, drawer, "Lightning Bolt", Zone::Hand);
+    let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+    let library = state.players[drawer.index()].library.clone();
+
+    pool(&mut state, caster, &[ManaColor::R, ManaColor::W], 0);
+    pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 5);
+    cast(&mut state, pursue, &[]);
+    next(&mut state);
+    act(&mut state, Action::Pass);
+    cast(&mut state, commandeer, &[Target::Object(pursue)]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            selected_count: 0,
+            ..
+        } if legal_targets.contains(&Target::Object(fodder)) => {
+            assert_eq!(player, drawer);
+            Action::ChooseEffectTarget(Target::Object(fodder))
+        }
+        Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            selected_count: 0,
+            ..
+        } if legal_targets.contains(&Target::Object(thug)) => {
+            assert_eq!(player, drawer);
+            Action::ChooseEffectTarget(Target::Object(thug))
+        }
+        other => first_answer(other),
+    });
+
+    assert_eq!(state.players[drawer.index()].life, 22);
+    assert!(state.players[drawer.index()].graveyard.contains(&fodder));
+    assert!(library[..4]
+        .iter()
+        .all(|card| state.players[drawer.index()].graveyard.contains(card)));
+    assert!(hand_contains(&state, drawer, thug));
+    assert!(hand_contains(&state, drawer, library[4]), "second draw");
+    assert_eq!(state.players[drawer.index()].library, library[5..]);
+    assert!(state.players[caster.index()].graveyard.contains(&pursue));
+}
+
+#[test]
+fn commandeered_pursue_dredges_after_discard_with_p0_as_caster() {
+    commandeered_pursue_the_past_dredges(P0);
+}
+
+#[test]
+fn commandeered_pursue_dredges_after_discard_with_p1_as_caster() {
+    commandeered_pursue_the_past_dredges(P1);
+}
+
 #[test]
 fn commandeered_artifact_spells_enter_under_the_new_controller() {
     let mut state = islands();
@@ -1248,6 +1362,10 @@ fn carnivorous_cultivator_enters_prepared_and_its_enroot_copy_is_cast_from_exile
         .collect();
     assert_eq!(graveyard, vec!["Island"], "the copy ceased to exist");
     assert!(copies(&state).is_empty(), "no longer prepared");
+    assert!(!state.engine.event_history.iter().any(|event| matches!(
+        event,
+        CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == enroot
+    )));
 
     // Combat damage to a player returns a land card from the graveyard.
     let island = state.players[0].graveyard[0];
@@ -1270,6 +1388,83 @@ fn carnivorous_cultivator_enters_prepared_and_its_enroot_copy_is_cast_from_exile
     settled(&mut state);
     assert_eq!(zone(&state, cultivator), Zone::Graveyard);
     assert!(!state.exile.contains(&enroot), "the copy ceases to exist");
+}
+
+#[test]
+fn sailors_bane_ignores_prepared_spell_copies_in_exile() {
+    let mut state = islands();
+    let cultivator = put(&mut state, P0, "Carnivorous Cultivator", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, cultivator, &[]);
+    settled(&mut state);
+    assert!(state
+        .exile
+        .iter()
+        .any(|&id| name_of(&state, id) == "Enroot"));
+
+    let bane = put(&mut state, P0, "Sailors' Bane", Zone::Hand);
+    put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 5);
+    assert!(
+        !castable(&mut state, bane),
+        "the exiled copy does not reduce the cost"
+    );
+
+    put(&mut state, P0, "Grapeshot", Zone::Exile);
+    assert!(
+        castable(&mut state, bane),
+        "an exiled sorcery card reduces the cost"
+    );
+    cast(&mut state, bane, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, bane), Zone::Battlefield);
+}
+
+#[test]
+fn prepared_spell_copies_cease_when_removed_from_the_stack() {
+    for (response, colors, generic) in [
+        ("Counterspell", [ManaColor::U, ManaColor::U], 0),
+        ("No More Lies", [ManaColor::W, ManaColor::U], 0),
+        ("Mindbreak Trap", [ManaColor::U, ManaColor::U], 2),
+    ] {
+        let mut state = islands();
+        let cultivator = put(&mut state, P0, "Carnivorous Cultivator", Zone::Hand);
+        let response = put(&mut state, P1, response, Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::G], 1);
+        cast(&mut state, cultivator, &[]);
+        settled(&mut state);
+        let enroot = *state
+            .exile
+            .iter()
+            .find(|&&id| name_of(&state, id) == "Enroot")
+            .expect("prepared Enroot copy");
+
+        pool(&mut state, P0, &[ManaColor::G], 0);
+        let library = state.players[0].library.len();
+        cast(&mut state, enroot, &[]);
+        next(&mut state);
+        assert_eq!(state.players[0].spells_cast_this_turn, 2);
+        act(&mut state, Action::Pass);
+        pool(&mut state, P1, &colors, generic);
+        cast(&mut state, response, &[Target::Object(enroot)]);
+        settle_first(&mut state);
+
+        assert_eq!(state.players[0].library.len(), library);
+        assert!(!state.players[0].graveyard.contains(&enroot));
+        assert!(!state.exile.contains(&enroot));
+        assert!(state.stack.is_empty());
+        assert!(state.engine.event_history.iter().any(|event| matches!(
+            event,
+            CommittedEvent::SpellCast { spell, controller: P0 } if *spell == enroot
+        )));
+        assert!(!state.engine.event_history.iter().any(|event| matches!(
+            event,
+            CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == enroot
+        )));
+        let prepare = &state.eternal_v1.as_ref().unwrap().e7b;
+        assert!(prepare.prepared.is_empty());
+        assert!(prepare.prepare_copies.is_empty());
+    }
 }
 
 // ---- Removal and graveyard hate ---------------------------------------------------
@@ -1764,6 +1959,92 @@ fn minsc_and_boo_make_boo_grow_it_and_fling_it() {
 }
 
 #[test]
+fn departed_minsc_damage_keeps_the_soul_scar_and_hallow_choices_after_restore() {
+    let mut state = islands();
+    let mage = put(&mut state, P0, "Soul-Scar Mage", Zone::Battlefield);
+    let victim = put(&mut state, P1, "Wall of Blossoms", Zone::Battlefield);
+    let minsc = put(&mut state, P0, "Minsc & Boo, Timeless Heroes", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 2);
+    cast(&mut state, minsc, &[]);
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, hallow, &[Target::Object(minsc)]);
+    settle_picking(&mut state, 1, None);
+    let [boo] = controls(&state, P0, "Boo Token").try_into().unwrap();
+    assert_eq!(power_toughness(&state, boo), (1, 1));
+    let damage_source_generation = state.objects.get(minsc).zone_change_count;
+
+    activate(&mut state, minsc, 1, &[]);
+    let sacrifice = settle(&mut state);
+    assert!(
+        matches!(
+            &sacrifice,
+            Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. })
+                if legal_targets.len() == 2
+                    && legal_targets.contains(&Target::Object(boo))
+                    && legal_targets.contains(&Target::Object(mage))
+        ),
+        "unexpected Minsc sacrifice choice: {sacrifice:?}"
+    );
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(boo)));
+    choose_target(&mut state, Target::Object(victim));
+    let bounce = put(&mut state, P0, "Echoing Truth", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, bounce, &[Target::Object(minsc)]);
+    pass_until(&mut state, |state| zone(state, minsc) == Zone::Hand);
+    assert_eq!(state.stack.last().unwrap().source, minsc);
+
+    let hand_before_draw = state.players[P0.index()].hand.len();
+    let library_before_draw = state.players[P0.index()].library.len();
+    let choice = settle(&mut state);
+    assert!(matches!(
+        &choice,
+        Some(Decision::ChooseEffectOption { player: P1, source, option_count: 2 })
+            if *source == minsc
+    ));
+    let pending = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_ref()
+        .unwrap();
+    assert_eq!(pending.choice.source.object, minsc);
+    assert_eq!(
+        pending.choice.source.zone_change_count,
+        damage_source_generation
+    );
+    assert_eq!(pending.choice.source_zone, Zone::Battlefield);
+
+    let snapshot = serde_json::to_vec(&state).unwrap();
+    let mut outcomes = [(0, 0); 2];
+    for (option, outcome) in outcomes.iter_mut().enumerate() {
+        let mut live = state.clone();
+        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        assert_eq!(settle(&mut restored), choice);
+        for branch in [&mut live, &mut restored] {
+            let actor = &branch.players[P0.index()];
+            assert_eq!(actor.hand.len(), hand_before_draw);
+            assert_eq!(actor.library.len(), library_before_draw);
+            act(branch, Action::ChooseEffectOption(option as u16));
+            settled(branch);
+            let actor = &branch.players[P0.index()];
+            assert_eq!(actor.hand.len(), hand_before_draw + 1);
+            assert_eq!(actor.library.len() + 1, library_before_draw);
+            assert_eq!(zone(branch, minsc), Zone::Hand);
+            let creature = branch.objects.get(victim);
+            assert_eq!((creature.zone, creature.damage), (Zone::Battlefield, 0));
+        }
+        assert_eq!(restored.state_hash(), live.state_hash());
+        *outcome = (
+            live.players[P0.index()].life,
+            live.objects.get(victim).counters.minus1_minus1,
+        );
+    }
+    outcomes.sort_unstable();
+    assert_eq!(outcomes, [(20, 1), (21, 0)]);
+}
+
+#[test]
 fn minsc_hamster_draw_resumes_after_damage_and_fizzles_with_its_target_both_seats() {
     use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 
@@ -2135,4 +2416,1228 @@ fn golos_fetches_a_land_and_exiles_three_to_play_free() {
     cast(&mut state, bolt, &[Target::Player(P1)]);
     settled(&mut state);
     assert_eq!(state.players[1].life, 17);
+}
+
+#[test]
+fn faithless_looting_dredging_snacker_on_second_draw_does_not_trigger_snacker() {
+    for actor in [P0, P1] {
+        let mut state = game(&[
+            "Mountain",
+            "Sneaky Snacker",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+        ]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.players[actor.index()].draws_this_turn = 2;
+        let snacker = state.players[actor.index()].library[1];
+        assert_eq!(name_of(&state, snacker), "Sneaky Snacker");
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        put(&mut state, actor, "Swamp", Zone::Hand);
+        let looting = put(&mut state, actor, "Faithless Looting", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        cast(&mut state, looting, &[]);
+
+        let mut draw_prompts = 0usize;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                selected_count: 0,
+                ..
+            } if legal_targets.contains(&Target::Object(thug)) => {
+                draw_prompts += 1;
+                if draw_prompts == 1 {
+                    // Draw 1 (3rd card drawn this turn): decline dredge while Snacker is in library.
+                    Action::FinishEffectSelection
+                } else {
+                    // Draw 2: dredge Golgari Thug, milling Snacker into the graveyard.
+                    Action::ChooseEffectTarget(Target::Object(thug))
+                }
+            }
+            Decision::ChooseEffectTargets {
+                selected_count: 1, ..
+            } => Action::FinishEffectSelection,
+            other => first_answer(other),
+        });
+        assert_eq!(draw_prompts, 2);
+        assert_eq!(
+            zone(&state, snacker),
+            Zone::Graveyard,
+            "Snacker was still in library when the 3rd card was drawn (CR 603.2, 113.6)"
+        );
+        assert!(controls(&state, actor, "Sneaky Snacker").is_empty());
+    }
+}
+
+#[test]
+fn faithless_looting_with_snacker_already_in_graveyard_and_dredge_returns_snacker() {
+    for actor in [P0, P1] {
+        let mut state = game(&["Mountain", "Island", "Island", "Island", "Island"]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.players[actor.index()].draws_this_turn = 2;
+        let snacker = put(&mut state, actor, "Sneaky Snacker", Zone::Graveyard);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        put(&mut state, actor, "Swamp", Zone::Hand);
+        let looting = put(&mut state, actor, "Faithless Looting", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        cast(&mut state, looting, &[]);
+
+        let mut draw_prompts = 0usize;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                selected_count: 0,
+                ..
+            } if legal_targets.contains(&Target::Object(thug)) => {
+                draw_prompts += 1;
+                if draw_prompts == 1 {
+                    Action::FinishEffectSelection
+                } else {
+                    Action::ChooseEffectTarget(Target::Object(thug))
+                }
+            }
+            Decision::ChooseEffectTargets {
+                selected_count: 1, ..
+            } => Action::FinishEffectSelection,
+            other => first_answer(other),
+        });
+        assert_eq!(draw_prompts, 2);
+        assert_eq!(zone(&state, snacker), Zone::Battlefield);
+        assert!(state.objects.get(snacker).tapped);
+    }
+}
+
+#[test]
+fn faithless_looting_dredging_snacker_on_first_draw_then_drawing_third_card_triggers_snacker() {
+    for actor in [P0, P1] {
+        let mut state = game(&[
+            "Sneaky Snacker",
+            "Island",
+            "Island",
+            "Island",
+            "Mountain",
+            "Island",
+        ]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.players[actor.index()].draws_this_turn = 2;
+        let snacker = state.players[actor.index()].library[0];
+        assert_eq!(name_of(&state, snacker), "Sneaky Snacker");
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        put(&mut state, actor, "Swamp", Zone::Hand);
+        let looting = put(&mut state, actor, "Faithless Looting", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        cast(&mut state, looting, &[]);
+
+        let mut draw_prompts = 0usize;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                selected_count: 0,
+                ..
+            } if legal_targets.contains(&Target::Object(thug)) => {
+                draw_prompts += 1;
+                // Draw 1: dredge Golgari Thug, milling Snacker into the graveyard; Draw 2 draws the 3rd card.
+                Action::ChooseEffectTarget(Target::Object(thug))
+            }
+            Decision::ChooseEffectTargets {
+                selected_count: 1, ..
+            } => Action::FinishEffectSelection,
+            other => first_answer(other),
+        });
+        assert_eq!(draw_prompts, 1);
+        assert_eq!(zone(&state, snacker), Zone::Battlefield);
+        assert!(state.objects.get(snacker).tapped);
+    }
+}
+
+#[test]
+fn faithless_looting_dredge_orders_mixed_controller_triggers_apnap_both_seats() {
+    for actor in [P0, P1] {
+        let opp = actor.opponent();
+        let mut state = game(&[
+            "Island",
+            "Creeping Chill",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+        ]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.players[actor.index()].life = 1;
+        state.players[opp.index()].life = 3;
+        put(&mut state, opp, "Scrawling Crawler", Zone::Battlefield);
+        let chill = state.players[actor.index()].library[1];
+        assert_eq!(name_of(&state, chill), "Creeping Chill");
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        put(&mut state, actor, "Swamp", Zone::Hand);
+        let looting = put(&mut state, actor, "Faithless Looting", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        cast(&mut state, looting, &[]);
+
+        let mut draw_prompts = 0usize;
+        for _ in 0..200 {
+            let decision = next(&mut state);
+            match decision {
+                Decision::CastSpellOrPass { .. }
+                    if state.stack.len() == 2
+                        && state
+                            .stack
+                            .iter()
+                            .all(|item| item.kind == StackItemKind::TriggeredAbility) =>
+                {
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::OrderTriggers { pending, .. } => {
+                    act(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    );
+                }
+                Decision::ChooseEffectTargets {
+                    legal_targets,
+                    can_finish: true,
+                    selected_count: 0,
+                    ..
+                } if zone(&state, thug) == Zone::Graveyard
+                    && legal_targets.contains(&Target::Object(thug)) =>
+                {
+                    draw_prompts += 1;
+                    let action = if draw_prompts == 1 {
+                        // Draw 1: draw Island, triggering opponent's Scrawling Crawler.
+                        Action::FinishEffectSelection
+                    } else {
+                        // Draw 2: dredge Golgari Thug, milling Creeping Chill.
+                        Action::ChooseEffectTarget(Target::Object(thug))
+                    };
+                    act(&mut state, action);
+                }
+                Decision::ChooseEffectTargets {
+                    selected_count: 1, ..
+                } => act(&mut state, Action::FinishEffectSelection),
+                other => act(&mut state, first_answer(other)),
+            }
+        }
+        assert_eq!(draw_prompts, 2);
+        assert_eq!(state.stack.len(), 2);
+        assert_eq!(state.stack[0].controller, actor);
+        assert_eq!(state.stack[0].source, chill);
+        assert_eq!(state.stack[1].controller, opp);
+
+        // Opponent's Scrawling Crawler resolves first and ends the game at 0 life
+        // before active player's Creeping Chill can drain.
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::GameOver { winner: Some(winner) }) if winner == opp
+        ));
+        assert_eq!(state.players[actor.index()].life, 0);
+        assert_eq!(state.players[opp.index()].life, 3);
+        assert_eq!(zone(&state, chill), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn brainstorm_by_nonactive_player_dredge_orders_mixed_controller_triggers_apnap_both_seats() {
+    for actor in [P0, P1] {
+        let opp = actor.opponent();
+        let mut state = game(&[
+            "Island",
+            "Creeping Chill",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+        ]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        state.players[actor.index()].life = 3;
+        state.players[opp.index()].life = 1;
+        put(&mut state, actor, "Scrawling Crawler", Zone::Battlefield);
+        let chill = state.players[opp.index()].library[1];
+        assert_eq!(name_of(&state, chill), "Creeping Chill");
+        let thug = put(&mut state, opp, "Golgari Thug", Zone::Graveyard);
+        let brainstorm = put(&mut state, opp, "Brainstorm", Zone::Hand);
+        pool(&mut state, opp, &[ManaColor::U], 0);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor
+        ));
+        act(&mut state, Action::Pass);
+        assert!(castable(&mut state, brainstorm));
+        act(&mut state, Action::CastSpell(brainstorm));
+
+        let mut draw_prompts = 0usize;
+        for _ in 0..200 {
+            let decision = next(&mut state);
+            match decision {
+                Decision::CastSpellOrPass { .. }
+                    if draw_prompts == 2
+                        && state.stack.len() == 3
+                        && state
+                            .stack
+                            .iter()
+                            .all(|item| item.kind == StackItemKind::TriggeredAbility) =>
+                {
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::OrderTriggers { pending, .. } => {
+                    act(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    );
+                }
+                Decision::ChooseEffectTargets {
+                    legal_targets,
+                    can_finish: true,
+                    selected_count: 0,
+                    ..
+                } if zone(&state, thug) == Zone::Graveyard
+                    && legal_targets.contains(&Target::Object(thug)) =>
+                {
+                    draw_prompts += 1;
+                    let action = if draw_prompts == 2 {
+                        // Draw 2: dredge Golgari Thug, milling non-active player's Creeping Chill;
+                        // Thug is then in hand so Draw 3 draws automatically.
+                        Action::ChooseEffectTarget(Target::Object(thug))
+                    } else {
+                        // Draw 1: draw Island, triggering active player's Scrawling Crawler.
+                        Action::FinishEffectSelection
+                    };
+                    act(&mut state, action);
+                }
+                Decision::ChooseEffectTargets {
+                    can_finish: true,
+                    selected_count: 1,
+                    ..
+                } if zone(&state, thug) == Zone::Graveyard => {
+                    act(&mut state, Action::FinishEffectSelection);
+                }
+                other => act(&mut state, first_answer(other)),
+            }
+        }
+        assert_eq!(draw_prompts, 2);
+        assert_eq!(state.stack.len(), 3);
+        assert_eq!(state.stack[0].controller, actor);
+        assert_eq!(state.stack[1].controller, actor);
+        assert_eq!(state.stack[2].controller, opp);
+        assert_eq!(state.stack[2].source, chill);
+
+        // Non-active player's Creeping Chill resolves first, drains active player to 0,
+        // and ends the game before either Scrawling Crawler trigger resolves.
+        let mut terminal = None;
+        for _ in 0..20 {
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectOption { .. }) => {
+                    act(&mut state, Action::ChooseEffectOption(1));
+                }
+                Some(other @ Decision::GameOver { .. }) => {
+                    terminal = Some(other);
+                    break;
+                }
+                other => panic!("unexpected decision settling triggers: {other:?}"),
+            }
+        }
+        assert!(matches!(
+            terminal,
+            Some(Decision::GameOver { winner: Some(winner) }) if winner == opp
+        ));
+        assert_eq!(state.players[actor.index()].life, 0);
+        assert_eq!(state.players[opp.index()].life, 4);
+        assert_eq!(zone(&state, chill), Zone::Exile);
+    }
+}
+
+fn approach_mad_mages_last_room(state: &mut GameState, player: PlayerId) -> ObjectId {
+    const ACERERAK: &str = "Acererak the Archlich";
+    state.active_player = player;
+    state.priority_player = player;
+    let acererak = put(state, player, ACERERAK, Zone::Hand);
+    for option in [Some(1), None, Some(0), None, Some(1), None] {
+        pool(state, player, &[ManaColor::B], 2);
+        cast(state, acererak, &[]);
+        let mut room = option;
+        while let Some(decision) = settle(state) {
+            match decision {
+                Decision::ChooseEffectOption { .. } => {
+                    act(state, Action::ChooseEffectOption(room.take().unwrap()));
+                }
+                Decision::ChooseEffectTargets { legal_targets, .. } => {
+                    act(state, Action::ChooseEffectTarget(legal_targets[0]));
+                }
+                other => panic!("unexpected approach to Mad Wizard's Lair: {other:?}"),
+            }
+        }
+        assert!(room.is_none());
+    }
+    assert_eq!(state.players[player.index()].dungeon.dungeon_id, Some(3));
+    assert_eq!(state.players[player.index()].dungeon.room_id, Some(8));
+    acererak
+}
+
+#[test]
+fn mad_wizards_lair_dredge_then_resolution_cast_orders_mixed_controller_triggers_apnap_both_seats()
+{
+    for active_seat in [P0, P1] {
+        for venturer in [P0, P1] {
+            let mut state = game(&["Island"; 24]);
+            let acererak = approach_mad_mages_last_room(&mut state, venturer);
+            let opp = venturer.opponent();
+            state.active_player = active_seat;
+            state.priority_player = active_seat;
+            state.step = Step::Main1;
+            state.players[venturer.index()].life = 1;
+            state.players[opp.index()].life = 3;
+            put(&mut state, active_seat, "Aluren", Zone::Battlefield);
+            put(&mut state, opp, "Scrawling Crawler", Zone::Battlefield);
+            let thug = put(&mut state, venturer, "Golgari Thug", Zone::Graveyard);
+            let dark_ritual = put(&mut state, venturer, "Dark Ritual", Zone::Library);
+            for _ in 0..3 {
+                put(&mut state, venturer, "Island", Zone::Library);
+            }
+            let chill = put(&mut state, venturer, "Creeping Chill", Zone::Library);
+            let first_island = put(&mut state, venturer, "Island", Zone::Library);
+            assert_eq!(state.players[venturer.index()].library[0], first_island);
+            assert_eq!(state.players[venturer.index()].library[1], chill);
+            assert_eq!(state.players[venturer.index()].library[5], dark_ritual);
+
+            if active_seat != venturer {
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::CastSpellOrPass { player, .. } if player == active_seat
+                ));
+                act(&mut state, Action::Pass);
+            }
+            assert!(castable(&mut state, acererak));
+            act(&mut state, Action::CastSpell(acererak));
+
+            let mut draw_prompts = 0usize;
+            let mut dark_ritual_cast = false;
+            for _ in 0..250 {
+                let decision = next(&mut state);
+                match decision {
+                    Decision::CastSpellOrPass { .. }
+                        if draw_prompts == 2
+                            && dark_ritual_cast
+                            && state.stack.len() == 4
+                            && state.stack[0].source == dark_ritual
+                            && state.stack[1..]
+                                .iter()
+                                .all(|item| item.kind == StackItemKind::TriggeredAbility) =>
+                    {
+                        break;
+                    }
+                    Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                    Decision::OrderTriggers { pending, .. } => {
+                        act(
+                            &mut state,
+                            Action::OrderTriggers((0..pending.len()).collect()),
+                        );
+                    }
+                    Decision::ChooseEffectTargets {
+                        legal_targets,
+                        can_finish: true,
+                        selected_count: 0,
+                        ..
+                    } if zone(&state, thug) == Zone::Graveyard
+                        && legal_targets.contains(&Target::Object(thug)) =>
+                    {
+                        draw_prompts += 1;
+                        let action = if draw_prompts == 1 {
+                            Action::FinishEffectSelection
+                        } else {
+                            Action::ChooseEffectTarget(Target::Object(thug))
+                        };
+                        act(&mut state, action);
+                    }
+                    Decision::ChooseEffectTargets {
+                        legal_targets,
+                        selected_count: 0,
+                        ..
+                    } if !dark_ritual_cast
+                        && legal_targets.contains(&Target::Object(dark_ritual)) =>
+                    {
+                        dark_ritual_cast = true;
+                        act(
+                            &mut state,
+                            Action::ChooseEffectTarget(Target::Object(dark_ritual)),
+                        );
+                    }
+                    Decision::ChooseEffectTargets {
+                        can_finish: true,
+                        selected_count: 1,
+                        ..
+                    } => act(&mut state, Action::FinishEffectSelection),
+                    other => act(&mut state, first_answer(other)),
+                }
+            }
+            assert_eq!(draw_prompts, 2);
+            assert!(dark_ritual_cast);
+            assert_eq!(zone(&state, dark_ritual), Zone::Stack);
+            assert_eq!(state.stack.len(), 4);
+            assert_eq!(state.stack[0].kind, StackItemKind::Spell);
+            assert_eq!(state.stack[0].source, dark_ritual);
+            if venturer == active_seat {
+                assert_eq!(state.stack[1].controller, active_seat);
+                assert_eq!(state.stack[1].source, chill);
+                assert_eq!(state.stack[2].controller, opp);
+                assert_eq!(state.stack[3].controller, opp);
+            } else {
+                assert_eq!(state.stack[1].controller, active_seat);
+                assert_eq!(state.stack[2].controller, active_seat);
+                assert_eq!(state.stack[3].controller, venturer);
+                assert_eq!(state.stack[3].source, chill);
+            }
+
+            let mut terminal = None;
+            for _ in 0..20 {
+                match settle(&mut state) {
+                    Some(Decision::ChooseEffectOption { .. }) => {
+                        act(&mut state, Action::ChooseEffectOption(1));
+                    }
+                    Some(other @ Decision::GameOver { .. }) => {
+                        terminal = Some(other);
+                        break;
+                    }
+                    other => panic!("unexpected decision settling triggers: {other:?}"),
+                }
+            }
+            if venturer == active_seat {
+                assert!(matches!(
+                    terminal,
+                    Some(Decision::GameOver { winner: Some(winner) }) if winner == opp
+                ));
+                assert_eq!(state.players[venturer.index()].life, 0);
+            } else {
+                assert!(matches!(
+                    terminal,
+                    Some(Decision::GameOver { winner: Some(winner) }) if winner == venturer
+                ));
+                assert_eq!(state.players[active_seat.index()].life, 0);
+                assert_eq!(state.players[venturer.index()].life, 4);
+                assert_eq!(zone(&state, chill), Zone::Exile);
+            }
+        }
+    }
+}
+
+#[test]
+fn discard_before_dredge_absorbs_pending_triggers_and_orders_apnap_both_seats() {
+    for active_seat in [P0, P1] {
+        let opp = active_seat.opponent();
+
+        // Case 1: opponent's Tourach trigger captured during Pursue the Past's
+        // discard before dredging Creeping Chill must follow active player's Chill.
+        {
+            let mut state = game(&["Island"; 16]);
+            state.active_player = active_seat;
+            state.priority_player = active_seat;
+            state.step = Step::Main1;
+            let tourach = put(&mut state, opp, "Tourach, Dread Cantor", Zone::Battlefield);
+            let imp = put(&mut state, active_seat, "Stinkweed Imp", Zone::Graveyard);
+            for _ in 0..3 {
+                put(&mut state, active_seat, "Island", Zone::Library);
+            }
+            let chill = put(&mut state, active_seat, "Creeping Chill", Zone::Library);
+            put(&mut state, active_seat, "Island", Zone::Library);
+            let fodder = put(&mut state, active_seat, "Lightning Bolt", Zone::Hand);
+            let pursue = put(&mut state, active_seat, "Pursue the Past", Zone::Hand);
+            pool(&mut state, active_seat, &[ManaColor::R, ManaColor::W], 0);
+            cast(&mut state, pursue, &[]);
+
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(fodder)) =>
+                {
+                    act(
+                        &mut state,
+                        Action::ChooseEffectTarget(Target::Object(fodder)),
+                    );
+                }
+                other => panic!("expected optional discard choice, got {other:?}"),
+            }
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(imp)) =>
+                {
+                    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+                }
+                other => panic!("expected dredge choice, got {other:?}"),
+            }
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.len(), 2);
+            assert_eq!(state.stack[0].controller, active_seat);
+            assert_eq!(state.stack[0].source, chill);
+            assert_eq!(state.stack[1].controller, opp);
+            assert_eq!(state.stack[1].source, tourach);
+        }
+
+        // Case 2: active Madness offer + active Ivora trigger before dredge +
+        // active Creeping Chill during dredge + opponent Tourach order all four under APNAP.
+        {
+            let mut state = game(&["Island"; 16]);
+            state.active_player = active_seat;
+            state.priority_player = active_seat;
+            state.step = Step::Main1;
+            let ivora = put(
+                &mut state,
+                active_seat,
+                "Ivora, Insatiable Heir",
+                Zone::Battlefield,
+            );
+            let tourach = put(&mut state, opp, "Tourach, Dread Cantor", Zone::Battlefield);
+            let imp = put(&mut state, active_seat, "Stinkweed Imp", Zone::Graveyard);
+            for _ in 0..3 {
+                put(&mut state, active_seat, "Island", Zone::Library);
+            }
+            let chill = put(&mut state, active_seat, "Creeping Chill", Zone::Library);
+            put(&mut state, active_seat, "Island", Zone::Library);
+            let temper = put(&mut state, active_seat, "Fiery Temper", Zone::Hand);
+            let pursue = put(&mut state, active_seat, "Pursue the Past", Zone::Hand);
+            pool(&mut state, active_seat, &[ManaColor::R, ManaColor::W], 0);
+            cast(&mut state, pursue, &[]);
+
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(temper)) =>
+                {
+                    act(
+                        &mut state,
+                        Action::ChooseEffectTarget(Target::Object(temper)),
+                    );
+                }
+                other => panic!("expected Madness discard choice, got {other:?}"),
+            }
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(imp)) =>
+                {
+                    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+                }
+                other => panic!("expected dredge choice, got {other:?}"),
+            }
+            match next(&mut state) {
+                Decision::OrderTriggers { player, pending } => {
+                    assert_eq!(player, active_seat);
+                    assert_eq!(pending.len(), 3);
+                    let chill_idx = pending
+                        .iter()
+                        .position(|trigger| trigger.source == chill)
+                        .unwrap();
+                    let temper_idx = pending
+                        .iter()
+                        .position(|trigger| trigger.source == temper && trigger.is_madness_offer)
+                        .unwrap();
+                    let ivora_idx = pending
+                        .iter()
+                        .position(|trigger| trigger.source == ivora)
+                        .unwrap();
+                    act(
+                        &mut state,
+                        Action::OrderTriggers(vec![chill_idx, temper_idx, ivora_idx]),
+                    );
+                }
+                other => panic!("expected active-player OrderTriggers, got {other:?}"),
+            }
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.len(), 4);
+            assert_eq!(state.stack[0].controller, active_seat);
+            assert_eq!(state.stack[0].source, chill);
+            assert_eq!(state.stack[1].controller, active_seat);
+            assert_eq!(state.stack[1].source, temper);
+            assert_eq!(state.stack[1].kind, StackItemKind::MadnessOffer);
+            assert_eq!(state.stack[2].controller, active_seat);
+            assert_eq!(state.stack[2].source, ivora);
+            assert_eq!(state.stack[3].controller, opp);
+            assert_eq!(state.stack[3].source, tourach);
+        }
+
+        // Case 3: non-active player resolves Seasoned Pyromancer via Aluren,
+        // auto-discards Fiery Temper (Madness in pending_triggers) while active_seat
+        // controls Tourach, then dredges Creeping Chill; Madness must still join APNAP
+        // with Chill ahead of Tourach instead of remaining ahead in pending_triggers.
+        {
+            let mut state = game(&["Island"; 16]);
+            state.active_player = active_seat;
+            state.priority_player = active_seat;
+            state.step = Step::Main1;
+            put(&mut state, active_seat, "Aluren", Zone::Battlefield);
+            let tourach = put(
+                &mut state,
+                active_seat,
+                "Tourach, Dread Cantor",
+                Zone::Battlefield,
+            );
+            let imp = put(&mut state, opp, "Stinkweed Imp", Zone::Graveyard);
+            for _ in 0..3 {
+                put(&mut state, opp, "Island", Zone::Library);
+            }
+            let chill = put(&mut state, opp, "Creeping Chill", Zone::Library);
+            put(&mut state, opp, "Island", Zone::Library);
+            let temper = put(&mut state, opp, "Fiery Temper", Zone::Hand);
+            let pyromancer = put(&mut state, opp, "Seasoned Pyromancer", Zone::Hand);
+
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player, .. } if player == active_seat
+            ));
+            act(&mut state, Action::Pass);
+            assert!(castable(&mut state, pyromancer));
+            act(&mut state, Action::CastSpell(pyromancer));
+
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(imp)) =>
+                {
+                    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+                }
+                other => {
+                    panic!("expected opp dredge choice after Pyromancer discard, got {other:?}")
+                }
+            }
+            match next(&mut state) {
+                Decision::OrderTriggers { player, pending } => {
+                    assert_eq!(player, opp);
+                    assert_eq!(pending.len(), 2);
+                    let chill_idx = pending
+                        .iter()
+                        .position(|trigger| trigger.source == chill)
+                        .unwrap();
+                    let temper_idx = pending
+                        .iter()
+                        .position(|trigger| trigger.source == temper && trigger.is_madness_offer)
+                        .unwrap();
+                    act(
+                        &mut state,
+                        Action::OrderTriggers(vec![chill_idx, temper_idx]),
+                    );
+                }
+                other => panic!("expected opp OrderTriggers, got {other:?}"),
+            }
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(state.stack.len(), 3);
+            assert_eq!(state.stack[0].controller, active_seat);
+            assert_eq!(state.stack[0].source, tourach);
+            assert_eq!(state.stack[1].controller, opp);
+            assert_eq!(state.stack[1].source, chill);
+            assert_eq!(state.stack[2].controller, opp);
+            assert_eq!(state.stack[2].source, temper);
+            assert_eq!(state.stack[2].kind, StackItemKind::MadnessOffer);
+        }
+    }
+}
+
+#[test]
+fn miracle_reveal_mid_resolution_with_dredge_and_resolution_cast_preserves_deferred_checkpoint_and_apnap_both_seats(
+) {
+    // Part A: multi-draw resolution drawing Terminus first and dredging second
+    // keeps SBA deferred across both accept and decline Miracle responses and
+    // orders Miracle, Creeping Chill, and Scrawling Crawler under APNAP.
+    for active_seat in [P0, P1] {
+        for caster in [P0, P1] {
+            let opp = caster.opponent();
+            let mut state = game(&["Island"; 16]);
+            state.active_player = active_seat;
+            state.priority_player = active_seat;
+            state.step = Step::Main1;
+            let crawler = put(&mut state, opp, "Scrawling Crawler", Zone::Battlefield);
+            let sba_canary = put(&mut state, opp, "Llanowar Elves", Zone::Battlefield);
+            let imp = put(&mut state, caster, "Stinkweed Imp", Zone::Graveyard);
+            for _ in 0..3 {
+                put(&mut state, caster, "Island", Zone::Library);
+            }
+            let chill = put(&mut state, caster, "Creeping Chill", Zone::Library);
+            put(&mut state, caster, "Island", Zone::Library);
+            let terminus = put(&mut state, caster, "Terminus", Zone::Library);
+            let brainstorm = put(&mut state, caster, "Brainstorm", Zone::Hand);
+            pool(&mut state, caster, &[ManaColor::U], 0);
+            if active_seat != caster {
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::CastSpellOrPass { player, .. } if player == active_seat
+                ));
+                act(&mut state, Action::Pass);
+            }
+            cast(&mut state, brainstorm, &[]);
+
+            // Draw 1: decline dredge to draw Terminus as first card of turn,
+            // marking lethal damage on sba_canary mid-resolution.
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets {
+                    player,
+                    legal_targets,
+                    can_finish: true,
+                    ..
+                }) if player == caster && legal_targets.contains(&Target::Object(imp)) => {
+                    state.objects.get_mut(sba_canary).damage = 1;
+                    act(&mut state, Action::FinishEffectSelection);
+                }
+                other => panic!("expected first Brainstorm dredge prompt, got {other:?}"),
+            }
+            assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
+
+            // Draw 2: dredge Stinkweed Imp, milling Creeping Chill while recording Terminus's miracle offer.
+            match settle(&mut state) {
+                Some(Decision::ChooseEffectTargets {
+                    player,
+                    legal_targets,
+                    ..
+                }) if player == caster && legal_targets.contains(&Target::Object(imp)) => {
+                    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+                }
+                other => panic!("expected second Brainstorm dredge prompt, got {other:?}"),
+            }
+            assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
+
+            // While Brainstorm is still resolving, Miracle reveal is offered.
+            let offer_decision = next(&mut state);
+            assert!(matches!(
+                offer_decision,
+                Decision::ChooseEffectOption {
+                    player,
+                    source,
+                    option_count: 2,
+                } if player == caster && source == terminus
+            ));
+
+            // Branch 1: decline reveal; SBA and dredge deferral remain preserved until Brainstorm finishes.
+            {
+                let mut declined = state.clone();
+                act(&mut declined, Action::ChooseEffectOption(0));
+                assert_eq!(zone(&declined, sba_canary), Zone::Battlefield);
+                for _ in 0..8 {
+                    match next(&mut declined) {
+                        Decision::ChooseEffectTargets {
+                            legal_targets,
+                            can_finish: false,
+                            ..
+                        } => {
+                            let pick = legal_targets
+                                .into_iter()
+                                .find(|target| *target != Target::Object(terminus))
+                                .unwrap();
+                            act(&mut declined, Action::ChooseEffectTarget(pick));
+                        }
+                        Decision::OrderTriggers { pending, .. } => {
+                            act(
+                                &mut declined,
+                                Action::OrderTriggers((0..pending.len()).collect()),
+                            );
+                        }
+                        Decision::CastSpellOrPass { .. } => break,
+                        other => panic!("unexpected decline branch decision: {other:?}"),
+                    }
+                    if declined.engine.pending_effect.is_some() {
+                        assert_eq!(zone(&declined, sba_canary), Zone::Battlefield);
+                    }
+                }
+                assert!(matches!(
+                    next(&mut declined),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                assert_eq!(zone(&declined, sba_canary), Zone::Graveyard);
+                assert_eq!(declined.stack.len(), 3);
+                if caster == active_seat {
+                    assert_eq!(declined.stack[0].controller, active_seat);
+                    assert_eq!(declined.stack[0].source, chill);
+                    assert_eq!(declined.stack[1].controller, opp);
+                    assert_eq!(declined.stack[1].source, crawler);
+                    assert_eq!(declined.stack[2].controller, opp);
+                    assert_eq!(declined.stack[2].source, crawler);
+                } else {
+                    assert_eq!(declined.stack[0].controller, active_seat);
+                    assert_eq!(declined.stack[0].source, crawler);
+                    assert_eq!(declined.stack[1].controller, active_seat);
+                    assert_eq!(declined.stack[1].source, crawler);
+                    assert_eq!(declined.stack[2].controller, caster);
+                    assert_eq!(declined.stack[2].source, chill);
+                }
+            }
+
+            // Branch 2: accept reveal; SBA must not run early and Miracle joins APNAP with Chill & Crawler.
+            act(&mut state, Action::ChooseEffectOption(1));
+            assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(state.stack[0].source, brainstorm);
+            assert!(state.engine.pending_effect.is_some());
+
+            let mut caster_ordered_both = false;
+            for _ in 0..16 {
+                match next(&mut state) {
+                    Decision::ChooseEffectTargets {
+                        legal_targets,
+                        can_finish: false,
+                        ..
+                    } => {
+                        assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
+                        let pick = legal_targets
+                            .into_iter()
+                            .find(|target| *target != Target::Object(terminus))
+                            .unwrap();
+                        act(&mut state, Action::ChooseEffectTarget(pick));
+                    }
+                    Decision::OrderTriggers { player, pending } => {
+                        if player == caster {
+                            caster_ordered_both = true;
+                            assert_eq!(pending.len(), 2);
+                            assert!(pending.iter().any(|trigger| trigger.source == terminus));
+                            assert!(pending.iter().any(|trigger| trigger.source == chill));
+                        }
+                        act(
+                            &mut state,
+                            Action::OrderTriggers((0..pending.len()).collect()),
+                        );
+                    }
+                    Decision::CastSpellOrPass { .. } => break,
+                    other => panic!("unexpected accept branch decision: {other:?}"),
+                }
+            }
+            assert!(caster_ordered_both);
+            assert_eq!(zone(&state, sba_canary), Zone::Graveyard);
+            assert_eq!(state.stack.len(), 4);
+            if caster == active_seat {
+                assert!(state.stack[0..2]
+                    .iter()
+                    .all(|item| item.controller == active_seat));
+                assert!(state.stack[2..4]
+                    .iter()
+                    .all(|item| item.controller == opp && item.source == crawler));
+            } else {
+                assert!(state.stack[0..2]
+                    .iter()
+                    .all(|item| item.controller == active_seat && item.source == crawler));
+                assert!(state.stack[2..4]
+                    .iter()
+                    .all(|item| item.controller == caster));
+            }
+        }
+    }
+
+    // Part B: Mad Wizard's Lair drawing Terminus first, dredging second, and
+    // casting Dark Ritual from hand preserves Miracle inside the deferred
+    // checkpoint alongside Creeping Chill and Scrawling Crawler.
+    for active_seat in [P0, P1] {
+        let mut state = game(&["Island"; 24]);
+        let venturer = active_seat.opponent();
+        let acererak = approach_mad_mages_last_room(&mut state, venturer);
+        state.active_player = active_seat;
+        state.priority_player = active_seat;
+        state.step = Step::Main1;
+        state.players[venturer.index()].draws_this_turn = 0;
+
+        put(&mut state, active_seat, "Aluren", Zone::Battlefield);
+        let crawler = put(
+            &mut state,
+            active_seat,
+            "Scrawling Crawler",
+            Zone::Battlefield,
+        );
+        let sba_canary = put(&mut state, active_seat, "Llanowar Elves", Zone::Battlefield);
+        let imp = put(&mut state, venturer, "Stinkweed Imp", Zone::Graveyard);
+        let dark_ritual = put(&mut state, venturer, "Dark Ritual", Zone::Library);
+        for _ in 0..3 {
+            put(&mut state, venturer, "Island", Zone::Library);
+        }
+        let chill = put(&mut state, venturer, "Creeping Chill", Zone::Library);
+        put(&mut state, venturer, "Island", Zone::Library);
+        let terminus = put(&mut state, venturer, "Terminus", Zone::Library);
+
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == active_seat
+        ));
+        act(&mut state, Action::Pass);
+        assert!(castable(&mut state, acererak));
+        act(&mut state, Action::CastSpell(acererak));
+
+        let mut draw_prompts = 0usize;
+        let mut miracle_accepted = false;
+        let mut dark_ritual_cast = false;
+        for _ in 0..250 {
+            let decision = next(&mut state);
+            match decision {
+                Decision::CastSpellOrPass { .. }
+                    if draw_prompts == 2
+                        && miracle_accepted
+                        && dark_ritual_cast
+                        && state.stack.len() == 5
+                        && state.stack[0].source == dark_ritual =>
+                {
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::OrderTriggers { pending, .. } => {
+                    act(
+                        &mut state,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    );
+                }
+                Decision::ChooseEffectOption {
+                    player,
+                    source,
+                    option_count: 2,
+                } if player == venturer && source == terminus && !miracle_accepted => {
+                    assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
+                    miracle_accepted = true;
+                    act(&mut state, Action::ChooseEffectOption(1));
+                    assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
+                }
+                Decision::ChooseEffectTargets {
+                    legal_targets,
+                    can_finish: true,
+                    selected_count: 0,
+                    ..
+                } if zone(&state, imp) == Zone::Graveyard
+                    && legal_targets.contains(&Target::Object(imp)) =>
+                {
+                    draw_prompts += 1;
+                    if draw_prompts == 1 {
+                        state.objects.get_mut(sba_canary).damage = 1;
+                    }
+                    let action = if draw_prompts == 1 {
+                        Action::FinishEffectSelection
+                    } else {
+                        Action::ChooseEffectTarget(Target::Object(imp))
+                    };
+                    act(&mut state, action);
+                }
+                Decision::ChooseEffectTargets {
+                    legal_targets,
+                    selected_count: 0,
+                    ..
+                } if !dark_ritual_cast && legal_targets.contains(&Target::Object(dark_ritual)) => {
+                    dark_ritual_cast = true;
+                    act(
+                        &mut state,
+                        Action::ChooseEffectTarget(Target::Object(dark_ritual)),
+                    );
+                }
+                Decision::ChooseEffectTargets {
+                    can_finish: true,
+                    selected_count: 1,
+                    ..
+                } => act(&mut state, Action::FinishEffectSelection),
+                other => act(&mut state, first_answer(other)),
+            }
+        }
+        assert_eq!(draw_prompts, 2);
+        assert!(miracle_accepted);
+        assert!(dark_ritual_cast);
+        assert_eq!(zone(&state, sba_canary), Zone::Graveyard);
+        assert_eq!(state.stack.len(), 5);
+        assert_eq!(state.stack[0].kind, StackItemKind::Spell);
+        assert_eq!(state.stack[0].source, dark_ritual);
+        assert_eq!(state.stack[1].controller, active_seat);
+        assert_eq!(state.stack[1].source, crawler);
+        assert_eq!(state.stack[2].controller, active_seat);
+        assert_eq!(state.stack[2].source, crawler);
+        assert!(state.stack[3..5]
+            .iter()
+            .all(|item| item.controller == venturer));
+        assert!(state.stack[3..5].iter().any(|item| item.source == chill));
+        assert!(state.stack[3..5].iter().any(|item| item.source == terminus));
+    }
+}
+
+#[test]
+fn pursue_the_past_discard_against_ivora_crosses_second_dredge_decision_and_public_capture_both_seats(
+) {
+    use mtg_kernel::{rl::observe_v2, surface_v2::HarnessSurfaceV2};
+
+    for active_seat in [PlayerId::P0, PlayerId::P1] {
+        let opp = active_seat.opponent();
+        let mut state = game(&["Island"; 16]);
+        state.active_player = active_seat;
+        state.priority_player = active_seat;
+        state.step = Step::Main1;
+        let ivora = put(
+            &mut state,
+            active_seat,
+            "Ivora, Insatiable Heir",
+            Zone::Battlefield,
+        );
+        let imp = put(&mut state, active_seat, "Stinkweed Imp", Zone::Graveyard);
+        let thug = put(&mut state, active_seat, "Golgari Thug", Zone::Graveyard);
+        let chill = put(&mut state, active_seat, "Creeping Chill", Zone::Library);
+        put(&mut state, active_seat, "Island", Zone::Library);
+        let fodder = put(&mut state, active_seat, "Island", Zone::Hand);
+        let pursue = put(&mut state, active_seat, "Pursue the Past", Zone::Hand);
+        pool(&mut state, active_seat, &[ManaColor::R, ManaColor::W], 0);
+        cast(&mut state, pursue, &[]);
+
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(fodder)) =>
+            {
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(fodder)),
+                );
+            }
+            other => panic!("expected discard choice, got {other:?}"),
+        }
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(imp)) =>
+            {
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+            }
+            other => panic!("expected first dredge choice, got {other:?}"),
+        }
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                ..
+            }) if legal_targets.contains(&Target::Object(thug)) => {
+                assert!(state.engine.pending_triggers.is_empty());
+                let surface = HarnessSurfaceV2::default();
+                for viewer in [active_seat, opp] {
+                    let obs = observe_v2(&state, &surface, viewer, 0).unwrap();
+                    let pending = &obs.projection.engine_context.pending_triggers;
+                    assert_eq!(pending.len(), 1);
+                    assert!(pending[0]
+                        .source
+                        .as_ref()
+                        .is_some_and(|s| s.arena_id == ivora.0));
+                }
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            other => panic!("expected second dredge choice, got {other:?}"),
+        }
+        match next(&mut state) {
+            Decision::OrderTriggers { player, pending } => {
+                assert_eq!(player, active_seat);
+                assert_eq!(pending.len(), 2);
+                let chill_idx = pending
+                    .iter()
+                    .position(|trigger| trigger.source == chill)
+                    .unwrap();
+                let ivora_idx = pending
+                    .iter()
+                    .position(|trigger| trigger.source == ivora)
+                    .unwrap();
+                act(
+                    &mut state,
+                    Action::OrderTriggers(vec![chill_idx, ivora_idx]),
+                );
+            }
+            other => panic!("expected active-player OrderTriggers, got {other:?}"),
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.len(), 2);
+        assert_eq!(state.stack[0].controller, active_seat);
+        assert_eq!(state.stack[0].source, chill);
+        assert_eq!(state.stack[1].controller, active_seat);
+        assert_eq!(state.stack[1].source, ivora);
+    }
+}
+
+#[test]
+fn decree_of_pain_with_drop_of_honey_and_dredge_queues_single_state_trigger_both_seats() {
+    for seat in [PlayerId::P0, PlayerId::P1] {
+        let mut state = game(&["Island"; 16]);
+        state.active_player = seat;
+        state.priority_player = seat;
+        state.step = Step::Main1;
+        let honey = put(&mut state, seat, "Drop of Honey", Zone::Battlefield);
+        let imp = put(&mut state, seat, "Stinkweed Imp", Zone::Battlefield);
+        let decree = put(&mut state, seat, "Decree of Pain", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::B, ManaColor::B], 6);
+        cast(&mut state, decree, &[]);
+
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(imp)) =>
+            {
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+            }
+            other => panic!("expected dredge choice, got {other:?}"),
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack[0].source, honey);
+        settled(&mut state);
+        assert_eq!(zone(&state, honey), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn paradoxical_outcome_returning_animate_dead_across_dredge_preserves_public_link_and_sacrifices_creature_both_seats(
+) {
+    for seat in [PlayerId::P0, PlayerId::P1] {
+        let mut state = game(&["Island"; 16]);
+        state.active_player = seat;
+        state.priority_player = seat;
+        state.step = Step::Main1;
+        let guide = put(&mut state, seat, "Elvish Spirit Guide", Zone::Graveyard);
+        let ring = put(&mut state, seat, "Sol Ring", Zone::Battlefield);
+        let aura = put(&mut state, seat, "Animate Dead", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::B], 1);
+        cast(&mut state, aura, &[Target::Object(guide)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, aura), Zone::Battlefield);
+        assert_eq!(zone(&state, guide), Zone::Battlefield);
+        let aura_bf_generation = state.objects.get(aura).zone_change_count;
+
+        let imp = put(&mut state, seat, "Stinkweed Imp", Zone::Graveyard);
+        let thug = put(&mut state, seat, "Golgari Thug", Zone::Graveyard);
+        let outcome = put(&mut state, seat, "Paradoxical Outcome", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::U], 3);
+        cast(
+            &mut state,
+            outcome,
+            &[Target::Object(aura), Target::Object(ring)],
+        );
+        if matches!(
+            next(&mut state),
+            Decision::ChooseTargets {
+                can_finish: true,
+                ..
+            }
+        ) {
+            act(&mut state, Action::FinishEffectSelection);
+        }
+
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(imp)) =>
+            {
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+            }
+            other => panic!("expected first dredge choice, got {other:?}"),
+        }
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                ..
+            }) if legal_targets.contains(&Target::Object(thug)) => {
+                assert_eq!(zone(&state, aura), Zone::Hand);
+                assert_eq!(zone(&state, guide), Zone::Battlefield);
+                let dynamic = mtg_kernel::eternal_actor_public_v1::capture_v1(&state).unwrap();
+                assert_eq!(dynamic.animate_dead_attached.len(), 1);
+                assert_eq!(
+                    dynamic.animate_dead_attached[0].source.zone_change_count,
+                    aura_bf_generation
+                );
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            other => panic!("expected second dredge choice, got {other:?}"),
+        }
+        settled(&mut state);
+        assert_eq!(zone(&state, guide), Zone::Graveyard);
+    }
 }

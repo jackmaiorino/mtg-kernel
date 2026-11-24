@@ -327,7 +327,7 @@ pub struct FrozenPlayPolicyV1 {
     w_model: Option<std::sync::Arc<NativePolicyValueNetWideV1>>,
 }
 
-/// An installed no-state-digest input contract (`no_state_digest_v1`).
+/// An installed no-state-digest / no-digests input contract (`no_state_digest_v1`).
 #[derive(Clone, Debug)]
 struct InputContractV1 {
     /// The converted feature contract digest.
@@ -336,12 +336,18 @@ struct InputContractV1 {
     columns: std::ops::Range<usize>,
     /// The state encoder's input width.
     input_width: usize,
+    /// Optional zeroed action-digest input columns of `action_encoder.0.weight`
+    /// and its input width (`no-digests-v1`).
+    action_columns: Option<(std::ops::Range<usize>, usize)>,
     /// The conversion record of a training source, which its training
     /// records name; None until a loader binds it.
     conversion: Option<crate::expanded_deck_training_v1::PinnedFileV1>,
     /// With the check model: its original state-digest columns, row by row,
     /// which every parameter replacement puts back into it.
     original_columns: Option<Vec<f32>>,
+    /// With the check model under `no-digests-v1`: its original action-digest
+    /// columns, row by row.
+    original_action_columns: Option<Vec<f32>>,
 }
 
 #[derive(Default)]
@@ -1732,6 +1738,39 @@ impl FrozenPlayPolicyV1 {
         input_width: usize,
         check: bool,
     ) -> Result<(), String> {
+        self.apply_input_contract_v1(contract_digest, columns, input_width, None, check)
+    }
+
+    /// Installs the no-digests input contract (`no-digests-v1`): zeros both the
+    /// state-digest columns of `state_encoder.0.weight` and the action-digest
+    /// columns of `action_encoder.0.weight`, stopping both state and action
+    /// SHA-512 hashing in the tensorizers.
+    pub(crate) fn apply_no_digests_v1(
+        &mut self,
+        contract_digest: String,
+        state_columns: std::ops::Range<usize>,
+        state_input_width: usize,
+        action_columns: std::ops::Range<usize>,
+        action_input_width: usize,
+        check: bool,
+    ) -> Result<(), String> {
+        self.apply_input_contract_v1(
+            contract_digest,
+            state_columns,
+            state_input_width,
+            Some((action_columns, action_input_width)),
+            check,
+        )
+    }
+
+    fn apply_input_contract_v1(
+        &mut self,
+        contract_digest: String,
+        columns: std::ops::Range<usize>,
+        input_width: usize,
+        action: Option<(std::ops::Range<usize>, usize)>,
+        check: bool,
+    ) -> Result<(), String> {
         require(
             self.s_model.is_none(),
             "this operation is net-8's; a policy with native S refuses it",
@@ -1777,6 +1816,41 @@ impl FrozenPlayPolicyV1 {
             bias.values.len() == rows && no_negative_zero_v1(&bias.values),
             "a state encoder bias of -0.0 has no exact no-state-digest conversion",
         )?;
+        let mut original_action_columns = None;
+        if let Some((ref action_columns, action_input_width)) = action {
+            let a_weight = parameters
+                .iter_mut()
+                .find(|parameter| parameter.name == "action_encoder.0.weight")
+                .ok_or("action encoder weight is missing")?;
+            let &[a_rows, a_width] = a_weight.shape.as_slice() else {
+                return Err("action encoder weight is not a matrix".into());
+            };
+            require(
+                a_width == action_input_width
+                    && action_columns.start < action_columns.end
+                    && action_columns.end <= a_width
+                    && a_weight.values.len() == a_rows * a_width,
+                "action encoder weight shape differs",
+            )?;
+            original_action_columns = check.then(|| {
+                a_weight
+                    .values
+                    .chunks_exact(a_width)
+                    .flat_map(|row| row[action_columns.clone()].iter().copied())
+                    .collect::<Vec<f32>>()
+            });
+            for row in a_weight.values.chunks_exact_mut(a_width) {
+                row[action_columns.clone()].fill(0.0);
+            }
+            let a_bias = parameters
+                .iter()
+                .find(|parameter| parameter.name == "action_encoder.0.bias")
+                .ok_or("action encoder bias is missing")?;
+            require(
+                a_bias.values.len() == a_rows && no_negative_zero_v1(&a_bias.values),
+                "an action encoder bias of -0.0 has no exact no-digests conversion",
+            )?;
+        }
         let unconverted = check.then(|| Box::new((*self.model).clone()));
         std::sync::Arc::make_mut(&mut self.model)
             .replace_parameter_snapshot_v1(&parameters)
@@ -1791,11 +1865,21 @@ impl FrozenPlayPolicyV1 {
             digest: contract_digest,
             columns,
             input_width,
+            action_columns: action,
             conversion: None,
             original_columns,
+            original_action_columns,
         });
         self.no_digest_check = unconverted;
         Ok(())
+    }
+
+    /// Whether the installed input contract also omits per-action digests
+    /// (`no-digests-v1`).
+    pub(crate) fn action_digest_off_v1(&self) -> bool {
+        self.input_contract
+            .as_ref()
+            .is_some_and(|contract| contract.action_columns.is_some())
     }
 
     /// The converted feature contract digest when the no-state-digest
@@ -1887,6 +1971,34 @@ impl FrozenPlayPolicyV1 {
                     no_negative_zero_v1(&bias.values),
                     "a state encoder bias of -0.0 has no exact no-state-digest conversion",
                 )?;
+                if let Some((ref action_columns, action_width)) = contract.action_columns {
+                    let a_weight = parameters
+                        .iter()
+                        .find(|parameter| parameter.name == "action_encoder.0.weight")
+                        .ok_or("action encoder weight is missing")?;
+                    require(
+                        a_weight.shape.len() == 2
+                            && a_weight.shape[1] == action_width
+                            && a_weight.values.len() == a_weight.shape[0] * action_width,
+                        "action encoder weight shape differs",
+                    )?;
+                    require(
+                        crate::native_policy_train_step_v1::columns_are_positive_zero_v1(
+                            &a_weight.values,
+                            action_width,
+                            action_columns.clone(),
+                        ),
+                        "no-digests contract: an action-digest weight column is not +0.0",
+                    )?;
+                    let a_bias = parameters
+                        .iter()
+                        .find(|parameter| parameter.name == "action_encoder.0.bias")
+                        .ok_or("action encoder bias is missing")?;
+                    require(
+                        no_negative_zero_v1(&a_bias.values),
+                        "an action encoder bias of -0.0 has no exact no-digests conversion",
+                    )?;
+                }
                 match (&self.no_digest_check, &contract.original_columns) {
                     (Some(check), Some(original)) => {
                         let mut restored = parameters.to_vec();
@@ -1905,6 +2017,29 @@ impl FrozenPlayPolicyV1 {
                             .zip(original.chunks_exact(span))
                         {
                             row[contract.columns.clone()].copy_from_slice(columns);
+                        }
+                        if let Some((ref action_columns, action_width)) = contract.action_columns {
+                            let original_action = contract
+                                .original_action_columns
+                                .as_ref()
+                                .ok_or("no-state-digest check model is incomplete")?;
+                            let a_weight = restored
+                                .iter_mut()
+                                .find(|parameter| parameter.name == "action_encoder.0.weight")
+                                .ok_or("action encoder weight is missing")?;
+                            let a_span = action_columns.len();
+                            require(
+                                original_action.len() * action_width
+                                    == a_weight.values.len() * a_span,
+                                "no-digests check action columns differ in shape",
+                            )?;
+                            for (row, cols) in a_weight
+                                .values
+                                .chunks_exact_mut(action_width)
+                                .zip(original_action.chunks_exact(a_span))
+                            {
+                                row[action_columns.clone()].copy_from_slice(cols);
+                            }
                         }
                         let mut model = (**check).clone();
                         model
@@ -2066,6 +2201,17 @@ impl FrozenPlayPolicyV1 {
                     .is_some_and(|digest| digest.iter().all(|value| value.to_bits() == 0)),
                 "no-state-digest contract: a stored state-digest input is not +0.0",
             )?;
+            if let Some((ref action_columns, _)) = contract.action_columns {
+                let row_width = crate::native_flat_tensorizer_v2::NATIVE_FLAT_ACTION_FEATURE_DIM_V2;
+                require(
+                    common.action_features.len().is_multiple_of(row_width)
+                        && common.action_features.chunks_exact(row_width).all(|row| {
+                            row.get(action_columns.clone())
+                                .is_some_and(|digest| digest.iter().all(|v| v.to_bits() == 0))
+                        }),
+                    "no-digests contract: a stored action-digest input is not +0.0",
+                )?;
+            }
         }
         let view =
             crate::expanded_deck_training_v1::encoded_decision_view_generic_v1(common, generation);
@@ -2292,6 +2438,20 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         session: &FastActorSessionV1,
     ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
+        self.select_with_training_tensor_offset_v4(session, None)
+    }
+
+    /// [`Self::select_with_training_tensor_v4`] with an optional London keep
+    /// offset (`london_keep_offset_v1`): the draw uses the offset logits, the
+    /// returned scores stay the raw scorer output. `None` is exactly the
+    /// plain selection.
+    pub(crate) fn select_with_training_tensor_offset_v4(
+        &mut self,
+        session: &FastActorSessionV1,
+        london_keep_offset: Option<
+            crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1,
+        >,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
         require(
             self.fresh_successor.is_some(),
             "training requires explicit V4 successor features",
@@ -2300,17 +2460,31 @@ impl FrozenPlayPolicyV1 {
             return Err("cannot collect a terminal decision".into());
         };
         let scores = self.score_fast_session_v1(session)?;
-        let selected = self.sample_scores(
-            &scores.logits,
-            decision.acting_player,
-            decision.legal_action_count,
-        )?;
         let tensor = self
             .fresh_successor
             .as_ref()
             .ok_or("missing fresh successor tensor")?
             .tensor
             .clone();
+        let adjusted = match london_keep_offset {
+            Some(offset) => {
+                crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
+                    &scores.logits,
+                    &tensor.common.state,
+                    &tensor.common.action_features,
+                    &offset,
+                )?
+            }
+            None => None,
+        };
+        // An adjusted row is drawn from the unclamped sampler so the draw is
+        // the softmax of exactly the logits the update trains on.
+        let selected = self.sample_scores_with_v1(
+            adjusted.as_deref().unwrap_or(&scores.logits),
+            decision.acting_player,
+            decision.legal_action_count,
+            adjusted.is_some(),
+        )?;
         Ok((selected, scores, tensor))
     }
     pub fn embedding_rows_v1(&self) -> &[f32] {
@@ -2429,8 +2603,10 @@ impl FrozenPlayPolicyV1 {
         };
         let mode = self.forward_mode_v1();
         let state_digest = self.input_contract.is_none();
+        let action_digest = !self.action_digest_off_v1();
         let successor = self.successor.as_mut().expect("V3 policy");
         successor.tensorizer.set_state_digest_v1(state_digest);
+        successor.tensorizer.set_action_digest_v1(action_digest);
         let t0 = Instant::now();
         let encoded = session
             .encode_current_flat_scoring_decision_owned_v3(
@@ -2682,8 +2858,10 @@ impl FrozenPlayPolicyV1 {
         }
         let mode = self.forward_mode_v1();
         let state_digest = self.input_contract.is_none();
+        let action_digest = !self.action_digest_off_v1();
         let (path, view) = if let Some(successor) = &mut self.successor {
             successor.tensorizer.set_state_digest_v1(state_digest);
+            successor.tensorizer.set_action_digest_v1(action_digest);
             successor
                 .tensorizer
                 .fill(
@@ -2698,6 +2876,7 @@ impl FrozenPlayPolicyV1 {
         } else if let Some(fresh) = &mut self.fresh_successor {
             if fresh.flat_v8 {
                 fresh.tensorizer_v8.set_state_digest_v1(state_digest);
+                fresh.tensorizer_v8.set_action_digest_v1(action_digest);
                 fresh
                     .tensorizer_v8
                     .fill(
@@ -2715,6 +2894,7 @@ impl FrozenPlayPolicyV1 {
                 )
             } else if fresh.flat_v7 {
                 fresh.tensorizer_v7.set_state_digest_v1(state_digest);
+                fresh.tensorizer_v7.set_action_digest_v1(action_digest);
                 fresh
                     .tensorizer_v7
                     .fill(
@@ -2730,6 +2910,7 @@ impl FrozenPlayPolicyV1 {
                 )
             } else {
                 fresh.tensorizer.set_state_digest_v1(state_digest);
+                fresh.tensorizer.set_action_digest_v1(action_digest);
                 fresh
                     .tensorizer
                     .fill(
@@ -2746,6 +2927,7 @@ impl FrozenPlayPolicyV1 {
             let span =
                 crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyTensorize);
             self.tensorizer.set_state_digest_v1(state_digest);
+            self.tensorizer.set_action_digest_v1(action_digest);
             self.tensorizer
                 .fill(self.owned.view(), &mut self.tensor)
                 .map_err(|e| format!("visible tensorization: {e:?}"))?;
@@ -3100,6 +3282,20 @@ impl FrozenPlayPolicyV1 {
         seat: PlayerSeatV1,
         legal_count: u32,
     ) -> Result<u32, String> {
+        self.sample_scores_with_v1(logits, seat, legal_count, false)
+    }
+
+    /// [`Self::sample_scores`] with `force_unclamped`: draw this row from the
+    /// unclamped softmax sampler whatever the policy's own sampler is (the
+    /// London keep offset's adjusted rows). The seat stream advances by
+    /// exactly one draw either way.
+    fn sample_scores_with_v1(
+        &mut self,
+        logits: &[f32],
+        seat: PlayerSeatV1,
+        legal_count: u32,
+        force_unclamped: bool,
+    ) -> Result<u32, String> {
         require(
             self.sampling_initialized,
             "reset both policy seeds before a game",
@@ -3132,6 +3328,12 @@ impl FrozenPlayPolicyV1 {
                     "sampler_seed_sha256":hash(&seed.to_le_bytes()),
                     "inverse_cdf_draw_sha256":hash(&crate::fast_sampler::splitmix64_first(seed).to_le_bytes())}));
             }
+        }
+        if force_unclamped {
+            let selected = UnclampedSoftmaxScratchV1::default()
+                .sample(logits, seed)
+                .map_err(|e| e.to_string())?;
+            return u32::try_from(selected).map_err(|e| e.to_string());
         }
         if let Some(unclamped) = &mut self.collection_sampler {
             // The seat-stream output is the draw itself: never reseeded.

@@ -1856,9 +1856,14 @@ fn c6c_printed_characteristics_include_garruk_and_honest_unimplemented_cards() {
     assert_eq!(card.colors, &[ManaColor::G]);
     assert_eq!(card.starting_loyalty, Some(5));
     assert_eq!(card.activated_abilities.len(), 3);
-    for name in ["Chandra, Torch of Defiance", "Saheeli, Sublime Artificer"] {
-        assert!(card_id_by_name(name).is_none(), "{name} stays out");
-    }
+    assert_eq!(
+        def("Chandra, Torch of Defiance").capability,
+        CardCapability::Full
+    );
+    assert_eq!(
+        def("Saheeli, Sublime Artificer").capability,
+        CardCapability::Full
+    );
     let mut state = plains();
     let walker = put(&mut state, P0, card.name, Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G], 3);

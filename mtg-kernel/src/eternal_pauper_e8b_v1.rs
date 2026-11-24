@@ -222,7 +222,7 @@ impl E8bOpV1 {
     /// Whether this leaf can yield a player decision, so its program must
     /// use the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        matches!(self, Self::GloriousGaleV1)
+        matches!(self, Self::GloriousGaleV1 | Self::SplicedRitualsV1)
     }
 }
 
@@ -258,6 +258,7 @@ const AZORIUS_CHANCERY: &str = "Azorius Chancery";
 const CRIMSON_FLEET_COMMODORE: &str = "Crimson Fleet Commodore";
 const DESERT: &str = "Desert";
 const DESPERATE_RITUAL: &str = "Desperate Ritual";
+const THROUGH_THE_BREACH: &str = "Through the Breach";
 const FIRST_DAY_OF_CLASS: &str = "First Day of Class";
 const GLIMPSE_THE_IMPOSSIBLE: &str = "Glimpse the Impossible";
 const GOBLIN_ANARCHOMANCER: &str = "Goblin Anarchomancer";
@@ -289,6 +290,13 @@ const DEPLETION_COUNTERS: u8 = 2;
 const SPLICE_COST: Cost = Cost {
     pips: &[Pip::Colored(ManaColor::R)],
     generic: 1,
+    x_count: 0,
+};
+
+/// Splice onto Arcane {2}{R}{R} (Through the Breach, Vintage Cube wave C9c).
+const BREACH_SPLICE_COST: Cost = Cost {
+    pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)],
+    generic: 2,
     x_count: 0,
 };
 
@@ -973,7 +981,8 @@ pub(crate) fn execute(op: &E8bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         E8bOpV1::SplicedRitualsV1 => {
-            let count = usize::from(ctx.x_value).saturating_mul(3);
+            let (rituals, _) = decode_splice(ctx.x_value);
+            let count = usize::from(rituals).saturating_mul(3);
             if count > 0 {
                 event::propose_and_commit(
                     state,
@@ -1211,6 +1220,47 @@ pub(crate) fn drive(
                 return Ok(false);
             }
             Ok(ring_tempts(state, continuation, path))
+        }
+        E8bOpV1::RingLootV1 => {
+            // Frames run last-in first-out: draw 1 (replaceable), then discard 1.
+            continuation
+                .frames
+                .push(crate::effect::EffectFrame::Program {
+                    op: EffectOp::DiscardCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    },
+                    path: path.clone(),
+                });
+            continuation
+                .frames
+                .push(crate::effect::EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    },
+                    path,
+                });
+            Ok(false)
+        }
+        E8bOpV1::SplicedRitualsV1 => {
+            let (rituals, breaches) = decode_splice(continuation.ctx.x_value);
+            let red = usize::from(rituals).saturating_mul(3);
+            if red > 0 {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::mana_add(continuation.ctx.controller, vec![ManaColor::R; red]),
+                );
+            }
+            for _ in 0..breaches {
+                continuation
+                    .frames
+                    .push(crate::effect::EffectFrame::Program {
+                        op: crate::eternal_cube_c9c_v1::spliced_through_the_breach(),
+                        path: path.clone(),
+                    });
+            }
+            Ok(false)
         }
         other => {
             execute(other, &continuation.ctx, state);
@@ -1451,29 +1501,37 @@ fn reveal_splices(state: &mut GameState, events: &[CommittedEvent]) {
         let Some(def) = definition(state, spell) else {
             continue;
         };
-        if splice_cost(def).is_none() || crate::eternal_cards_v1::replicate_cost(def.name).is_some()
-        {
+        if !is_spliceable_arcane(def) {
             continue;
         }
-        let spliced = state
+        let code = state
             .stack
             .iter()
             .find(|item| item.kind == StackItemKind::Spell && item.source == spell && !item.is_copy)
-            .map_or(0, |item| usize::from(item.v4.x_value));
-        let cards = splice_cards_in_hand(state, controller, spell)
-            .into_iter()
-            .take(spliced)
-            .collect::<Vec<_>>();
-        let minimum_named_copies = cards.len();
-        for card in cards {
-            // spellbench-public-reveal: hand card revealed by the card rules.
-            for observer in [PlayerId::P0, PlayerId::P1] {
-                let _ = state.record_hand_reveal(
-                    observer,
-                    controller,
-                    card,
-                    Some(minimum_named_copies),
-                );
+            .map_or(0, |item| item.v4.x_value);
+        let (rituals, breaches) = decode_splice(code);
+        for (name, count) in [
+            (DESPERATE_RITUAL, usize::from(rituals)),
+            (THROUGH_THE_BREACH, usize::from(breaches)),
+        ] {
+            if count == 0 {
+                continue;
+            }
+            let cards = splice_cards_named_in_hand(state, controller, spell, name)
+                .into_iter()
+                .take(count)
+                .collect::<Vec<_>>();
+            let minimum_named_copies = cards.len();
+            for card in cards {
+                // spellbench-public-reveal: hand card revealed by the card rules.
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    let _ = state.record_hand_reveal(
+                        observer,
+                        controller,
+                        card,
+                        Some(minimum_named_copies),
+                    );
+                }
             }
         }
     }
@@ -1743,9 +1801,17 @@ pub(crate) fn activation_allowed(state: &GameState, name: &str, ability_index: u
 pub(crate) fn spell_cost_reduction(
     state: &GameState,
     definition: &CardDef,
+    method: CastMethodV4,
     player: PlayerId,
 ) -> u32 {
-    let colors = crate::card_def::mana_colors_mask(definition.colors);
+    let colors = if method == CastMethodV4::Alternative {
+        crate::eternal_pauper_pf2c_v1::prototype_profile(definition).map_or_else(
+            || crate::card_def::mana_colors_mask(definition.colors),
+            |profile| profile.color_mask,
+        )
+    } else {
+        crate::card_def::mana_colors_mask(definition.colors)
+    };
     if colors == 0 {
         return 0;
     }
@@ -1771,12 +1837,28 @@ pub(crate) fn spell_cost_reduction(
     u32::try_from(count).unwrap_or(u32::MAX)
 }
 
-/// Splice onto Arcane's cost for an Arcane spell: the only splice card in
-/// the catalog is Desperate Ritual ({1}{R}), so the spliced cards are the
-/// Desperate Rituals in the caster's hand and their count is announced like
-/// X. `None` for every other spell, for an Arcane spell with its own X
-/// (Sickening Shoal, wave S1e), whose X holds that announcement, and
-/// outside eternal builds.
+/// Packs `(spliced Desperate Rituals, spliced Through the Breaches)` into the
+/// spell's announced `x_value` byte. When no Through the Breach is spliced,
+/// the encoded value equals the Desperate Ritual count verbatim.
+pub(crate) fn encode_splice(rituals: u8, breaches: u8) -> u8 {
+    (rituals & 0x0F) | ((breaches & 0x0F) << 4)
+}
+
+/// Decodes a packed splice announcement into `(rituals, breaches)`.
+pub(crate) fn decode_splice(code: u16) -> (u8, u8) {
+    ((code & 0x0F) as u8, ((code >> 4) & 0x0F) as u8)
+}
+
+/// Whether `definition` is an Arcane spell that announces splice counts in
+/// its X slot (neither replicate nor multikicker nor printed `{X}`).
+pub(crate) fn is_spliceable_arcane(definition: &CardDef) -> bool {
+    splice_cost(definition).is_some()
+        && crate::eternal_cards_v1::replicate_cost(definition.name).is_none()
+        && crate::eternal_cube_c2c_v1::multikicker_cost(definition.name).is_none()
+}
+
+/// Splice onto Arcane's cost marker for an Arcane spell without printed `{X}`
+/// (Sickening Shoal, wave S1e, keeps its X for its own cost).
 pub(crate) fn splice_cost(definition: &CardDef) -> Option<Cost> {
     (cfg!(feature = "eternal-fixtures")
         && definition.subtypes.contains(&Subtype::Arcane)
@@ -1784,14 +1866,69 @@ pub(crate) fn splice_cost(definition: &CardDef) -> Option<Cost> {
         .then_some(SPLICE_COST)
 }
 
-/// The splice cards `player` holds other than `spell`.
-fn splice_cards_in_hand(state: &GameState, player: PlayerId, spell: ObjectId) -> Vec<ObjectId> {
+/// The additional mana costs owed by the encoded splice selection `code`.
+pub(crate) fn splice_costs_for_code(code: u16) -> Vec<Cost> {
+    let (rituals, breaches) = decode_splice(code);
+    let mut costs = Vec::with_capacity(usize::from(rituals) + usize::from(breaches));
+    costs.extend(std::iter::repeat_n(SPLICE_COST, usize::from(rituals)));
+    costs.extend(std::iter::repeat_n(
+        BREACH_SPLICE_COST,
+        usize::from(breaches),
+    ));
+    costs
+}
+
+/// The splice cards named `name` that `player` holds other than `spell`.
+fn splice_cards_named_in_hand(
+    state: &GameState,
+    player: PlayerId,
+    spell: ObjectId,
+    name: &str,
+) -> Vec<ObjectId> {
     state.players[player.index()]
         .hand
         .iter()
         .copied()
-        .filter(|&card| card != spell && definition_name(state, card) == Some(DESPERATE_RITUAL))
+        .filter(|&card| card != spell && definition_name(state, card) == Some(name))
         .collect()
+}
+
+/// Counts of `(Desperate Ritual, Through the Breach)` cards in `player`'s hand
+/// excluding `spell`, clamped to the 4-bit nibble ceiling (15 each).
+pub(crate) fn splice_hand_counts(state: &GameState, player: PlayerId, spell: ObjectId) -> (u8, u8) {
+    let rituals = u8::try_from(
+        splice_cards_named_in_hand(state, player, spell, DESPERATE_RITUAL)
+            .len()
+            .min(15),
+    )
+    .unwrap_or(15);
+    let breaches = u8::try_from(
+        splice_cards_named_in_hand(state, player, spell, THROUGH_THE_BREACH)
+            .len()
+            .min(15),
+    )
+    .unwrap_or(15);
+    (rituals, breaches)
+}
+
+/// Whether `code` is a valid splice combination for `player`'s current hand
+/// when casting `spell` (`definition`). Non-spliceable spells return `true`.
+pub(crate) fn splice_code_valid_for_hand(
+    definition: &CardDef,
+    spell: ObjectId,
+    player: PlayerId,
+    code: u16,
+    state: &GameState,
+) -> bool {
+    if !is_spliceable_arcane(definition) {
+        return true;
+    }
+    if code > u16::from(u8::MAX) {
+        return false;
+    }
+    let (rituals, breaches) = decode_splice(code);
+    let (max_rituals, max_breaches) = splice_hand_counts(state, player, spell);
+    rituals <= max_rituals && breaches <= max_breaches
 }
 
 /// The most cards a cast of `definition` may splice: the splice cards in
@@ -1802,12 +1939,11 @@ pub(crate) fn splice_cap(
     player: PlayerId,
     state: &GameState,
 ) -> Option<u8> {
-    if splice_cost(definition).is_none()
-        || crate::eternal_cards_v1::replicate_cost(definition.name).is_some()
-    {
+    if !is_spliceable_arcane(definition) {
         return None;
     }
-    Some(u8::try_from(splice_cards_in_hand(state, player, spell).len()).unwrap_or(u8::MAX))
+    let (rituals, breaches) = splice_hand_counts(state, player, spell);
+    Some(encode_splice(rituals, breaches))
 }
 
 /// Twinned Vision's "Discard a card" belongs to its flashback cost: whether

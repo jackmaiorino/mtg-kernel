@@ -19,6 +19,8 @@ pub struct FlatActionDecisionSliceV5 {
     pub active_object_count: u16,
 }
 
+/// The dedup key and its three fixed defects are those of
+/// `flat_action_v4::FlatResolvedActionObjectV4`; see its doc comment.
 struct FlatResolvedActionObjectV5 {
     arena_id: u32,
     position: u32,
@@ -210,6 +212,7 @@ impl FastActorSessionV1 {
                             && candidate.reference == *reference
                             && candidate.position_sensitive == position_sensitive
                             && (!position_sensitive || candidate.position == position)
+                            && candidate.object.group == object.group
                     }) {
                         if previous.object != object {
                             return Err(FlatActionDecisionSliceErrorV1::InvalidActionReference);

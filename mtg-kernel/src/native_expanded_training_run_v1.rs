@@ -25,14 +25,15 @@ use crate::expanded_deck_training_v1::soft_q_teacher_v1::{
 use crate::expanded_deck_training_v1::verified_bytes_cache_v1;
 use crate::expanded_deck_training_v1::{
     execute_collect_with_carried_v1, execute_update_with_carried_v1, line_b_frozen_sha256_v1,
-    load_expanded_update_inference_v1, load_fixed_roster_opponent_contract_v1,
-    load_initial_for_run_v1, take_collection_fields_v1, CarriedLearnerV1, CollectionSamplerV1,
-    CollectionTrajectoryFieldsV1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
-    ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
-    ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PendingCarriedLearnerV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    load_fixed_roster_opponent_contract_v1, load_initial_for_run_v1, take_collection_fields_v1,
+    CarriedLearnerV1, CollectionSamplerV1, CollectionTrajectoryFieldsV1, ExpandedEpisodeV1,
+    ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
+    ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1,
+    PendingCarriedLearnerV1, PinnedFileV1, UpdateBackwardExecutionV1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
+use crate::native_policy_train_step_v1::card_projection_e1::CardSemanticsV1;
 use crate::sideboard::RegisteredDeckV1;
 use crate::training_math_v1::TrainingMathV1;
 use crate::w5_xact_v1::W5_XACT_VERSION_V1;
@@ -511,7 +512,37 @@ pub struct NativeExpandedTrainingRunV1 {
     /// config and receipt is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_ledger: Option<ChainLedgerOptionsV1>,
+    /// Opt-in binary columnar trajectory container (`trajectory_container_v1`);
+    /// omitted for legacy JSON, preserving every existing config and identity.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::expanded_deck_training_v1::TrajectoryRecordFormatV1::is_json"
+    )]
+    pub trajectory_format: crate::expanded_deck_training_v1::TrajectoryRecordFormatV1,
     pub output_directory: PathBuf,
+    // Last on purpose: serde also decodes a struct from a positional array, and a
+    // trailing defaulted field keeps every earlier positional config valid.
+    /// Config-driven bound (MiB) on the record bytes of one prepared update's
+    /// trajectory batch (decompressed for sealed files), checked at
+    /// collection validation and in the update; default 512 keeps every
+    /// existing config byte-identical on the wire and every bound unchanged.
+    /// Raising it admits updates of more than about 190 games of 2.7 MiB.
+    /// It changes no state: an update either fits or is refused. Recorded in
+    /// run.json when non-default. Prepared updates only. See
+    /// `ordered_update_preparation`.
+    #[serde(
+        default = "default_max_trajectory_batch_mebibytes",
+        skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+    )]
+    pub max_trajectory_batch_mebibytes: usize,
+    // Trailing on purpose, after the bound above: a positional config from
+    // before this option still decodes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::expanded_deck_training_v1::card_semantics_e1::deserialize_present_v1"
+    )]
+    pub card_semantics: Option<crate::expanded_deck_training_v1::CardSemanticsConfigV1>,
 }
 
 fn is_zero_non_natural_fraction(value: &f32) -> bool {
@@ -524,6 +555,14 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+}
+
+fn default_max_trajectory_batch_mebibytes() -> usize {
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
+
+fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
 }
 
 fn check(ok: bool, message: &str) -> Result<(), String> {
@@ -566,6 +605,13 @@ fn identity(value: &impl Serialize) -> Result<String, String> {
 }
 
 impl NativeExpandedTrainingRunV1 {
+    /// The trajectory batch bound in bytes (`max_trajectory_batch_mebibytes`).
+    fn trajectory_batch_bytes_v1(&self) -> u64 {
+        crate::expanded_deck_training_v1::trajectory_batch_bytes_v1(
+            self.max_trajectory_batch_mebibytes,
+        )
+    }
+
     /// Read-only strict decoding for explicit schedule preparation. This does
     /// not load any model, open a device or create a run directory.
     pub fn from_json_v1(input: &str) -> Result<Self, String> {
@@ -575,6 +621,42 @@ impl NativeExpandedTrainingRunV1 {
     }
 
     pub fn validate_v1(&self) -> Result<(), String> {
+        self.validate_with_projection_v1().map(|_| ())
+    }
+
+    fn validate_with_projection_v1(&self) -> Result<Option<CardSemanticsV1>, String> {
+        let mut projection = None;
+        crate::expanded_deck_training_v1::validate_card_semantics_run_v1(
+            self.card_semantics.as_ref(),
+            &self.initial_source,
+            self.update_backend,
+            &self.loss_selection,
+            self.line_b.is_some()
+                || self.e_supported.is_some()
+                || self.soft_q.is_some()
+                || self.search_targets.is_some()
+                || self.ex1.is_some(),
+        )?;
+        if let Some(config) = &self.card_semantics {
+            check(
+                config.table_path.is_absolute(),
+                "card semantics table_path must be absolute",
+            )?;
+            check(
+                !is_converted_source_v1(&self.initial_source),
+                "card semantics requires an ordinary input contract",
+            )?;
+            check(
+                !self.record_format.is_v2(),
+                "card semantics requires record_format v1",
+            )?;
+            projection = Some(config.load_v1()?);
+            #[cfg(feature = "gpu-exact-v1")]
+            check(
+                !crate::gpu_exact_v1::learner_installed_v1(),
+                "card semantics refuses GPU exact learner",
+            )?;
+        }
         check(self.schema == SCHEMA, "unknown successor run schema")?;
         // Line (b) teacher seeds are explicit per update and come from the
         // launcher's manifest (CODEX #572); this driver invents no schedule.
@@ -611,6 +693,18 @@ impl NativeExpandedTrainingRunV1 {
             "record_envelope requires parallel collection and a prepared or EX1 CPU update, \
              without line (b), E, SQ1 or search targets",
         )?;
+        check(
+            !self.trajectory_format.is_binary() || self.collection_workers > 1,
+            "trajectory_format binary modes require parallel collection (collection_workers > 1)",
+        )?;
+        check(
+            !self.trajectory_format.uses_zstd1_payload() || self.record_envelope.is_none(),
+            "binary_zstd1 trajectory format cannot be combined with record_envelope zstd1",
+        )?;
+        check(
+            !(self.trajectory_format.omits_opponent_tensors() && self.ex1.is_some()),
+            "learner-only trajectory format refuses EX1 collection",
+        )?;
         if !self.training_math.is_platform_libm() {
             check(
                 self.update_backend.is_cpu()
@@ -640,6 +734,14 @@ impl NativeExpandedTrainingRunV1 {
             self.preparation_workers > 1
                 || self.max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             "max_prepared_tensor_mebibytes applies to prepared updates only (preparation_workers > 1)",
+        )?;
+        crate::expanded_deck_training_v1::validate_max_trajectory_batch_mebibytes_v1(
+            self.max_trajectory_batch_mebibytes,
+        )?;
+        check(
+            self.preparation_workers > 1
+                || self.max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+            "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
         )?;
         check(
             self.output_directory.is_absolute(),
@@ -890,7 +992,7 @@ impl NativeExpandedTrainingRunV1 {
                 }
             }
         }
-        Ok(())
+        Ok(projection)
     }
 }
 
@@ -1181,6 +1283,7 @@ fn reverify_validated_collection(
 /// `input_contract` is the run's no-state-digest contract member
 /// (`no_state_digest_v1`), None for an unconverted run; the receipt and
 /// every trajectory must carry exactly it.
+#[allow(clippy::too_many_arguments)]
 fn validate_collection(
     collection: &PinnedFileV1,
     source: &ExpandedModelSourceV1,
@@ -1189,6 +1292,7 @@ fn validate_collection(
     collection_sampler: CollectionSamplerV1,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
+    batch_bytes: u64,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let document = read_pin(collection)?;
     check(
@@ -1210,12 +1314,13 @@ fn validate_collection(
         document.get("input_contract") == input_contract,
         "collection no-state-digest contract differs from the run's",
     )?;
-    validate_collection_episodes_with_sampler_v1(
+    validate_collection_episodes_bounded_v1(
         &document,
         episodes,
         collection_sampler.identity_v1(),
         training_math,
         input_contract,
+        batch_bytes,
     )
 }
 
@@ -1244,12 +1349,35 @@ fn validate_collection_episodes(
 /// Also binds every trajectory's `learner_sampler` to the configured
 /// collection sampler (absent for the legacy samplers), its
 /// `training_math` to the run's, and its `input_contract` to the run's.
+#[cfg(test)]
 fn validate_collection_episodes_with_sampler_v1(
     document: &Value,
     episodes: &[ExpandedEpisodeV1],
     learner_sampler: Option<&str>,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
+) -> Result<Vec<PinnedFileV1>, String> {
+    validate_collection_episodes_bounded_v1(
+        document,
+        episodes,
+        learner_sampler,
+        training_math,
+        input_contract,
+        ARTIFACT_CAP,
+    )
+}
+
+/// Validates every collected trajectory against its scheduled episode,
+/// sampler, training math and input contract within the run's trajectory
+/// batch bound (`max_trajectory_batch_mebibytes`, 512 MiB by default, which
+/// is `ARTIFACT_CAP`).
+fn validate_collection_episodes_bounded_v1(
+    document: &Value,
+    episodes: &[ExpandedEpisodeV1],
+    learner_sampler: Option<&str>,
+    training_math: TrainingMathV1,
+    input_contract: Option<&Value>,
+    batch_bytes: u64,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(document["trajectories"].clone()).map_err(err)?;
@@ -1264,54 +1392,119 @@ fn validate_collection_episodes_with_sampler_v1(
             crate::expanded_deck_training_v1::ledgered_retry_seed_overrides_v1(&pin, episodes)?
         }
     };
-    // Hash and parse the trajectory files concurrently (one short-lived thread
-    // per file, ten to sixty per update); the checks below still run in order
-    // and report the first failing trajectory exactly as the serial loop did.
+    // Hash and parse the trajectory files on a bounded worker pool instead of
+    // spawning one OS thread per file (which would spawn up to hundreds of
+    // threads on large batches); the checks below still run in slot order and
+    // report the first failing trajectory exactly as the serial loop did.
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
     // Sealed files (`record_envelope_v1`) open only within the update's batch
     // bound, decided in pin order before any is opened.
     let admitted = crate::expanded_deck_training_v1::record_envelope_v1::admit_batch_v1(
         trajectories.iter().map(|pin| pin.path.as_path()),
-        ARTIFACT_CAP,
+        batch_bytes,
     )?;
     let parsed_ahead = std::sync::atomic::AtomicUsize::new(0);
-    let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = std::thread::scope(|scope| {
-        let parsed_ahead = &parsed_ahead;
-        let handles: Vec<_> = trajectories
+    const MAX_VALIDATION_WORKERS_V1: usize = 16;
+    let worker_count = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .clamp(1, MAX_VALIDATION_WORKERS_V1)
+        .min(trajectories.len());
+    let next_slot = std::sync::atomic::AtomicUsize::new(0);
+    let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = if worker_count <= 1 {
+        trajectories
             .iter()
             .zip(&admitted)
             .map(|(trajectory, admitted)| {
-                scope.spawn(move || -> Result<CollectionTrajectoryFieldsV1, String> {
-                    let bytes = read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
-                    admitted.check_v1(&bytes)?;
-                    match take_collection_fields_v1(&trajectory.sha256, &bytes) {
-                        Some(fields) => {
-                            parsed_ahead.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            Ok(fields)
-                        }
-                        None => {
-                            let record =
-                                crate::expanded_deck_training_v1::record_envelope_v1::open_v1(
-                                    &bytes,
-                                    ARTIFACT_CAP,
-                                )?;
-                            let document: Value = serde_json::from_slice(&record).map_err(err)?;
-                            Ok(CollectionTrajectoryFieldsV1::of_document_v1(&document))
-                        }
+                let bytes = read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
+                admitted.check_v1(&bytes)?;
+                match take_collection_fields_v1(&trajectory.sha256, &bytes) {
+                    Some(fields) => {
+                        parsed_ahead.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        Ok(fields)
                     }
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err("collection validation worker panicked".to_string()))
+                    None => {
+                        crate::expanded_deck_training_v1::trajectory_container_v1::read_any_collection_fields_v1(
+                            &bytes,
+                            ARTIFACT_CAP,
+                        )
+                    }
+                }
             })
             .collect()
-    });
+    } else {
+        std::thread::scope(|scope| {
+            let parsed_ahead = &parsed_ahead;
+            let next_slot = &next_slot;
+            let trajectories = &trajectories;
+            let admitted = &admitted;
+            let handles: Vec<_> = (0..worker_count)
+                .map(|_| {
+                    scope.spawn(
+                        move || -> Vec<(usize, Result<CollectionTrajectoryFieldsV1, String>)> {
+                            let mut out = Vec::new();
+                            loop {
+                                let slot =
+                                    next_slot.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                if slot >= trajectories.len() {
+                                    break;
+                                }
+                                let trajectory = &trajectories[slot];
+                                let admitted = &admitted[slot];
+                                let res = (|| -> Result<CollectionTrajectoryFieldsV1, String> {
+                                    let bytes =
+                                        read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
+                                    admitted.check_v1(&bytes)?;
+                                    match take_collection_fields_v1(&trajectory.sha256, &bytes) {
+                                        Some(fields) => {
+                                            parsed_ahead.fetch_add(
+                                                1,
+                                                std::sync::atomic::Ordering::Relaxed,
+                                            );
+                                            Ok(fields)
+                                        }
+                                        None => crate::expanded_deck_training_v1::trajectory_container_v1::read_any_collection_fields_v1(
+                                            &bytes,
+                                            ARTIFACT_CAP,
+                                        ),
+                                    }
+                                })();
+                                out.push((slot, res));
+                            }
+                            out
+                        },
+                    )
+                })
+                .collect();
+            let mut by_slot: Vec<Option<Result<CollectionTrajectoryFieldsV1, String>>> =
+                (0..trajectories.len()).map(|_| None).collect();
+            let mut worker_panicked = false;
+            for handle in handles {
+                match handle.join() {
+                    Ok(results) => {
+                        for (slot, res) in results {
+                            by_slot[slot] = Some(res);
+                        }
+                    }
+                    Err(_) => {
+                        worker_panicked = true;
+                    }
+                }
+            }
+            by_slot
+                .into_iter()
+                .map(|entry| {
+                    entry.unwrap_or_else(|| {
+                        if worker_panicked {
+                            Err("collection validation worker panicked".to_string())
+                        } else {
+                            Err("collection validation slot missing".to_string())
+                        }
+                    })
+                })
+                .collect()
+        })
+    };
     for ((episode, seed_override), saved) in episodes.iter().zip(&seed_overrides).zip(saved) {
         let saved = saved?;
         let mut expected = episode.clone();
@@ -1347,6 +1540,7 @@ fn validate_preparation_execution(
     document: &Value,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_preparation_groups: usize,
 ) -> Result<(), String> {
     let telemetry = document.get("update_preparation");
     if workers == 1 {
@@ -1363,7 +1557,7 @@ fn validate_preparation_execution(
     check(
         telemetry["schema"] == "mtg-kernel-ordered-update-preparation/v1"
             && telemetry["requested_workers"] == workers
-            && (1..=65_536).contains(&jobs)
+            && (1..=max_preparation_groups as u64).contains(&jobs)
             && telemetry["started_workers"] == (workers as u64).min(jobs),
         "recovered update preparation differs from run configuration",
     )?;
@@ -1383,7 +1577,7 @@ fn validate_preparation_execution(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn validate_update(
+pub(crate) fn validate_update(
     update: &PinnedFileV1,
     source: &ExpandedModelSourceV1,
     trajectories: &[PinnedFileV1],
@@ -1393,6 +1587,7 @@ fn validate_update(
     update_backend: ExpandedUpdateBackendV1,
     preparation_workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_preparation_groups: usize,
     line_b_frozen_sha256: Option<&str>,
     e_supported: Option<&ESupportedTeacherOptionsV1>,
     soft_q: Option<&SoftQTeacherOptionsV1>,
@@ -1401,8 +1596,21 @@ fn validate_update(
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
     loss_selection: &ExpandedLossSelectionV1,
-) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
+    before_projection: Option<&CardSemanticsV1>,
+) -> Result<
+    (
+        ExpandedModelSourceV1,
+        ExpandedInferenceIdentityV1,
+        Option<CardSemanticsV1>,
+    ),
+    String,
+> {
+    let card_semantics_binding = before_projection.map(CardSemanticsV1::binding_v1);
     let document = read_pin(update)?;
+    crate::expanded_deck_training_v1::card_semantics_e1::validate_receipt_v1(
+        &document,
+        card_semantics_binding,
+    )?;
     check(
         document.get("input_contract") == input_contract,
         "update no-state-digest contract differs from the run's",
@@ -1431,6 +1639,7 @@ fn validate_update(
         &document,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_preparation_groups,
     )?;
     check(
         document["complete"] == true
@@ -1444,8 +1653,14 @@ fn validate_update(
         checkpoint: Some(checkpoint.clone()),
         ..source.clone()
     };
-    let after = scoped_v1(LoadRoleV1::UpdateValidation, || {
-        load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)
+    let (after, projection) = scoped_v1(LoadRoleV1::UpdateValidation, || {
+        crate::expanded_deck_training_v1::load_expanded_update_bound_projection_v1(
+            &next,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            before_projection,
+        )
     })?;
     // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
     crate::expanded_deck_training_v1::s_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
@@ -1461,7 +1676,7 @@ fn validate_update(
             && document["after_state_sha256"] == after.state_sha256,
         "update does not advance exactly one optimizer step",
     )?;
-    Ok((next, after))
+    Ok((next, after, projection))
 }
 
 /// An E run's update must carry its packet, bound into the new checkpoint with
@@ -1610,6 +1825,7 @@ fn collection_command(
             training_math: config.training_math,
             ex1,
             record_envelope: config.record_envelope,
+            trajectory_format: config.trajectory_format,
             output_directory,
         }
     }
@@ -1643,6 +1859,9 @@ fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &
     if config.max_prepared_tensor_mebibytes != DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES {
         document["max_prepared_tensor_mebibytes"] = json!(config.max_prepared_tensor_mebibytes);
     }
+    if config.max_trajectory_batch_mebibytes != DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES {
+        document["max_trajectory_batch_mebibytes"] = json!(config.max_trajectory_batch_mebibytes);
+    }
 }
 
 fn update_command(
@@ -1674,6 +1893,7 @@ fn update_command(
         }
     } else if config.preparation_workers == 1 {
         ExpandedTrainingCommandV1::Update {
+            card_semantics: config.card_semantics.clone(),
             line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
@@ -1688,6 +1908,7 @@ fn update_command(
         }
     } else {
         ExpandedTrainingCommandV1::UpdatePrepared {
+            card_semantics: config.card_semantics.clone(),
             line_b: config.line_b.clone(),
             source: source.clone(),
             trajectories,
@@ -1698,6 +1919,7 @@ fn update_command(
             loss_selection: config.loss_selection,
             preparation_workers: config.preparation_workers,
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes: config.max_trajectory_batch_mebibytes,
             training_math: config.training_math,
             record_format: config.record_format,
             record_envelope: config.record_envelope,
@@ -1715,14 +1937,23 @@ struct ConvertedInitialV1 {
     carried: Option<CarriedLearnerV1>,
 }
 
-/// Never inlined: the loaded policy stays out of the driver's frame.
+/// Never inlined: the loaded policy stays out of the driver's frame. Run
+/// validation refuses card semantics for a converted source, so `projection`
+/// is None: a run-start training load refuses a checkpoint section through
+/// the same admission as an ordinary source (`card_semantics_e1`).
 #[inline(never)]
 fn load_converted_initial_v1(
     config: &NativeExpandedTrainingRunV1,
     want_carried: bool,
+    projection: &mut Option<CardSemanticsV1>,
 ) -> Result<ConvertedInitialV1, String> {
     let loaded = scoped_v1(LoadRoleV1::RunInitial, || {
-        load_initial_for_run_v1(&config.initial_source, config.training_math, want_carried)
+        load_initial_for_run_v1(
+            &config.initial_source,
+            config.training_math,
+            want_carried,
+            projection,
+        )
     })?;
     let record = loaded
         .input_contract_record
@@ -1772,13 +2003,73 @@ fn flat_identity_declared_v1(
     })
 }
 
+/// The engine identity recorded for a checkpoint this trainer wrote, read
+/// from the iteration receipt that commits it: the checkpoint sits in
+/// `iterations/N/attempt-A/update/` beside its `update.json`, which must pin
+/// it, and `iterations/N/complete.json` must pin that `update.json`. Paths
+/// are taken relative to the checkpoint, so a moved run still resolves.
+/// None for any other checkpoint, a receipt written before identities were
+/// recorded, or anything unreadable.
+fn recorded_checkpoint_engine_v1(checkpoint: &PinnedFileV1) -> Option<Value> {
+    let update_directory = checkpoint.path.parent()?;
+    let update_path = update_directory.join("update.json");
+    let metadata = fs::metadata(&update_path).ok()?;
+    if !metadata.is_file() || metadata.len() > SMALL_CAP {
+        return None;
+    }
+    let update_bytes = fs::read(&update_path).ok()?;
+    let update: Value = serde_json::from_slice(&update_bytes).ok()?;
+    if update["checkpoint"]["sha256"] != checkpoint.sha256.as_str() {
+        return None;
+    }
+    let receipt_path = update_directory.parent()?.parent()?.join("complete.json");
+    let receipt = read_json(&receipt_path, SMALL_CAP).ok()?;
+    if receipt["update"]["sha256"] != digest(&update_bytes) {
+        return None;
+    }
+    receipt.get("engine").cloned()
+}
+
+/// The one line a run prints when its start checkpoint's recorded engine is
+/// not `running` or is not recorded. A fresh start (no checkpoint) and a
+/// match print nothing. Recording only: the run continues either way.
+fn start_checkpoint_engine_note_v1(
+    source: &ExpandedModelSourceV1,
+    running: &Value,
+) -> Option<String> {
+    let checkpoint = source.checkpoint.as_ref()?;
+    let running_text = crate::engine_identity_v1::describe_engine_identity_v1(running);
+    match recorded_checkpoint_engine_v1(checkpoint) {
+        Some(recorded) if recorded == *running => None,
+        Some(recorded) => Some(format!(
+            "native expanded training: note: the start checkpoint was written by a different engine ({}); this build is {running_text}; continuing",
+            crate::engine_identity_v1::describe_engine_identity_v1(&recorded)
+        )),
+        None => Some(format!(
+            "native expanded training: note: the start checkpoint has no recorded engine identity; this build is {running_text}; continuing"
+        )),
+    }
+}
+
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
 /// only at completed iteration boundaries; it never changes the saved plan.
+/// Notes for the operator (`start_checkpoint_engine_note_v1`) go to stderr.
 pub fn run_native_expanded_training_v1(
     config: &NativeExpandedTrainingRunV1,
     max_new_iterations: Option<usize>,
 ) -> Result<Value, String> {
-    config.validate_v1()?;
+    run_native_expanded_training_noting_v1(config, max_new_iterations, &mut std::io::stderr())
+}
+
+/// [`run_native_expanded_training_v1`] with its operator notes written to
+/// `notes`, one whole line per write, so tests can read exactly what the run
+/// prints. A note that cannot be written never stops the run.
+fn run_native_expanded_training_noting_v1(
+    config: &NativeExpandedTrainingRunV1,
+    max_new_iterations: Option<usize>,
+    notes: &mut dyn Write,
+) -> Result<Value, String> {
+    let mut projection = config.validate_with_projection_v1()?;
     config.update_backend.require_compiled_v1()?;
     // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
     // run is admitted before its first pinned read: a run without resident
@@ -1812,13 +2103,21 @@ pub fn run_native_expanded_training_v1(
         .map_err(err)?;
     lock.try_lock()
         .map_err(|e| format!("run already has an active writer or cannot lock: {e}"))?;
+    // Every completion record names the engine that wrote it, outside every
+    // digest (`engine_identity_v1`). A start checkpoint written by another
+    // engine, or by one that recorded none, is reported on stderr (stdout
+    // stays JSON lines) and never refused.
+    let engine = crate::engine_identity_v1::engine_identity_v1();
+    if let Some(note) = start_checkpoint_engine_note_v1(&config.initial_source, &engine) {
+        let _ = notes.write_all(format!("{note}\n").as_bytes());
+    }
     // A converted (no-state-digest) run loads its initial source before the
     // plan, which records its validated effective identity and contract. An
     // unconverted run keeps its plan bytes and loads afterwards, as before.
     let want_initial_carried = !root.join("iterations/000000/complete.json").exists()
         && !root.join("completion.json").exists();
     let converted_initial = is_converted_source_v1(&config.initial_source)
-        .then(|| load_converted_initial_v1(config, want_initial_carried))
+        .then(|| load_converted_initial_v1(config, want_initial_carried, &mut projection))
         .transpose()?;
     let input_contract = converted_initial
         .as_ref()
@@ -1871,6 +2170,7 @@ pub fn run_native_expanded_training_v1(
                     &config.initial_source,
                     config.training_math,
                     want_initial_carried,
+                    &mut projection,
                 )
             })?;
             (loaded.identity, None, loaded.carried)
@@ -1946,9 +2246,10 @@ pub fn run_native_expanded_training_v1(
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
+                config.trajectory_batch_bytes_v1(),
             )?;
             let update = parse_pin(&receipt, "update")?;
-            let (next, after) = validate_update(
+            let (next, after, next_projection) = validate_update(
                 &update,
                 &current,
                 &trajectories,
@@ -1958,6 +2259,9 @@ pub fn run_native_expanded_training_v1(
                 config.update_backend,
                 config.preparation_workers,
                 config.max_prepared_tensor_mebibytes,
+                crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                    config.trajectory_batch_bytes_v1(),
+                ),
                 line_b_frozen_sha256.as_deref(),
                 e_options.as_ref(),
                 sq_options.as_ref(),
@@ -1966,6 +2270,7 @@ pub fn run_native_expanded_training_v1(
                 config.training_math,
                 input_contract.as_ref(),
                 &config.loss_selection,
+                projection.as_ref(),
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -1980,6 +2285,7 @@ pub fn run_native_expanded_training_v1(
                 stopped_at_ledger = usec >= stop;
             }
             carried = None;
+            projection = next_projection;
             current = next;
             current_identity = after;
             history.push(current.clone());
@@ -2043,6 +2349,7 @@ pub fn run_native_expanded_training_v1(
                     config.collection_sampler,
                     config.training_math,
                     input_contract.as_ref(),
+                    config.trajectory_batch_bytes_v1(),
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(candidate);
@@ -2064,6 +2371,7 @@ pub fn run_native_expanded_training_v1(
                     config.collection_sampler,
                     config.training_math,
                     input_contract.as_ref(),
+                    config.trajectory_batch_bytes_v1(),
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 let started = Instant::now();
@@ -2077,6 +2385,9 @@ pub fn run_native_expanded_training_v1(
                     config.update_backend,
                     config.preparation_workers,
                     config.max_prepared_tensor_mebibytes,
+                    crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                        config.trajectory_batch_bytes_v1(),
+                    ),
                     line_b_frozen_sha256.as_deref(),
                     e_options.as_ref(),
                     sq_options.as_ref(),
@@ -2088,6 +2399,7 @@ pub fn run_native_expanded_training_v1(
                     config.training_math,
                     input_contract.as_ref(),
                     &config.loss_selection,
+                    projection.as_ref(),
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -2130,6 +2442,7 @@ pub fn run_native_expanded_training_v1(
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
+                config.trajectory_batch_bytes_v1(),
             )?;
             collection_validation_seconds += started.elapsed().as_secs_f64();
             validated_trajectories = Some(trajectories.clone());
@@ -2149,6 +2462,7 @@ pub fn run_native_expanded_training_v1(
                     preparation_workers: (config.preparation_workers > 1)
                         .then_some(config.preparation_workers),
                     max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
+                    max_trajectory_batch_mebibytes: config.max_trajectory_batch_mebibytes,
                     record_envelope: config.record_envelope,
                     output_directory: attempt.join("update"),
                 },
@@ -2198,11 +2512,12 @@ pub fn run_native_expanded_training_v1(
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
+                config.trajectory_batch_bytes_v1(),
             )?
         };
         collection_validation_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
-        let (next, after) = validate_update(
+        let (next, after, next_projection) = validate_update(
             &update,
             &current,
             &trajectories,
@@ -2212,6 +2527,9 @@ pub fn run_native_expanded_training_v1(
             config.update_backend,
             config.preparation_workers,
             config.max_prepared_tensor_mebibytes,
+            crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                config.trajectory_batch_bytes_v1(),
+            ),
             line_b_frozen_sha256.as_deref(),
             e_options.as_ref(),
             sq_options.as_ref(),
@@ -2220,11 +2538,12 @@ pub fn run_native_expanded_training_v1(
             config.training_math,
             input_contract.as_ref(),
             &config.loss_selection,
+            projection.as_ref(),
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
             "source":current,"episodes_sha256":episode_digest,"collection":collection,"update":update,
-            "output_identity":after});
+            "output_identity":after,"engine":engine});
         if config.record_process_cpu {
             receipt["driver_process_cpu_seconds"] =
                 json!(crate::regret_census_v1::stage4a::process_cpu::seconds()?);
@@ -2258,6 +2577,7 @@ pub fn run_native_expanded_training_v1(
         }
         receipts.push(publish(&directory, "complete.json", &receipt)?);
         carried = pending_carried.and_then(|pending| pending.commit_v1(&next, &after));
+        projection = next_projection;
         current = next;
         current_identity = after;
         history.push(current.clone());
@@ -2291,17 +2611,28 @@ pub fn run_native_expanded_training_v1(
     let mut result = json!({"schema":SCHEMA,"complete":complete,"completed_iterations":receipts.len(),
         "planned_iterations":config.iterations.len(),"iterations":receipts,"source":current,
         "actual_identity":current_identity,"device":"cpu","gpu_ordinal":null,
-        "loss_identity":config.loss_selection.loss_identity_v1(),"strength_claim":false});
+        "loss_identity":config.loss_selection.loss_identity_v1(),"strength_claim":false,
+        "engine":engine});
     config.update_backend.record_run_execution_v1(&mut result);
     record_loss_selection_execution(config, &mut result);
     record_collection_execution(config, &mut result);
     let final_path = root.join("completion.json");
     if complete {
         if final_path.exists() {
-            check(
-                read_json(&final_path, SMALL_CAP)? == result,
-                "saved run completion differs",
-            )?;
+            let saved = read_json(&final_path, SMALL_CAP)?;
+            // The completion names the engine that wrote it. run.json binds
+            // the commit and tracked tree, not the clean status, so a rerun by
+            // another build of the same plan keeps the saved engine rather
+            // than refusing on it.
+            match saved.get("engine") {
+                Some(recorded) => result["engine"] = recorded.clone(),
+                None => {
+                    if let Some(fields) = result.as_object_mut() {
+                        fields.remove("engine");
+                    }
+                }
+            }
+            check(saved == result, "saved run completion differs")?;
         } else {
             publish(root, "completion.json", &result)?;
         }
@@ -2460,6 +2791,7 @@ mod tests {
         };
         let registered = [list("Affinity"), list("Elves")];
         NativeExpandedTrainingRunV1 {
+            card_semantics: None,
             schema: SCHEMA.into(),
             initial_source: source.clone(),
             opponents: vec![NamedExpandedOpponentV1 {
@@ -2485,6 +2817,8 @@ mod tests {
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        priority_windows: None,
+                        london_keep_offset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -2503,6 +2837,7 @@ mod tests {
             preparation_workers: 1,
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             line_b: None,
@@ -2512,6 +2847,7 @@ mod tests {
             ex1: None,
             record_process_cpu: false,
             chain_ledger: None,
+            trajectory_format: Default::default(),
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
     }
@@ -2710,15 +3046,403 @@ mod tests {
         }
         let legacy = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
             "requested_workers": 4, "physical_group_jobs": 10, "started_workers": 4}});
-        validate_preparation_execution(&legacy, 4, 256).unwrap();
-        assert!(validate_preparation_execution(&legacy, 4, 1024)
+        validate_preparation_execution(&legacy, 4, 256, 65_536).unwrap();
+        assert!(validate_preparation_execution(&legacy, 4, 1024, 65_536)
             .unwrap_err()
             .contains("preparation bound differs"));
         let recorded = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
             "requested_workers": 4, "physical_group_jobs": 10, "started_workers": 4,
             "max_decoded_tensor_bytes": 1024u64 * 1024 * 1024}});
-        validate_preparation_execution(&recorded, 4, 1024).unwrap();
-        assert!(validate_preparation_execution(&recorded, 4, 256).is_err());
+        validate_preparation_execution(&recorded, 4, 1024, 65_536).unwrap();
+        assert!(validate_preparation_execution(&recorded, 4, 256, 65_536).is_err());
+        // The recovered job count is bounded by the run's group bound, which
+        // follows `max_trajectory_batch_mebibytes` (65,536 by default).
+        let large = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
+            "requested_workers": 4, "physical_group_jobs": 70_000, "started_workers": 4}});
+        assert!(validate_preparation_execution(&large, 4, 256, 65_536).is_err());
+        validate_preparation_execution(&large, 4, 256, 262_144).unwrap();
+        let mut raised = schedule();
+        raised.preparation_workers = 4;
+        raised.max_trajectory_batch_mebibytes = 2048;
+        assert_eq!(
+            crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                raised.trajectory_batch_bytes_v1()
+            ),
+            262_144
+        );
+        assert_eq!(
+            crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                schedule().trajectory_batch_bytes_v1()
+            ),
+            65_536
+        );
+    }
+
+    /// `max_trajectory_batch_mebibytes`: absent is 512 and never serialized,
+    /// so an existing config keeps its wire bytes and identity; an explicit
+    /// 512 shares those bytes; 1..=4096 is admitted on prepared runs; zero,
+    /// anything above 4096 and a serial run are refused; a raised bound is
+    /// recorded in run.json, reaches collection validation and reaches the
+    /// prepared update command.
+    #[test]
+    fn max_trajectory_batch_mebibytes_preserves_wire_and_validates() {
+        let plan = schedule();
+        let wire = value(&plan).unwrap();
+        assert!(wire.get("max_trajectory_batch_mebibytes").is_none());
+        let decoded: NativeExpandedTrainingRunV1 = serde_json::from_value(wire).unwrap();
+        assert_eq!(decoded.max_trajectory_batch_mebibytes, 512);
+        assert_eq!(decoded.trajectory_batch_bytes_v1(), ARTIFACT_CAP);
+        let mut explicit = schedule();
+        explicit.max_trajectory_batch_mebibytes = 512;
+        assert_eq!(identity(&explicit).unwrap(), identity(&plan).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&explicit).unwrap(),
+            serde_json::to_vec(&plan).unwrap()
+        );
+        let prepared = |mebibytes| {
+            let mut config = schedule();
+            config.preparation_workers = 4;
+            config.max_trajectory_batch_mebibytes = mebibytes;
+            config
+        };
+        for admitted in [1, 511, 513, 2048, 4096] {
+            prepared(admitted).validate_v1().unwrap();
+        }
+        for refused in [0, 4097, usize::MAX] {
+            assert_eq!(
+                prepared(refused).validate_v1().unwrap_err(),
+                "max_trajectory_batch_mebibytes must be in 1..=4096"
+            );
+        }
+        let raised = prepared(2048);
+        assert_eq!(raised.trajectory_batch_bytes_v1(), 2048 << 20);
+        let wire = value(&raised).unwrap();
+        assert_eq!(wire["max_trajectory_batch_mebibytes"], json!(2048));
+        assert_ne!(
+            identity(&raised).unwrap(),
+            identity(&prepared(512)).unwrap()
+        );
+        let mut serial = schedule();
+        serial.max_trajectory_batch_mebibytes = 2048;
+        assert!(serial
+            .validate_v1()
+            .unwrap_err()
+            .contains("max_trajectory_batch_mebibytes applies to prepared updates only"));
+        let mut manifest = json!({});
+        record_collection_execution(&raised, &mut manifest);
+        assert_eq!(manifest["max_trajectory_batch_mebibytes"], json!(2048));
+        let mut default_manifest = json!({});
+        record_collection_execution(&schedule(), &mut default_manifest);
+        assert!(default_manifest
+            .get("max_trajectory_batch_mebibytes")
+            .is_none());
+        let default_prepared = prepared(512);
+        for (config, expected) in [(&raised, 2048), (&default_prepared, 512)] {
+            let command = update_command(
+                config,
+                0,
+                &config.initial_source,
+                Vec::new(),
+                PathBuf::new(),
+            );
+            let wire = value(&command).unwrap();
+            assert_eq!(
+                wire.get("max_trajectory_batch_mebibytes").is_some(),
+                expected != 512
+            );
+            match command {
+                ExpandedTrainingCommandV1::UpdatePrepared {
+                    max_trajectory_batch_mebibytes,
+                    ..
+                } => assert_eq!(max_trajectory_batch_mebibytes, expected),
+                _ => panic!("prepared run must issue a prepared update"),
+            }
+        }
+        // Collection validation enforces the run's batch bound before opening
+        // any sealed trajectory file.
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("run-collection-batch-bound");
+        let mut frame = vec![0x28, 0xb5, 0x2f, 0xfd, 0xe0];
+        frame.extend_from_slice(&(300u64 << 20).to_le_bytes());
+        frame.extend_from_slice(&[0x01, 0x00, 0x00]);
+        let pins: Vec<PinnedFileV1> = (0..2)
+            .map(|index| {
+                let path = root.join(format!("episode-{index:04}.json"));
+                fs::write(&path, &frame).unwrap();
+                PinnedFileV1 {
+                    path,
+                    sha256: digest(&frame),
+                }
+            })
+            .collect();
+        let mut two = schedule();
+        let mut second = two.iterations[0].episodes[0].clone();
+        second.episode.id = "second".into();
+        two.iterations[0].episodes.push(second);
+        let episodes = resolve_episodes(&two, 0, &two.initial_source, &[]).unwrap();
+        let doc = json!({"trajectories": pins});
+        assert_eq!(
+            validate_collection_episodes_bounded_v1(
+                &doc,
+                &episodes,
+                None,
+                TrainingMathV1::PlatformLibm,
+                None,
+                ARTIFACT_CAP,
+            )
+            .unwrap_err(),
+            "trajectory batch exceeds 512 MiB CPU ingestion bound"
+        );
+        assert_eq!(
+            validate_collection_episodes_bounded_v1(
+                &doc,
+                &episodes,
+                None,
+                TrainingMathV1::PlatformLibm,
+                None,
+                500 << 20,
+            )
+            .unwrap_err(),
+            "trajectory batch exceeds 500 MiB CPU ingestion bound"
+        );
+        let admitted_err = validate_collection_episodes_bounded_v1(
+            &doc,
+            &episodes,
+            None,
+            TrainingMathV1::PlatformLibm,
+            None,
+            600 << 20,
+        )
+        .unwrap_err();
+        assert!(
+            !admitted_err.contains("CPU ingestion bound"),
+            "600 MiB bound should admit two 300 MiB frames before opening: {admitted_err}"
+        );
+    }
+
+    /// A non-default `max_trajectory_batch_mebibytes` (513 MiB, so 65,664
+    /// physical groups) through the run driver. The `Ex1Update` it issues
+    /// carries the key and runs on a batch one byte over the default batch
+    /// bound; each of the driver's five `validate_collection` calls admits
+    /// that batch; and each of its three `validate_update` calls admits a
+    /// recovered receipt of 65,600 physical groups. With the historical
+    /// 512 MiB or 65,536 at any of them the run fails there: the last block
+    /// shows those bounds refusing this batch and this receipt. The chain
+    /// and first game are those of
+    /// `w5_ex1_prepared_and_sealed_run_matches_serial_states`.
+    #[test]
+    fn run_driver_forwards_max_trajectory_batch_mebibytes_to_ex1_and_recovery() {
+        use crate::expanded_deck_training_v1::{execute_v1, RecordEnvelopeV1};
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        };
+        let (root, mut config) = real_two_iteration_config_v1(
+            "batch-bound-ex1-recovery",
+            gae,
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        // One update of two games: two files hold more than the default
+        // batch bound, each within one file's own 512 MiB.
+        config.iterations.truncate(1);
+        let mut second = config.iterations[0].episodes[0].clone();
+        second.episode.id = "batch-bound-ex1-recovery-iter-0-second".into();
+        second.episode.seed += 1_000;
+        config.iterations[0].episodes.push(second);
+        config.preparation_workers = 2;
+        config.max_trajectory_batch_mebibytes = 513;
+        config.ex1 = Some(Ex1RunOptionsV1 {
+            run: "w5/chain-prep-test".into(),
+            update_offset: 0,
+            coefficient: 1.0,
+            cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1::Ratio {
+                kappa: 2.0,
+            },
+            w5: Some(W5RunOptionsV1 {
+                budget: 1_500,
+                key_memo_mib: 512,
+            }),
+        });
+        config.validate_v1().unwrap();
+        let groups_bound = crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+            config.trajectory_batch_bytes_v1(),
+        );
+        assert_eq!(groups_bound, 65_664);
+        let run = || run_native_expanded_training_v1(&config, None).unwrap();
+        let iteration = config.output_directory.join("iterations").join("000000");
+        let attempt = |number: usize| iteration.join(format!("attempt-{number:06}"));
+        let update_command = |number: usize| {
+            read_json(&attempt(number).join("update-command.json"), SMALL_CAP).unwrap()
+        };
+        let update_path = |number: usize| attempt(number).join("update").join("update.json");
+        let forget_completion =
+            || fs::remove_file(config.output_directory.join("completion.json")).unwrap();
+
+        // 1. A fresh run issues `Ex1Update` with the run's key.
+        let initial = run();
+        assert_eq!(initial["complete"], true);
+        let command = update_command(0);
+        assert_eq!(command["mode"], "ex1_update");
+        assert_eq!(command["max_trajectory_batch_mebibytes"], 513);
+        let after = read_json(&update_path(0), SMALL_CAP).unwrap()["after_state_sha256"].clone();
+        assert!(after.is_string());
+        assert_eq!(initial["actual_identity"]["state_sha256"], after);
+
+        // 2. The collected games again, in place, as sealed files whose
+        // records (each game followed by spaces, which parse to the same
+        // game) total one byte over the default batch bound, with the update
+        // removed. The resumed run validates that collection where it reuses
+        // the attempt and again before its update, and its `Ex1Update`
+        // reaches the first update's state.
+        let collection_path = attempt(0).join("collect").join("collection.json");
+        let mut collection = read_json(&collection_path, SMALL_CAP).unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(collection["trajectories"].clone()).unwrap();
+        assert_eq!(trajectories.len(), 2);
+        let games: Vec<Vec<u8>> = trajectories
+            .iter()
+            .map(|pin| fs::read(&pin.path).unwrap())
+            .collect();
+        let played: u64 = games.iter().map(|bytes| bytes.len() as u64).sum();
+        let spaces = ARTIFACT_CAP + 1 - played;
+        let padded: Vec<PinnedFileV1> = trajectories
+            .into_iter()
+            .zip(games)
+            .zip([spaces / 2, spaces - spaces / 2])
+            .map(|((pin, mut bytes), count)| {
+                bytes.resize(bytes.len() + count as usize, b' ');
+                let sealed = RecordEnvelopeV1::Zstd1.seal_owned_v1(bytes).unwrap();
+                fs::write(&pin.path, &sealed).unwrap();
+                PinnedFileV1 {
+                    path: pin.path,
+                    sha256: digest(&sealed),
+                }
+            })
+            .collect();
+        collection["trajectories"] = json!(padded);
+        fs::write(&collection_path, serde_json::to_vec(&collection).unwrap()).unwrap();
+        fs::remove_dir_all(attempt(0).join("update")).unwrap();
+        for name in ["update-input.json", "update-command.json"] {
+            fs::remove_file(attempt(0).join(name)).unwrap();
+        }
+        fs::remove_file(iteration.join("complete.json")).unwrap();
+        forget_completion();
+        let resumed = run();
+        assert_eq!(resumed["complete"], true);
+        let command = update_command(1);
+        assert_eq!(command["mode"], "ex1_update");
+        assert_eq!(command["max_trajectory_batch_mebibytes"], 513);
+        let mut receipt = read_json(&update_path(1), SMALL_CAP).unwrap();
+        assert_eq!(receipt["after_state_sha256"], after);
+
+        // The command the driver issued for that batch, executed directly:
+        // without the key it is refused with the historical error, and with
+        // a lower bound it names that bound.
+        let issued_with_bound = |mebibytes: Option<usize>, name: &str| {
+            let mut issued = update_command(1);
+            let members = issued.as_object_mut().unwrap();
+            match mebibytes {
+                Some(mebibytes) => {
+                    members.insert("max_trajectory_batch_mebibytes".into(), json!(mebibytes))
+                }
+                None => members.remove("max_trajectory_batch_mebibytes"),
+            };
+            members.insert("output_directory".into(), json!(root.join(name)));
+            execute_v1(serde_json::from_value(issued).unwrap())
+        };
+        assert_eq!(
+            issued_with_bound(None, "command-default").unwrap_err(),
+            "trajectory batch exceeds 512 MiB CPU ingestion bound"
+        );
+        assert_eq!(
+            issued_with_bound(Some(1), "command-small").unwrap_err(),
+            "trajectory batch exceeds 1 MiB CPU ingestion bound"
+        );
+
+        // 3. The resumed attempt's receipt with more physical groups than
+        // the historical bound, and the iteration's receipt removed: the next
+        // run recovers the attempt, checking the collection and the update
+        // where it reuses them and again before the iteration's receipt.
+        receipt["update_preparation"]["physical_group_jobs"] = json!(65_600);
+        fs::write(update_path(1), serde_json::to_vec(&receipt).unwrap()).unwrap();
+        fs::remove_file(iteration.join("complete.json")).unwrap();
+        forget_completion();
+        let recovered = run();
+        assert_eq!(recovered["complete"], true);
+        assert_eq!(recovered["actual_identity"]["state_sha256"], after);
+
+        // 4. With the iteration's receipt kept and only the run's completion
+        // removed, the next run recovers the completed iteration from that
+        // receipt, checking the same collection and update there.
+        forget_completion();
+        let recovered = run();
+        assert_eq!(recovered["complete"], true);
+        assert_eq!(recovered["actual_identity"]["state_sha256"], after);
+
+        // The same checks of that collection and that receipt, as the driver
+        // names them, pass at the run's bounds and are refused at the
+        // historical ones.
+        let receipt = read_json(&iteration.join("complete.json"), SMALL_CAP).unwrap();
+        let collection = parse_pin(&receipt, "collection").unwrap();
+        let update = parse_pin(&receipt, "update").unwrap();
+        let episodes = resolve_episodes(&config, 0, &config.initial_source, &[]).unwrap();
+        let before = load_initial_for_run_v1(
+            &config.initial_source,
+            config.training_math,
+            false,
+            &mut None,
+        )
+        .unwrap()
+        .identity;
+        let collection_within = |batch_bytes: u64| {
+            validate_collection(
+                &collection,
+                &config.initial_source,
+                &episodes,
+                &before,
+                config.collection_sampler,
+                config.training_math,
+                None,
+                batch_bytes,
+            )
+        };
+        assert_eq!(
+            collection_within(config.trajectory_batch_bytes_v1()).unwrap(),
+            padded
+        );
+        assert_eq!(
+            collection_within(ARTIFACT_CAP).unwrap_err(),
+            "trajectory batch exceeds 512 MiB CPU ingestion bound"
+        );
+        let update_within = |max_preparation_groups: usize| {
+            validate_update(
+                &update,
+                &config.initial_source,
+                &padded,
+                &before,
+                config.learning_rate,
+                config.value_coefficient,
+                config.update_backend,
+                config.preparation_workers,
+                config.max_prepared_tensor_mebibytes,
+                max_preparation_groups,
+                None,
+                None,
+                None,
+                None,
+                config.ex1.as_ref().map(|options| (options, 0, &collection)),
+                config.training_math,
+                None,
+                &config.loss_selection,
+                None,
+            )
+        };
+        update_within(groups_bound).unwrap();
+        assert_eq!(
+            update_within(65_536).unwrap_err(),
+            "recovered update preparation differs from run configuration"
+        );
     }
 
     /// The default record format (`auto`, an absent field) keeps the config's
@@ -3365,14 +4089,14 @@ mod tests {
     #[test]
     fn recovered_update_must_match_actual_preparation_mode() {
         let serial = json!({});
-        validate_preparation_execution(&serial, 1, 256).unwrap();
-        assert!(validate_preparation_execution(&serial, 4, 256).is_err());
+        validate_preparation_execution(&serial, 1, 256, 65_536).unwrap();
+        assert!(validate_preparation_execution(&serial, 4, 256, 65_536).is_err());
         let prepared = json!({"update_preparation":{
             "schema":"mtg-kernel-ordered-update-preparation/v1",
             "requested_workers":4,"started_workers":3,"physical_group_jobs":3}});
-        validate_preparation_execution(&prepared, 4, 256).unwrap();
-        assert!(validate_preparation_execution(&prepared, 1, 256).is_err());
-        assert!(validate_preparation_execution(&prepared, 2, 256).is_err());
+        validate_preparation_execution(&prepared, 4, 256, 65_536).unwrap();
+        assert!(validate_preparation_execution(&prepared, 1, 256, 65_536).is_err());
+        assert!(validate_preparation_execution(&prepared, 2, 256, 65_536).is_err());
         for (field, bad) in [
             ("schema", json!("unknown")),
             ("started_workers", json!(4)),
@@ -3381,7 +4105,7 @@ mod tests {
         ] {
             let mut changed = prepared.clone();
             changed["update_preparation"][field] = bad;
-            assert!(validate_preparation_execution(&changed, 4, 256).is_err());
+            assert!(validate_preparation_execution(&changed, 4, 256, 65_536).is_err());
         }
     }
 
@@ -3541,6 +4265,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         gae.validate_v1().unwrap();
         assert_ne!(identity(&legacy).unwrap(), identity(&gae).unwrap());
@@ -3670,6 +4395,8 @@ mod tests {
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        priority_windows: None,
+                        london_keep_offset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 }],
@@ -3679,6 +4406,7 @@ mod tests {
         (
             root,
             NativeExpandedTrainingRunV1 {
+                card_semantics: None,
                 schema: SCHEMA.into(),
                 initial_source,
                 opponents: vec![],
@@ -3695,6 +4423,7 @@ mod tests {
                 preparation_workers: 1,
                 max_non_natural_episode_fraction: 0.0,
                 max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
                 collection_sampler: CollectionSamplerV1::Legacy,
                 training_math: TrainingMathV1::PlatformLibm,
                 line_b: None,
@@ -3704,6 +4433,7 @@ mod tests {
                 ex1: None,
                 record_process_cpu: false,
                 chain_ledger: None,
+                trajectory_format: Default::default(),
                 output_directory,
             },
         )
@@ -3788,6 +4518,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         let transfer = |contract: &str, encoding: &str| {
             crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
@@ -3885,6 +4616,281 @@ mod tests {
         }
     }
 
+    /// A two-iteration FlatV7 run whose every episode has a London opening
+    /// and carries `offset`, under `loss`.
+    fn london_v7_config_v1(
+        label: &str,
+        loss: ExpandedLossSelectionV1,
+        offset: Option<crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1>,
+    ) -> (
+        crate::test_temp_dir_v1::TempTestDir,
+        NativeExpandedTrainingRunV1,
+    ) {
+        use crate::native_flat_tensorizer_v7::{
+            FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+        };
+        use crate::rl_session::pauper_london_v1::{PauperMulliganModeV1, PauperOpeningV1};
+        let (root, mut config) =
+            real_two_iteration_config_v1(label, loss, ExpandedUpdateBackendV1::Cpu);
+        config.initial_source.feature_transfer =
+            crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V7.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V7.into(),
+            };
+        for iteration in &mut config.iterations {
+            for scheduled in &mut iteration.episodes {
+                scheduled.episode.opening = Some(PauperOpeningV1::LondonV1);
+                scheduled.episode.mulligan_modes =
+                    Some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]);
+                scheduled.episode.london_keep_offset = offset;
+            }
+        }
+        (root, config)
+    }
+
+    /// The `update.json` of completed iteration `index` of a run result.
+    fn iteration_update_v1(result: &Value, index: usize) -> Value {
+        let complete_pin: PinnedFileV1 =
+            serde_json::from_value(result["iterations"][index].clone()).unwrap();
+        let complete: Value =
+            serde_json::from_str(&fs::read_to_string(&complete_pin.path).unwrap()).unwrap();
+        let update_pin: PinnedFileV1 = serde_json::from_value(complete["update"].clone()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&update_pin.path).unwrap()).unwrap()
+    }
+
+    fn gae_loss_v1(
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1,
+    ) -> ExpandedLossSelectionV1 {
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage,
+        }
+    }
+
+    /// The per-count lean vector and the terminal pregame advantage through
+    /// the production run: both are accepted on a real London FlatV7 run, the
+    /// mode is in the run manifest and the update receipts (and a default run
+    /// has neither key), and a run cannot resume under the other mode.
+    #[test]
+    fn london_vector_offset_and_terminal_pregame_advantage_reach_a_real_run() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let vector = LondonKeepOffsetV1::PerCount([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5]);
+        let (_terminal_root, terminal) = london_v7_config_v1(
+            "lv-terminal",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        terminal.validate_v1().unwrap();
+        run_native_expanded_training_v1(&terminal, Some(1)).unwrap();
+        let result = run_native_expanded_training_v1(&terminal, None).unwrap();
+        let manifest: Value =
+            read_json(&terminal.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert_eq!(
+            manifest["loss_selection"]["pregame_advantage"],
+            "terminal_v1"
+        );
+        assert_eq!(
+            manifest["config"]["iterations"][0]["episodes"][0]["episode"]["london_keep_offset"],
+            serde_json::json!([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5])
+        );
+        for index in 0..2 {
+            let update = iteration_update_v1(&result, index);
+            assert_eq!(update["pregame_advantage"]["mode"], "terminal_v1");
+            assert!(
+                update["pregame_advantage"]["pregame_groups"]
+                    .as_u64()
+                    .unwrap()
+                    >= 1,
+                "{}",
+                update["pregame_advantage"]
+            );
+            assert!(update.get("advantage_statistics").is_some());
+        }
+        // The same run under the default mode: no key anywhere, and it cannot
+        // resume the terminal run's directory (one run, one mode).
+        let mut mixed = terminal.clone();
+        mixed.loss_selection = gae_loss_v1(PregameAdvantageV1::Gae);
+        let error = run_native_expanded_training_v1(&mixed, None).unwrap_err();
+        assert!(
+            error.contains("resume plan or implementation differs"),
+            "{error}"
+        );
+        let (_default_root, default) = london_v7_config_v1(
+            "lv-default",
+            gae_loss_v1(PregameAdvantageV1::Gae),
+            Some(vector),
+        );
+        let result = run_native_expanded_training_v1(&default, None).unwrap();
+        let manifest: Value =
+            read_json(&default.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert!(manifest["loss_selection"]
+            .get("pregame_advantage")
+            .is_none());
+        for index in 0..2 {
+            assert!(iteration_update_v1(&result, index)
+                .get("pregame_advantage")
+                .is_none());
+        }
+    }
+
+    /// A scalar offset and seven equal entries are one run: the same
+    /// after-state hash and the same collected actions at every update (the
+    /// episodes differ only in the field's own text).
+    #[test]
+    fn a_scalar_offset_and_seven_equal_entries_run_identically() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let after_states_and_actions = |label: &str, offset: LondonKeepOffsetV1| {
+            let (_root, config) =
+                london_v7_config_v1(label, gae_loss_v1(PregameAdvantageV1::Gae), Some(offset));
+            let result = run_native_expanded_training_v1(&config, None).unwrap();
+            (0..2)
+                .map(|index| {
+                    let update = iteration_update_v1(&result, index);
+                    let pins: Vec<PinnedFileV1> =
+                        serde_json::from_value(update["trajectories"].clone()).unwrap();
+                    let selected: Vec<Value> = pins
+                        .iter()
+                        .map(|pin| {
+                            let trajectory: Value =
+                                serde_json::from_str(&fs::read_to_string(&pin.path).unwrap())
+                                    .unwrap();
+                            let decisions = trajectory["decisions"].as_array().unwrap();
+                            assert!(!decisions.is_empty());
+                            Value::Array(decisions.iter().map(|d| d["selected"].clone()).collect())
+                        })
+                        .collect();
+                    (update["after_state_sha256"].clone(), Value::Array(selected))
+                })
+                .collect::<Vec<_>>()
+        };
+        for value in [6.5f64, 1.0e4] {
+            let scalar = after_states_and_actions(
+                &format!("scalar-{value}"),
+                LondonKeepOffsetV1::Scalar(value),
+            );
+            let spread = after_states_and_actions(
+                &format!("spread-{value}"),
+                LondonKeepOffsetV1::PerCount([value; 7]),
+            );
+            assert_eq!(scalar, spread, "offset {value}");
+        }
+    }
+
+    /// The update's own refusals of the two London modes, on real batches:
+    /// a keep offset trains only under the GAE loss, and the terminal pregame
+    /// advantage needs a London opening on every episode and no auxiliary
+    /// term.
+    #[test]
+    fn the_update_refuses_the_london_modes_outside_the_plain_cpu_gae_update() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::{
+            execute_v1, CheckpointRecordFormatV1, OptimizerMaskV1, PregameAdvantageV1,
+        };
+        // A keep offset under the terminal-reinforce loss: the first update
+        // refuses the batch its own collection wrote.
+        let (_offset_root, offset) = london_v7_config_v1(
+            "lv-offset-terminal-loss",
+            ExpandedLossSelectionV1::TerminalReinforceValueV3,
+            Some(LondonKeepOffsetV1::Scalar(6.5)),
+        );
+        let error = run_native_expanded_training_v1(&offset, None).unwrap_err();
+        assert!(
+            error.contains("london_keep_offset trains only on the plain CPU GAE update"),
+            "{error}"
+        );
+        // The terminal mode on episodes without a London opening.
+        let (_keep_seven_root, keep_seven) = real_two_iteration_config_v1(
+            "terminal-keep-seven",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        let error = run_native_expanded_training_v1(&keep_seven, None).unwrap_err();
+        assert!(
+            error.contains(
+                "the terminal pregame advantage requires a London opening on every episode"
+            ),
+            "{error}"
+        );
+        // The terminal mode beside an auxiliary option (line (b)'s head-only
+        // mask), on the first batch of a completed default run.
+        let (_default_root, default) = real_two_iteration_config_v1(
+            "terminal-line-b",
+            gae_loss_v1(PregameAdvantageV1::Gae),
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        let result = run_native_expanded_training_v1(&default, None).unwrap();
+        let trajectories: Vec<PinnedFileV1> =
+            serde_json::from_value(iteration_update_v1(&result, 0)["trajectories"].clone())
+                .unwrap();
+        let error = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
+            source: default.initial_source.clone(),
+            trajectories,
+            learning_rate: default.learning_rate,
+            value_coefficient: default.value_coefficient,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            loss_selection: gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            line_b: Some(LineBUpdateOptionsV1 {
+                optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
+                teacher: None,
+            }),
+            training_math: TrainingMathV1::PlatformLibm,
+            record_format: CheckpointRecordFormatV1::V1,
+            output_directory: default.output_directory.join("refused-terminal-line-b"),
+        })
+        .unwrap_err();
+        assert!(
+            error
+                .contains("the terminal pregame advantage trains only on the plain CPU GAE update"),
+            "{error}"
+        );
+    }
+
+    /// The London modes on the run's parallel path: parallel collection
+    /// (whose collectors hand the trajectory they serialized to the run's
+    /// collection validation and to the update) and a prepared update reach
+    /// the serial run's states, with the per-count offset and the terminal
+    /// pregame advantage both on.
+    #[test]
+    fn london_modes_reach_the_serial_states_through_parallel_collection_and_a_prepared_update() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let vector = LondonKeepOffsetV1::PerCount([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5]);
+        let (_serial_root, serial) = london_v7_config_v1(
+            "lv-serial",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        let (_prepared_root, mut prepared) = london_v7_config_v1(
+            "lv-prepared",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        prepared.collection_workers = 2;
+        prepared.preparation_workers = 2;
+        prepared.validate_v1().unwrap();
+        let serial_result = run_native_expanded_training_v1(&serial, None).unwrap();
+        let prepared_result = run_native_expanded_training_v1(&prepared, None).unwrap();
+        for index in 0..2 {
+            let serial_update = iteration_update_v1(&serial_result, index);
+            let prepared_update = iteration_update_v1(&prepared_result, index);
+            assert_eq!(
+                prepared_update["after_state_sha256"], serial_update["after_state_sha256"],
+                "update {index}"
+            );
+            assert_eq!(
+                prepared_update["pregame_advantage"], serial_update["pregame_advantage"],
+                "update {index}"
+            );
+            assert!(prepared_update.get("update_preparation").is_some());
+        }
+    }
+
     #[test]
     fn loss_selection_reaches_a_real_two_iteration_cpu_run_receipt() {
         let (_root, config) = real_two_iteration_config_v1(
@@ -3893,6 +4899,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -3931,6 +4938,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4014,6 +5022,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4156,6 +5165,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         let w5_config = |label: &str, closed: u64, stop: Option<u64>| {
             let (root_guard, mut config) =
@@ -4255,6 +5265,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         let ex1_opts = Ex1RunOptionsV1 {
             run: "w5/chain-prep-test".into(),
@@ -4322,6 +5333,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         for format in [
             crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
@@ -4720,6 +5732,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4769,7 +5782,38 @@ mod tests {
             let checkpoint = parse_pin(&update, "checkpoint").unwrap();
             let checkpoint = read_pin_bounded(&checkpoint, ARTIFACT_CAP).unwrap();
             assert_eq!(checkpoint["training_math"], "portable-math-v1");
+            // The iteration receipt names its engine; the update receipt, the
+            // checkpoint and the output identity (every digest) do not.
+            assert_eq!(
+                receipt["engine"],
+                crate::engine_identity_v1::engine_identity_v1()
+            );
+            assert!(receipt["output_identity"].get("engine").is_none());
+            assert!(update.get("engine").is_none());
+            assert!(checkpoint.get("engine").is_none());
         }
+        let engine = crate::engine_identity_v1::engine_identity_v1();
+        assert_eq!(result["engine"], engine);
+        let completion_path = config.output_directory.join("completion.json");
+        let mut saved = read_json(&completion_path, SMALL_CAP).unwrap();
+        assert_eq!(saved["engine"], engine);
+        // Starting from this build's own final checkpoint prints nothing;
+        // the same checkpoint under another running engine prints the line.
+        let last: ExpandedModelSourceV1 = serde_json::from_value(result["source"].clone()).unwrap();
+        assert_eq!(start_checkpoint_engine_note_v1(&last, &engine), None);
+        let mut other = engine.clone();
+        other["git_commit"] = json!("0".repeat(40));
+        let line = start_checkpoint_engine_note_v1(&last, &other).unwrap();
+        assert!(line.contains("different engine"), "{line}");
+        // A completion another build of the same plan wrote (here, with the
+        // other clean status, which run.json does not bind) is kept on a
+        // rerun, not refused, and the train state is unchanged.
+        saved["engine"]["git_clean"] = json!(!engine["git_clean"].as_bool().unwrap());
+        fs::write(&completion_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let rerun = run_native_expanded_training_v1(&config, None).unwrap();
+        assert_eq!(rerun["engine"], saved["engine"]);
+        assert_eq!(rerun["actual_identity"], result["actual_identity"]);
+        assert_eq!(read_json(&completion_path, SMALL_CAP).unwrap(), saved);
         let mut serial = config.clone();
         serial.collection_workers = 1;
         serial.preparation_workers = 1;
@@ -4795,6 +5839,184 @@ mod tests {
         );
     }
 
+    /// mtg-kernel#921 at the run entry: a run whose start checkpoint was
+    /// written by another engine, or by one that recorded none, prints exactly
+    /// one line and then trains as usual; a fresh start and a checkpoint this
+    /// engine wrote print nothing. The note sink stands in for stderr.
+    #[test]
+    fn run_entry_prints_one_line_for_a_start_checkpoint_from_another_or_no_recorded_engine() {
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        };
+        let (_root, config) =
+            real_two_iteration_config_v1("engine-note-run", gae, ExpandedUpdateBackendV1::Cpu);
+        let run = |config: &NativeExpandedTrainingRunV1| {
+            let mut notes = Vec::new();
+            let result =
+                run_native_expanded_training_noting_v1(config, Some(1), &mut notes).unwrap();
+            assert_eq!(result["completed_iterations"], 1);
+            assert!(config
+                .output_directory
+                .join("iterations/000000/complete.json")
+                .is_file());
+            (result, String::from_utf8(notes).unwrap())
+        };
+        // A fresh start: no checkpoint, no line.
+        assert!(config.initial_source.checkpoint.is_none());
+        let (fresh, notes) = run(&config);
+        assert_eq!(notes, "");
+        assert_eq!(fresh["actual_identity"]["adam_step"], 1);
+        // Continuations from the checkpoint the fresh run wrote, each into its
+        // own run directory, while its iteration receipt records this engine,
+        // another engine, or none.
+        let start: ExpandedModelSourceV1 = serde_json::from_value(fresh["source"].clone()).unwrap();
+        let receipt_pin: PinnedFileV1 =
+            serde_json::from_value(fresh["iterations"][0].clone()).unwrap();
+        let receipt = read_pin(&receipt_pin).unwrap();
+        let engine = crate::engine_identity_v1::engine_identity_v1();
+        assert_eq!(receipt["engine"], engine);
+        let continue_as = |name: &str, recorded: Option<Value>| {
+            let mut edited = receipt.clone();
+            match recorded {
+                Some(recorded) => edited["engine"] = recorded,
+                None => {
+                    edited.as_object_mut().unwrap().remove("engine");
+                }
+            }
+            fs::write(&receipt_pin.path, serde_json::to_vec(&edited).unwrap()).unwrap();
+            let mut next = config.clone();
+            next.initial_source = start.clone();
+            next.output_directory = config.output_directory.with_file_name(name);
+            run(&next)
+        };
+        let (same, notes) = continue_as("run-same-engine", Some(engine.clone()));
+        assert_eq!(notes, "");
+        assert_eq!(same["actual_identity"]["adam_step"], 2);
+        let mut other = engine.clone();
+        other["git_commit"] = json!("f".repeat(40));
+        other["rules_version"] = json!(0);
+        let (different, notes) = continue_as("run-other-engine", Some(other));
+        assert_eq!(notes.lines().count(), 1, "{notes}");
+        assert!(notes.ends_with("; continuing\n"), "{notes}");
+        assert!(notes.contains("written by a different engine"), "{notes}");
+        assert!(notes.contains(&"f".repeat(40)), "{notes}");
+        assert!(notes.contains(env!("MTG_KERNEL_BUILD_GIT_HEAD")), "{notes}");
+        let (unrecorded, notes) = continue_as("run-no-engine", None);
+        assert_eq!(notes.lines().count(), 1, "{notes}");
+        assert!(notes.ends_with("; continuing\n"), "{notes}");
+        assert!(notes.contains("has no recorded engine identity"), "{notes}");
+        // The note changes nothing the run trains or records.
+        for result in [&different, &unrecorded] {
+            for field in ["adam_step", "state_sha256"] {
+                assert_eq!(
+                    result["actual_identity"][field],
+                    same["actual_identity"][field]
+                );
+            }
+            assert_eq!(result["engine"], engine);
+        }
+    }
+
+    /// mtg-kernel#921: a run starting from a checkpoint finds the engine its
+    /// iteration receipt recorded, and reports a different or missing one in
+    /// one line; a match or a fresh start reports nothing.
+    #[test]
+    fn start_checkpoint_engine_note_reports_a_different_or_missing_engine_only() {
+        let root = temporary_directory("engine-note");
+        let engine = crate::engine_identity_v1::engine_identity_v1();
+        let iteration = root.join("run").join("iterations").join("000003");
+        let update_directory = iteration.join("attempt-000001").join("update");
+        fs::create_dir_all(&update_directory).unwrap();
+        let checkpoint_bytes = br#"{"checkpoint":"fixture"}"#;
+        fs::write(update_directory.join("checkpoint.json"), checkpoint_bytes).unwrap();
+        let checkpoint = PinnedFileV1 {
+            path: update_directory.join("checkpoint.json"),
+            sha256: digest(checkpoint_bytes),
+        };
+        let update_bytes =
+            serde_json::to_vec(&json!({"complete":true,"checkpoint":checkpoint})).unwrap();
+        fs::write(update_directory.join("update.json"), &update_bytes).unwrap();
+        let update = PinnedFileV1 {
+            path: update_directory.join("update.json"),
+            sha256: digest(&update_bytes),
+        };
+        let write_receipt = |engine: Option<&Value>| {
+            let mut receipt = json!({"iteration":3,"update":update});
+            if let Some(engine) = engine {
+                receipt["engine"] = engine.clone();
+            }
+            fs::write(
+                iteration.join("complete.json"),
+                serde_json::to_vec(&receipt).unwrap(),
+            )
+            .unwrap();
+        };
+        let source = |checkpoint: Option<PinnedFileV1>| ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: root.join("descriptor.json"),
+                sha256: "0".repeat(64),
+            },
+            feature_transfer: crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: String::new(),
+                expected_feature_encoding_digest: String::new(),
+            },
+            checkpoint,
+            s_learner: None,
+            w_learner: None,
+        };
+        let note =
+            |source: &ExpandedModelSourceV1| start_checkpoint_engine_note_v1(source, &engine);
+        let unrecorded = |source: &ExpandedModelSourceV1| {
+            let line = note(source).expect("a line");
+            assert!(line.contains("no recorded engine identity"), "{line}");
+            assert!(line.contains(env!("MTG_KERNEL_BUILD_GIT_HEAD")), "{line}");
+        };
+        // A fresh start has no checkpoint to compare.
+        assert_eq!(note(&source(None)), None);
+        let started = source(Some(checkpoint.clone()));
+        // The iteration has not committed the checkpoint.
+        unrecorded(&started);
+        // The same engine: nothing.
+        write_receipt(Some(&engine));
+        assert_eq!(note(&started), None);
+        // Another engine: one line naming both.
+        let mut other = engine.clone();
+        other["git_commit"] = json!("f".repeat(40));
+        other["rules_version"] = json!(0);
+        write_receipt(Some(&other));
+        let line = note(&started).expect("a line");
+        assert!(line.contains("different engine"), "{line}");
+        assert!(line.contains(&"f".repeat(40)), "{line}");
+        assert!(line.contains("rules version 0"), "{line}");
+        assert!(line.contains(env!("MTG_KERNEL_BUILD_GIT_HEAD")), "{line}");
+        assert!(!line.contains('\n'), "{line}");
+        // A receipt written before engines were recorded.
+        write_receipt(None);
+        unrecorded(&started);
+        // A receipt or update that does not commit this checkpoint is not
+        // its record.
+        write_receipt(Some(&engine));
+        let mut changed = checkpoint.clone();
+        changed.sha256 = "1".repeat(64);
+        unrecorded(&source(Some(changed)));
+        let mut respaced = update_bytes.clone();
+        respaced.push(b'\n');
+        fs::write(update_directory.join("update.json"), &respaced).unwrap();
+        unrecorded(&started);
+        fs::write(update_directory.join("update.json"), &update_bytes).unwrap();
+        assert_eq!(note(&started), None);
+        // A checkpoint outside a run's layout.
+        let loose = root.join("loose-checkpoint.json");
+        fs::write(&loose, checkpoint_bytes).unwrap();
+        unrecorded(&source(Some(PinnedFileV1 {
+            path: loose,
+            sha256: digest(checkpoint_bytes),
+        })));
+    }
+
     /// The portable math covers the CPU update without the recovery loss,
     /// line (b) or E; a config that asks for more is refused before any work.
     #[test]
@@ -4805,6 +6027,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -5092,6 +6315,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -5206,6 +6430,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -5291,6 +6516,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 },
         );
@@ -5301,5 +6527,132 @@ mod tests {
             last_update_loss_identity_v1(&result),
             "gae_advantage_value/v1"
         );
+    }
+    #[test]
+    fn projection_run_validates_table_format_paths_and_null_before_collection() {
+        let (root, source, semantics, _) =
+            crate::expanded_deck_training_v1::card_semantics_e1::fixture_files_v1("run-validation");
+        let mut config = schedule();
+        config.initial_source = source;
+        config.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage: Default::default(),
+        };
+        config.card_semantics = Some(semantics.clone());
+        config.output_directory = root.join("run");
+        config.validate_v1().unwrap();
+        let mut value = serde_json::to_value(&config).unwrap();
+        value["card_semantics"] = Value::Null;
+        assert!(serde_json::from_value::<NativeExpandedTrainingRunV1>(value)
+            .unwrap_err()
+            .to_string()
+            .contains("must not be null"));
+        config.record_format = crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V2;
+        assert!(run_native_expanded_training_v1(&config, Some(1))
+            .unwrap_err()
+            .contains("record_format v1"));
+        assert!(!config.output_directory.exists());
+        config.record_format = crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1;
+        config.card_semantics.as_mut().unwrap().table_path = "relative.json".into();
+        assert!(run_native_expanded_training_v1(&config, Some(1))
+            .unwrap_err()
+            .contains("absolute"));
+        config.card_semantics = Some(semantics);
+        config.card_semantics.as_mut().unwrap().table_sha256 = "0".repeat(64);
+        assert!(run_native_expanded_training_v1(&config, Some(1))
+            .unwrap_err()
+            .contains("sha256"));
+        assert!(!config.output_directory.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn projection_run_dispatch_refuses_s_wide_and_flat_v8() {
+        let (root, source, semantics, _) =
+            crate::expanded_deck_training_v1::card_semantics_e1::fixture_files_v1("run-gates");
+        for case in ["s-learner", "w-learner", "flat-v8"] {
+            let mut config = schedule();
+            config.initial_source = source.clone();
+            config.card_semantics = Some(semantics.clone());
+            config.output_directory = root.join(case);
+            config.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+                pregame_advantage: Default::default(),
+            };
+            if case == "s-learner" {
+                config.initial_source.s_learner = Some(Box::new(
+                    crate::expanded_deck_training_v1::s_learner_v1::SLearnerSourceV1 {
+                        schema: crate::expanded_deck_training_v1::s_learner_v1::S_LEARNER_SOURCE_SCHEMA_V1.into(),
+                        initial: source.play_import.clone(),
+                    }));
+            } else if case == "w-learner" {
+                config.initial_source.w_learner = Some(Box::new(
+                    crate::expanded_deck_training_v1::w_learner_v1::WLearnerSourceV1 {
+                        schema: crate::expanded_deck_training_v1::w_learner_v1::W_LEARNER_SOURCE_SCHEMA_V1.into(),
+                        initial: source.play_import.clone(),
+                    }));
+            } else {
+                config
+                    .initial_source
+                    .feature_transfer
+                    .expected_feature_contract_digest =
+                    crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8.into();
+                config
+                    .initial_source
+                    .feature_transfer
+                    .expected_feature_encoding_digest =
+                    crate::native_flat_tensorizer_v8::FEATURE_ENCODING_DIGEST_V8.into();
+            }
+            assert_eq!(
+                run_native_expanded_training_v1(&config, Some(1)).unwrap_err(),
+                "card semantics requires ordinary net8 CPU GAE",
+                "{case}"
+            );
+            assert!(!config.output_directory.exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn projection_run_refuses_missing_initial_section_before_collection() {
+        use crate::expanded_deck_training_v1::card_semantics_e1::{fixture_files_v1, tool_json_v1};
+        let (root, source, semantics, _) = fixture_files_v1("run-initial");
+        // A tiny file fixture checkpoint is produced by the same helper used
+        // by the tool and loader tests; no collection is needed to admit it.
+        let pin = crate::expanded_deck_training_v1::card_semantics_e1::fixture_plain_checkpoint_v1(
+            &root, &source,
+        );
+        let mut config = schedule();
+        config.initial_source = ExpandedModelSourceV1 {
+            checkpoint: Some(pin),
+            ..source.clone()
+        };
+        config.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage: Default::default(),
+        };
+        config.card_semantics = Some(semantics.clone());
+        config.output_directory = root.join("run");
+        assert!(run_native_expanded_training_v1(&config, Some(1))
+            .unwrap_err()
+            .contains("section missing"));
+        assert!(!config.output_directory.join("iterations/000000").exists());
+        let fork = tool_json_v1(&json!({"mode":"fork-import", "source":config.initial_source,
+            "initial_source":source,"card_semantics":semantics,"tokens":[1],"output_directory":root.join("fork")}).to_string()).unwrap();
+        config.initial_source.checkpoint =
+            Some(serde_json::from_value(fork["card_semantics"].clone()).unwrap());
+        config.card_semantics = None;
+        config.output_directory = root.join("off-run");
+        assert!(run_native_expanded_training_v1(&config, Some(1))
+            .unwrap_err()
+            .contains("requires"));
+        assert!(!config.output_directory.join("iterations/000000").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

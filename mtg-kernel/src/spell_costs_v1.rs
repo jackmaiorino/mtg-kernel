@@ -151,7 +151,9 @@ pub(super) struct SpellComponentChoicesV1 {
 
 pub(super) struct SelectedSpellManaCostsV1 {
     granted_flashback_v1: bool,
-    tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
+    breach_escape: bool,
+    pub(super) tinybones_mana_v72: Option<super::tinybones_v72::ManaGrantV72>,
+    pub(super) any_mana_type: bool,
     /// Whether the last component group is retrace's land discard
     /// (Wrenn and Six's emblem), added after any definition-owned groups.
     pub(super) retrace: bool,
@@ -171,6 +173,8 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) improvise: bool,
     /// Replicate's cost, paid once for each unit of the announced X.
     pub(super) replicate: Option<Cost>,
+    /// Splice onto Arcane: X packs `(Desperate Rituals, Through the Breaches)`.
+    pub(super) splice: bool,
     /// Whether this is a colorless Eldrazi spell, for Eldrazi Temple's
     /// restricted mana.
     pub(super) colorless_eldrazi: bool,
@@ -183,9 +187,44 @@ pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) no_mana: bool,
     /// The spell's own card, which never pays for itself by delve.
     pub(super) no_mana_source: Option<ObjectId>,
+    /// Emerge from artifact (Crabomination, wave C9a): reduces generic mana by
+    /// the sacrificed artifact's mana value.
+    pub(super) emerge_artifact: bool,
 }
 
 impl SelectedSpellManaCostsV1 {
+    fn choose_life_instead_of_discard(&mut self, def: &card_def::CardDef) -> Option<()> {
+        let life = crate::eternal_legacy_e8a_v1::bitter_triumph_life_cost(def)?;
+        let group = self
+            .component_groups
+            .iter_mut()
+            .find(|g| matches!(**g, [CostComponent::DiscardCards(1)]) || **g == life)?;
+        *group = life;
+        Some(())
+    }
+
+    pub(super) fn compound_costs(
+        &self,
+        def: &card_def::CardDef,
+        method: CastMethodV4,
+        mode: u8,
+        x: u16,
+    ) -> Option<super::compound_cast_cost_v1::Costs> {
+        if crate::eternal_legacy_e8a_v1::bitter_triumph_life_cost(def)
+            .is_some_and(|life| self.component_groups.contains(&life))
+        {
+            return None;
+        }
+        super::compound_cast_cost_v1::Costs::new(
+            def,
+            method,
+            self.retrace,
+            self.breach_escape,
+            mode,
+            x,
+        )
+    }
+
     /// Assign the pending cast's one interactive object family to the original
     /// definition-owned group. Escape picks are ordered by the live graveyard,
     /// matching the existing public-equivalence and paid-provenance contract.
@@ -201,13 +240,20 @@ impl SelectedSpellManaCostsV1 {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
             CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
             CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
-            CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
+            CastMethodV4::Escape => Some(escape_cost_v1(definition, self.breach_escape)?),
             _ => None,
         };
         // A card with a choice between additional costs (#715) has one of two
         // groups here; the selected group below is the chosen mode's, and it
         // must be one of the card's two costs.
-        let additional_cost = additional_cost_for_method_v1(definition, method, 0);
+        let printed_method = if self.granted_flashback_v1 {
+            CastMethodV4::Normal
+        } else {
+            method
+        };
+        let additional_cost = crate::eternal_legacy_e8a_v1::bitter_triumph_life_cost(definition)
+            .filter(|life| self.component_groups.contains(life))
+            .or_else(|| additional_cost_for_method_v1(definition, printed_method, 0));
         let retrace = self.retrace.then_some(RETRACE_COST);
         let additional_slot = self
             .component_groups
@@ -262,6 +308,14 @@ impl SelectedSpellManaCostsV1 {
             && original_groups.last().is_some_and(|components| {
                 super::controlled_permanent_sacrifice_in(components).is_some()
                     || super::tap_permanent_filter_in(components).is_some()
+                    // Deprive: "return a land you control to its owner's
+                    // hand" as an additional cost of an ordinary cast.
+                    || components.iter().any(|component| {
+                        matches!(
+                            component,
+                            CostComponent::ReturnControlledPermanentToOwnersHand(_)
+                        )
+                    })
                     // Abhorrent Oculus: "exile six cards from your graveyard"
                     // as an additional cost of an ordinary cast.
                     || (cfg!(feature = "eternal-fixtures")
@@ -359,10 +413,86 @@ impl SelectedSpellManaCostsV1 {
             }
         }
         let (increase, reduction) = generic_modifiers;
-        self.payment_plan(x, player, state, increase, reduction, &reserved)
-            .filter(|payment| {
-                super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
-            })
+        let reduction = if cfg!(feature = "eternal-fixtures") && self.emerge_artifact {
+            if let Some(artifact) = self.component_groups.iter().zip(chosen_by_group).find_map(
+                |(components, chosen)| {
+                    components
+                        .iter()
+                        .any(|component| {
+                            matches!(component, CostComponent::SacrificeControlled { .. })
+                        })
+                        .then(|| chosen.first().copied())
+                        .flatten()
+                },
+            ) {
+                reduction.saturating_add(u32::from(super::object_mana_value(state, artifact)))
+            } else {
+                reduction
+            }
+        } else {
+            reduction
+        };
+        let plan = |reserved: &[ObjectId]| {
+            self.payment_plan(x, player, state, increase, reduction, reserved)
+                .filter(|payment| {
+                    super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
+                })
+        };
+        let payment = plan(&reserved)?;
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            // A land returned by Deprive may first produce mana, but must
+            // survive that production. Only LandV1 return costs need this
+            // projection; ordinary spell and activation quotes do not.
+            let returned_lands = self
+                .component_groups
+                .iter()
+                .zip(chosen_by_group)
+                .filter(|(components, _)| {
+                    components.iter().any(|component| {
+                        matches!(
+                            component,
+                            CostComponent::ReturnControlledPermanentToOwnersHand(
+                                card_def::PermanentFilterDef::LandV1
+                            )
+                        )
+                    })
+                })
+                .flat_map(|(_, chosen)| chosen.iter().copied())
+                .collect::<Vec<_>>();
+            if !returned_lands.is_empty() {
+                let survives = |payment: &SpellManaPaymentV1| {
+                    let mut projected = state.clone();
+                    projected.engine.pending_cast = None;
+                    projected.engine.pending_discard = None;
+                    // The real mana commitment owns depletion, ability
+                    // removal, and all other source effects. Do not keep a
+                    // second list of lands that can leave during payment.
+                    payment.commit(&mut projected, player, source);
+                    let candidates = super::return_permanent_cost_candidates(
+                        player,
+                        &projected,
+                        card_def::PermanentFilterDef::LandV1,
+                        &[],
+                    );
+                    projected.engine.halted.is_none()
+                        && returned_lands.iter().all(|object| {
+                            candidates.iter().any(|binding| {
+                                binding.object == *object
+                                    && binding.expected_zone_change_count
+                                        == state.objects.get(*object).zone_change_count
+                            })
+                        })
+                };
+                if !survives(&payment) {
+                    // Keep the selected land out of mana production and
+                    // retry the same planner. Another source may save it.
+                    reserved.extend(returned_lands.iter().copied());
+                    return plan(&reserved).filter(survives);
+                }
+            }
+        }
+        Some(payment)
     }
 
     /// Determine the payment without changing state. Freeze this result before
@@ -434,22 +564,26 @@ impl SelectedSpellManaCostsV1 {
         if self.convoke && self.delve {
             return None;
         }
-        let replicated = self
-            .replicate
-            .iter()
-            .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)));
+        let extra_costs: Vec<Cost> = if self.splice && cfg!(feature = "eternal-fixtures") {
+            crate::eternal_pauper_e8b_v1::splice_costs_for_code(x)
+        } else {
+            self.replicate
+                .iter()
+                .flat_map(|cost| std::iter::repeat_n(*cost, usize::from(x)))
+                .collect()
+        };
         let pips = self
             .costs
             .iter()
             .copied()
-            .chain(replicated.clone())
+            .chain(extra_costs.iter().copied())
             .flat_map(|cost| cost.pips.iter().copied())
             .collect::<Vec<_>>();
         let generic = self
             .costs
             .iter()
             .map(|cost| u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x))
-            .chain(replicated.map(|cost| u32::from(cost.generic)))
+            .chain(extra_costs.iter().map(|cost| u32::from(cost.generic)))
             .sum::<u32>()
             .saturating_add(increase)
             .saturating_add(self.own_generic_increase)
@@ -501,6 +635,7 @@ impl SelectedSpellManaCostsV1 {
                     &self.spell_subtypes,
                     self.all_creature_types_v60,
                     self.tinybones_mana_v72.as_ref(),
+                    self.any_mana_type,
                     self.types.contains(&CardType::Artifact),
                     self.colorless_eldrazi,
                     self.improvise,
@@ -536,6 +671,7 @@ impl SelectedSpellManaCostsV1 {
                 &self.spell_subtypes,
                 self.all_creature_types_v60,
                 self.tinybones_mana_v72.as_ref(),
+                self.any_mana_type,
                 self.types.contains(&CardType::Artifact),
                 self.colorless_eldrazi,
             ) {
@@ -637,9 +773,39 @@ pub(super) fn selected_spell_mana_costs_v1(
     player: PlayerId,
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
+    selected_spell_mana_costs_with_escape(
+        definition, method, kicked, mode, targets, player, state, false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn selected_spell_mana_costs_with_escape(
+    definition: &card_def::CardDef,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    targets: &[Target],
+    player: PlayerId,
+    state: &GameState,
+    breach_escape: bool,
+) -> Option<SelectedSpellManaCostsV1> {
+    let grist_cda = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c9c_v1::is_grist_card(definition.name)
+        && method != CastMethodV4::Omen
+        && method != CastMethodV4::Bestow
+        && !(method == CastMethodV4::Alternative
+            && definition
+                .alt_cost
+                .is_some_and(|a| a.condition == card_def::AltCostCondition::DisguiseFromHand));
+    let replicate = crate::eternal_cards_v1::replicate_cost(definition.name)
+        .or_else(|| crate::eternal_cube_c2c_v1::multikicker_cost(definition.name));
+    let splice =
+        replicate.is_none() && crate::eternal_pauper_e8b_v1::splice_cost(definition).is_some();
     let mut selected = SelectedSpellManaCostsV1 {
+        breach_escape,
         granted_flashback_v1: false,
         tinybones_mana_v72: None,
+        any_mana_type: false,
         retrace: false,
         legendary_spell: definition
             .supertypes
@@ -659,18 +825,21 @@ pub(super) fn selected_spell_mana_costs_v1(
             .collect(),
         costs: Vec::new(),
         component_groups: Vec::new(),
-        types: definition.types,
+        types: if grist_cda {
+            &[CardType::Planeswalker, CardType::Creature]
+        } else {
+            definition.types
+        },
         own_generic_reduction: 0,
         own_generic_increase: 0,
         delve: false,
         convoke: false,
         improvise: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
-        // Splice onto Arcane is paid like replicate: once per spliced card.
-        // Multikicker (wave C2c) is paid the same way, once per kick.
-        replicate: crate::eternal_cards_v1::replicate_cost(definition.name)
-            .or_else(|| crate::eternal_cube_c2c_v1::multikicker_cost(definition.name))
-            .or_else(|| crate::eternal_pauper_e8b_v1::splice_cost(definition)),
+        // Multikicker (wave C2c) is paid like replicate, once per kick.
+        // Splice onto Arcane packs (Rituals, Through the Breaches) in `x`.
+        replicate,
+        splice,
         // Painter's Servant colors every spell (eternal wave E9a).
         colorless_eldrazi: definition.colors.is_empty()
             && definition.subtypes.contains(&card_def::Subtype::Eldrazi)
@@ -679,6 +848,9 @@ pub(super) fn selected_spell_mana_costs_v1(
         no_mana: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e8a_v1::statics::no_mana_spell(definition.name),
         no_mana_source: None,
+        emerge_artifact: cfg!(feature = "eternal-fixtures")
+            && method == CastMethodV4::Alternative
+            && crate::eternal_cube_c9a_v1::is_emerge_artifact(definition.name),
     };
     match method {
         CastMethodV4::Normal => {
@@ -698,7 +870,7 @@ pub(super) fn selected_spell_mana_costs_v1(
             }
         }
         CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
-        CastMethodV4::Escape => selected.components(escape_cost_v1(definition)?),
+        CastMethodV4::Escape => selected.components(escape_cost_v1(definition, breach_escape)?),
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
         CastMethodV4::Plotted => {
             definition.plot_cost?;
@@ -745,6 +917,11 @@ pub(super) fn selected_spell_mana_costs_v1(
                 .map(|subtype| subtype.stable_id()),
         );
     }
+    if grist_cda {
+        selected
+            .spell_subtypes
+            .push(card_def::Subtype::Insect.stable_id());
+    }
     selected.spell_subtypes.sort_unstable();
     selected.spell_subtypes.dedup();
     // Goblin Anarchomancer and the Familiars: spells of their colors cost
@@ -752,7 +929,7 @@ pub(super) fn selected_spell_mana_costs_v1(
     #[cfg(feature = "eternal-fixtures")]
     {
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
-            crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
+            crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, method, player),
         );
         // Sailors' Bane costs {1} less per instant, sorcery and Adventure
         // card in its owner's graveyard and exile (wave S1b).
@@ -823,7 +1000,7 @@ const RETRACE_COST: &[CostComponent] = &[CostComponent::DiscardLandCardsV1(1)];
 /// (`eternal_legacy_e8a_v1::alternative_skips_additional_cost`). A card
 /// with a choice between two additional costs (Bone Shards, Demand Answers)
 /// pays the one its mode names (`eternal_cost_choice_v1`).
-fn additional_cost_for_method_v1(
+pub(super) fn additional_cost_for_method_v1(
     definition: &card_def::CardDef,
     method: CastMethodV4,
     mode: u8,
@@ -859,7 +1036,13 @@ fn flashback_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostCom
 /// A definition's escape cost: printed, or the one Underworld Breach grants
 /// a nonland card. Whether a card has a granted escape is checked where the
 /// cast is offered.
-fn escape_cost_v1(definition: &card_def::CardDef) -> Option<&'static [CostComponent]> {
+pub(super) fn escape_cost_v1(
+    definition: &card_def::CardDef,
+    breach: bool,
+) -> Option<&'static [CostComponent]> {
+    if breach {
+        return crate::eternal_lurrus_v1::granted_escape_cost(definition);
+    }
     definition
         .escape
         .as_ref()
@@ -883,7 +1066,7 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         targets,
         player,
         state,
-        crate::effect::sphinx_lore_v1::granted_route(state, source),
+        super::sphinx_lore_cast_v1::CostGrant::selected(state, source),
     )
 }
 
@@ -895,7 +1078,7 @@ fn selected_spell_mana_costs_for_source_grant_v1(
     targets: &[Target],
     player: PlayerId,
     state: &GameState,
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SelectedSpellManaCostsV1> {
     let (method, kicked, mode) = form;
     if method == CastMethodV4::Omen
@@ -905,19 +1088,18 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         return None;
     }
     let granted = method == CastMethodV4::Flashback && grant.is_some();
-    if let Some(index) = grant {
+    if let Some(grant) = grant {
         if state
             .objects
             .try_get(source)
             .and_then(|o| card_def::CARD_DEFS.get(o.card_def as usize))
             .is_none_or(|actual| !std::ptr::eq(actual, definition))
-            || method != CastMethodV4::Flashback
-            || !crate::effect::sphinx_lore_v1::quote_grant(state, source, player, index)
+            || !grant.permits(state, source, player, method)
         {
             return None;
         }
     }
-    let mut selected = selected_spell_mana_costs_v1(
+    let mut selected = selected_spell_mana_costs_with_escape(
         definition,
         if granted {
             CastMethodV4::Normal
@@ -929,7 +1111,19 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         targets,
         player,
         state,
+        grant == Some(super::sphinx_lore_cast_v1::CostGrant::Breach),
     )?;
+    if state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        pending.spell == source
+            && pending.cast_mode == Some(super::CastMode::Alternative)
+            && crate::eternal_legacy_e8a_v1::graveyard_life_choice(
+                definition,
+                pending.origin_zone,
+                method,
+            )
+    }) {
+        selected.choose_life_instead_of_discard(definition)?;
+    }
     // Cost determination follows moving the spell to the stack (601.2f).
     // Preserve other reducers, but remove this source's graveyard contribution.
     // Limited to the eternal build so the rated Pauper build keeps its quotes.
@@ -956,6 +1150,8 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         }
     }
     selected.tinybones_mana_v72 = super::tinybones_v72::mana_grant(state, source, player);
+    selected.any_mana_type = cfg!(feature = "eternal-fixtures")
+        && super::permission_allows_any_mana_type_v1(state, source, player);
     if selected.no_mana {
         selected.no_mana_source = Some(source);
     }
@@ -981,13 +1177,26 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 ))
                 .saturating_add(crate::eternal_premodern_p3b_v1::statics::gloom_spell_tax(
                     state, definition, method,
+                ))
+                // Kaervek's Torch: spells that target it cost {2} more
+                // (Pauper field wave Pf1c).
+                .saturating_add(crate::eternal_pauper_pf1c_v1::torch_target_tax(
+                    state, targets,
+                ))
+                // Elite Spellbinder: a spell cast via its exile permission
+                // costs {2} more to cast (Vintage Cube wave C8c).
+                .saturating_add(crate::eternal_cube_c8c_v1::spellbinder_spell_tax(
+                    state, source, player,
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
         if (matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
             || (method == CastMethodV4::Omen
                 && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
-            && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
+            && !(method == CastMethodV4::Alternative
+                && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(definition).is_some())
+            && (grant == Some(super::sphinx_lore_cast_v1::CostGrant::Retrace)
+                || crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player))
         {
             // Delve is tracked outside component_groups, so the check for
             // two object families below does not see it. Retrace cannot
@@ -1021,6 +1230,33 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         // Citadel: "pay life equal to its mana value rather than pay its
         // mana cost", paid as the cast completes.
         selected.costs.remove(0);
+    } else if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, source, player)
+    {
+        // Airbend (Aang, Swift Savior, wave C9a): "While it is exiled, its
+        // owner may cast it for {2} rather than its mana cost." An alternative
+        // cost replaces the mana cost and cannot combine with another
+        // alternative cost (118.9a).
+        if matches!(
+            method,
+            CastMethodV4::Alternative
+                | CastMethodV4::Bestow
+                | CastMethodV4::Flashback
+                | CastMethodV4::Escape
+                | CastMethodV4::Madness
+                | CastMethodV4::Plotted
+        ) || (method == CastMethodV4::Omen
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name))
+        {
+            return None;
+        }
+        if let Some(first) = selected.costs.first_mut() {
+            *first = crate::eternal_cube_c9a_v1::AIRBEND_CAST_COST;
+        } else {
+            selected
+                .costs
+                .insert(0, crate::eternal_cube_c9a_v1::AIRBEND_CAST_COST);
+        }
     }
     if crate::eternal_premodern_p2b_v1::is_thornscape(definition)
         && state.engine.pending_cast.as_ref().is_some_and(|pending| {
@@ -1097,7 +1333,7 @@ pub(super) fn selected_spell_quote_wide_x_v59(
         player,
         state,
         reserved_graveyard,
-        crate::effect::sphinx_lore_v1::granted_route(state, source),
+        super::sphinx_lore_cast_v1::CostGrant::selected(state, source),
     )
 }
 
@@ -1115,7 +1351,7 @@ pub(super) fn selected_spell_quote_with_grant_v1(
     player: PlayerId,
     state: &GameState,
     reserved_graveyard: &[ObjectId],
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SpellManaPaymentV1> {
     selected_spell_quote_with_grant_wide_x_v59(
         definition,
@@ -1148,16 +1384,25 @@ pub(super) fn selected_spell_quote_with_grant_wide_x_v59(
     player: PlayerId,
     state: &GameState,
     reserved_graveyard: &[ObjectId],
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SpellManaPaymentV1> {
-    if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
-        let choice = state
+    let bitter =
+        crate::eternal_legacy_e8a_v1::graveyard_life_choice(definition, origin_zone, method);
+    if bitter || super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
+        let pending = state
             .engine
             .pending_cast
             .as_ref()
-            .filter(|pending| pending.spell == source)
-            .and_then(|pending| pending.mandatory_additional_cost)
-            .and_then(|choice| choice.pay_mana);
+            .filter(|p| p.spell == source);
+        let choice = if bitter {
+            pending
+                .and_then(|p| p.cast_mode)
+                .map(|m| m == super::CastMode::Alternative)
+        } else {
+            pending
+                .and_then(|p| p.mandatory_additional_cost)
+                .and_then(|c| c.pay_mana)
+        };
         return [false, true]
             .into_iter()
             .filter(|branch| choice.is_none_or(|selected| selected == *branch))
@@ -1228,7 +1473,7 @@ pub(super) fn selected_spell_quote_branch_wide_x_v59(
         state,
         reserved_graveyard,
         forced_branch,
-        crate::effect::sphinx_lore_v1::granted_route(state, source),
+        super::sphinx_lore_cast_v1::CostGrant::selected(state, source),
     )
 }
 
@@ -1247,7 +1492,7 @@ fn selected_spell_quote_branch_grant_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
     forced_branch: Option<bool>,
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SpellManaPaymentV1> {
     // Every route, including resolution-time permissions and X menus, uses
     // this quote. Evaluate cast restrictions with the selected form and X.
@@ -1261,13 +1506,25 @@ fn selected_spell_quote_branch_grant_v1(
     {
         return None;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if kicked && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0) && x == 0 {
+        return None;
+    }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
-    // additional cost's discards (Premodern wave P1b), and a replicate,
-    // multikicker or splice count, which counts additional cost payments.
+    // additional cost's discards (Premodern wave P1b), a replicate,
+    // multikicker or splice count, which counts additional cost payments, and
+    // an X kicker cost paid on top of a free cast (Thieving Skydiver, wave C8c).
+    let x_is_additional_cost =
+        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
+            || super::announces_additional_cost_count(definition)
+            || (cfg!(feature = "eternal-fixtures")
+                && kicked
+                && definition.kicker_cost.is_some_and(|cost| cost.x_count > 0));
     if x != 0
-        && !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
-        && !super::announces_additional_cost_count(definition)
+        && !x_is_additional_cost
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c9a_v1::is_airbent_exile_cast(state, source, player))
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal
                 && (crate::eternal_cards_v1::e3::free_hand_cast_selected(
@@ -1289,6 +1546,13 @@ fn selected_spell_quote_branch_grant_v1(
     // Sneak and disturb: the costs each card may be cast for.
     #[cfg(feature = "eternal-fixtures")]
     if !crate::eternal_pauper_e6b_v1::quote_allowed(state, definition, source, origin_zone, method)
+        || !crate::eternal_cube_c8a_v1::quote_allowed(
+            state,
+            definition,
+            source,
+            origin_zone,
+            method,
+        )
     {
         return None;
     }
@@ -1312,7 +1576,11 @@ fn selected_spell_quote_branch_grant_v1(
         state,
         grant,
     )?;
-    if let Some(pay_mana) = forced_branch {
+    if crate::eternal_legacy_e8a_v1::graveyard_life_choice(definition, origin_zone, method) {
+        if forced_branch == Some(true) {
+            selected.choose_life_instead_of_discard(definition)?;
+        }
+    } else if let Some(pay_mana) = forced_branch {
         let mana = super::mandatory_cast_cost_v1::mana_branch(definition)?;
         // Retrace's group follows the mandatory additional cost.
         let retrace = if selected.retrace {
@@ -1332,6 +1600,51 @@ fn selected_spell_quote_branch_grant_v1(
         selected.component_groups.extend(retrace);
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
+    let pending = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|p| p.spell == source);
+    let order = pending.and_then(|p| p.graveyard_cost_first_v1);
+    if let Some(costs) = super::compound_cast_cost_v1::Costs::optional_escape(
+        definition,
+        method,
+        selected.breach_escape,
+    ) {
+        let choice = pending.and_then(|p| p.optional_additional_cost_paid);
+        if choice.is_none()
+            || pending.is_some_and(super::compound_cast_cost_v1::Costs::ordered_optional)
+        {
+            let joint = costs.quote(
+                &selected,
+                state,
+                source,
+                player,
+                x,
+                modifiers,
+                chosen_prefix,
+                order,
+                reserved_graveyard,
+            );
+            if joint.is_some() || choice == Some(true) {
+                return joint.map(|(mana, _)| mana);
+            }
+        }
+    }
+    if let Some(costs) = selected.compound_costs(definition, method, mode, x) {
+        let (mana, _) = costs.quote(
+            &selected,
+            state,
+            source,
+            player,
+            x,
+            modifiers,
+            chosen_prefix,
+            order,
+            reserved_graveyard,
+        )?;
+        return Some(mana);
+    }
     let mut family = None;
     let mut graveyard_types_needed = None;
     let mut discard_count = 0usize;
@@ -1423,14 +1736,7 @@ fn selected_spell_quote_branch_grant_v1(
             }
             // Foil: an Island card first, then any other card.
             CostComponent::DiscardIslandAndAnotherCardV1 => {
-                let mut hand = super::island_discard_cost_candidates(player, source, state, &[]);
-                let first = hand.clone();
-                for &card in &state.players[player.index()].hand {
-                    if card != source && !first.contains(&card) {
-                        hand.push(card);
-                    }
-                }
-                Some((2, hand))
+                Some((2, super::foil_discard_candidates(player, source, state)))
             }
             CostComponent::DiscardCards(count) => {
                 discard_count += usize::from(*count);
@@ -1486,8 +1792,10 @@ fn selected_spell_quote_branch_grant_v1(
             .is_empty()
             && (hand.len() <= discard_count
                 || !hand.iter().any(|object| {
-                    card_def::CARD_DEFS[state.objects.get(*object).card_def as usize]
-                        .has_type(CardType::Creature)
+                    let def = &card_def::CARD_DEFS[state.objects.get(*object).card_def as usize];
+                    def.has_type(CardType::Creature)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_cube_c9c_v1::is_grist_card(def.name))
                 }))
         {
             return None;
@@ -1600,18 +1908,19 @@ fn selected_spell_quote_branch_grant_v1(
 pub(super) struct PreparedSpellPaymentV1 {
     greatwurm: Option<super::greatwurm_cast_v1::PaymentV1>,
     mana: SpellManaPaymentV1,
+    compound: Option<super::compound_cast_cost_v1::Payment>,
     base: PreparedSpellNonmanaV1,
     additional: PreparedSpellNonmanaV1,
     chosen_reveal: Option<ObjectId>,
     optional_kind: Option<super::OptionalAdditionalCostDef>,
-    optional_objects: Vec<ObjectId>,
+    pub(super) optional_objects: Vec<ObjectId>,
     pub(super) ordered_objects: Vec<ObjectId>,
-    pub(super) chosen_power_lki: Option<i32>,
+    pub(super) chosen_creature: Option<super::PaidCostRefV4>,
     pub(super) storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
 }
 
 impl SpellManaPaymentV1 {
-    fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
+    pub(super) fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
         for &object in &self.convoke_tapped {
             super::event::propose_and_commit(state, super::ProposedEvent::tap(object));
         }
@@ -1632,6 +1941,13 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    pub(super) fn compound_printed_discards(&self) -> &[ObjectId] {
+        self.compound
+            .as_ref()
+            .map(|p| p.printed_discards())
+            .unwrap_or_default()
+    }
+
     pub(super) fn planned_mana_count_v1(&self, state: &GameState, player: PlayerId) -> Option<u32> {
         super::checked_spell_mana_plan_v59(state, player, &self.mana.mana)
     }
@@ -1699,6 +2015,30 @@ impl PreparedSpellPaymentV1 {
         .count() as u8
     }
 
+    /// Count of mana of each color (indexed by `ManaColor::pool_index`) spent
+    /// by this payment: tapped sources' consumed units, pool units, and
+    /// restricted-pool units (Vibrance, Wistfulness).
+    #[cfg(feature = "eternal-fixtures")]
+    pub(super) fn mana_by_color(&self, state: &GameState, player: PlayerId) -> [u8; 6] {
+        let plan = &self.mana.mana;
+        let mut counts = plan.pool_used;
+        for &(_, color) in &plan.taps {
+            let slot = &mut counts[color.pool_index()];
+            *slot = slot.saturating_add(1);
+        }
+        for &index in &plan.restricted_pool_used {
+            if let Some(unit) = state.players[player.index()]
+                .restricted_mana_pool
+                .0
+                .get(index)
+            {
+                let slot = &mut counts[unit.color.pool_index()];
+                *slot = slot.saturating_add(1);
+            }
+        }
+        counts
+    }
+
     fn commit_optional(&self, state: &mut GameState) {
         match self.optional_kind {
             Some(super::OptionalAdditionalCostDef::CollectEvidence { .. }) => {
@@ -1713,8 +2053,22 @@ impl PreparedSpellPaymentV1 {
     }
 
     /// Discards have already committed through the shared Madness-aware path.
-    pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
+    pub(super) fn commit(
+        self,
+        state: &mut GameState,
+        player: PlayerId,
+        source: ObjectId,
+    ) -> (u32, Vec<super::PaidCostRefV4>) {
         let spent = self.mana.commit(state, player, source);
+        // Fling: the sacrificed creature's power as it last exists on the
+        // battlefield, after mana abilities changed the board and just before
+        // the sacrifice (Pauper field wave Pf1c).
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_pauper_pf1c_v1::note_sacrifice_power(state, source, &self.ordered_objects);
+        let receipts = self
+            .compound
+            .as_ref()
+            .map_or_else(Vec::new, |payment| payment.commit(state, player, source));
         self.base.apply(state, player, source);
         if let Some(object) = self.chosen_reveal {
             PreparedNonmanaActionV1::RevealHandCard(object).commit(state, player, source);
@@ -1724,7 +2078,7 @@ impl PreparedSpellPaymentV1 {
         if let Some(plan) = self.greatwurm {
             plan.apply_committed(state);
         }
-        spent
+        (spent, receipts)
     }
 }
 
@@ -1766,13 +2120,22 @@ pub(super) fn prepare_final_spell_payment_v1(
         state,
     )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
-    let choices = selected.component_choices_v1(
-        definition,
-        method,
-        player,
-        state,
-        &pending.sacrifice_chosen,
-    )?;
+    let compound = super::compound_cast_cost_v1::Costs::pending(state, pending, definition);
+    let ordered_optional = compound.is_some_and(|costs| costs.pays_optional());
+    let choices = if compound.is_some() {
+        SpellComponentChoicesV1 {
+            ordered_objects: Vec::new(),
+            chosen_by_group: Vec::new(),
+        }
+    } else {
+        selected.component_choices_v1(
+            definition,
+            method,
+            player,
+            state,
+            &pending.sacrifice_chosen,
+        )?
+    };
     let discard_count = selected
         .component_groups
         .iter()
@@ -1797,6 +2160,11 @@ pub(super) fn prepare_final_spell_payment_v1(
             Some(count) => usize::from(count.unwrap_or(0)),
             None => discard_count,
         };
+    let discard_count = if compound.is_some_and(|cost| cost.printed_discard()) {
+        0
+    } else {
+        discard_count
+    };
     if discarded.len() != discard_count
         || discarded.iter().enumerate().any(|(index, object)| {
             discarded[..index].contains(object)
@@ -1811,14 +2179,18 @@ pub(super) fn prepare_final_spell_payment_v1(
     {
         return None;
     }
-    let optional_kind = if pending.optional_additional_cost_paid == Some(true) {
+    let optional_kind = if !ordered_optional && pending.optional_additional_cost_paid == Some(true)
+    {
         Some(definition.optional_additional_cost?)
     } else {
-        None
+        super::pending_collect_evidence_minimum(definition, pending).map(|minimum_mana_value| {
+            super::OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }
+        })
     };
     let optional_objects = pending
         .optional_additional_cost_chosen
         .iter()
+        .filter(|_| optional_kind.is_some())
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
     let optional_graveyard = if matches!(
@@ -1846,15 +2218,36 @@ pub(super) fn prepare_final_spell_payment_v1(
         Some(projected)
     };
     let resources = resource_projection.as_ref().unwrap_or(state);
-    let mana = selected.payment_plan_with_component_choices_v1(
-        pending.selected_x_v59().unwrap_or(0),
-        player,
-        source,
-        resources,
-        modifiers,
-        &group_choices,
-        optional_graveyard,
-    )?;
+    let (mana, compound) = if let Some(costs) = compound {
+        if pending.sacrifice_chosen.len() != costs.count() {
+            return None;
+        }
+        let (mana, payment) = costs.quote(
+            &selected,
+            resources,
+            source,
+            player,
+            pending.selected_x_v59().unwrap_or(0),
+            modifiers,
+            &pending.sacrifice_chosen,
+            Some(pending.graveyard_cost_first_v1?),
+            optional_graveyard,
+        )?;
+        (mana, Some(payment))
+    } else {
+        (
+            selected.payment_plan_with_component_choices_v1(
+                pending.selected_x_v59().unwrap_or(0),
+                player,
+                source,
+                resources,
+                modifiers,
+                &group_choices,
+                optional_graveyard,
+            )?,
+            None,
+        )
+    };
     let spent = super::checked_spell_mana_plan_v59(resources, player, &mana.mana)?;
     if definition.records_mana_spent && u16::try_from(spent).is_err() {
         return None;
@@ -1870,6 +2263,7 @@ pub(super) fn prepare_final_spell_payment_v1(
             None
         },
         mana,
+        compound,
         base: PreparedSpellNonmanaV1 {
             actions: Vec::new(),
         },
@@ -1880,7 +2274,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         optional_kind,
         optional_objects,
         ordered_objects: choices.ordered_objects,
-        chosen_power_lki: None,
+        chosen_creature: None,
         storm_targets: crate::effect::thousand_year_storm_v1::freeze_cast_targets(
             state, pending, method,
         )
@@ -1911,10 +2305,16 @@ pub(super) fn prepare_final_spell_payment_v1(
     // Delve may use an actual graveyard discard, but a Madness card enters exile.
     // Its original frozen total is unchanged by either projection.
     prepared.mana.commit(&mut projected, player, source);
-    let base_count = usize::from(matches!(
-        method,
-        CastMethodV4::Alternative | CastMethodV4::Flashback | CastMethodV4::Escape
-    ));
+    if let Some(payment) = &prepared.compound {
+        payment.commit(&mut projected, player, source);
+    }
+    let base_count = usize::from(
+        prepared.compound.is_none()
+            && matches!(
+                method,
+                CastMethodV4::Alternative | CastMethodV4::Flashback | CastMethodV4::Escape
+            ),
+    );
     let groups = selected
         .component_groups
         .iter()
@@ -1936,6 +2336,25 @@ pub(super) fn prepare_final_spell_payment_v1(
                 source,
             );
         }
+        // Capture the revealed hand incarnation before retrace discards its land.
+        // A creature land can pay both costs and has two distinct receipts.
+        let mut chosen = super::PaidCostRefV4::capture(&projected, binding.object);
+        chosen.power_lki = Some(match zone {
+            super::ChosenCreatureCostZoneV1::Battlefield => {
+                super::effective_power(&projected, binding.object)
+            }
+            super::ChosenCreatureCostZoneV1::Hand => {
+                // Known-by-name mode can already know a different copy of this card.
+                if projected.hand_knowledge_by_name_v2 {
+                    chosen.visible_to_mask = 0b11;
+                }
+                card_def::CARD_DEFS[usize::from(chosen.card_def)]
+                    .power
+                    .map(i32::from)
+                    .unwrap_or(0)
+            }
+        });
+        prepared.chosen_creature = Some(chosen);
     }
     prepared.additional =
         prepare_spell_nonmana_v1(&projected, player, source, &groups[base_count..])?;
@@ -1963,17 +2382,6 @@ pub(super) fn prepare_final_spell_payment_v1(
         }
     }
     prepared.commit_optional(&mut projected);
-    if let Some(binding) = pending.chosen_creature_cost {
-        prepared.chosen_power_lki = Some(match projected.objects.get(binding.object).zone {
-            crate::state::Zone::Battlefield => super::effective_power(&projected, binding.object),
-            crate::state::Zone::Hand => card_def::CARD_DEFS
-                [projected.objects.get(binding.object).card_def as usize]
-                .power
-                .map(i32::from)
-                .unwrap_or(0),
-            _ => return None,
-        });
-    }
     if prepared.greatwurm.is_some() {
         // Counts and exact incarnations were prepared before any real payment.
         // Automatic mana/base costs may not silently spend the same selected
@@ -2616,7 +3024,7 @@ mod tests {
             assert_eq!(serde_json::to_value(&state).unwrap(), funded);
             state.engine.pending_cast = None;
             super::super::commit_discarded_card(&mut state, discarded);
-            let spent = payment.commit(&mut state, PlayerId::P0, pending.spell);
+            let (spent, _) = payment.commit(&mut state, PlayerId::P0, pending.spell);
             assert_eq!(spent, 2);
             assert_eq!(state.players[0].mana_pool, [0; 6]);
             assert_eq!(state.objects.get(discarded).zone, expected_zone);
@@ -2644,7 +3052,7 @@ mod tests {
         assert_eq!(payment.ordered_objects, vec![land]);
         assert_eq!(serde_json::to_value(&state).unwrap(), before);
         state.engine.pending_cast = None;
-        let spent = payment.commit(&mut state, PlayerId::P0, pending.spell);
+        let (spent, _) = payment.commit(&mut state, PlayerId::P0, pending.spell);
         assert_eq!(spent, 1);
         assert_eq!(state.players[0].mana_pool, [0; 6]);
         assert_eq!(state.objects.get(land).zone, crate::state::Zone::Graveyard);

@@ -3,12 +3,13 @@
 //! whose whole mainboard and companion are Full resolve and play to natural
 //! terminals, with both a fixed action preference and seeded random actions.
 //! Games run on the Limited schema 5 session, whose policy observation
-//! reports shroud on permanents and players.
+//! reports shroud on permanents and players and every bound Ward payment, so
+//! spells and abilities target Ward permanents freely.
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError,
-    TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError, CARD_DEFS,
+    KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use serde_json::{json, Value};
@@ -247,17 +248,14 @@ const SNAPSHOTS: [&str; 2] = [
     "data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json",
 ];
 
-/// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 1] = ["Hullbreacher"];
+/// Executable S1 implementations with known missing reachable branches: none.
+const PARTIAL_S1: [&str; 0] = [];
 
 /// Vintage Cube implementations with known missing reachable branches: none.
 /// Bone Shards became Full with the choice between additional costs (#715),
-/// The Mightstone and Weakstone with the Powerstone payments (#726).
-const PARTIAL_CUBE: [&str; 3] = [
-    "Headliner Scarlett",
-    "Gandalf, Goblins' Bane",
-    "Metamorphosis Fanatic",
-];
+/// The Mightstone and Weakstone with the Powerstone payments (#726), and
+/// Headliner Scarlett, Gandalf, Goblins' Bane and Metamorphosis Fanatic in C7a.
+const PARTIAL_CUBE: [&str; 0] = [];
 
 /// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
 /// only Partial definitions.
@@ -321,7 +319,11 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
             "{name}"
         );
     }
-    for name in PARTIAL_S1 {
+    for name in ["Volrath's Shapeshifter"]
+        .into_iter()
+        .chain(PARTIAL_S1)
+        .chain(PARTIAL_CUBE)
+    {
         let id = card_id_by_name(name).unwrap();
         assert!(CARD_DEFS[usize::from(id)].is_executable());
         assert!(matches!(
@@ -443,48 +445,6 @@ fn lavinia_prohibits(decision: &Value, action: &Value) -> bool {
         && usize::from(def.mana_value) > lands_controlled(decision, actor)
 }
 
-/// Whether the opponent of `seat` controls a Hexing Squelcher, whose own
-/// "Ward--Pay 2 life" and the one it grants their other creatures policy
-/// observation v5 does not represent.
-fn opponent_has_life_ward(decision: &Value, seat: &Value) -> bool {
-    decision["observation"]["projection"]["battlefield"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|cards| cards.as_array().into_iter().flatten())
-        .any(|card| {
-            &card["stable"]["controller"] != seat
-                && card["stable"]["card_db_id"]
-                    .as_u64()
-                    .is_some_and(|id| CARD_DEFS[id as usize].name == "Hexing Squelcher")
-        })
-}
-
-/// Whether starting this spell or ability may target a permanent: its card
-/// or ability has a target, or its entry trigger targets one.
-fn may_target(action: &Value) -> bool {
-    let s = &action["semantic"];
-    let Some(id) = s["source"]["card_db_id"].as_u64() else {
-        return false;
-    };
-    let def = &CARD_DEFS[id as usize];
-    match s["action_kind"].as_str() {
-        Some("cast_spell") => {
-            def.target_spec != TargetSpec::None
-                || def.mode2.is_some()
-                || matches!(
-                    def.name,
-                    "Portable Hole" | "Witch Enchanter" | "Monk Realist" | "Ghitu Slinger"
-                )
-        }
-        Some("activate_ability") => s["ability_index"]
-            .as_u64()
-            .and_then(|index| def.activated_abilities.get(index as usize))
-            .is_some_and(|ability| ability.target_spec != TargetSpec::None),
-        _ => false,
-    }
-}
-
 /// Whether this action puts a companion into its owner's hand.
 fn is_companion_action(action: &Value) -> bool {
     let s = &action["semantic"];
@@ -493,19 +453,22 @@ fn is_companion_action(action: &Value) -> bool {
         && s["source"]["card_db_id"].as_u64().is_some_and(|id| {
             matches!(
                 CARD_DEFS[id as usize].name,
-                "Lurrus of the Dream-Den" | "Yorion, Sky Nomad"
+                "Lurrus of the Dream-Den"
+                    | "Yorion, Sky Nomad"
+                    | "Lutri, the Spellchaser"
+                    | "Zirda, the Dawnwaker"
             )
         })
 }
 
 /// Whether the public session can follow this action. Policy observation v5
 /// fails closed while an Escape cast stages its graveyard exile (Sleep of the
-/// Dead, and every nonland card under Underworld Breach) and once an extra
-/// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
-/// Time Vault's ability), so these games never begin either; the engine
-/// paths are covered by the rules tests. Every other action is admitted:
-/// schema 5 reports shroud (Sylvan Safekeeper's ability, Argothian
-/// Enchantress, Sterling Grove, Solitary Confinement).
+/// Dead, and every nonland card under Underworld Breach), so these games
+/// never begin either; the engine paths are covered by the rules tests.
+/// Every other action is admitted: schema 5 reports shroud (Sylvan
+/// Safekeeper's ability, Argothian Enchantress, Sterling Grove, Solitary
+/// Confinement) and the turn schedule once an extra turn is scheduled
+/// (Emrakul, the Aeons Torn's cast trigger, Time Walk, Time Vault's ability).
 fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let s = &action["semantic"];
     if !matches!(
@@ -518,58 +481,28 @@ fn session_can_follow(action: &Value, decision: &Value) -> bool {
         return true;
     };
     let id = id as usize;
-    if matches!(
-        CARD_DEFS[id].name,
-        "Emrakul, the Aeons Torn" | "Time Walk" | "Time Vault"
-    ) {
-        return false;
-    }
     s["action_kind"] != "cast_spell"
         || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
         || (CARD_DEFS[id].escape.is_none()
             && !controls_named(decision, &s["actor"], "Underworld Breach"))
 }
 
-/// Whether this action chooses a Ward permanent as a target.
-fn targets_ward_permanent(action: &Value) -> bool {
-    let target = &action["semantic"]["target"];
-    target["target_kind"] == "object"
-        && target["object"]["card_db_id"]
-            .as_u64()
-            .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
-}
-
-/// Whether this action chooses as a target an object whose controller
-/// controls a Hexing Squelcher, which grants its other creatures "Ward--Pay 2
-/// life" (policy observation v5 does not represent it).
-fn targets_life_warded_object(action: &Value, decision: &Value) -> bool {
-    let target = &action["semantic"]["target"];
-    target["target_kind"] == "object"
-        && controls_named(
-            decision,
-            &target["object"]["controller"],
-            "Hexing Squelcher",
-        )
-}
-
-/// Whether any public stack item's targets include a Ward permanent.
-fn public_targets_ward_permanent(value: &Value) -> bool {
-    match value {
-        Value::Object(map) => {
-            map.get("targets")
-                .and_then(Value::as_array)
-                .is_some_and(|targets| {
-                    targets.iter().any(|target| {
-                        target["target_kind"] == "object"
-                            && target["object"]["card_db_id"]
-                                .as_u64()
-                                .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
-                    })
-                })
-                || map.values().any(public_targets_ward_permanent)
+/// Counts the decision's reported Ward payments (pending and queued) by
+/// cost kind: generic mana, then life.
+fn count_ward_payments(decision: &Value, counts: &mut [usize; 2]) {
+    let payments = &decision["observation"]["projection"]["ward_payments"];
+    let pending = payments.get("pending").into_iter();
+    let queued = payments["queued"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|queued| &queued["payment"]);
+    for payment in pending.chain(queued) {
+        match payment["cost"]["kind"].as_str() {
+            Some("generic") => counts[0] += 1,
+            Some("life") => counts[1] += 1,
+            other => panic!("unexpected Ward cost {other:?}: {payment}"),
         }
-        Value::Array(items) => items.iter().any(public_targets_ward_permanent),
-        _ => false,
     }
 }
 
@@ -1023,6 +956,9 @@ pub(crate) struct Game {
     /// acting player holds a card with that single spell name, which no
     /// action casts.
     pub(crate) mage_held_names: usize,
+    /// Decisions whose observation reports a Ward payment, by cost kind:
+    /// generic mana, then life.
+    pub(crate) ward_payments: [usize; 2],
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -1069,6 +1005,7 @@ pub(crate) fn play_observed(
     let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
     let mut circle_choices = 0;
     let (mut mage_choices, mut mage_held_names) = ([0; 2], 0);
+    let mut ward_payments = [0; 2];
     let mut miracle_reveals = BTreeSet::new();
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
@@ -1136,10 +1073,12 @@ last actions:
                 circle_choices,
                 mage_choices,
                 mage_held_names,
+                ward_payments,
             };
         }
         let decision = &reply["decision"];
         collect_overloaded_spells(decision, &mut overloaded_spells);
+        count_ward_payments(decision, &mut ward_payments);
         // No noncreature spell over the caster's lands is offered while an
         // opponent controls Lavinia, Azorius Renegade (wave S1l).
         for action in decision["legal_actions"].as_array().unwrap() {
@@ -1185,39 +1124,6 @@ last actions:
                 unpaid_exclusions += 1;
             }
         }
-        // Policy observation v5 fails closed while two stack items target
-        // one Ward permanent, so these games avoid targeting a Ward
-        // permanent whenever another action is available, and start no new
-        // spell or ability while something on the stack targets one. It
-        // does not represent "Ward--Pay N life" at all, so while a seat's
-        // opponent controls a Hexing Squelcher that seat starts no spell or
-        // ability that may target a permanent.
-        let ward_targeted = public_targets_ward_permanent(decision);
-        let unwarded: Vec<&Value> = actions
-            .iter()
-            .copied()
-            .filter(|action| {
-                if targets_ward_permanent(action) || targets_life_warded_object(action, decision) {
-                    return false;
-                }
-                let starts_new = matches!(
-                    action["semantic"]["action_kind"].as_str(),
-                    Some("cast_spell" | "activate_ability")
-                );
-                if starts_new
-                    && may_target(action)
-                    && opponent_has_life_ward(decision, &action["semantic"]["actor"])
-                {
-                    return false;
-                }
-                !ward_targeted || !starts_new
-            })
-            .collect();
-        let actions = if unwarded.is_empty() {
-            actions
-        } else {
-            unwarded
-        };
         let action = match policy {
             // A ranked seat passes while its own spell or ability is on the
             // stack, so free recasts (Acererak under Aluren) cannot pile up
@@ -1370,6 +1276,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
     let mut companion_actions = 0;
+    let mut ward_payments = [0; 2];
     // Every deck casts a spell in its two ranked games (one per seat); a
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1410,6 +1317,8 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             continue;
         };
         companion_actions += game.companion_actions;
+        ward_payments[0] += game.ward_payments[0];
+        ward_payments[1] += game.ward_payments[1];
         if let Policy::Ranked = policy {
             *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
             *ranked_casts.entry(second.archetype.as_str()).or_default() += game.casts_by_seat[1];
@@ -1445,6 +1354,13 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     assert!(
         companion_actions > 0,
         "no game put a companion into its owner's hand"
+    );
+    // Spells and abilities target Ward permanents freely, and the session
+    // follows each Ward payment (generic, life).
+    println!("ward payment decisions (generic, life): {ward_payments:?}");
+    assert!(
+        ward_payments.iter().all(|count| *count > 0),
+        "{ward_payments:?}"
     );
 }
 

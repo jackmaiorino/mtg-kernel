@@ -89,7 +89,10 @@ fn library_cards(
 fn shuffle(state: &mut GameState, player: PlayerId) -> Result<(), String> {
     state
         .shuffle_library(player)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c8c_v1::note_library_searched(state, player);
+    Ok(())
 }
 
 fn push(continuation: &mut EffectContinuation, op: EffectOp, path: &[u16]) {
@@ -126,6 +129,24 @@ pub(crate) fn drive(
                 *spec,
                 &path,
             );
+            Ok(false)
+        }
+        E5aOpV1::ExileGraveyardTargetsAfterDrawV1 { first, spec } => {
+            let exiled = super::execute::graveyard_targets(&continuation.ctx, state, *first, *spec);
+            if !exiled.is_empty() && capture_before_exile(state, continuation) {
+                super::execute::exile_graveyard_targets(state, exiled);
+            }
+            Ok(false)
+        }
+        E5aOpV1::ExileCreatureAfterDrawV1 { slot, spec } => {
+            let Some(object) =
+                super::execute::creature_to_exile(&continuation.ctx, state, *slot, *spec)
+            else {
+                return Ok(false);
+            };
+            if capture_before_exile(state, continuation) {
+                event::propose_and_commit(state, ProposedEvent::zone_change(object, Zone::Exile));
+            }
             Ok(false)
         }
         E5aOpV1::ScryTargetXV1 { slot } => {
@@ -203,7 +224,7 @@ pub(crate) fn drive(
                 .filter(|&card| {
                     CARD_DEFS
                         .get(state.objects.get(card).card_def as usize)
-                        .is_some_and(|def| def.has_type(CardType::Creature))
+                        .is_some_and(crate::eternal_cube_c9c_v1::is_nonbattlefield_creature_def)
                 })
                 .map(|card| bind(state, card))
                 .collect::<Vec<_>>();
@@ -301,6 +322,7 @@ fn kozilek(
             });
         }
     }
+    let mut draws = false;
     if let Some(slot) = scry.filter(|&slot| legal_player(slot)) {
         if x > 0 {
             ops.push(e5a(E5aOpV1::ScryTargetXV1 { slot }));
@@ -309,16 +331,46 @@ fn kozilek(
             player: PlayerRef::Target(slot),
             count: 1,
         });
+        draws = true;
     }
     if let Some(slot) = creature {
-        ops.push(e5a(E5aOpV1::ExileCreatureManaValueAtMostXV1 { slot, spec }));
+        ops.push(e5a(if draws {
+            E5aOpV1::ExileCreatureAfterDrawV1 { slot, spec }
+        } else {
+            E5aOpV1::ExileCreatureManaValueAtMostXV1 { slot, spec }
+        }));
     }
     if let Some(first) = cards {
-        ops.push(e5a(E5aOpV1::ExileGraveyardTargetsV1 { first, spec }));
+        ops.push(e5a(if draws {
+            E5aOpV1::ExileGraveyardTargetsAfterDrawV1 { first, spec }
+        } else {
+            E5aOpV1::ExileGraveyardTargetsV1 { first, spec }
+        }));
     }
     for op in ops.into_iter().rev() {
         push(continuation, op, path);
     }
+}
+
+/// Match the draw's triggers while the legal exile targets are in their
+/// original zones (CR 603.2). Hold them until the resolution's checkpoint
+/// so they are ordered under APNAP with the exile's triggers (CR 603.3b).
+/// Returns whether the exile can proceed.
+fn capture_before_exile(state: &mut GameState, continuation: &EffectContinuation) -> bool {
+    if !state.engine.event_log.is_empty() {
+        let captures = crate::trigger::capture_triggers_without_sba_owning(
+            state,
+            &continuation.resolving_item,
+        );
+        if state.engine.halted.is_some() {
+            return false;
+        }
+        if !captures.is_empty() || crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state)
+        {
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, captures);
+        }
+    }
+    true
 }
 
 /// Kozilek's Command: "Exile target creature with mana value X or less"
@@ -457,6 +509,7 @@ pub(crate) fn finish(
                 }
                 let permission = crate::engine::PlayPermission {
                     without_mana_cost: crate::engine::FreeCastV1(true),
+                    any_mana_type: Default::default(),
                     object: card.object,
                     holder: player,
                     zone_change_generation: live.zone_change_count,

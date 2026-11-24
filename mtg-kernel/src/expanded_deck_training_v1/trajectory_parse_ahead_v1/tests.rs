@@ -58,6 +58,56 @@ fn readers_receive_exactly_their_own_parse_once() {
     assert!(!lock_v1(shared_v1()).entries.contains_key(key));
 }
 
+/// The hand-over of a trajectory whose episode carries a London keep offset
+/// (the episode's only floating-point member) equals the parse of its file,
+/// as it does for every other trajectory: the offset is an f64, written in
+/// its shortest round-trip form and read back to the same f64. (An f32 field
+/// would be written in its shortest f32 form, which does not read back to
+/// the widened value the hand-over holds.)
+#[test]
+fn a_handed_over_keep_offset_episode_equals_the_parse_of_its_file() {
+    use london_keep_offset_v1::LondonKeepOffsetV1;
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+    let (mut trajectory, _, _) = replay_fixture(&mut policy, None, 0, &[0, 1]);
+    // Values a schedule writes: float32 start values, decayed in float32. As
+    // one number, and as the first of seven with a zero entry among them.
+    let bases = [15.3003f32, 27.5723, 22.1944, 0.1, 1.0e-3, 123456.7];
+    for b0 in bases {
+        for step in [1.0f32, 0.9999, 0.5, 0.123456] {
+            let mut entries = [0.0f64; 7];
+            for (entry, base) in entries.iter_mut().zip(bases) {
+                *entry = f64::from(base * step);
+            }
+            for offset in [
+                LondonKeepOffsetV1::Scalar(f64::from(b0 * step)),
+                LondonKeepOffsetV1::PerCount(entries),
+            ] {
+                trajectory.episode.london_keep_offset = Some(offset);
+                let bytes = serde_json::to_vec(&trajectory).unwrap();
+                let handed = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory).unwrap();
+                let document: Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    handed,
+                    CollectionTrajectoryFieldsV1::of_document_v1(&document),
+                    "{offset:?}"
+                );
+                let parsed: ExpandedTrajectoryV1 = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(parsed, trajectory, "{offset:?}");
+            }
+        }
+    }
+    // Without the offset the hand-over is unchanged and has no such member.
+    trajectory.episode.london_keep_offset = None;
+    let handed = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory).unwrap();
+    assert!(handed.episode.get("london_keep_offset").is_none());
+    let document: Value =
+        serde_json::from_slice(&serde_json::to_vec(&trajectory).unwrap()).unwrap();
+    assert_eq!(
+        handed,
+        CollectionTrajectoryFieldsV1::of_document_v1(&document)
+    );
+}
+
 #[test]
 fn failed_parses_are_not_kept() {
     let key = "parse-ahead-test-failed";
@@ -180,4 +230,58 @@ fn an_entry_is_never_charged_less_than_the_capacity_it_keeps_alive() {
     state.remove_v1(key);
     assert_eq!(held - state.retained_bytes, capacity);
     assert!(!state.entries.contains_key(key));
+}
+
+/// Differential check: `CollectionTrajectoryFieldsV1::parse_json_v1` returns
+/// the exact same fields as a full `serde_json::Value` parse across valid,
+/// edge-case, duplicate-key, non-object, and malformed documents.
+#[test]
+fn field_only_json_visitor_matches_full_value_parse_on_valid_and_malformed_inputs() {
+    let valid_cases: &[&[u8]] = &[
+        br#"{"episode":{"seed":1,"learner_seat":0},"learner_sampler":"unclamped","training_math":"portable","input_contract":{"kind":"no_state_digest_v1"},"decisions":[{"step":0,"tensor":{"state":[1,2,3]}}]}"#,
+        br#"{"episode":null,"learner_sampler":123,"training_math":null,"input_contract":null,"extra":[1,2,{"nested":"ok"}]}"#,
+        br#"{"decisions":[1,2,3]}"#,
+        // Duplicate keys: serde_json::Map keeps the last occurrence.
+        br#"{"episode":1,"episode":2,"learner_sampler":"first","learner_sampler":99,"training_math":"a","training_math":"b","input_contract":{"x":1},"input_contract":null}"#,
+        br#"[]"#,
+        br#"null"#,
+        br#"42"#,
+        br#""hello""#,
+        br#"true"#,
+    ];
+    for bytes in valid_cases {
+        let value: Value = serde_json::from_slice(bytes).unwrap();
+        let expected = CollectionTrajectoryFieldsV1::of_document_v1(&value);
+        let actual = CollectionTrajectoryFieldsV1::parse_json_v1(bytes).unwrap();
+        assert_eq!(
+            actual,
+            expected,
+            "mismatch on {}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+
+    let deep_open = "[".repeat(140);
+    let deep_close = "]".repeat(140);
+    let deep_doc = format!(r#"{{"episode":1,"decisions":{deep_open}0{deep_close}}}"#);
+    let malformed_cases: Vec<&[u8]> = vec![
+        br#"{"episode":1,"decisions":[1,2,]}"#,
+        br#"{"episode":1,"decisions":[1e999999]}"#,
+        br#"{"episode":1,"decisions":["bad\escape"]}"#,
+        br#"{"episode":1} trailing"#,
+        br#"{"episode":1,"decisions":[1,2"#,
+        deep_doc.as_bytes(),
+    ];
+    for bytes in malformed_cases {
+        assert!(
+            serde_json::from_slice::<Value>(bytes).is_err(),
+            "reference should reject {}",
+            String::from_utf8_lossy(bytes)
+        );
+        assert!(
+            CollectionTrajectoryFieldsV1::parse_json_v1(bytes).is_err(),
+            "visitor should reject {}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
 }

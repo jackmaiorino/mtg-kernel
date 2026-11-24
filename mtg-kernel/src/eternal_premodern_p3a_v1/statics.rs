@@ -119,6 +119,15 @@ pub(crate) fn form_colors(state: &GameState, definition: &CardDef, method: CastM
             .is_some_and(|alt| alt.condition == AltCostCondition::DisguiseFromHand);
     let own = if face_down {
         0
+    } else if method == CastMethodV4::Alternative
+        && definition
+            .alt_cost
+            .is_some_and(|alt| alt.condition == AltCostCondition::PrototypeV1)
+    {
+        crate::eternal_pauper_pf2c_v1::prototype_profile(definition).map_or_else(
+            || crate::card_def::mana_colors_mask(definition.colors),
+            |profile| profile.color_mask,
+        )
     } else if method == CastMethodV4::Omen {
         definition.omen_spell_form().map_or_else(
             || crate::card_def::mana_colors_mask(definition.colors),
@@ -159,23 +168,46 @@ fn cost_colors(cost: Cost) -> u8 {
 /// Whether that prevents all of it. The caller skips it when damage can't be
 /// prevented.
 pub(crate) fn sphere_of_law_prevents(state: &GameState, damage: &mut DamageProposed) -> bool {
-    let Target::Player(player) = damage.target else {
-        return false;
-    };
-    if damage.amount <= 0 {
-        return false;
-    }
-    let spheres = active_with_id(
-        state,
-        static_ids().sphere_of_law,
-        SPHERE_OF_LAW,
-        Some(player),
-    )
-    .count();
-    if spheres == 0 || crate::event::damage_color_mask(state, damage) & red() == 0 {
+    let spheres = applicable_spheres(state, damage).count();
+    if spheres == 0 {
         return false;
     }
     let prevented = i32::try_from(spheres).map_or(i32::MAX, |count| count.saturating_mul(2));
     damage.amount = damage.amount.saturating_sub(prevented).max(0);
     damage.amount == 0
+}
+
+/// Keep each Sphere distinct when the affected player may interleave other effects.
+pub(crate) fn applicable_spheres<'a>(
+    state: &'a GameState,
+    damage: &DamageProposed,
+) -> impl Iterator<Item = ObjectId> + 'a {
+    let player = match damage.target {
+        Target::Player(player)
+            if damage.amount > 0 && crate::event::damage_color_mask(state, damage) & red() != 0 =>
+        {
+            Some(player)
+        }
+        _ => None,
+    };
+    player.into_iter().flat_map(move |owner| {
+        active_with_id(
+            state,
+            static_ids().sphere_of_law,
+            SPHERE_OF_LAW,
+            Some(owner),
+        )
+    })
+}
+
+/// Coarse operation ownership uses the same active Sphere matcher as damage.
+pub(crate) fn has_sphere_of_law(state: &GameState, player: PlayerId) -> bool {
+    active_with_id(
+        state,
+        static_ids().sphere_of_law,
+        SPHERE_OF_LAW,
+        Some(player),
+    )
+    .next()
+    .is_some()
 }

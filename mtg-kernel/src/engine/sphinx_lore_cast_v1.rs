@@ -1,4 +1,4 @@
-//! Native selection of printed versus installed flashback costs.
+//! Select and bind the permission and cost of a graveyard cast before paying it.
 use super::*;
 use crate::effect::sphinx_lore_v1 as lore;
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,78 @@ pub enum RouteV1 {
     PrintedFlashback,
     Escape,
     Granted { installation: u64 },
+    Snapcaster,
+    BeamMeUp,
+    Breach,
+    Retrace,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CostGrant {
+    Sphinx(u64),
+    Snapcaster,
+    Retrace,
+    Breach,
+}
+impl CostGrant {
+    pub(super) fn selected(state: &GameState, id: ObjectId) -> Option<Self> {
+        match state.objects.try_get(id)?.v4.spell_cast_origin?.route {
+            SpellCastRouteV4::SnapcasterFlashbackV1 => Some(Self::Snapcaster),
+            SpellCastRouteV4::SphinxLoreFlashbackV1 { installation, .. } => {
+                Some(Self::Sphinx(installation))
+            }
+            SpellCastRouteV4::BreachEscapeV1 => Some(Self::Breach),
+            SpellCastRouteV4::RetraceV1 => Some(Self::Retrace),
+            _ => None,
+        }
+    }
+    pub(super) fn permits(
+        self,
+        state: &GameState,
+        id: ObjectId,
+        player: PlayerId,
+        method: CastMethodV4,
+    ) -> bool {
+        let Some(o) = state.objects.try_get(id) else {
+            return false;
+        };
+        if o.owner != player {
+            return false;
+        }
+        let generation = match o.zone {
+            Zone::Graveyard => o.zone_change_count,
+            Zone::Stack if Self::selected(state, id) == Some(self) => {
+                let Some(origin) = o.v4.spell_cast_origin else {
+                    return false;
+                };
+                if origin.origin_zone != Zone::Graveyard
+                    || origin.origin_zone_change_count.checked_add(1) != Some(o.zone_change_count)
+                {
+                    return false;
+                }
+                origin.origin_zone_change_count
+            }
+            _ => return false,
+        };
+        match self {
+            Self::Sphinx(i) => {
+                method == CastMethodV4::Flashback && lore::quote_grant(state, id, player, i)
+            }
+            Self::Snapcaster => {
+                method == CastMethodV4::Flashback
+                    && crate::eternal_lurrus_v1::flashback_granted(state, id, generation)
+            }
+            Self::Breach => {
+                method == CastMethodV4::Escape
+                    && crate::eternal_lurrus_v1::escape_granted(state, id, generation)
+            }
+            Self::Retrace => {
+                ordinary_payment_method(&card_def::CARD_DEFS[usize::from(o.card_def)], method)
+                    && crate::eternal_vintage_e7b_v1::retrace_permission(state, id, player)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptionsV1 {
@@ -45,10 +116,18 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                 || card.zone_change_count < options.graveyard_generation
                 || !d.is_castable()
                 || !d.is_executable()
-                || !d
-                    .types
-                    .iter()
-                    .any(|t| matches!(t, CardType::Instant | CardType::Sorcery))
+                || !(d.has_type(CardType::Instant)
+                    || d.has_type(CardType::Sorcery)
+                    || (has_competing_grant(d, &options.routes)
+                        && options.routes.iter().all(|r| {
+                            matches!(
+                                r,
+                                RouteV1::Breach
+                                    | RouteV1::Escape
+                                    | RouteV1::Retrace
+                                    | RouteV1::Normal
+                            )
+                        })))
                 || options.routes.is_empty()
                 || options.routes.len() > usize::from(u16::MAX)
                 || options
@@ -56,10 +135,18 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                     .iter()
                     .enumerate()
                     .any(|(i, r)| options.routes[..i].contains(r))
-                || !options
+                || !(options
                     .routes
                     .iter()
-                    .any(|r| matches!(r, RouteV1::Granted { .. }))
+                    .any(|r| matches!(r, RouteV1::Granted { .. } | RouteV1::Snapcaster))
+                    || cfg!(feature = "eternal-fixtures")
+                        && (has_competing_grant(d, &options.routes)
+                            || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some()
+                            || crate::eternal_lurrus_v1::flashback_granted(
+                                state,
+                                options.spell,
+                                options.graveyard_generation,
+                            )))
             {
                 return Err("Sphinx original cast-choice roster changed".into());
             }
@@ -83,6 +170,27 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                     }
                     RouteV1::PrintedFlashback if d.flashback.is_some() && d.escape.is_none() => {}
                     RouteV1::Escape if d.escape.is_some() && d.flashback.is_none() => {}
+                    RouteV1::Snapcaster
+                        if options.turn == state.turn_key_v1()
+                            && crate::eternal_lurrus_v1::flashback_granted(
+                                state,
+                                options.spell,
+                                options.graveyard_generation,
+                            ) => {}
+                    RouteV1::BeamMeUp
+                        if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some() => {}
+                    RouteV1::Breach
+                        if crate::eternal_lurrus_v1::escape_granted(
+                            state,
+                            options.spell,
+                            options.graveyard_generation,
+                        ) => {}
+                    RouteV1::Retrace
+                        if crate::eternal_vintage_e7b_v1::retrace_permission(
+                            state,
+                            options.spell,
+                            options.controller,
+                        ) => {}
                     RouteV1::Normal => {}
                     _ => return Err("Sphinx original printed cost route changed".into()),
                 }
@@ -94,18 +202,37 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
 }
 fn method(route: RouteV1) -> CastMethodV4 {
     match route {
-        RouteV1::Normal => CastMethodV4::Normal,
-        RouteV1::Escape => CastMethodV4::Escape,
+        RouteV1::Normal | RouteV1::Retrace => CastMethodV4::Normal,
+        RouteV1::BeamMeUp => CastMethodV4::Alternative,
+        RouteV1::Escape | RouteV1::Breach => CastMethodV4::Escape,
         _ => CastMethodV4::Flashback,
     }
 }
-fn route_origin(route: RouteV1, player: PlayerId, generation: u32) -> SpellCastRouteV4 {
+/// A permission that charges the ordinary cost can also allow a printed alternative.
+pub(crate) fn ordinary_payment_method(def: &card_def::CardDef, method: CastMethodV4) -> bool {
+    matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+        || (method == CastMethodV4::Omen
+            && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
+}
+
+pub(super) fn selected_origin(
+    route: RouteV1,
+    player: PlayerId,
+    generation: u32,
+    card_def: u16,
+) -> SpellCastRouteV4 {
     match route {
         RouteV1::Normal => SpellCastRouteV4::GraveyardPermissionV1 {
             holder: player,
             permission_zone_change_count: generation,
         },
-        RouteV1::Escape => SpellCastRouteV4::GraveyardEscape,
+        RouteV1::Breach if card_def::CARD_DEFS[usize::from(card_def)].escape.is_some() => {
+            SpellCastRouteV4::BreachEscapeV1
+        }
+        RouteV1::Escape | RouteV1::Breach => SpellCastRouteV4::GraveyardEscape,
+        RouteV1::BeamMeUp => SpellCastRouteV4::BeamMeUpV1,
+        RouteV1::Snapcaster => SpellCastRouteV4::SnapcasterFlashbackV1,
+        RouteV1::Retrace => SpellCastRouteV4::RetraceV1,
         RouteV1::PrintedFlashback => SpellCastRouteV4::GraveyardFlashback,
         RouteV1::Granted { installation } => SpellCastRouteV4::SphinxLoreFlashbackV1 {
             installation,
@@ -117,81 +244,114 @@ fn route_origin(route: RouteV1, player: PlayerId, generation: u32) -> SpellCastR
 pub(super) fn granted(p: &PendingCast) -> bool {
     matches!(
         p.source_contract.spell_cast_origin.map(|o| o.route),
-        Some(SpellCastRouteV4::SphinxLoreFlashbackV1 { .. })
+        Some(
+            SpellCastRouteV4::SphinxLoreFlashbackV1 { .. }
+                | SpellCastRouteV4::SnapcasterFlashbackV1
+        )
     )
 }
 fn route_quote(state: &GameState, id: ObjectId, player: PlayerId, route: RouteV1) -> bool {
-    let d = &card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)];
-    let m = method(route);
-    if !matches!(route, RouteV1::Granted { .. }) {
-        return is_castable_now(player, id, m, state);
-    }
-    if !d.is_castable()
-        || !d.is_executable()
-        || !cast_form_timing_ok(d.types, d.keywords, player, state)
-    {
-        return false;
-    }
-    let modes = viable_printed_spell_modes(d, id, player, state);
-    modes.into_iter().any(|mode| {
-        [false, true]
-            .into_iter()
-            .filter(|k| !*k || d.kicker_cost.is_some())
-            .any(|kicked| {
-                spell_costs_v1::selected_spell_quote_with_grant_v1(
-                    d,
-                    id,
-                    Zone::Graveyard,
-                    m,
-                    kicked,
-                    mode,
-                    0,
-                    &[],
-                    &[],
-                    player,
-                    state,
-                    &[],
-                    match route {
-                        RouteV1::Granted { installation } => Some(installation),
-                        _ => None,
-                    },
-                )
-                .is_some()
-            })
-    })
+    let grant = match route {
+        RouteV1::Granted { installation } => Some(CostGrant::Sphinx(installation)),
+        RouteV1::Breach
+            if card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)]
+                .escape
+                .is_some() =>
+        {
+            Some(CostGrant::Breach)
+        }
+        RouteV1::Snapcaster => Some(CostGrant::Snapcaster),
+        RouteV1::Retrace => Some(CostGrant::Retrace),
+        _ => None,
+    };
+    is_castable_with_cost_grant(player, id, method(route), state, grant)
 }
+pub(super) fn has_printed_graveyard_method(d: &card_def::CardDef) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && (d.flashback.is_some() || d.escape.is_some())
+        && (d.has_type(CardType::Instant) || d.has_type(CardType::Sorcery))
+}
+
+fn has_competing_grant(d: &card_def::CardDef, routes: &[RouteV1]) -> bool {
+    let permissions = routes
+        .iter()
+        .filter(|r| matches!(r, RouteV1::Breach | RouteV1::Normal | RouteV1::Retrace))
+        .count();
+    (d.escape.is_some() && routes.contains(&RouteV1::Breach))
+        || permissions >= 2
+        || (permissions == 1 && has_printed_graveyard_method(d))
+}
+
 pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<RouteV1> {
-    let grants = lore::active_grants(state, id, player);
-    if grants.is_empty() {
+    let o = state.objects.get(id);
+    if o.zone != Zone::Graveyard || o.owner != player {
         return vec![];
     }
-    let o = state.objects.get(id);
     let d = &card_def::CARD_DEFS[usize::from(o.card_def)];
+    let grants = lore::active_grants(state, id, player);
+    let snapcaster = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_lurrus_v1::flashback_granted(state, id, o.zone_change_count);
+    let beam = crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some();
+    let printed = has_printed_graveyard_method(d)
+        || (cfg!(feature = "eternal-fixtures") && d.escape.is_some());
+    let breach = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_lurrus_v1::escape_granted(state, id, o.zone_change_count);
+    let retrace = cfg!(feature = "eternal-fixtures")
+        && crate::eternal_vintage_e7b_v1::retrace_permission(state, id, player);
+    // An ordinary permission can compete with either grant. A lone permission
+    // still takes the legacy path after the roster is assembled and quoted.
+    if grants.is_empty() && !snapcaster && !beam && !printed && !breach && !retrace {
+        return vec![];
+    }
     let mut routes = vec![];
+    if beam {
+        routes.push(RouteV1::BeamMeUp);
+    }
     if d.flashback.is_some() && d.escape.is_none() {
         routes.push(RouteV1::PrintedFlashback);
     }
     if d.escape.is_some() && d.flashback.is_none() {
         routes.push(RouteV1::Escape);
     }
-    if graveyard_permission_zone_change_count(player, id, state).is_some() {
+    if breach {
+        routes.push(RouteV1::Breach);
+    }
+    if crate::standard_cards_v1::graveyard_cast_granted_without_retrace(
+        state,
+        id,
+        player,
+        o.zone_change_count,
+    ) {
         routes.push(RouteV1::Normal);
+    }
+    if retrace {
+        routes.push(RouteV1::Retrace);
+    }
+    if snapcaster {
+        routes.push(RouteV1::Snapcaster);
     }
     routes.extend(
         grants
             .into_iter()
             .map(|installation| RouteV1::Granted { installation }),
     );
+    // Keep legacy single-route announcements when no competing permission exists.
+    if grants_are_absent(&routes) && routes.len() <= 1 {
+        return vec![];
+    }
     routes.retain(|r| route_quote(state, id, player, *r));
     // An unaffordable new alternative must not replace an independently legal
     // printed/granted predecessor route or manufacture an empty choice stage.
-    if !routes.iter().any(|r| matches!(r, RouteV1::Granted { .. })) {
+    if !snapcaster && !beam && grants_are_absent(&routes) && !has_competing_grant(d, &routes) {
         return vec![];
     }
     if routes.len() > usize::from(u16::MAX) {
         return vec![];
     }
     routes
+}
+fn grants_are_absent(routes: &[RouteV1]) -> bool {
+    !routes.iter().any(|r| matches!(r, RouteV1::Granted { .. }))
 }
 pub(super) fn seed(
     state: &mut GameState,
@@ -209,6 +369,9 @@ pub(super) fn seed(
         turn: state.turn_key_v1(),
         routes,
     };
+    if options.routes.contains(&RouteV1::Breach) {
+        crate::eternal_lurrus_v1::note_breach_escape(state, id, options.graveyard_generation);
+    }
     let selected = (options.routes.len() == 1).then_some(0);
     let index = state.engine.event_history.len() as u64;
     state
@@ -226,13 +389,6 @@ pub(super) fn seed(
 pub(super) fn selected_method(route: RouteV1) -> CastMethodV4 {
     method(route)
 }
-pub(super) fn selected_origin(
-    route: RouteV1,
-    player: PlayerId,
-    generation: u32,
-) -> SpellCastRouteV4 {
-    route_origin(route, player, generation)
-}
 pub(super) fn waiting(p: &PendingCast) -> bool {
     p.sphinx_lore_v1.is_some_and(|c| c.selected.is_none())
 }
@@ -243,7 +399,7 @@ pub(super) fn count(state: &GameState, p: &PendingCast) -> Result<u16, String> {
 }
 pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String> {
     let Some(c) = p.sphinx_lore_v1 else {
-        return if granted(p) || p.source_contract.spell_cast_origin.is_some_and(|origin| state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::SphinxLoreCastOptionsV1{options} if options.spell==p.spell && options.controller==p.controller && options.card_def==p.source_contract.card_def && options.graveyard_generation==origin.origin_zone_change_count))) {
+        return if granted(p) || p.source_contract.spell_cast_origin.is_some_and(|o| o.route == SpellCastRouteV4::BreachEscapeV1) || p.source_contract.spell_cast_origin.is_some_and(|origin| state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::SphinxLoreCastOptionsV1{options} if options.spell==p.spell && options.controller==p.controller && options.card_def==p.source_contract.card_def && options.graveyard_generation==origin.origin_zone_change_count))) {
             Err("Sphinx selected route stage erased".into())
         } else {
             Ok(())
@@ -259,57 +415,30 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
         || record.controller != p.controller
         || record.graveyard_generation != origin.origin_zone_change_count
         || p.origin_zone != Zone::Graveyard
-        || record.routes.is_empty()
-        || record.routes.len() > usize::from(u16::MAX)
-        || record
-            .routes
-            .iter()
-            .enumerate()
-            .any(|(i, r)| record.routes[..i].contains(r))
     {
-        return Err("Sphinx route source/menu changed".into());
+        return Err("graveyard route no longer matches the announcing card".into());
     }
-    for route in &record.routes {
-        match *route {
-            RouteV1::Granted { installation } => {
-                let (b, holder, turn) = lore::installation(state, installation)?;
-                if installation >= c.options_history_index
-                    || b.object != p.spell
-                    || b.expected_zone_change_count != record.graveyard_generation
-                    || holder != p.controller
-                    || turn != record.turn
-                    || !lore::active_at(state, c.options_history_index as usize)?
-                        .contains(&installation)
-                {
-                    return Err(
-                        "Sphinx original route grant changed or expired before announcement".into(),
-                    );
-                }
-            }
-            RouteV1::PrintedFlashback
-                if card_def::CARD_DEFS[record.card_def as usize]
-                    .flashback
-                    .is_some() => {}
-            RouteV1::Escape
-                if card_def::CARD_DEFS[record.card_def as usize]
-                    .escape
-                    .is_some() => {}
-            RouteV1::Normal
-                if crate::standard_cards_v1::graveyard_cast_granted(
-                    state,
-                    p.spell,
-                    p.controller,
-                    record.graveyard_generation,
-                ) => {}
-            _ => return Err("Sphinx foreign cast route".into()),
-        }
+    if record.routes.contains(&RouteV1::Normal)
+        && !crate::standard_cards_v1::graveyard_cast_granted_without_retrace(
+            state,
+            p.spell,
+            p.controller,
+            record.graveyard_generation,
+        )
+    {
+        return Err("ordinary graveyard permission no longer matches the card".into());
     }
     let selected = record
         .routes
         .get(usize::from(c.selected.unwrap_or(0)))
         .ok_or("Sphinx selected route outside menu")?;
     if method(*selected) != p.source_contract.cast_method
-        || route_origin(*selected, p.controller, record.graveyard_generation) != origin.route
+        || selected_origin(
+            *selected,
+            p.controller,
+            record.graveyard_generation,
+            record.card_def,
+        ) != origin.route
         || p.is_flashback != (method(*selected) == CastMethodV4::Flashback)
     {
         return Err("Sphinx selected method/origin changed".into());
@@ -333,7 +462,12 @@ pub(super) fn answer(state: &mut GameState, p: &PendingCast, index: u16) -> Resu
         .spell_cast_origin
         .as_mut()
         .ok_or("Sphinx origin absent")?
-        .route = route_origin(route, p.controller, record.graveyard_generation);
+        .route = selected_origin(
+        route,
+        p.controller,
+        record.graveyard_generation,
+        record.card_def,
+    );
     let is_flashback = source.cast_method == CastMethodV4::Flashback;
     state.objects.get_mut(p.spell).v4.spell_cast_origin = source.spell_cast_origin;
     let row = state.stack.last_mut().ok_or("Sphinx placeholder absent")?;
@@ -347,10 +481,14 @@ pub(super) fn answer(state: &mut GameState, p: &PendingCast, index: u16) -> Resu
         .ok_or("Sphinx pending absent")?;
     live.source_contract = source;
     live.is_flashback = is_flashback;
-    live.cast_mode = if source.cast_method == CastMethodV4::Normal
-        && card_def::CARD_DEFS[source.card_def as usize]
-            .alt_cost
-            .is_some()
+    let def = &card_def::CARD_DEFS[usize::from(source.card_def)];
+    live.cast_mode = if crate::eternal_legacy_e8a_v1::graveyard_life_choice(
+        def,
+        live.origin_zone,
+        source.cast_method,
+    ) || source.cast_method == CastMethodV4::Normal
+        && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none()
+        && def.alt_cost.is_some()
     {
         None
     } else {
@@ -411,9 +549,12 @@ pub(super) fn validate_finalized(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let granted = source
-        .spell_cast_origin
-        .is_some_and(|o| matches!(o.route, SpellCastRouteV4::SphinxLoreFlashbackV1 { .. }));
+    let granted = source.spell_cast_origin.is_some_and(|o| {
+        matches!(
+            o.route,
+            SpellCastRouteV4::SphinxLoreFlashbackV1 { .. } | SpellCastRouteV4::BreachEscapeV1
+        )
+    });
     let bound = source
         .finalized_cast_binding
         .and_then(|b| b.sphinx_lore_cast_v1);
@@ -448,10 +589,20 @@ pub(super) fn validate_finalized(
         || record.controller != item.controller
         || record.card_def != source.card_def
         || (method(route) != source.cast_method
-            && !(route == RouteV1::Normal && source.cast_method == CastMethodV4::Alternative))
+            && !(matches!(route, RouteV1::Normal | RouteV1::Retrace)
+                && ordinary_payment_method(
+                    &card_def::CARD_DEFS[usize::from(record.card_def)],
+                    source.cast_method,
+                )))
         || source.spell_cast_origin.is_none_or(|o| {
             o.origin_zone_change_count != record.graveyard_generation
-                || o.route != route_origin(route, item.controller, record.graveyard_generation)
+                || o.route
+                    != selected_origin(
+                        route,
+                        item.controller,
+                        record.graveyard_generation,
+                        record.card_def,
+                    )
         })
     {
         return Err("Sphinx finalized route/source changed".into());

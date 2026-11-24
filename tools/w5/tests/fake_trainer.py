@@ -10,7 +10,16 @@ Knobs (the config's `fake` block, which the test base carries, then FAKE_<NAME> 
 burn_x (CPU seconds per update), sleep and sleep_x (seconds per update), cpu_step and cpu_step_x (usec added to
 the ledger source's cpu.stat file per update, for hosts without cgroups), fail_at (exit 1 before that global
 update), publish_delay and publish_delay_x (seconds between a run's last receipt and its completion.json: a slow
-final publication).
+final publication). FAKE_LEARNER_STATE (environment only): each update also publishes a wide learner's container
+(`w_learner.state` in update.json), so a full state is a checkpoint and its container.
+
+`CONFIG --follow SPOOL` runs consecutive configs in one process as the native trainer does (mtg-kernel
+`native_expanded_training_run_v1::follow_v1`): after a complete run it writes `done-NNNNNN.json`, then waits for
+`STOP` (exit 0), its parent's end (exit 0) or `next.json` (read and removed), which it admits only if every field
+equals the last config's except output_directory, iterations and initial_source.checkpoint, and that checkpoint is
+the last run's last output checkpoint; anything else exits 3 before any work. Knobs: follow_fail_at (exit 1 at that
+global update, only in a run that is not its process's first) and FAKE_FOLLOW_REFUSE (environment only: refuse
+every next config).
 """
 import hashlib
 import json
@@ -54,10 +63,11 @@ def ledger(cfg, step):
     return record, source.get('stop_at_usec')
 
 
-def main():
-    if sys.argv[1:] == ['--settle-vector-tanh']:
-        return 0
-    cfg = json.loads(Path(sys.argv[1]).read_text())
+FOLLOW_REFUSED = 3
+
+
+def run(cfg, followed=False):
+    """One run; returns (exit code, the source after its last completed iteration)."""
     root = Path(cfg['output_directory'])
     x = bool(cfg.get('ex1'))
     source = cfg['initial_source']
@@ -80,9 +90,10 @@ def main():
         ids = [e['episode']['id'] for e in item['episodes']]
         update = int(re.search(r'-u(\d+)-', ids[0]).group(1))
         fail_at = knob(cfg, 'fail_at', x)
-        if fail_at is not None and update >= fail_at:
+        follow_fail_at = knob(cfg, 'follow_fail_at', x) if followed else None
+        if (fail_at is not None and update >= fail_at) or (follow_fail_at is not None and update == follow_fail_at):
             (a / 'collect').mkdir(parents=True, exist_ok=True)  # a partial attempt, as a crash leaves one
-            return 1
+            return 1, source
         # An S source at its initial train state has no checkpoint; `s_learner.initial` pins it (s_learner_v1.rs).
         # A fresh net-8 start has neither: the play import (the fresh-initialization parameters) is the pin.
         pinned = source['checkpoint'] or (source.get('s_learner') or {}).get('initial') or source['play_import']
@@ -116,8 +127,12 @@ def main():
             collection['ex1'] = {'options': {}, 'episodes': [{'path': side.as_posix(), 'sha256': h(side)}]}
         c.write_text(json.dumps(collection))
         u = a / 'update' / 'update.json'
-        u.write_text(json.dumps({'after_state_sha256': h(ck), 'checkpoint': {'path': ck.as_posix(),
-                                                                             'sha256': h(ck)}}))
+        update_doc = {'after_state_sha256': h(ck), 'checkpoint': {'path': ck.as_posix(), 'sha256': h(ck)}}
+        if os.environ.get('FAKE_LEARNER_STATE'):  # a wide learner's container beside the checkpoint (one state)
+            st = a / 'update' / 'w-train-state.bin'
+            st.write_bytes(b'container of ' + h(ck).encode())
+            update_doc['w_learner'] = {'state': {'path': st.as_posix(), 'sha256': h(st)}}
+        u.write_text(json.dumps(update_doc))
         record, stop = ledger(cfg, knob(cfg, 'cpu_step', x))
         receipt = {'iteration': i, 'collection': {'path': c.as_posix()},
                    'update': {'path': u.as_posix(), 'sha256': h(u)},
@@ -133,7 +148,57 @@ def main():
     if len(list((root / 'iterations').glob('*/complete.json'))) == len(cfg['iterations']):
         time.sleep(knob(cfg, 'publish_delay', x) or 0.0)
         (root / 'completion.json').write_text('{}')  # as native: a stop at the last update completes the run
-    return 0
+    return 0, source
+
+
+def continues(previous, source, nxt):
+    """follow_v1::check_continuation_v1's rule."""
+    if nxt.get('output_directory') == previous.get('output_directory'):
+        return False
+    a, b = json.loads(json.dumps(previous)), json.loads(json.dumps(nxt))
+    for d in (a, b):
+        d.pop('output_directory', None)
+        d.pop('iterations', None)
+        d.get('initial_source', {}).pop('checkpoint', None)
+    return a == b and (nxt.get('initial_source') or {}).get('checkpoint') == source.get('checkpoint')
+
+
+def wait_spool(spool, parent):
+    while True:
+        if (spool / 'STOP').exists() or os.getppid() != parent:
+            return None
+        nxt = spool / 'next.json'
+        if nxt.exists():
+            data = nxt.read_bytes()
+            nxt.unlink()
+            return json.loads(data)
+        time.sleep(0.01)
+
+
+def main():
+    if sys.argv[1:] == ['--settle-vector-tanh']:
+        return 0
+    cfg = json.loads(Path(sys.argv[1]).read_text())
+    if sys.argv[2:3] != ['--follow']:
+        return run(cfg)[0]
+    spool, parent = Path(sys.argv[3]), os.getppid()
+    index = 0
+    while True:
+        code, source = run(cfg, followed=index > 0)
+        root = Path(cfg['output_directory'])
+        if code or not (root / 'completion.json').exists():
+            return code
+        tmp = spool / f'.done-{index:06d}.tmp'
+        tmp.write_text(json.dumps({'index': index, 'output_directory': cfg['output_directory'], 'source': source}))
+        os.replace(tmp, spool / f'done-{index:06d}.json')
+        index += 1
+        nxt = wait_spool(spool, parent)
+        if nxt is None:
+            return 0
+        if os.environ.get('FAKE_FOLLOW_REFUSE') or not continues(cfg, source, nxt):
+            print('follow refused the next config', file=sys.stderr, flush=True)
+            return FOLLOW_REFUSED
+        cfg = nxt
 
 
 if __name__ == '__main__':

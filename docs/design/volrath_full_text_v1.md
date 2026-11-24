@@ -103,9 +103,10 @@ leaves the engine while one is (automatic work such as a state-based death
 can change a top without passing an event site). While an owner order is
 quoted, open or pending the check waits, because the arrivals are then in the
 graveyard in their unordered native order; it runs once the order completes.
-Each site has a fixture that fails when only that site's check is turned off. Of the listed additions, Auramancer,
-Monk Realist and Uktabi Orangutan are accepted only as part D cards and Ghitu
-Slinger and Xantid Swarm are refused, until their donated programs land.
+Each site has a fixture that fails when only that site's check is turned off. Of the listed additions, Auramancer, Monk Realist, Uktabi Orangutan, Ghitu Slinger
+(both entry and `{2}{R}` `DonatedEcho`) and Xantid Swarm (attack trigger) now
+have donated programs in step A2 (`DonatedTriggerKindV1` / `FullTextProgramV1`),
+and are accepted alongside the frozen mainboard donors.
 
 The frozen mirror's numeric and Human views, prompt by prompt with the chosen
 ordinal and with the catalog hash folded out, are pinned in both starting seats

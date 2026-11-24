@@ -1372,11 +1372,19 @@ pub(crate) fn execute(op: &P1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 state,
             );
         }
-        P1aOpV1::RandomDiscardV1 { player } => match state.random_hand_card_v1(*player) {
-            Ok(Some(card)) => crate::engine::commit_discarded_card(state, card),
-            Ok(None) => {}
-            Err(_) => halt(state, ctx.source),
-        },
+        P1aOpV1::RandomDiscardV1 { player } => {
+            if !crate::eternal_cube_c9c_v1::opponent_effect_cant_cause_discard_or_sacrifice(
+                state,
+                ctx.controller,
+                *player,
+            ) {
+                match state.random_hand_card_v1(*player) {
+                    Ok(Some(card)) => crate::engine::commit_discarded_card(state, card),
+                    Ok(None) => {}
+                    Err(_) => halt(state, ctx.source),
+                }
+            }
+        }
         P1aOpV1::PupDamageV1 { amount } => {
             if *amount > 0 {
                 event::propose_and_commit(

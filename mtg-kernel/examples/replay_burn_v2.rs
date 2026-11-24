@@ -1665,6 +1665,22 @@ fn run(
             SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => {
                 return Err("unhandled-decision:ChooseSpellMode".to_string())
             }
+            SurfaceDecision::Decision(Decision::ChooseEffectOption { .. })
+                if state
+                    .engine
+                    .pending_spell_copy
+                    .as_ref()
+                    .is_some_and(|pending| pending.stage == engine::SpellCopyStage::Copy) =>
+            {
+                // Legacy XMage traces imply acceptance after a successful RR
+                // payment. They have no separate copy answer to consume.
+                surface
+                    .apply(
+                        &mut state,
+                        SurfaceAction::Action(Action::ChooseEffectOption(1)),
+                    )
+                    .map_err(|e| format!("engine-step-error:ChoosePaidSpellCopy:{e}"))?;
+            }
             SurfaceDecision::Decision(Decision::ChooseEffectOption { .. }) => {
                 return Err("unhandled-decision:ChooseEffectOption".to_string())
             }
@@ -4211,6 +4227,7 @@ mod tests {
             convoke_chosen: Vec::new(),
             convoke_finished: false,
             escape_exile_finished_v1: false,
+            graveyard_cost_first_v1: None,
             hand_free_cast_v1: None,
             thornscape_white_kicker_v1: None,
             mandatory_additional_cost: None,

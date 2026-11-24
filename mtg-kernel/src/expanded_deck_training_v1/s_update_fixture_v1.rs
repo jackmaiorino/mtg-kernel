@@ -340,6 +340,7 @@ pub fn loss_selection_v1() -> ExpandedLossSelectionV1 {
         gamma: 1.0,
         lambda: 0.9,
         entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
     }
 }
 
@@ -448,6 +449,8 @@ pub fn episode_v1(
         reset: None,
         opening: None,
         mulligan_modes: None,
+        priority_windows: None,
+        london_keep_offset: None,
     })
 }
 
@@ -473,6 +476,7 @@ pub fn update_command_v1(
     }
     Ok(match path {
         UpdatePathV1::Serial => ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: batch.source.clone(),
             trajectories: batch.trajectories.clone(),
             learning_rate: learning.learning_rate,
@@ -500,6 +504,7 @@ pub fn update_command_v1(
         UpdatePathV1::Prepared => {
             validate_preparation_workers_v1(workers)?;
             ExpandedTrainingCommandV1::UpdatePrepared {
+                card_semantics: None,
                 source: batch.source.clone(),
                 trajectories: batch.trajectories.clone(),
                 learning_rate: learning.learning_rate,
@@ -509,6 +514,7 @@ pub fn update_command_v1(
                 loss_selection: learning.loss_selection,
                 preparation_workers: workers,
                 max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+                max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
                 line_b: None,
                 training_math: TrainingMathV1::PlatformLibm,
                 record_format: CheckpointRecordFormatV1::default(),
@@ -531,6 +537,7 @@ pub fn update_command_v1(
                 loss_selection: learning.loss_selection,
                 preparation_workers: workers,
                 max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+                max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
                 tape_cap_bytes,
                 output_directory,
             }
@@ -616,6 +623,7 @@ pub fn generate_v1(options: &FixtureOptionsV1, out: &Path) -> Result<FixtureMani
             training_math: TrainingMathV1::PlatformLibm,
             ex1: None,
             record_envelope: RecordEnvelopeV1::default(),
+            trajectory_format: Default::default(),
             output_directory: directory.join("collect"),
         })?;
         let trajectories: Vec<PinnedFileV1> =

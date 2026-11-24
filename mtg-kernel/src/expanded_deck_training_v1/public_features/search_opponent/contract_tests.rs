@@ -57,6 +57,8 @@ fn episode(search: bool) -> ExpandedEpisodeV1 {
         reset: None,
         opening: None,
         mulligan_modes: None,
+        priority_windows: None,
+        london_keep_offset: None,
     }
 }
 

@@ -396,6 +396,7 @@ fn exile_opponents_top_two(state: &mut GameState, ctx: &ExecCtx) {
             .exile_play_permissions
             .push(crate::engine::PlayPermission {
                 without_mana_cost: crate::engine::FreeCastV1(true),
+                any_mana_type: Default::default(),
                 object,
                 holder: ctx.controller,
                 zone_change_generation,

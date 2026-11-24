@@ -358,13 +358,13 @@ pub(crate) fn damage_once(
     state: &mut GameState,
     pending: &EffectContinuation,
     sacrifice: usize,
-) -> Result<u32, String> {
+) -> Result<Option<u32>, String> {
     let (published_at, row) = publication(state, &pending.resolving_item, sacrifice)
         .ok_or("Minsc & Boo lost its native reflexive target")?;
     let power = count(state, &pending.ctx, sacrifice)
         .ok_or("Minsc & Boo lost its original Hamster power")?;
     if !crate::engine::stack_targets_still_legal(&pending.resolving_item, state)? {
-        return Ok(0);
+        return Ok(Some(0));
     }
     let mut proposal = event::damage_from_exec_ctx_v1(
         &pending.ctx,
@@ -382,6 +382,9 @@ pub(crate) fn damage_once(
     if state.engine.halted.is_some() || crate::linked_aura_operation_v1::has_pending(state) {
         return Err("Minsc & Boo damage did not complete".into());
     }
+    if crate::linked_aura_operation_v1::entry_checkpoint_in_flight_v1(state) {
+        return Ok(None);
+    }
     record(
         state,
         JournalV1::MinscDamageCompleted {
@@ -389,7 +392,7 @@ pub(crate) fn damage_once(
             published_at,
         },
     );
-    Ok(power)
+    Ok(Some(power))
 }
 
 pub(crate) fn completed_damage(

@@ -97,6 +97,9 @@ fn draws(op: &EffectOp) -> bool {
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P3hV1(
             crate::eternal_premodern_p3h_v1::P3hOpV1::DecreeOfPainV1,
         ))) => true,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E8bV1(
+            crate::eternal_pauper_e8b_v1::E8bOpV1::RingLootV1,
+        ))) => true,
         _ => false,
     }
 }
@@ -149,6 +152,9 @@ pub(crate) fn forces_resumable(
         program,
         EffectOp::EachPlayerControllingDefinitionDrawsCard { .. }
     ) {
+        return crate::effect::resumable_program_supported(program);
+    }
+    if owned_draws_v1::knowledge::recipe(program) {
         return crate::effect::resumable_program_supported(program);
     }
     let starting_draws = match program {
@@ -547,6 +553,84 @@ pub(crate) fn finish_jace_or_hullbreacher(
     Ok(())
 }
 
+pub(crate) fn deferring_captures(state: &GameState) -> bool {
+    read_state(state).is_some_and(|e7b| e7b.dredge_deferring)
+}
+
+pub(crate) fn waiting_triggers(state: &GameState) -> &[crate::trigger::PendingTrigger] {
+    read_state(state).map_or(&[], |e7b| e7b.dredge_captures.as_slice())
+}
+
+pub(crate) fn defer_captures(state: &mut GameState, captures: Vec<crate::trigger::PendingTrigger>) {
+    let mut combined = std::mem::take(&mut state.engine.pending_triggers);
+    combined.extend(captures);
+    e7b_state(state).dredge_deferring = true;
+    #[cfg(feature = "eternal-fixtures")]
+    let combined = match crate::engine::resolution_cast_v1::defer_dredge_captures(state, combined) {
+        Ok(()) => return,
+        Err(combined) => combined,
+    };
+    e7b_state(state).dredge_captures.extend(combined);
+}
+
+pub(crate) fn take_captures_keep_deferring(
+    state: &mut GameState,
+) -> Vec<crate::trigger::PendingTrigger> {
+    let Some(eternal) = state.eternal_v1.as_mut() else {
+        return Vec::new();
+    };
+    std::mem::take(&mut eternal.e7b.dredge_captures)
+}
+
+pub(crate) fn prepend_captures(
+    state: &mut GameState,
+    mut earlier: Vec<crate::trigger::PendingTrigger>,
+) {
+    let e7b = e7b_state(state);
+    e7b.dredge_deferring = true;
+    earlier.append(&mut e7b.dredge_captures);
+    e7b.dredge_captures = earlier;
+}
+
+pub(crate) fn take_captures(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
+    let Some(eternal) = state.eternal_v1.as_mut() else {
+        return Vec::new();
+    };
+    eternal.e7b.dredge_deferring = false;
+    std::mem::take(&mut eternal.e7b.dredge_captures)
+}
+
+pub(crate) fn stop_deferring(state: &mut GameState) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal.e7b.dredge_deferring = false;
+    }
+}
+
+pub(crate) fn prepend_checkpoint_captures(
+    state: &mut GameState,
+    mut earlier: Vec<crate::trigger::PendingTrigger>,
+) {
+    if earlier.is_empty() {
+        return;
+    }
+    let e7b = e7b_state(state);
+    e7b.dredge_deferring = false;
+    earlier.append(&mut e7b.dredge_captures);
+    e7b.dredge_captures = earlier;
+}
+
+pub(crate) fn store_checkpoint_captures(
+    state: &mut GameState,
+    captures: Vec<crate::trigger::PendingTrigger>,
+) {
+    if captures.is_empty() {
+        return;
+    }
+    let e7b = e7b_state(state);
+    e7b.dredge_deferring = false;
+    e7b.dredge_captures = captures;
+}
+
 /// Applies a dredge choice: no card draws, a card dredges.
 pub(crate) fn finish(
     state: &mut GameState,
@@ -559,19 +643,28 @@ pub(crate) fn finish(
         commit_resolution_draw(state, pending, player, &choice.path);
         return;
     };
-    if !dredge(state, player, card.object, binding_link(&card)) {
+    if !dredge(
+        state,
+        player,
+        card.object,
+        binding_link(&card),
+        Some(&pending.resolving_item),
+    ) && state.engine.halted.is_none()
+    {
         commit_resolution_draw(state, pending, player, &choice.path);
     }
 }
 
 /// Mills the card's dredge number, then returns it from the graveyard to
 /// its owner's hand. `false` (and nothing happens) if it can no longer
-/// dredge.
+/// dredge. `resolving` is the spell or ability whose resolution draws, held
+/// by the interpreter outside the public stack; the draw step has none.
 fn dredge(
     state: &mut GameState,
     player: PlayerId,
     card: ObjectId,
     link: crate::state::ObjectLinkV4,
+    resolving: Option<&crate::state::StackItem>,
 ) -> bool {
     let Some(count) = definition(state, card).and_then(|def| dredge_count(def.name)) else {
         return false;
@@ -583,6 +676,23 @@ fn dredge(
     {
         return false;
     }
+    let captures = if state.engine.event_log.is_empty() {
+        Vec::new()
+    } else {
+        let captures = match resolving {
+            Some(resolving) => {
+                crate::trigger::capture_triggers_without_sba_owning(state, resolving)
+            }
+            None => crate::trigger::capture_triggers_without_sba(state),
+        };
+        if state.engine.halted.is_some() {
+            return false;
+        }
+        captures
+    };
+    // Defer mid-resolution captures until the resolution checkpoint so all
+    // simultaneous triggers order together under APNAP (CR 603.2, 603.3b).
+    defer_captures(state, captures);
     let milled = library
         .into_iter()
         .take(usize::from(count))
@@ -600,48 +710,131 @@ fn dredge(
 
 // ---- The draw step ------------------------------------------------------------------
 
-/// The draw step's draw: whether `player` may dredge instead, so the draw
-/// waits for their choice (option 0 draws, option N dredges their Nth
-/// dredge card).
+enum DrawStepChoiceV1 {
+    Dredge(Vec<ObjectId>),
+    JaceOrHullbreacher(ObjectId),
+}
+
+fn draw_step_choice(state: &GameState, player: PlayerId) -> Option<DrawStepChoiceV1> {
+    if crate::eternal_cube_c6c_v1::prevents_draw(state, player) {
+        return None;
+    }
+    let cards = dredge_cards(state, player);
+    if !cards.is_empty() {
+        return Some(DrawStepChoiceV1::Dredge(cards));
+    }
+    if !state.players[player.index()].library.is_empty()
+        || crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, player)
+            .is_none()
+    {
+        return None;
+    }
+    let jace = crate::eternal_cards_v1::e3::jace_draw_replacement_source(state, player)?;
+    Some(DrawStepChoiceV1::JaceOrHullbreacher(jace))
+}
+
+fn drive_draw_step_draws(state: &mut GameState, player: PlayerId, mut remaining: u32) {
+    while remaining != 0
+        && state.engine.halted.is_none()
+        && !owned_draws_v1::draw_won_game(state, player)
+    {
+        if draw_step_choice(state, player).is_some() {
+            let e7b = e7b_state(state);
+            e7b.dredge_draw = Some(player);
+            e7b.draw_step_remaining =
+                super::OptionalRemainingV1((remaining > 1).then_some(remaining));
+            return;
+        }
+        event::propose_draw_attempt(state, player);
+        remaining -= 1;
+    }
+}
+
+/// The draw step's draw: whether `player` has (or will reach across extra
+/// draws such as Quantum Riddler's) a dredge or competing draw-replacement
+/// choice, so the draw runs through the resumable turn-draw driver.
 pub(crate) fn defer_draw_step_draw(state: &mut GameState, player: PlayerId) -> bool {
-    if dredge_cards(state, player).is_empty() {
+    if !owned_draw_needs_choice(state, player, 1) {
         return false;
     }
-    e7b_state(state).dredge_draw = Some(player);
+    let total = 1 + event::draw_instruction_extra(state, player, 1);
+    drive_draw_step_draws(state, player, total);
     true
 }
 
-/// The pending draw-step dredge choice, if any.
-pub(crate) fn pending_decision(state: &GameState) -> Option<crate::engine::Decision> {
-    let player = read_state(state)?.dredge_draw?;
-    let cards = dredge_cards(state, player);
-    Some(crate::engine::Decision::ChooseEffectOption {
-        player,
-        source: cards.first().copied()?,
-        option_count: u16::try_from(cards.len() + 1).ok()?,
-    })
+pub(crate) fn draw_step_pending(state: &GameState) -> bool {
+    read_state(state).is_some_and(|e7b| e7b.dredge_draw.is_some())
 }
 
-/// Answers the pending draw-step dredge choice. `Ok(false)` when none is
+/// The pending draw-step replacement choice (dredge or Jace vs Hullbreacher),
+/// if any.
+pub(crate) fn pending_decision(state: &GameState) -> Option<crate::engine::Decision> {
+    let player = read_state(state)?.dredge_draw?;
+    match draw_step_choice(state, player)? {
+        DrawStepChoiceV1::Dredge(cards) => Some(crate::engine::Decision::ChooseEffectOption {
+            player,
+            source: cards.first().copied()?,
+            option_count: u16::try_from(cards.len() + 1).ok()?,
+        }),
+        DrawStepChoiceV1::JaceOrHullbreacher(jace) => {
+            Some(crate::engine::Decision::ChooseEffectOption {
+                player,
+                source: jace,
+                option_count: 2,
+            })
+        }
+    }
+}
+
+/// Answers the pending draw-step replacement choice. `Ok(false)` when none is
 /// pending.
 pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Result<bool, String> {
     let Some(player) = read_state(state).and_then(|e7b| e7b.dredge_draw) else {
         return Ok(false);
     };
-    let cards = dredge_cards(state, player);
-    e7b_state(state).dredge_draw = None;
-    let dredged = match usize::from(option) {
-        0 => false,
-        index => {
-            let card = *cards
-                .get(index - 1)
-                .ok_or("the dredge option is out of range")?;
-            let link = super::live_link(state, card);
-            dredge(state, player, card, link)
-        }
+    let Some(choice) = draw_step_choice(state, player) else {
+        return Err("the draw-step replacement choice is no longer available".into());
     };
-    if !dredged {
-        event::propose_and_commit(state, ProposedEvent::draw(player));
+    let remaining = read_state(state)
+        .and_then(|e7b| e7b.draw_step_remaining.0)
+        .unwrap_or(1);
+    match choice {
+        DrawStepChoiceV1::Dredge(cards) => {
+            let card = match usize::from(option) {
+                0 => None,
+                index => Some(
+                    *cards
+                        .get(index - 1)
+                        .ok_or("the dredge option is out of range")?,
+                ),
+            };
+            let e7b = e7b_state(state);
+            e7b.dredge_draw = None;
+            e7b.draw_step_remaining = super::OptionalRemainingV1(None);
+            let dredged = card.is_some_and(|card| {
+                let link = super::live_link(state, card);
+                dredge(state, player, card, link, None)
+            });
+            if !dredged && state.engine.halted.is_none() {
+                event::propose_draw_attempt(state, player);
+            }
+        }
+        DrawStepChoiceV1::JaceOrHullbreacher(_) => {
+            if option > 1 {
+                return Err("the draw replacement option is out of range".into());
+            }
+            let e7b = e7b_state(state);
+            e7b.dredge_draw = None;
+            e7b.draw_step_remaining = super::OptionalRemainingV1(None);
+            if option == 1 {
+                event::commit(state, ProposedEvent::draw(player));
+            } else {
+                event::propose_draw_attempt(state, player);
+            }
+        }
+    }
+    if remaining > 1 {
+        drive_draw_step_draws(state, player, remaining - 1);
     }
     Ok(true)
 }

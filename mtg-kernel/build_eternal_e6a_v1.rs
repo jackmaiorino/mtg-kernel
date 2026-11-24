@@ -154,9 +154,11 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
 }
 
 /// Activated abilities printed on one face only: Tithing Blade's craft is
-/// its front face's.
-pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
-    (name == "Tithing Blade").then_some(0)
+/// its front face's, falling through to wave C8a.
+pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
+    (name == "Tithing Blade")
+        .then_some(0)
+        .or_else(|| super::build_eternal_c8a_v1::activated_ability_face_for(name, index))
 }
 
 /// A spell whose program is a runtime function of `eternal_pauper_e6a_v1`.
@@ -264,6 +266,12 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
         // not make (Relic of Sauron's pairs); its condition is
         // `standard_lands_v1::fields`.
         "Fanatic of Rhonas" | "Fanatic of Rhonas Eternalized Token" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::C], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::G, ManaColor::G, ManaColor::G, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Orcish Lumberjack (Vintage Cube wave C7b): the two mixed triples of
+        // "{T}, Sacrifice a Forest: Add three mana in any combination of {R}
+        // and/or {G}" (the primary ability makes RRR or GGG). Each triple is a
+        // fixed bundle identified by a color it does not produce: {W} is
+        // {R}{R}{G} and {U} is {R}{G}{G}.
+        "Orcish Lumberjack" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(Subtype::Forest), amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::R, ManaColor::R, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }, AdditionalManaAbilityDef { colors: &[ManaColor::U], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfSacrificeControlledWithSubtypeV1(Subtype::Forest), amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::R, ManaColor::G, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }]",
         _ => super::build_eternal_e7a_v1::additional_mana_abilities_for(name),
     }
 }
