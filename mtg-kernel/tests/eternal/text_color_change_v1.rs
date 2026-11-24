@@ -1235,7 +1235,7 @@ fn elemental_blasts_pyroblast_hydroblast_snuff_out_and_anarchy_on_stack() {
 
     // Site 23: Pyroblast — resolves and does nothing to blue target after U -> G; destroys green target.
     let mut state = islands();
-    let blue_perm = put(&mut state, P1, "Volrath's Shapeshifter", Zone::Battlefield);
+    let blue_perm = put(&mut state, P1, "Mulldrifter", Zone::Battlefield);
     let green_perm = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     let pyro1 = put(&mut state, P0, "Pyroblast", Zone::Hand);
     let pyro2 = put(&mut state, P0, "Pyroblast", Zone::Hand);
