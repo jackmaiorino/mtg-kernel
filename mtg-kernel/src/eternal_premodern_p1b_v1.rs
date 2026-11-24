@@ -1479,8 +1479,8 @@ pub(crate) fn finish_selection(
         }
         P1bChoiceV1::IntuitionSearchV1 => {
             let opponent = controller.opponent();
-            // "reveal them": each found card's library position is known to
-            // the opponent.
+            // "reveal them": each found card's library position is public to
+            // both players while the opponent chooses.
             for card in &bindings {
                 if let Some(position) = state.players[controller.index()]
                     .library
@@ -1488,7 +1488,9 @@ pub(crate) fn finish_selection(
                     .position(|&object| object == card.object)
                 {
                     // spellbench-public-reveal: the found cards are revealed (Intuition).
-                    state.reveal_library_position(opponent, controller, position);
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        state.reveal_library_position(observer, controller, position);
+                    }
                 }
             }
             offer(

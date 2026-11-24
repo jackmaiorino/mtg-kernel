@@ -8,7 +8,7 @@ use super::{
     NumericRegisteredDecisionViewV1, ObservationV1,
 };
 use crate::{
-    card_def::{card_id_by_name, CardCapability, CARD_DEFS, KERNEL_CARDDB_HASH},
+    card_def::{card_id_by_name, CARD_DEFS, KERNEL_CARDDB_HASH},
     current_mixed_policy_v1::{visible_numeric_parts_v1, NumericTree},
     engine::UnsupportedMechanic,
     event::{propose_and_commit, ProposedEvent},
@@ -151,11 +151,8 @@ fn mainboard() -> Result<&'static Mainboard, String> {
                     || card.is_token
                     || count == 0
                     || count > 4
-                    || if volrath {
-                        card.capability != CardCapability::Partial || count != 2
-                    } else {
-                        !card.has_full_support()
-                    }
+                    || !card.has_full_support()
+                    || (volrath && count != 2)
                 {
                     return Err(format!("unsupported frozen FEB printing {name:?}"));
                 }
