@@ -39,17 +39,25 @@ def workflow_step(step):
 # Job lists of the pull request run at the dispatched commit (see test_pr_lookup.py for real ones).
 WHOLE_SET_JOBS = [{"name": "Detect changed paths", "status": "completed", "conclusion": "success"},
                   {"name": "Rust tests (ubuntu-24.04, workspace-lib)", "status": "in_progress", "conclusion": None},
-                  {"name": "Rust tests (windows-2025, workspace-lib)", "status": "queued", "conclusion": None}]
+                  {"name": "Rust tests (windows-2025, workspace-lib)", "status": "queued", "conclusion": None},
+                  {"name": "Build Python test binaries (${{ matrix.os }})", "status": "completed", "conclusion": "skipped"},
+                  {"name": "CI plan: rust=true python=false scope=pr checks=all", "status": "completed",
+                   "conclusion": "success"}]
+# The same run if its plan had said Python was relevant: the Python build rows are missing, so no complement.
+PYTHON_MISSING_JOBS = WHOLE_SET_JOBS[:-1] + [{"name": "CI plan: rust=true python=true scope=pr checks=all",
+                                              "status": "completed", "conclusion": "success"}]
 DRAFT_JOBS = [{"name": "Detect changed paths", "status": "completed", "conclusion": "success"},
               {"name": "Rust formatting and lint", "status": "completed", "conclusion": "success"},
-              {"name": "Rust tests (${{ matrix.os }}, ${{ matrix.group }})", "status": "completed", "conclusion": "skipped"}]
+              {"name": "Rust tests (${{ matrix.os }}, ${{ matrix.group }})", "status": "completed", "conclusion": "skipped"},
+              {"name": "CI plan: rust=false python=false scope=draft checks=all", "status": "completed",
+               "conclusion": "success"}]
 
 
-def pr_runs(event="pull_request", head=HEAD, repo="fixture/repo"):
+def pr_runs(event="pull_request", head=HEAD, repo="fixture/repo", number=841):
     return [{"id": 51, "event": event, "head_sha": head, "path": ".github/workflows/ci.yml",
              "created_at": "2026-11-24T10:00:00Z", "status": "in_progress", "conclusion": None,
              "repository": {"full_name": "fixture/repo"},
-             "head_repository": {"full_name": repo}}]
+             "head_repository": {"full_name": repo}, "pull_requests": [{"number": number}]}]
 
 
 def dispatch(repo, runs, jobs, *, after=READY, api_status=0, no_gh=False, malformed=False):
@@ -80,7 +88,9 @@ def dispatch(repo, runs, jobs, *, after=READY, api_status=0, no_gh=False, malfor
             else:
                 assert "/actions/runs/51/jobs?filter=latest&" in path, path
                 Path("evidence-read").touch()
-                rows, key = [dict(job, run_id=51) for job in json.loads(os.environ["CI_TEST_JOBS"])], "jobs"
+                rows = [dict(job, run_id=51, id=5100 + index)
+                        for index, job in enumerate(json.loads(os.environ["CI_TEST_JOBS"]))]
+                key = "jobs"
             if os.environ["CI_TEST_MALFORMED"] == "true":
                 return {key: rows}
             return {key: rows, "total_count": len(rows)}
@@ -196,6 +206,9 @@ class DraftLightTests(unittest.TestCase):
                 with self.subTest(no_gh=no_gh):
                     self.assertEqual(dispatch(repo, pr_runs(), WHOLE_SET_JOBS, no_gh=no_gh), ("scope=windows-complement", True))
                     self.assertEqual(dispatch(repo, pr_runs(), DRAFT_JOBS, no_gh=no_gh), ("scope=full", True))
+                    self.assertEqual(dispatch(repo, pr_runs(), PYTHON_MISSING_JOBS, no_gh=no_gh), ("scope=full", True))
+                    self.assertEqual(dispatch(repo, pr_runs(number=842), WHOLE_SET_JOBS, no_gh=no_gh),
+                                     ("scope=full", False))
                     self.assertEqual(dispatch(repo, pr_runs(), [], no_gh=no_gh), ("scope=full", True))
                     for runs in ([], pr_runs(event="push"), pr_runs(repo="someone/fork"), pr_runs(head="b" * 40)):
                         self.assertEqual(dispatch(repo, runs, WHOLE_SET_JOBS, no_gh=no_gh), ("scope=full", False))
@@ -236,7 +249,8 @@ class DraftLightTests(unittest.TestCase):
         for name, body in jobs().items():
             cond = condition(body)
             with self.subTest(job=name):
-                if name == "detect-changes":
+                if name in ("detect-changes", "ci-plan"):
+                    # ci-plan runs in every run (a draft's too): one short hosted job that only names the plan.
                     self.assertEqual(cond, "")
                 elif name == "rust-quality":
                     self.assertIn("""contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope)""", cond)
