@@ -1931,7 +1931,6 @@ impl FlatDecisionEncoderV2 {
                         )
                 })
             || observation.projection.restricted_mana.is_some()
-            || observation.projection.text_color_changes.is_some()
             || observation.projection.surface.stack.iter().any(|item| {
                 item.granted_ability.is_some()
                     || item.counter_distribution.is_some()
@@ -6877,34 +6876,6 @@ mod tests {
                 "ExiledBy must resolve through the historical stack registration, got: {error:?}"
             )
         });
-    }
-
-    #[test]
-    fn frozen_encoder_v2_rejects_public_text_color_changes() {
-        let session = v2_session(90_120, 127);
-        let mut observation = session
-            .flat_policy_observation_v2(expected(&session))
-            .unwrap();
-        assert_eq!(
-            FlatDecisionEncoderV2::default().build_globals(&observation),
-            Ok(())
-        );
-        observation.projection.text_color_changes =
-            Some(vec![crate::rl::PublicTextColorChangeV1 {
-                object: synthetic_stable(
-                    98_122,
-                    1,
-                    PlayerSeatV1::P0,
-                    PlayerSeatV1::P0,
-                    Zone::Battlefield,
-                ),
-                from: crate::mana::ManaColor::B,
-                to: crate::mana::ManaColor::G,
-            }]);
-        assert_eq!(
-            FlatDecisionEncoderV2::default().build_globals(&observation),
-            Err(FlatDecisionErrorV2::ObservationContract)
-        );
     }
 
     #[test]

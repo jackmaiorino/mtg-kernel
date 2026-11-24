@@ -21559,10 +21559,9 @@ mod tests {
     #[test]
     fn fast_actor_session_refuses_text_color_changes_state() {
         let mut session = FastActorSessionV1::reset_with_limits(46_001, 46_001, 128, 16_384);
-        assert!(matches!(
-            session.current_response(),
-            FastActorResponseV1::Decision(_)
-        ));
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected initial decision");
+        };
         let island_def = crate::card_def::card_id_by_name("Island").unwrap();
         let perm = session.state.objects.push(crate::state::GameObject {
             card_def: island_def,
@@ -21590,6 +21589,14 @@ mod tests {
             crate::mana::ManaColor::U,
             crate::mana::ManaColor::G,
         ));
+        assert_eq!(
+            session.flat_policy_observation_v1(decision),
+            Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        );
+        assert_eq!(
+            session.flat_policy_observation_v2(decision),
+            Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        );
         session.current = None;
         session.terminal = None;
         session.advance_to_decision_or_terminal();

@@ -1712,7 +1712,6 @@ impl FlatDecisionEncoderV1 {
                         )
                 })
             || observation.projection.restricted_mana.is_some()
-            || observation.projection.text_color_changes.is_some()
             || observation.projection.surface.stack.iter().any(|item| {
                 item.granted_ability.is_some()
                     || item.counter_distribution.is_some()
@@ -4067,34 +4066,6 @@ mod tests {
                 Err(FlatDecisionErrorV1::ObservationContract)
             );
         }
-    }
-
-    #[test]
-    fn frozen_encoder_rejects_public_text_color_changes() {
-        let session = FastActorSessionV1::reset_with_limits(90_120, 127, 128, 16_384);
-        let mut observation = session
-            .flat_policy_observation_v1(expected(&session))
-            .unwrap();
-        assert_eq!(
-            FlatDecisionEncoderV1::default().build_globals(&observation),
-            Ok(())
-        );
-        observation.projection.text_color_changes =
-            Some(vec![crate::rl::PublicTextColorChangeV1 {
-                object: synthetic_stable(
-                    98_122,
-                    1,
-                    PlayerSeatV1::P0,
-                    PlayerSeatV1::P0,
-                    Zone::Battlefield,
-                ),
-                from: crate::mana::ManaColor::B,
-                to: crate::mana::ManaColor::G,
-            }]);
-        assert_eq!(
-            FlatDecisionEncoderV1::default().build_globals(&observation),
-            Err(FlatDecisionErrorV1::ObservationContract)
-        );
     }
 
     #[test]
