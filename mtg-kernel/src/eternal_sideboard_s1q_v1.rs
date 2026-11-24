@@ -460,6 +460,9 @@ fn completion_among(
         return crate::mana::plan_activation_mana_v1(cost, 0, player, state, source, chosen)
             .is_some();
     }
+    if among.len() < more {
+        return false;
+    }
     among.iter().enumerate().any(|(index, &next)| {
         let mut with = chosen.to_vec();
         with.push(next);
