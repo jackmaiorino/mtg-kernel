@@ -66,6 +66,10 @@ class CheckTests(unittest.TestCase):
         self.assertIn("the build job's list names a test twice",
                       parts.check(doubled, [record(0, LISTED, count=1, listed=doubled)], 1))
 
+    def test_two_reports_of_one_part_in_one_attempt_fail(self):
+        records = [record(0, LISTED[:2]), record(1, LISTED[2:]), record(1, LISTED[2:])]
+        self.assertEqual(parts.check(LISTED, records, 2), ["part 1 reported more than once in one attempt"])
+
     def test_a_rerun_part_counts_by_its_newest_attempt(self):
         stale = record(1, ["beta::one"])
         fresh = {**record(1, ["beta::one", "gamma::one"]), "attempt": 2}

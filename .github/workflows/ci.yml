@@ -8,7 +8,8 @@ name: CI
 # name a self-hosted label directly. What keeps fork code off those runners is
 # the repository setting that holds every outside contributor's run until a
 # maintainer approves it (Settings, Actions, General: require approval for all
-# external contributors). Approving a run approves the workflow files in that
+# external contributors; members of the organization are not held). Approving
+# a run approves the workflow files in that
 # pull request: never approve one without reading its diff under
 # .github/workflows/ and .github/actions/. Repository-level runners cannot be
 # limited to chosen workflows.

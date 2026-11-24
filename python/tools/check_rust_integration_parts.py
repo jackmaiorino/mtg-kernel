@@ -40,6 +40,10 @@ def check(listed: list[str], records: list[dict], count: int) -> list[str]:
         problems.append(f"no report from part(s) {missing_parts} of {count}")
     owner: dict[str, int] = {}
     for index in sorted(by_shard):
+        attempts = [record.get("attempt", 0) for record in by_shard[index]]
+        if len(set(attempts)) != len(attempts):
+            # Two files for one part in one attempt: it ran twice, or a file is not what it claims.
+            problems.append(f"part {index} reported more than once in one attempt")
         record = newest(by_shard[index])
         if sorted(record.get("listed", [])) != sorted(listed):
             problems.append(f"part {index} ran a binary with a different test list than the build job's")

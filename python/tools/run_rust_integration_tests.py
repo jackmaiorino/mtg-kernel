@@ -27,6 +27,9 @@ EXECUTED_ENV = "MTG_CI_RUST_INTEGRATION_EXECUTED"
 # A line libtest prints when a test ends: "test <name> ... ok", also with
 # "- should panic" after the name, FAILED, or ignored (with or without a reason).
 TEST_LINE = re.compile(r"^test (\S+)(?: - should panic)? \.\.\. (ok|FAILED|ignored)\b")
+# Longest command line for one test process. Windows refuses more than 32,767
+# characters; a unit that needs more must be split in the plan.
+MAX_COMMAND = 30000
 
 
 def suite_modules(root: Path, suite: str) -> list[str]:
@@ -166,22 +169,20 @@ def run_recorded(command: list[str]) -> tuple[int, list[str]]:
     """Run one test process, pass its output through, and name the tests it reported.
 
     Only standard output is read, where libtest prints one line as each test
-    ends; standard error still goes straight to the job log. After the last
-    test libtest replays captured output under "successes:" and "failures:"
-    (with --show-output also that of passing tests); nothing from there on is
-    a result, whatever a test printed.
+    ends; standard error still goes straight to the job log. Every line of
+    that shape is returned, in order. That is evidence that a test ran, not
+    what decides which tests run: a test, or a child process that shares its
+    standard output, can print such a line too, and libtest replays what a
+    passing test printed under --show-output. The caller therefore selects
+    tests by exact name and only requires a line for each of them.
     """
     reported = []
-    results = True
     sys.stdout.flush()
     with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
         for raw in process.stdout:
             sys.stdout.buffer.write(raw)
             sys.stdout.buffer.flush()
-            line = raw.decode("utf-8", "replace")
-            if line.strip() in ("successes:", "failures:"):
-                results = False
-            match = TEST_LINE.match(line) if results else None
+            match = TEST_LINE.match(raw.decode("utf-8", "replace"))
             if match:
                 reported.append(match.group(1))
     return process.returncode, reported
@@ -225,7 +226,7 @@ def run_suite(executable: str, *, allow_empty: bool = False, selection: dict | N
                 print(f"Integration module without compiled tests: {module}", flush=True)
     failures = 0
     expected: list[str] = []
-    executed: list[str] = []
+    executed: set[str] = set()
     for unit in units:
         module = unit.split("::", 1)[0]
         selected_tests = unit_tests(unit, every_unit, tests)
@@ -235,31 +236,38 @@ def run_suite(executable: str, *, allow_empty: bool = False, selection: dict | N
             continue
         expected += selected_tests
         # Each original file gets a fresh process, with its existing internal
-        # libtest concurrency and ignored-test behavior. The trailing ::
-        # prevents similarly named modules from overlapping. A unit that is
-        # not a whole module names its tests exactly.
+        # libtest concurrency and ignored-test behavior. An unsharded run
+        # selects a module by its prefix, as it always has; the trailing ::
+        # keeps `alpha` from selecting `alphabet`. libtest's filter is a
+        # substring match, though, so `alpha::` also selects
+        # `beta_alpha::one`: with the two modules in different parts that
+        # test would run in both. A run in parts therefore names every test
+        # of a unit exactly, and a process can execute nothing else.
         print(f"Running integration module: {unit} ({len(selected_tests)} listed tests)", flush=True)
-        if selected_tests == [test for test in tests if test.startswith(module + "::")]:
+        if selection is None:
             command = [executable, module + "::"]
         else:
             command = [executable, "--exact", *selected_tests]
+            if sum(map(len, command)) + len(command) > MAX_COMMAND:
+                raise ValueError(f"The tests of {unit} are too long for one command: isolate some in the plan")
         # Keep the replay hashes from passing Eternal games and matches in CI.
         if module in {"eternal_catalog_v1", "eternal_bo3_v1"}:
             command.append("--show-output")
         if executed_path:
             returncode, reported = run_recorded(command)
-            executed += reported
+            # A passing process must have reported each of its tests (more
+            # than once is a replayed line) and no test of another unit.
+            missing = sorted(set(selected_tests) - set(reported))
+            unexpected = sorted(set(reported) - set(selected_tests))
+            if not returncode and (missing or unexpected):
+                print(f"Integration tests reported by {unit} differ from its selection: "
+                      f"missing {missing}, unexpected {unexpected}", flush=True)
+                returncode = 1
+            executed |= set(reported) & set(selected_tests)
         else:
             returncode = subprocess.run(command, check=False).returncode
         failures += bool(returncode)
     if executed_path:
-        # A passing process that reported other tests than the ones selected
-        # for it fails the run; the inventory job compares the lists of the parts.
-        if not failures and sorted(executed) != sorted(expected):
-            print("Integration tests reported differ from the selection: missing "
-                  f"{sorted(set(expected) - set(executed))}, unexpected {sorted(set(executed) - set(expected))}, "
-                  f"{len(executed) - len(set(executed))} reported twice", flush=True)
-            failures += 1
         record = {"shard": selection["shard"] if selection is not None else None,
                   "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT") or 0),
                   "listed": sorted(tests), "executed": sorted(executed), "failed": failures}

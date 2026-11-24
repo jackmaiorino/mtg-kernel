@@ -194,19 +194,17 @@ class RecordedRunTests(unittest.TestCase):
         with patch.object(integration.sys, "stdout", fake):
             return integration.run_recorded([sys.executable, "-c", script])
 
-    def test_output_a_test_printed_is_not_a_result(self):
-        # With --show-output libtest replays what passing tests printed, after every result line.
-        for section in ("successes:", "failures:"):
-            script = ("print('test alpha::one ... ok')\n"
-                      "print()\n"
-                      f"print('{section}')\n"
-                      "print()\n"
-                      "print('---- alpha::one stdout ----')\n"
-                      "print('test alpha::one ... ok')\n"
-                      "print('test alpha::invented ... ok')\n"
-                      "print('test result: ok. 1 passed')\n")
-            with self.subTest(section=section):
-                self.assertEqual(self.reported_by(script), (0, ["alpha::one"]))
+    def test_every_result_shaped_line_is_returned_in_order(self):
+        # libtest replays what passing tests printed (--show-output), and a child process can print before
+        # the last result: the parser stops nowhere and judges nothing. run_suite selects by exact name and
+        # requires a line for each selected test.
+        script = ("print('test alpha::one ... ok')\n"
+                  "print('successes:')\n"
+                  "print('---- alpha::one stdout ----')\n"
+                  "print('test alpha::one ... ok')\n"
+                  "print('test alpha::two ... ok')\n"
+                  "print('test result: ok. 2 passed')\n")
+        self.assertEqual(self.reported_by(script), (0, ["alpha::one", "alpha::one", "alpha::two"]))
 
     def test_a_result_line_written_in_two_pieces_is_one_result(self):
         # One test thread: libtest writes the name when the test starts and the outcome when it ends.
@@ -222,28 +220,29 @@ class RecordedRunTests(unittest.TestCase):
 class RunSuiteTests(unittest.TestCase):
     TESTS = ["alpha::one", "alpha::two", "beta::one", "gamma::one"]
 
-    def run_suite(self, selection, returncodes=None):
+    def run_suite(self, selection, returncodes=None, tests=None, **more):
         calls = []
 
         def run(command, **_):
-            calls.append(command[1])
-            return type("Result", (), {"returncode": (returncodes or {}).get(command[1], 0)})()
+            calls.append(command[1:])
+            return type("Result", (), {"returncode": (returncodes or {}).get(command[-1], 0)})()
 
-        with patch.object(integration, "listed_tests", lambda _: list(self.TESTS)), \
+        with patch.object(integration, "listed_tests", lambda _: list(tests or self.TESTS)), \
                 patch.object(integration.subprocess, "run", run), patch("builtins.print"):
-            code = integration.run_suite("suite-binary", selection=selection)
+            code = integration.run_suite("suite-binary", selection=selection, **more)
         return code, calls
 
-    def test_without_a_shard_every_module_runs(self):
-        self.assertEqual(self.run_suite(None), (0, ["alpha::", "beta::", "gamma::"]))
+    def test_without_a_shard_every_module_runs_by_its_prefix(self):
+        self.assertEqual(self.run_suite(None), (0, [["alpha::"], ["beta::"], ["gamma::"]]))
 
-    def test_a_shard_runs_only_its_selected_modules(self):
+    def test_a_shard_runs_only_its_selected_modules_by_exact_test_name(self):
         selection = {"inventory": ["alpha", "beta", "gamma"], "selected": ["alpha", "gamma"], "shard": [1, 2]}
-        self.assertEqual(self.run_suite(selection), (0, ["alpha::", "gamma::"]))
+        self.assertEqual(self.run_suite(selection),
+                         (0, [["--exact", "alpha::one", "alpha::two"], ["--exact", "gamma::one"]]))
 
     def test_a_failed_module_fails_the_shard(self):
         selection = {"inventory": ["alpha", "beta", "gamma"], "selected": ["beta"], "shard": [0, 2]}
-        self.assertEqual(self.run_suite(selection, {"beta::": 101}), (1, ["beta::"]))
+        self.assertEqual(self.run_suite(selection, {"beta::one": 101}), (1, [["--exact", "beta::one"]]))
 
     def test_a_compiled_module_outside_the_inventory_fails_before_running(self):
         selection = {"inventory": ["alpha", "beta"], "selected": ["alpha", "beta"], "shard": [0, 1]}
@@ -252,53 +251,62 @@ class RunSuiteTests(unittest.TestCase):
 
     PLAN = [["alpha", "gamma"], ["alpha::two", "beta"]]
 
-    def planned(self, shard, plan=None):
+    def planned(self, shard, plan=None, inventory=("alpha", "beta", "gamma")):
         plan = plan or self.PLAN
-        return {"inventory": ["alpha", "beta", "gamma"], "plan": plan, "selected": plan[shard], "shard": [shard, 2]}
+        return {"inventory": list(inventory), "plan": plan, "selected": plan[shard], "shard": [shard, len(plan)]}
 
-    def commands(self, selection, **more):
-        calls = []
+    def test_a_part_names_its_tests_exactly(self):
+        self.assertEqual(self.run_suite(self.planned(0)),
+                         (0, [["--exact", "alpha::one"], ["--exact", "gamma::one"]]))
+        self.assertEqual(self.run_suite(self.planned(1)),
+                         (0, [["--exact", "alpha::two"], ["--exact", "beta::one"]]))
 
-        def run(command, **_):
-            calls.append(command[1:])
-            return type("Result", (), {"returncode": 0})()
-
-        with patch.object(integration, "listed_tests", lambda _: list(self.TESTS)), \
-                patch.object(integration.subprocess, "run", run), patch("builtins.print"):
-            code = integration.run_suite("suite-binary", selection=selection, **more)
-        return code, calls
-
-    def test_a_part_with_an_isolated_test_names_its_tests_exactly(self):
-        # alpha without its isolated test runs the rest by exact name; a whole module keeps its filter.
-        self.assertEqual(self.commands(self.planned(0)), (0, [["--exact", "alpha::one"], ["gamma::"]]))
-        self.assertEqual(self.commands(self.planned(1)), (0, [["--exact", "alpha::two"], ["beta::"]]))
-
-    def test_the_two_parts_run_every_test_once(self):
+    def test_a_module_whose_name_contains_another_is_never_selected_with_it(self):
+        # libtest filters by substring: the filter `alpha::` also selects `beta_alpha::one`. With the two
+        # modules in different parts that test would run in both, so a part never passes a module filter.
+        tests = ["alpha::one", "beta_alpha::one"]
+        plan = [["alpha"], ["beta_alpha"]]
         ran = []
         for shard in (0, 1):
-            for command in self.commands(self.planned(shard))[1]:
-                names = command[1:] if command[0] == "--exact" else \
-                    [test for test in self.TESTS if test.startswith(command[0])]
-                ran += names
+            code, calls = self.run_suite(self.planned(shard, plan, inventory=("alpha", "beta_alpha")), tests=tests)
+            self.assertEqual(code, 0)
+            for call in calls:
+                self.assertEqual(call[0], "--exact")
+                ran += call[1:]
+        self.assertEqual(sorted(ran), sorted(tests))
+
+    def test_the_parts_run_every_test_once(self):
+        ran = []
+        for shard in (0, 1):
+            for call in self.run_suite(self.planned(shard))[1]:
+                self.assertEqual(call[0], "--exact")
+                ran += call[1:]
         self.assertEqual(sorted(ran), sorted(self.TESTS))
+
+    def test_a_selection_too_long_for_one_command_is_refused(self):
+        tests = [f"alpha::{'x' * 200}_{index}" for index in range(200)]
+        with self.assertRaisesRegex(ValueError, "too long for one command"):
+            self.run_suite(self.planned(0, [["alpha"]], inventory=("alpha",)), tests=tests)
 
     def test_a_plan_that_leaves_a_test_out_or_doubles_it_fails_before_running(self):
         for plan in ([["alpha"], ["alpha::two", "beta"]], [["alpha", "gamma"], ["beta"], ["gamma"]]):
             with self.subTest(plan=plan), self.assertRaises(ValueError):
-                self.commands(self.planned(0, plan))
+                self.run_suite(self.planned(0, plan))
         selection = {**self.planned(0), "selected": ["alpha"]}
         with self.assertRaisesRegex(ValueError, "not this shard of the plan"):
-            self.commands(selection)
+            self.run_suite(selection)
 
     def test_an_isolated_test_missing_from_the_binary_runs_nothing_for_it(self):
         plan = [["alpha", "beta", "gamma"], ["alpha::gone"]]
-        self.assertEqual(self.commands(self.planned(1, plan)), (0, []))
-        self.assertEqual(self.commands(self.planned(0, plan)), (0, [["alpha::"], ["beta::"], ["gamma::"]]))
+        self.assertEqual(self.run_suite(self.planned(1, plan)), (0, []))
+        self.assertEqual(self.run_suite(self.planned(0, plan)),
+                         (0, [["--exact", "alpha::one", "alpha::two"], ["--exact", "beta::one"],
+                              ["--exact", "gamma::one"]]))
 
     def test_the_list_mode_writes_the_names_and_runs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             listing = Path(directory) / "tests.json"
-            self.assertEqual(self.commands(None, list_path=str(listing)), (0, []))
+            self.assertEqual(self.run_suite(None, list_path=str(listing)), (0, []))
             self.assertEqual(json.loads(listing.read_text(encoding="utf-8")),
                              {"attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT") or 0), "tests": sorted(self.TESTS)})
 
@@ -326,11 +334,31 @@ class RunSuiteTests(unittest.TestCase):
         self.assertEqual(record, {"shard": [1, 2], "attempt": 3, "listed": sorted(self.TESTS),
                                   "executed": ["alpha::two", "beta::one"], "failed": 0})
 
-    def test_a_passing_process_that_reported_other_tests_fails_the_part(self):
-        for reports in (lambda arguments: [], lambda arguments: self.faithful(arguments) * 2,
-                        lambda arguments: [*self.faithful(arguments), "gamma::one"]):
-            code, record = self.recorded(self.planned(1), reports)
-            self.assertEqual((code, record["failed"]), (1, 1))
+    def test_a_result_line_replayed_from_a_test_is_one_execution(self):
+        # With --show-output a passing test's own printed "test x ... ok" line appears a second time.
+        code, record = self.recorded(self.planned(1), lambda arguments: self.faithful(arguments) * 2)
+        self.assertEqual((code, record["failed"]), (0, 0))
+        self.assertEqual(record["executed"], ["alpha::two", "beta::one"])
+
+    def test_a_passing_process_that_did_not_report_a_selected_test_fails_its_unit(self):
+        code, record = self.recorded(self.planned(1), lambda arguments: [])
+        self.assertEqual((code, record["failed"]), (1, 2))
+        code, record = self.recorded(self.planned(1), lambda arguments: self.faithful(arguments)[:0]
+                                     if arguments[-1] == "beta::one" else self.faithful(arguments))
+        self.assertEqual((code, record["failed"], record["executed"]), (1, 1, ["alpha::two"]))
+
+    def test_a_passing_process_that_reported_an_unselected_test_fails_its_unit(self):
+        code, record = self.recorded(self.planned(1), lambda arguments: [*self.faithful(arguments), "gamma::one"])
+        self.assertEqual((code, record["failed"]), (1, 2))
+
+    def test_an_unsharded_recorded_run_catches_a_module_filter_that_ran_another_module(self):
+        # Without a plan a module is still selected by its prefix; a recorded run then refuses the overlap.
+        def substring(arguments):
+            return [test for test in RunSuiteTests.TESTS if arguments[0] in test] + \
+                (["gamma::one"] if arguments[0] == "alpha::" else [])
+
+        code, record = self.recorded(None, substring)
+        self.assertEqual((code, record["failed"], record["shard"]), (1, 1, None))
 
     def test_a_failed_process_is_counted_once(self):
         code, record = self.recorded(self.planned(1), lambda arguments: [], returncode=101)
