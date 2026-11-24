@@ -1641,10 +1641,17 @@ fn stack_target_contract_shape(
             || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin
-            && if spell_copy_origin.is_some() {
-                zone == Zone::Stack
-                    && live.zone == Zone::Stack
-                    && zone_change_count == live.zone_change_count
+            && if spell_copy_origin.is_some() && zone == Zone::Stack {
+                live.zone == Zone::Stack && zone_change_count == live.zone_change_count
+            } else if spell_copy_origin.is_some() {
+                // 707.10f: a resolved permanent spell copy is a token on the
+                // battlefield. It keeps its immutable copy provenance and is
+                // targeted as any other permanent, so a later incarnation is
+                // an ordinary stale target.
+                zone == Zone::Battlefield
+                    && live.v4.is_token
+                    && zone_change_count <= live.zone_change_count
+                    && (zone_change_count != live.zone_change_count || zone == live.zone)
             } else {
                 zone_change_count <= live.zone_change_count
                     && (zone_change_count != live.zone_change_count || zone == live.zone)
