@@ -122,9 +122,10 @@ def card_names(records: Iterable[dict[str, Any]]) -> dict[int, str]:
 
 
 def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = None) -> dict[str, Any]:
-    names = names or {}
+    names = dict(names or {})
     total = completed = draws = 0
     expected_index: int | None = None
+    first_index: int | None = None
     order_errors: list[str] = []
     mismatches: list[dict[str, Any]] = []
     by_kind: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
@@ -138,6 +139,8 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
     over_warning = 0
     for row in rows:
         index = row["index"]
+        if first_index is None:
+            first_index = index
         if expected_index is not None and index != expected_index:
             order_errors.append(f"index {index} follows {expected_index - 1}")
         expected_index = index + 1
@@ -171,8 +174,11 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
             source = None
         if source is not None:
             charged[source] += 1
-        if row.get("recent_action_source") is not None:
+        if row["end"].get("kind") != "panic" and row.get("recent_action_source") is not None:
             charged_recent[row["recent_action_source"]] += 1
+        for key in ("last_action_source", "recent_action_source"):
+            if row.get(key) is not None and row.get(key + "_name") and row[key] not in names:
+                names[row[key]] = row[key + "_name"]
         by_kind[kind].append({"index": index, "cards": cards, "source": source,
                               "panic_source": row.get("last_action_source") if row["end"].get("kind") == "panic" else None})
     if total == 0:
@@ -222,9 +228,12 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
             "charged_recent": charged_recent[card],
             "panic_last_source": panic_source[card],
         })
-    unpresent_charges = sorted(set(charged) - set(present))
-    if unpresent_charges:
-        order_errors.append(f"charged cards in no deck: {unpresent_charges}")
+    # A card outside both decks (a token such as a Clue or a Treasure) can be the last action's
+    # source. It is reported apart, by stop kind and count, and is not an order error.
+    token_sources = [
+        {"card": card, "name": name(card), "charged": charged[card]}
+        for card in sorted(set(charged) - set(present), key=lambda c: (-charged[c], c))
+    ]
     return {
         "games": total,
         "completed": completed,
@@ -232,12 +241,13 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
         "completed_share": completed / total,
         "halted_share": (total - completed) / total,
         "natural_draws": draws,
-        "index_start": expected_index - total if expected_index is not None else None,
+        "index_start": first_index,
         "index_end": expected_index,
         "order_errors": order_errors,
         "stop_kind_mismatches": mismatches,
         "stop_kinds": kinds,
         "cards": cards,
+        "token_sources": token_sources,
         "percentiles_all_games": {key: distribution(values) for key, values in counts_all.items()},
         "percentiles_completed_games": {key: distribution(values) for key, values in counts_completed.items()},
         "warning_8192": {

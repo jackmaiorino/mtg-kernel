@@ -41,7 +41,8 @@ def fixture():
              policy=9000, draw=True),
         line(2, halt, [[1, 2], [5]], "engine_halted:InvalidEffectContinuation:source:*", driver=50, source=2,
              recent=2),
-        line(3, {"kind": "panic", "message": "x" * 200}, [[1], [3]], "panic: " + "x" * 160, driver=7, source=3),
+        line(3, {"kind": "panic", "message": "x" * 200}, [[1], [3]], "panic: " + "x" * 160, driver=7, source=3,
+             recent=3),
         line(4, {"kind": "process_died", "exit_code": 3221225725}, [[1], [6]],
              "process dies: stack overflow (0xC00000FD)", driver=None),
         line(5, natural, [[1], [2]], None, driver=3000, physical=2000, policy=3000),
@@ -75,6 +76,29 @@ class NormaliserTests(unittest.TestCase):
         self.assertEqual(bcs.cause_of({"end": "driver_decision_cap"}), "driver_decision_cap")
         self.assertEqual(bcs.cause_of(bcs.census_end({"kind": "session_error", "code": "c", "message": "m"})),
                          "session error c: m")
+
+
+class SummaryReviewFixTests(unittest.TestCase):
+    def test_a_panic_charges_no_card_in_either_column(self):
+        summary = bcs.summarise(fixture())
+        card3 = next(c for c in summary["cards"] if c["card"] == 3)
+        self.assertEqual(card3["charged"], 0)
+        self.assertEqual(card3["charged_recent"], 0)
+        self.assertEqual(card3["panic_last_source"], 1)
+
+    def test_a_token_source_is_reported_apart_not_an_order_error(self):
+        halt = {"kind": "decision_cap"}
+        rows = fixture()[:1] + [dict(line(1, halt, [[1], [2]], "driver_decision_cap", source=4242, recent=4242),
+                                     last_action_source_name="Clue")]
+        summary = bcs.summarise(rows)
+        self.assertEqual(summary["order_errors"], [])
+        self.assertEqual(summary["token_sources"], [{"card": 4242, "name": "Clue", "charged": 1}])
+
+    def test_index_start_is_the_first_index_even_with_a_gap(self):
+        rows = [line(i, {"kind": "natural", "winner_seat": 0, "reason": "life"}, [[1], [2]], None) for i in (5, 6, 8)]
+        summary = bcs.summarise(rows)
+        self.assertEqual(summary["index_start"], 5)
+        self.assertEqual(summary["order_errors"], ["index 8 follows 6"])
 
 
 class SummaryTests(unittest.TestCase):
