@@ -198,6 +198,66 @@ class PoolTests(unittest.TestCase):
             self.assertEqual(len(written["spells"]), 29)
 
 
+class LfOutputTests(unittest.TestCase):
+    """pool.py and deal.py write UTF-8 bytes with LF line endings on every OS (file and stdout)."""
+
+    def _run(self, script: str, args: list[str]) -> bytes:
+        proc = subprocess.run(
+            [sys.executable, str(CUBE_V1_DIR / script), *args],
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        return proc.stdout
+
+    def test_pool_and_deal_write_lf_bytes_to_file_and_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pool_args = [
+                "--cube-list",
+                str(FIXTURES_DIR / "cube_list.json"),
+                "--gaps",
+                str(FIXTURES_DIR / "gaps.json"),
+                "--id-export",
+                str(FIXTURES_DIR / "id_export.json"),
+                "--fence",
+                str(FIXTURES_DIR / "fence.json"),
+            ]
+            pool_file = tmp_path / "pool.json"
+            self.assertEqual(self._run("pool.py", pool_args + ["--out", str(pool_file)]), b"")
+            pool_stdout = self._run("pool.py", pool_args)
+            pool_bytes = pool_file.read_bytes()
+            for data in (pool_bytes, pool_stdout):
+                self.assertNotIn(b"\r", data)
+                self.assertIn(b"\n", data)
+                data.decode("utf-8")
+            self.assertEqual(pool_bytes, pool_stdout)
+
+            deal_args = [
+                "--pool",
+                str(pool_file),
+                "--constants",
+                str(FIXTURES_DIR / "constants.json"),
+                "--namespace",
+                "train",
+                "--run",
+                "lf",
+                "--update-start",
+                "0",
+                "--update-end",
+                "2",
+            ]
+            deal_file = tmp_path / "deal.json"
+            self.assertEqual(self._run("deal.py", deal_args + ["--out", str(deal_file)]), b"")
+            deal_stdout = self._run("deal.py", deal_args)
+            deal_bytes = deal_file.read_bytes()
+            for data in (deal_bytes, deal_stdout):
+                self.assertNotIn(b"\r", data)
+                self.assertIn(b"\n", data)
+                data.decode("utf-8")
+            self.assertEqual(deal_bytes, deal_stdout)
+
+
 class DealGuaranteeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
