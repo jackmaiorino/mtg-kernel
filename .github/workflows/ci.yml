@@ -1627,10 +1627,16 @@ jobs:
       # Builds the plain library and the suite's test binary with the same
       # Cargo command the parts use, then writes the names of the binary's
       # tests and runs none: the inventory job compares the parts with it.
+      # Four Cargo jobs on hosted Linux, not the two of the other heavy
+      # builds: this job compiles one target and nothing runs beside it.
+      # Measured 2026-11-24 on both hosted processors: 1,485 s against 1,740
+      # and 1,746 (EPYC 7763), 1,164 against about 1,337 (EPYC 9V74); lowest
+      # available memory 391 and 530 MiB with about 0.5 GiB of the compressed
+      # swap in use, against 950 MiB and no swap at two jobs.
       - name: Build the Eternal integration suite and list its tests
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            export CARGO_BUILD_JOBS=2
+            export CARGO_BUILD_JOBS=4
           fi
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --list-only eternal-integration-tests.json
 
