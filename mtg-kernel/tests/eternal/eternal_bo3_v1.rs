@@ -27,7 +27,7 @@ pub(crate) mod ordered;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 137] = [
+const PLAYABLE_75: [(&str, &str); 138] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -207,6 +207,7 @@ const PLAYABLE_75: [(&str, &str); 137] = [
     ("premodern", "premodern-grow"),
     ("premodern", "premodern-other-control"),
     ("premodern", "premodern-full-english-breakfast"),
+    ("premodern", "premodern-replenish"),
 ];
 
 fn id(name: &str) -> u16 {
@@ -1903,8 +1904,9 @@ fn registered_feb_plays_best_of_three_against_psychatog_and_allure_mage_and_repl
     )
     .unwrap();
 
-    // A Premodern-pool 75 with Legacy's Allure and Meddling Mage (Replenish
-    // cannot register before step C2 adds Alter Reality).
+    // A dedicated Premodern-pool 75 with Legacy's Allure and Meddling Mage
+    // (the snapshot Replenish 75 with Alter Reality now also plays FEB directly
+    // through PLAYABLE_75).
     let allure_mage = EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
         EternalFormatV1::Premodern,
         "premodern-allure-mage-test",

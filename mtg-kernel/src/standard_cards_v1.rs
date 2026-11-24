@@ -500,6 +500,9 @@ pub enum StandardTargetV1 {
     C9aV1(crate::eternal_cube_c9a_v1::targets::C9aTargetV1),
     /// A filter of eternal wave C9c (`eternal_cube_c9c_v1::targets`).
     C9cV1(crate::eternal_cube_c9c_v1::targets::C9cTargetV1),
+    /// Alter Reality (Premodern wave P3i): "target spell or permanent".
+    /// Appended to preserve existing target discriminants.
+    SpellOrPermanentV1,
 }
 
 impl StandardTargetV1 {
@@ -795,7 +798,11 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || crate::eternal_cube_c8c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c9a_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c9c_v1::targets::zone_allows(target, zone)
-        || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
+        || (matches!(
+            target,
+            StandardTargetV1::OpponentSpellOrNonlandPermanentV1
+                | StandardTargetV1::SpellOrPermanentV1
+        ) && zone == Zone::Stack)
         || (matches!(
             target,
             StandardTargetV1::PlayerThenGraveyardCardsV1
@@ -976,6 +983,7 @@ fn stack_spell_matches(
             crate::eternal_sideboard_s1a_v1::targets::spell_matches(state, item)
         }
         StandardTargetV1::OpponentSpellOrNonlandPermanentV1 => item.controller != controller,
+        StandardTargetV1::SpellOrPermanentV1 => true,
         StandardTargetV1::TriggeredAbilityOrColorlessSpellV1 => {
             // Painter's Servant colors every spell (eternal wave E9a).
             state.objects.get(source).v4.effective_color_mask == 0
@@ -1258,7 +1266,13 @@ pub(crate) fn legal_targets(
             .filter(|candidate| !prefix.contains(candidate))
             .collect();
     }
-    if target.on_stack() || target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 {
+    if target.on_stack()
+        || matches!(
+            target,
+            StandardTargetV1::OpponentSpellOrNonlandPermanentV1
+                | StandardTargetV1::SpellOrPermanentV1
+        )
+    {
         let spells = state
             .stack
             .iter()
@@ -1267,7 +1281,11 @@ pub(crate) fn legal_targets(
             .filter(|&spell| stack_spell_matches(target, controller, spell, state))
             .filter(|&spell| source.is_none_or(|(id, _)| id != spell))
             .map(Target::Object);
-        let permanents = if target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 {
+        let permanents = if matches!(
+            target,
+            StandardTargetV1::OpponentSpellOrNonlandPermanentV1
+                | StandardTargetV1::SpellOrPermanentV1
+        ) {
             [PlayerId::P0, PlayerId::P1]
                 .iter()
                 .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
@@ -1556,7 +1574,11 @@ pub(crate) fn target_matches(
     }
     if live.zone == Zone::Stack {
         return (target.on_stack()
-            || target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1)
+            || matches!(
+                target,
+                StandardTargetV1::OpponentSpellOrNonlandPermanentV1
+                    | StandardTargetV1::SpellOrPermanentV1
+            ))
             && stack_spell_matches(target, controller, object, state);
     }
     if live.zone != Zone::Battlefield || target.on_stack() {
@@ -1792,6 +1814,7 @@ pub(crate) fn target_matches(
         | StandardTargetV1::C8cV1(_)
         | StandardTargetV1::C9aV1(_)
         | StandardTargetV1::C9cV1(_) => false,
+        StandardTargetV1::SpellOrPermanentV1 => true,
     }
 }
 
