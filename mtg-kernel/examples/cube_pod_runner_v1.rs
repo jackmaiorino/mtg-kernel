@@ -1,28 +1,48 @@
-//! Runs N uniform training pods in a namespace and run and writes one
-//! `mtg-kernel-cube-pod-record/v1` JSON line per pod.
+//! Cube pod runner CLI (`mtg-kernel-cube-pod-record/v2` and
+//! `mtg-kernel-cube-read-plan/v1`).
 //!
-//! If any pod stops (exhausts its 3 retries) or trips the per-pod watchdog,
-//! nothing is published from the batch and the process exits non-zero.
-//!
-//! Usage (`eternal-fixtures` build):
-//!   cube_pod_runner_v1 --namespace NS --run RUN --pods N
-//!                      [--pod-start J] [--use training] [--older 6,7]
-//!                      [--workers W] [--watchdog-seconds 600]
-//!                      [--cube PATH] [--gaps PATH] [--fence PATH]
-//!                      [--out PATH] [--report PATH]
+//! Modes (`eternal-fixtures` build):
+//! 1. Training / client pods:
+//!    `cube_pod_runner_v1 --namespace NS --run RUN --pods N [--pod-start J]`
+//!                        `[--use training|shakedown|test|client] [--older 6,7]`
+//!                        `[--workers W] [--watchdog-seconds 600]`
+//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//!                        `[--out PATH] [--report PATH]`
+//! 2. Prep set (`READ-PLAN-v1` section 4-5, drafts and builds without playing):
+//!    `cube_pod_runner_v1 --prep-set DIR --execution E --declaration PATH`
+//!                        `--binary-pin SHA --card-index-pin SHA --cube-table-pin SHA`
+//!                        `[--panel-pin SHA] [--platform ID] [--host HOST]`
+//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//! 3. Supervised plan set (`READ-PLAN-v1` section 5-6, writes `exec-<E>/`):
+//!    `cube_pod_runner_v1 --plan-set DIR --execution E --declaration PATH`
+//!                        `--binary-pin SHA --card-index-pin SHA --cube-table-pin SHA`
+//!                        `[--pool-pin SHA] [--constants-pin SHA] [--panel-pin SHA]`
+//!                        `[--platform ID] [--host HOST] [--workers W]`
+//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//! 4. Single-pod worker (spawned by the supervisor for `--plan-set`):
+//!    `cube_pod_runner_v1 --worker-plan PLAN --out RECORD --timing TIMING`
+//!                        `--journal JOURNAL --execution E [--host HOST] [--workers W]`
+//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
 mtg_kernel::fast_global_allocator!();
 
 use mtg_kernel::cube_draft_v1::CubePool;
 use mtg_kernel::cube_pod_runner_v1::{
-    run_uniform_training_batch, training_roles_with_older, BatchReport, PilotInfo, PodCaps,
-    PodPins, PodUse, UniformBatchConfig, DEFAULT_WATCHDOG_SECONDS,
+    run_training_pod, run_uniform_training_batch, training_roles_with_older,
+    uniform_training_chairs, BatchReport, PilotInfo, PodCaps, PodPins, PodUse, TrainingPodConfig,
+    UniformBatchConfig, DEFAULT_WATCHDOG_SECONDS,
+};
+use mtg_kernel::cube_read_plan_v1::{
+    execute_read_plan_v1, parse_and_validate_read_plan_json, run_prep_set_execution, sha256_hex,
+    supervise_plan_set_execution, to_canonical_compact_json, to_canonical_pretty_json,
+    CommandPodWorkerLauncher, PodProgressJournal, ReadPlanRunOptions, RuntimePins,
+    RuntimeVerification, UniformSeatFactory,
 };
 use mtg_kernel::cube_seat_v1::UniformPilot;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 type Fallible<T> = Result<T, String>;
 
@@ -40,6 +60,21 @@ const VALUE_FLAGS: &[&str] = &[
     "--fence",
     "--out",
     "--report",
+    "--prep-set",
+    "--plan-set",
+    "--worker-plan",
+    "--timing",
+    "--journal",
+    "--execution",
+    "--declaration",
+    "--binary-pin",
+    "--card-index-pin",
+    "--cube-table-pin",
+    "--pool-pin",
+    "--constants-pin",
+    "--panel-pin",
+    "--platform",
+    "--host",
 ];
 
 struct Args {
@@ -92,6 +127,7 @@ fn parse_use(text: &str) -> Fallible<PodUse> {
         "paired_build" => Ok(PodUse::PairedBuild),
         "sizing" => Ok(PodUse::Sizing),
         "test" => Ok(PodUse::Test),
+        "client" => Ok(PodUse::Client),
         other => Err(format!("unknown --use {other:?}")),
     }
 }
@@ -120,14 +156,223 @@ fn utf8(path: &str, bytes: &[u8]) -> Fallible<String> {
     String::from_utf8(bytes.to_vec()).map_err(|error| format!("{path}: {error}"))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+struct LoadedPool {
+    pool: CubePool,
+    cube_path: String,
+    gaps_path: String,
+    fence_path: Option<String>,
+    cube_sha256: String,
+    fence_sha256: Option<String>,
+}
+
+fn load_pool(args: &Args) -> Fallible<LoadedPool> {
+    let cube_path = args
+        .get("--cube")
+        .unwrap_or("data/cube_v1/mtgo_vintage_cube_20261007.json")
+        .to_owned();
+    let gaps_path = args
+        .get("--gaps")
+        .unwrap_or("data/cube_v1/mtgo_vintage_cube_20261007_gaps.json")
+        .to_owned();
+    let fence_path = args.get("--fence").map(str::to_owned);
+    let cube_bytes = read_bytes(&cube_path)?;
+    let gaps_bytes = read_bytes(&gaps_path)?;
+    let fence_bytes = fence_path.as_deref().map(read_bytes).transpose()?;
+    let fence_text = match (fence_path.as_deref(), &fence_bytes) {
+        (Some(path), Some(bytes)) => Some(utf8(path, bytes)?),
+        _ => None,
+    };
+    let pool = CubePool::from_json_texts(
+        &utf8(&cube_path, &cube_bytes)?,
+        &utf8(&gaps_path, &gaps_bytes)?,
+        fence_text.as_deref(),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(LoadedPool {
+        pool,
+        cube_path,
+        gaps_path,
+        fence_path,
+        cube_sha256: sha256_hex(&cube_bytes),
+        fence_sha256: fence_bytes.as_deref().map(sha256_hex),
+    })
+}
+
+fn load_verification(args: &Args, loaded: &LoadedPool) -> Fallible<RuntimeVerification> {
+    let binary = match args.get("--binary-pin") {
+        Some(pin) => pin.to_owned(),
+        None => {
+            let exe = std::env::current_exe()
+                .map_err(|error| format!("current_exe: {error}"))?;
+            let bytes = std::fs::read(&exe)
+                .map_err(|error| format!("{}: {error}", exe.display()))?;
+            sha256_hex(&bytes)
+        }
+    };
+    let fence_record = loaded
+        .fence_sha256
+        .clone()
+        .ok_or_else(|| "--fence is required for read-plan/prep pin verification".to_owned())?;
+    let card_index = args.required("--card-index-pin")?.to_owned();
+    let cube_table = args.required("--cube-table-pin")?.to_owned();
+    let declaration_path = args.required("--declaration")?;
+    let declaration_bytes = read_bytes(declaration_path)?;
+    let platform = args.get("--platform").unwrap_or("local").to_owned();
+    let host = args.get("--host").unwrap_or("local").to_owned();
+    Ok(RuntimeVerification {
+        pins: RuntimePins {
+            binary,
+            cube_list: loaded.cube_sha256.clone(),
+            fence_record,
+            card_index,
+            cube_table,
+            pool_sha256: args.get("--pool-pin").map(str::to_owned),
+            constants_sha256: args.get("--constants-pin").map(str::to_owned),
+        },
+        platform,
+        host,
+        declaration_bytes,
+        pinned_panel_sha256: args.get("--panel-pin").map(str::to_owned),
+    })
+}
+
+fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
+    let plan_path = args.required("--worker-plan")?;
+    let out_path = PathBuf::from(args.required("--out")?);
+    let timing_path = PathBuf::from(args.required("--timing")?);
+    let journal_path = PathBuf::from(args.required("--journal")?);
+    let execution = args
+        .number("--execution")?
+        .ok_or("--execution is required")?;
+    let workers = args.number("--workers")?.unwrap_or(1).max(1) as usize;
+    let host = args.get("--host").unwrap_or("local");
+
+    let plan_text = std::fs::read_to_string(plan_path)
+        .map_err(|error| format!("{plan_path}: {error}"))?;
+    let plan = parse_and_validate_read_plan_json(&plan_text).map_err(|e| e.to_string())?;
+    let journal = PodProgressJournal::create(journal_path).map_err(|e| e.to_string())?;
+    let run_opts = ReadPlanRunOptions {
+        execution,
+        workers,
+        host,
+        watchdog_override: None,
+        journal: Some(&journal),
+    };
+    let output = execute_read_plan_v1(
+        &loaded.pool,
+        &plan,
+        &UniformSeatFactory,
+        &UniformPilot,
+        &run_opts,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let record_text = to_canonical_pretty_json(&output.record).map_err(|e| e.to_string())?;
+    let mut rec_file =
+        File::create_new(&out_path).map_err(|e| format!("{}: {e}", out_path.display()))?;
+    rec_file
+        .write_all(record_text.as_bytes())
+        .map_err(|e| format!("{}: {e}", out_path.display()))?;
+    rec_file
+        .sync_all()
+        .map_err(|e| format!("{}: {e}", out_path.display()))?;
+
+    let mut timing_file =
+        File::create_new(&timing_path).map_err(|e| format!("{}: {e}", timing_path.display()))?;
+    for entry in &output.timings {
+        let line = to_canonical_compact_json(entry).map_err(|e| e.to_string())?;
+        writeln!(timing_file, "{line}")
+            .map_err(|e| format!("{}: {e}", timing_path.display()))?;
+    }
+    timing_file
+        .sync_all()
+        .map_err(|e| format!("{}: {e}", timing_path.display()))?;
+    Ok(())
 }
 
 fn run_cli(args: &Args) -> Fallible<()> {
+    let loaded = load_pool(args)?;
+
+    if args.get("--worker-plan").is_some() {
+        return run_worker_plan(args, &loaded);
+    }
+
+    if let Some(prep_dir) = args.get("--prep-set") {
+        let execution = args
+            .number("--execution")?
+            .ok_or("--execution is required with --prep-set")?;
+        let verification = load_verification(args, &loaded)?;
+        let receipt = run_prep_set_execution(
+            &loaded.pool,
+            Path::new(prep_dir),
+            execution,
+            &UniformSeatFactory,
+            &verification,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        let text = to_canonical_pretty_json(&receipt).map_err(|e| e.to_string())?;
+        print!("{text}");
+        return Ok(());
+    }
+
+    if let Some(plan_dir) = args.get("--plan-set") {
+        let execution = args
+            .number("--execution")?
+            .ok_or("--execution is required with --plan-set")?;
+        let workers = args.number("--workers")?.unwrap_or(1).max(1) as usize;
+        let verification = load_verification(args, &loaded)?;
+        let exe = std::env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
+        let cube_path = loaded.cube_path.clone();
+        let gaps_path = loaded.gaps_path.clone();
+        let fence_path = loaded.fence_path.clone();
+        let host = verification.host.clone();
+        let launcher = CommandPodWorkerLauncher::new(
+            move |plan_path: &Path,
+                  record_path: &Path,
+                  timing_path: &Path,
+                  journal_path: &Path,
+                  exec_num: u64| {
+                let mut cmd = Command::new(&exe);
+                cmd.arg("--worker-plan")
+                    .arg(plan_path)
+                    .arg("--out")
+                    .arg(record_path)
+                    .arg("--timing")
+                    .arg(timing_path)
+                    .arg("--journal")
+                    .arg(journal_path)
+                    .arg("--execution")
+                    .arg(exec_num.to_string())
+                    .arg("--workers")
+                    .arg(workers.to_string())
+                    .arg("--host")
+                    .arg(&host)
+                    .arg("--cube")
+                    .arg(&cube_path)
+                    .arg("--gaps")
+                    .arg(&gaps_path);
+                if let Some(ref fp) = fence_path {
+                    cmd.arg("--fence").arg(fp);
+                }
+                cmd
+            },
+        );
+        let receipt = supervise_plan_set_execution(
+            &loaded.pool,
+            Path::new(plan_dir),
+            execution,
+            &UniformSeatFactory,
+            &verification,
+            &launcher,
+        )
+        .map_err(|error| error.to_string())?;
+        let text = to_canonical_pretty_json(&receipt).map_err(|e| e.to_string())?;
+        print!("{text}");
+        return Ok(());
+    }
+
+    // Default mode: training or client pod batch.
     let namespace = args.required("--namespace")?.to_owned();
     let run = args.required("--run")?.to_owned();
     let pods = args.number("--pods")?.ok_or("--pods is required")?;
@@ -142,27 +387,6 @@ fn run_cli(args: &Args) -> Fallible<()> {
     let watchdog_seconds = args
         .number("--watchdog-seconds")?
         .unwrap_or(DEFAULT_WATCHDOG_SECONDS);
-
-    let cube_path = args
-        .get("--cube")
-        .unwrap_or("data/cube_v1/mtgo_vintage_cube_20261007.json");
-    let gaps_path = args
-        .get("--gaps")
-        .unwrap_or("data/cube_v1/mtgo_vintage_cube_20261007_gaps.json");
-    let cube_bytes = read_bytes(cube_path)?;
-    let gaps_bytes = read_bytes(gaps_path)?;
-    let fence_bytes = args.get("--fence").map(read_bytes).transpose()?;
-    let fence_text = match (args.get("--fence"), &fence_bytes) {
-        (Some(path), Some(bytes)) => Some(utf8(path, bytes)?),
-        _ => None,
-    };
-
-    let pool = CubePool::from_json_texts(
-        &utf8(cube_path, &cube_bytes)?,
-        &utf8(gaps_path, &gaps_bytes)?,
-        fence_text.as_deref(),
-    )
-    .map_err(|error| error.to_string())?;
 
     let out_path = args.get("--out").map(PathBuf::from);
     if let Some(path) = out_path.as_ref().filter(|path| path.exists()) {
@@ -181,8 +405,8 @@ fn run_cli(args: &Args) -> Fallible<()> {
 
     let pins = PodPins {
         binary: None,
-        cube_list: Some(sha256_hex(&cube_bytes)),
-        fence_record: fence_bytes.as_deref().map(sha256_hex),
+        cube_list: Some(loaded.cube_sha256),
+        fence_record: loaded.fence_sha256,
         card_index: None,
         cube_table: None,
     };
@@ -193,22 +417,42 @@ fn run_cli(args: &Args) -> Fallible<()> {
     let pod_end = pod_start
         .checked_add(pods)
         .ok_or("--pod-start + --pods overflows u64")?;
-    let batch_config = UniformBatchConfig {
-        pod_use,
-        namespace,
-        run,
-        pod_indices: (pod_start..pod_end).collect(),
-        roles,
-        pins,
-        pilot_info: PilotInfo::uniform(),
-        caps,
-        workers,
+
+    let records = if pod_use == PodUse::Client {
+        let mut out = Vec::with_capacity(pods as usize);
+        for pod_index in pod_start..pod_end {
+            let pod_cfg = TrainingPodConfig {
+                pod_use,
+                namespace: namespace.clone(),
+                run: run.clone(),
+                pod_index,
+                pins: pins.clone(),
+                pilot_info: PilotInfo::uniform(),
+                caps,
+                workers,
+            };
+            let mut chairs = uniform_training_chairs(roles);
+            let rec = run_training_pod(&loaded.pool, &pod_cfg, &mut chairs, &UniformPilot)
+                .map_err(|error| error.to_string())?;
+            out.push(rec);
+        }
+        out
+    } else {
+        let batch_config = UniformBatchConfig {
+            pod_use,
+            namespace,
+            run,
+            pod_indices: (pod_start..pod_end).collect(),
+            roles,
+            pins,
+            pilot_info: PilotInfo::uniform(),
+            caps,
+            workers,
+        };
+        run_uniform_training_batch(&loaded.pool, &batch_config, &UniformPilot)
+            .map_err(|error| error.to_string())?
     };
 
-    // Publish nothing unless the entire batch completes without a stopped pod
-    // or watchdog expiry.
-    let records = run_uniform_training_batch(&pool, &batch_config, &UniformPilot)
-        .map_err(|error| error.to_string())?;
     let report = BatchReport::from_records(&records);
 
     match out_path {

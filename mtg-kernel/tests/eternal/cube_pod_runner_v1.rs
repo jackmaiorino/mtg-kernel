@@ -15,28 +15,46 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::cube_draft_v1::{
-    derive_seed, game_seed, play_pod_game, pod_pairings, run_draft, uniform_pickers, CubePool,
-    Deck, GameCaps, GameEnd, SeedStream, PACK_SIZE, POD_GAMES, POOL_CARDS, ROUNDS, SEATS,
+    derive_seed, game_seed, play_pod_game, pod_game_seats, pod_pairings, run_draft,
+    uniform_pickers, CubePool, Deck, GameCaps, GameEnd, SeedStream, PACK_SIZE, POD_GAMES,
+    POOL_CARDS, ROUNDS, SEATS,
 };
 use mtg_kernel::cube_pod_runner_v1::{
-    attempt_seeds, pod_draft_seed, pod_league_seed, pod_play_seed, run_read_plan,
+    attempt_seeds, is_watchdog_end, pod_draft_seed, pod_league_seed, pod_play_seed, run_read_plan,
     run_training_pod, run_uniform_training_batch, seed, sibling_correlation,
     stated_training_chairs, training_roles_with_older, uniform_training_chairs,
-    validate_pod_record_json, BatchReport, ChairRole, DealtOrigin, DeckSource, GameRole,
-    PairedBuildKind, PilotInfo, PodCaps, PodPins, PodRecord, PodReport, PodRunnerError, PodStatus,
-    PodUse, ReadDeckSpec, ReadGameSpec, ReadPlan, SeatRule, SeedPart, TrainingPodConfig,
-    UniformBatchConfig, A2_GAME_CAPS, POD_RECORD_SCHEMA, TRAINING_POD_GAMES,
+    validate_pod_record_json, watchdog_game_end, BatchReport, BuilderKind, BuilderPin, BuilderRef,
+    ChairRole, DealtOrigin, DeckSource, GameRole, PairedBuildKind, PairedBuildRecord, PilotInfo,
+    PodCaps, PodPins, PodRecord, PodReport, PodRunnerError, PodSeeds, PodStatus, PodUse,
+    ReadDeckSpec, ReadGameSpec, ReadPlan, SeatKind, SeatRef, SeatRule, SeedPart, TrainingPodConfig,
+    UniformBatchConfig, A2_GAME_CAPS, CLIENT_NAMESPACE, POD_RECORD_SCHEMA, TRAINING_POD_GAMES,
+    WATCHDOG_STOP_KIND,
+};
+use mtg_kernel::cube_read_plan_v1::{
+    accept_plan_execution, accept_prep_execution, compute_plan_set_sha256, execute_read_plan_v1,
+    parse_and_validate_prep_result_json, parse_and_validate_read_plan_json, run_plan_set_execution,
+    run_prep_set_execution, sha256_hex, supervise_plan_set_execution, to_canonical_compact_json,
+    to_canonical_pretty_json, CommandPodWorkerLauncher, DeckRow, ExecutionRecordEntry,
+    ExecutionReason, ManifestEntry, ManifestExecutionEntry, ManifestKind, ManifestPodEntry,
+    ManifestUnitEntry, MarkKind, PanelDocument, PanelDraftEntry, PanelPrepOutput, PlanChair,
+    PlanDeck, PlanExecutionEnded, PlanFamily, PlanGame, PlanInputs, PlanMark, PodProgressJournal,
+    PodWorkerLauncher, PrepBuildSpec, PrepExecutionEnded, PrepFamily, PrepRequest,
+    ReadPlanRunOptions, ReadPlanV1, RuntimePins, RuntimeVerification, SeatFactory, SetManifest,
+    SupervisedPodOutcome, UniformSeatFactory, READ_PLAN_SCHEMA,
 };
 use mtg_kernel::cube_seat_v1::{
     canonical_deck, run_seat_draft, AttemptOutcome, AttemptSpec, DecisionKind, GamePilot,
     PassDirection, PickOutcome, SeatBuilder, SeatError, SeatPickView, SeatPicker,
-    StatedSeatBuilder, UniformFourStepBuilder, UniformPilot, UniformSeatPicker,
+    StatedSeatBuilder, UniformFourStepBuilder, UniformPilot, UniformSeatPicker, LEARNED_SAMPLER_ID,
     M4_INTERFACES_VERSION, UNIFORM_SAMPLER_ID,
 };
 use mtg_kernel::rl::build_deck_pair_state;
 use mtg_kernel::state::SplitMix64;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 const CUBE_LIST: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -529,7 +547,13 @@ fn acceptance_4_sibling_invariance() {
         namespace: "test".to_owned(),
         run: "sib-inv".to_owned(),
         pod_index: 4,
-        seeds: pod_with_sib.seeds,
+        seeds: PodSeeds::for_read(
+            pod_with_sib.seeds.draft_seed.unwrap(),
+            pod_with_sib.seeds.pod_seed.unwrap(),
+            None,
+            "test",
+            "test",
+        ),
         pins: PodPins::default(),
         pilot: PilotInfo::uniform(),
         caps: PodCaps::read_a2(),
@@ -537,7 +561,6 @@ fn acceptance_4_sibling_invariance() {
         decks: ref_deck_specs,
         games: read_games,
         paired_builds: Vec::new(),
-        stop_on_halt: false,
     };
     let read_pod = run_read_plan(&read_plan, &pilot, 2).unwrap();
     for (ref_g, read_g) in chair0_ref_games.iter().zip(&read_pod.games) {
@@ -1189,6 +1212,7 @@ fn acceptance_9_layout_read_plans_and_reports() {
         assert_eq!(pb_chairs, learning_chairs);
         for pb in &pod.paired_builds {
             assert_eq!(pb.kind, PairedBuildKind::Sibling);
+            assert_eq!(pb.q, None);
             assert_eq!(pb.opponents.len(), 7);
             assert_eq!(pb.games_x.len(), 7);
             assert_eq!(pb.games_y.len(), 7);
@@ -1225,12 +1249,16 @@ fn acceptance_9_layout_read_plans_and_reports() {
         .halt_by_episode_env
         .insert((0, env0), (GameEnd::DecisionCap, None));
 
+    let dealt_origin = DealtOrigin {
+        function: "cube_deal_b_v1".to_owned(),
+        key: json!(["read-gate-b", "v1", 0]),
+    };
     let plan = ReadPlan {
         pod_use: PodUse::ReadB,
-        namespace: "read-b".to_owned(),
-        run: "r0".to_owned(),
+        namespace: "read-gate-b".to_owned(),
+        run: "v1".to_owned(),
         pod_index: 0,
-        seeds: Default::default(),
+        seeds: PodSeeds::for_read(99, 100, None, "read-gate-pools", "read-gate-pools"),
         pins: PodPins::default(),
         pilot: PilotInfo::uniform(),
         caps: PodCaps::read_a2(),
@@ -1240,8 +1268,8 @@ fn acceptance_9_layout_read_plans_and_reports() {
                 source: DeckSource::Build,
                 chair: Some(0),
                 build: Some(0),
-                builder: None,
-                build_seed: None,
+                builder: BuilderRef::uniform(),
+                build_seed: Some(1),
                 cards: d0,
                 build_rows: None,
                 dealt: None,
@@ -1250,14 +1278,11 @@ fn acceptance_9_layout_read_plans_and_reports() {
                 source: DeckSource::Dealt,
                 chair: None,
                 build: None,
-                builder: None,
+                builder: BuilderRef::dealt(dealt_origin.clone()),
                 build_seed: None,
                 cards: d1,
                 build_rows: None,
-                dealt: Some(DealtOrigin {
-                    function: "deal_read_b_opponent".to_owned(),
-                    key: json!(["read-b", "r0", 0]),
-                }),
+                dealt: Some(dealt_origin.clone()),
             },
         ],
         games: vec![
@@ -1283,17 +1308,28 @@ fn acceptance_9_layout_read_plans_and_reports() {
             },
         ],
         paired_builds: Vec::new(),
-        stop_on_halt: false,
     };
     let read_rec = run_read_plan(&plan, &read_pilot, 2).unwrap();
     assert!(read_rec.draft.is_none());
     assert_eq!(read_rec.status, PodStatus::Complete);
+    assert!(read_rec.stop.is_none());
+    assert_eq!(read_rec.seeds.league_seed, None);
+    assert_eq!(
+        read_rec.seeds.draft_seed_namespace.as_deref(),
+        Some("read-gate-pools")
+    );
+    assert_eq!(
+        read_rec.seeds.pod_seed_namespace.as_deref(),
+        Some("read-gate-pools")
+    );
+    assert_eq!(read_rec.decks[1].builder, BuilderRef::dealt(dealt_origin));
     assert_eq!(read_rec.games[0].seat_rule, SeatRule::Schedule);
     assert_eq!(read_rec.games[0].attempts.len(), 1);
     assert!(read_rec.games[0].attempts[0].halted);
     assert_eq!(read_rec.games[0].scores, None);
     assert_eq!(read_rec.halts.len(), 1);
     assert!(read_rec.games[1].scores.is_some());
+    validate_pod_record_json(&read_rec.to_json_line()).expect("read pod record matches v2 schema");
 
     let mut bad_plan = plan.clone();
     bad_plan.caps.max_replays = 1;
@@ -1436,7 +1472,7 @@ fn acceptance_10_schema() {
 }
 
 #[test]
-fn watchdog_expiry_voids_pod_without_classifying_games() {
+fn watchdog_expiry_recorded_as_terminal_watchdog() {
     struct SlowPilot;
 
     impl GamePilot for SlowPilot {
@@ -1450,7 +1486,7 @@ fn watchdog_expiry_voids_pod_without_classifying_games() {
                     winner_seat: Some(spec.seats[0]),
                     reason: "life_zero".to_owned(),
                 },
-                last_action_source: None,
+                last_action_source: Some(42),
             }
         }
     }
@@ -1461,16 +1497,1664 @@ fn watchdog_expiry_voids_pod_without_classifying_games() {
     cfg.caps.watchdog_seconds = 1;
     let mut chairs = uniform_training_chairs(roles);
     let err = run_training_pod(&pool, &cfg, &mut chairs, &SlowPilot)
-        .expect_err("watchdog expiry must void the pod run");
-    assert!(
-        matches!(
-            err,
-            PodRunnerError::WatchdogExpired {
-                pod_index: 0,
-                watchdog_seconds: 1,
-                ..
+        .expect_err("watchdog expiry must stop the training pod");
+    let PodRunnerError::Stopped(record) = err else {
+        panic!("expected Stopped(record), got {err:?}");
+    };
+    assert_eq!(record.status, PodStatus::Stopped);
+    assert_eq!(record.games.len(), 1);
+    let a0 = &record.games[0].attempts[0];
+    assert!(is_watchdog_end(&a0.end));
+    assert_eq!(a0.end, watchdog_game_end());
+    assert!(a0.halted);
+    assert_eq!(a0.stop_kind.as_deref(), Some(WATCHDOG_STOP_KIND));
+    assert_eq!(a0.last_action_source, None);
+    assert_eq!(record.games[0].scores, None);
+    assert_eq!(record.halts.len(), 1);
+    assert_eq!(record.halts[0].stop_kind, WATCHDOG_STOP_KIND);
+    assert_eq!(record.halts[0].last_action_source, None);
+    let stop = record.stop.as_ref().expect("stop report present");
+    assert_eq!(stop.game, 0);
+    assert_eq!(stop.attempts.len(), 1);
+    assert_eq!(stop.attempts[0].stop_kind, WATCHDOG_STOP_KIND);
+    assert_eq!(stop.attempts[0].last_action_source, None);
+    validate_pod_record_json(&record.to_json_line()).expect("watchdog-stopped record valid v2");
+}
+
+
+// ---------------------------------------------------------------------------
+// Round 2 helpers and tests (`m4-interfaces/v2`, `pod-record/v2`, `READ-PLAN-v1`)
+// ---------------------------------------------------------------------------
+
+static TEMP_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
+
+struct TempTestDir {
+    path: PathBuf,
+}
+
+impl TempTestDir {
+    fn new(label: &str) -> Self {
+        let seq = TEMP_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("cube-d5-r2-{label}-{pid}-{seq}"));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("create temp test dir");
+        TempTestDir { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempTestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn pin_hex(byte: u8) -> String {
+    format!("{byte:02x}").repeat(32)
+}
+
+fn fixture_runtime_pins() -> RuntimePins {
+    RuntimePins {
+        binary: pin_hex(0x11),
+        cube_list: pin_hex(0x22),
+        fence_record: pin_hex(0x33),
+        card_index: pin_hex(0x44),
+        cube_table: pin_hex(0x55),
+        pool_sha256: Some(pin_hex(0x66)),
+        constants_sha256: Some(pin_hex(0x77)),
+    }
+}
+
+fn pod_pins_from_runtime(rt: &RuntimePins) -> PodPins {
+    PodPins {
+        binary: Some(rt.binary.clone()),
+        cube_list: Some(rt.cube_list.clone()),
+        fence_record: Some(rt.fence_record.clone()),
+        card_index: Some(rt.card_index.clone()),
+        cube_table: Some(rt.cube_table.clone()),
+    }
+}
+
+fn fixture_verification(decl_bytes: Vec<u8>, pinned_panel: Option<String>) -> RuntimeVerification {
+    RuntimeVerification {
+        pins: fixture_runtime_pins(),
+        platform: "test-platform-v1".to_owned(),
+        host: "test-host".to_owned(),
+        declaration_bytes: decl_bytes,
+        pinned_panel_sha256: pinned_panel,
+    }
+}
+
+/// Deterministic test factory supporting `uniform`, `stated`, and `learned`
+/// (salted by checkpoint pin so distinct learned builders produce distinct
+/// decks on the same build-0 stream).
+struct PinSaltedTestBuilder {
+    salt: u64,
+}
+
+impl SeatBuilder for PinSaltedTestBuilder {
+    fn build(
+        &mut self,
+        pool: &[u16],
+        stream: &mut SplitMix64,
+    ) -> Result<mtg_kernel::cube_seat_v1::BuildOutcome, SeatError> {
+        let mut salted = SplitMix64::seed(stream.next_u64() ^ self.salt);
+        UniformFourStepBuilder.build(pool, &mut salted)
+    }
+}
+
+struct LearnedTestSeatFactory;
+
+impl SeatFactory for LearnedTestSeatFactory {
+    fn make_picker(&self, seat: &SeatRef) -> Result<Box<dyn SeatPicker>, PodRunnerError> {
+        match seat.kind {
+            SeatKind::Uniform | SeatKind::Learned => Ok(Box::new(UniformSeatPicker)),
+            SeatKind::Stated => Err(PodRunnerError::InvalidPlan("unsupported picker".to_owned())),
+        }
+    }
+
+    fn make_builder(&self, builder: &BuilderRef) -> Result<Box<dyn SeatBuilder>, PodRunnerError> {
+        match builder.kind {
+            BuilderKind::Uniform => Ok(Box::new(UniformFourStepBuilder)),
+            BuilderKind::Stated => Ok(Box::new(StatedSeatBuilder)),
+            BuilderKind::Learned => {
+                let salt = match &builder.pin {
+                    Some(BuilderPin::Checkpoint(hex)) => {
+                        u64::from_str_radix(&hex[..16], 16).unwrap_or(1)
+                    }
+                    _ => 1,
+                };
+                Ok(Box::new(PinSaltedTestBuilder { salt }))
             }
-        ),
-        "expected WatchdogExpired, got {err:?}"
+            BuilderKind::Dealt => Err(PodRunnerError::InvalidPlan("dealt not built".to_owned())),
+        }
+    }
+}
+
+fn build_test_aa_plan(unit: u64, mirror: u8, pins: &PodPins) -> ReadPlanV1 {
+    let ns = "test";
+    let run = "v1";
+    let d_seed = seed(&[
+        SeedPart::Str(ns),
+        SeedPart::Str("draft"),
+        SeedPart::Str(run),
+        SeedPart::Int(unit),
+    ])
+    .unwrap();
+    let p_seed = seed(&[
+        SeedPart::Str(ns),
+        SeedPart::Str("pod"),
+        SeedPart::Str(run),
+        SeedPart::Int(unit),
+    ])
+    .unwrap();
+    let chairs: Vec<PlanChair> = (0..SEATS)
+        .map(|c| PlanChair {
+            chair: c as u8,
+            role: if c % 2 == usize::from(mirror) {
+                ChairRole::Learning
+            } else {
+                ChairRole::Fixture
+            },
+            picker: SeatRef::uniform(),
+        })
+        .collect();
+    let mut decks = Vec::with_capacity(16);
+    for c in 0..SEATS {
+        decks.push(PlanDeck {
+            deck: (2 * c) as u32,
+            source: DeckSource::Build,
+            chair: Some(c as u8),
+            build: Some(0),
+            builder: BuilderRef::uniform(),
+            cards: None,
+            dealt: None,
+            row: DeckRow::Candidate,
+        });
+        decks.push(PlanDeck {
+            deck: (2 * c + 1) as u32,
+            source: DeckSource::Build,
+            chair: Some(c as u8),
+            build: Some(1),
+            builder: BuilderRef::stated(),
+            cards: None,
+            dealt: None,
+            row: DeckRow::Stated,
+        });
+    }
+    let pairings = pod_pairings();
+    let cross: Vec<usize> = pairings
+        .iter()
+        .enumerate()
+        .filter_map(|(g, &(low, high))| ((low % 2) != (high % 2)).then_some(g))
+        .collect();
+    let mut games = Vec::with_capacity(32);
+    for (k, &g) in cross.iter().enumerate() {
+        let g_seed = game_seed(p_seed, g);
+        let seats = pod_game_seats(p_seed, g).unwrap();
+        for row in 0..2u32 {
+            games.push(PlanGame {
+                game: (2 * k) as u32 + row,
+                group: k as u32,
+                role: GameRole::Cross,
+                pairing: Some(g as u8),
+                decks: [2 * seats[0] as u32 + row, 2 * seats[1] as u32 + row],
+                chairs: [Some(seats[0] as u8), Some(seats[1] as u8)],
+                seat_rule: SeatRule::Schedule,
+                game_seed: g_seed,
+                episode: g as u64,
+            });
+        }
+    }
+    ReadPlanV1 {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        interfaces: M4_INTERFACES_VERSION.to_owned(),
+        family: PlanFamily::Aa,
+        pod_use: PodUse::Test,
+        namespace: ns.to_owned(),
+        run: run.to_owned(),
+        unit,
+        pod_index: 2 * unit + u64::from(mirror),
+        mirror: Some(mirror),
+        mirror_pods: Some([2 * unit, 2 * unit + 1]),
+        rotation: None,
+        mark: None,
+        seeds: PodSeeds::for_read(d_seed, p_seed, None, ns, ns),
+        pins: pins.clone(),
+        pilot: PilotInfo::uniform(),
+        caps: PodCaps::read_a2(),
+        seat_rule: SeatRule::Schedule,
+        inputs: PlanInputs::default(),
+        prep_sha256: None,
+        chairs,
+        pools: None,
+        decks,
+        games,
+        paired_builds: Vec::new(),
+    }
+}
+
+fn build_test_d13_plan(
+    unit: u64,
+    pins: &PodPins,
+    inputs: &PlanInputs,
+    prep_sha256: &str,
+    pools: Vec<Vec<u16>>,
+    built_cards_by_chair_row: &BTreeMap<(u8, u8), Vec<u16>>,
+    dealt_sample_cards: &[u16],
+) -> ReadPlanV1 {
+    let ns = "test";
+    let run = "v1";
+    let d_seed = seed(&[
+        SeedPart::Str(ns),
+        SeedPart::Str("draft"),
+        SeedPart::Str(run),
+        SeedPart::Int(unit),
+    ])
+    .unwrap();
+    let p_seed = seed(&[
+        SeedPart::Str(ns),
+        SeedPart::Str("pod"),
+        SeedPart::Str(run),
+        SeedPart::Int(unit),
+    ])
+    .unwrap();
+    let chairs: Vec<PlanChair> = (0..SEATS)
+        .map(|c| PlanChair {
+            chair: c as u8,
+            role: ChairRole::Learning,
+            picker: SeatRef {
+                kind: SeatKind::Learned,
+                pin: Some(pin_hex(0xa1)),
+            },
+        })
+        .collect();
+    let mut decks = Vec::with_capacity(48);
+    let mut games = Vec::with_capacity(192);
+    let mut paired_builds = Vec::with_capacity(24);
+    for s in 0..SEATS {
+        let base = 6 * s;
+        let specs = [
+            (0u8, DeckRow::B1Last, 0u8, BuilderRef::learned(pin_hex(0xb1))),
+            (1, DeckRow::Initial, 0, BuilderRef::learned(pin_hex(0xb2))),
+            (2, DeckRow::K1Last, 0, BuilderRef::learned(pin_hex(0xb3))),
+            (3, DeckRow::Stated, 1, BuilderRef::stated()),
+        ];
+        for (slot, row, build_idx, builder) in specs {
+            decks.push(PlanDeck {
+                deck: (base + usize::from(slot)) as u32,
+                source: DeckSource::Build,
+                chair: Some(s as u8),
+                build: Some(build_idx),
+                builder,
+                cards: Some(built_cards_by_chair_row[&(s as u8, slot)].clone()),
+                dealt: None,
+                row,
+            });
+        }
+        for o in 0..2u64 {
+            let dealt = DealtOrigin {
+                function: "cube_deal_common_v1".to_owned(),
+                key: json!([ns, unit, s, o]),
+            };
+            decks.push(PlanDeck {
+                deck: (base + 4 + o as usize) as u32,
+                source: DeckSource::Dealt,
+                chair: None,
+                build: None,
+                builder: BuilderRef::dealt(dealt.clone()),
+                cards: Some(dealt_sample_cards.to_vec()),
+                dealt: Some(dealt),
+                row: DeckRow::Opponent,
+            });
+        }
+        let contrasts = [
+            (0u8, PairedBuildKind::CurrentInitial, base as u32, (base + 1) as u32),
+            (1u8, PairedBuildKind::K1LastB1Last, (base + 2) as u32, base as u32),
+            (2u8, PairedBuildKind::CandidateStated, (base + 2) as u32, (base + 3) as u32),
+        ];
+        for (q, kind, deck_x, deck_y) in contrasts {
+            let mut gx = Vec::with_capacity(4);
+            let mut gy = Vec::with_capacity(4);
+            for o in 0..2u64 {
+                for j in 0..2u64 {
+                    let group =
+                        (12 * s + 4 * usize::from(q) + 2 * (o as usize) + j as usize) as u32;
+                    let g_seed = seed(&[
+                        SeedPart::Str(ns),
+                        SeedPart::Str("game"),
+                        SeedPart::Str(run),
+                        SeedPart::Int(unit),
+                        SeedPart::Int(s as u64),
+                        SeedPart::Int(o),
+                        SeedPart::Int(j),
+                        SeedPart::Int(u64::from(q)),
+                    ])
+                    .unwrap();
+                    let opp_id = (base + 4 + o as usize) as u32;
+                    for arm in 0..2u32 {
+                        let game_id = 2 * group + arm;
+                        if arm == 0 {
+                            gx.push(game_id);
+                        } else {
+                            gy.push(game_id);
+                        }
+                        let focal = if arm == 0 { deck_x } else { deck_y };
+                        let (g_decks, g_chairs) = if j % 2 == 0 {
+                            ([focal, opp_id], [Some(s as u8), None])
+                        } else {
+                            ([opp_id, focal], [None, Some(s as u8)])
+                        };
+                        games.push(PlanGame {
+                            game: game_id,
+                            group,
+                            role: GameRole::Common,
+                            pairing: None,
+                            decks: g_decks,
+                            chairs: g_chairs,
+                            seat_rule: SeatRule::Schedule,
+                            game_seed: g_seed,
+                            episode: j,
+                        });
+                    }
+                }
+            }
+            paired_builds.push(PairedBuildRecord {
+                kind,
+                chair: s as u8,
+                deck_x,
+                deck_y,
+                opponents: vec![(base + 4) as u32, (base + 5) as u32],
+                games_x: gx,
+                games_y: gy,
+                q: Some(q),
+            });
+        }
+    }
+    ReadPlanV1 {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        interfaces: M4_INTERFACES_VERSION.to_owned(),
+        family: PlanFamily::D13,
+        pod_use: PodUse::Test,
+        namespace: ns.to_owned(),
+        run: run.to_owned(),
+        unit,
+        pod_index: unit,
+        mirror: None,
+        mirror_pods: None,
+        rotation: None,
+        mark: Some(PlanMark {
+            kind: MarkKind::Pilot,
+            label: "pilot-0".to_owned(),
+            ordinal: 0,
+        }),
+        seeds: PodSeeds::for_read(d_seed, p_seed, None, ns, ns),
+        pins: pins.clone(),
+        pilot: PilotInfo::uniform(),
+        caps: PodCaps::read_a2(),
+        seat_rule: SeatRule::Schedule,
+        inputs: inputs.clone(),
+        prep_sha256: Some(prep_sha256.to_owned()),
+        chairs,
+        pools: Some(pools),
+        decks,
+        games,
+        paired_builds,
+    }
+}
+
+fn write_plan_set_dir(
+    set_dir: &Path,
+    family: &str,
+    namespace: &str,
+    set_name: &str,
+    decl_sha: &str,
+    panel_sha: Option<String>,
+    prep_set: Option<String>,
+    plans: &[ReadPlanV1],
+    executions: Vec<ManifestExecutionEntry>,
+) -> SetManifest {
+    let plans_dir = set_dir.join("plans");
+    std::fs::create_dir_all(&plans_dir).unwrap();
+    let mut entries = Vec::with_capacity(plans.len());
+    for plan in plans {
+        let text = to_canonical_pretty_json(plan).unwrap();
+        let digest = sha256_hex(text.as_bytes());
+        let rel = format!("plans/pod-{}.json", plan.pod_index);
+        std::fs::write(set_dir.join(&rel), text.as_bytes()).unwrap();
+        entries.push(ManifestEntry::Pod(ManifestPodEntry {
+            pod_index: plan.pod_index,
+            file: rel,
+            sha256: digest,
+        }));
+    }
+    let min_u = plans.iter().map(|p| p.unit).min().unwrap_or(0);
+    let max_u = plans.iter().map(|p| p.unit).max().unwrap_or(0) + 1;
+    let plan_set_sha256 = compute_plan_set_sha256(&entries).unwrap();
+    let manifest = SetManifest {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        kind: ManifestKind::Plans,
+        family: family.to_owned(),
+        namespace: namespace.to_owned(),
+        run: "v1".to_owned(),
+        set: set_name.to_owned(),
+        interfaces: M4_INTERFACES_VERSION.to_owned(),
+        declaration_sha256: decl_sha.to_owned(),
+        look: None,
+        units: [min_u, max_u],
+        reserved: None,
+        pools_with: None,
+        panel_sha256: panel_sha,
+        prep_set,
+        replaces: None,
+        retired: Vec::new(),
+        plans: entries,
+        plan_set_sha256,
+        executions,
+    };
+    let manifest_text = to_canonical_pretty_json(&manifest).unwrap();
+    std::fs::write(set_dir.join("manifest.json"), manifest_text.as_bytes()).unwrap();
+    manifest
+}
+
+// ---------------------------------------------------------------------------
+// Round 2 Test 1: m4-interfaces/v2 and pod-record/v2 contract
+// ---------------------------------------------------------------------------
+
+#[test]
+fn round2_v2_record_client_d13_dealt_and_read_halts() {
+    assert_eq!(M4_INTERFACES_VERSION, "m4-interfaces/v2");
+    assert_eq!(POD_RECORD_SCHEMA, "mtg-kernel-cube-pod-record/v2");
+    assert_eq!(LEARNED_SAMPLER_ID, "softmax-cdf-splitmix64-v2");
+
+    let pool = pool();
+    let roles = training_roles_with_older([1, 5]).unwrap();
+
+    // 1. Client pod uses `namespace = "client-pods"` and `use = "client"`, and
+    //    never enters a training batch.
+    let client_cfg =
+        TrainingPodConfig::uniform_a2(PodUse::Client, CLIENT_NAMESPACE, "c-run", 0, 2);
+    let mut chairs = uniform_training_chairs(roles);
+    let client_pod =
+        run_training_pod(&pool, &client_cfg, &mut chairs, &ScriptedPilot::natural_only()).unwrap();
+    assert_eq!(client_pod.pod_use, PodUse::Client);
+    assert_eq!(client_pod.namespace, CLIENT_NAMESPACE);
+    validate_pod_record_json(&client_pod.to_json_line()).expect("client pod validates v2");
+
+    // Mismatched client use/namespace is refused.
+    let bad_client = TrainingPodConfig::uniform_a2(PodUse::Client, "test", "c-run", 0, 1);
+    let mut chairs_bad = uniform_training_chairs(roles);
+    assert!(run_training_pod(
+        &pool,
+        &bad_client,
+        &mut chairs_bad,
+        &ScriptedPilot::natural_only()
+    )
+    .is_err());
+
+    let bad_ns = TrainingPodConfig::uniform_a2(PodUse::Training, CLIENT_NAMESPACE, "c-run", 0, 1);
+    let mut chairs_bad2 = uniform_training_chairs(roles);
+    assert!(run_training_pod(
+        &pool,
+        &bad_ns,
+        &mut chairs_bad2,
+        &ScriptedPilot::natural_only()
+    )
+    .is_err());
+
+    let batch_client = UniformBatchConfig {
+        pod_use: PodUse::Client,
+        namespace: CLIENT_NAMESPACE.to_owned(),
+        run: "c-run".to_owned(),
+        pod_indices: vec![0],
+        roles,
+        pins: PodPins::default(),
+        pilot_info: PilotInfo::uniform(),
+        caps: PodCaps::training_a2(),
+        workers: 1,
+    };
+    assert!(
+        run_uniform_training_batch(&pool, &batch_client, &ScriptedPilot::natural_only()).is_err()
     );
+
+    // 2. Read pod with max_replays = 0 where ALL games halt still ends
+    //    `status = "complete"`, `stop = null`, `league_seed = null`, 5-key
+    //    seeds, dealt builder pin, explicit episode, and `q` always present.
+    let draft = run_draft(&pool, 123, &mut uniform_pickers(123)).unwrap();
+    let d0 = UniformFourStepBuilder
+        .build(&draft.pools[0], &mut SplitMix64::seed(11))
+        .unwrap()
+        .deck
+        .card_ids();
+    let d1 = UniformFourStepBuilder
+        .build(&draft.pools[1], &mut SplitMix64::seed(12))
+        .unwrap()
+        .deck
+        .card_ids();
+
+    struct AllHaltEpisodeCheckPilot;
+    impl GamePilot for AllHaltEpisodeCheckPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+            let end = if spec.episode == 7 {
+                watchdog_game_end()
+            } else {
+                GameEnd::DecisionCap
+            };
+            AttemptOutcome {
+                decisions: 5,
+                physical_decisions: None,
+                policy_steps: None,
+                end,
+                last_action_source: Some(9),
+            }
+        }
+    }
+
+    let dealt_origin = DealtOrigin {
+        function: "cube_deal_common_v1".to_owned(),
+        key: json!(["panel-k1", 0, 0, 0]),
+    };
+    let read_plan = ReadPlan {
+        pod_use: PodUse::PairedBuild,
+        namespace: "panel-k1".to_owned(),
+        run: "v1".to_owned(),
+        pod_index: 5,
+        seeds: PodSeeds::for_read(555, 666, None, "panel-k1", "panel-k1"),
+        pins: PodPins::default(),
+        pilot: PilotInfo::uniform(),
+        caps: PodCaps::read_a2(),
+        chairs: Vec::new(),
+        decks: vec![
+            ReadDeckSpec {
+                source: DeckSource::Build,
+                chair: Some(0),
+                build: Some(0),
+                builder: BuilderRef::learned(pin_hex(0xaa)),
+                build_seed: Some(1),
+                cards: d0.clone(),
+                build_rows: None,
+                dealt: None,
+            },
+            ReadDeckSpec {
+                source: DeckSource::Build,
+                chair: Some(0),
+                build: Some(0),
+                builder: BuilderRef::learned(pin_hex(0xbb)),
+                build_seed: Some(1),
+                cards: d0,
+                build_rows: None,
+                dealt: None,
+            },
+            ReadDeckSpec {
+                source: DeckSource::Dealt,
+                chair: None,
+                build: None,
+                builder: BuilderRef::dealt(dealt_origin.clone()),
+                build_seed: None,
+                cards: d1,
+                build_rows: None,
+                dealt: Some(dealt_origin),
+            },
+        ],
+        games: vec![
+            ReadGameSpec {
+                group: 0,
+                role: GameRole::Common,
+                pairing: None,
+                decks: [0, 2],
+                chairs: [Some(0), None],
+                seats: [0, 1],
+                game_seed: 1001,
+                episode: 7,
+            },
+            ReadGameSpec {
+                group: 0,
+                role: GameRole::Common,
+                pairing: None,
+                decks: [1, 2],
+                chairs: [Some(0), None],
+                seats: [0, 1],
+                game_seed: 1001,
+                episode: 8,
+            },
+        ],
+        paired_builds: vec![PairedBuildRecord {
+            kind: PairedBuildKind::K1LastB1Last,
+            chair: 0,
+            deck_x: 0,
+            deck_y: 1,
+            opponents: vec![2],
+            games_x: vec![0],
+            games_y: vec![1],
+            q: Some(1),
+        }],
+    };
+
+    let rec = run_read_plan(&read_plan, &AllHaltEpisodeCheckPilot, 2).unwrap();
+    assert_eq!(rec.status, PodStatus::Complete);
+    assert!(rec.stop.is_none());
+    assert_eq!(rec.pod_index, 5);
+    assert_eq!(rec.seeds.league_seed, None);
+    assert_eq!(rec.games[0].episode, 7);
+    assert_eq!(rec.games[1].episode, 8);
+    assert_eq!(rec.games[0].scores, None);
+    assert_eq!(rec.games[1].scores, None);
+    assert_eq!(rec.halts.len(), 2);
+    // Watchdog expiry on game 0 forces last_action_source to None (charges no card).
+    assert_eq!(
+        rec.games[0].attempts[0].stop_kind.as_deref(),
+        Some(WATCHDOG_STOP_KIND)
+    );
+    assert_eq!(rec.games[0].attempts[0].last_action_source, None);
+    assert_eq!(rec.halts[0].stop_kind, WATCHDOG_STOP_KIND);
+    assert_eq!(rec.halts[0].last_action_source, None);
+    assert_eq!(rec.paired_builds[0].q, Some(1));
+    assert_eq!(rec.paired_builds[0].kind, PairedBuildKind::K1LastB1Last);
+
+    let json_line = rec.to_json_line();
+    validate_pod_record_json(&json_line).expect("all-halted D13 read record validates v2");
+
+    // Validator rejects missing `q`, mismatched `q`, and charged watchdog source.
+    let no_q = json_line.replace(",\"q\":1}", "}");
+    assert_ne!(no_q, json_line);
+    assert!(validate_pod_record_json(&no_q).is_err());
+
+    let bad_q = json_line.replace(",\"q\":1}", ",\"q\":0}");
+    assert_ne!(bad_q, json_line);
+    assert!(validate_pod_record_json(&bad_q).is_err());
+
+    let charged_wd = json_line.replace(
+        "\"stop_kind\":\"terminal:watchdog\",\"last_action_source\":null",
+        "\"stop_kind\":\"terminal:watchdog\",\"last_action_source\":42",
+    );
+    assert_ne!(charged_wd, json_line);
+    assert!(validate_pod_record_json(&charged_wd).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Round 2 Test 2: Prep mode, unit-keyed receipts, retries, determinism & panel
+// ---------------------------------------------------------------------------
+
+#[test]
+fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
+    let pool = pool();
+    let tmp = TempTestDir::new("prep");
+    let decl_bytes = b"test binding declaration\n".to_vec();
+    let decl_sha = sha256_hex(&decl_bytes);
+    let verification = fixture_verification(decl_bytes.clone(), None);
+    let pins = pod_pins_from_runtime(&verification.pins);
+
+    // Part A: `b_c` prep set interrupted on exec-0, retried on exec-1 with
+    // byte-identical outputs and accepted by `accept_prep_execution`.
+    let bc_dir = tmp.path().join("test").join("v1").join("prep-0-2");
+    std::fs::create_dir_all(bc_dir.join("requests")).unwrap();
+    let mut plan_entries = Vec::new();
+    for unit in 0..2u64 {
+        let d_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("draft"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        let p_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("pod"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        let mut builds = Vec::with_capacity(16);
+        for c in 0..SEATS {
+            builds.push(PrepBuildSpec {
+                chair: c as u8,
+                build: 0,
+                builder: BuilderRef::uniform(),
+                row: DeckRow::Candidate,
+            });
+            builds.push(PrepBuildSpec {
+                chair: c as u8,
+                build: 1,
+                builder: BuilderRef::stated(),
+                row: DeckRow::Stated,
+            });
+        }
+        let req = PrepRequest {
+            schema: READ_PLAN_SCHEMA.to_owned(),
+            kind: "prep_request".to_owned(),
+            family: PrepFamily::BC,
+            namespace: "test".to_owned(),
+            run: "v1".to_owned(),
+            unit,
+            seeds: PodSeeds::for_read(d_seed, p_seed, None, "test", "test"),
+            pins: pins.clone(),
+            chairs: (0..SEATS)
+                .map(|c| PlanChair {
+                    chair: c as u8,
+                    role: ChairRole::Learning,
+                    picker: SeatRef::uniform(),
+                })
+                .collect(),
+            builds,
+        };
+        let text = to_canonical_pretty_json(&req).unwrap();
+        let rel = format!("requests/unit-{unit}.json");
+        std::fs::write(bc_dir.join(&rel), text.as_bytes()).unwrap();
+        plan_entries.push(ManifestEntry::Unit(ManifestUnitEntry {
+            unit,
+            file: rel,
+            sha256: sha256_hex(text.as_bytes()),
+        }));
+    }
+    let plan_set_sha256 = compute_plan_set_sha256(&plan_entries).unwrap();
+    let mut manifest = SetManifest {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        kind: ManifestKind::Prep,
+        family: "b_c".to_owned(),
+        namespace: "test".to_owned(),
+        run: "v1".to_owned(),
+        set: "prep-0-2".to_owned(),
+        interfaces: M4_INTERFACES_VERSION.to_owned(),
+        declaration_sha256: decl_sha.clone(),
+        look: None,
+        units: [0, 2],
+        reserved: Some([0, 6]),
+        pools_with: None,
+        panel_sha256: None,
+        prep_set: None,
+        replaces: None,
+        retired: Vec::new(),
+        plans: plan_entries,
+        plan_set_sha256: plan_set_sha256.clone(),
+        executions: vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+        }],
+    };
+    std::fs::write(
+        bc_dir.join("manifest.json"),
+        to_canonical_pretty_json(&manifest).unwrap().as_bytes(),
+    )
+    .unwrap();
+
+    // Execution 0 interrupted after 1 unit; writes no pod record.
+    let e0 = run_prep_set_execution(
+        &pool,
+        &bc_dir,
+        0,
+        &UniformSeatFactory,
+        &verification,
+        Some(1),
+    )
+    .unwrap();
+    assert_eq!(e0.ended, PrepExecutionEnded::Interrupted);
+    assert_eq!(e0.outputs.len(), 1);
+    assert!(!bc_dir.join("exec-0").join("records").exists());
+    assert!(accept_prep_execution(&bc_dir).is_err());
+
+    // Append prep_retry execution 1 and run to completion.
+    manifest.executions.push(ManifestExecutionEntry {
+        execution: 1,
+        reason: ExecutionReason::PrepRetry,
+        expired_games: Vec::new(),
+        binary: verification.pins.binary.clone(),
+        platform: verification.platform.clone(),
+    });
+    std::fs::write(
+        bc_dir.join("manifest.json"),
+        to_canonical_pretty_json(&manifest).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let e1 = run_prep_set_execution(
+        &pool,
+        &bc_dir,
+        1,
+        &UniformSeatFactory,
+        &verification,
+        None,
+    )
+    .unwrap();
+    assert_eq!(e1.ended, PrepExecutionEnded::Complete);
+    assert_eq!(e1.outputs.len(), 2);
+
+    // Output unit-0 from exec-1 is byte-identical to exec-0.
+    let e0_u0 = std::fs::read(bc_dir.join("exec-0").join("prep").join("unit-0.json")).unwrap();
+    let e1_u0 = std::fs::read(bc_dir.join("exec-1").join("prep").join("unit-0.json")).unwrap();
+    assert_eq!(e0_u0, e1_u0);
+
+    let accepted = accept_prep_execution(&bc_dir).unwrap();
+    assert_eq!(accepted.execution, 1);
+    assert_eq!(accepted.output_bytes_by_unit.len(), 2);
+
+    // Retrying after a complete execution is refused.
+    manifest.executions.push(ManifestExecutionEntry {
+        execution: 2,
+        reason: ExecutionReason::PrepRetry,
+        expired_games: Vec::new(),
+        binary: verification.pins.binary.clone(),
+        platform: verification.platform.clone(),
+    });
+    std::fs::write(
+        bc_dir.join("manifest.json"),
+        to_canonical_pretty_json(&manifest).unwrap().as_bytes(),
+    )
+    .unwrap();
+    assert!(run_prep_set_execution(
+        &pool,
+        &bc_dir,
+        2,
+        &UniformSeatFactory,
+        &verification,
+        None
+    )
+    .is_err());
+
+    // Part B: Two-stage frozen panel (`prep-panel` stage 1 -> `panel/panel.json`
+    // stage 2 -> `prep-dose-0` verified against pinned `panel_sha256`).
+    let run_root = tmp.path().join("panel-test").join("test").join("v1");
+    let prep_panel_dir = run_root.join("prep-panel");
+    std::fs::create_dir_all(prep_panel_dir.join("requests")).unwrap();
+    let mut panel_req_entries = Vec::new();
+    for unit in 0..2u64 {
+        let d_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("draft"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        let p_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("pod"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        let req = PrepRequest {
+            schema: READ_PLAN_SCHEMA.to_owned(),
+            kind: "prep_request".to_owned(),
+            family: PrepFamily::Dose,
+            namespace: "test".to_owned(),
+            run: "v1".to_owned(),
+            unit,
+            seeds: PodSeeds::for_read(d_seed, p_seed, None, "test", "test"),
+            pins: pins.clone(),
+            chairs: (0..SEATS)
+                .map(|c| PlanChair {
+                    chair: c as u8,
+                    role: ChairRole::Fixture,
+                    picker: SeatRef::uniform(),
+                })
+                .collect(),
+            builds: Vec::new(), // dose prep-panel has empty builds
+        };
+        let text = to_canonical_pretty_json(&req).unwrap();
+        let rel = format!("requests/unit-{unit}.json");
+        std::fs::write(prep_panel_dir.join(&rel), text.as_bytes()).unwrap();
+        panel_req_entries.push(ManifestEntry::Unit(ManifestUnitEntry {
+            unit,
+            file: rel,
+            sha256: sha256_hex(text.as_bytes()),
+        }));
+    }
+    let stage1_set_sha = compute_plan_set_sha256(&panel_req_entries).unwrap();
+    let stage1_manifest = SetManifest {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        kind: ManifestKind::Prep,
+        family: "dose".to_owned(),
+        namespace: "test".to_owned(),
+        run: "v1".to_owned(),
+        set: "prep-panel".to_owned(),
+        interfaces: M4_INTERFACES_VERSION.to_owned(),
+        declaration_sha256: decl_sha.clone(),
+        look: None,
+        units: [0, 2],
+        reserved: None,
+        pools_with: None,
+        panel_sha256: None, // prep-panel exempt from pinned-panel checks
+        prep_set: None,
+        replaces: None,
+        retired: Vec::new(),
+        plans: panel_req_entries,
+        plan_set_sha256: stage1_set_sha.clone(),
+        executions: vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+        }],
+    };
+    std::fs::write(
+        prep_panel_dir.join("manifest.json"),
+        to_canonical_pretty_json(&stage1_manifest).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let stage1_receipt = run_prep_set_execution(
+        &pool,
+        &prep_panel_dir,
+        0,
+        &UniformSeatFactory,
+        &verification,
+        None,
+    )
+    .unwrap();
+    assert_eq!(stage1_receipt.ended, PrepExecutionEnded::Complete);
+    let stage1_accepted = accept_prep_execution(&prep_panel_dir).unwrap();
+
+    // Stage 2: assemble `panel/panel.json` from accepted stage-1 outputs.
+    let mut prep_outputs = Vec::new();
+    let mut drafts = Vec::new();
+    for unit in 0..2u64 {
+        let bytes = &stage1_accepted.output_bytes_by_unit[&unit];
+        let parsed =
+            parse_and_validate_prep_result_json(std::str::from_utf8(bytes).unwrap()).unwrap();
+        let d_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("draft"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        let p_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("pod"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        prep_outputs.push(PanelPrepOutput {
+            unit,
+            sha256: sha256_hex(bytes),
+        });
+        drafts.push(PanelDraftEntry {
+            unit,
+            seeds: PodSeeds::for_read(d_seed, p_seed, None, "test", "test"),
+            pools: parsed.draft.pools,
+            opponents: Vec::new(),
+            games: Vec::new(),
+            built: None,
+        });
+    }
+    let panel_doc = PanelDocument {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        kind: "panel".to_owned(),
+        namespace: "test".to_owned(),
+        run: "v1".to_owned(),
+        units: [0, 2],
+        inputs: PlanInputs {
+            pool_sha256: verification.pins.pool_sha256.clone(),
+            constants_sha256: verification.pins.constants_sha256.clone(),
+        },
+        pins: pins.clone(),
+        prep_set_sha256: stage1_set_sha,
+        prep_execution: stage1_accepted.execution,
+        prep_outputs,
+        drafts,
+    };
+    let panel_text = to_canonical_pretty_json(&panel_doc).unwrap();
+    let panel_digest = sha256_hex(panel_text.as_bytes());
+    std::fs::create_dir_all(run_root.join("panel")).unwrap();
+    std::fs::write(run_root.join("panel").join("panel.json"), panel_text.as_bytes()).unwrap();
+
+    // Stage-2 consumer `prep-dose-0` with pinned `panel_sha256`.
+    let prep_dose_dir = run_root.join("prep-dose-0");
+    std::fs::create_dir_all(prep_dose_dir.join("requests")).unwrap();
+    let mut dose_entries = Vec::new();
+    for unit in 0..2u64 {
+        let d_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("draft"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        let p_seed = seed(&[
+            SeedPart::Str("test"),
+            SeedPart::Str("pod"),
+            SeedPart::Str("v1"),
+            SeedPart::Int(unit),
+        ])
+        .unwrap();
+        let mut builds = Vec::with_capacity(16);
+        for c in 0..SEATS {
+            builds.push(PrepBuildSpec {
+                chair: c as u8,
+                build: 0,
+                builder: BuilderRef::learned(pin_hex(0xc1)),
+                row: DeckRow::Current,
+            });
+            builds.push(PrepBuildSpec {
+                chair: c as u8,
+                build: 0,
+                builder: BuilderRef::learned(pin_hex(0xc2)),
+                row: DeckRow::Initial,
+            });
+        }
+        let req = PrepRequest {
+            schema: READ_PLAN_SCHEMA.to_owned(),
+            kind: "prep_request".to_owned(),
+            family: PrepFamily::Dose,
+            namespace: "test".to_owned(),
+            run: "v1".to_owned(),
+            unit,
+            seeds: PodSeeds::for_read(d_seed, p_seed, None, "test", "test"),
+            pins: pins.clone(),
+            chairs: (0..SEATS)
+                .map(|c| PlanChair {
+                    chair: c as u8,
+                    role: ChairRole::Fixture,
+                    picker: SeatRef::uniform(),
+                })
+                .collect(),
+            builds,
+        };
+        let text = to_canonical_pretty_json(&req).unwrap();
+        let rel = format!("requests/unit-{unit}.json");
+        std::fs::write(prep_dose_dir.join(&rel), text.as_bytes()).unwrap();
+        dose_entries.push(ManifestEntry::Unit(ManifestUnitEntry {
+            unit,
+            file: rel,
+            sha256: sha256_hex(text.as_bytes()),
+        }));
+    }
+    let dose_manifest = SetManifest {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        kind: ManifestKind::Prep,
+        family: "dose".to_owned(),
+        namespace: "test".to_owned(),
+        run: "v1".to_owned(),
+        set: "prep-dose-0".to_owned(),
+        interfaces: M4_INTERFACES_VERSION.to_owned(),
+        declaration_sha256: decl_sha,
+        look: None,
+        units: [0, 2],
+        reserved: None,
+        pools_with: None,
+        panel_sha256: Some(panel_digest.clone()),
+        prep_set: None,
+        replaces: None,
+        retired: Vec::new(),
+        plans: dose_entries.clone(),
+        plan_set_sha256: compute_plan_set_sha256(&dose_entries).unwrap(),
+        executions: vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+        }],
+    };
+    std::fs::write(
+        prep_dose_dir.join("manifest.json"),
+        to_canonical_pretty_json(&dose_manifest).unwrap().as_bytes(),
+    )
+    .unwrap();
+
+    // Wrong pinned digest is refused.
+    let bad_panel_verif = fixture_verification(decl_bytes.clone(), Some(pin_hex(0xff)));
+    assert!(run_prep_set_execution(
+        &pool,
+        &prep_dose_dir,
+        0,
+        &LearnedTestSeatFactory,
+        &bad_panel_verif,
+        None
+    )
+    .is_err());
+
+    // Matching pinned digest succeeds and builds distinct current/initial decks on build-0 stream.
+    let good_panel_verif = fixture_verification(decl_bytes, Some(panel_digest));
+    let dose_receipt = run_prep_set_execution(
+        &pool,
+        &prep_dose_dir,
+        0,
+        &LearnedTestSeatFactory,
+        &good_panel_verif,
+        None,
+    )
+    .unwrap();
+    assert_eq!(dose_receipt.ended, PrepExecutionEnded::Complete);
+    let dose_acc = accept_prep_execution(&prep_dose_dir).unwrap();
+    let u0_parsed = parse_and_validate_prep_result_json(
+        std::str::from_utf8(&dose_acc.output_bytes_by_unit[&0]).unwrap(),
+    )
+    .unwrap();
+    // Both current and initial share build=0 and build_seed, distinguished by builder.pin.
+    assert_eq!(u0_parsed.builds[0].build, 0);
+    assert_eq!(u0_parsed.builds[1].build, 0);
+    assert_eq!(u0_parsed.builds[0].build_seed, u0_parsed.builds[1].build_seed);
+    assert_ne!(u0_parsed.builds[0].builder.pin, u0_parsed.builds[1].builder.pin);
+}
+
+// ---------------------------------------------------------------------------
+// Round 2 Test 3: Execution directories `exec-<e>`, receipts, timing & D13/aa
+// ---------------------------------------------------------------------------
+
+#[test]
+fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
+    let pool = pool();
+    let tmp = TempTestDir::new("exec");
+    let decl_bytes = b"test declaration\n".to_vec();
+    let decl_sha = sha256_hex(&decl_bytes);
+    let verification = fixture_verification(decl_bytes, None);
+    let pins = pod_pins_from_runtime(&verification.pins);
+
+    // 1. Two-mirror `aa` plan set: pod_index = 0 and 1 sharing unit 0 seeds.
+    let plan0 = build_test_aa_plan(0, 0, &pins);
+    let plan1 = build_test_aa_plan(0, 1, &pins);
+    assert_eq!(plan0.pod_index, 0);
+    assert_eq!(plan1.pod_index, 1);
+    assert_eq!(plan0.seeds, plan1.seeds);
+
+    // Validate JSON roundtrip and strict rejection of reordered keys / floats.
+    let plan0_json = to_canonical_pretty_json(&plan0).unwrap();
+    assert_eq!(parse_and_validate_read_plan_json(&plan0_json).unwrap(), plan0);
+    let swapped = plan0_json.replace(
+        "\"unit\": 0,\n  \"pod_index\": 0,",
+        "\"pod_index\": 0,\n  \"unit\": 0,",
+    );
+    assert_ne!(swapped, plan0_json);
+    assert!(parse_and_validate_read_plan_json(&swapped).is_err());
+    let float_val = plan0_json.replace("\"unit\": 0,", "\"unit\": 0.0,");
+    assert!(parse_and_validate_read_plan_json(&float_val).is_err());
+
+    let set_dir = tmp.path().join("test").join("v1").join("fixed");
+    write_plan_set_dir(
+        &set_dir,
+        "aa",
+        "test",
+        "fixed",
+        &decl_sha,
+        None,
+        None,
+        &[plan0, plan1],
+        vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+        }],
+    );
+
+    let receipt = run_plan_set_execution(
+        &pool,
+        &set_dir,
+        0,
+        &UniformSeatFactory,
+        &ScriptedPilot::natural_only(),
+        &verification,
+        4,
+        None,
+    )
+    .unwrap();
+    assert_eq!(receipt.execution, 0);
+    assert_eq!(receipt.ended, PlanExecutionEnded::Complete);
+    assert_eq!(receipt.records.len(), 2);
+    let accepted = accept_plan_execution(&set_dir, 0).unwrap();
+    assert_eq!(accepted, receipt);
+
+    // Check timing side files: one line per attempt with exact keys.
+    for pod_idx in 0..2u64 {
+        let timing_text = std::fs::read_to_string(
+            set_dir
+                .join("exec-0")
+                .join("timing")
+                .join(format!("pod-{pod_idx}.jsonl")),
+        )
+        .unwrap();
+        let lines: Vec<&str> = timing_text.lines().collect();
+        assert_eq!(lines.len(), 32);
+        for (i, line) in lines.iter().enumerate() {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(v["game"], json!(i));
+            assert_eq!(v["attempt"], json!(0));
+            assert!(v["elapsed_ms"].is_u64());
+            assert_eq!(v["host"], json!("test-host"));
+        }
+    }
+
+    // 2. D13 plan with prep redraft/rebuild check before game 0.
+    let d13_inputs = PlanInputs {
+        pool_sha256: verification.pins.pool_sha256.clone(),
+        constants_sha256: verification.pins.constants_sha256.clone(),
+    };
+    let d13_dseed = seed(&[
+        SeedPart::Str("test"),
+        SeedPart::Str("draft"),
+        SeedPart::Str("v1"),
+        SeedPart::Int(0),
+    ])
+    .unwrap();
+    let mut pickers: [Box<dyn SeatPicker>; SEATS] =
+        std::array::from_fn(|_| Box::new(UniformSeatPicker) as Box<dyn SeatPicker>);
+    let seat_draft = run_seat_draft(&pool, d13_dseed, &mut pickers).unwrap();
+    let mut built_map = BTreeMap::new();
+    for s in 0..SEATS {
+        let builders = [
+            (0u8, 0u8, BuilderRef::learned(pin_hex(0xb1))),
+            (1, 0, BuilderRef::learned(pin_hex(0xb2))),
+            (2, 0, BuilderRef::learned(pin_hex(0xb3))),
+            (3, 1, BuilderRef::stated()),
+        ];
+        for (slot, b_idx, bref) in builders {
+            let mut b = LearnedTestSeatFactory.make_builder(&bref).unwrap();
+            let mut stream = SplitMix64::seed(mtg_kernel::cube_pod_runner_v1::build_seed_for_chair(
+                d13_dseed, s, b_idx,
+            ));
+            let deck = canonical_deck(&b.build(&seat_draft.record.pools[s], &mut stream).unwrap().deck.card_ids());
+            built_map.insert((s as u8, slot), deck.card_ids());
+        }
+    }
+    let sample_opp = built_map[&(0, 0)].clone();
+    let d13_plan = build_test_d13_plan(
+        0,
+        &pins,
+        &d13_inputs,
+        &pin_hex(0x99),
+        seat_draft.record.pools.clone(),
+        &built_map,
+        &sample_opp,
+    );
+    let d13_json = to_canonical_pretty_json(&d13_plan).unwrap();
+    parse_and_validate_read_plan_json(&d13_json).expect("valid D13 plan");
+
+    let run_opts = ReadPlanRunOptions {
+        execution: 0,
+        workers: 4,
+        host: "test-host",
+        watchdog_override: None,
+        journal: None,
+    };
+    let d13_out = execute_read_plan_v1(
+        &pool,
+        &d13_plan,
+        &LearnedTestSeatFactory,
+        &ScriptedPilot::natural_only(),
+        &run_opts,
+    )
+    .unwrap();
+    assert_eq!(d13_out.record.games.len(), 192);
+    assert_eq!(d13_out.record.paired_builds.len(), 24);
+    assert_eq!(d13_out.record.paired_builds[0].q, Some(0));
+    assert_eq!(d13_out.record.paired_builds[1].q, Some(1));
+    assert_eq!(
+        d13_out.record.paired_builds[1].kind,
+        PairedBuildKind::K1LastB1Last
+    );
+    assert_eq!(d13_out.record.paired_builds[2].q, Some(2));
+    validate_pod_record_json(&d13_out.record.to_json_line()).expect("D13 pod record valid v2");
+
+    // Altering plan.pools or plan.decks[].cards is refused before game 0.
+    let mut bad_pools = d13_plan.clone();
+    bad_pools.pools.as_mut().unwrap()[0].swap(0, 1);
+    assert!(execute_read_plan_v1(
+        &pool,
+        &bad_pools,
+        &LearnedTestSeatFactory,
+        &ScriptedPilot::natural_only(),
+        &run_opts
+    )
+    .is_err());
+
+    let mut bad_cards = d13_plan;
+    bad_cards.decks[0].cards = Some(built_map[&(1, 0)].clone());
+    assert!(execute_read_plan_v1(
+        &pool,
+        &bad_cards,
+        &LearnedTestSeatFactory,
+        &ScriptedPilot::natural_only(),
+        &run_opts
+    )
+    .is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Round 2 Test 4: Watchdog e=0 complete / e=1 stop & supervisor process death
+// ---------------------------------------------------------------------------
+
+#[test]
+fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
+    let pool = pool();
+    let tmp = TempTestDir::new("wd-sup");
+    let decl_bytes = b"test declaration\n".to_vec();
+    let decl_sha = sha256_hex(&decl_bytes);
+    let verification = fixture_verification(decl_bytes, None);
+    let pins = pod_pins_from_runtime(&verification.pins);
+
+    let plan0 = build_test_aa_plan(0, 0, &pins);
+    let plan1 = build_test_aa_plan(0, 1, &pins);
+
+    // Part A: Watchdog expiry on pod 0 game 3 (via real timer with override).
+    let target_seed = plan0.games[3].game_seed;
+    let target_env = attempt_seeds(target_seed, 0).1;
+    let target_deck0_pair = plan0.games[3].decks;
+
+    struct SlowOnTargetPilot {
+        inner: ScriptedPilot,
+        target_env: u64,
+        target_episode: u64,
+        target_p0_cards: Vec<u16>,
+    }
+
+    impl GamePilot for SlowOnTargetPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            if spec.env_seed == self.target_env
+                && spec.episode == self.target_episode
+                && spec.decks[0].card_ids() == self.target_p0_cards
+            {
+                std::thread::sleep(Duration::from_millis(60));
+                return AttemptOutcome {
+                    decisions: 1,
+                    physical_decisions: Some(1),
+                    policy_steps: Some(1),
+                    end: GameEnd::Natural {
+                        winner_seat: Some(spec.seats[0]),
+                        reason: "life_zero".to_owned(),
+                    },
+                    last_action_source: Some(99),
+                };
+            }
+            self.inner.play(spec, caps)
+        }
+    }
+
+    // Compute pod 0's exact deck cards for game 3's p0 so only pod 0 game 3 sleeps.
+    let (hdr0, _) =
+        mtg_kernel::cube_read_plan_v1::prepare_read_plan_decks(&pool, &plan0, &UniformSeatFactory)
+            .unwrap();
+    let slow_pilot = SlowOnTargetPilot {
+        inner: ScriptedPilot::natural_only(),
+        target_env,
+        target_episode: plan0.games[3].episode,
+        target_p0_cards: hdr0.decks[target_deck0_pair[0] as usize].cards.clone(),
+    };
+
+    let wd_dir = tmp.path().join("wd-set");
+    let mut manifest = write_plan_set_dir(
+        &wd_dir,
+        "aa",
+        "test",
+        "fixed",
+        &decl_sha,
+        None,
+        None,
+        &[plan0.clone(), plan1.clone()],
+        vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+        }],
+    );
+
+    // e = 0: watchdog expiry recorded as terminal:watchdog, continues to complete.
+    let e0 = run_plan_set_execution(
+        &pool,
+        &wd_dir,
+        0,
+        &UniformSeatFactory,
+        &slow_pilot,
+        &verification,
+        1,
+        Some(Duration::from_millis(20)),
+    )
+    .unwrap();
+    assert_eq!(e0.ended, PlanExecutionEnded::Complete);
+    assert_eq!(e0.records.len(), 2);
+    assert_eq!(e0.records[0].status, PodStatus::Complete);
+    assert_eq!(e0.records[1].status, PodStatus::Complete);
+    accept_plan_execution(&wd_dir, 0).expect("exec-0 accepted");
+
+    let e0_pod0_text =
+        std::fs::read_to_string(wd_dir.join("exec-0").join("records").join("pod-0.json")).unwrap();
+    let e0_pod0: serde_json::Value = serde_json::from_str(&e0_pod0_text).unwrap();
+    assert_eq!(e0_pod0["status"], json!("complete"));
+    assert_eq!(e0_pod0["stop"], json!(null));
+    assert_eq!(e0_pod0["games"].as_array().unwrap().len(), 32);
+    assert_eq!(e0_pod0["games"][3]["scores"], json!(null));
+    assert_eq!(
+        e0_pod0["games"][3]["attempts"][0]["stop_kind"],
+        json!(WATCHDOG_STOP_KIND)
+    );
+    assert_eq!(
+        e0_pod0["games"][3]["attempts"][0]["last_action_source"],
+        json!(null)
+    );
+    assert_eq!(e0_pod0["halts"].as_array().unwrap().len(), 1);
+    assert_eq!(e0_pod0["halts"][0]["game"], json!(3));
+    assert_eq!(e0_pod0["halts"][0]["stop_kind"], json!(WATCHDOG_STOP_KIND));
+
+    // e = 1 (watchdog_rerun): stops immediately at pod 0 game 3 with `watchdog_stop`.
+    manifest.executions.push(ManifestExecutionEntry {
+        execution: 1,
+        reason: ExecutionReason::WatchdogRerun,
+        expired_games: vec![[0, 3]],
+        binary: verification.pins.binary.clone(),
+        platform: verification.platform.clone(),
+    });
+    std::fs::write(
+        wd_dir.join("manifest.json"),
+        to_canonical_pretty_json(&manifest).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let e1 = run_plan_set_execution(
+        &pool,
+        &wd_dir,
+        1,
+        &UniformSeatFactory,
+        &slow_pilot,
+        &verification,
+        1,
+        Some(Duration::from_millis(20)),
+    )
+    .unwrap();
+    assert_eq!(e1.ended, PlanExecutionEnded::WatchdogStop);
+    assert_eq!(e1.records.len(), 1);
+    assert_eq!(e1.records[0].pod_index, 0);
+    assert_eq!(e1.records[0].status, PodStatus::Stopped);
+    assert!(!wd_dir.join("exec-1").join("records").join("pod-1.json").exists());
+    accept_plan_execution(&wd_dir, 1).expect("exec-1 watchdog_stop accepted");
+
+    let e1_pod0_text =
+        std::fs::read_to_string(wd_dir.join("exec-1").join("records").join("pod-0.json")).unwrap();
+    let e1_pod0: serde_json::Value = serde_json::from_str(&e1_pod0_text).unwrap();
+    assert_eq!(e1_pod0["status"], json!("stopped"));
+    assert_eq!(e1_pod0["games"].as_array().unwrap().len(), 4); // prefix 0..=3
+    assert_eq!(e1_pod0["stop"]["game"], json!(3));
+    assert_eq!(
+        e1_pod0["stop"]["attempts"][0]["stop_kind"],
+        json!(WATCHDOG_STOP_KIND)
+    );
+    assert_eq!(e1_pod0["stop"]["attempts"][0]["last_action_source"], json!(null));
+
+    // e = 2 is always refused.
+    assert!(run_plan_set_execution(
+        &pool,
+        &wd_dir,
+        2,
+        &UniformSeatFactory,
+        &slow_pilot,
+        &verification,
+        1,
+        None
+    )
+    .is_err());
+
+    // Part B: D5's supervisor writes the stopped record from the durable
+    // progress journal when a worker process dies mid-pod.
+    struct DyingWorkerLauncher<'a> {
+        pool: &'a CubePool,
+    }
+
+    impl PodWorkerLauncher for DyingWorkerLauncher<'_> {
+        fn run_pod(
+            &self,
+            plan: &ReadPlanV1,
+            _plan_path: &Path,
+            record_path: &Path,
+            timing_path: &Path,
+            journal_path: &Path,
+            execution: u64,
+        ) -> Result<SupervisedPodOutcome, PodRunnerError> {
+            let pilot = ScriptedPilot::natural_only();
+            let opts = ReadPlanRunOptions {
+                execution,
+                workers: 1,
+                host: "test-host",
+                watchdog_override: None,
+                journal: None,
+            };
+            let out =
+                execute_read_plan_v1(self.pool, plan, &UniformSeatFactory, &pilot, &opts)?;
+            if plan.pod_index == 0 {
+                let text = to_canonical_pretty_json(&out.record)?;
+                let sha = sha256_hex(text.as_bytes());
+                std::fs::write(record_path, text.as_bytes()).unwrap();
+                let mut tbuf = String::new();
+                for t in &out.timings {
+                    tbuf.push_str(&to_canonical_compact_json(t)?);
+                    tbuf.push('\n');
+                }
+                std::fs::write(timing_path, tbuf.as_bytes()).unwrap();
+                Ok(SupervisedPodOutcome::Complete(ExecutionRecordEntry {
+                    pod_index: 0,
+                    sha256: sha,
+                    status: PodStatus::Complete,
+                }))
+            } else {
+                // Simulate durable games 0, 1, 2 plus out-of-order game 5 and
+                // a truncated trailing line, then sudden process death.
+                let journal = PodProgressJournal::create(journal_path.to_path_buf())?;
+                journal
+                    .record_header(&mtg_kernel::cube_read_plan_v1::PodJournalHeader {
+                        draft: out.record.draft.clone().unwrap(),
+                        chairs: out.record.chairs.clone(),
+                        decks: out.record.decks.clone(),
+                    })
+                    .unwrap();
+                for g_idx in [0usize, 1, 2, 5] {
+                    journal
+                        .record_game(&out.record.games[g_idx], &[out.timings[g_idx].clone()])
+                        .unwrap();
+                }
+                // Append a truncated partial JSON line as if killed mid-write.
+                use std::io::Write as _;
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(journal_path)
+                    .unwrap();
+                let _ = write!(f, "{{\"kind\":\"game\",\"truncated\":");
+                Ok(SupervisedPodOutcome::ProcessDied {
+                    reason: "simulated SIGKILL".to_owned(),
+                })
+            }
+        }
+    }
+
+    let sup_dir = tmp.path().join("sup-set");
+    write_plan_set_dir(
+        &sup_dir,
+        "aa",
+        "test",
+        "fixed",
+        &decl_sha,
+        None,
+        None,
+        &[plan0.clone(), plan1.clone()],
+        vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+        }],
+    );
+
+    let launcher = DyingWorkerLauncher { pool: &pool };
+    let sup_receipt = supervise_plan_set_execution(
+        &pool,
+        &sup_dir,
+        0,
+        &UniformSeatFactory,
+        &verification,
+        &launcher,
+    )
+    .unwrap();
+    assert_eq!(sup_receipt.ended, PlanExecutionEnded::Interrupted);
+    assert_eq!(sup_receipt.records.len(), 2);
+    assert_eq!(sup_receipt.records[0].status, PodStatus::Complete);
+    assert_eq!(sup_receipt.records[1].status, PodStatus::Stopped);
+    accept_plan_execution(&sup_dir, 0).expect("interrupted execution accepted");
+
+    let sup_pod1_text =
+        std::fs::read_to_string(sup_dir.join("exec-0").join("records").join("pod-1.json"))
+            .unwrap();
+    validate_pod_record_json(&sup_pod1_text).expect("supervisor stopped record valid v2");
+    let sup_pod1: serde_json::Value = serde_json::from_str(&sup_pod1_text).unwrap();
+    assert_eq!(sup_pod1["status"], json!("stopped"));
+    // Exact contiguous prefix 0..3; out-of-order game 5 and unplayed slots excluded.
+    assert_eq!(sup_pod1["games"].as_array().unwrap().len(), 3);
+    assert_eq!(sup_pod1["halts"].as_array().unwrap().len(), 0);
+    assert_eq!(sup_pod1["stop"]["game"], json!(3));
+    assert_eq!(sup_pod1["stop"]["attempts"][0]["stop_kind"], json!("process_death"));
+    assert_eq!(sup_pod1["stop"]["attempts"][0]["last_action_source"], json!(null));
+    // Supervisor journal scratch dir was cleaned up.
+    assert!(!sup_dir.join(".supervisor-exec-0").exists());
+
+    // Part C: Real OS child process death handled by CommandPodWorkerLauncher.
+    let os_dir = tmp.path().join("os-death-set");
+    write_plan_set_dir(
+        &os_dir,
+        "aa",
+        "test",
+        "fixed",
+        &decl_sha,
+        None,
+        None,
+        &[plan0],
+        vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+        }],
+    );
+    let os_launcher = CommandPodWorkerLauncher::new(|_, _, _, _, _| {
+        #[cfg(windows)]
+        {
+            let mut cmd = std::process::Command::new("cmd");
+            cmd.args(["/C", "exit", "137"]);
+            cmd
+        }
+        #[cfg(not(windows))]
+        {
+            let mut cmd = std::process::Command::new("sh");
+            cmd.args(["-c", "exit 137"]);
+            cmd
+        }
+    });
+    let os_receipt = supervise_plan_set_execution(
+        &pool,
+        &os_dir,
+        0,
+        &UniformSeatFactory,
+        &verification,
+        &os_launcher,
+    )
+    .unwrap();
+    assert_eq!(os_receipt.ended, PlanExecutionEnded::Interrupted);
+    assert_eq!(os_receipt.records.len(), 1);
+    assert_eq!(os_receipt.records[0].status, PodStatus::Stopped);
+    accept_plan_execution(&os_dir, 0).expect("OS child death execution accepted");
 }

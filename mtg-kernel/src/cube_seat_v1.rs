@@ -1,4 +1,4 @@
-//! Frozen M4 seat interfaces (`m4-interfaces/v1`) for cube draft picking,
+//! Frozen M4 seat interfaces (`m4-interfaces/v2`) for cube draft picking,
 //! deck building and game play.
 //!
 //! The uniform seats ([`UniformSeatPicker`], [`UniformFourStepBuilder`]),
@@ -17,9 +17,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 /// Frozen interface contract version implemented by this module.
-pub const M4_INTERFACES_VERSION: &str = "m4-interfaces/v1";
-/// Sampler identifier recorded by learned pickers and builders.
-pub const LEARNED_SAMPLER_ID: &str = "softmax-cdf-splitmix64-v1";
+pub const M4_INTERFACES_VERSION: &str = "m4-interfaces/v2";
+/// Sampler identifier recorded by learned pickers and builders (D2a exact
+/// integer apportionment).
+pub const LEARNED_SAMPLER_ID: &str = "softmax-cdf-splitmix64-v2";
 /// Sampler identifier recorded by uniform fixture pickers, builders and pilots.
 pub const UNIFORM_SAMPLER_ID: &str = "uniform-index-splitmix64-v1";
 
@@ -65,7 +66,10 @@ pub enum DecisionKind {
 }
 
 /// One logged draft or build decision, in the frozen field order of
-/// `m4-interfaces/v1` section 3.
+/// `m4-interfaces/v2` section 3.
+///
+/// For learned rows, `p_chosen_bits` carries the exact IEEE-754 `f64` bits of
+/// the chosen option's integer count over `2^53`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionRow {
@@ -142,7 +146,7 @@ pub struct PickOutcome {
     pub row: Option<DecisionRow>,
 }
 
-/// Draft picker on the frozen `m4-interfaces/v1` contract.
+/// Draft picker on the frozen `m4-interfaces/v2` contract.
 pub trait SeatPicker {
     fn pick(
         &mut self,
@@ -167,7 +171,7 @@ fn pass_packs(packs: Vec<Vec<u16>>, round: usize) -> Vec<Vec<u16>> {
     passed
 }
 
-/// Runs an 8-seat draft using the `m4-interfaces/v1` [`SeatPicker`] trait and
+/// Runs an 8-seat draft using the `m4-interfaces/v2` [`SeatPicker`] trait and
 /// per-chair RNG streams seeded by [`picker_seed`].
 pub fn run_seat_draft(
     pool: &CubePool,
@@ -287,7 +291,7 @@ pub struct BuildRows {
     pub split: Vec<DecisionRow>,
 }
 
-/// Deck builder on the frozen `m4-interfaces/v1` contract.
+/// Deck builder on the frozen `m4-interfaces/v2` contract.
 pub trait SeatBuilder {
     fn build(&mut self, pool: &[u16], stream: &mut SplitMix64) -> Result<BuildOutcome, SeatError>;
 }
