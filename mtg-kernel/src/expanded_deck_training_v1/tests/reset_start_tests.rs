@@ -34,6 +34,8 @@ fn base_episode(seed: u64) -> ExpandedEpisodeV1 {
         reset: None,
         opening: None,
         mulligan_modes: None,
+        priority_windows: None,
+        london_keep_offset: None,
     }
 }
 

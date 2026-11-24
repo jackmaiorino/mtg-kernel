@@ -436,6 +436,10 @@ pub enum JournalV1 {
         item: StackItemId,
         start: usize,
     },
+    FullTextDeparture {
+        at: usize,
+        departure: crate::full_text_v1::DepartureV1,
+    },
 }
 
 impl JournalV1 {

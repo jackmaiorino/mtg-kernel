@@ -69,7 +69,9 @@ impl CollectionTrajectoryFieldsV1 {
 
     /// [`Self::of_document_v1`] of the bytes `serde_json::to_vec(trajectory)`
     /// writes, without parsing them: the episode holds only integers,
-    /// strings, booleans and paths, so its value tree equals the parsed one,
+    /// strings, booleans, paths and its London keep offset (one f64 or
+    /// seven, each written in its shortest round-trip form and read back to
+    /// the same f64), so its value tree equals the parsed one,
     /// and the two strings are written exactly when present (training math
     /// as its identity, omitted for the default), as is the input contract,
     /// whose strings, integers and path form the same tree.
@@ -234,7 +236,8 @@ fn seed_check_enabled_v1() -> bool {
 /// [`offer_v1`] for `bytes` that are exactly `serde_json::to_vec(&trajectory)`:
 /// both results are stored ready instead of being parsed from the bytes.
 /// Every trajectory field is an integer, string, boolean, path or raw binary32
-/// bit pattern, so parsing the bytes returns `trajectory` itself. Readers
+/// bit pattern, or the episode's London keep offset (f64 numbers, which read
+/// back exactly), so parsing the bytes returns `trajectory` itself. Readers
 /// still compare their own bytes with these in full before taking a result.
 pub(super) fn offer_serialized_v1(
     sha256: &str,

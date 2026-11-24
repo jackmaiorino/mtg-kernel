@@ -121,6 +121,8 @@ pub enum P2dOpV1 {
     EchoSacrificeV1,
     /// The borrowed Karmic Guide trigger retains the cost after text changes.
     DonatedGuideEchoPayV1,
+    /// A donated echo trigger retains the captured donor's cost after text changes.
+    DonatedEchoPayV1 { donor_card_def: u16 },
 }
 
 impl P2dOpV1 {
@@ -189,6 +191,10 @@ fn echo_trigger() -> EffectOp {
 
 pub(crate) fn donated_guide_echo_trigger() -> EffectOp {
     echo_choice(P2dOpV1::DonatedGuideEchoPayV1)
+}
+
+pub(crate) fn donated_echo_trigger(donor_card_def: u16) -> EffectOp {
+    echo_choice(P2dOpV1::DonatedEchoPayV1 { donor_card_def })
 }
 
 fn echo_choice(payment: P2dOpV1) -> EffectOp {
@@ -325,6 +331,16 @@ pub(crate) fn execute(op: &P2dOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 state,
                 echo_cost(crate::eternal_premodern_p2c_v1::KARMIC_GUIDE),
             );
+        }
+        P2dOpV1::DonatedEchoPayV1 { donor_card_def } => {
+            let cost = CARD_DEFS
+                .get(usize::from(*donor_card_def))
+                .filter(|definition| {
+                    definition.is_executable()
+                        && definition.name != crate::eternal_premodern_p2c_v1::KARMIC_GUIDE
+                })
+                .and_then(|definition| echo_cost(definition.name));
+            pay_or_sacrifice(ctx, state, cost);
         }
     }
 }

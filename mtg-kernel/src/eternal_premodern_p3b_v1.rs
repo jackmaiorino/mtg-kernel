@@ -166,7 +166,7 @@ const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> Trigg
 
 /// Xantid Swarm: "Whenever this creature attacks, defending player can't
 /// cast spells this turn."
-fn xantid_attacks() -> EffectOp {
+pub(crate) fn xantid_attacks() -> EffectOp {
     p3b(P3bOpV1::XantidBanV1)
 }
 

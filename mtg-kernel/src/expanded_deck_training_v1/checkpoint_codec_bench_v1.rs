@@ -61,7 +61,7 @@ use super::{
     verified_bytes_cache_v1, CollectionSamplerV1, ExpandedCheckpointV1, ExpandedDeckListV1,
     ExpandedEpisodeV1, ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
     ExpandedUpdateBackendV1, PinnedFileV1, UpdateBackwardExecutionV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, MAX_FILE_BYTES,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES, MAX_FILE_BYTES,
 };
 use crate::native_policy_train_step_v1::{
     NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TrainTensorsV1,
@@ -829,6 +829,7 @@ fn gae_selection_v1() -> ExpandedLossSelectionV1 {
         gamma: GAMMA_V1,
         lambda: LAMBDA_V1,
         entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
     }
 }
 
@@ -859,6 +860,8 @@ fn collect_v1(
             reset: None,
             opening: None,
             mulligan_modes: None,
+            priority_windows: None,
+            london_keep_offset: None,
         })
         .collect();
     let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
@@ -932,6 +935,7 @@ pub fn generate_fixture_v1(config: &GenerateConfigV1) -> Result<Value, String> {
             root.join(format!("collect-{update:02}")),
         )?;
         let receipt = execute_v1(ExpandedTrainingCommandV1::Update {
+            card_semantics: None,
             source: source.clone(),
             trajectories: trajectories.clone(),
             learning_rate: LEARNING_RATE_V1,
@@ -1683,6 +1687,7 @@ fn measure_updates_v1(
             let directory = root.join(format!("{}-{rep:03}", cell.name));
             let (receipt, sample) = meter.time_v1(|| {
                 execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
+                    card_semantics: None,
                     source: measured.source.clone(),
                     trajectories: trajectories.to_vec(),
                     learning_rate: LEARNING_RATE_V1,
@@ -1692,6 +1697,7 @@ fn measure_updates_v1(
                     loss_selection: gae_selection_v1(),
                     preparation_workers: config.preparation_workers,
                     max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                    max_trajectory_batch_mebibytes: DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
                     line_b: None,
                     training_math: TrainingMathV1::PlatformLibm,
                     record_format: cell.format,

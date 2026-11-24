@@ -1490,3 +1490,20 @@ fn a_repeated_chain_is_refused_and_never_queued_twice() {
     assert_eq!(fitted["fits_written"], json!(6));
     assert_eq!(fitted["chains"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn screen_parent_refuses_projection_section_from_loaded_checkpoint() {
+    let (root, mut source, config, mut saved) =
+        super::super::card_semantics_e1::fixture_files_v1("screen-refusal");
+    let (_, state) = initialize_any_math_v1(&source).unwrap();
+    saved.card_semantics = Some(config.load_v1().unwrap().section_v1());
+    saved.state_sha256 = checkpoint_hash_v1(
+        &state.state_sha256_v1().unwrap(),
+        saved.card_semantics.as_ref(),
+    )
+    .unwrap();
+    source.checkpoint = Some(publish_json(&root, "enabled.json", &saved).unwrap());
+    let error = load_parent_v1(&shipped_v1(), &source).err().unwrap();
+    assert!(error.contains("screen parent refuses card semantics"));
+    fs::remove_dir_all(root).unwrap();
+}

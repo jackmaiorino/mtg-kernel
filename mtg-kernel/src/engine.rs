@@ -4026,6 +4026,9 @@ struct TargetingSource {
     /// A native dungeon uses its own color or departure LKI. The object
     /// fields still hold provenance and never supply its characteristics.
     dungeon_colors: Option<Result<u8, ()>>,
+    /// A departed full-text host preserves its exact battlefield LKI, while a
+    /// live step-A2 trigger uses the host's live copied color.
+    full_text_departure: Option<Result<crate::full_text_v1::TriggerSourceV1, ()>>,
     types_override: Option<crate::source_type_hexproof_v1::SourceTypesV1>,
     object: ObjectId,
     card_def: u16,
@@ -4043,6 +4046,7 @@ struct TargetingSource {
 fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<TargetingSource> {
     state.objects.try_get(object).map(|live| TargetingSource {
         dungeon_colors: None,
+        full_text_departure: None,
         types_override: None,
         object,
         card_def: live.card_def,
@@ -4117,6 +4121,7 @@ fn spell_sourced_trigger_targeting_source(item: &StackItem) -> Option<TargetingS
     let spell = item.v4.source_contract?;
     (spell.zone == Zone::Stack && spell.source == item.source).then_some(TargetingSource {
         dungeon_colors: None,
+        full_text_departure: None,
         types_override: None,
         object: item.source,
         card_def: spell.card_def,
@@ -4151,6 +4156,7 @@ fn triggered_ability_targeting_source(
     {
         return Some(TargetingSource {
             dungeon_colors: None,
+            full_text_departure: None,
             types_override: None,
             object: original.source,
             card_def: original.card_def,
@@ -4175,8 +4181,11 @@ fn triggered_ability_targeting_source(
         crate::eternal_cards_v1::e3::dungeons::occurrences::source_colors(state, effect)
             .map_err(|_| ())
     });
+    let full_text_departure =
+        crate::full_text_v1::a2_trigger_source(state, effect).map(|result| result.map_err(|_| ()));
     source_contract.map(|contract| TargetingSource {
         dungeon_colors,
+        full_text_departure,
         types_override: None,
         object: source,
         card_def: contract.card_def,
@@ -4435,6 +4444,23 @@ fn legal_targets_unrestricted_v1(
     };
     let source = source.filter(|_| dungeon_colors.is_none());
     let spec = current_target_spec(spec, source.map(|s| s.card_def));
+    let mut full_text_a2_live = false;
+    match source.and_then(|source| source.full_text_departure) {
+        Some(Ok(crate::full_text_v1::TriggerSourceV1::Departed(departure))) => {
+            return crate::full_text_v1::departed_trigger_legal_targets(
+                state,
+                spec,
+                targets_chosen,
+                controller,
+                departure,
+            );
+        }
+        Some(Ok(crate::full_text_v1::TriggerSourceV1::LiveOnBattlefield)) => {
+            full_text_a2_live = true;
+        }
+        Some(Err(())) => return Vec::new(),
+        None => {}
+    }
     if spec
         == TargetSpec::StandardV1(
             crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
@@ -5322,7 +5348,13 @@ fn legal_targets_unrestricted_v1(
                 && (live.controller == controller
                     || !has_effective_keyword(state, object, Keywords::HEXPROOF)))
     });
-    if source.is_some_and(targeting_source_is_monocolored) {
+    if source.is_some_and(|s| {
+        if full_text_a2_live {
+            object_is_monocolored(state, s.object)
+        } else {
+            targeting_source_is_monocolored(s)
+        }
+    }) {
         targets.retain(|target| {
             let Target::Object(object) = target else {
                 return true;
@@ -5649,6 +5681,7 @@ pub(crate) fn effect_target_is_legal_from_ability_source_with_power_lki(
             controller,
             Some(TargetingSource {
                 dungeon_colors: None,
+                full_text_departure: None,
                 types_override: None,
                 object: source.source,
                 card_def: source.card_def,
@@ -5903,6 +5936,7 @@ fn activation_legal_targets_with_source_lki(
         controller,
         Some(TargetingSource {
             dungeon_colors: None,
+            full_text_departure: None,
             types_override: None,
             object: source,
             card_def: captured_source
@@ -22270,6 +22304,7 @@ pub(crate) fn stack_targets_still_legal(
                     match item.kind {
                         StackItemKind::Spell => Some(TargetingSource {
                             dungeon_colors: None,
+                            full_text_departure: None,
                             types_override: None,
                             object: item.source,
                             card_def: state.objects.get(item.source).card_def,
@@ -22301,6 +22336,7 @@ pub(crate) fn stack_targets_still_legal(
                                 // authenticated above by `validate_spell_sourced_trigger`.
                                 Some(TargetingSource {
                                     dungeon_colors: None,
+                                    full_text_departure: None,
                                     types_override: None,
                                     object: item.source,
                                     card_def: spell.card_def,
@@ -31352,6 +31388,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
         )) || another_observes_attacks
+            || crate::full_text_v1::has_donated_attack_trigger(state, source)
             || trigger::triggers_for(object.card_def).iter().any(|def| {
                 matches!(
                     def.condition,
@@ -31379,6 +31416,14 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             crate::ashroot_dispatch_v2::record_attack(state, source);
             crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
             crate::high_society_hunter_v1::capture_attack(state, declaration);
+            if let Err(halted_source) =
+                crate::full_text_v1::record_attack_trigger(state, declaration)
+            {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    halted_source,
+                ));
+            }
         }
     }
     crate::eternal_cube_c6c_v1::capture_attack(state);
