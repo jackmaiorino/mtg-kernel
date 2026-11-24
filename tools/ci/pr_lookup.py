@@ -4,7 +4,9 @@ open-pr-head: "<number> <head sha> <base sha>" of the first open, ready pull req
 repository's branch GITHUB_REF_NAME, or an empty line (for runners without the GitHub CLI). ready-pr selects
 the same tuple from JSON on stdin.
 pr-run SHA: whole-set if this repository's ci.yml run for event pull_request at head commit SHA scheduled the Linux
-Rust groups (an expanded, not skipped `Rust tests (ubuntu-24.04, <group>)` job of rust-test-groups), else partial.
+Rust groups and is completing them (expanded `Rust tests (ubuntu-24.04, <group>)` jobs of rust-test-groups, each
+finished with success or failure, or queued or running in a run that is still going), else partial. A cancelled,
+timed-out or otherwise unfinished run or group job is not evidence: nothing would complete Linux Rust then.
 Only then may the dispatch run just the Windows groups that run leaves out. The decision reads that run's actual
 jobs, never a file list: a file list (GitHub's three-dot list) can differ from what the run classified (the
 synthetic merge's diff).
@@ -57,18 +59,43 @@ def open_pr_head(pulls: list, repository: str, ref: str) -> str:
     return ""
 
 
-def scheduled_linux_rust(jobs: list, run_id: int) -> bool:
-    """Whether one run's latest-attempt jobs include an expanded Linux row of rust-test-groups that was not skipped
-    (queued, in progress or finished in any way: the complement only completes what that run scheduled). Rows
-    exist once detect-changes has finished; before that, or for a draft (lint only) or a narrowed scope, there are
-    none. The gate `Rust tests (ubuntu-24.04)` alone does not count: the group rows are the direct evidence."""
+# A group job or a run that ran to an end of its own, and one that is still on its way to one.
+FINISHED = ("success", "failure")
+ACTIVE = ("queued", "in_progress", "waiting", "pending", "requested")
+
+
+def scheduled_linux_rust(jobs: list, run: dict) -> bool:
+    """Whether one run's latest-attempt jobs show the Linux rows of rust-test-groups scheduled and being completed.
+
+    There must be at least one expanded row that was not skipped, and every such row must have finished with
+    success or failure, or be queued or running while the run itself is still going. A run that ended cancelled,
+    timed out or failed to start, or any such row (a newer push, a manual cancel, a runner that never took the
+    job), shows nothing: the dispatch would take the Windows complement and no run would complete Linux Rust.
+    Whether the tests passed is judged on that run, not here. Rows exist once detect-changes has finished; before
+    that, or for a draft (lint only) or a narrowed scope, there are none. The gate `Rust tests (ubuntu-24.04)`
+    alone does not count: the group rows are the direct evidence."""
+    run_id = run.get("id")
+    run_finished = run.get("status") == "completed"
+    if run_finished and run.get("conclusion") not in FINISHED:
+        return False
+    if not run_finished and run.get("status") not in ACTIVE:
+        return False
     names = {f"Rust tests (ubuntu-24.04, {group})" for group in RUST_TEST_GROUPS}
+    rows = []
     for job in jobs:
         if not isinstance(job, dict) or job.get("run_id") != run_id:
             raise ValueError("expected job records of the chosen run")
         if job.get("name") in names and job.get("conclusion") != "skipped":
-            return True
-    return False
+            rows.append(job)
+    if not rows:
+        return False
+    for job in rows:
+        if job.get("status") == "completed":
+            if job.get("conclusion") not in FINISHED:
+                return False
+        elif run_finished or job.get("status") not in ACTIVE:
+            return False
+    return True
 
 
 def newest_pull_request_runs(runs: list, repository: str, head_sha: str) -> list:
@@ -120,7 +147,7 @@ def pr_run(repository: str, head_sha: str, budget=None) -> str:
                     "workflow_runs", budget)
     newest = newest_pull_request_runs(runs, repository, head_sha)
     shown = [scheduled_linux_rust(paginate(f"/repos/{repository}/actions/runs/{run['id']}/jobs?filter=latest", "jobs",
-                                           budget), run["id"]) for run in newest]
+                                           budget), run) for run in newest]
     return "whole-set" if shown and all(shown) else "partial"
 
 

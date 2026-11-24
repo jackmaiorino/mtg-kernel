@@ -24,6 +24,10 @@ def workflow():
     return {"jobs": jobs}
 
 
+# A pull request run that is still going (pr_lookup counts rows on their way only in such a run).
+ACTIVE_RUN = {"id": 1, "status": "in_progress", "conclusion": None}
+
+
 class TableTests(unittest.TestCase):
     def test_the_docs_table_is_generated_from_the_scope_table(self):
         self.assertEqual((ROOT / "docs" / "CI-SCOPES.md").read_text(encoding="utf-8"), ci_scope.markdown())
@@ -267,7 +271,7 @@ class Classifier:
         import pr_lookup
         if self.version == "new":
             jobs = run_jobs(self.scheduled("pull_request", run_paths, label=label))
-            return "windows-complement" if pr_lookup.scheduled_linux_rust(jobs, 1) else "full"
+            return "windows-complement" if pr_lookup.scheduled_linux_rust(jobs, ACTIVE_RUN) else "full"
         listed = run_paths if dispatch_paths is None else dispatch_paths
         return "windows-complement" if self.scope_of_files(listed) == "pr" else "full"
 
@@ -648,10 +652,10 @@ class DispatchCompositionTests(unittest.TestCase):
                  "docs": (["README.md"], False, False)}
         for name, (paths, label, expected) in cases.items():
             with self.subTest(case=name):
-                self.assertEqual(pr_lookup.scheduled_linux_rust(run_jobs(scheduled("pull_request", paths, label=label)), 1),
+                self.assertEqual(pr_lookup.scheduled_linux_rust(run_jobs(scheduled("pull_request", paths, label=label)), ACTIVE_RUN),
                                  expected)
         self.assertFalse(pr_lookup.scheduled_linux_rust(run_jobs(scheduled("pull_request", ["mtg-kernel/src/engine.rs"],
-                                                                           draft=True)), 1))
+                                                                           draft=True)), ACTIVE_RUN))
 
 
 class ShardTests(unittest.TestCase):
