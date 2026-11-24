@@ -227,8 +227,32 @@ PARTS = {"full": ("linux", "windows-pr", "windows-rest"), "pr": ("linux", "windo
          "windows-complement": ("windows-rest",), "draft": ("linux",)}
 
 
+def linux_only_jobs():
+    """ci.yml jobs that never name a Windows runner (one Linux row whatever the group set)."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    parts = re.split(r"^  ([a-z][a-z-]*):\n", text[text.index("\njobs:\n"):], flags=re.MULTILINE)
+    return {name for name, body in zip(parts[1::2], parts[2::2]) if "windows-2025" not in body}
+
+
 def coverage(scheduled):
-    return {(job, part) for job, group_set in scheduled for part in PARTS[group_set]}
+    """A Linux-only job (lint, trainer and tools tests) covers only Linux, in any group set. The Python jobs have
+    the same rows in the pull request set and the full set (Windows is in both; a test keeps it so), so they have
+    no part outside the pull request set for the complement to leave out."""
+    linux_only = linux_only_jobs()
+    return {(job, "linux" if job in linux_only else part) for job, group_set in scheduled for part in PARTS[group_set]
+            if not (job in PYTHON_SET and part == "windows-rest")}
+
+
+class CoverageModelTests(unittest.TestCase):
+    def test_the_python_jobs_have_the_same_rows_in_the_pull_request_and_full_sets(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        for job in sorted(PYTHON_SET):
+            block = text[text.index(f"\n  {job}:\n"):]
+            block = block[:block.index("\n    steps:\n")]
+            with self.subTest(job=job):
+                self.assertIn("""os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) """
+                              """&& '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}""", block)
+                self.assertNotIn("exclude: ${{", block)
 
 
 class Classifier:
