@@ -6,11 +6,17 @@ route by its output. A self-hosted job cannot move once queued and GitHub keeps 
 so the choice fails closed: any error, a slow lookup, a Mac that looks off or busy, or no free slot routes
 nothing, and every group stays on GitHub's hosted runners in this same run (no rerun).
 
-The job token cannot list self-hosted runners (that needs admin rights), so liveness comes from the Mac
-heartbeat workflow (.github/workflows/mac-heartbeat.yml), a no-op job on the Mac runners every five
-minutes. The Mac counts as available only when its last heartbeat succeeded within MAX_HEARTBEAT_AGE and
-no heartbeat has waited for a Mac runner longer than MAX_HEARTBEAT_WAIT (a Mac that is off, asleep or busy
-with other jobs leaves heartbeats queued).
+The job token cannot list self-hosted runners (that needs admin rights), so liveness comes from one of
+two sources, checked in this order:
+  1. This job itself runs on a Mac runner (detect-changes may, through vars.MTG_CI_DETECT_RUNNER). That is
+     direct proof the Mac is alive, so the heartbeat is not read. The runner's own environment decides:
+     RUNNER_ENVIRONMENT=self-hosted, RUNNER_OS=Linux and RUNNER_ARCH=ARM64, compared exactly. The Mac VM
+     runners are the only self-hosted Linux arm64 runners; a missing or different value means no.
+  2. Otherwise the Mac heartbeat workflow (.github/workflows/mac-heartbeat.yml), a no-op job on the Mac
+     runners every five minutes. The Mac counts as available only when its last heartbeat succeeded within
+     MAX_HEARTBEAT_AGE and no heartbeat has waited for a Mac runner longer than MAX_HEARTBEAT_WAIT (a Mac
+     that is off, asleep or busy with other jobs leaves heartbeats queued).
+Either way the free-slot count below still decides how many groups go.
 
 Environment:
   MAC_GROUPS   JSON list of group names in order of preference (vars.MTG_CI_MAC_GROUPS). Unset or empty
@@ -47,6 +53,9 @@ LINUX_SCOPES = ("full", "pr")
 FULL_RUST_GROUPS = frozenset({"eternal-integration", "workspace-targets", "native-store", "standard",
                               "limited-store"})
 NOT_STARTED = ("requested", "pending", "waiting", "queued")
+# The environment a Mac runner gives its jobs. The Mac VM runners are the only self-hosted Linux arm64
+# runners of this repository, so a job seeing exactly these values is running on a Mac runner.
+MAC_RUNNER_ENVIRONMENT = {"RUNNER_ENVIRONMENT": "self-hosted", "RUNNER_OS": "Linux", "RUNNER_ARCH": "ARM64"}
 
 
 def parse_list(text: str | None) -> list[str]:
@@ -73,6 +82,11 @@ def mac_available(runs: list[dict], now: float) -> str | None:
     if waits and max(waits) > MAX_HEARTBEAT_WAIT:
         return f"a heartbeat has waited {int(max(waits))} s for a Mac runner"
     return None
+
+
+def running_on_mac_runner() -> bool:
+    """True only when this job's runner environment matches a Mac runner exactly (missing values mean no)."""
+    return all(os.environ.get(name) == value for name, value in MAC_RUNNER_ENVIRONMENT.items())
 
 
 def held_by_mac(jobs: list[dict], skip_run: int | None = None) -> int:
@@ -117,14 +131,19 @@ def choose(now: float) -> tuple[list[str], str]:
     if not slots:
         return [], "no Mac slots"
     repo, budget = os.environ["GITHUB_REPOSITORY"], Budget()
-    runs = _get(f"/repos/{repo}/actions/workflows/{HEARTBEAT_WORKFLOW}/runs?per_page=30", budget)["workflow_runs"]
-    reason = mac_available(runs, now)
-    if reason:
-        return [], f"Mac unavailable: {reason}"
+    if running_on_mac_runner():
+        alive = "alive: this job runs on a Mac runner"
+    else:
+        runs = _get(f"/repos/{repo}/actions/workflows/{HEARTBEAT_WORKFLOW}/runs?per_page=30", budget)["workflow_runs"]
+        reason = mac_available(runs, now)
+        if reason:
+            return [], f"Mac unavailable: {reason}"
+        alive = "alive: recent heartbeat"
     run_id = int(os.environ.get("GITHUB_RUN_ID") or 0) or None
     held = held_by_mac(active_jobs(repo, budget), skip_run=run_id)
     chosen = candidates[:max(0, slots - held)]
-    return chosen, f"{held} job(s) of other runs queued or running there, {slots} slots, candidates {json.dumps(candidates)}"
+    return chosen, (f"{alive}; {held} job(s) of other runs queued or running there, {slots} slots, "
+                    f"candidates {json.dumps(candidates)}")
 
 
 def main() -> int:

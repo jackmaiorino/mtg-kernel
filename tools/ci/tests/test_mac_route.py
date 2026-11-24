@@ -76,21 +76,28 @@ class SlotTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
-    def run_main(self, env, runs=(), jobs=(), error=None):
+    def run_main(self, env, runs=(), jobs=(), error=None, jobs_error=None, with_line=False):
         with tempfile.TemporaryDirectory() as folder:
-            output = Path(folder) / "out"
+            output, summary = Path(folder) / "out", Path(folder) / "summary"
             def get(path, budget):
                 if error:
                     raise error
                 return {"workflow_runs": list(runs)}
-            with patch.dict(os.environ, {**env, "GITHUB_OUTPUT": str(output)}, clear=True), \
-                    patch.object(mac_route, "_get", get), patch.object(mac_route, "active_jobs", lambda repo, budget: list(jobs)), \
+            def held(repo, budget):
+                if jobs_error:
+                    raise jobs_error
+                return list(jobs)
+            with patch.dict(os.environ, {**env, "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)},
+                            clear=True), \
+                    patch.object(mac_route, "_get", get), patch.object(mac_route, "active_jobs", held), \
                     patch.object(mac_route.datetime, "datetime", wraps=mac_route.datetime.datetime) as clock:
                 clock.now.return_value = mac_route.datetime.datetime.fromtimestamp(NOW, mac_route.datetime.timezone.utc)
                 self.assertEqual(mac_route.main(), 0)
             text = output.read_text(encoding="utf-8")
+            line = summary.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("groups=") and text.endswith("\n"))
-        return json.loads(text[len("groups="):])
+        groups = json.loads(text[len("groups="):])
+        return (groups, line) if with_line else groups
 
     def test_free_slots_take_groups_in_order(self):
         self.assertEqual(self.run_main(ENV, runs=[beat()]), ["limited-only", "standard", "python-shard-0"])
@@ -108,6 +115,71 @@ class MainTests(unittest.TestCase):
         self.assertEqual(self.run_main(ENV, runs=[]), [])
         self.assertEqual(self.run_main(ENV, runs=[beat(updated=3600)]), [])
         self.assertEqual(self.run_main(ENV, error=TimeoutError("slow")), [])
+
+
+ON_MAC = {"RUNNER_ENVIRONMENT": "self-hosted", "RUNNER_OS": "Linux", "RUNNER_ARCH": "ARM64"}
+ALL = ["limited-only", "standard", "python-shard-0"]
+STALE = [beat(updated=mac_route.MAX_HEARTBEAT_AGE + 600)]
+WAITING = [beat("queued", None, created=mac_route.MAX_HEARTBEAT_WAIT + 1, updated=0), beat()]
+
+
+def not_on_mac():
+    """Runner environments that are not a Mac runner: real other runners, then each value wrong or missing."""
+    cases = {"hosted": {"RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux", "RUNNER_ARCH": "X64"},
+             "hosted arm64": {"RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux", "RUNNER_ARCH": "ARM64"},
+             "self-hosted Linux X64": {**ON_MAC, "RUNNER_ARCH": "X64"},
+             "self-hosted Windows": {"RUNNER_ENVIRONMENT": "self-hosted", "RUNNER_OS": "Windows", "RUNNER_ARCH": "X64"},
+             "self-hosted macOS": {**ON_MAC, "RUNNER_OS": "macOS"},
+             "unset": {}}
+    for name, wrong in (("RUNNER_ENVIRONMENT", "github-hosted"), ("RUNNER_OS", "linux"), ("RUNNER_ARCH", "arm64")):
+        cases[f"{name} wrong"] = {**ON_MAC, name: wrong}
+        cases[f"{name} empty"] = {**ON_MAC, name: ""}
+        cases[f"{name} missing"] = {key: value for key, value in ON_MAC.items() if key != name}
+    return cases
+
+
+class MacRunnerLivenessTests(unittest.TestCase):
+    run_main = MainTests.run_main
+
+    def test_this_job_on_a_mac_runner_proves_liveness_without_a_heartbeat(self):
+        for runs in ([], STALE, WAITING, [beat(conclusion="failure")]):
+            with self.subTest(runs=runs):
+                groups, line = self.run_main({**ENV, **ON_MAC}, runs=runs, with_line=True)
+                self.assertEqual(groups, ALL)
+                self.assertIn("alive: this job runs on a Mac runner", line)
+
+    def test_on_a_mac_runner_the_heartbeat_is_not_read(self):
+        self.assertEqual(self.run_main({**ENV, **ON_MAC}, error=TimeoutError("heartbeat lookup")), ALL)
+
+    def test_on_a_mac_runner_the_slot_limit_still_holds(self):
+        env = {**ENV, **ON_MAC}
+        self.assertEqual(self.run_main(env, jobs=[job("queued", MAC, run_id=4)]), ["limited-only", "standard"])
+        self.assertEqual(self.run_main(env, jobs=[job("in_progress", MAC, run_id=4)] * 2), ["limited-only"])
+        self.assertEqual(self.run_main(env, jobs=[job("queued", MAC, run_id=4)] * 3), [])
+        self.assertEqual(self.run_main(env, jobs=[job("queued", MAC, run_id=4)] * 5), [])
+        self.assertEqual(self.run_main({**env, "MAC_SLOTS": "1"}), ["limited-only"])
+        self.assertEqual(self.run_main({**env, "MAC_SLOTS": "0"}), [])
+        # This run's own jobs (run 9) do not take its slots.
+        self.assertEqual(self.run_main(env, jobs=[job("in_progress", MAC, run_id=9)] * 3), ALL)
+
+    def test_off_a_mac_runner_the_heartbeat_still_decides(self):
+        for name, runner in not_on_mac().items():
+            with self.subTest(runner=name):
+                with patch.dict(os.environ, runner, clear=True):
+                    self.assertFalse(mac_route.running_on_mac_runner())
+                env = {**ENV, **runner}
+                self.assertEqual(self.run_main(env, runs=STALE), [])
+                self.assertEqual(self.run_main(env, runs=[]), [])
+                self.assertEqual(self.run_main(env, runs=WAITING), [])
+                groups, line = self.run_main(env, runs=[beat()], with_line=True)
+                self.assertEqual(groups, ALL)
+                self.assertIn("alive: recent heartbeat", line)
+                self.assertNotIn("Mac runner", line)
+
+    def test_on_a_mac_runner_an_error_counting_held_jobs_routes_nothing(self):
+        groups, line = self.run_main({**ENV, **ON_MAC}, runs=[], jobs_error=TimeoutError("slow"), with_line=True)
+        self.assertEqual(groups, [])
+        self.assertIn("check failed", line)
 
 
 if __name__ == "__main__":
