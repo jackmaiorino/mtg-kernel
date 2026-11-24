@@ -9406,8 +9406,8 @@ fn activation_controlled_cost_candidates(
             }
         })
         .collect::<Vec<_>>();
-    // Invasion Submersible's (wave S1q) and Aang, Swift Savior's (wave C9a)
-    // waterbend taps leave their mana part payable.
+    // Invasion Submersible's (wave S1q), Aang, Swift Savior's (wave C9a) and
+    // Aang's Iceberg's (wave C5c) waterbend taps leave their mana part payable.
     #[cfg(feature = "eternal-fixtures")]
     if tap {
         crate::eternal_sideboard_s1q_v1::retain_payable_waterbend_taps(
@@ -9417,6 +9417,12 @@ fn activation_controlled_cost_candidates(
             &mut candidates,
         );
         crate::eternal_cube_c9a_v1::retain_payable_waterbend_taps(
+            state,
+            source,
+            already_chosen,
+            &mut candidates,
+        );
+        crate::eternal_cube_c5c_v1::retain_payable_waterbend_taps(
             state,
             source,
             already_chosen,
