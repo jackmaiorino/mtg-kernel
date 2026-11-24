@@ -15,7 +15,8 @@ rule, merges (2026-11-21 07:27 ET)"). One exception: a dispatch without inputs a
 runs only the Windows complement when that pull request's own run at the same commit says (its ci-plan job) and
 shows that it scheduled the whole pull request set: every Linux Rust group, and the Python build on both systems
 unless its paths were not Python-relevant (tools/ci/pr_lookup.py pr-run); otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out.
-A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. A Rust-only pull request runs no Python before the merge.
+A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. An unlabelled Rust-only pull request runs no Python before
+the merge (ci:full schedules Python).
 `full_matrix=true` skips that lookup; `fallback_scope` and an explicit `scope` input take precedence over it.
 
 Usage:
@@ -103,7 +104,8 @@ SCOPES: dict[str, dict] = {
                       "summary": "formatting and Clippy, the shared Limited build and every Limited group, Linux "
                                  "(only Limited process binaries map here; Limited library code is engine code)"},
     "workflow": {"jobs": [], "summary": "nothing in ci.yml: the changed workflow runs itself on its own paths"},
-    "viewer": {"jobs": [], "summary": "no Rust or Python job (detect-changes only): viewer.yml builds and tests the "
+    "viewer": {"jobs": [], "summary": "no Rust or Python job (only detect-changes and the ci-plan job run): viewer.yml "
+                                      "builds and tests the "
                                       "website on these paths (and publishes it from main)"},
     "docs": {"jobs": [], "summary": "nothing"},
 }
@@ -401,8 +403,8 @@ def markdown() -> str:
            "the head of a ready pull request runs only the Windows complement when that pull request's own run at "
            "the same commit says (its ci-plan job) and shows that it scheduled the whole pull request set, every "
            "Linux Rust group and, unless its paths were not Python-relevant, the Python build on both systems; "
-           "otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out. A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. A Rust-only pull request runs no Python "
-           "before the merge; `full_matrix=true` skips that lookup, and `fallback_scope` or an explicit `scope` "
+           "otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out. A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. An unlabelled Rust-only pull request runs no "
+           "Python before the merge (`ci:full` schedules Python); `full_matrix=true` skips that lookup, and `fallback_scope` or an explicit `scope` "
            "input takes precedence over it): pushes to a line share one concurrency group (one running, one "
            "waiting, a newer merge replaces the waiting one), and a red monitor's report names every merge it "
            "covers. `ci:full` on a pull request forces the whole pull request set (every Rust and Python job, "

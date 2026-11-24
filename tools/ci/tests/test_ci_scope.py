@@ -445,7 +445,9 @@ class ViewerScopeTests(unittest.TestCase):
             with self.subTest(change=change):
                 self.assertEqual(new.dispatch_group_set(change), "full")
                 self.assertEqual(main.dispatch_group_set(change), "windows-complement")
-        # The snapshot of main is not the classifier under test: there the website ran the Rust set.
+        # Classifier("main") reconstructs the base from the current functions (no viewer rule, website paths
+        # Rust-relevant), so it is not an independent baseline; the literal tables (FROZEN_RELEVANCE,
+        # WEBSITE_SCHEDULES, the frozen detect outputs) are. Here it only shows the website ran the Rust set there.
         self.assertEqual({job for job, _ in main.scheduled("pull_request", WEBSITE)}, RUST_SET)
 
     def test_pull_request_and_other_events_match_frozen_detect_outputs(self):
@@ -878,6 +880,12 @@ FROZEN_RELEVANCE = [
     ("mtg-kernel/src/bin/kernel_limited_match_v1.rs", False, True, "rules-limited"),
     ("mtg-kernel/src/rl_session.rs", False, True, "shared"),
     ("viewer_tools/x.py", False, True, None),
+    # Matching is case-sensitive, as in the shell `case`: these name no rule and are Rust-relevant only.
+    ("Python/tools/foo.py", False, True, None),
+    ("Tools/ci/x.py", False, True, None),
+    ("README.MD", False, True, None),
+    ("VIEWER/index.html", False, True, None),
+    ("Docs/a.txt", False, True, None),
     # Website paths: origin/main's verdicts; now both False (viewer/index.html) under the viewer scope.
     ("viewer/index.html", False, True, "viewer"),
     ("viewer/README.md", False, False, "docs"),
@@ -891,6 +899,18 @@ class FrozenBaselineTests(unittest.TestCase):
                 now = (False, False) if path.startswith("viewer/") else (python, rust)
                 self.assertEqual(ci_scope.relevance([path]), now)
                 self.assertEqual(ci_scope.scope_of(path), scope)
+
+    def test_matching_is_case_sensitive_on_every_system(self):
+        # fnmatch.fnmatch folds case where os.path.normcase does (Windows); fnmatchcase never does. Folding is
+        # forced here so a switch to fnmatch fails on Linux too.
+        import fnmatch as fnmatch_module
+        from unittest import mock
+        with mock.patch.object(fnmatch_module.os.path, "normcase", lambda text: text.lower()):
+            for path, python, rust, scope in FROZEN_RELEVANCE:
+                if path != path.lower():
+                    with self.subTest(path=path):
+                        self.assertEqual(ci_scope.relevance([path]), (python, rust))
+                        self.assertEqual(ci_scope.scope_of(path), scope)
 
     def test_the_frozen_table_samples_every_pattern(self):
         paths = [row[0] for row in FROZEN_RELEVANCE]
