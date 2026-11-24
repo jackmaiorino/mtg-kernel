@@ -108,6 +108,10 @@ def green_so_far(jobs: list, run: dict) -> bool:
     if not run_finished and run.get("status") not in ACTIVE:
         return False
     for job in jobs:
+        # A conclusion that is not green disqualifies whatever the status says (GitHub is not known to send a
+        # running job with a conclusion, but nothing here may depend on that).
+        if job["conclusion"] is not None and job["conclusion"] not in GREEN:
+            return False
         if job["status"] == "completed":
             if job["conclusion"] not in GREEN:
                 return False

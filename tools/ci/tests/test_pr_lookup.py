@@ -383,6 +383,20 @@ class EvidenceTests(unittest.TestCase):
                     self.assertFalse(whole(rows, the_run))
         self.assertIn(("Rust formatting and lint", "completed", "success"), DONE)
 
+    def test_a_red_conclusion_disqualifies_whatever_the_status_says(self):
+        # A job reported as queued or running that already carries a red conclusion: contradictory, and red.
+        ubuntu, windows = pr_lookup.PYTHON_BUILD_JOBS
+        for status in ("in_progress", "queued", "waiting"):
+            for conclusion in ("failure", "cancelled", "timed_out", "neutral", "action_required", "stale",
+                               "startup_failure"):
+                with self.subTest(status=status, conclusion=conclusion):
+                    self.assertFalse(whole(replace(DONE, windows, status, conclusion), run(7)))
+                    self.assertFalse(whole(replace(DONE, "Rust formatting and lint", status, conclusion), run(7)))
+        # The same rows without a conclusion are jobs on their way, which is fine while the run is going.
+        for status in ("in_progress", "queued", "waiting"):
+            with self.subTest(status=status, conclusion=None):
+                self.assertTrue(whole(replace(DONE, windows, status, None), run(7)))
+
     def test_every_linux_rust_group_row_must_be_present(self):
         for group in pr_lookup.LINUX_RUST_GROUPS:
             with self.subTest(missing=group):
