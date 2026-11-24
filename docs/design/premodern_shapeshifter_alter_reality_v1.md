@@ -1,9 +1,12 @@
 # Volrath's Shapeshifter Full and Alter Reality
 
-Status: decided design, issue #460. The research lead ruled on its three contract points and
-on the eight questions it raised (section 9). This document changes no source, test or data
-file. It specifies the work that makes the last two Premodern cards Full, for an implementer
-to build from.
+Status: in progress, issue #460. The research lead ruled on its three contract points and
+on the eight questions it raised (section 9). Volrath's Shapeshifter donor scope (steps A1 #768,
+A2 #793), the registered Premodern ordered-graveyard owner (step B1 #927), and Volrath's
+Shapeshifter promotion to `full` (step B2: 304/305 Premodern cards Full, 90.0% playable
+mainboards, 84.0% full 75s; `premodern-full-english-breakfast` in `PLAYABLE` and `PLAYABLE_75`)
+are implemented; Alter Reality (steps C1 and C2, plus the section 4.7 interaction test) remains
+to reach 305/305 Full and close #460.
 
 Code references are to main at `fd9ff09a`. Line numbers drift; each reference also names
 the function or constant. Rules are cited from the
@@ -948,17 +951,17 @@ There is no typed halt for this case. The test lands with whichever of B2 and C2
 
 ### 5.1 Volrath's Shapeshifter
 
-- [ ] One `full_text_v1/registered.rs` style fixture per new donor, both seats, real entry or
+- [x] One `full_text_v1/registered.rs` style fixture per new donor, both seats, real entry or
       attack, paid costs, snapshot restore and donor departure: Auramancer (return changes the
       top), Monk Realist (the destroyed enchantment can become the top), Uktabi Orangutan,
       Ghitu Slinger entry, Ghitu Slinger echo paid, declined and unpayable with the donor
       departed, Xantid Swarm's attack trigger. Model:
       `volrath_native_paid_rats_discards_for_the_opponent_unless_suppressed_both_seats`.
-- [ ] Meddling Mage donor through a native Legacy's Allure transfer: names nothing, prohibits
+- [x] Meddling Mage donor through a native Legacy's Allure transfer: names nothing, prohibits
       nothing, both seats.
-- [ ] Legend rule: a Shapeshifter with Akroma's (or Squee's) text and the physical card under
+- [x] Legend rule: a Shapeshifter with Akroma's (or Squee's) text and the physical card under
       one controller.
-- [ ] Refusal fixtures, each asserting `Decision::Halted { mechanic:
+- [x] Refusal fixtures, each asserting `Decision::Halted { mechanic:
       FullTextDonorOutsideSetV1, source: host }` and no later decision, both seats: entry with
       an unsupported top; a single arrival; an ordered batch; a departure exposing an older
       card; a control change onto a graveyard with an unsupported top; phase-in; Meddling Mage
@@ -966,49 +969,49 @@ There is no typed halt for this case. The test lands with whichever of B2 and C2
       Masticore branch of
       `volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_both_seats`
       becomes a refusal case.
-- [ ] Part A donors without a dedicated donor fixture today: Ihsan's Shade and Iridescent Angel
+- [x] Part A donors without a dedicated donor fixture today: Ihsan's Shade and Iridescent Angel
       as donors give their protection on a Shapeshifter and are not refused, both seats.
-- [ ] Part C, both seats, one fixture each: with Anger, Arrogant Wurm, Eternal Dragon or Glory
+- [x] Part C, both seats, one fixture each: with Anger, Arrogant Wurm, Eternal Dragon or Glory
       on top the Shapeshifter has exactly that card's keywords and no other; with Krosan
       Tusker, Gempalm Incinerator, Genesis, Nether Spirit, Thornscape Battlemage, Bane of the
       Living or Nantuko Vigilante on top it has no keyword and offers no action beyond the
       retained discard; a Shapeshifter entering with Thornscape Battlemage on top triggers
       nothing and is not refused; no part C card is refused, entering or not.
-- [ ] Part D, both seats, for each of the five cards: it becomes the top card under a
+- [x] Part D, both seats, for each of the five cards: it becomes the top card under a
       Shapeshifter already on the battlefield (a death, a discard) and play continues with its
       keywords and no refusal; a Shapeshifter entering with it on top (cast, Animate Dead, and
       inside an ordered batch whose final top is the card) halts with
       `FullTextDonorOutsideSetV1` at that entry. Meddling Mage the same way.
-- [ ] The audited lists: every creature card of the Premodern pool is in exactly one of the
+- [x] The audited lists: every creature card of the Premodern pool is in exactly one of the
       four classes or the refused class of appendix A.
-- [ ] Pending order and the backstop: a pending owner order, also after a restore without a
+- [x] Pending order and the backstop: a pending owner order, also after a restore without a
       runner, with an unsupported donor among the arrivals offers the order menu and halts
       only once the order completes.
-- [ ] Mogg Fanatic and Ravenous Rats stay donors: their three existing fixtures pass
+- [x] Mogg Fanatic and Ravenous Rats stay donors: their three existing fixtures pass
       unchanged after the refusal lands.
-- [ ] The frozen tests of section 3.1 pass unchanged, plus a new pin of the mirror's view
+- [x] The frozen tests of section 3.1 pass unchanged, plus a new pin of the mirror's view
       sequence: the SHA-256 of the frozen JSONL wire states (numeric and Human views, prompt
       by prompt) of the seed `20261108` fixture in both starting seats, recorded on main before
       PR A and asserted by every later step. It is what catches a change to Karmic Guide's echo
       or any other mirror view.
-- [ ] Registered owner: a twin of the hidden-world privacy test; step, snapshot, restore and
+- [x] Registered owner: a twin of the hidden-world privacy test; step, snapshot, restore and
       stale tokens; shroud in its scene; a registered game in which a Meddling Mage is cast,
       its name chosen through the owner's menu, and the name shown in its scene;
       `RegisteredHaltV1` reporting.
-- [ ] Registration: the ordered profile's admissions and refusals and the profile mismatch.
+- [x] Registration: the ordered profile's admissions and refusals and the profile mismatch.
       The registered profile refuses a card outside the Premodern pool.
-- [ ] Schema 5 refusal (section 3.7): a schema 5 FEB reset is refused with `unsupported_deck`
+- [x] Schema 5 refusal (section 3.7): a schema 5 FEB reset is refused with `unsupported_deck`
       and the new message, and so is a reset whose mainboard holds Extrapolate the Impossible
       and whose cards outside the game hold a Shapeshifter, in either seat; a reset with cards
       outside the game and no Shapeshifter (a `PLAYABLE_75` game's sideboard) is admitted with
       the same reply as on main.
-- [ ] Games: FEB in `PLAYABLE` (both pairs, ranked and random, terminal and replay) and in
+- [x] Games: FEB in `PLAYABLE` (both pairs, ranked and random, terminal and replay) and in
       `PLAYABLE_75` (both matches, random sideboarding, every game terminal and replayed).
-- [ ] CI: the Eternal library filter (`.github/workflows/ci.yml`, the
+- [x] CI: the Eternal library filter (`.github/workflows/ci.yml`, the
       `run_rust_lib_filters.py` line with `full_text_v1::tests:: graveyard_order_v1::tests::
       premodern_ordered_public_v1::`) and the `eternal_integration` suite; hosted Windows
       Eternal job at the pull request head.
-- [ ] Registry row `partial` to `full`; `expected_capability` in
+- [x] Registry row `partial` to `full`; `expected_capability` in
       `tests/eternal/eternal_catalog_v1.rs` drops the Shapeshifter; `feb.rs::mainboard`
       accepts Full; catalog hash re-pinned.
 
