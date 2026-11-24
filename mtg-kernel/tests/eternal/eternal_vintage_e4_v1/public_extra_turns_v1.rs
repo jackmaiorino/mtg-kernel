@@ -146,4 +146,23 @@ fn a_goad_is_published_until_its_players_next_turn_once_a_schedule_exists() {
     assert!(state.objects.get(dungeoneer).v4.goaded_by.is_empty());
     let extra = observe(&mut state).unwrap();
     assert!(published_goads(&extra, dungeoneer).is_empty());
+
+    // A permanent entering during the extra turn is stamped with the
+    // schedule's occurrence, which differs from the repeated round.
+    let occurrence = extra.projection.turn_schedule.as_ref().unwrap().occurrence;
+    assert_eq!(extra.projection.surface.turn, round);
+    assert_eq!(occurrence, round + 1);
+    let island = state.players[0].hand[0];
+    act(&mut state, Action::PlayLand(island));
+    let played = observe(&mut state).unwrap();
+    let entered = played
+        .projection
+        .surface
+        .battlefield
+        .iter()
+        .flatten()
+        .find(|card| card.stable.arena_id == island.0)
+        .expect("the land is on the battlefield")
+        .entered_battlefield_turn;
+    assert_eq!(entered, Some(occurrence));
 }

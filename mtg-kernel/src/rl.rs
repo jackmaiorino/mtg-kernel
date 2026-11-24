@@ -1099,8 +1099,12 @@ pub struct PublicObservationProjectionV5 {
     /// turn being taken and those still queued. While it is present every
     /// published goad has `expires_at_turn` 0: the goad lasts until its
     /// `player`'s next turn begins, whichever turn that is, and no round
-    /// number names that turn. Card fields that hold a round
-    /// (`entered_battlefield_turn`, `plotted_turn`) keep holding the round.
+    /// number names that turn. Fields stamped with the turn key
+    /// (`entered_battlefield_turn`, `plotted_turn`, and the `turn` of
+    /// `engine_context.trigger_uses` and
+    /// `engine_context.combat_damage_prevention`) hold the round until the
+    /// schedule exists and its `occurrence` from then on, so they compare
+    /// with `turn_schedule.occurrence`, not with `turn`.
     /// Absent until the game's first extra turn is scheduled, and in every
     /// other observation, which keeps refusing such games.
     #[serde(default, skip_serializing_if = "Option::is_none")]
