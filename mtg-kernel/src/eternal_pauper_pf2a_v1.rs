@@ -35,7 +35,7 @@ use crate::effect::{
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::eternal_cards_v1::{EternalOpV1, EternalTriggerV1};
 use crate::eternal_legacy_e9a_v1::{active_named, live_link};
-use crate::eternal_sideboard_s1d_v1::S1dTargetV1;
+use crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1;
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;

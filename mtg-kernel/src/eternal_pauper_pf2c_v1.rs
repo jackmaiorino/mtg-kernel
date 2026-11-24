@@ -230,6 +230,7 @@ pub(crate) fn is_spell_damage(state: &GameState, damage: &DamageProposed) -> boo
             .objects
             .try_get(id)
             .is_some_and(|live| live.zone == Zone::Battlefield),
+        Target::StackItem(_) => false,
     };
     valid_recipient
         && state

@@ -103,7 +103,7 @@ const fn program(target_spec: &'static str, program: &'static str) -> Special {
 pub(super) fn special_for(name: &str) -> Option<Special> {
     match name {
         "Memory Leak" => Some(program(
-            "TargetSpec::Opponent",
+            "TargetSpec::TargetOpponent",
             "crate::eternal_pauper_pf2b_v1::memory_leak",
         )),
         "Gigadrowse" => Some(program(

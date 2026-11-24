@@ -143,6 +143,7 @@ pub(crate) fn install_aurora_shield(state: &mut GameState, target: Target, amoun
             }
             Some(live_link(state, id))
         }
+        Target::StackItem(_) => return,
     };
     let turn = state.turn_key_v1();
     let active = state.active_player;
@@ -606,7 +607,10 @@ pub(crate) fn delayed_triggers(
                     ));
                 }
             }
-            CommittedEvent::BeginningEndStep { player } => {
+            CommittedEvent::BeginningEndStep {
+                active_player: player,
+                ..
+            } => {
                 if !permanent_left_battlefield_this_turn(state, player) {
                     continue;
                 }
@@ -699,7 +703,7 @@ pub(crate) fn drive(
     let controller = continuation.ctx.controller;
     match op {
         Pf2bOpV1::MemoryLeakV1 => {
-            if !target_is_legal(&continuation.ctx, state, TargetSpec::Opponent, 0) {
+            if !target_is_legal(&continuation.ctx, state, TargetSpec::TargetOpponent, 0) {
                 return Ok(false);
             }
             let Some(&Target::Player(opponent)) = continuation.ctx.targets.first() else {

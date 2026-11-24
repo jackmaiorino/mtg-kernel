@@ -35,7 +35,7 @@ const ESCAPE_TUNNEL: [ActivatedAbilityRecipe; 2] = [
         ),
         activation_zone: "Battlefield",
         sorcery_speed_only: false,
-        target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::S1dV1(crate::eternal_sideboard_s1d_v1::S1dTargetV1::CreaturePowerAtMostV1(2)))",
+        target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::S1dV1(crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1::CreaturePowerAtMostV1(2)))",
         activation_target_filter: "TargetSpecOnly",
         max_activations_per_turn: None,
     },
