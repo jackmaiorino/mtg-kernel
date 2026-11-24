@@ -4,7 +4,7 @@
 
 This repository is an independent extraction of kernel work formerly developed inside the Mage/XMage tree. Building and running the standalone kernel does not require Java, Maven, or a parent Mage checkout; see the [extraction provenance](docs/archive/EXTRACTION_PROVENANCE.md) for the exact cutover mapping. Running the optional XMage comparison bridge requires its separate Java runtime.
 
-Agents trained here are rated on [Spellbench](https://jackmaiorino.github.io/spellbench/) ([source](https://github.com/jackmaiorino/spellbench)), a cross-engine Magic: The Gathering bot benchmark, and their recorded decisions can be explored in the [Decision Studio](https://jackmaiorino.github.io/mtg-kernel/).
+Agents trained here are rated on [Spellbench](https://jackmaiorino.github.io/spellbench/) ([source](https://github.com/jackmaiorino/spellbench)), a cross-engine Magic: The Gathering bot benchmark, and their recorded decisions can be explored in the [Decision Studio](https://mtg-kernel.github.io/mtg-kernel/).
 
 ## Getting started
 
@@ -78,7 +78,7 @@ See the [priority interface](docs/design/limited_priority_windows_v1.md),
 [combat interface](docs/design/fdn_combat_damage_v1.md), and
 [London mulligan implementation](docs/design/fdn_london_mulligans_v1.md).
 Full Foundations card coverage and complete Limited rules are being developed
-under [issue #110](https://github.com/jackmaiorino/mtg-kernel/issues/110).
+under [issue #110](https://github.com/mtg-kernel/mtg-kernel/issues/110).
 
 ## MageZero Standard decks
 
