@@ -628,12 +628,6 @@ class MatrixTests(unittest.TestCase):
         self.assertLess(unpack.index('tar -xf "$archive" -C target'), check)
         self.assertLess(check, unpack.index("rm -rf -- target\n            exit 0"))
         self.assertLess(unpack.index("rm -rf -- target\n            exit 0"), unpack.index("find target -exec touch"))
-
-    def test_artifact_actions_are_pinned_by_commit(self):
-        for workflow in sorted(WORKFLOW.parent.glob("*.yml")):
-            for use in re.findall(r"uses: (actions/(?:upload|download)-artifact@\S+)", workflow.read_text(encoding="utf-8")):
-                with self.subTest(workflow=workflow.name, use=use):
-                    self.assertRegex(use, r"@[0-9a-f]{40}$")
         # The inventory job compares the build job's list with every part's executed names.
         self.assertIn(f"check_rust_integration_parts.py --listed eternal-integration-lists "
                       f"--parts eternal-integration-parts --count {ETERNAL_PARTS}", inventory)
@@ -644,6 +638,12 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("pattern: eternal-integration-executed-${{ matrix.os }}-*", inventory)
         self.assertIn("name: eternal-integration-build-${{ matrix.os }}-${{ github.run_attempt }}", build)
         self.assertIn("pattern: eternal-integration-build-${{ matrix.os }}-*", parts)
+
+    def test_artifact_actions_are_pinned_by_commit(self):
+        for workflow in sorted(WORKFLOW.parent.glob("*.yml")):
+            for use in re.findall(r"uses: (actions/(?:upload|download)-artifact@\S+)", workflow.read_text(encoding="utf-8")):
+                with self.subTest(workflow=workflow.name, use=use):
+                    self.assertRegex(use, r"@[0-9a-f]{40}$")
 
     def test_the_eternal_integration_jobs_run_where_the_group_ran_and_gate_the_merge(self):
         text = WORKFLOW.read_text(encoding="utf-8")
