@@ -5336,7 +5336,7 @@ mod tests {
             "78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e";
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "27c70a9ac9740cf1c107aa29d574865f48f8c44df9721f2010a940d322ef4334";
+            "3a81332db9cb44f98d68f52dfa1ff0af02dbb4102236d45bfd498e2842afb20a";
         const MAIN_GOLDEN_LEN_V1: usize = 71_544;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -5848,7 +5848,7 @@ mod tests {
         // Re-baselined again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) value:
         // "0fd11d97f708f191e89c0039a0d65a48c2b63a38b68cbeaa86c0dc152c16498f".
         // New value is this test's own live-computed digest, read directly
@@ -5856,7 +5856,7 @@ mod tests {
         // discipline as the prior re-baseline note above.
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "48ace9c3c2232847215101849fbcd751f758cb4527690fe39d9fee20aa6ac45f",
+            "dd73008fbc535cdf3f0a14e52e0314b126d86aa4db0ea7542d30b45b39e1437a",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }
