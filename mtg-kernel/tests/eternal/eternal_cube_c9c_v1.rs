@@ -909,9 +909,12 @@ fn grist_cda_works_in_all_nonbattlefield_zones_and_not_on_battlefield() {
     let recruiter = put(&mut state, P0, "Recruiter of the Guard", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::W], 2);
     cast(&mut state, recruiter, &[]);
+    let mut saw_recruiter_target = false;
     settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
         Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(true),
         Decision::ChooseEffectTargets { legal_targets, .. } => {
+            saw_recruiter_target = true;
             assert!(
                 legal_targets.contains(&Target::Object(grist_in_lib)),
                 "Recruiter of the Guard must find 1/1 Grist in library"
@@ -920,6 +923,7 @@ fn grist_cda_works_in_all_nonbattlefield_zones_and_not_on_battlefield() {
         }
         other => first_answer(other),
     });
+    assert!(saw_recruiter_target);
     assert!(hand_contains(&state, P0, grist_in_lib));
 
     // 6. Hand checks: Duress skips Grist (it is a creature card!), Sneak Attack offers Grist.
@@ -1140,6 +1144,7 @@ fn nissa_forest_mana_trigger_works_manually_and_in_automatic_payment() {
     let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
     let mystic = put(&mut state, P0, "Elvish Mystic", Zone::Hand);
     cast(&mut state, mystic, &[]);
+    next(&mut state);
     assert!(state.objects.get(forest).tapped);
     assert_eq!(
         mana(&state, P0, ManaColor::G),
@@ -1451,6 +1456,7 @@ fn tamiyo_static_stops_opponent_discard_and_sacrifice_but_not_own_costs_or_clean
     //    Wild Mongrel), and CLEANUP discard still happen normally!
     let mut state = plains();
     let _tamiyo = cast_tamiyo(&mut state, P0);
+    let _spare = put(&mut state, P0, "Plains", Zone::Hand);
     let looting = put(&mut state, P0, "Faithless Looting", Zone::Hand);
     let delta = put(&mut state, P0, "Polluted Delta", Zone::Battlefield);
     let mongrel = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
@@ -1473,6 +1479,7 @@ fn tamiyo_static_stops_opponent_discard_and_sacrifice_but_not_own_costs_or_clean
         own_discarded,
         "controller's own Faithless Looting still discards"
     );
+    assert_eq!(state.players[0].hand.len(), 1);
 
     // Fetchland sacrifice cost still works.
     activate(&mut state, delta, 0, &[]);
@@ -1586,8 +1593,9 @@ fn tamiyo_plus_one_names_nonland_reveals_four_and_minus_three_regrowths() {
         .any(|entry| entry.object == bolt2));
 
     // Next turn, -3 returns Plains (any card type!) from P0's graveyard to P0's hand.
+    let turn_after_plus = state.turn;
     pass_until(&mut state, |s| {
-        s.active_player == P0 && s.step == Step::Main1
+        s.turn > turn_after_plus && s.active_player == P0 && s.step == Step::Main1
     });
     activate(&mut state, tamiyo, 1, &[Target::Object(plain)]);
     settled(&mut state);

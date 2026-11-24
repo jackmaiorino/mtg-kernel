@@ -1080,6 +1080,10 @@ fn hexdrinker_innkeepers_talent_dress_down_and_departure_pruning() {
 
     // 2. Dress Down suppresses level bands (reverts to 2/1, loses protection) while
     //    keeping level counters so Hexdrinker recovers after Dress Down leaves.
+    //    Here Innkeeper's Talent Level 1+3 is still active on the battlefield, so
+    //    during P0's combat while Dress Down removes protection from everything,
+    //    Innkeeper's Talent puts 2 +1/+1 counters on Hexdrinker -> 8/8 after
+    //    Dress Down leaves!
     let dd = put(&mut state, P1, "Dress Down", Zone::Hand);
     state.priority_player = P1;
     pool(&mut state, P1, &[ManaColor::U], 1);
@@ -1088,12 +1092,44 @@ fn hexdrinker_innkeepers_talent_dress_down_and_departure_pruning() {
     assert_eq!(power_toughness(&state, hex), (2, 1));
     assert!(!keyword(&state, hex, Keywords::PROTECTION_FROM_EVERYTHING));
     pass_to_player_main1(&mut state, P1);
+    assert_eq!(state.objects.get(hex).counters.plus1_plus1, 2);
     assert_eq!(
         power_toughness(&state, hex),
+        (8, 8),
+        "level counters survived Dress Down (6/6) plus 2 +1/+1 counters from Talent during combat"
+    );
+    assert!(keyword(&state, hex, Keywords::PROTECTION_FROM_EVERYTHING));
+
+    // And without Innkeeper's Talent, Dress Down leaves Hexdrinker at clean 6/6.
+    let mut clean = plains();
+    let hex_clean = put(&mut clean, P0, "Hexdrinker", Zone::Battlefield);
+    for _ in 0..8 {
+        pool(&mut clean, P0, &[], 1);
+        activate(&mut clean, hex_clean, 0, &[]);
+        settled(&mut clean);
+    }
+    let dd_clean = put(&mut clean, P1, "Dress Down", Zone::Hand);
+    clean.priority_player = P1;
+    pool(&mut clean, P1, &[ManaColor::U], 1);
+    cast(&mut clean, dd_clean, &[]);
+    settled(&mut clean);
+    assert_eq!(power_toughness(&clean, hex_clean), (2, 1));
+    assert!(!keyword(
+        &clean,
+        hex_clean,
+        Keywords::PROTECTION_FROM_EVERYTHING
+    ));
+    pass_to_player_main1(&mut clean, P1);
+    assert_eq!(
+        power_toughness(&clean, hex_clean),
         (6, 6),
         "level counters survived Dress Down and restore LEVEL 8+ once Dress Down leaves"
     );
-    assert!(keyword(&state, hex, Keywords::PROTECTION_FROM_EVERYTHING));
+    assert!(keyword(
+        &clean,
+        hex_clean,
+        Keywords::PROTECTION_FROM_EVERYTHING
+    ));
 
     // 3. Departure prunes level counters: while Dress Down suppresses protection,
     //    Ephemerate flickers Hexdrinker -> returns at level 0 (2/1) even after
@@ -1542,15 +1578,15 @@ fn swift_reconfiguration_combat_removal_vehicle_timestamps_and_stony_silence() {
     let mut state = plains();
     let attacker = put(&mut state, P0, "Questing Beast", Zone::Battlefield);
     let reconfig = put(&mut state, P1, "Swift Reconfiguration", Zone::Hand);
-    pool(&mut state, P1, &[ManaColor::W], 0);
     pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
     act(&mut state, Action::DeclareAttackers(vec![attacker]));
-    // P0 passes in Declare Attackers; P1 flashes Swift Reconfiguration onto attacker.
+    // P0 passes in Declare Attackers; P1 adds {W} and flashes Swift Reconfiguration onto attacker.
     assert!(matches!(
         next(&mut state),
         Decision::CastSpellOrPass { player: P0, .. }
     ));
     act(&mut state, Action::Pass);
+    pool(&mut state, P1, &[ManaColor::W], 0);
     assert!(matches!(
         next(&mut state),
         Decision::CastSpellOrPass { player: P1, .. }

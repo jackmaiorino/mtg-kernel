@@ -5116,6 +5116,9 @@ fn sba_fixed_point_with_protected_triggers(
             // Bestow Auras detach back into creatures when their host ceases to
             // be a legal creature (CR 702.103e, Vintage Cube wave C8b).
             changed |= crate::eternal_cube_c8b_v1::unattach_illegal_bestow(state);
+            // Equipment attached to a noncreature or protected host unattaches
+            // in SBAs (CR 704.5n / 702.16c, Vintage Cube wave C9b).
+            changed |= crate::eternal_cube_c9b_v1::unattach_illegal_equipment(state);
         }
         if !ordered_graveyard {
             let invalid_auras = state

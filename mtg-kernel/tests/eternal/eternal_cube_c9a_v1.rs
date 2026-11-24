@@ -1549,7 +1549,9 @@ fn blightsteel_colossus_graveyard_replacement_from_all_zones() {
     let scour = put(&mut state, P0, "Thought Scour", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 0);
     cast(&mut state, scour, &[Target::Player(P0)]);
-    settled(&mut state);
+    // Thought Scour's MillCards(2) asks the owner to order the 2-card mill batch
+    // before committing, where Blightsteel's replacement intercepts and shuffles.
+    settle_first(&mut state);
     assert!(
         zone(&state, colossus) != Zone::Graveyard,
         "milled Blightsteel never hits graveyard"
@@ -1622,26 +1624,28 @@ fn crabomination_emerge_from_artifact_cost_and_candidate_filtering() {
     assert_eq!(zone(&state, wurm), Zone::Graveyard);
     assert_eq!(zone(&state, crab), Zone::Battlefield);
 
-    // 3. Candidate filtering: with {2}{B}{B}, Mox Pearl (MV 0) leaves Emerge
-    //    unpayable while Coalition Relic (MV 3) makes it payable -> only Relic
-    //    is offered (no dead-end abort on Mox Pearl).
+    // 3. Candidate filtering: with {2}{B}{B} and two non-mana artifacts,
+    //    Mishra's Bauble (MV 0) leaves Emerge unpayable ({5}{B}{B}) while
+    //    Crucible of Worlds (MV 3) makes it payable ({2}{B}{B}) -> only Crucible
+    //    is offered (no dead-end abort on Mishra's Bauble, and Normal {4}{B}{B}
+    //    is unaffordable).
     let mut state = plains();
-    let mox = put(&mut state, P0, "Mox Pearl", Zone::Battlefield);
-    let relic = put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+    let bauble = put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+    let crucible = put(&mut state, P0, "Crucible of Worlds", Zone::Battlefield);
     let crab = put(&mut state, P0, "Crabomination", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 2);
     assert!(castable(&mut state, crab));
     act(&mut state, Action::CastSpell(crab));
     settle_first(&mut state);
     assert_eq!(
-        zone(&state, mox),
+        zone(&state, bauble),
         Zone::Battlefield,
-        "unpayable MV 0 Mox untouched"
+        "unpayable MV 0 Bauble untouched"
     );
     assert_eq!(
-        zone(&state, relic),
+        zone(&state, crucible),
         Zone::Graveyard,
-        "payable MV 3 Relic sacrificed"
+        "payable MV 3 Crucible sacrificed"
     );
     assert_eq!(zone(&state, crab), Zone::Battlefield);
 
@@ -1968,24 +1972,52 @@ fn c9a_decks_finish_and_replay_through_public_sessions_both_seats() {
     ]);
     let artifact_black_ramp = deck(&[
         ("Mishra's Workshop", 4),
+        ("Ancient Tomb", 4),
         ("Underground Sea", 8),
-        ("Swamp", 4),
         ("Sol Ring", 4),
+        ("Mana Crypt", 4),
+        ("Mana Vault", 4),
         ("Grim Monolith", 4),
         ("Basalt Monolith", 4),
-        ("Coalition Relic", 4),
         ("Mox Jet", 4),
         ("Mox Sapphire", 4),
-        ("Blightsteel Colossus", 10),
-        ("Crabomination", 10),
+        ("Mox Ruby", 4),
+        ("Blightsteel Colossus", 6),
+        ("Crabomination", 6),
+    ]);
+    let colossus_ramp = deck(&[
+        ("Mishra's Workshop", 4),
+        ("Ancient Tomb", 8),
+        ("Sol Ring", 4),
+        ("Mana Crypt", 4),
+        ("Mana Vault", 4),
+        ("Grim Monolith", 4),
+        ("Basalt Monolith", 4),
+        ("Mox Pearl", 4),
+        ("Mox Sapphire", 4),
+        ("Mox Jet", 4),
+        ("Mox Ruby", 4),
+        ("Mox Emerald", 4),
+        ("Blightsteel Colossus", 8),
     ]);
     let mut events = C9aEvents::default();
-    // 2 seats x 3 seeds x 2 policies x (original + replay) = 24 games total.
-    for pair in [
-        [four_color_tempo.clone(), artifact_black_ramp.clone()],
-        [artifact_black_ramp, four_color_tempo],
+    // 4 matchups x 3 seeds x 2 policies x (original + replay) = 48 games total.
+    for (pair, first_seed) in [
+        (
+            [four_color_tempo.clone(), artifact_black_ramp.clone()],
+            0x4339_6100_u64,
+        ),
+        (
+            [artifact_black_ramp, four_color_tempo.clone()],
+            0x4339_6110_u64,
+        ),
+        (
+            [colossus_ramp.clone(), four_color_tempo.clone()],
+            0x4339_6120_u64,
+        ),
+        ([four_color_tempo, colossus_ramp], 0x4339_6130_u64),
     ] {
-        for seed in 0x4339_6100_u64..0x4339_6103 {
+        for seed in first_seed..first_seed + 3 {
             for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
                 let played =
                     play_observed(pair.clone(), None, seed, policy, &mut |decision, action| {
