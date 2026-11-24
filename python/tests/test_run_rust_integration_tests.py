@@ -181,6 +181,17 @@ class ListedTestsTests(unittest.TestCase):
             self.assertEqual(integration.listed_tests("suite-binary"), [name])
         self.assertEqual(seen.get("encoding"), "utf-8")
 
+    def test_a_selection_is_listed_by_the_binary_with_the_same_decoding(self):
+        commands = []
+
+        def run(command, **options):
+            commands.append((command, options.get("encoding")))
+            return type("Result", (), {"stdout": "alpha::café: test\nalpha::bench: benchmark\n"})()
+
+        with patch.object(integration.subprocess, "run", run):
+            self.assertEqual(integration.listed_tests("lib-binary", "--skip", "x", "alpha::"), ["alpha::café"])
+        self.assertEqual(commands, [(["lib-binary", "--list", "--format=terse", "--skip", "x", "alpha::"], "utf-8")])
+
 
 class RecordedRunTests(unittest.TestCase):
     def test_the_reported_tests_are_named_and_the_output_passes_through(self):
