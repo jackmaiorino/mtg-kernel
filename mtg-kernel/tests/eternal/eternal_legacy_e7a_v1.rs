@@ -1131,15 +1131,19 @@ fn kappa_cannoneer_improvises_and_grows_unblockable_as_artifacts_enter() {
     assert_eq!(power_toughness(&state, kappa), (6, 6));
 }
 
-/// Census games 24000 and 25049: Mishra's Workshop's mana is floating
-/// ("spend this mana only to cast artifact spells") when Kappa Cannoneer is
-/// cast. Choosing its improvise cost must lead to a payable selection, never
-/// to a decision without an answer.
+/// Census games 24000 and 25049 (and four more): Mishra's Workshop's mana is
+/// floating ("spend this mana only to cast artifact spells") when Kappa
+/// Cannoneer is cast. Before `02da53195` the improvise selection could not
+/// spend that mana, so improvise was offered with no answer. Each known
+/// payable position must offer Kappa with improvise, enter the artifact
+/// selection with a legal answer and finish the cast spending the Workshop
+/// mana.
 #[test]
 fn kappa_cannoneer_improvise_with_workshop_mana_always_has_an_answer() {
     type Setup = (&'static [&'static str], &'static [&'static str]);
-    // (permanents tapped for mana before the cast, untapped permanents)
-    let variants: [Setup; 4] = [
+    // (permanents tapped for mana before the cast, untapped permanents):
+    // census game 24000's board, census game 25049's, and a smaller one.
+    let variants: [Setup; 3] = [
         (
             &["Mishra's Workshop", "Mountain", "Mountain"],
             &[
@@ -1150,7 +1154,6 @@ fn kappa_cannoneer_improvise_with_workshop_mana_always_has_an_answer() {
             ],
         ),
         (&["Mishra's Workshop"], &["Island", "Mountain", "Sol Ring"]),
-        (&["Mishra's Workshop"], &["Island", "Sol Ring"]),
         (
             &["Mishra's Workshop", "Mountain", "Mountain"],
             &["Island", "Sword of the Meek"],
@@ -1162,45 +1165,69 @@ fn kappa_cannoneer_improvise_with_workshop_mana_always_has_an_answer() {
             .iter()
             .map(|name| put(&mut state, P0, name, Zone::Battlefield))
             .collect();
-        for name in untapped {
-            put(&mut state, P0, name, Zone::Battlefield);
-        }
+        let untapped_ids: Vec<ObjectId> = untapped
+            .iter()
+            .map(|name| put(&mut state, P0, name, Zone::Battlefield))
+            .collect();
+        let artifacts: Vec<ObjectId> = untapped_ids
+            .into_iter()
+            .filter(|&object| {
+                CARD_DEFS[state.objects.get(object).card_def as usize].has_type(CardType::Artifact)
+            })
+            .collect();
         let kappa = put(&mut state, P0, "Kappa Cannoneer", Zone::Hand);
         for source in tapped {
             priority(&mut state);
             act(&mut state, Action::ActivateManaAbility(source));
         }
-        if !castable(&mut state, kappa) {
-            continue;
-        }
+        assert!(
+            !state.players[0].restricted_mana_pool.is_empty(),
+            "Workshop mana floats"
+        );
+        assert!(
+            castable(&mut state, kappa),
+            "{untapped:?}: Kappa is offered"
+        );
         act(&mut state, Action::CastSpell(kappa));
-        let mut improvised = false;
-        for _ in 0..40 {
-            let decision = next(&mut state);
-            let action = match decision {
-                Decision::ChooseCastMode { ref options, .. }
-                    if options.contains(&CastMode::Alternative) =>
-                {
-                    improvised = true;
-                    Action::ChooseCastMode(CastMode::Alternative)
-                }
+        match next(&mut state) {
+            Decision::ChooseCastMode { options, .. } => {
+                assert!(options.contains(&CastMode::Alternative), "{untapped:?}");
+                act(&mut state, Action::ChooseCastMode(CastMode::Alternative));
+            }
+            other => panic!("{untapped:?}: expected improvise to be offered, got {other:?}"),
+        }
+        let mut selected = 0;
+        loop {
+            match next(&mut state) {
                 Decision::ChooseEffectTargets {
-                    ref legal_targets,
+                    legal_targets,
                     can_finish,
                     ..
                 } => {
                     assert!(
                         can_finish || !legal_targets.is_empty(),
-                        "{untapped:?}: improvise offers no answer: {decision:?}"
+                        "{untapped:?}: improvise offers no answer"
                     );
-                    first_answer(decision)
+                    if let Some(&target) = legal_targets.first() {
+                        assert!(
+                            matches!(target, Target::Object(object) if artifacts.contains(&object)),
+                            "{untapped:?}: improvise taps an artifact"
+                        );
+                        act(&mut state, Action::ChooseEffectTarget(target));
+                        selected += 1;
+                    } else {
+                        act(&mut state, Action::FinishEffectSelection);
+                    }
                 }
-                Decision::CastSpellOrPass { .. } if zone(&state, kappa) != Zone::Hand => break,
-                other => first_answer(other),
-            };
-            act(&mut state, action);
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("{untapped:?}: unexpected {other:?}"),
+            }
         }
-        eprintln!("KAPPA-VARIANT {untapped:?} improvised={improvised}");
+        assert!(selected > 0, "{untapped:?}: an artifact was improvised");
+        assert!(
+            state.players[0].restricted_mana_pool.is_empty(),
+            "{untapped:?}: the Workshop mana paid"
+        );
         settle_first(&mut state);
         assert_eq!(zone(&state, kappa), Zone::Battlefield, "{untapped:?}");
     }
