@@ -256,9 +256,12 @@ impl Costs {
         let groups = self.groups(route_first);
         let split = picks.len().min(usize::from(groups[0].count()));
         let (first, second) = picks.split_at(split);
+        // A printed group that costs nothing (Collective Brutality with one
+        // mode, discard X = 0) owes nothing and is left out.
         Ok([(groups[0], first), (groups[1], second)]
             .into_iter()
             .enumerate()
+            .filter(|(index, (group, _))| (*index == 0) == route_first || group.count() > 0)
             .map(|(index, (group, selected))| StagedEscapeCostGroupV1 {
                 kind: group
                     .component()

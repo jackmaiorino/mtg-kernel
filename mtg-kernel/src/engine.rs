@@ -9889,7 +9889,9 @@ pub(crate) fn staged_escape_v1(
             "collect evidence",
         ),
         (
-            !optional_in_prefix && !pending.optional_additional_cost_chosen.is_empty(),
+            !optional_in_prefix
+                && (pending.optional_additional_cost_paid == Some(true)
+                    || !pending.optional_additional_cost_chosen.is_empty()),
             "an optional additional cost",
         ),
         (
@@ -11597,13 +11599,18 @@ fn viable_pending_spell_forms(
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
     };
-    // Escape and bestow are both alternative costs (CR 118.9a): a bestow
-    // card cast with escape (Underworld Breach's grant) is cast as its
-    // creature, which the escape permission itself allows, for the escape
-    // cost.
+    // A card cast with escape (Underworld Breach's grant) is cast in its
+    // first form for the escape cost: a bestow or Adventure card as its
+    // creature, a split card as its first half, an overload card without
+    // overload. Bestow and overload are alternative costs, which cannot
+    // combine with escape (CR 118.9a). Escaping an Adventure or a split card's
+    // other half is not offered (a conservative reading, recorded as a
+    // follow-up).
     let escaped_form = cfg!(feature = "eternal-fixtures")
         && pending.source_contract.cast_method == CastMethodV4::Escape
-        && supported_bestow(def).is_some();
+        && (supported_bestow(def).is_some()
+            || supported_adventure(def).is_some()
+            || supported_omen(def).is_some());
     let alternative = alternative.filter(|_| !escaped_form);
     if supported_bestow(def).is_some()
         || supported_adventure(def).is_some()
@@ -17772,9 +17779,13 @@ pub(crate) fn validate_pending_cast(
     if pending.origin_zone == Zone::Graveyard && supported_adventure(def).is_some() {
         let malcolm_free = cfg!(feature = "eternal-fixtures")
             && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, pending.spell);
+        // Escape permits casting the card itself in its first form.
+        let escaped = cfg!(feature = "eternal-fixtures")
+            && pending.source_contract.cast_method == CastMethodV4::Escape;
         if pending.mode_chosen == Some(0)
             && !pending_has_graveyard_creature_permission(pending, state)
             && !malcolm_free
+            && !escaped
         {
             return Err(
                 "graveyard Adventure permission cannot cast the permanent form".to_string(),
