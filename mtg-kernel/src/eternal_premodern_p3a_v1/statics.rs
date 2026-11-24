@@ -119,6 +119,15 @@ pub(crate) fn form_colors(state: &GameState, definition: &CardDef, method: CastM
             .is_some_and(|alt| alt.condition == AltCostCondition::DisguiseFromHand);
     let own = if face_down {
         0
+    } else if method == CastMethodV4::Alternative
+        && definition
+            .alt_cost
+            .is_some_and(|alt| alt.condition == AltCostCondition::PrototypeV1)
+    {
+        crate::eternal_pauper_pf2c_v1::prototype_profile(definition).map_or_else(
+            || crate::card_def::mana_colors_mask(definition.colors),
+            |profile| profile.color_mask,
+        )
     } else if method == CastMethodV4::Omen {
         definition.omen_spell_form().map_or_else(
             || crate::card_def::mana_colors_mask(definition.colors),

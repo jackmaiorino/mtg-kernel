@@ -1091,6 +1091,25 @@ pub struct PublicObservationProjectionV5 {
     /// Mage's name applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meddling_mage_names: Option<Vec<PublicMeddlingMageNameV1>>,
+    /// The public turn schedule once an extra turn has been scheduled (Time
+    /// Walk, Time Vault's ability, Emrakul, the Aeons Torn's cast trigger),
+    /// under the public shroud contract (Limited schema 5). `turn` keeps its
+    /// round numbering, so an extra turn repeats its round and active seat;
+    /// the schedule's occurrence tells such turns apart and names the extra
+    /// turn being taken and those still queued. While it is present every
+    /// published goad has `expires_at_turn` 0: the goad lasts until its
+    /// `player`'s next turn begins, whichever turn that is, and no round
+    /// number names that turn. Fields stamped with the turn key
+    /// (`entered_battlefield_turn`, `plotted_turn`, the turn in
+    /// `creature_upgrade.wurmlet_resolved_turn`, and the `turn` of
+    /// `engine_context.trigger_uses` and
+    /// `engine_context.combat_damage_prevention`) hold the round until the
+    /// schedule exists and its `occurrence` from then on, so they compare
+    /// with `turn_schedule.occurrence`, not with `turn`.
+    /// Absent until the game's first extra turn is scheduled, and in every
+    /// other observation, which keeps refusing such games.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_schedule: Option<crate::extra_turn_public_v1::TurnScheduleV1>,
     /// Pending and queued Ward payments, each bound to its exact targeting
     /// stack item, under the public shroud contract (Limited schema 5).
     /// Absent while no Ward trigger is bound; every other observation mode
@@ -2157,6 +2176,14 @@ fn public_meddling_mage_names_v1(state: &GameState) -> Result<Vec<PublicMeddling
         .collect()
 }
 
+fn public_attack_count_v1(state: &GameState) -> Option<u32> {
+    if state.creatures_attacked_this_turn_v1() == 0 {
+        None
+    } else {
+        Some(state.creatures_attacked_this_turn_v1())
+    }
+}
+
 /// `public_shroud` is true only while building the schema 5 policy
 /// observation (`ObservationTextModeV2::PublicShroudV5Artifact`), which
 /// represents shroud. Every other observation refuses a permanent's or a
@@ -2402,11 +2429,110 @@ pub fn observe_premodern_ordered_v1(
     })
 }
 
+/// Numeric observation for the registered Premodern ordered-graveyard profile.
+/// Its stable scene carries the schema 5 public projection (Foundations combat,
+/// London mulligans, public shroud, and Meddling Mage names) alongside the
+/// ordered-graveyard and full-text facts.
+pub fn observe_premodern_ordered_registered_v1(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    viewer: PlayerId,
+    step_index: u64,
+) -> Result<crate::premodern_ordered_public_v1::NumericRegisteredObservationV1> {
+    use crate::premodern_ordered_public_v1::{
+        observe, NumericRegisteredObservationV1, NumericRegisteredStableSceneV1,
+        NUMERIC_REGISTERED_SCHEMA_V1,
+    };
+
+    if !state.public_shroud_v1 {
+        return Err(RlContractError(
+            "Premodern registered ordered observation requires the public shroud profile".into(),
+        ));
+    }
+    let ordered = observe(state, viewer).map_err(RlContractError)?;
+    let stable = if ordered.full_text.is_some() {
+        crate::wildwood_capture_v1::refuse_legacy(state)?;
+        crate::elenda_public_v52::require_legacy_visible(state, Some(viewer))
+            .map_err(RlContractError)?;
+        crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+        crate::effect::temporary_control_v1::refuse_legacy_observation(state)
+            .map_err(RlContractError)?;
+        if state
+            .engine
+            .pending_cast
+            .as_ref()
+            .is_some_and(|pending| pending.source_contract.cast_method == CastMethodV4::Escape)
+        {
+            return Err(RlContractError(
+                "policy schema v5 cannot represent a staged Escape graveyard-exile prefix; a versioned object-cost successor is required"
+                    .to_string(),
+            ));
+        }
+        let text_mode = ObservationTextModeV2::PremodernOrderedRegisteredV1Artifact;
+        let common = build_observation_v2(state, surface, viewer, step_index, text_mode)?;
+        let projection = PublicObservationProjectionV5 {
+            poison_counters: public_poison_counters_v1(state),
+            ninja_emblems: crate::standard_cards_v1::ninja_emblems(state),
+            poison_prevention: {
+                let flags = [
+                    state.players[0].poison_prevention_v1.0,
+                    state.players[1].poison_prevention_v1.0,
+                ];
+                flags.iter().any(|x| *x).then_some(flags)
+            },
+            creatures_attacked_this_turn: public_attack_count_v1(state),
+            restricted_mana: public_restricted_mana_v1(
+                state,
+                text_mode,
+                LimitedAppendixV1::Legacy,
+            )?,
+            surface: common.projection,
+            policy_surface_context: PolicySurfaceContextV5 {
+                current_stage: PolicySurfaceStageV5::Surface,
+                private_combat_selection: None,
+            },
+            london_mulligans: public_london_mulligans_v1(state),
+            foundations_combat: public_foundations_combat_v1(state)?,
+            public_shroud: text_mode
+                .accepts_public_shroud()
+                .then(|| public_shroud_v1(state))
+                .transpose()?,
+            meddling_mage_names: text_mode
+                .accepts_public_shroud()
+                .then(|| public_meddling_mage_names_v1(state))
+                .transpose()?
+                .filter(|names| !names.is_empty()),
+            // This observation keeps refusing a game with extra turns and
+            // the Ward states the legacy check cannot bind.
+            turn_schedule: None,
+            ward_payments: None,
+        };
+        Some(NumericRegisteredStableSceneV1 {
+            projection,
+            own_hand: common.own_hand,
+            known_library_cards: common.known_library_cards,
+            known_hand_cards: common.known_hand_cards,
+            known_face_down_cards: common.known_face_down_cards,
+        })
+    } else {
+        None
+    };
+    Ok(NumericRegisteredObservationV1 {
+        schema: NUMERIC_REGISTERED_SCHEMA_V1,
+        step_index,
+        ordered,
+        stable,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObservationTextModeV2 {
     FullArtifact,
     /// Stable common facts consumed by the ordered Premodern envelope only.
     PremodernOrderedV1Artifact,
+    /// Union of `PublicShroudV5Artifact` and `PremodernOrderedV1Artifact` for
+    /// the registered Premodern ordered-graveyard profile only.
+    PremodernOrderedRegisteredV1Artifact,
     /// `FullArtifact` for a game under the public shroud contract (Limited
     /// schema 5): shroud on permanents and players is reported instead of
     /// refused. Only `observe_policy_v5` selects it.
@@ -2430,6 +2556,20 @@ enum ObservationTextModeV2 {
 }
 
 impl ObservationTextModeV2 {
+    fn accepts_public_shroud(self) -> bool {
+        matches!(
+            self,
+            Self::PublicShroudV5Artifact | Self::PremodernOrderedRegisteredV1Artifact
+        )
+    }
+
+    fn accepts_ordered_full_text(self) -> bool {
+        matches!(
+            self,
+            Self::PremodernOrderedV1Artifact | Self::PremodernOrderedRegisteredV1Artifact
+        )
+    }
+
     fn complete_source_scope(self) -> Option<CommonProjectionScopeV42> {
         match self {
             Self::PreparedV57Artifact => Some(CommonProjectionScopeV42::PreparedV57),
@@ -2452,6 +2592,7 @@ impl ObservationTextModeV2 {
         match self {
             Self::FullArtifact
             | Self::PremodernOrderedV1Artifact
+            | Self::PremodernOrderedRegisteredV1Artifact
             | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
@@ -2474,6 +2615,7 @@ impl ObservationTextModeV2 {
         match self {
             Self::FullArtifact
             | Self::PremodernOrderedV1Artifact
+            | Self::PremodernOrderedRegisteredV1Artifact
             | Self::PublicShroudV5Artifact
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
@@ -2652,10 +2794,11 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             "Eternal opening actions require their consumer successor".into(),
         ));
     }
-    // Only the schema 5 policy observation represents Meddling Mage's names
-    // (`meddling_mage_names`, wave S1k). It never reads a pending entry's
-    // saved world or answers, and still refuses a pending Metamorph copy menu.
-    let mage_refused = if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+    // Only the schema 5 policy observation and the registered Premodern
+    // ordered profile represent Meddling Mage's names (`meddling_mage_names`,
+    // wave S1k). They never read a pending entry's saved world or answers, and
+    // still refuse a pending Metamorph copy menu.
+    let mage_refused = if text_mode.accepts_public_shroud() {
         crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_copy_successor(state)
     } else {
         crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state)
@@ -2665,7 +2808,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             "Meddling Mage named entry requires its consumer successor".into(),
         ));
     }
-    if text_mode != ObservationTextModeV2::PremodernOrderedV1Artifact {
+    if !text_mode.accepts_ordered_full_text() {
         crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
     }
     if !matches!(
@@ -2869,7 +3012,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         refuse_unrepresented_shroud_in_mode(
             state,
             accept_akroma,
-            text_mode == ObservationTextModeV2::PublicShroudV5Artifact,
+            text_mode.accepts_public_shroud(),
         )?;
     }
     if !matches!(
@@ -3021,7 +3164,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .map_err(RlContractError)?;
     crate::eternal_cards_v1::owned_draws_v1::denial::refuse_legacy(state)
         .map_err(RlContractError)?;
-    let ordered_full_text = text_mode == ObservationTextModeV2::PremodernOrderedV1Artifact;
+    let ordered_full_text = text_mode.accepts_ordered_full_text();
     if ordered_full_text {
         crate::fixed_source_damage_v3::validate_state(state).map_err(RlContractError)?;
     }
@@ -3246,8 +3389,24 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
     // completed V5 observation once; the flat typed path explicitly skips it.
-    let (base, policy_surface_context) =
+    let (mut base, policy_surface_context) =
         build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
+    let turn_schedule = if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+        crate::extra_turn_public_v1::schedule(state)?
+    } else {
+        None
+    };
+    if turn_schedule.is_some() {
+        // Once the schedule exists a goad lasts until its player's next turn
+        // begins, whichever turn that is (701.15a): the engine removes it at
+        // that turn's untap step and no longer reads the stored round. No
+        // number names that turn in advance, so none is published.
+        for card in base.projection.battlefield.iter_mut().flatten() {
+            for goad in &mut card.goaded_by {
+                goad.expires_at_turn = 0;
+            }
+        }
+    }
     let ward_payments = if public_contract {
         public_ward_payments_v1(state, &base.projection)?
     } else {
@@ -3274,8 +3433,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 ];
                 flags.iter().any(|x| *x).then_some(flags)
             },
-            creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
-                .then(|| state.creatures_attacked_this_turn_v1()),
+            creatures_attacked_this_turn: public_attack_count_v1(state),
             restricted_mana: public_restricted_mana_v1(
                 state,
                 text_mode,
@@ -3285,13 +3443,16 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             policy_surface_context,
             london_mulligans: public_london_mulligans_v1(state),
             foundations_combat: public_foundations_combat_v1(state)?,
-            public_shroud: (text_mode == ObservationTextModeV2::PublicShroudV5Artifact)
+            public_shroud: text_mode
+                .accepts_public_shroud()
                 .then(|| public_shroud_v1(state))
                 .transpose()?,
-            meddling_mage_names: (text_mode == ObservationTextModeV2::PublicShroudV5Artifact)
+            meddling_mage_names: text_mode
+                .accepts_public_shroud()
                 .then(|| public_meddling_mage_names_v1(state))
                 .transpose()?
                 .filter(|names| !names.is_empty()),
+            turn_schedule,
             ward_payments,
         },
         own_hand: base.own_hand,
@@ -3479,6 +3640,10 @@ fn build_policy_observation_parts(
     step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    // The schema 5 public contract reports the turn schedule
+    // (`PublicObservationProjectionV5::turn_schedule`), so its observation
+    // accepts a game with extra turns. Every other mode keeps refusing.
+    let accept_extra_turn = text_mode == ObservationTextModeV2::PublicShroudV5Artifact;
     build_policy_observation_parts_common(
         state,
         surface,
@@ -3486,8 +3651,21 @@ fn build_policy_observation_parts(
         step_index,
         text_mode,
         (
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false,
+            false,
+            false,
+            accept_extra_turn,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         ),
     )
 }
@@ -3652,7 +3830,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
         refuse_unrepresented_shroud_in_mode(
             state,
             accept_akroma,
-            text_mode == ObservationTextModeV2::PublicShroudV5Artifact,
+            text_mode.accepts_public_shroud(),
         )?;
     }
     if !matches!(
@@ -6013,6 +6191,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
             meddling_mage_names: None,
+            turn_schedule: None,
             ward_payments: None,
         },
         own_hand: base.own_hand,

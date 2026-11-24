@@ -6100,6 +6100,13 @@ impl RlEpisodeSessionV1 {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
             })?;
         }
+        if let Some(outside) = &outside_the_game {
+            for cards in outside {
+                crate::card_def::preflight_outside_the_game(cards).map_err(|error| {
+                    session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+                })?;
+            }
+        }
         for cards in card_ids {
             crate::rl::require_declared_cards_for_scope(
                 crate::rl::CommonProjectionScopeV42::ExistingV40,
@@ -7002,7 +7009,9 @@ impl RlEpisodeSessionV1 {
             return;
         }
 
-        if self.state.extra_turn_v1.is_some() {
+        // The schema 5 public contract reports the turn schedule in its
+        // policy observation, so its session follows extra turns.
+        if self.state.extra_turn_v1.is_some() && !self.state.public_shroud_v1 {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
                 self.deck_hashes,
