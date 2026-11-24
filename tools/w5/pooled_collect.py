@@ -56,6 +56,8 @@ the executor. The runner stops on its stop file (default `<scratch>/.spool/STOP`
 from __future__ import annotations
 
 import base64
+import contextlib
+import gzip
 import hashlib
 import io
 import json
@@ -2066,10 +2068,15 @@ def _fetch_compression_arg(args: dict) -> str:
     return compression
 
 
+@contextlib.contextmanager
 def _open_fetch_archive(stdout, compression: str):
     if compression == "gzip1":
-        return tarfile.open(fileobj=stdout, mode="w|gz", compresslevel=1)
-    return tarfile.open(fileobj=stdout, mode="w|")
+        with gzip.GzipFile(fileobj=stdout, mode="wb", compresslevel=1) as gz:
+            with tarfile.open(fileobj=gz, mode="w|") as archive:
+                yield archive
+        return
+    with tarfile.open(fileobj=stdout, mode="w|") as archive:
+        yield archive
 
 
 def _spool_fetch(config: dict, tag: str, stdout, compression: str = "none") -> None:
