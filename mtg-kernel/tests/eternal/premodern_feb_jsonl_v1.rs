@@ -110,15 +110,16 @@ type TraceRow = ([u8; 32], usize);
 
 /// The view-sequence pin of the frozen mirror: every numeric and Human view,
 /// prompt by prompt, with the chosen ordinal. The catalog hash is folded out,
-/// so a registry wave that changes no FEB card leaves the pin alone.
+/// so a registry wave that changes no FEB card (and adds no executable nonland
+/// name to Cabal Therapy's chosen `'A'` bucket) leaves the pin alone.
 const MIRROR_VIEW_PINS: [(PlayerSeatV1, &str); 2] = [
     (
         PlayerSeatV1::P0,
-        "1831ea4fc640d60b392e66a70d0e1b585938310c30bfe91ad4b60e0ad8970fb8",
+        "470d0abd9a33c5f516cb0587e1481757475b86934e22e06ac389d6b68f4d1db8",
     ),
     (
         PlayerSeatV1::P1,
-        "1e9a45dca810746adc78098a6f043e3f64318d782e340b0139e201f6909211b3",
+        "9f67713379db88e7f18054fc269d5395ebc17af959fc22d72e645ba4f4eb00ef",
     ),
 ];
 

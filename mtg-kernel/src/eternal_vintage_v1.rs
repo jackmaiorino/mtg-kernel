@@ -2095,6 +2095,7 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
         .any(|name| active_permanents(state, name, None).next().is_some()))
         || crate::eternal_legacy_e5b_v1::cast_prohibited(state, player)
         || crate::eternal_legacy_e9a_v1::statics::cast_prohibited(state, player)
+        || crate::eternal_cube_c8a_v1::cast_prohibited(state, player)
 }
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."

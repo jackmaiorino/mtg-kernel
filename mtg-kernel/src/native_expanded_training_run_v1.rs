@@ -1377,9 +1377,10 @@ fn validate_collection_episodes_bounded_v1(
             crate::expanded_deck_training_v1::ledgered_retry_seed_overrides_v1(&pin, episodes)?
         }
     };
-    // Hash and parse the trajectory files concurrently (one short-lived thread
-    // per file, ten to sixty per update); the checks below still run in order
-    // and report the first failing trajectory exactly as the serial loop did.
+    // Hash and parse the trajectory files on a bounded worker pool instead of
+    // spawning one OS thread per file (which would spawn up to hundreds of
+    // threads on large batches); the checks below still run in slot order and
+    // report the first failing trajectory exactly as the serial loop did.
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
     // Sealed files (`record_envelope_v1`) open only within the update's batch
@@ -1389,42 +1390,110 @@ fn validate_collection_episodes_bounded_v1(
         batch_bytes,
     )?;
     let parsed_ahead = std::sync::atomic::AtomicUsize::new(0);
-    let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = std::thread::scope(|scope| {
-        let parsed_ahead = &parsed_ahead;
-        let handles: Vec<_> = trajectories
+    const MAX_VALIDATION_WORKERS_V1: usize = 16;
+    let worker_count = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .clamp(1, MAX_VALIDATION_WORKERS_V1)
+        .min(trajectories.len());
+    let next_slot = std::sync::atomic::AtomicUsize::new(0);
+    let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = if worker_count <= 1 {
+        trajectories
             .iter()
             .zip(&admitted)
             .map(|(trajectory, admitted)| {
-                scope.spawn(move || -> Result<CollectionTrajectoryFieldsV1, String> {
-                    let bytes = read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
-                    admitted.check_v1(&bytes)?;
-                    match take_collection_fields_v1(&trajectory.sha256, &bytes) {
-                        Some(fields) => {
-                            parsed_ahead.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            Ok(fields)
-                        }
-                        None => {
-                            let record =
-                                crate::expanded_deck_training_v1::record_envelope_v1::open_v1(
-                                    &bytes,
-                                    ARTIFACT_CAP,
-                                )?;
-                            let document: Value = serde_json::from_slice(&record).map_err(err)?;
-                            Ok(CollectionTrajectoryFieldsV1::of_document_v1(&document))
-                        }
+                let bytes = read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
+                admitted.check_v1(&bytes)?;
+                match take_collection_fields_v1(&trajectory.sha256, &bytes) {
+                    Some(fields) => {
+                        parsed_ahead.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        Ok(fields)
                     }
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err("collection validation worker panicked".to_string()))
+                    None => {
+                        let record = crate::expanded_deck_training_v1::record_envelope_v1::open_v1(
+                            &bytes,
+                            ARTIFACT_CAP,
+                        )?;
+                        CollectionTrajectoryFieldsV1::parse_json_v1(&record)
+                    }
+                }
             })
             .collect()
-    });
+    } else {
+        std::thread::scope(|scope| {
+            let parsed_ahead = &parsed_ahead;
+            let next_slot = &next_slot;
+            let trajectories = &trajectories;
+            let admitted = &admitted;
+            let handles: Vec<_> = (0..worker_count)
+                .map(|_| {
+                    scope.spawn(
+                        move || -> Vec<(usize, Result<CollectionTrajectoryFieldsV1, String>)> {
+                            let mut out = Vec::new();
+                            loop {
+                                let slot =
+                                    next_slot.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                if slot >= trajectories.len() {
+                                    break;
+                                }
+                                let trajectory = &trajectories[slot];
+                                let admitted = &admitted[slot];
+                                let res = (|| -> Result<CollectionTrajectoryFieldsV1, String> {
+                                    let bytes =
+                                        read_pin_bounded_shared_v1(trajectory, ARTIFACT_CAP)?;
+                                    admitted.check_v1(&bytes)?;
+                                    match take_collection_fields_v1(&trajectory.sha256, &bytes) {
+                                        Some(fields) => {
+                                            parsed_ahead.fetch_add(
+                                                1,
+                                                std::sync::atomic::Ordering::Relaxed,
+                                            );
+                                            Ok(fields)
+                                        }
+                                        None => {
+                                            let record = crate::expanded_deck_training_v1::record_envelope_v1::open_v1(
+                                                &bytes,
+                                                ARTIFACT_CAP,
+                                            )?;
+                                            CollectionTrajectoryFieldsV1::parse_json_v1(&record)
+                                        }
+                                    }
+                                })();
+                                out.push((slot, res));
+                            }
+                            out
+                        },
+                    )
+                })
+                .collect();
+            let mut by_slot: Vec<Option<Result<CollectionTrajectoryFieldsV1, String>>> =
+                (0..trajectories.len()).map(|_| None).collect();
+            let mut worker_panicked = false;
+            for handle in handles {
+                match handle.join() {
+                    Ok(results) => {
+                        for (slot, res) in results {
+                            by_slot[slot] = Some(res);
+                        }
+                    }
+                    Err(_) => {
+                        worker_panicked = true;
+                    }
+                }
+            }
+            by_slot
+                .into_iter()
+                .map(|entry| {
+                    entry.unwrap_or_else(|| {
+                        if worker_panicked {
+                            Err("collection validation worker panicked".to_string())
+                        } else {
+                            Err("collection validation slot missing".to_string())
+                        }
+                    })
+                })
+                .collect()
+        })
+    };
     for ((episode, seed_override), saved) in episodes.iter().zip(&seed_overrides).zip(saved) {
         let saved = saved?;
         let mut expected = episode.clone();

@@ -488,6 +488,14 @@ pub enum StandardTargetV1 {
     /// Guardian Scalelord: a nonland permanent card in your graveyard with
     /// mana value at most the attacking creature's power.
     NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1,
+    /// Regrowth (Vintage Cube wave C8a): "target card from your graveyard".
+    CardInOwnGraveyardV1,
+    /// Saheeli, Sublime Artificer (-2): target artifact you control, then
+    /// another target artifact or creature you control. Appended for Vintage
+    /// Cube wave C8b.
+    ControlledArtifactThenAnotherControlledArtifactOrCreatureV1,
+    /// A filter of eternal wave C8c (`eternal_cube_c8c_v1::targets`).
+    C8cV1(crate::eternal_cube_c8c_v1::targets::C8cTargetV1),
 }
 
 impl StandardTargetV1 {
@@ -562,6 +570,9 @@ impl StandardTargetV1 {
         if let Some(counts) = crate::eternal_sideboard_s1q_v1::targets::counts(self) {
             return counts;
         }
+        if let Some(counts) = crate::eternal_cube_c8c_v1::targets::counts(self) {
+            return counts;
+        }
         match self {
             Self::UpToTwoAnyTargets
             | Self::UpToTwoControlledCreatures
@@ -606,6 +617,7 @@ impl StandardTargetV1 {
             }
             Self::UpToOneCreatureCardInOwnGraveyardV1 => (1, 0),
             Self::UpToTwoLandsV1 => (2, 0),
+            Self::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => (2, 2),
             _ => (1, 1),
         }
     }
@@ -705,6 +717,7 @@ impl StandardTargetV1 {
                 | Self::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
                 | Self::CreatureCardInAGraveyardV1
                 | Self::UpToThreeLandCardsInOwnGraveyardV1
+                | Self::CardInOwnGraveyardV1
         ) || crate::eternal_sideboard_s1d_v1::targets::in_graveyard(self)
             || crate::eternal_vintage_e7b_v1::targets::in_graveyard(self)
             || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
@@ -762,6 +775,7 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || crate::eternal_cube_c2c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c4c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c4a_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c8c_v1::targets::zone_allows(target, zone)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
         || (matches!(
             target,
@@ -1111,6 +1125,16 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_cube_c8b_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) = crate::eternal_cube_c8c_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1447,8 +1471,24 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c8b_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_cube_c8c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
+    }
+    if target == StandardTargetV1::CardInOwnGraveyardV1 {
+        return live.zone == Zone::Graveyard
+            && live.owner == controller
+            && !live.v4.is_token
+            && live.spell_copy_origin.is_none();
     }
     if target == StandardTargetV1::ArtifactThenArtifactCardInItsControllersGraveyardV1 {
         return match live.zone {
@@ -1703,7 +1743,10 @@ pub(crate) fn target_matches(
         StandardTargetV1::OpponentPlaneswalkerV1 => {
             live.controller == controller.opponent() && has(CardType::Planeswalker)
         }
-        StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => false,
+        StandardTargetV1::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1
+        | StandardTargetV1::CardInOwnGraveyardV1
+        | StandardTargetV1::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1
+        | StandardTargetV1::C8cV1(_) => false,
     }
 }
 
@@ -3732,6 +3775,10 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
         if let Some(minimum) = crate::eternal_cube_c1b_v1::minimum_x(def.name, targets) {
             return minimum;
         }
+        // Thieving Skydiver: "Kicker {X}. X can't be 0."
+        if let Some(minimum) = crate::eternal_cube_c8c_v1::minimum_x(def.name, state) {
+            return minimum;
+        }
         // "Exile X cards from your graveyard" (wave P1a): X is the number
         // of cards the cast chose to exile. Sickening Shoal's alternative
         // cost (wave S1e): X is the exiled card's mana value.
@@ -4731,6 +4778,12 @@ pub(crate) fn graveyard_cast_granted_without_retrace(
                     object,
                     holder,
                     zone_change_count,
+                )
+                || crate::eternal_cube_c8a_v1::jace_graveyard_permission(
+                    state,
+                    object,
+                    holder,
+                    zone_change_count,
                 )))
 }
 
@@ -5515,14 +5568,33 @@ pub(crate) fn archived_copy_printing(
     let mut entered = state
         .eternal_v1
         .iter()
-        .flat_map(|e| &e.vintage.copies)
-        .filter(|copy| copy.host == host);
-    if let Some(copy) = entered.next() {
+        .flat_map(|e| {
+            e.vintage
+                .copies
+                .iter()
+                .map(|copy| (copy.host, copy.card_def, true))
+                .chain(
+                    e.c8b
+                        .permanent_copies
+                        .iter()
+                        .map(|copy| (copy.host, copy.card_def, false)),
+                )
+        })
+        .filter(|(copy_host, _, _)| *copy_host == host);
+    if let Some((_, card_def, is_metamorph)) = entered.next() {
         return (entered.next().is_none()
-            && CARD_DEFS
-                .get(usize::from(copy.card_def))
-                .is_some_and(|d| d.name == "Phyrexian Metamorph"))
-        .then_some(copy.card_def);
+            && CARD_DEFS.get(usize::from(card_def)).is_some_and(|d| {
+                if is_metamorph {
+                    d.name == "Phyrexian Metamorph"
+                } else {
+                    matches!(
+                        d.name,
+                        crate::eternal_cube_c8b_v1::PHANTASMAL_IMAGE
+                            | crate::eternal_cube_c8b_v1::SUPERIOR_SPIDER_MAN
+                    )
+                }
+            }))
+        .then_some(card_def);
     }
     let key = (host.object, host.zone_change_count);
     let aegis = state
@@ -5533,9 +5605,26 @@ pub(crate) fn archived_copy_printing(
     let mut permanent = state
         .eternal_v1
         .iter()
-        .flat_map(|e| &e.e7a.copies)
-        .filter(|copy| copy.host == host);
-    let saved = permanent.next().map(|copy| copy.card_def);
+        .flat_map(|e| {
+            e.e7a
+                .copies
+                .iter()
+                .map(|copy| (copy.host, copy.card_def))
+                .chain(
+                    e.c8b
+                        .saheeli_copies
+                        .iter()
+                        .map(|copy| (copy.host, copy.card_def)),
+                )
+                .chain(
+                    e.c8c
+                        .absorbing_copies
+                        .iter()
+                        .map(|copy| (copy.host, copy.orig_card_def)),
+                )
+        })
+        .filter(|(copy_host, _)| *copy_host == host);
+    let saved = permanent.next().map(|(_, card_def)| card_def);
     if permanent.next().is_some() || matches!((aegis, saved), (Some(a), Some(b)) if a != b) {
         return None;
     }

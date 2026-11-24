@@ -388,6 +388,32 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c7c_v1::C7cStateV1::is_empty"
     )]
     pub c7c: crate::eternal_cube_c7c_v1::C7cStateV1,
+    /// Vintage Cube wave C8a's state: Bonecrusher Giant spell-target triggers,
+    /// Jace, Telepath Unbound power debuffs, graveyard cast permissions and
+    /// emblems, and The Sensational She-Hulk damage triggers and once-per-turn
+    /// usage (`eternal_cube_c8a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c8a_v1::C8aStateV1::is_empty"
+    )]
+    pub c8a: crate::eternal_cube_c8a_v1::C8aStateV1,
+    /// Vintage Cube wave C8b's state: Phantasmal Image and Superior Spider-Man
+    /// entry copies, copiable modifications, Saheeli temporary copies, and
+    /// Vaultborn Tyrant death-copy LKI (`eternal_cube_c8b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c8b_v1::C8bStateV1::is_empty"
+    )]
+    pub c8b: crate::eternal_cube_c8b_v1::C8bStateV1,
+    /// Vintage Cube wave C8c's state: Pyrogoyf LKI, Elite Spellbinder exile
+    /// tax, Librarian/Skydiver cast X, Librarian opponent-search triggers,
+    /// Zirda can't-block marks, and Absorbing Man copy records
+    /// (`eternal_cube_c8c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c8c_v1::C8cStateV1::is_empty"
+    )]
+    pub c8c: crate::eternal_cube_c8c_v1::C8cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -475,6 +501,10 @@ pub enum EternalTriggerV1 {
     C6aV1(crate::eternal_cube_c6a_v1::C6aTriggerV1),
     /// Vintage Cube wave C7c's per-color cast mana and Persist conditions.
     C7cV1(crate::eternal_cube_c7c_v1::C7cTriggerV1),
+    /// Vintage Cube wave C8b's Vaultborn Tyrant entry condition.
+    C8bV1(crate::eternal_cube_c8b_v1::C8bTriggerV1),
+    /// Vintage Cube wave C8c's card-to-library trigger condition.
+    C8cV1(crate::eternal_cube_c8c_v1::C8cTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -763,6 +793,15 @@ pub enum EternalOpV1 {
     /// A leaf owned by Vintage Cube wave C7c's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     C7cV1(crate::eternal_cube_c7c_v1::C7cOpV1),
+    /// A leaf owned by Vintage Cube wave C8a's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C8aV1(crate::eternal_cube_c8a_v1::C8aOpV1),
+    /// A leaf owned by Vintage Cube wave C8b's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C8bV1(crate::eternal_cube_c8b_v1::C8bOpV1),
+    /// A leaf owned by Vintage Cube wave C8c's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C8cV1(crate::eternal_cube_c8c_v1::C8cOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -807,6 +846,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 }
                 EternalTriggerV1::C7cV1(condition) => {
                     crate::eternal_cube_c7c_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::C8bV1(condition) => {
+                    crate::eternal_cube_c8b_v1::arrival_condition(condition)
                 }
                 _ => false,
             },
@@ -874,6 +916,9 @@ impl EternalOpV1 {
             EternalOpV1::C7aV1(op) => op.contains_player_choice(),
             EternalOpV1::C7bV1(op) => op.contains_player_choice(),
             EternalOpV1::C7cV1(op) => op.contains_player_choice(),
+            EternalOpV1::C8aV1(op) => op.contains_player_choice(),
+            EternalOpV1::C8bV1(op) => op.contains_player_choice(),
+            EternalOpV1::C8cV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -1351,6 +1396,18 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_cube_c7c_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Vintage Cube wave C8a's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c8a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage Cube wave C8b's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c8b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage Cube wave C8c's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c8c_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern sideboard wave P3a's queued triggers.
     if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1630,6 +1687,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::C7aV1(op) => crate::eternal_cube_c7a_v1::execute(op, ctx, state),
         EternalOpV1::C7bV1(op) => crate::eternal_cube_c7b_v1::execute(op, ctx, state),
         EternalOpV1::C7cV1(op) => crate::eternal_cube_c7c_v1::execute(op, ctx, state),
+        EternalOpV1::C8aV1(op) => crate::eternal_cube_c8a_v1::execute(op, ctx, state),
+        EternalOpV1::C8bV1(op) => crate::eternal_cube_c8b_v1::execute(op, ctx, state),
+        EternalOpV1::C8cV1(op) => crate::eternal_cube_c8c_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -2139,6 +2199,7 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_sideboard_s1e_v1::blocker_allowed(state, attacker, blocker)
         && crate::eternal_cube_c7a_v1::blocker_allowed(state, blocker)
         && crate::eternal_cube_c7b_v1::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_cube_c8c_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -2166,6 +2227,10 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
         return Some(value);
     }
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
+    // Pyrogoyf (Vintage Cube wave C8c): power = card types in all graveyards.
+    if let Some(value) = crate::eternal_cube_c8c_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
     // Seize the Storm's Elemental token sets both stats.
@@ -2201,6 +2266,10 @@ pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId)
     }
     // Barrowgoyf's toughness is its power plus 1.
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_toughness(state, id) {
+        return Some(value);
+    }
+    // Pyrogoyf's toughness is its power plus 1 (Vintage Cube wave C8c).
+    if let Some(value) = crate::eternal_cube_c8c_v1::characteristic_defining_toughness(state, id) {
         return Some(value);
     }
     if let Some(value) = crate::eternal_pauper_e8b_v1::characteristic_defining_power(state, id) {
@@ -2507,6 +2576,8 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c7a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c7b_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c7c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c8a_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_cube_c8c_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2591,6 +2662,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_cube_c7a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_cube_c7b_v1::delayed_effect_matches(name, effect)
         || crate::eternal_cube_c7c_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c8a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c8b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c8c_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1e_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1f_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1g_v1::delayed_effect_matches(name, effect)
@@ -2668,6 +2742,8 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_cube_c6c_v1::begin_turn(state, player);
     crate::eternal_cube_c7a_v1::begin_turn(state, player);
     crate::eternal_cube_c7c_v1::begin_turn(state, player);
+    crate::eternal_cube_c8a_v1::begin_turn(state, player);
+    crate::eternal_cube_c8c_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2834,6 +2910,12 @@ pub(crate) fn trigger_matches(
         EternalTriggerV1::C6aV1(condition) => {
             crate::eternal_cube_c6a_v1::trigger_matches(condition, events, index, source, state)
         }
+        EternalTriggerV1::C8bV1(condition) => {
+            crate::eternal_cube_c8b_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::C8cV1(condition) => {
+            crate::eternal_cube_c8c_v1::trigger_matches(condition, events, index, source, state)
+        }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {
                 object,
@@ -2932,6 +3014,7 @@ pub(crate) fn exiled_instead_of_graveyard(
     // Burning Wish exiles itself.
     if crate::eternal_pauper_e6a_v1::rebounds_on_departure(state, item)
         || crate::eternal_legacy_e7a_v1::exiles_on_departure(state, item)
+        || crate::eternal_cube_c8a_v1::exiles_on_departure(state, item)
     {
         return true;
     }

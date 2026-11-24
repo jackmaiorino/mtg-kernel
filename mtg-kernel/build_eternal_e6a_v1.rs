@@ -154,9 +154,11 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
 }
 
 /// Activated abilities printed on one face only: Tithing Blade's craft is
-/// its front face's.
-pub(super) fn activated_ability_face_for(name: &str, _index: usize) -> Option<u8> {
-    (name == "Tithing Blade").then_some(0)
+/// its front face's, falling through to wave C8a.
+pub(super) fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
+    (name == "Tithing Blade")
+        .then_some(0)
+        .or_else(|| super::build_eternal_c8a_v1::activated_ability_face_for(name, index))
 }
 
 /// A spell whose program is a runtime function of `eternal_pauper_e6a_v1`.

@@ -3487,6 +3487,41 @@ Engine changes shared with other cards:
   planeswalker 0-loyalty SBA exemption and granted loyalty ability (Sanctum Lurker), Backup 1
   granted attack triggers (Guardian Scalelord), and `Subtype::Spy` (stable id 750).
 
+### C8: adventure, DFCs, prepare, copies, bestow and library triggers
+
+Wave C8 adds 19 cards (plus `Regrowth`, `Green Insect Token`, and `Wan Shi Tong Spirit Token`),
+raising the cube to 523 of 540 Full (0 Partial, 17 Missing). Its three sub-modules chain after
+wave C7c: C8a (`eternal_cube_c8a_v1`), C8b (`eternal_cube_c8b_v1`) and C8c (`eternal_cube_c8c_v1`),
+the new tail.
+
+- C8a: Bonecrusher Giant (Stomp Adventure), Concealing Curtains (Revealing Eye), Jace, Vryn's
+  Prodigy (Jace, Telepath Unbound), Jennifer Walters (The Sensational She-Hulk), Emeritus of
+  Abundance (Regrowth prepare spell), Emeritus of Ideation (Ancestral Recall prepare spell).
+- C8b: Phantasmal Image, Superior Spider-Man, Vaultborn Tyrant, Saheeli, Sublime Artificer,
+  Springheart Nantuko (Green Insect Token), Detective's Phoenix.
+- C8c: Pyrogoyf, Elite Spellbinder, Wan Shi Tong, All-Knowing (Wan Shi Tong Spirit Token),
+  Wan Shi Tong, Librarian, Thieving Skydiver, Zirda, the Dawnwaker, Absorbing Man.
+
+Engine changes shared with other cards:
+
+- Prepare generalization (`eternal_vintage_e7b_v1`) now maps multiple prepared creatures to their
+  prepare spells while keeping standalone `Ancestral Recall` untouched; `StandardTargetV1` adds
+  `CardInOwnGraveyardV1`, `ControlledArtifactThenAnotherControlledArtifactOrCreatureV1`, and
+  `C8cV1(C8cTargetV1)` at the end of the enum.
+- As-enters copy exceptions and temporary copy effects cover Illusion + becomes-target sacrifice
+  (Phantasmal Image), graveyard Mind Swap with Layer 1 4/4 name/subtype overrides and reflexive
+  exile (Superior Spider-Man), nontoken dies artifact token copy (Vaultborn Tyrant), until-EOT
+  artifact copy (Saheeli), and until-your-next-turn 4/4 legendary Human Villain Vigilance copy
+  (Absorbing Man).
+- Non-X Bestow support adds graveyard Bestow and Collect Evidence 6 excluding the cast spell
+  (Detective's Phoenix), attached-host optional `{1}{G}` copy landfall (Springheart Nantuko), and
+  Bestow Enchantment-Aura spell types on the stack.
+- Extended spell/activation mechanics add Kicker `{X}` with `X >= 1` (Thieving Skydiver),
+  non-mana activated-ability `{2}` reduction floored at 1 mana plus companion validation (Zirda),
+  per-exile-incarnation `+{2}` cast tax (Elite Spellbinder), entering-creature damage source LKI
+  (Pyrogoyf), batched card-to-library triggers and opponent library-search hooks across search
+  sites (both Wan Shi Tong printings), and `Subtype::{Fox = 760, Gamma = 761, Saheeli = 762}`.
+
 ## Eternal rules precision closeout (#717)
 
 This records the finite [rules review checklist](https://github.com/jackmaiorino/mtg-kernel/issues/717)
