@@ -644,7 +644,12 @@ SAMPLES = [
 
 class DispatchCompositionTests(unittest.TestCase):
     """The dispatch follows the pull request run's plan and jobs, so the two together never cover less than
-    origin/main's file-list rule did for the same change."""
+    origin/main's file-list rule did for the same change.
+
+    What this model does not see: job results. It evaluates job conditions from detect-changes' outputs and treats
+    every scheduled job as running to the end, so it cannot show a failed build leaving its dependents unscheduled.
+    pr_lookup's green-so-far rule covers that case (test_pr_lookup.EvidenceTests.test_any_failed_job_disqualifies_the_run);
+    the model shows only which job families each plan schedules."""
 
     def test_a_run_and_a_default_dispatch_cover_at_least_what_main_covered(self):
         new, main = Classifier(), Classifier("main")

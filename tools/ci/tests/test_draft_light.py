@@ -37,8 +37,11 @@ def workflow_step(step):
 
 
 # Job lists of the pull request run at the dispatched commit (see test_pr_lookup.py for real ones).
+LINUX_GROUPS = ("workspace-lib", "workspace-targets", "standard", "eternal", "cuda", "native-store", "trace",
+                "saved-input", "limited-store")
 WHOLE_SET_JOBS = [{"name": "Detect changed paths", "status": "completed", "conclusion": "success"},
-                  {"name": "Rust tests (ubuntu-24.04, workspace-lib)", "status": "in_progress", "conclusion": None},
+                  *({"name": f"Rust tests (ubuntu-24.04, {group})", "status": "in_progress", "conclusion": None}
+                    for group in LINUX_GROUPS),
                   {"name": "Rust tests (windows-2025, workspace-lib)", "status": "queued", "conclusion": None},
                   {"name": "Build Python test binaries (${{ matrix.os }})", "status": "completed", "conclusion": "skipped"},
                   {"name": "CI plan: rust=true python=false scope=pr checks=all", "status": "completed",

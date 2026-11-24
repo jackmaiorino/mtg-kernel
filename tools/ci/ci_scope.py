@@ -9,15 +9,14 @@ no Rust job (python/mtg_kernel_rl/** and the named Rust runner files in python/t
 a trainer file runs the trainer scope, plus a Limited binary the rules-limited scope, and plus viewer.yml the
 workflow scope (nothing in ci.yml). Before the viewer scope each of those ran the whole Rust set only because the
 website path had no scope; the reductions are intended and equal what the other files alone already got. The full
-matrix still runs on every push to
-main and every tag (and on a dispatch without `scope`, the way release lines are checked) as a monitor, so a scope
-only decides what gates a merge (collab HANDOFFS/20261117/COORD.md, "Standing rule, merges (2026-11-21 07:27 ET)").
-One exception: a dispatch without inputs at the head of a ready pull request runs only the Windows complement when
-that pull request's own run at the same commit says (its ci-plan job) and shows that it scheduled the whole pull
-request set: the Linux Rust groups, and the Python build on both systems unless its paths were not Python-relevant
-(tools/ci/pr_lookup.py pr-run); otherwise the full matrix. The two runs then cover every group whose paths were
-relevant: a Rust-only pull request runs no Python before the merge. `full_matrix=true` skips that lookup;
-`fallback_scope` and an explicit `scope` input take precedence over it.
+matrix still runs on every push to main and every tag (and on a dispatch without `scope`, the way release lines are
+checked) as a monitor, so a scope only decides what gates a merge (collab HANDOFFS/20261117/COORD.md, "Standing
+rule, merges (2026-11-21 07:27 ET)"). One exception: a dispatch without inputs at the head of a ready pull request
+runs only the Windows complement when that pull request's own run at the same commit says (its ci-plan job) and
+shows that it scheduled the whole pull request set: every Linux Rust group, and the Python build on both systems
+unless its paths were not Python-relevant (tools/ci/pr_lookup.py pr-run); otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out.
+A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. A Rust-only pull request runs no Python before the merge.
+`full_matrix=true` skips that lookup; `fallback_scope` and an explicit `scope` input take precedence over it.
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE (the group set chosen before), INPUT_SCOPE,
@@ -397,18 +396,19 @@ def markdown() -> str:
            "the named Rust runner files in `python/tools` are Rust-relevant), website plus a trainer file runs the "
            "trainer scope, plus a Limited binary the rules-limited scope, and plus `viewer.yml` the workflow scope. "
            "Before the viewer scope each of those ran the whole Rust set only because the website path had no scope; "
-           "the reductions are intended and equal what the other files alone already got. Main pushes, tags and dispatches "
-           "without `scope` run the full matrix as a monitor (one exception: a dispatch without inputs at the head "
-           "of a ready pull request runs only the Windows complement when that pull request's own run at the same "
-           "commit says (its ci-plan job) and shows that it scheduled the whole pull request set, the Linux Rust "
-           "groups and, unless its paths were not Python-relevant, the Python build on both systems; otherwise the "
-           "full matrix; a Rust-only pull request runs no Python before the merge; `full_matrix=true` skips that "
-           "lookup, and `fallback_scope` or an explicit `scope` input takes precedence over it): pushes to a line "
-           "share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and a "
-           "red monitor's report names every merge it covers. `ci:full` on a pull request forces the whole pull "
-           "request set (every Rust and Python job, whatever the paths) from the next push, reopen or "
-           "ready-for-review event (adding the label starts no run); labels never narrow a run. "
-           "`gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one scope on any ref.", "",
+           "the reductions are intended and equal what the other files alone already got. Main pushes, tags and "
+           "dispatches without `scope` run the full matrix as a monitor (one exception: a dispatch without inputs at "
+           "the head of a ready pull request runs only the Windows complement when that pull request's own run at "
+           "the same commit says (its ci-plan job) and shows that it scheduled the whole pull request set, every "
+           "Linux Rust group and, unless its paths were not Python-relevant, the Python build on both systems; "
+           "otherwise the full matrix. The complement is taken only beside a pull request run that is still going or has succeeded, with no job of its latest attempt failed, cancelled or timed out. A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request run; rerun the dispatch, which will then run the full set. A Rust-only pull request runs no Python "
+           "before the merge; `full_matrix=true` skips that lookup, and `fallback_scope` or an explicit `scope` "
+           "input takes precedence over it): pushes to a line share one concurrency group (one running, one "
+           "waiting, a newer merge replaces the waiting one), and a red monitor's report names every merge it "
+           "covers. `ci:full` on a pull request forces the whole pull request set (every Rust and Python job, "
+           "whatever the paths) from the next push, reopen or ready-for-review event (adding the label starts no "
+           "run); labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one scope on "
+           "any ref.", "",
            "## Path rules (first match decides)", "", "| paths | scope |", "|---|---|"]
     for patterns, scope in PATH_RULES:
         out.append(f"| {', '.join('`' + p + '`' for p in patterns)} | {scope} |")

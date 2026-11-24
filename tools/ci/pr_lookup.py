@@ -4,28 +4,36 @@ open-pr-head: "<number> <head sha> <base sha>" of the first open, ready pull req
 repository's branch GITHUB_REF_NAME, or an empty line (for runners without the GitHub CLI). ready-pr selects
 the same tuple from JSON on stdin.
 pr-run SHA NUMBER: whole-set if this repository's ci.yml run for event pull_request at head commit SHA, for pull
-request NUMBER, says and shows that it scheduled everything the Windows complement leaves to it; else partial.
-From that run's latest-attempt jobs, in a run that is itself going or finished with success or failure:
+request NUMBER, qualifies; else partial. The complement is taken only beside a pull request run that is still going
+or has succeeded, with no job of its latest attempt failed, cancelled or timed out. In full, from that run and its
+latest-attempt jobs:
+  0. the run is still going, or finished with success; every job is queued or running (while the run is going) or
+     finished with success or skipped; any other conclusion, or a status this code does not know, anywhere in the
+     run disqualifies it (any failed job can be a prerequisite of jobs that then never ran);
   1. exactly one `CI plan: rust=.. python=.. scope=.. checks=..` job (the ci-plan job, named from detect-changes'
-     outputs), in the exact format, concluded success;
+     outputs), in the exact format, completed with success;
   2. the plan says rust=true, scope=pr and checks=all;
-  3. the Linux rows of rust-test-groups are present and every one is healthy;
+  3. every Linux row of the rust-test-groups matrix (each group except native-store-1, which the pull request set
+     excludes on Linux) is present and not skipped;
   4. the plan says python=false and no Python build row ran, or it says python=true and both Python build rows
-     (`Build Python test binaries (ubuntu-24.04)` and `(windows-2025)`) are present and healthy.
-Healthy: finished with success or failure, or queued or running while the run is still going (a cancelled,
-timed-out or never started job is not evidence). Anything else, and any error, is partial: the full set.
-The decision reads that run's actual jobs, never a file list (GitHub's three-dot list can differ from the
-synthetic merge's diff the run classified).
+     (`Build Python test binaries (ubuntu-24.04)` and `(windows-2025)`) are present and not skipped.
+Anything else, and any error, is partial: the full set. Established directly: the plan, the Linux Rust rows, the
+Python build rows and no failed job so far. What else the pull request set runs (lint, the Limited and Eternal
+families, the Python shards) follows from the workflow's own conditions on those same outputs; a failed job is the
+one way a scheduled family goes missing, and rule 0 excludes it. In use: a default dispatch at a head whose pull
+request run already has a failed or cancelled job runs the full matrix; the complement is for a run that is passing
+so far or has passed. The decision reads that run's actual jobs, never a file list (GitHub's three-dot list can
+differ from the synthetic merge's diff the run classified).
 Consequences: a pull request that touches only Rust sources keeps the complement with no Python anywhere before
 the merge, as before (its paths are not Python-relevant; the push to main runs everything). On this change alone,
 a pull request labelled ci:full whose paths are Rust-only has the plan rust=true python=false scope=pr checks=all,
 so a default dispatch at its head takes the Windows complement, where the file-list rule gave it a full dispatch
 (its file list mapped to a narrower scope). This is narrower than before only until the viewer-scope change
 (pull request 955) merges, because that change makes ci:full set both relevance flags: the plan then reads
-python=true, the run schedules Python, and the complement is taken only with healthy Python rows, which is the
-whole set. A run of a ci.yml without the plan job gives partial until the pull request is
-updated. Not covered: a pull request run cancelled after the dispatch decided; that run is red by itself, and its
-rerun restores its jobs.
+python=true, the run schedules Python, and the complement is taken only with the Python build rows present, which
+is the whole set. A run of a ci.yml without the plan job gives partial until the pull request is updated.
+Left open. A job that fails after the dispatch has decided can leave its dependents unscheduled in the pull request
+run; rerun the dispatch, which will then run the full set.
 
 Reads GH_TOKEN (the job token: this job has actions: read, contents: read, pull-requests: read, and its
 self_hosted_budget.py and mac_route.py steps read the same runs and jobs endpoints), GITHUB_API_URL,
@@ -51,6 +59,9 @@ WORKFLOW_PATH = ".github/workflows/ci.yml"
 # can run without the pull request set).
 RUST_TEST_GROUPS = ("workspace-lib", "workspace-targets", "standard", "eternal", "cuda", "native-store",
                     "native-store-1", "trace", "saved-input", "limited-store")
+# The Linux rows of that matrix in the pull request set (its exclude expression drops native-store-1 on Linux; the
+# test pins it).
+LINUX_RUST_GROUPS = tuple(group for group in RUST_TEST_GROUPS if group != "native-store-1")
 # The python-env-build matrix rows in the pull request and full sets (a test keeps them equal to ci.yml). The build,
 # not the Python test shards: the shards expand only after the build finishes, and a dispatch right after a push
 # must still see the evidence.
@@ -82,20 +93,31 @@ def open_pr_head(pulls: list, repository: str, ref: str) -> str:
     return ""
 
 
-# A group job or a run that ran to an end of its own, and one that is still on its way to one.
-FINISHED = ("success", "failure")
+# Conclusions of a job that leave the run green so far, and statuses of a job still on its way.
+GREEN = ("success", "skipped")
 ACTIVE = ("queued", "in_progress", "waiting", "pending", "requested")
 
 
-def healthy(job: dict, run_finished: bool) -> bool:
-    """A job that finished with success or failure, or is queued or running while its run is still going."""
-    if job["status"] == "completed":
-        return job["conclusion"] in FINISHED
-    return not run_finished and job["status"] in ACTIVE
+def green_so_far(jobs: list, run: dict) -> bool:
+    """Rule 0: the run is still going or finished with success, and no job of its latest attempt has failed, been
+    cancelled, timed out or ended any other way than success or skipped (nor has a status this code does not know;
+    a job still on its way is fine while the run is going)."""
+    run_finished = run.get("status") == "completed"
+    if run_finished and run.get("conclusion") != "success":
+        return False
+    if not run_finished and run.get("status") not in ACTIVE:
+        return False
+    for job in jobs:
+        if job["status"] == "completed":
+            if job["conclusion"] not in GREEN:
+                return False
+        elif run_finished or job["status"] not in ACTIVE:
+            return False
+    return True
 
 
 def scheduled_whole_set(jobs: list, run: dict) -> bool:
-    """Rules 1 to 4 of pr-run (see the module docstring) for one run's latest-attempt jobs. Every job record is
+    """Rules 0 to 4 of pr-run (see the module docstring) for one run's latest-attempt jobs. Every job record is
     validated before anything is decided; a malformed record anywhere is an error."""
     run_id = run.get("id")
     for job in jobs:
@@ -103,10 +125,7 @@ def scheduled_whole_set(jobs: list, run: dict) -> bool:
                 or not isinstance(job.get("status"), str) or not (job.get("conclusion") is None
                                                                   or isinstance(job.get("conclusion"), str))):
             raise ValueError("expected job records of the chosen run")
-    run_finished = run.get("status") == "completed"
-    if run_finished and run.get("conclusion") not in FINISHED:
-        return False
-    if not run_finished and run.get("status") not in ACTIVE:
+    if not green_so_far(jobs, run):
         return False
     plans = [job for job in jobs if job["name"].startswith("CI plan")]
     if len(plans) != 1 or plans[0]["status"] != "completed" or plans[0]["conclusion"] != "success":
@@ -117,23 +136,21 @@ def scheduled_whole_set(jobs: list, run: dict) -> bool:
     rust, python, scope, checks = plan.groups()
     if (rust, scope, checks) != ("true", "pr", "all"):
         return False
-    rust_names = {f"Rust tests (ubuntu-24.04, {group})" for group in RUST_TEST_GROUPS}
-    rust_rows = [job for job in jobs if job["name"] in rust_names and job["conclusion"] != "skipped"]
-    if not rust_rows or not all(healthy(job, run_finished) for job in rust_rows):
+    present = {job["name"] for job in jobs if job["conclusion"] != "skipped"}
+    if not {f"Rust tests (ubuntu-24.04, {group})" for group in LINUX_RUST_GROUPS} <= present:
         return False
-    python_rows = {name: [job for job in jobs if job["name"] == name and job["conclusion"] != "skipped"]
-                   for name in PYTHON_BUILD_JOBS}
     if python == "false":
         # The plan skipped Python by relevance; a Python build row that ran anyway disagrees with it.
-        return not any(python_rows.values())
-    return all(rows and all(healthy(job, run_finished) for job in rows) for rows in python_rows.values())
+        return not present & set(PYTHON_BUILD_JOBS)
+    return set(PYTHON_BUILD_JOBS) <= present
 
 
 def newest_pull_request_runs(runs: list, repository: str, head_sha: str, number: int) -> list:
     """The ci.yml runs of event pull_request at head_sha in this repository (a fork's run at the same commit has
-    another head repository) for pull request `number` (two open pull requests sharing a head never supply each
-    other's evidence; an empty pull_requests list does not match), newest by creation time; all runs sharing the
-    newest time are returned, and a caller takes whole-set only if every one of them shows it."""
+    another head repository) whose pull_requests list contains `number` (a run listed for another pull request
+    sharing the head is not this one's; a run whose list holds both numbers is that run for both; an empty list
+    does not match), newest by creation time; all runs sharing the newest time are returned, and a caller takes
+    whole-set only if every one of them shows it."""
     chosen = []
     for run in runs:
         if not isinstance(run, dict):
