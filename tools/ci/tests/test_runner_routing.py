@@ -504,8 +504,8 @@ class DetectStepTests(unittest.TestCase):
         block = job_block("detect-changes", "rust-quality")
         self.assertIn("if command -v gh > /dev/null 2>&1; then", block)
         self.assertIn("python3 tools/ci/pr_lookup.py open-pr-head", block)
-        self.assertIn('python3 tools/ci/pr_lookup.py pr-files "$1"', block)
-        self.assertEqual(block.count("gh api"), 2)
+        self.assertIn('python3 tools/ci/pr_lookup.py pr-run "$GITHUB_SHA"', block)
+        self.assertEqual(block.count("gh api"), 1)
 
 
 def job_block(name, following):

@@ -1,11 +1,19 @@
-"""The two GitHub REST lookups of ci.yml's "Choose the group set" step, for runners without the GitHub CLI.
+"""The GitHub REST lookups of ci.yml's "Choose the group set" step (a dispatch without inputs).
 
 open-pr-head: "<number> <head sha> <base sha>" of the first open, ready pull request for this
-repository's branch GITHUB_REF_NAME, or an empty line. ready-pr selects the same tuple from JSON on stdin.
-pr-files N: the changed-file records of pull request N, as an array of pages (the gh --paginate --slurp output).
+repository's branch GITHUB_REF_NAME, or an empty line (for runners without the GitHub CLI). ready-pr selects
+the same tuple from JSON on stdin.
+pr-run SHA: whole-set if this repository's ci.yml run for event pull_request at head commit SHA scheduled the Linux
+Rust groups (an expanded, not skipped `Rust tests (ubuntu-24.04, <group>)` job of rust-test-groups), else partial.
+Only then may the dispatch run just the Windows groups that run leaves out. The decision reads that run's actual
+jobs, never a file list: a file list (GitHub's three-dot list) can differ from what the run classified (the
+synthetic merge's diff).
 
-Reads GH_TOKEN, GITHUB_API_URL, GITHUB_REPOSITORY, GITHUB_REPOSITORY_OWNER and GITHUB_REF_NAME. Standard
-library only. Any failure exits non-zero, and the step then keeps the full group set.
+Reads GH_TOKEN (the job token: this job has actions: read, contents: read, pull-requests: read, and its
+self_hosted_budget.py and mac_route.py steps read the same runs and jobs endpoints), GITHUB_API_URL,
+GITHUB_REPOSITORY, GITHUB_REPOSITORY_OWNER and GITHUB_REF_NAME. Standard library only. Any failure (an API error,
+malformed JSON, a pagination miss, the time or request budget) exits non-zero without printing whole-set, and the
+step then keeps the full group set.
 """
 from __future__ import annotations
 
@@ -15,6 +23,15 @@ import re
 import sys
 import urllib.parse
 import urllib.request
+
+import self_hosted_budget
+
+WORKFLOW_PATH = ".github/workflows/ci.yml"
+# The rust-test-groups matrix groups (tools/ci/tests/test_pr_lookup.py keeps this equal to ci.yml and disjoint from
+# the other jobs named `Rust tests (<os>, <group>)`: the Limited groups and the Eternal integration parts, which
+# can run without the pull request set).
+RUST_TEST_GROUPS = ("workspace-lib", "workspace-targets", "standard", "eternal", "cuda", "native-store",
+                    "native-store-1", "trace", "saved-input", "limited-store")
 
 
 def get(path: str):
@@ -40,6 +57,73 @@ def open_pr_head(pulls: list, repository: str, ref: str) -> str:
     return ""
 
 
+def scheduled_linux_rust(jobs: list, run_id: int) -> bool:
+    """Whether one run's latest-attempt jobs include an expanded Linux row of rust-test-groups that was not skipped
+    (queued, in progress or finished in any way: the complement only completes what that run scheduled). Rows
+    exist once detect-changes has finished; before that, or for a draft (lint only) or a narrowed scope, there are
+    none. The gate `Rust tests (ubuntu-24.04)` alone does not count: the group rows are the direct evidence."""
+    names = {f"Rust tests (ubuntu-24.04, {group})" for group in RUST_TEST_GROUPS}
+    for job in jobs:
+        if not isinstance(job, dict) or job.get("run_id") != run_id:
+            raise ValueError("expected job records of the chosen run")
+        if job.get("name") in names and job.get("conclusion") != "skipped":
+            return True
+    return False
+
+
+def newest_pull_request_runs(runs: list, repository: str, head_sha: str) -> list:
+    """The ci.yml runs of event pull_request at head_sha in this repository (a fork's run at the same commit has
+    another head repository), newest first by creation time; all runs sharing the newest time are returned, and a
+    caller takes whole-set only if every one of them shows it."""
+    chosen = []
+    for run in runs:
+        if not isinstance(run, dict):
+            raise ValueError("expected run records")
+        if (run.get("event") == "pull_request" and run.get("head_sha") == head_sha and run.get("path") == WORKFLOW_PATH
+                and (run.get("repository") or {}).get("full_name") == repository
+                and (run.get("head_repository") or {}).get("full_name") == repository):
+            if not isinstance(run.get("id"), int) or not isinstance(run.get("created_at"), str):
+                raise ValueError("expected a run id and creation time")
+            chosen.append(run)
+    if not chosen:
+        return []
+    newest = max(run["created_at"] for run in chosen)   # ISO 8601 UTC: text order is time order
+    return [run for run in chosen if run["created_at"] == newest]
+
+
+def api(path: str, budget):
+    return self_hosted_budget._get(path, budget)
+
+
+def paginate(path: str, key: str, budget) -> list:
+    """Every row of a listing; a page that is not a listing, or rows that do not add up to total_count, is an
+    error (never a shorter list)."""
+    rows, page = [], 1
+    while True:
+        body = api(f"{path}&per_page=100&page={page}", budget)
+        if not isinstance(body, dict) or not isinstance(body.get(key), list) or type(body.get("total_count")) is not int:
+            raise ValueError(f"expected a {key} listing")
+        rows += body[key]
+        if len(body[key]) < 100:
+            break
+        page += 1
+    if len(rows) != body["total_count"]:
+        raise ValueError(f"{key} listing incomplete: {len(rows)} of {body['total_count']}")
+    return rows
+
+
+def pr_run(repository: str, head_sha: str, budget=None) -> str:
+    if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+        raise ValueError("expected a full commit SHA")
+    budget = budget or self_hosted_budget.Budget(seconds=60.0, requests=20)
+    runs = paginate(f"/repos/{repository}/actions/workflows/ci.yml/runs?event=pull_request&head_sha={head_sha}",
+                    "workflow_runs", budget)
+    newest = newest_pull_request_runs(runs, repository, head_sha)
+    shown = [scheduled_linux_rust(paginate(f"/repos/{repository}/actions/runs/{run['id']}/jobs?filter=latest", "jobs",
+                                           budget), run["id"]) for run in newest]
+    return "whole-set" if shown and all(shown) else "partial"
+
+
 def main(argv: list) -> int:
     repository = os.environ["GITHUB_REPOSITORY"]
     if argv in (["open-pr-head"], ["ready-pr"]):
@@ -51,19 +135,11 @@ def main(argv: list) -> int:
             pulls = json.load(sys.stdin)
         print(open_pr_head(pulls, repository, ref))
         return 0
-    if argv[:1] == ["pr-files"] and len(argv) == 2 and argv[1].isdigit():
-        pages = []
-        for page in range(1, 31):  # GitHub lists at most 3000 files of a pull request
-            files = get(f"repos/{repository}/pulls/{argv[1]}/files?per_page=100&page={page}")
-            if not isinstance(files, list):
-                print("Expected an array from the pull request files API", file=sys.stderr)
-                return 2
-            pages.append(files)
-            if len(files) < 100:
-                break
-        print(json.dumps(pages))
+    if argv[:1] == ["pr-run"] and len(argv) == 2:
+        # Printed only after every lookup and check passed; any exception exits non-zero with nothing printed.
+        print(pr_run(repository, argv[1]))
         return 0
-    print("usage: pr_lookup.py open-pr-head | ready-pr | pr-files <number>", file=sys.stderr)
+    print("usage: pr_lookup.py open-pr-head | ready-pr | pr-run <head sha>", file=sys.stderr)
     return 2
 
 
