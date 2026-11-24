@@ -114,6 +114,20 @@ class PoolTests(unittest.TestCase):
             self.assertIn("Fixture Fenced Land", land_names)
             self.assertEqual(built["fenced"], [])
 
+    def test_wrapped_fence_record_matches_the_bare_list(self):
+        bare = json.loads((FIXTURES_DIR / "fence.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapped = Path(tmp) / "wrapped_fence.json"
+            wrapped.write_text(
+                json.dumps({"schema": "fence/v1", "cube_list": "fixture", "source": "test", "cards": bare}),
+                encoding="utf-8",
+            )
+            args = (FIXTURES_DIR / "cube_list.json", FIXTURES_DIR / "gaps.json", FIXTURES_DIR / "id_export.json")
+            from_bare = pool.build_pool_from_paths(*args, FIXTURES_DIR / "fence.json")
+            from_wrapped = pool.build_pool_from_paths(*args, wrapped)
+            for key in ("spells", "nonbasic_lands", "basics", "fenced"):
+                self.assertEqual(from_bare[key], from_wrapped[key])
+
     def test_refuses_fenced_name_not_in_cube_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             bad_fence = Path(tmp) / "bad_fence.json"
@@ -259,6 +273,12 @@ class LfOutputTests(unittest.TestCase):
 
 
 class CanonicalDeckHashTests(unittest.TestCase):
+    def test_refuses_a_bare_string_for_a_deck_or_deck_list(self) -> None:
+        with self.assertRaises(ValueError):
+            deal.canonical_deck_text("Island")
+        with self.assertRaises(ValueError):
+            deal.canonical_decks_sha256("Island")
+
     def test_canonical_text_is_sorted_name_count_lines_with_lf(self):
         text = deal.canonical_deck_text(["Island", "Brainstorm", "Island", "Ancestral Recall"])
         self.assertEqual(text, "Ancestral Recall 1\nBrainstorm 1\nIsland 2\n")
@@ -482,6 +502,7 @@ class ReadBDealerTests(unittest.TestCase):
                 "2",
             ]
             outputs = []
+            raw: list[bytes] = []
             for deck_path, hash_seed in ((deck_list, "1"), (deck_list, "42"), (deck_obj, "7")):
                 env = os.environ.copy()
                 env["PYTHONHASHSEED"] = hash_seed
@@ -493,8 +514,9 @@ class ReadBDealerTests(unittest.TestCase):
                 )
                 self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
                 self.assertNotIn(b"\r", proc.stdout)
+                raw.append(proc.stdout)
                 outputs.append(json.loads(proc.stdout.decode("utf-8")))
-            self.assertEqual(outputs[0], outputs[1])
+            self.assertEqual(raw[0], raw[1])
             # Deck file formatting changes only the recorded file hash.
             strip = lambda d: {k: v for k, v in d.items() if k != "drafted_deck_sha256"}  # noqa: E731
             self.assertEqual(strip(outputs[0]), strip(outputs[2]))

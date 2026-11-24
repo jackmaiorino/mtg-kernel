@@ -72,6 +72,12 @@ def _parse_gaps(doc: Any) -> set[str]:
 
 
 def _parse_fence(doc: Any, cube_names: set[str]) -> list[dict[str, str]]:
+    # The signed fence files wrap the list as {"cards": [...]} beside provenance keys
+    # (schema, cube_list, source); the bare list is accepted too, as CubePool does.
+    if isinstance(doc, dict):
+        if not isinstance(doc.get("cards"), list):
+            raise ValueError("fence object must hold a 'cards' list of {name, reason} objects")
+        doc = doc["cards"]
     if not isinstance(doc, list):
         raise ValueError("fence file must be a JSON list of {name, reason} objects")
     entries: list[dict[str, str]] = []

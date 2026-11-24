@@ -707,6 +707,8 @@ def deck_card_names(card_ids: Iterable[int], names_by_id: dict[int, str]) -> lis
 def canonical_deck_text(card_names: Iterable[str]) -> str:
     """Canonical text of one deck: a `name count` line per distinct card name, sorted by name
     (Unicode code point order), each line ending in LF. Card order and file formatting do not matter."""
+    if isinstance(card_names, (str, bytes)):
+        raise ValueError("a deck must be a list of card names, not a single string")
     counts: dict[str, int] = {}
     for name in card_names:
         if not isinstance(name, str) or not name.strip():
@@ -725,6 +727,8 @@ def canonical_decks_sha256(decks: Iterable[Iterable[str]]) -> str:
     The hashed text is, for each deck in list order, its canonical_deck_text followed by one
     empty line, encoded as UTF-8 with LF line endings. It depends only on the decks' card names
     and counts and on the order of the decks, never on how or where they were stored."""
+    if isinstance(decks, (str, bytes)):
+        raise ValueError("decks must be a list of decks, not a single string")
     text = "".join(canonical_deck_text(deck) + "\n" for deck in decks)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
