@@ -491,6 +491,7 @@ fn check_loss_scalars_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
             gamma: f32::from_bits(gamma),
             lambda: f32::from_bits(lambda),
             entropy_coefficient: f32::from_bits(entropy_coefficient),
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         }
         .validate_v1()
         .map_err(|error| {
