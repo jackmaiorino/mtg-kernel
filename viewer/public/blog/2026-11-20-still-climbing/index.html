@@ -111,7 +111,7 @@ th { color: var(--ink-3); font-weight: 500; }
     <div class="chart-head">
       <div>
         <p class="chart-title" id="c1t">How often today's bot beats the version it started from</p>
-        <p class="chart-sub">Each dot combines 11,664 test games across three training runs, with 3,888 games per run.</p>
+        <p class="chart-sub">Each dot combines 11,664 test games across three training runs, with 3,888 games per run. Every deal is played twice with the seats swapped, so the luck of the draw evens out.</p>
       </div>
       <div class="big"><div class="n" id="bigN">70.8%</div><div class="l" id="bigL">of games won, at 1.59M training steps</div></div>
     </div>
@@ -131,7 +131,7 @@ th { color: var(--ink-3); font-weight: 500; }
   <article class="prose">
     <h2>What we learned</h2>
     <p>The bot plays Pauper, a version of Magic that allows only cards printed at its most common rarity. We test it against Basilisk 1, the public bot it started from. Basilisk 1 won 1,936 of 3,888 games against a copy of itself (49.79%). On the same deals, the three trained versions won 8,253 of 11,664 games (70.76%). Training gained about 21 wins per 100 games.</p>
-    <p>Through the first million training steps, doubling practice added about 2.6 to 4.5 wins per 100 games. Across the later tests, another doubling of practice was worth an estimated 2.4 extra wins per 100 games. The latest pace looks slower, though the earlier pace still fits the data.</p>
+    <p>One training step is one small adjustment to the bot after a batch of 10 practice games, so 1.59 million steps means about 16 million games. Through the first million training steps, doubling practice added about 2.6 to 4.5 wins per 100 games. Across the later tests, another doubling of practice was worth an estimated 2.4 extra wins per 100 games. The latest pace looks slower, though the earlier pace still fits the data.</p>
     <p>So besides training longer, we are handing it decisions it used to skip: whether to throw back a bad opening hand (a mulligan), and when to respond during the opponent's turn. It will have to work out both on its own.</p>
     <h2>Next week</h2>
     <p>At the time of this analysis, two of the three training runs had played their 2.1-million-step test games. We hadn't opened their results yet. Starting from the million-step score, the later pace would put the bot near 72% at 2.1 million steps. A flat result would put it near 70%.</p>
