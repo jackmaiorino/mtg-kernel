@@ -1040,8 +1040,23 @@ impl ModelV1 {
         Ok(PickForwardV1 {
             model: self,
             rows,
-            hidden,
+            hidden: std::borrow::Cow::Owned(hidden),
         })
+    }
+
+    /// Borrows H from a caller that holds this immutable model and its card rows.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(crate) fn pick_forward_with_hidden<'m>(
+        &'m self,
+        rows: &'m ModelCardRowsV1,
+        hidden: &'m CardHiddenTableV1,
+    ) -> PickForwardV1<'m> {
+        debug_assert_eq!(hidden.trunk(), TrunkV1::Pick);
+        PickForwardV1 {
+            model: self,
+            rows,
+            hidden: std::borrow::Cow::Borrowed(hidden),
+        }
     }
 
     /// The build head over the build trunk's H, computed here once.
@@ -1054,8 +1069,23 @@ impl ModelV1 {
         Ok(BuildForwardV1 {
             model: self,
             rows,
-            hidden,
+            hidden: std::borrow::Cow::Owned(hidden),
         })
+    }
+
+    /// Borrows H from a caller that holds this immutable model and its card rows.
+    #[cfg(feature = "eternal-fixtures")]
+    pub(crate) fn build_forward_with_hidden<'m>(
+        &'m self,
+        rows: &'m ModelCardRowsV1,
+        hidden: &'m CardHiddenTableV1,
+    ) -> BuildForwardV1<'m> {
+        debug_assert_eq!(hidden.trunk(), TrunkV1::Build);
+        BuildForwardV1 {
+            model: self,
+            rows,
+            hidden: std::borrow::Cow::Borrowed(hidden),
+        }
     }
 }
 
@@ -1300,7 +1330,7 @@ fn resolve_pick_state(
 pub struct PickForwardV1<'m> {
     model: &'m ModelV1,
     rows: &'m ModelCardRowsV1,
-    hidden: CardHiddenTableV1,
+    hidden: std::borrow::Cow<'m, CardHiddenTableV1>,
 }
 
 impl PickForwardV1<'_> {
@@ -1383,7 +1413,7 @@ impl PickForwardV1<'_> {
 pub struct BuildForwardV1<'m> {
     model: &'m ModelV1,
     rows: &'m ModelCardRowsV1,
-    hidden: CardHiddenTableV1,
+    hidden: std::borrow::Cow<'m, CardHiddenTableV1>,
 }
 
 impl BuildForwardV1<'_> {

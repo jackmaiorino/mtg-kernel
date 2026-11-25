@@ -1,15 +1,17 @@
 #![cfg(feature = "eternal-fixtures")]
 
-use mtg_kernel::cube_draft_v1::{game_seed, CubePool, GameCaps, GameEnd};
-use mtg_kernel::cube_learned_seat_v1::{BuildInputs, PickInputs, SeatForward};
+use mtg_kernel::cube_draft_build_v1::model::{
+    training::fixture::{CAPPED_MEAN, DETERMINISTIC_HALT_MEAN, DROP_MEAN, UNLIMITED_MEAN},
+    ModelCardRowsV1,
+};
+use mtg_kernel::cube_draft_v1::{basic_land_ids, game_seed, CubePool, GameCaps, GameEnd};
 use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed, watchdog_game_end};
-use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot, SeatError};
+use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot};
 use mtg_kernel::cube_training_driver_v1::{
     check_stop_ledger, prune_checkpoint, run_two_action_part3, tripwire_games_for_test,
-    two_action_dropped_mean, CheckpointModel, CubeModelState, CubeUpdate, HeadUpdates,
-    LineageSegment, OptimizerOutput, ParameterSetState, PilotPin, PilotProvider, PilotSchedule,
-    PilotSelection, PilotSwitch, RunConfig, RunOutcome, Segment, TrainSets, TrainingDriver,
-    TrainingDriverError, TripwireMode, TripwireRule, TwoActionGradient, UpdateBatch,
+    two_action_dropped_mean, LineageSegment, PilotPin, PilotProvider, PilotSchedule,
+    PilotSelection, PilotSwitch, RunConfig, RunOutcome, Segment, TrainingDriver,
+    TrainingDriverError, TripwireMode, TripwireRule,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -54,98 +56,26 @@ fn pool() -> CubePool {
     .expect("cube pool")
 }
 
-fn parameters(value: u32) -> ParameterSetState {
-    ParameterSetState {
-        parameters: vec![value],
-        first_moment: vec![0],
-        second_moment: vec![0],
-        adam_step: 0,
-    }
+fn model_rows() -> Arc<ModelCardRowsV1> {
+    let mut ids = pool().ids().to_vec();
+    ids.extend(basic_land_ids().expect("basic ids"));
+    ids.sort_unstable();
+    ids.dedup();
+    let len = ids.len();
+    Arc::new(
+        ModelCardRowsV1::with_registry_basics_v1(ids, 1, vec![0.0; len], 1, vec![0.0; len])
+            .expect("fixture card rows"),
+    )
 }
 
-#[derive(Clone)]
-struct TestModel {
-    state: CubeModelState,
-}
+struct FixturePilot<P>(Arc<P>);
 
-impl TestModel {
-    fn new() -> Self {
-        Self {
-            state: CubeModelState {
-                build: parameters(0),
-                pick: parameters(100),
-                value: parameters(200),
-            },
-        }
-    }
-}
-
-impl SeatForward for TestModel {
-    fn pick_and_value(&self, input: &PickInputs<'_>) -> Result<(Vec<f32>, f32), SeatError> {
-        Ok((vec![0.0; input.pack.len()], 0.0))
-    }
-
-    fn count(&self, _pool: &[u16]) -> Result<[f32; 41], SeatError> {
-        Ok([0.0; 41])
-    }
-
-    fn pointer(&self, _input: &BuildInputs<'_>, remaining: &[u16]) -> Result<Vec<f32>, SeatError> {
-        Ok(vec![0.0; remaining.len()])
-    }
-
-    fn type_set(&self, _input: &BuildInputs<'_>, masks: &[u16]) -> Result<Vec<f32>, SeatError> {
-        Ok(vec![0.0; masks.len()])
-    }
-
-    fn split(&self, _input: &BuildInputs<'_>, bits: &[u16]) -> Result<Vec<f32>, SeatError> {
-        Ok(vec![0.0; bits.len()])
-    }
-}
-
-impl CheckpointModel for TestModel {
-    fn export_checkpoint(&self) -> CubeModelState {
-        self.state.clone()
-    }
-
-    fn import_checkpoint(state: &CubeModelState) -> Result<Self, String> {
-        Ok(Self {
-            state: state.clone(),
-        })
-    }
-
-    fn copy_build_trunk_to_pick(state: &mut CubeModelState) -> Result<(), String> {
-        state.pick.parameters = state.build.parameters.clone();
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct TestUpdate;
-
-impl CubeUpdate<TestModel> for TestUpdate {
-    fn replay_and_commit(
-        &mut self,
-        model: &mut TestModel,
-        batch: UpdateBatch<'_>,
-        sets: TrainSets,
-    ) -> Result<OptimizerOutput, String> {
-        assert_eq!(batch.pods.len(), 16);
-        assert!(!batch.league.is_empty());
-        let mut state = model.export_checkpoint();
-        for (enabled, set) in [
-            (sets.build, &mut state.build),
-            (sets.pick, &mut state.pick),
-            (sets.value, &mut state.value),
-        ] {
-            if enabled {
-                set.parameters[0] += 1;
-                set.first_moment[0] += 2;
-                set.second_moment[0] += 3;
-                set.adam_step += 1;
-            }
-        }
-        *model = TestModel { state };
-        Ok(OptimizerOutput::default())
+impl<P: GamePilot + Sync + 'static> PilotProvider for FixturePilot<P> {
+    fn load_checkpoint(
+        &self,
+        _pin: &PilotPin,
+    ) -> Result<Arc<dyn GamePilot + Sync>, TrainingDriverError> {
+        Ok(self.0.clone())
     }
 }
 
@@ -153,12 +83,20 @@ struct NaturalPilot;
 
 impl GamePilot for NaturalPilot {
     fn play(&self, spec: &AttemptSpec<'_>, _caps: &GameCaps) -> AttemptOutcome {
+        let deck_key = spec.decks[0]
+            .card_ids()
+            .into_iter()
+            .fold(spec.action_seed, |key, id| {
+                key.rotate_left(11)
+                    .wrapping_mul(0x9e37_79b9)
+                    .wrapping_add(u64::from(id))
+            });
         AttemptOutcome {
             decisions: 3,
             physical_decisions: Some(4),
             policy_steps: Some(5),
             end: GameEnd::Natural {
-                winner_seat: Some(spec.seats[(spec.action_seed % 2) as usize]),
+                winner_seat: Some(spec.seats[((deck_key ^ (deck_key >> 32)) % 2) as usize]),
                 reason: "fixture".to_owned(),
             },
             last_action_source: None,
@@ -233,29 +171,12 @@ impl GamePilot for OneHaltPilot {
     }
 }
 
-struct CheckpointPilotProvider;
-
-impl PilotProvider for CheckpointPilotProvider {
-    fn load_checkpoint(
-        &self,
-        _pin: &PilotPin,
-    ) -> Result<Arc<dyn GamePilot + Sync>, TrainingDriverError> {
-        Ok(Arc::new(NaturalPilot))
-    }
-}
-
-impl PilotProvider for NaturalPilot {
-    fn load_checkpoint(
-        &self,
-        _pin: &PilotPin,
-    ) -> Result<Arc<dyn GamePilot + Sync>, TrainingDriverError> {
-        Ok(Arc::new(NaturalPilot))
-    }
-}
-
 fn config(root: &Path, run: &str, segment: Segment, updates: u64) -> RunConfig {
     let mut config = RunConfig::shakedown(root, run, segment);
     config.update_range = [0, updates];
+    config.label = "test".to_owned();
+    config.namespace = "test".to_owned();
+    config.pilot.initial = PilotSelection::Checkpoint { pin: pilot_pin() };
     config
 }
 
@@ -298,41 +219,32 @@ fn directory_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 
 #[test]
 fn two_action_part3_uses_real_replay_cap_and_stop() {
-    struct Derivative;
-    impl TwoActionGradient for Derivative {
-        fn derivative(&self, outcome: [u8; 2]) -> f64 {
-            let result = f64::from(outcome[0]) - f64::from(outcome[1]);
-            let mut derivative = 0.0;
-            for action in outcome {
-                let seat_result = if action == outcome[0] {
-                    result
-                } else {
-                    -result
-                };
-                derivative += -0.5 * seat_result * (f64::from(action) - 0.5);
-            }
-            derivative
-        }
-    }
-
     let temp = TempTestDir::new("two-action");
-    let gradient = Derivative;
-    let report = run_two_action_part3(&temp.join("half"), &gradient, false).expect("part 3");
+    let report = run_two_action_part3(&temp.join("half"), false).expect("part 3");
     assert_eq!(report.published_batches, 63);
     assert_eq!(report.stopped_batches, 1);
-    assert!((report.published_mean - -31.0 / 126.0).abs() < 1e-12);
-    assert_ne!(report.published_mean, -0.25);
-    assert!((two_action_dropped_mean(&gradient) - -3.0 / 14.0).abs() < 1e-12);
+    assert!((report.published_mean - CAPPED_MEAN).abs() < 1e-12);
+    assert_ne!(report.published_mean, UNLIMITED_MEAN);
+    assert!((two_action_dropped_mean() - DROP_MEAN).abs() < 1e-12);
     assert_eq!(
         check_stop_ledger(&temp.join("half")),
         Err(TrainingDriverError::StoppedWithoutResolution)
     );
 
     let deterministic =
-        run_two_action_part3(&temp.join("always"), &gradient, true).expect("deterministic halt");
+        run_two_action_part3(&temp.join("always"), true).expect("deterministic halt");
     assert_eq!(deterministic.published_batches, 3);
     assert_eq!(deterministic.stopped_batches, 1);
-    assert!((deterministic.published_mean - -1.0 / 6.0).abs() < 1e-12);
+    assert!((deterministic.published_mean - DETERMINISTIC_HALT_MEAN).abs() < 1e-12);
+    for root in [temp.join("half"), temp.join("always")] {
+        assert!(!root.join("updates").exists());
+        let stop: serde_json::Value = serde_json::from_slice(
+            &fs::read(root.join("stops/stop-0000.json")).expect("fixture stop"),
+        )
+        .expect("fixture stop JSON");
+        assert_eq!(stop["kind"], "retry_exhausted");
+        assert_eq!(stop["attempts"].as_array().expect("attempts").len(), 4);
+    }
 }
 
 #[test]
@@ -341,12 +253,12 @@ fn head_updates_and_optimizer_state_cross_the_segment_boundary() {
     let cube = pool();
     let mut builder = TrainingDriver::open(
         config(&temp.join("b1"), "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .expect("open builder");
     assert_eq!(
-        builder.run_next_update(&cube, &NaturalPilot),
+        builder.run_next_update(&cube, &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
     let heads = builder.head_updates();
@@ -361,25 +273,45 @@ fn head_updates_and_optimizer_state_cross_the_segment_boundary() {
     let mut picks = TrainingDriver::start_pick_phase(
         &builder,
         config(&temp.join("k1"), "k1", Segment::PickPhase, 1),
-        TestUpdate,
     )
     .expect("start pick phase");
     let initial = picks.checkpoint().expect("pick checkpoint");
     assert_eq!(initial.head_updates, heads);
+    assert_eq!(initial.model.build, builder_state.model.build);
     assert_eq!(
+        initial.model.value.parameters,
+        builder_state.model.value.parameters
+    );
+    assert_ne!(
         initial.model.pick.parameters,
-        builder_state.model.build.parameters
+        builder_state.model.pick.parameters
     );
     assert_eq!(initial.model.pick.adam_step, 0);
+    assert!(builder_state
+        .model
+        .build
+        .first_moment
+        .iter()
+        .any(|&value| value != 0));
     assert_eq!(initial.model.value.adam_step, 0);
-    assert_eq!(initial.model.pick.first_moment, vec![0]);
-    assert_eq!(initial.model.value.second_moment, vec![0]);
+    assert!(initial
+        .model
+        .pick
+        .first_moment
+        .iter()
+        .all(|&value| value == 0));
+    assert!(initial
+        .model
+        .value
+        .second_moment
+        .iter()
+        .all(|&value| value == 0));
     assert_eq!(initial.model.build.adam_step, 1);
     assert_eq!(picks.league().len(), builder.league().len());
     assert!(temp.join("k1").join(&picks.league()[0].path).exists());
 
     assert_eq!(
-        picks.run_next_update(&cube, &NaturalPilot),
+        picks.run_next_update(&cube, &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
     let heads = picks.head_updates();
@@ -408,8 +340,8 @@ fn pinned_league_snapshot_cannot_be_pruned() {
     let temp = TempTestDir::new("pinned");
     let driver = TrainingDriver::open(
         config(&temp.join("b1"), "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .expect("open");
     let snapshot = temp.join("b1").join(&driver.league()[0].path);
@@ -432,7 +364,7 @@ fn uniform_pilot_lineage_is_refused_outside_shakedown() {
         run: "b1".to_owned(),
         pilots: vec![mtg_kernel::cube_pod_runner_v1::PilotKind::Uniform],
     }];
-    let error = TrainingDriver::open_with_lineage(config, TestModel::new(), TestUpdate, lineage)
+    let error = TrainingDriver::open_with_lineage(config, model_rows(), 1234, lineage)
         .err()
         .expect("uniform lineage must fail");
     assert!(error.to_string().contains("uniform-pilot lineage"));
@@ -451,9 +383,9 @@ fn missing_gate_pin_pauses_before_touching_a_batch() {
             gate: None,
         }),
     };
-    let mut driver = TrainingDriver::open(config, TestModel::new(), TestUpdate).expect("open");
+    let mut driver = TrainingDriver::open(config, model_rows(), 1234).expect("open");
     assert_eq!(
-        driver.run_next_update(&pool(), &CheckpointPilotProvider),
+        driver.run_next_update(&pool(), &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Paused { update: 0 })
     );
     assert!(!temp.join("k2/pending/update-0000").exists());
@@ -462,7 +394,7 @@ fn missing_gate_pin_pauses_before_touching_a_batch() {
 
     driver.set_gate_pin(pilot_pin()).expect("pin gate");
     assert_eq!(
-        driver.run_next_update(&pool(), &CheckpointPilotProvider),
+        driver.run_next_update(&pool(), &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
 }
@@ -473,12 +405,12 @@ fn cap_stop_publishes_nothing_and_resume_refuses_without_resolution() {
     let root = temp.join("b1");
     let mut driver = TrainingDriver::open(
         config(&root, "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .expect("open");
     assert_eq!(
-        driver.run_next_update(&pool(), &AlwaysHaltPilot),
+        driver.run_next_update(&pool(), &FixturePilot(Arc::new(AlwaysHaltPilot))),
         Ok(RunOutcome::Stopped {
             update: 0,
             kind: "retry_exhausted".to_owned(),
@@ -489,21 +421,26 @@ fn cap_stop_publishes_nothing_and_resume_refuses_without_resolution() {
     assert!(!root.join("pending/update-0000").exists());
     let error = TrainingDriver::open(
         config(&root, "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .err()
     .expect("stopped run must refuse resume");
     assert_eq!(error, TrainingDriverError::StoppedWithoutResolution);
+    fs::write(root.join("stops/stop-0000.resolution.json"), b"{}").expect("fixture resolution");
+    assert_eq!(
+        check_stop_ledger(&root),
+        Err(TrainingDriverError::StoppedRequiresRestart)
+    );
 }
 
 #[test]
 fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     let temp = TempTestDir::new("resume");
     let cube = pool();
-    let pod_seed = pod_play_seed("shakedown-pods", "b1", 0).expect("pod seed");
+    let pod_seed = pod_play_seed("test", "b1", 0).expect("pod seed");
     let target_action_seed = attempt_seeds(game_seed(pod_seed, 0), 0).2;
-    let pilot = OneHaltPilot { target_action_seed };
+    let pilot = FixturePilot(Arc::new(OneHaltPilot { target_action_seed }));
     let rules = TripwireMode::Full {
         rules: vec![TripwireRule::stop_kind_rate("decision_cap", 0.0)],
     };
@@ -511,8 +448,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     let uninterrupted_root = temp.join("direct");
     let mut direct_config = config(&uninterrupted_root, "b1", Segment::BuilderOnly, 2);
     direct_config.tripwire = rules.clone();
-    let mut direct =
-        TrainingDriver::open(direct_config, TestModel::new(), TestUpdate).expect("direct");
+    let mut direct = TrainingDriver::open(direct_config, model_rows(), 1234).expect("direct");
     assert_eq!(
         direct.run_next_update(&cube, &pilot),
         Ok(RunOutcome::Published { update: 0 })
@@ -528,8 +464,8 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     let resumed_root = temp.join("resumed");
     let mut resumed_config = config(&resumed_root, "b1", Segment::BuilderOnly, 2);
     resumed_config.tripwire = rules.clone();
-    let mut resumed = TrainingDriver::open(resumed_config.clone(), TestModel::new(), TestUpdate)
-        .expect("resumed");
+    let mut resumed =
+        TrainingDriver::open(resumed_config.clone(), model_rows(), 1234).expect("resumed");
     assert_eq!(
         resumed.run_next_update(&cube, &pilot),
         Ok(RunOutcome::Published { update: 0 })
@@ -541,8 +477,8 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     )
     .expect("simulate committed pending update");
 
-    let mut resumed = TrainingDriver::open(resumed_config, TestModel::new(), TestUpdate)
-        .expect("recover committed update");
+    let mut resumed =
+        TrainingDriver::open(resumed_config, model_rows(), 1234).expect("recover committed update");
     assert_eq!(resumed.next_update(), 1);
     assert_eq!(
         resumed.run_next_update(&cube, &pilot),
@@ -555,17 +491,23 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
         tripwire_games_for_test(&resumed_root, &rules).expect("games"),
         2_240
     );
+    let stop: serde_json::Value = serde_json::from_slice(
+        &fs::read(resumed_root.join("stops/stop-0000.json")).expect("window stop"),
+    )
+    .expect("window stop JSON");
+    assert_eq!(stop["firing"]["denominator"], 2_240);
+    assert_eq!(stop["firing"]["games"], 1);
     assert_eq!(
         directory_bytes(&uninterrupted_root),
         directory_bytes(&resumed_root)
     );
 
     fs::remove_file(resumed_root.join("stops/stop-0000.json")).expect("remove ledger copy");
-    let before = directory_bytes(&resumed_root);
+    let before = directory_bytes(&uninterrupted_root);
     let error = TrainingDriver::open(
         config(&resumed_root, "b1", Segment::BuilderOnly, 2),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .err()
     .expect("recovery restores the stop then refuses");
@@ -581,18 +523,17 @@ fn worker_count_does_not_change_pods_or_checkpoint() {
     let twelve_root = temp.join("twelve");
     let mut one_config = config(&one_root, "b1", Segment::BuilderOnly, 1);
     one_config.workers = 1;
-    let mut one =
-        TrainingDriver::open(one_config, TestModel::new(), TestUpdate).expect("one worker");
+    let mut one = TrainingDriver::open(one_config, model_rows(), 1234).expect("one worker");
     assert_eq!(
-        one.run_next_update(&cube, &NaturalPilot),
+        one.run_next_update(&cube, &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
     let mut twelve_config = config(&twelve_root, "b1", Segment::BuilderOnly, 1);
     twelve_config.workers = 12;
     let mut twelve =
-        TrainingDriver::open(twelve_config, TestModel::new(), TestUpdate).expect("twelve workers");
+        TrainingDriver::open(twelve_config, model_rows(), 1234).expect("twelve workers");
     assert_eq!(
-        twelve.run_next_update(&cube, &NaturalPilot),
+        twelve.run_next_update(&cube, &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
     for name in ["pods.json", "checkpoint.json"] {
@@ -610,30 +551,30 @@ fn first_watchdog_expiry_reruns_the_same_batch_once() {
     let cube = pool();
     let rerun_root = temp.join("rerun");
     let direct_root = temp.join("direct");
-    let pilot = FirstWatchdogPilot {
+    let pilot = FixturePilot(Arc::new(FirstWatchdogPilot {
         fired: AtomicBool::new(false),
-    };
+    }));
     let mut rerun = TrainingDriver::open(
         config(&rerun_root, "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .expect("rerun driver");
     assert_eq!(
         rerun.run_next_update(&cube, &pilot),
         Ok(RunOutcome::Published { update: 0 })
     );
-    assert!(pilot.fired.load(Ordering::SeqCst));
+    assert!(pilot.0.fired.load(Ordering::SeqCst));
     assert!(!rerun_root.join("stops").exists());
 
     let mut direct = TrainingDriver::open(
         config(&direct_root, "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .expect("direct driver");
     assert_eq!(
-        direct.run_next_update(&cube, &NaturalPilot),
+        direct.run_next_update(&cube, &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
     assert_eq!(directory_bytes(&rerun_root), directory_bytes(&direct_root));
@@ -643,14 +584,14 @@ fn first_watchdog_expiry_reruns_the_same_batch_once() {
 fn repeat_watchdog_on_same_game_number_in_another_pod_is_not_a_hang() {
     let temp = TempTestDir::new("watchdog-two-pods");
     let root = temp.join("b1");
-    let pilot = RepeatWatchdogPilot {
+    let pilot = FixturePilot(Arc::new(RepeatWatchdogPilot {
         calls: AtomicUsize::new(0),
-        second_call: 70,
-    };
+        second_call: 71,
+    }));
     let mut driver = TrainingDriver::open(
         config(&root, "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .expect("driver");
     assert_eq!(
@@ -678,8 +619,8 @@ fn invalid_pending_batch_is_abandoned_not_published() {
     fs::write(root.join("pending/update-0000/partial.txt"), b"lost").expect("partial write");
     let error = TrainingDriver::open(
         config(&root, "b1", Segment::BuilderOnly, 1),
-        TestModel::new(),
-        TestUpdate,
+        model_rows(),
+        1234,
     )
     .err()
     .expect("unfinished batch stops the run");

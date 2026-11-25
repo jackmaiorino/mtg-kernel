@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use crate::card_def::CARD_DEFS;
 use crate::cube_draft_v1::{basic_land_ids, Deck, DECK_CARDS, PACK_SIZE, POOL_CARDS, ROUNDS};
-use crate::cube_m4_sampler_v1::{draw, SAMPLER_ID};
 use crate::cube_seat_v1::{
     canonical_deck, BuildOutcome, BuildRows, DecisionKind, DecisionRow, PassDirection, PickOutcome,
     SeatBuilder, SeatError, SeatPickView, SeatPicker,
 };
+use crate::m4_sampler_v1::{sample_v1, GRID_SIZE, SAMPLER_ID_V1};
 use crate::state::SplitMix64;
-use crate::training_math_v1::TrainingMathV1;
 
 /// D2's five pick inputs. All three sets are in ascending registry order.
 pub struct PickInputs<'a> {
@@ -95,24 +94,22 @@ fn decide(
     }
     // Every vector is compacted before this call, including type-set masks.
     let enabled = vec![true; options.len()];
-    let (drawn, log_probs) = draw(logits, &enabled, word);
-    if drawn >= options.len() || log_probs.len() != options.len() {
-        return Err(invalid("invalid sampler output shape"));
-    }
+    let sample =
+        sample_v1(logits, &enabled, word).map_err(|error| SeatError::Seat(error.to_string()))?;
     let index = match specified {
         Some(chosen) => options
             .binary_search(&chosen)
             .map_err(|_| invalid("infeasible choice"))?,
-        None => drawn,
+        None => sample.selected_index,
     };
-    let log_prob = log_probs[index];
-    let probability = TrainingMathV1::PortableV1.exp_f64_v1(log_prob);
+    let log_prob = sample.log_probabilities[index];
+    let probability = sample.counts[index] as f64 / GRID_SIZE as f64;
     Ok(Decision {
         index,
         log_prob,
         row: DecisionRow {
             kind,
-            sampler: SAMPLER_ID.into(),
+            sampler: SAMPLER_ID_V1.into(),
             options: options.to_vec(),
             chosen: options[index],
             stream_values: vec![word],
@@ -371,7 +368,7 @@ pub fn try_build_path_log_prob(
 ) -> Result<f64, SeatError> {
     let path = walk_build(params, pool, |step, options, logits| {
         let row = step.recorded(rows)?;
-        if row.kind != step.kind() || row.sampler != SAMPLER_ID || row.options != options {
+        if row.kind != step.kind() || row.sampler != SAMPLER_ID_V1 || row.options != options {
             return Err(invalid("inconsistent recorded build options"));
         }
         decide(

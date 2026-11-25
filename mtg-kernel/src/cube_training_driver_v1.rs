@@ -1,5 +1,17 @@
 //! Training segments, checkpoints, league snapshots and durable resume for M4.
 
+pub use crate::cube_draft_build_v1::model::training::HeadUpdates;
+use crate::cube_draft_build_v1::model::{
+    training::{
+        fixture::{halt_cases, HaltCase},
+        Optimizer,
+    },
+    ModelCardRowsV1, ModelV1,
+};
+#[path = "cube_training_driver_model_v1.rs"]
+mod model;
+use model::TrainingModel;
+
 use crate::cube_draft_v1::{uniform_index, CubePool, GameEnd, SEATS};
 use crate::cube_learned_seat_v1::{LearnedSeatBuilder, LearnedSeatPicker, SeatForward};
 use crate::cube_pod_runner_v1::{
@@ -10,8 +22,8 @@ use crate::cube_pod_runner_v1::{
 };
 use crate::cube_read_plan_v1::sha256_hex;
 use crate::cube_seat_v1::{
-    AttemptOutcome, AttemptSpec, DecisionKind, GamePilot, UniformPilot, UniformSeatPicker,
-    LEARNED_SAMPLER_ID, M4_INTERFACES_VERSION,
+    AttemptOutcome, AttemptSpec, GamePilot, UniformPilot, UniformSeatPicker, LEARNED_SAMPLER_ID,
+    M4_INTERFACES_VERSION,
 };
 use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
 use crate::state::SplitMix64;
@@ -337,6 +349,8 @@ pub struct RunConfig {
     pub train_sets: TrainSets,
     pub pilot: PilotSchedule,
     pub tripwire: TripwireMode,
+    #[serde(default)]
+    pub tripwire_window_games: Vec<u64>,
     pub pins: PodPins,
     pub metadata: CheckpointMetadata,
     pub caps: crate::cube_pod_runner_v1::PodCaps,
@@ -359,6 +373,7 @@ impl RunConfig {
             train_sets,
             pilot: PilotSchedule::uniform(),
             tripwire: TripwireMode::Q9,
+            tripwire_window_games: Vec::new(),
             pins: PodPins::default(),
             metadata: CheckpointMetadata::default(),
             caps: crate::cube_pod_runner_v1::PodCaps::training_a2(),
@@ -468,103 +483,11 @@ impl CubeModelState {
     }
 }
 
-pub trait CheckpointModel: SeatForward + Sized {
-    fn export_checkpoint(&self) -> CubeModelState;
-    fn import_checkpoint(state: &CubeModelState) -> Result<Self, String>;
-    fn copy_build_trunk_to_pick(state: &mut CubeModelState) -> Result<(), String>;
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptimizerOutput {
     pub losses: BTreeMap<String, f64>,
     pub gradient_norms: BTreeMap<String, f64>,
-}
-
-pub struct UpdateBatch<'a> {
-    pub pods: &'a [PodRecord],
-    pub league: &'a BTreeMap<String, Arc<dyn SeatForward>>,
-}
-
-/// D4's complete update boundary. It replays every current and older learned
-/// row, computes all losses and backward passes, and applies one Adam step per
-/// trained set. All mutable optimizer state is exported through the model.
-pub trait CubeUpdate<M: CheckpointModel> {
-    fn replay_and_commit(
-        &mut self,
-        model: &mut M,
-        batch: UpdateBatch<'_>,
-        sets: TrainSets,
-    ) -> Result<OptimizerOutput, String>;
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HeadUpdates {
-    pub pick: u64,
-    pub value: u64,
-    pub count: u64,
-    pub pointer: u64,
-    pub type_set: u64,
-    pub split: u64,
-}
-
-impl HeadUpdates {
-    fn increment(
-        &mut self,
-        pods: &[PodRecord],
-        sets: TrainSets,
-    ) -> Result<(), TrainingDriverError> {
-        let mut learned = [false; 6];
-        for pod in pods {
-            for chair in &pod.chairs {
-                if chair.role != crate::cube_pod_runner_v1::ChairRole::Learning {
-                    continue;
-                }
-                for row in &chair.pick_rows {
-                    if row.kind == DecisionKind::Pick {
-                        learned[0] = true;
-                        learned[1] |= row.value_bits.is_some();
-                    }
-                }
-            }
-            for deck in &pod.decks {
-                if deck.chair.is_none_or(|chair| {
-                    pod.chairs.get(usize::from(chair)).is_none_or(|record| {
-                        record.role != crate::cube_pod_runner_v1::ChairRole::Learning
-                    })
-                }) {
-                    continue;
-                }
-                let Some(rows) = &deck.build_rows else {
-                    continue;
-                };
-                learned[2] = true;
-                learned[3] |= !rows.pointer.is_empty();
-                learned[4] |= rows.type_set.is_some();
-                learned[5] |= !rows.split.is_empty();
-            }
-        }
-        let enabled = [
-            sets.pick, sets.value, sets.build, sets.build, sets.build, sets.build,
-        ];
-        let counts = [
-            &mut self.pick,
-            &mut self.value,
-            &mut self.count,
-            &mut self.pointer,
-            &mut self.type_set,
-            &mut self.split,
-        ];
-        for ((count, present), unfrozen) in counts.into_iter().zip(learned).zip(enabled) {
-            if present && unfrozen {
-                *count = count
-                    .checked_add(1)
-                    .ok_or_else(|| invalid("head update count overflow"))?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -728,29 +651,39 @@ struct TripwireWindow {
     card_denominator: BTreeMap<u16, u64>,
 }
 
-impl TripwireWindow {
-    fn merge(&mut self, other: &Self) {
-        self.games += other.games;
-        for (target, count) in &other.stop_games {
-            *self.stop_games.entry(target.clone()).or_default() += count;
-        }
-        for (target, count) in &other.card_games {
-            *self.card_games.entry(*target).or_default() += count;
-        }
-        for (target, count) in &other.card_denominator {
-            *self.card_denominator.entry(*target).or_default() += count;
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct TripwireTracker {
-    closed: Vec<TripwireWindow>,
+    window_sizes: Vec<u64>,
+    closed_games: u64,
+    closed_windows: usize,
     open: TripwireWindow,
     firing: Option<TripwireFiring>,
 }
 
+fn tripwire_window_sizes(games: u64) -> Vec<u64> {
+    let windows = games / TRIPWIRE_WINDOW_GAMES;
+    let tail = games % TRIPWIRE_WINDOW_GAMES;
+    let mut sizes = vec![TRIPWIRE_WINDOW_GAMES; windows as usize];
+    if tail > 0 {
+        match sizes.last_mut() {
+            Some(last) if tail < TRIPWIRE_TAIL_MERGE_GAMES => *last += tail,
+            _ => sizes.push(tail),
+        }
+    }
+    sizes
+}
+
 impl TripwireTracker {
+    fn new(window_sizes: Vec<u64>) -> Self {
+        Self {
+            window_sizes,
+            closed_games: 0,
+            closed_windows: 0,
+            open: TripwireWindow::default(),
+            firing: None,
+        }
+    }
+
     fn rule_match(
         rules: &[TripwireRule],
         window: &TripwireWindow,
@@ -822,15 +755,16 @@ impl TripwireTracker {
             *self.open.card_denominator.entry(card).or_default() += 1;
         }
         if self.firing.is_none() {
-            let index = self.closed.len() as u64;
+            let index = self.closed_windows as u64;
             self.firing = Self::rule_match(rules, &self.open, index, true, false);
         }
-        if self.open.games == TRIPWIRE_WINDOW_GAMES {
+        if self.window_sizes.get(self.closed_windows) == Some(&self.open.games) {
             if self.firing.is_none() {
-                let index = self.closed.len() as u64;
+                let index = self.closed_windows as u64;
                 self.firing = Self::rule_match(rules, &self.open, index, false, true);
             }
-            self.closed.push(std::mem::take(&mut self.open));
+            self.closed_windows += 1;
+            self.closed_games += std::mem::take(&mut self.open).games;
         }
     }
 
@@ -901,22 +835,6 @@ impl TripwireTracker {
             self.add_game(&game_decks, &halted, rules);
         }
         Ok(())
-    }
-
-    fn finish_segment(&mut self, rules: &[TripwireRule]) {
-        if self.open.games == 0 || self.open.games >= TRIPWIRE_TAIL_MERGE_GAMES {
-            return;
-        }
-        let Some(mut previous) = self.closed.pop() else {
-            return;
-        };
-        previous.merge(&self.open);
-        self.open = TripwireWindow::default();
-        if self.firing.is_none() {
-            let index = self.closed.len() as u64;
-            self.firing = Self::rule_match(rules, &previous, index, true, true);
-        }
-        self.closed.push(previous);
     }
 }
 
@@ -1215,9 +1133,9 @@ fn read_pods(path: &Path) -> Result<Vec<Value>, TrainingDriverError> {
 fn rebuild_tripwire(
     root: &Path,
     mode: &TripwireMode,
-    segment_complete: bool,
+    window_sizes: Vec<u64>,
 ) -> Result<TripwireTracker, TrainingDriverError> {
-    let mut tracker = TripwireTracker::default();
+    let mut tracker = TripwireTracker::new(window_sizes);
     let rules = rules_for(mode);
     for update in published_update_indices(root)? {
         for pod in read_pods(
@@ -1228,9 +1146,6 @@ fn rebuild_tripwire(
         )? {
             tracker.add_pod_json(&pod, rules)?;
         }
-    }
-    if segment_complete {
-        tracker.finish_segment(rules);
     }
     Ok(tracker)
 }
@@ -1305,55 +1220,117 @@ enum CollectFailure {
     Error(TrainingDriverError),
 }
 
-pub struct TrainingDriver<M: CheckpointModel, O: CubeUpdate<M>> {
+fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecord {
+    let pod = failure.pod;
+    let stop = pod.stop.clone();
+    let attempts = stop
+        .as_ref()
+        .map_or_else(Vec::new, |stop| stop.attempts.clone());
+    let mut batch = failure.completed;
+    batch.push(pod.clone());
+    StopRecord {
+        schema: STOP_SCHEMA.to_owned(),
+        kind: if batch.iter().any(|pod| {
+            pod.games.iter().any(|game| {
+                game.attempts
+                    .iter()
+                    .any(|attempt| is_watchdog_end(&attempt.end))
+            })
+        }) {
+            "watchdog_stop".to_owned()
+        } else {
+            "retry_exhausted".to_owned()
+        },
+        run: run.to_owned(),
+        update,
+        pod: Some(pod.pod_index),
+        pairing: stop.as_ref().and_then(|stop| stop.pairing),
+        game: stop.as_ref().map(|stop| stop.game),
+        decks: stop.as_ref().map(|stop| stop.decks),
+        attempts,
+        hang: None,
+        first_watchdog_pod: None,
+        first_watchdog_game: None,
+        second_watchdog_pod: None,
+        second_watchdog_game: None,
+        firing: None,
+        batch: batch
+            .iter()
+            .map(|pod| serde_json::to_value(pod).expect("pod json"))
+            .collect(),
+    }
+}
+
+pub struct TrainingDriver {
     config: RunConfig,
-    model: Arc<M>,
-    optimizer: O,
+    model: Arc<TrainingModel>,
+    optimizer: Optimizer,
+    rows: Arc<ModelCardRowsV1>,
     next_update: u64,
-    head_updates: HeadUpdates,
     lineage: Vec<LineageSegment>,
     league: Vec<LeagueEntry>,
     current_pin: String,
     tripwire: TripwireTracker,
 }
 
-impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
-    pub fn open(config: RunConfig, model: M, optimizer: O) -> Result<Self, TrainingDriverError> {
-        Self::open_from_state(
-            config,
-            model.export_checkpoint(),
-            optimizer,
-            HeadUpdates::default(),
-            Vec::new(),
-            Vec::new(),
-        )
+impl TrainingDriver {
+    pub fn open(
+        config: RunConfig,
+        rows: Arc<ModelCardRowsV1>,
+        init_seed: u64,
+    ) -> Result<Self, TrainingDriverError> {
+        Self::open_with_lineage(config, rows, init_seed, Vec::new())
     }
 
     pub fn open_with_lineage(
         config: RunConfig,
-        model: M,
-        optimizer: O,
+        rows: Arc<ModelCardRowsV1>,
+        init_seed: u64,
         lineage: Vec<LineageSegment>,
     ) -> Result<Self, TrainingDriverError> {
-        Self::open_from_state(
-            config,
-            model.export_checkpoint(),
-            optimizer,
-            HeadUpdates::default(),
-            lineage,
-            Vec::new(),
+        let model = ModelV1::initialise_v1(
+            rows.rows(),
+            rows.table_width(),
+            rows.dense_width(),
+            init_seed,
         )
+        .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+        let optimizer = Optimizer::new(&model);
+        Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new())
     }
 
     fn open_from_state(
-        config: RunConfig,
-        initial_model: CubeModelState,
-        optimizer: O,
-        initial_heads: HeadUpdates,
+        mut config: RunConfig,
+        rows: Arc<ModelCardRowsV1>,
+        initial_model: ModelV1,
+        initial_optimizer: Optimizer,
         initial_lineage: Vec<LineageSegment>,
         initial_league: Vec<LeagueEntry>,
     ) -> Result<Self, TrainingDriverError> {
+        let layout = initial_model
+            .parameter_layout_sha256()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        if config.metadata.parameter_layout_sha256.is_empty() {
+            config.metadata.parameter_layout_sha256 = layout.clone();
+        } else if config.metadata.parameter_layout_sha256 != layout {
+            return Err(invalid(
+                "configured parameter layout differs from the model",
+            ));
+        }
         config.validate()?;
+        let scheduled_games = config.update_range[1]
+            .checked_mul(PODS_PER_UPDATE * crate::cube_pod_runner_v1::TRAINING_POD_GAMES as u64)
+            .ok_or_else(|| invalid("scheduled game count overflow"))?;
+        let window_sizes = tripwire_window_sizes(scheduled_games);
+        if !config.tripwire_window_games.is_empty() && config.tripwire_window_games != window_sizes
+        {
+            return Err(invalid(
+                "tripwire window layout differs from the update range",
+            ));
+        }
+        config.tripwire_window_games = window_sizes;
         if config.label != "shakedown"
             && initial_lineage
                 .iter()
@@ -1379,6 +1356,7 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
                 || saved.caps != config.caps
                 || saved.pins != config.pins
                 || saved.metadata != config.metadata
+                || saved.tripwire_window_games != config.tripwire_window_games
                 || saved.tripwire != config.tripwire
                 || !saved.pilot.compatible_resume(&config.pilot)
             {
@@ -1407,18 +1385,21 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             (
                 Checkpoint::new(
                     &config,
-                    initial_model,
+                    CubeModelState::from_model(&initial_model, &initial_optimizer),
                     initial_league.clone(),
                     0,
                     initial_lineage,
                     vec![CheckpointPinReason::SegmentStart],
-                    initial_heads,
+                    initial_optimizer.head_updates,
                 )?,
                 true,
             )
         };
         checkpoint.validate()?;
-        if checkpoint.run != config.run || checkpoint.segment != config.segment {
+        if checkpoint.run != config.run
+            || checkpoint.segment != config.segment
+            || checkpoint.parameter_layout_sha256 != layout
+        {
             return Err(invalid("checkpoint belongs to another segment"));
         }
         if config.label != "shakedown"
@@ -1439,8 +1420,11 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             publish_bytes(&initial_path, &json_bytes(&checkpoint)?)?;
         }
         let next_update = indices.last().map_or(0, |update| update + 1);
-        let segment_complete = next_update == config.total_updates();
-        let tripwire = rebuild_tripwire(&config.root, &config.tripwire, segment_complete)?;
+        let tripwire = rebuild_tripwire(
+            &config.root,
+            &config.tripwire,
+            config.tripwire_window_games.clone(),
+        )?;
         if tripwire.firing.is_some() && !indices.is_empty() {
             let last = *indices.last().unwrap();
             if !config
@@ -1453,14 +1437,18 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
                 return Err(invalid("a published tripwire firing has no stop record"));
             }
         }
+        let (model, optimizer) = checkpoint
+            .model
+            .restore(initial_model, checkpoint.head_updates)
+            .map_err(TrainingDriverError::Update)?;
         Ok(Self {
-            current_pin: checkpoint.state_sha256.clone(),
+            current_pin: checkpoint.state_sha256,
             model: Arc::new(
-                M::import_checkpoint(&checkpoint.model).map_err(TrainingDriverError::Update)?,
+                TrainingModel::new(model, rows.clone()).map_err(TrainingDriverError::Update)?,
             ),
             optimizer,
+            rows,
             next_update,
-            head_updates: checkpoint.head_updates,
             lineage: checkpoint.lineage.clone(),
             league: checkpoint.league.clone(),
             tripwire,
@@ -1471,9 +1459,10 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
     pub fn start_pick_phase(
         previous: &Self,
         mut config: RunConfig,
-        optimizer: O,
     ) -> Result<Self, TrainingDriverError> {
-        if config.segment != Segment::PickPhase
+        check_stop_ledger(&previous.config.root)?;
+        if previous.config.segment != Segment::BuilderOnly
+            || config.segment != Segment::PickPhase
             || previous.next_update != previous.config.total_updates()
         {
             return Err(invalid(
@@ -1484,6 +1473,10 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             return Err(invalid(
                 "the pick phase needs a new run id in the same namespace",
             ));
+        }
+        if config.metadata.parameter_layout_sha256.is_empty() {
+            config.metadata.parameter_layout_sha256 =
+                previous.config.metadata.parameter_layout_sha256.clone();
         }
         if config.pins != previous.config.pins || config.metadata != previous.config.metadata {
             return Err(invalid("the segment boundary changed model or input pins"));
@@ -1498,10 +1491,14 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
                 publish_bytes(&destination, &fs::read(source)?)?;
             }
         }
-        let mut state = previous.model.export_checkpoint();
-        M::copy_build_trunk_to_pick(&mut state).map_err(TrainingDriverError::Update)?;
+        let mut model = previous.model.parameters().clone();
+        model.copy_build_trunk_to_pick_trunk();
+        let mut state = CubeModelState::from_model(&model, &previous.optimizer);
         state.pick.reset_optimizer();
         state.value.reset_optimizer();
+        let (model, optimizer) = state
+            .restore(model, previous.head_updates())
+            .map_err(TrainingDriverError::Update)?;
         let lineage = if previous.lineage.iter().any(|entry| {
             entry.segment == previous.config.segment && entry.run == previous.config.run
         }) {
@@ -1518,9 +1515,9 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
         config.label = previous.config.label.clone();
         Self::open_from_state(
             config,
-            state,
+            previous.rows.clone(),
+            model,
             optimizer,
-            previous.head_updates,
             lineage,
             previous.league.clone(),
         )
@@ -1529,17 +1526,17 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
     pub fn checkpoint(&self) -> Result<Checkpoint, TrainingDriverError> {
         Checkpoint::new(
             &self.config,
-            self.model.export_checkpoint(),
+            CubeModelState::from_model(self.model.parameters(), &self.optimizer),
             self.league.clone(),
             self.next_update,
             self.lineage.clone(),
             pin_reasons(&self.config, self.next_update),
-            self.head_updates,
+            self.head_updates(),
         )
     }
 
     pub fn head_updates(&self) -> HeadUpdates {
-        self.head_updates
+        self.optimizer.head_updates
     }
 
     pub fn league(&self) -> &[LeagueEntry] {
@@ -1615,17 +1612,9 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
         update: u64,
         selection: &PilotSelection,
         pilot: &(dyn GamePilot + Sync),
+        snapshots: &BTreeMap<String, Arc<TrainingModel>>,
     ) -> Result<Vec<PodRecord>, CollectFailure> {
         let current: Arc<dyn SeatForward> = self.model.clone();
-        let mut snapshots = BTreeMap::new();
-        for entry in &self.league {
-            let path = self.config.root.join(&entry.path);
-            let checkpoint: Checkpoint = read_json(&path).map_err(CollectFailure::Error)?;
-            let model = M::import_checkpoint(&checkpoint.model)
-                .map_err(TrainingDriverError::Update)
-                .map_err(CollectFailure::Error)?;
-            snapshots.insert(entry.pin.clone(), Arc::new(model) as Arc<dyn SeatForward>);
-        }
         let mut completed = Vec::new();
         for offset in 0..PODS_PER_UPDATE {
             let pod_index = update * PODS_PER_UPDATE + offset;
@@ -1656,8 +1645,10 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             let config = self.pod_config(pod_index, pilot_info);
             let mut chairs: [TrainingChair; SEATS] = std::array::from_fn(|chair| {
                 let older_pin = assignments.get(&chair);
-                let forward =
-                    older_pin.map_or_else(|| current.clone(), |pin| snapshots[pin].clone());
+                let forward = older_pin.map_or_else(
+                    || current.clone(),
+                    |pin| snapshots[pin].clone() as Arc<dyn SeatForward>,
+                );
                 let picker: Box<dyn crate::cube_seat_v1::SeatPicker> =
                     if self.config.segment == Segment::BuilderOnly {
                         Box::new(UniformSeatPicker)
@@ -1713,47 +1704,6 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
         Ok(completed)
     }
 
-    fn stop_from_failure(&self, update: u64, failure: BatchFailure) -> StopRecord {
-        let pod = failure.pod;
-        let stop = pod.stop.clone();
-        let attempts = stop
-            .as_ref()
-            .map_or_else(Vec::new, |stop| stop.attempts.clone());
-        let mut batch = failure.completed;
-        batch.push(pod.clone());
-        StopRecord {
-            schema: STOP_SCHEMA.to_owned(),
-            kind: if batch.iter().any(|pod| {
-                pod.games.iter().any(|game| {
-                    game.attempts
-                        .iter()
-                        .any(|attempt| is_watchdog_end(&attempt.end))
-                })
-            }) {
-                "watchdog_stop".to_owned()
-            } else {
-                "retry_exhausted".to_owned()
-            },
-            run: self.config.run.clone(),
-            update,
-            pod: Some(pod.pod_index),
-            pairing: stop.as_ref().and_then(|stop| stop.pairing),
-            game: stop.as_ref().map(|stop| stop.game),
-            decks: stop.as_ref().map(|stop| stop.decks),
-            attempts,
-            hang: None,
-            first_watchdog_pod: None,
-            first_watchdog_game: None,
-            second_watchdog_pod: None,
-            second_watchdog_game: None,
-            firing: None,
-            batch: batch
-                .iter()
-                .map(|pod| serde_json::to_value(pod).expect("pod json"))
-                .collect(),
-        }
-    }
-
     pub fn run_next_update(
         &mut self,
         pool: &CubePool,
@@ -1780,6 +1730,28 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             PilotSelection::Uniform => Arc::new(UniformPilot),
             PilotSelection::Checkpoint { pin } => pilots.load_checkpoint(pin)?,
         };
+        let snapshots = self
+            .league
+            .iter()
+            .map(|entry| {
+                let checkpoint: Checkpoint = read_json(&self.config.root.join(&entry.path))?;
+                checkpoint.validate()?;
+                if checkpoint.state_sha256 != entry.pin
+                    || checkpoint.parameter_layout_sha256
+                        != self.config.metadata.parameter_layout_sha256
+                    || checkpoint.head_updates != entry.head_updates
+                {
+                    return Err(invalid("league snapshot differs from its pin"));
+                }
+                let (model, _) = checkpoint
+                    .model
+                    .restore(self.model.parameters().clone(), checkpoint.head_updates)
+                    .map_err(TrainingDriverError::Update)?;
+                let snapshot = TrainingModel::new(model, self.rows.clone())
+                    .map_err(TrainingDriverError::Update)?;
+                Ok((entry.pin.clone(), Arc::new(snapshot)))
+            })
+            .collect::<Result<BTreeMap<_, _>, TrainingDriverError>>()?;
         let pending = self.config.root.join("pending").join(update_name(update));
         if pending.exists() {
             return Err(invalid("an unrecovered pending update remains"));
@@ -1790,7 +1762,7 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
 
         let mut first_watchdog = None;
         let pods = loop {
-            match self.collect_batch(pool, update, &selection, pilot.as_ref()) {
+            match self.collect_batch(pool, update, &selection, pilot.as_ref(), &snapshots) {
                 Ok(pods) => break pods,
                 Err(CollectFailure::Error(error)) => return Err(error),
                 Err(CollectFailure::Stop(failure)) => {
@@ -1806,7 +1778,7 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
                         fs::create_dir_all(&pending)?;
                         continue;
                     }
-                    let mut stop = self.stop_from_failure(update, failure);
+                    let mut stop = stop_from_failure(&self.config.run, update, failure);
                     if let Some((second_pod, second_game)) = watchdog_game {
                         stop.hang = Some(first_watchdog == Some((second_pod, second_game)));
                         stop.first_watchdog_pod = first_watchdog.map(|key| key.0);
@@ -1828,38 +1800,20 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
         for pod in &pods {
             tripwire.add_pod(pod, rules_for(&self.config.tripwire));
         }
-        if update + 1 == self.config.total_updates() {
-            tripwire.finish_segment(rules_for(&self.config.tripwire));
-        }
         let firing = tripwire.firing.clone();
-        let snapshots = self
-            .league
-            .iter()
-            .map(|entry| {
-                let checkpoint: Checkpoint = read_json(&self.config.root.join(&entry.path))?;
-                let model =
-                    M::import_checkpoint(&checkpoint.model).map_err(TrainingDriverError::Update)?;
-                Ok((entry.pin.clone(), Arc::new(model) as Arc<dyn SeatForward>))
-            })
-            .collect::<Result<BTreeMap<_, _>, TrainingDriverError>>()?;
         let before_state = self.current_pin.clone();
-        let optimizer_output = self
-            .optimizer
-            .replay_and_commit(
-                Arc::get_mut(&mut self.model).ok_or_else(|| {
-                    TrainingDriverError::Update("current model is still shared".to_owned())
-                })?,
-                UpdateBatch {
-                    pods: &pods,
-                    league: &snapshots,
-                },
-                self.config.train_sets,
+        let (model, optimizer, optimizer_output) = self
+            .model
+            .update(
+                self.optimizer.clone(),
+                self.config.segment,
+                &pods,
+                &snapshots,
             )
             .map_err(TrainingDriverError::Update)?;
-        let mut head_updates = self.head_updates;
-        head_updates.increment(&pods, self.config.train_sets)?;
+        let head_updates = optimizer.head_updates;
         let checkpoint_number = update + 1;
-        let model_state = self.model.export_checkpoint();
+        let model_state = CubeModelState::from_model(model.parameters(), &optimizer);
         let state_pin = model_state.state_sha256();
         let mut league = self.league.clone();
         let reasons = pin_reasons(&self.config, checkpoint_number);
@@ -1970,7 +1924,8 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             ledger_stop(&self.config.root, &stop)?;
         }
         self.next_update += 1;
-        self.head_updates = head_updates;
+        self.model = Arc::new(model);
+        self.optimizer = optimizer;
         self.league = league;
         self.current_pin = state_pin;
         self.tripwire = tripwire;
@@ -1986,14 +1941,9 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
     }
 }
 
-pub trait TwoActionGradient {
-    fn derivative(&self, outcome: [u8; 2]) -> f64;
-}
-
 struct TwoActionPilot {
-    outcome: [u8; 2],
-    halt_mask: u8,
-    always_halt: bool,
+    case: HaltCase,
+    deterministic_halt: bool,
     game_seed: u64,
 }
 
@@ -2009,8 +1959,11 @@ impl GamePilot for TwoActionPilot {
                     == spec.action_seed
             })
             .expect("two-action attempt seed");
-        let halt =
-            self.outcome == [1, 0] && (self.always_halt || self.halt_mask & (1 << attempt) != 0);
+        let halt = if self.deterministic_halt {
+            self.case.deterministic_halt()
+        } else {
+            self.case.halts(usize::from(attempt))
+        };
         if halt {
             return AttemptOutcome {
                 decisions: 1,
@@ -2020,7 +1973,7 @@ impl GamePilot for TwoActionPilot {
                 last_action_source: None,
             };
         }
-        let result = i16::from(self.outcome[0]) - i16::from(self.outcome[1]);
+        let result = self.case.actions[0] as i8 - self.case.actions[1] as i8;
         AttemptOutcome {
             decisions: 1,
             physical_decisions: Some(1),
@@ -2045,96 +1998,84 @@ pub struct TwoActionPart3Report {
     pub stopped_batches: usize,
 }
 
-pub fn run_two_action_part3<G: TwoActionGradient>(
+pub fn run_two_action_part3(
     root: &Path,
-    gradient: &G,
     deterministic_halt: bool,
 ) -> Result<TwoActionPart3Report, TrainingDriverError> {
     fs::create_dir_all(root)?;
-    let mut decks = Vec::new();
-    decks.push(crate::cube_draft_v1::Deck::default());
-    decks.push(crate::cube_draft_v1::Deck::default());
+    let decks = [
+        crate::cube_draft_v1::Deck::default(),
+        crate::cube_draft_v1::Deck::default(),
+    ];
     let mut derivative_sum = 0.0;
     let mut published = 0usize;
     let mut stopped = 0usize;
-    let patterns: Vec<u8> = if deterministic_halt {
-        vec![15]
-    } else {
-        (0..16).collect()
-    };
-    for outcome in [[0, 0], [0, 1], [1, 0], [1, 1]] {
-        for pattern in &patterns {
-            let game_seed = u64::from(outcome[0]) * 2 + u64::from(outcome[1]);
-            let pilot = TwoActionPilot {
-                outcome,
-                halt_mask: *pattern,
-                always_halt: deterministic_halt,
-                game_seed,
-            };
-            let task = crate::cube_pod_runner_v1::GameTask {
-                game: 0,
-                group: 0,
-                role: GameRole::Reference,
-                pairing: Some(0),
-                decks: [0, 1],
-                chairs: [Some(0), Some(1)],
-                seats: [0, 1],
-                seat_rule: SeatRule::Schedule,
-                game_seed,
-                episode: 0,
-            };
-            let caps = crate::cube_pod_runner_v1::PodCaps::training_a2();
-            let game = play_training_game_for_driver(&task, &decks, &pilot, &caps)?;
-            let (halts, status, stop) = collect_halts_and_stop(std::slice::from_ref(&game), true);
-            let pod = PodRecord {
-                schema: POD_RECORD_SCHEMA,
-                interfaces: M4_INTERFACES_VERSION,
-                pod_use: PodUse::Test,
-                namespace: "test".to_owned(),
-                run: "v1".to_owned(),
-                pod_index: 0,
-                seeds: Default::default(),
-                pins: PodPins::default(),
-                pilot: PilotInfo::uniform(),
-                caps,
-                draft: None,
-                chairs: Vec::new(),
-                decks: Vec::new(),
-                games: vec![game],
-                paired_builds: Vec::new(),
-                halts,
-                status,
-                stop,
-            };
-            if pod.status == PodStatus::Stopped {
-                stopped += 1;
-                let stop = pod.stop.clone().expect("stopped game has a report");
-                let record = StopRecord {
-                    schema: STOP_SCHEMA.to_owned(),
-                    kind: "retry_exhausted".to_owned(),
-                    run: "v1".to_owned(),
-                    update: stopped as u64 - 1,
-                    pod: Some(0),
-                    pairing: stop.pairing,
-                    game: Some(stop.game),
-                    decks: Some(stop.decks),
-                    attempts: stop.attempts,
-                    hang: None,
-                    first_watchdog_pod: None,
-                    first_watchdog_game: None,
-                    second_watchdog_pod: None,
-                    second_watchdog_game: None,
-                    firing: None,
-                    batch: vec![serde_json::to_value(&pod)?],
-                };
-                ledger_stop(root, &record)?;
-                if check_stop_ledger(root) != Err(TrainingDriverError::StoppedWithoutResolution) {
-                    return Err(invalid("a stop without resolution did not refuse resume"));
-                }
-            } else {
-                published += 1;
-                derivative_sum += gradient.derivative(outcome);
+    for (index, case) in halt_cases().enumerate() {
+        if deterministic_halt && case.pattern != 15 {
+            continue;
+        }
+        let game_seed = index as u64;
+        let pilot = TwoActionPilot {
+            case,
+            deterministic_halt,
+            game_seed,
+        };
+        let task = crate::cube_pod_runner_v1::GameTask {
+            game: 0,
+            group: 0,
+            role: GameRole::Reference,
+            pairing: Some(0),
+            decks: [0, 1],
+            chairs: [Some(0), Some(1)],
+            seats: [0, 1],
+            seat_rule: SeatRule::Schedule,
+            game_seed,
+            episode: 0,
+        };
+        let caps = crate::cube_pod_runner_v1::PodCaps::training_a2();
+        let game = play_training_game_for_driver(&task, &decks, &pilot, &caps)?;
+        let (halts, status, stop) = collect_halts_and_stop(std::slice::from_ref(&game), true);
+        let pod = PodRecord {
+            schema: POD_RECORD_SCHEMA,
+            interfaces: M4_INTERFACES_VERSION,
+            pod_use: PodUse::Test,
+            namespace: "test".to_owned(),
+            run: "v1".to_owned(),
+            pod_index: 0,
+            seeds: Default::default(),
+            pins: PodPins::default(),
+            pilot: PilotInfo::uniform(),
+            caps,
+            draft: None,
+            chairs: Vec::new(),
+            decks: Vec::new(),
+            games: vec![game],
+            paired_builds: Vec::new(),
+            halts,
+            status,
+            stop,
+        };
+        if pod.status == PodStatus::Stopped {
+            stopped += 1;
+            let record = stop_from_failure(
+                "v1",
+                index as u64,
+                BatchFailure {
+                    pod,
+                    completed: Vec::new(),
+                },
+            );
+            ledger_stop(root, &record)?;
+            if check_stop_ledger(root) != Err(TrainingDriverError::StoppedWithoutResolution) {
+                return Err(invalid("a stop without resolution did not refuse resume"));
             }
+        } else {
+            published += 1;
+            let expected = case.actions[0] as i8 - case.actions[1] as i8;
+            if pod.games[0].scores != Some([expected, -expected]) {
+                return Err(invalid("two-action replay changed the completed score"));
+            }
+            derivative_sum += case.derivative;
         }
     }
     let total = if deterministic_halt { 4.0 } else { 64.0 };
@@ -2150,30 +2091,20 @@ pub fn run_two_action_part3<G: TwoActionGradient>(
     })
 }
 
-pub fn two_action_dropped_mean<G: TwoActionGradient>(gradient: &G) -> f64 {
-    let mut sum = 0.0;
-    let mut retained = 0usize;
-    for outcome in [[0, 0], [0, 1], [1, 0], [1, 1]] {
-        for pattern in 0..16u8 {
-            if outcome == [1, 0] && pattern & 1 != 0 {
-                continue;
-            }
-            sum += gradient.derivative(outcome);
-            retained += 1;
-        }
-    }
-    sum / 64.0 / (retained as f64 / 64.0)
+pub fn two_action_dropped_mean() -> f64 {
+    let (sum, count) = halt_cases()
+        .filter(|case| !case.halts(0))
+        .fold((0.0, 0), |(sum, count), case| {
+            (sum + case.derivative, count + 1)
+        });
+    sum / f64::from(count)
 }
 
 pub fn tripwire_games_for_test(
     root: &Path,
     mode: &TripwireMode,
 ) -> Result<u64, TrainingDriverError> {
-    let tracker = rebuild_tripwire(root, mode, false)?;
-    Ok(tracker
-        .closed
-        .iter()
-        .map(|window| window.games)
-        .sum::<u64>()
-        + tracker.open.games)
+    let config: RunConfig = read_json(&root.join("run.json"))?;
+    let tracker = rebuild_tripwire(root, mode, config.tripwire_window_games)?;
+    Ok(tracker.closed_games + tracker.open.games)
 }

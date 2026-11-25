@@ -1177,13 +1177,10 @@ fn acceptance_9_layout_read_plans_and_reports() {
 
         // Group counts: 15 of 3, 12 of 2, 1 of 1; exact role & deck rules.
         let pairings = pod_pairings();
-        let mut group_counts = BTreeMap::new();
+        let mut group_counts = BTreeMap::<_, Vec<_>>::new();
         let mut size_histogram = BTreeMap::new();
         for game in &pod.games {
-            group_counts
-                .entry(game.group)
-                .or_default()
-                .push(game);
+            group_counts.entry(game.group).or_default().push(game);
         }
         assert_eq!(group_counts.len(), POD_GAMES);
         for (g, &(low, high)) in pairings.iter().enumerate() {

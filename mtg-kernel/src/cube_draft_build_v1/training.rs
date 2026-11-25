@@ -68,7 +68,7 @@ pub enum Phase {
     Joint,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeadUpdates {
     pub pick: u64,
     pub value: u64,
