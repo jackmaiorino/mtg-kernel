@@ -382,6 +382,20 @@ mod tests {
             let p_hi = p.next_up().next_up().min(1.0);
             let mass = q as f64 / GRID_SIZE as f64;
             let error = (mass - p_lo).abs().max((mass - p_hi).abs()).next_up();
+            let (floor, remainder) = units.quota(total, GRID_BITS);
+            let ceil = floor + u64::from(remainder != Units::default());
+            let quota_error = [floor, ceil]
+                .into_iter()
+                .map(|endpoint| {
+                    let share = endpoint as f64 / GRID_SIZE as f64;
+                    (share - p_lo).abs().max((share - p_hi).abs())
+                })
+                .fold(0.0, f64::max)
+                .next_up();
+            assert!(
+                error <= quota_error && quota_error <= 1e-8,
+                "entry {i}: quota envelope {quota_error:e}"
+            );
             assert!(error <= loss_bound, "entry {i}: {error:e} > {loss_bound:e}");
             if equal_logits {
                 assert!(error < 1e-15, "equal logits, entry {i}: {error:e}");
@@ -405,6 +419,9 @@ mod tests {
 
     #[test]
     fn exact_quotas_loss_bounds_and_every_cdf_boundary() {
+        check_menu(&[0.75, 0.75], &[true; 2]);
+        check_menu(&[0.75, 1.75], &[true; 2]);
+        check_menu(&[0.75; 3], &[true; 3]);
         for case in golden_cases::cases() {
             check_menu(&case.logits, &case.mask);
         }

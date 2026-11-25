@@ -1,7 +1,7 @@
 use super::{
-    index_from_update_path, invalid, json_bytes, publish_bytes, read_commit, read_json,
-    replace_bytes, sha256_hex, stop_paths, sync_directory, update_directories, RunConfig,
-    TrainingDriverError,
+    index_from_update_path, invalid, json_bytes, publish_bytes, publish_fresh_bytes, read_commit,
+    read_json, replace_bytes, sha256_hex, stop_paths, sync_directory, update_directories,
+    RunConfig, TrainingDriverError,
 };
 #[path = "cube_training_manifest_v1.rs"]
 mod manifest;
@@ -12,6 +12,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const RUNNER_MARKER: &str = "runner-active.json";
+
+fn receipt_path(root: &Path, seq: u64) -> PathBuf {
+    root.join("resumes").join(format!("entry-{seq:020}.json"))
+}
 
 /// D0.3b entry selector and provenance from the authorized launcher record.
 #[derive(Debug, Clone)]
@@ -26,6 +30,8 @@ pub struct ResumeAuthorization {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ResumeReceipt {
+    entry_seq: u64,
+    batch_index: u64,
     manifest_len: usize,
     manifest_sha256: String,
 }
@@ -64,6 +70,8 @@ impl ResumeAuthorization {
         }
         verify_entry_commit(&self.records_repository, &self.manifest, &manifest, &entry)?;
         Ok(ResumeReceipt {
+            entry_seq: self.entry_seq,
+            batch_index: next_batch,
             manifest_len: manifest.len(),
             manifest_sha256: digest,
         })
@@ -121,6 +129,9 @@ pub(super) fn check_resume(
     if completed.into_iter().ne(0..next) || next > config.update_range[1] {
         return Err(invalid("resume has no contiguous committed batch prefix"));
     }
+    if receipt_path(root, proof.entry_seq).try_exists()? {
+        return Err(invalid("resume entry was already used"));
+    }
     let previous = if marker.exists() {
         read_json::<Option<ResumeReceipt>>(&marker)?
     } else {
@@ -143,6 +154,12 @@ impl RunnerMarker {
     ) -> Result<Self, TrainingDriverError> {
         let path = root.join(RUNNER_MARKER);
         let resuming = receipt.is_some();
+        if let Some(receipt) = &receipt {
+            publish_fresh_bytes(
+                &receipt_path(root, receipt.entry_seq),
+                &json_bytes(receipt)?,
+            )?;
+        }
         let bytes = json_bytes(&receipt)?;
         if resuming && path.exists() {
             replace_bytes(&path, &bytes)?;

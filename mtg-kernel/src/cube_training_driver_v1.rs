@@ -8,8 +8,8 @@ mod model;
 use model::update_model;
 #[path = "cube_training_tripwire_v1.rs"]
 mod tripwire;
-pub use tripwire::CensusBaselinePin;
 use tripwire::{tripwire_window_sizes, CensusRates, TripwireTracker};
+pub use tripwire::{CensusBaselineFiles, CensusBaselinePin};
 #[path = "cube_training_resume_v1.rs"]
 mod resume;
 pub use resume::ResumeAuthorization;
@@ -337,9 +337,9 @@ pub struct RunConfig {
     pub train_sets: TrainSets,
     pub pilot: PilotSchedule,
     pub tripwire: TripwireMode,
-    /// Local path to the admitted census summary. The content pin goes in run.json.
+    /// Local evidence for the census pins recorded in run.json.
     #[serde(skip)]
-    pub tripwire_summary: Option<PathBuf>,
+    pub tripwire_files: Option<CensusBaselineFiles>,
     /// Launcher-provided D0.3b proof for this open, outside the immutable run plan.
     #[serde(skip)]
     pub resume: Option<ResumeAuthorization>,
@@ -370,7 +370,7 @@ impl RunConfig {
             train_sets,
             pilot: PilotSchedule::uniform(),
             tripwire: TripwireMode::Q9,
-            tripwire_summary: None,
+            tripwire_files: None,
             resume: None,
             tripwire_window_games: Vec::new(),
             pins: PodPins::default(),
@@ -771,7 +771,7 @@ pub struct StopRecord {
     pub schema: String,
     pub kind: String,
     pub run: String,
-    pub update: u64,
+    pub batch_index: u64,
     pub pod: Option<u64>,
     pub pairing: Option<u8>,
     pub game: Option<u32>,
@@ -825,6 +825,10 @@ fn publish_bytes(path: &Path, bytes: &[u8]) -> Result<(), TrainingDriverError> {
             path.display()
         )));
     }
+    publish_fresh_bytes(path, bytes)
+}
+
+fn publish_fresh_bytes(path: &Path, bytes: &[u8]) -> Result<(), TrainingDriverError> {
     let parent = path
         .parent()
         .ok_or_else(|| invalid("published file has no parent"))?;
@@ -986,7 +990,21 @@ fn ledger_path_for_update(
 ) -> Result<Option<PathBuf>, TrainingDriverError> {
     for path in stop_paths(root)? {
         let stop: StopRecord = read_json(&path)?;
-        if stop.update == update {
+        if stop.batch_index == update {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn ledger_path_for_kind(
+    root: &Path,
+    stop: &StopRecord,
+) -> Result<Option<PathBuf>, TrainingDriverError> {
+    for path in stop_paths(root)? {
+        if read_json::<StopRecord>(&path)
+            .is_ok_and(|saved| saved.batch_index == stop.batch_index && saved.kind == stop.kind)
+        {
             return Ok(Some(path));
         }
     }
@@ -995,7 +1013,7 @@ fn ledger_path_for_update(
 
 fn ledger_stop(root: &Path, stop: &StopRecord) -> Result<PathBuf, TrainingDriverError> {
     fs::create_dir_all(stop_directory(root))?;
-    let path = if let Some(path) = ledger_path_for_update(root, stop.update)? {
+    let path = if let Some(path) = ledger_path_for_kind(root, stop)? {
         path
     } else {
         stop_directory(root).join(format!("stop-{:04}.json", stop_paths(root)?.len()))
@@ -1018,28 +1036,27 @@ fn published_stop(root: &Path, directory: &Path, update: u64) -> Result<(), Trai
     let digest = sha256_hex(&bytes);
     let record: StopRecord = serde_json::from_slice(&bytes)?;
     if commit.batch_index != update
-        || record.update != update
+        || record.batch_index != update
         || commit.files.get("stop.json") != Some(&digest)
     {
         return Err(invalid("published stop differs from commit.json"));
     }
     let paths = stop_paths(root)?;
-    let target = if let [path] = paths.as_slice() {
-        if let Ok(existing) = read_json::<StopRecord>(path) {
-            if existing.update != update {
-                return Err(invalid("published stop conflicts with the stop ledger"));
-            }
+    let target = ledger_path_for_kind(root, &record)?.or_else(|| {
+        paths
+            .iter()
+            .find(|path| read_json::<StopRecord>(path).is_err())
+            .cloned()
+    });
+    let target = if let Some(path) = target {
+        if fs::read(&path)? != bytes {
+            replace_bytes(&path, &bytes)?;
         }
-        if fs::read(path)? != bytes {
-            replace_bytes(path, &bytes)?;
-        }
-        path.clone()
-    } else if paths.is_empty() {
-        let path = stop_directory(root).join("stop-0000.json");
-        publish_bytes(&path, &bytes)?;
         path
     } else {
-        return Err(invalid("multiple stop ledger entries for a published stop"));
+        let path = stop_directory(root).join(format!("stop-{:04}.json", paths.len()));
+        publish_bytes(&path, &bytes)?;
+        path
     };
     if sha256_hex(&fs::read(target)?) != digest {
         return Err(invalid("stop ledger copy differs from commit.json"));
@@ -1058,7 +1075,7 @@ fn first_watchdog(root: &Path, update: u64) -> Result<Option<(u64, u32)>, Traini
         return Ok(None);
     }
     let record: StopRecord = read_json(&path)?;
-    if record.kind != "watchdog_void" || record.update != update {
+    if record.kind != "watchdog_void" || record.batch_index != update {
         return Err(invalid("invalid void watchdog execution"));
     }
     record
@@ -1194,7 +1211,7 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
                 schema: STOP_SCHEMA.to_owned(),
                 kind: "process_death".to_owned(),
                 run: run.to_owned(),
-                update,
+                batch_index: update,
                 pod: None,
                 pairing: None,
                 game: None,
@@ -1436,7 +1453,7 @@ fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecor
             "retry_exhausted".to_owned()
         },
         run: run.to_owned(),
-        update,
+        batch_index: update,
         pod: Some(pod.pod_index),
         pairing: stop.as_ref().and_then(|stop| stop.pairing),
         game: stop.as_ref().map(|stop| stop.game),
@@ -1473,6 +1490,9 @@ impl Snapshot {
     }
 }
 
+/// Owns the active runner marker. The launcher must drop the driver before
+/// a clean process exit, including before calling `std::process::exit`.
+/// An exit that skips cleanup requires host-loss authorization to reopen.
 pub struct TrainingDriver {
     config: RunConfig,
     model: Snapshot,
@@ -1534,10 +1554,10 @@ impl TrainingDriver {
         config.validate()?;
         let census_rates = match &config.tripwire {
             TripwireMode::Full { baseline } if baseline.matches(&config.pins) => {
-                let path = config.tripwire_summary.as_deref().ok_or_else(|| {
-                    invalid("matching census-b baseline needs its pinned summary")
+                let files = config.tripwire_files.as_ref().ok_or_else(|| {
+                    invalid("matching census-b baseline needs its pinned evidence")
                 })?;
-                Some(baseline.load(path)?)
+                Some(baseline.load(files)?)
             }
             _ => {
                 config.tripwire = TripwireMode::Q9;
@@ -2047,10 +2067,20 @@ impl TrainingDriver {
             _ => "collection_failed",
         };
         let batch = pods.map_or_else(
-            || read_partial_pods(pending),
+            || {
+                let published = self.config.root.join("updates").join(update_name(update));
+                let evidence = if pending.exists() {
+                    pending.to_owned()
+                } else {
+                    published
+                };
+                Ok(read_pods(&evidence.join("pods.json"))
+                    .or_else(|_| read_partial_pods(&evidence))
+                    .unwrap_or_default())
+            },
             |pods| {
                 pods.iter()
-                    .map(|pod| serde_json::to_value(pod).map_err(Into::into))
+                    .map(|pod| serde_json::to_value(pod).map_err(TrainingDriverError::from))
                     .collect()
             },
         )?;
@@ -2058,7 +2088,7 @@ impl TrainingDriver {
             schema: STOP_SCHEMA.to_owned(),
             kind: kind.to_owned(),
             run: self.config.run.clone(),
-            update,
+            batch_index: update,
             pod: None,
             pairing: None,
             game: None,
@@ -2075,8 +2105,11 @@ impl TrainingDriver {
         };
         apply_first_watchdog(&mut stop, first);
         ledger_stop(&self.config.root, &stop)?;
-        fs::remove_dir_all(pending)?;
-        sync_directory(&self.config.root.join("pending"))
+        if pending.exists() {
+            fs::remove_dir_all(pending)?;
+            sync_directory(&self.config.root.join("pending"))?;
+        }
+        Ok(())
     }
 
     pub fn run_next_update(
@@ -2131,18 +2164,40 @@ impl TrainingDriver {
             return Err(invalid("an unrecovered pending update remains"));
         }
         self.runner.start_batch();
-        fs::create_dir_all(&pending)?;
-        sync_directory(&pending)?;
+        let result = self.run_started_batch(pool, update, &selection, pilot.as_ref(), &pending);
+        if let Err(error @ TrainingDriverError::Io(_)) = &result {
+            let recorded = stop_paths(&self.config.root)?.iter().any(|path| {
+                read_json::<StopRecord>(path)
+                    .is_ok_and(|stop| stop.batch_index == update && stop.kind == "io_error")
+            });
+            if !recorded {
+                let first = first_watchdog(&self.config.root, update).unwrap_or_default();
+                self.abandon_error(update, &pending, first, error, None)?;
+            }
+        }
+        result
+    }
+
+    fn run_started_batch(
+        &mut self,
+        pool: &CubePool,
+        update: u64,
+        selection: &PilotSelection,
+        pilot: &(dyn GamePilot + Sync),
+        pending: &Path,
+    ) -> Result<RunOutcome, TrainingDriverError> {
+        fs::create_dir_all(pending)?;
+        sync_directory(pending)?;
         sync_directory(&self.config.root.join("pending"))?;
 
         let mut first_watchdog = None;
         let mut void_execution = None;
         let partial = pending.join("partial");
         let pods = loop {
-            match self.collect_batch(pool, update, &selection, pilot.as_ref(), &self.snapshots) {
+            match self.collect_batch(pool, update, selection, pilot, &self.snapshots) {
                 Ok(pods) => break pods,
                 Err(CollectFailure::Error(error)) => {
-                    self.abandon_error(update, &pending, first_watchdog, &error, None)?;
+                    self.abandon_error(update, pending, first_watchdog, &error, None)?;
                     return Err(error);
                 }
                 Err(CollectFailure::Stop(failure)) => {
@@ -2161,7 +2216,7 @@ impl TrainingDriver {
                         publish_bytes(&watchdog_path(&self.config.root, update), &bytes)?;
                         if partial.exists() {
                             fs::remove_dir_all(&partial)?;
-                            sync_directory(&pending)?;
+                            sync_directory(pending)?;
                         }
                         void_execution = Some(bytes);
                         continue;
@@ -2178,7 +2233,7 @@ impl TrainingDriver {
                         stop.second_watchdog_game = Some(second_game);
                     }
                     ledger_stop(&self.config.root, &stop)?;
-                    fs::remove_dir_all(&pending)?;
+                    fs::remove_dir_all(pending)?;
                     return Ok(RunOutcome::Stopped {
                         update,
                         kind: stop.kind,
@@ -2208,7 +2263,7 @@ impl TrainingDriver {
             Ok(result) => result,
             Err(message) => {
                 let error = TrainingDriverError::Update(message);
-                self.abandon_error(update, &pending, first_watchdog, &error, Some(&pods))?;
+                self.abandon_error(update, pending, first_watchdog, &error, Some(&pods))?;
                 return Err(error);
             }
         };
@@ -2224,7 +2279,7 @@ impl TrainingDriver {
                 model_state.clone(),
                 league.clone(),
                 checkpoint_number,
-                self.current_lineage(&selection),
+                self.current_lineage(selection),
                 reasons.clone(),
                 head_updates,
             )?;
@@ -2236,12 +2291,12 @@ impl TrainingDriver {
             model_state,
             league.clone(),
             checkpoint_number,
-            self.current_lineage(&selection),
+            self.current_lineage(selection),
             reasons,
             head_updates,
         )?;
         let state_pin = checkpoint.state_sha256.clone();
-        let pilot_info = match &selection {
+        let pilot_info = match selection {
             PilotSelection::Uniform => PilotInfo::uniform(),
             PilotSelection::Checkpoint { pin } => PilotInfo {
                 kind: PilotKind::Checkpoint,
@@ -2292,7 +2347,7 @@ impl TrainingDriver {
                 schema: STOP_SCHEMA.to_owned(),
                 kind: "tripwire".to_owned(),
                 run: self.config.run.clone(),
-                update,
+                batch_index: update,
                 pod: None,
                 pairing: None,
                 game: None,
@@ -2330,10 +2385,10 @@ impl TrainingDriver {
                 files,
             })?,
         )?;
-        sync_directory(&pending)?;
+        sync_directory(pending)?;
         sync_directory(&self.config.root.join("pending"))?;
         let published = self.config.root.join("updates").join(update_name(update));
-        fs::rename(&pending, &published)?;
+        fs::rename(pending, &published)?;
         sync_directory(&self.config.root.join("pending"))?;
         sync_directory(&self.config.root.join("updates"))?;
         restore_update_league_snapshot(&self.config.root, &published)?;

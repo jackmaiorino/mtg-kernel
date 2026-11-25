@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const MIN_GAMES: u64 = 5;
 const ELIGIBLE_SUMMARY_SCHEMA: &str = "mtg-kernel-census-b-eligible/v2";
@@ -57,13 +57,45 @@ pub struct CensusBaselinePin {
     pub authorization_sha256: String,
 }
 
+/// Local files used to authenticate a full-mode census baseline.
+#[derive(Debug, Clone)]
+pub struct CensusBaselineFiles {
+    pub summary: PathBuf,
+    /// JSON with run, summary_sha256, build_sha256, fence_sha256 and
+    /// authorization_sha256 linking the three pinned files.
+    pub manifest: PathBuf,
+    pub authorization: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct CensusManifest {
+    run: String,
+    summary_sha256: String,
+    build_sha256: String,
+    fence_sha256: String,
+    authorization_sha256: String,
+}
+
+fn pinned_bytes(path: &Path, pin: &str, artifact: &str) -> Result<Vec<u8>, TrainingDriverError> {
+    let bytes = fs::read(path)?;
+    if sha256_hex(&bytes) != pin {
+        return Err(invalid(format!(
+            "census-b {artifact} digest differs from its pin"
+        )));
+    }
+    Ok(bytes)
+}
+
 impl CensusBaselinePin {
     pub(super) fn matches(&self, pins: &PodPins) -> bool {
         pins.binary.as_deref() == Some(&self.build_sha256)
             && pins.fence_record.as_deref() == Some(&self.fence_sha256)
     }
 
-    pub(super) fn load(&self, path: &Path) -> Result<CensusRates, TrainingDriverError> {
+    pub(super) fn load(
+        &self,
+        files: &CensusBaselineFiles,
+    ) -> Result<CensusRates, TrainingDriverError> {
         let valid_run = self.run == "census-b"
             || self
                 .run
@@ -82,9 +114,23 @@ impl CensusBaselinePin {
         {
             return Err(invalid("invalid census-b baseline pins"));
         }
-        let bytes = fs::read(path)?;
-        if sha256_hex(&bytes) != self.summary_sha256 {
-            return Err(invalid("census-b summary digest differs from its pin"));
+        let bytes = pinned_bytes(&files.summary, &self.summary_sha256, "summary")?;
+        let manifest = pinned_bytes(&files.manifest, &self.manifest_sha256, "manifest")?;
+        pinned_bytes(
+            &files.authorization,
+            &self.authorization_sha256,
+            "authorization",
+        )?;
+        let manifest: CensusManifest = serde_json::from_slice(&manifest)?;
+        if manifest.run != self.run
+            || manifest.summary_sha256 != self.summary_sha256
+            || manifest.build_sha256 != self.build_sha256
+            || manifest.fence_sha256 != self.fence_sha256
+            || manifest.authorization_sha256 != self.authorization_sha256
+        {
+            return Err(invalid(
+                "census-b manifest does not bind the summary and its authorization",
+            ));
         }
         CensusRates::from_summary(serde_json::from_slice(&bytes)?)
     }
@@ -325,7 +371,9 @@ impl TripwireTracker {
             for (end, source) in halted {
                 if let Some(kind) = stop_kind(end) {
                     kinds.insert(kind);
-                    sources.extend(source);
+                    if !matches!(end, GameEnd::Panic { .. }) {
+                        sources.extend(source);
+                    }
                 }
             }
             for kind in kinds {
@@ -469,6 +517,28 @@ mod tests {
                 baseline,
             );
         }
+    }
+
+    #[test]
+    fn panic_has_a_stop_kind_but_charges_no_card() {
+        let mut tracker = TripwireTracker::new(vec![2000]);
+        let baseline = baseline();
+        let panic = GameEnd::Panic {
+            message: "fixture".into(),
+        };
+        add(&mut tracker, Some(&baseline), 3, 3, &panic, Some(2), &[2]);
+        add(
+            &mut tracker,
+            Some(&baseline),
+            2,
+            2,
+            &GameEnd::DecisionCap,
+            Some(2),
+            &[2],
+        );
+        assert_eq!(tracker.open.stop_games["panic: fixture"], 3);
+        assert_eq!(tracker.open.card_games[&2], 2);
+        assert!(tracker.firing.is_none());
     }
 
     #[test]

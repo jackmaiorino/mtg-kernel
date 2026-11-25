@@ -15,9 +15,9 @@ use mtg_kernel::cube_training_driver_v1::fixtures::{
 };
 use mtg_kernel::cube_training_driver_v1::{
     check_stop_ledger, load_checkpoint_read_only_v1, prune_checkpoint, tripwire_games_for_test,
-    CensusBaselinePin, LineageSegment, PilotPin, PilotProvider, PilotSchedule, PilotSelection,
-    PilotSwitch, ResumeAuthorization, RunConfig, RunOutcome, Segment, TrainingDriver,
-    TrainingDriverError, TripwireMode,
+    CensusBaselineFiles, CensusBaselinePin, LineageSegment, PilotPin, PilotProvider, PilotSchedule,
+    PilotSelection, PilotSwitch, ResumeAuthorization, RunConfig, RunOutcome, Segment,
+    TrainingDriver, TrainingDriverError, TripwireMode,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -540,29 +540,20 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
         }))
     };
     let pilot = new_pilot();
-    let summary_path = temp.join("summary.json");
     let bytes = serde_json::to_vec(&serde_json::json!({
         "games": 2000, "completed": 1999, "halted": 1,
         "stop_kinds": [{"stop_kind": "driver_decision_cap", "games": 1}],
         "cards": [], "order_errors": [], "stop_kind_mismatches": []
     }))
     .unwrap();
-    fs::write(&summary_path, &bytes).unwrap();
-    let baseline = CensusBaselinePin {
-        run: "census-b".into(),
-        summary_sha256: sha256_hex(&bytes),
-        manifest_sha256: "11".repeat(32),
-        build_sha256: "22".repeat(32),
-        fence_sha256: "33".repeat(32),
-        authorization_sha256: "44".repeat(32),
-    };
+    let (baseline, files) = baseline_fixture(&temp, "census-b", &bytes);
     let bind = |config: &mut RunConfig| {
         config.pins.binary = Some(baseline.build_sha256.clone());
         config.pins.fence_record = Some(baseline.fence_sha256.clone());
         config.tripwire = TripwireMode::Full {
             baseline: baseline.clone(),
         };
-        config.tripwire_summary = Some(summary_path.clone());
+        config.tripwire_files = Some(files.clone());
     };
 
     let uninterrupted_root = temp.join("direct");
@@ -618,6 +609,11 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     )
     .expect("window stop JSON");
     assert_eq!(stop["firing"]["denominator"], 2_240);
+    assert_eq!(stop["batch_index"], 1);
+    assert!(stop.get("update").is_none());
+    let checkpoint = read_value(&resumed_root.join("updates/update-0001/checkpoint.json"));
+    assert_eq!(checkpoint["update"], 2);
+    assert!(checkpoint.get("batch_index").is_none());
     assert_eq!(stop["first_watchdog_pod"], PODS_PER_UPDATE);
     assert_eq!(stop["first_watchdog_game"], 0);
     let receipt = read_value(&resumed_root.join("updates/update-0000/update.json"));
@@ -664,7 +660,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     drop(resumed);
     assert_eq!(
         directory_bytes(&uninterrupted_root),
-        directory_bytes(&resumed_root)
+        resumed_artifacts(&resumed_root)
     );
 
     let update_dir = resumed_root.join("updates/update-0001");
@@ -873,15 +869,22 @@ fn append_resume(manifest: &mut String, seq: u64, run: &str, next: u64) {
     );
 }
 
+const MANIFEST_REPO_PATH: &str =
+    "LANES/lead/reviews/cube-briefs-20261122/decl-20261124/d0/SHAKEDOWN-MANIFEST.md";
+
 fn manifest_resume(manifest: &Path, run: &str, next: u64) -> ResumeAuthorization {
+    manifest_resume_at(manifest, run, next, MANIFEST_REPO_PATH)
+}
+
+fn manifest_resume_at(manifest: &Path, run: &str, next: u64, name: &str) -> ResumeAuthorization {
     let repo = manifest.with_extension(format!(
         "repo-{}",
         TEST_DIR_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir(&repo).unwrap();
     manifest_git(&repo, &["init", "-q", "-b", "lead"]);
-    let name = "SHAKEDOWN-MANIFEST.md";
     let manifest = repo.join(name);
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     let mut bytes = "# Shakedown manifest\n\n".to_owned();
     append_manifest_entry(
         &mut bytes,
@@ -1042,7 +1045,7 @@ fn resume_refuses_an_edit_to_an_existing_entry_merged_into_lead() {
 
     manifest_git(repo, &["checkout", "-qb", "other"]);
     fs::write(&proof.manifest, &edited).unwrap();
-    manifest_git(repo, &["add", "--", "SHAKEDOWN-MANIFEST.md"]);
+    manifest_git(repo, &["add", "--", MANIFEST_REPO_PATH]);
     manifest_git(repo, &["commit", "-qm", "Edit the recorded host loss"]);
     manifest_git(repo, &["checkout", "-q", "lead"]);
     manifest_git(repo, &["merge", "--no-ff", "--no-edit", "other"]);
@@ -1129,10 +1132,7 @@ fn manifest_history_refuses_non_append_commits_even_if_tip_restores_bytes() {
                 "removed or renamed"
             }
             Probe::Rename => {
-                manifest_git(
-                    repo,
-                    &["mv", "--", "SHAKEDOWN-MANIFEST.md", "moved-manifest.md"],
-                );
+                manifest_git(repo, &["mv", "--", MANIFEST_REPO_PATH, "moved-manifest.md"]);
                 "removed or renamed"
             }
             Probe::CrLf => {
@@ -1147,7 +1147,7 @@ fn manifest_history_refuses_non_append_commits_even_if_tip_restores_bytes() {
         manifest_git(repo, &["add", "-A", "--", "."]);
         manifest_git(repo, &["commit", "-qm", "Change prior manifest"]);
         fs::write(&proof.manifest, original).unwrap();
-        manifest_git(repo, &["add", "--", "SHAKEDOWN-MANIFEST.md"]);
+        manifest_git(repo, &["add", "--", MANIFEST_REPO_PATH]);
         manifest_git(repo, &["commit", "-qm", "Restore original manifest bytes"]);
         let mut proposed = config.clone();
         proposed.resume = Some(proof);
@@ -1161,6 +1161,64 @@ fn manifest_history_refuses_non_append_commits_even_if_tip_restores_bytes() {
         );
         assert_eq!(directory_bytes(&root), before, "{probe:?}");
     }
+}
+
+#[test]
+fn resume_refuses_a_committed_manifest_at_another_repository_path() {
+    let temp = TempTestDir::new("resume-wrong-path");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    let before = directory_bytes(&root);
+    let mut request = config(&root, "b1", Segment::BuilderOnly, 2);
+    request.resume = Some(manifest_resume_at(
+        &temp.join("manifest.md"),
+        "b1",
+        1,
+        "other/SHAKEDOWN-MANIFEST.md",
+    ));
+    let error = TrainingDriver::open(request, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains("fixed repository path"),
+        "{error}"
+    );
+    assert_eq!(directory_bytes(&root), before);
+}
+
+#[test]
+fn a_clean_exit_does_not_make_a_used_resume_entry_reusable() {
+    let temp = TempTestDir::new("resume-once");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    let mut request = config(&root, "b1", Segment::BuilderOnly, 2);
+    request.resume = Some(manifest_resume(&temp.join("manifest.md"), "b1", 1));
+    let driver = TrainingDriver::open(request.clone(), model_rows(), 1234).unwrap();
+    assert_eq!(driver.next_update(), 1);
+    drop(driver);
+    assert!(!root.join("runner-active.json").exists());
+
+    // A subsequent exit before dispatching the same untouched batch.
+    fs::write(root.join("runner-active.json"), b"null\n").unwrap();
+    let before = directory_bytes(&root);
+    let error = TrainingDriver::open(request, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains("resume entry was already used"),
+        "{error}"
+    );
+    assert_eq!(directory_bytes(&root), before);
+}
+
+fn resumed_artifacts(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    assert_eq!(
+        read_value(&root.join("resumes/entry-00000000000000000002.json"))["batch_index"],
+        1
+    );
+    let mut artifacts = directory_bytes(root);
+    artifacts.retain(|path, _| !path.starts_with("resumes"));
+    artifacts
 }
 
 #[test]
@@ -1213,7 +1271,7 @@ fn host_loss_resume_with_pinned_manifest_is_bit_identical() {
     );
     drop(resumed);
     assert_eq!(
-        directory_bytes(&resumed_root),
+        resumed_artifacts(&resumed_root),
         directory_bytes(&direct_root)
     );
 }
@@ -1377,20 +1435,46 @@ fn same_game_watchdog_repeat_fires_in_q9() {
     assert_eq!(stop["firing"]["games"], 1);
 }
 
+fn baseline_fixture(
+    temp: &TempTestDir,
+    run: &str,
+    bytes: &[u8],
+) -> (CensusBaselinePin, CensusBaselineFiles) {
+    let files = CensusBaselineFiles {
+        summary: temp.join("summary.json"),
+        manifest: temp.join("census-manifest.json"),
+        authorization: temp.join("authorization.md"),
+    };
+    let authorization = b"Synthetic signed authorization";
+    let manifest = serde_json::json!({
+        "run": run,
+        "summary_sha256": sha256_hex(bytes),
+        "build_sha256": "22".repeat(32),
+        "fence_sha256": "33".repeat(32),
+        "authorization_sha256": sha256_hex(authorization),
+    });
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    fs::write(&files.summary, bytes).unwrap();
+    fs::write(&files.manifest, &manifest).unwrap();
+    fs::write(&files.authorization, authorization).unwrap();
+    (
+        CensusBaselinePin {
+            run: run.into(),
+            summary_sha256: sha256_hex(bytes),
+            manifest_sha256: sha256_hex(&manifest),
+            build_sha256: "22".repeat(32),
+            fence_sha256: "33".repeat(32),
+            authorization_sha256: sha256_hex(authorization),
+        },
+        files,
+    )
+}
+
 #[test]
 fn only_a_matching_pinned_census_summary_enables_full_mode() {
     let temp = TempTestDir::new("baseline");
-    let path = temp.join("summary.json");
     let bytes = br#"{"games":1,"completed":1,"halted":0,"stop_kinds":[],"cards":[],"order_errors":[],"stop_kind_mismatches":[]}"#;
-    fs::write(&path, bytes).unwrap();
-    let baseline = CensusBaselinePin {
-        run: "census-b-r2".into(),
-        summary_sha256: sha256_hex(bytes),
-        manifest_sha256: "11".repeat(32),
-        build_sha256: "22".repeat(32),
-        fence_sha256: "33".repeat(32),
-        authorization_sha256: "44".repeat(32),
-    };
+    let (baseline, files) = baseline_fixture(&temp, "census-b-r2", bytes);
     let make_config = |root: &Path| {
         let mut config = config(root, "b1", Segment::BuilderOnly, 1);
         config.pins.binary = Some(baseline.build_sha256.clone());
@@ -1398,7 +1482,7 @@ fn only_a_matching_pinned_census_summary_enables_full_mode() {
         config.tripwire = TripwireMode::Full {
             baseline: baseline.clone(),
         };
-        config.tripwire_summary = Some(path.clone());
+        config.tripwire_files = Some(files.clone());
         config
     };
 
@@ -1426,7 +1510,7 @@ fn only_a_matching_pinned_census_summary_enables_full_mode() {
     let q9_root = temp.join("q9-stays-q9");
     let mut q9 = make_config(&q9_root);
     q9.tripwire = TripwireMode::Q9;
-    q9.tripwire_summary = None;
+    q9.tripwire_files = None;
     TrainingDriver::open(q9, model_rows(), 1234).unwrap();
     let error = TrainingDriver::open(make_config(&q9_root), model_rows(), 1234)
         .err()
@@ -1435,7 +1519,35 @@ fn only_a_matching_pinned_census_summary_enables_full_mode() {
         .to_string()
         .contains("resume changed a run pin, plan or tripwire mode"));
 
-    fs::write(&path, b"changed bytes").unwrap();
+    for (path, artifact) in [
+        (&files.manifest, "manifest"),
+        (&files.authorization, "authorization"),
+    ] {
+        let original = fs::read(path).unwrap();
+        fs::write(path, b"changed bytes").unwrap();
+        let refusal_root = temp.join(artifact);
+        let error = TrainingDriver::open(make_config(&refusal_root), model_rows(), 1234)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(&format!("{artifact} digest")));
+        assert!(!refusal_root.exists());
+        fs::write(path, original).unwrap();
+    }
+
+    let mut inconsistent = read_value(&files.manifest);
+    inconsistent["summary_sha256"] = "55".repeat(32).into();
+    let inconsistent = serde_json::to_vec(&inconsistent).unwrap();
+    fs::write(&files.manifest, &inconsistent).unwrap();
+    let mut requested = make_config(&temp.join("unbound-summary"));
+    if let TripwireMode::Full { baseline } = &mut requested.tripwire {
+        baseline.manifest_sha256 = sha256_hex(&inconsistent);
+    }
+    let error = TrainingDriver::open(requested, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("does not bind the summary"));
+
+    fs::write(&files.summary, b"changed bytes").unwrap();
     let error = TrainingDriver::open(make_config(&root), model_rows(), 1234)
         .err()
         .unwrap();
@@ -1655,6 +1767,41 @@ fn checkpoint_sixteen_is_pinned_at_creation_and_recovered_after_copy_loss() {
         .iter()
         .flat_map(|pod| pod["decks"].as_array().unwrap())
         .any(|deck| deck["builder"]["pin"] == snapshot_pin));
+}
+
+#[test]
+fn publication_io_failure_ledgers_the_batch_and_refuses_resume() {
+    struct BlockingPilot(PathBuf);
+    impl GamePilot for BlockingPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            fs::create_dir_all(&self.0).unwrap();
+            NaturalPilot.play(spec, caps)
+        }
+    }
+
+    let temp = TempTestDir::new("publication-io");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 1);
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    let pilot = FixturePilot(Arc::new(BlockingPilot(
+        root.join("pending/update-0000/checkpoint.json"),
+    )));
+    assert!(matches!(
+        driver.run_next_update(&pool(), &pilot),
+        Err(TrainingDriverError::Io(_))
+    ));
+    let stop = read_value(&root.join("stops/stop-0000.json"));
+    assert_eq!(stop["kind"], "io_error");
+    assert_eq!(stop["batch_index"], 0);
+    assert!(stop.get("update").is_none());
+    assert_eq!(stop["batch"].as_array().unwrap().len(), 16);
+    assert!(!root.join("updates/update-0000").exists());
+    assert!(!root.join("pending/update-0000").exists());
+    drop(driver);
+    assert_eq!(
+        TrainingDriver::open(config, model_rows(), 1234).err(),
+        Some(TrainingDriverError::StoppedWithoutResolution)
+    );
 }
 
 #[test]

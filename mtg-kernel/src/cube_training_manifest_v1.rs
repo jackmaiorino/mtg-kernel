@@ -7,6 +7,9 @@ use std::ops::Range;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+const MANIFEST_PATH: &str =
+    "LANES/lead/reviews/cube-briefs-20261122/decl-20261124/d0/SHAKEDOWN-MANIFEST.md";
+
 #[derive(Deserialize)]
 struct CommonEntry {
     seq: u64,
@@ -214,6 +217,11 @@ pub(super) fn verify_entry_commit(
         .strip_prefix(canonical_root)
         .map_err(|_| invalid("resume manifest is outside the records repository"))?;
     let relative = git_path(relative)?;
+    if relative != MANIFEST_PATH {
+        return Err(invalid(
+            "resume manifest is not at its fixed repository path",
+        ));
+    }
     let lead_ref = resolve_lead_ref(root, &entry.lead_branch)?;
     let history = git(
         root,
