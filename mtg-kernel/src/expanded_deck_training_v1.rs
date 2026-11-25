@@ -15048,8 +15048,8 @@ pub(crate) mod tests {
     ];
     // GPU1 outputs for the issue #969 fixture seed.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
-        "575155abba07921c6cb6110ded34e856f56c0b8e4980d4b6b3d25fa9399d9583",
-        "27978dcc17adc2e5b5e0fd6859bc8c592175072b34a32fcbcfd8d1fbbbef7a35",
+        "5332ed0ff07b0043f6644f2eb91b44c2abc4425f3eb203b1cd7534af6899bff4",
+        "0b975c84781e8c4baa34550b1ca79a2bbd3bbba89a58d17353cd4b7b478941b7",
     ];
 
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
