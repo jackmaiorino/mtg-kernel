@@ -42,7 +42,7 @@ pub const A2_CAPS: GameCaps = GameCaps {
     max_decisions: 16_384,
     max_physical_decisions: 16_384,
     max_policy_steps: 32_768,
-    max_stack_objects: None,
+    max_stack_objects: Some(128),
 };
 /// The Windows exit code of a stack overflow (`0xC00000FD`).
 pub const STACK_OVERFLOW_EXIT_CODE: u32 = 0xC000_00FD;

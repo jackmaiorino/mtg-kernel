@@ -13,10 +13,10 @@
 //! (the run record: binary commit, card database hash, input hashes, caps,
 //! namespace and range). Both are created fresh, only when the run
 //! completes. The caps default to the A2.1 caps (driver decisions 16,384,
-//! physical decisions 16,384, policy steps 32,768); other caps are refused
-//! unless `--allow-non-a2-caps true` is given, and the record says which.
-//! The optional `--max-stack-objects N` session cap is recorded separately
-//! from the three values checked for A2.1.
+//! physical decisions 16,384, policy steps 32,768, stack objects 128).
+//! Use `--max-stack-objects N` to set a stack cap, or
+//! `--max-stack-objects none` to run uncapped. Caps outside A2.1 require
+//! `--allow-non-a2-caps true`. The record includes the caps and A2 status.
 //!
 //! The games run in `--workers` child processes (default 1) over contiguous
 //! index ranges, each game on a thread with a 256 MiB stack, and the parts
@@ -188,20 +188,21 @@ fn caps_from(args: &Args) -> Fallible<(GameCaps, bool)> {
         max_policy_steps: args
             .number("--max-policy-steps")?
             .unwrap_or(A2_CAPS.max_policy_steps),
-        max_stack_objects: args
-            .number("--max-stack-objects")?
-            .map(u32::try_from)
-            .transpose()
-            .map_err(|_| "--max-stack-objects exceeds u32::MAX".to_owned())?,
+        max_stack_objects: match args.get("--max-stack-objects") {
+            None => A2_CAPS.max_stack_objects,
+            Some("none") => None,
+            Some(text) => Some(
+                text.parse::<u32>()
+                    .map_err(|error| format!("--max-stack-objects {text:?}: {error}"))?,
+            ),
+        },
     };
     let allow = match args.get("--allow-non-a2-caps") {
         None | Some("false") => false,
         Some("true") => true,
         Some(other) => return Err(format!("--allow-non-a2-caps {other:?}: true or false")),
     };
-    let a2 = caps.max_decisions == A2_CAPS.max_decisions
-        && caps.max_physical_decisions == A2_CAPS.max_physical_decisions
-        && caps.max_policy_steps == A2_CAPS.max_policy_steps;
+    let a2 = caps == A2_CAPS;
     if !a2 && !allow {
         return Err(format!(
             "caps {caps:?} are not the A2.1 caps {A2_CAPS:?}; pass --allow-non-a2-caps true for a non-census run"
@@ -963,74 +964,148 @@ mod tests {
         assert_eq!(play(false), play(true));
     }
 
+    fn write_dealt_schedule(dir: &Path) -> PathBuf {
+        let deck = json!({"mainboard": vec![basic_land_ids().unwrap()[0]; 40]});
+        let episode = |seed: u64| {
+            json!({"episode": {
+                "id": format!("game-{seed}"), "seed": seed, "starting_player": 0,
+                "selected": [&deck, &deck], "max_physical_decisions": A2_CAPS.max_physical_decisions,
+                "max_policy_steps": A2_CAPS.max_policy_steps
+            }})
+        };
+        let schedule = dir.join("schedule.json");
+        std::fs::write(
+            &schedule,
+            json!({
+                "kernel_carddb_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
+                "iterations": [{"episodes": [episode(11), episode(12)]}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        schedule
+    }
+
     #[test]
-    fn record_includes_optional_stack_cap_without_changing_a2_caps() {
+    fn drafted_and_dealt_stack_caps_are_recorded_and_checked() {
         let dir = temp_dir("stack-cap");
         let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/cube_v1");
         let cube = data.join("mtgo_vintage_cube_20261007.json");
         let gaps = data.join("mtgo_vintage_cube_20261007_gaps.json");
         let fence = dir.join("fence.json");
         std::fs::write(&fence, r#"{"cards":[]}"#).unwrap();
-        for limit in [None, Some(7), Some(0), Some(u32::MAX)] {
-            let mut flags = [
-                "--mode",
-                "drafted",
-                "--namespace",
-                "stack-cap-test",
-                "--draft-start",
-                "0",
-                "--draft-end",
-                "1",
-                "--cube",
-                cube.to_str().unwrap(),
-                "--gaps",
-                gaps.to_str().unwrap(),
-                "--fence",
-                fence.to_str().unwrap(),
-            ]
-            .map(str::to_owned)
-            .to_vec();
-            if let Some(limit) = limit {
-                flags.extend(["--max-stack-objects".to_owned(), limit.to_string()]);
+        let schedule = write_dealt_schedule(&dir);
+        let drafted = [
+            "--mode",
+            "drafted",
+            "--namespace",
+            "stack-cap-test",
+            "--draft-start",
+            "0",
+            "--draft-end",
+            "1",
+            "--cube",
+            cube.to_str().unwrap(),
+            "--gaps",
+            gaps.to_str().unwrap(),
+            "--fence",
+            fence.to_str().unwrap(),
+        ];
+        let dealt = ["--mode", "dealt", "--schedule", schedule.to_str().unwrap()];
+        for flags in [drafted.as_slice(), dealt.as_slice()] {
+            let load = |extra: &[&str]| {
+                let raw = flags.iter().chain(extra).map(|flag| (*flag).to_owned());
+                load_run(&Args::parse(raw.collect()).unwrap())
+            };
+            for (extra, limit, a2) in [
+                (vec![], Some(128), true),
+                (vec!["--max-stack-objects", "128"], Some(128), true),
+                (vec!["--max-stack-objects", "7"], Some(7), false),
+                (vec!["--max-stack-objects", "0"], Some(0), false),
+                (
+                    vec!["--max-stack-objects", "4294967295"],
+                    Some(u32::MAX),
+                    false,
+                ),
+                (vec!["--max-stack-objects", "none"], None, false),
+            ] {
+                let mut extra = extra;
+                if !a2 {
+                    let error = load(&extra).err().expect("non-A2 caps must be refused");
+                    assert!(error.contains("--allow-non-a2-caps true"), "{error}");
+                    extra.extend(["--allow-non-a2-caps", "true"]);
+                }
+                let run = load(&extra).unwrap();
+                assert_eq!(
+                    run.caps,
+                    GameCaps {
+                        max_stack_objects: limit,
+                        ..A2_CAPS
+                    }
+                );
+                let record: Value = serde_json::from_str(&run.record_text()).unwrap();
+                assert_eq!(record["caps"].get("max_stack_objects"), Some(&json!(limit)));
+                assert_eq!(record["caps"]["a2_caps"], a2);
             }
-            let run = load_run(&Args::parse(flags).unwrap()).unwrap();
-            assert_eq!(run.caps.max_stack_objects, limit);
-            let record: Value = serde_json::from_str(&run.record_text()).unwrap();
-            assert_eq!(record["caps"].get("max_stack_objects"), Some(&json!(limit)));
-            assert_eq!(record["caps"]["a2_caps"], true);
+            let error = load(&[
+                "--max-stack-objects",
+                "4294967296",
+                "--allow-non-a2-caps",
+                "true",
+            ])
+            .err()
+            .expect("out-of-range stack cap must be refused");
+            assert!(
+                error.starts_with(r#"--max-stack-objects "4294967296":"#),
+                "{error}"
+            );
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn heartbeat_preserves_drafted_and_dealt_output_bytes() {
-        std::thread::Builder::new().stack_size(WORKER_STACK_BYTES).spawn(|| {
-            let dir = temp_dir("bytes");
-            let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/cube_v1");
-            let cube = data.join("mtgo_vintage_cube_20261007.json");
-            let gaps = data.join("mtgo_vintage_cube_20261007_gaps.json");
-            let fence = dir.join("fence.json");
-            std::fs::write(&fence, r#"{"cards":[]}"#).unwrap();
-            assert_same_outputs(&dir, &[
-                "--mode", "drafted", "--namespace", "census-b-test", "--draft-start", "0",
-                "--draft-end", "2", "--cube", cube.to_str().unwrap(), "--gaps", gaps.to_str().unwrap(),
-                "--fence", fence.to_str().unwrap(),
-            ], (2 * GAMES_PER_DRAFT) as usize);
+        std::thread::Builder::new()
+            .stack_size(WORKER_STACK_BYTES)
+            .spawn(|| {
+                let dir = temp_dir("bytes");
+                let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/cube_v1");
+                let cube = data.join("mtgo_vintage_cube_20261007.json");
+                let gaps = data.join("mtgo_vintage_cube_20261007_gaps.json");
+                let fence = dir.join("fence.json");
+                std::fs::write(&fence, r#"{"cards":[]}"#).unwrap();
+                assert_same_outputs(
+                    &dir,
+                    &[
+                        "--mode",
+                        "drafted",
+                        "--namespace",
+                        "census-b-test",
+                        "--draft-start",
+                        "0",
+                        "--draft-end",
+                        "2",
+                        "--cube",
+                        cube.to_str().unwrap(),
+                        "--gaps",
+                        gaps.to_str().unwrap(),
+                        "--fence",
+                        fence.to_str().unwrap(),
+                    ],
+                    (2 * GAMES_PER_DRAFT) as usize,
+                );
 
-            let deck = json!({"mainboard": vec![basic_land_ids().unwrap()[0]; 40]});
-            let episode = |seed: u64| json!({"episode": {
-                "id": format!("game-{seed}"), "seed": seed, "starting_player": 0,
-                "selected": [&deck, &deck], "max_physical_decisions": A2_CAPS.max_physical_decisions,
-                "max_policy_steps": A2_CAPS.max_policy_steps
-            }});
-            let schedule = dir.join("schedule.json");
-            std::fs::write(&schedule, json!({
-                "kernel_carddb_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
-                "iterations": [{"episodes": [episode(11), episode(12)]}]
-            }).to_string()).unwrap();
-            assert_same_outputs(&dir, &["--mode", "dealt", "--schedule", schedule.to_str().unwrap()], 2);
-            std::fs::remove_dir_all(dir).unwrap();
-        }).unwrap().join().unwrap();
+                let schedule = write_dealt_schedule(&dir);
+                assert_same_outputs(
+                    &dir,
+                    &["--mode", "dealt", "--schedule", schedule.to_str().unwrap()],
+                    2,
+                );
+                std::fs::remove_dir_all(dir).unwrap();
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

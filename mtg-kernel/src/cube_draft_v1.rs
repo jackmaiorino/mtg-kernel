@@ -1153,7 +1153,7 @@ pub const RECENT_ACTIONS: u64 = 10;
 pub struct GameTally {
     /// The terminal reply's `policy_step_count`.
     pub policy_steps: Option<u64>,
-    /// Largest stack in an exposed decision, or zero before any observation.
+    /// Largest exposed stack in a decision or terminal reply, or zero before any observation.
     pub max_stack: u32,
     /// The terminal reply's `physical_decision_count`.
     pub physical_decisions: Option<u64>,
@@ -1171,6 +1171,14 @@ pub struct GameTally {
 }
 
 impl GameTally {
+    fn record_stack(&mut self, body: &Value) {
+        if let Some(stack) = body["observation"]["projection"]["stack"].as_array() {
+            self.max_stack = self
+                .max_stack
+                .max(u32::try_from(stack.len()).unwrap_or(u32::MAX));
+        }
+    }
+
     fn record_action(&mut self, action: &Value) {
         let source = action["semantic"]["source"]["card_db_id"]
             .as_u64()
@@ -1480,6 +1488,7 @@ fn drive_game(
             }
             Some("terminal") => {
                 let terminal = &reply["terminal"];
+                tally.record_stack(terminal);
                 tally.policy_steps = terminal["policy_step_count"].as_u64();
                 tally.physical_decisions = terminal["physical_decision_count"].as_u64();
                 return terminal_end(terminal, setup.seats);
@@ -1487,11 +1496,7 @@ fn drive_game(
             _ => {}
         }
         let decision = &reply["decision"];
-        if let Some(stack) = decision["observation"]["projection"]["stack"].as_array() {
-            tally.max_stack = tally
-                .max_stack
-                .max(u32::try_from(stack.len()).unwrap_or(u32::MAX));
-        }
+        tally.record_stack(decision);
         if let Some(step) = decision["step"].as_u64() {
             tally.last_step = Some(step);
         }

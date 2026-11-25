@@ -194,18 +194,20 @@ fn replay_stack_peak(pod: &DraftedPod, line: &GameLine, caps: &GameCaps) -> u32 
     for step in 0..=caps.max_decisions {
         let raw = server.handle_line(&request.to_string());
         let reply: Value = serde_json::from_str(&raw).unwrap();
-        if reply["response_type"] == "terminal" || reply["response_type"] == "error" {
-            break;
-        }
-        assert_eq!(reply["response_type"], "decision", "{reply}");
-        let decision = &reply["decision"];
-        let stack = decision
+        let body = match reply["response_type"].as_str() {
+            Some("terminal") => &reply["terminal"],
+            Some("error") => break,
+            Some("decision") => &reply["decision"],
+            _ => panic!("unexpected reply: {reply}"),
+        };
+        let stack = body
             .pointer("/observation/projection/stack")
             .and_then(Value::as_array);
-        lengths.push(stack.map_or(0, Vec::len) as u32);
-        if step == caps.max_decisions {
+        lengths.push(u32::try_from(stack.map_or(0, Vec::len)).unwrap_or(u32::MAX));
+        if reply["response_type"] == "terminal" || step == caps.max_decisions {
             break;
         }
+        let decision = body;
         // Replay the uniform policy's rejection sampling from the same seed.
         let actions = decision["legal_actions"].as_array().unwrap();
         let n = actions.len() as u64;
