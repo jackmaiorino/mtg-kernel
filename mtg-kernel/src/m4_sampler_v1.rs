@@ -245,6 +245,14 @@ fn select(counts: &[u64], k: u64) -> usize {
         .expect("k is below the apportioned total")
 }
 
+/// The pinned natural log (`ln_f64_v1`, identity `m4-ln-atanh23-f64-v1`), exposed only so the
+/// goldens example can print its bits. Refuses inputs outside its domain (finite `x >= 1`).
+#[doc(hidden)]
+pub fn ln_f64_v1_for_goldens(x: f64) -> f64 {
+    assert!(x.is_finite() && x >= 1.0, "ln_f64_v1 domain is finite x >= 1, got {x}");
+    ln_f64_v1(x)
+}
+
 /// Exact counts in caller order, including zeros for masked entries.
 pub fn counts_v1(logits: &[f32], mask: &[bool]) -> Result<Vec<u64>, SamplerErrorV1> {
     Ok(apportion::<GRID_BITS>(&weights(logits, mask)?.values))

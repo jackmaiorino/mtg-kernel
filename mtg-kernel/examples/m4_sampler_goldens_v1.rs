@@ -11,7 +11,7 @@ fn main() {
     }
     println!("// ln_f64_v1 expected bits, in test order");
     for x in ln_golden_inputs::INPUTS {
-        let bits = mtg_kernel::line_b_teacher_target_v1::ln_v1(x).to_bits();
+        let bits = mtg_kernel::m4_sampler_v1::ln_f64_v1_for_goldens(x).to_bits();
         println!("\"{bits:016x}\", // x={x:?}");
     }
 }

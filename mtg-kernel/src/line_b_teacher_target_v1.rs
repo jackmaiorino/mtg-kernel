@@ -172,7 +172,7 @@ pub struct LineBDivergenceValueV1 {
 /// Libm-free natural logarithm for finite `x >= 1` (sums of softmax weights):
 /// `x = m * 2^e` with `m` in `[sqrt(1/2), sqrt 2]` and `ln m = 2 atanh((m -
 /// 1) / (m + 1))`. `m - 1` is exact; the series is truncated after `t^23/23`.
-pub fn ln_v1(x: f64) -> f64 {
+pub(crate) fn ln_v1(x: f64) -> f64 {
     debug_assert!(x.is_finite() && x >= 1.0);
     ln_normal_v1(x)
 }
