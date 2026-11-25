@@ -944,13 +944,13 @@ impl ModelV1 {
         Ok(())
     }
 
-    /// h(r) of one index row through `trunk`.
-    fn card_hidden_row(&self, trunk: TrunkV1, rows: &ModelCardRowsV1, row: usize, out: &mut [f32]) {
-        let ids = match trunk {
-            TrunkV1::Build => TensorIdV1::BUILD_TRUNK,
-            TrunkV1::Pick => TensorIdV1::PICK_TRUNK,
-        };
-        let [embedding, projection, mlp0_weight, mlp0_bias, mlp2_weight, mlp2_bias] = ids;
+    fn card_input(
+        &self,
+        rows: &ModelCardRowsV1,
+        row: usize,
+        embedding: TensorIdV1,
+        projection: TensorIdV1,
+    ) -> Vec<f32> {
         let embedding_row =
             &self.t(embedding)[row * EMBEDDING_WIDTH_V1..(row + 1) * EMBEDDING_WIDTH_V1];
         let projection = self.t(projection);
@@ -966,6 +966,17 @@ impl ModelV1 {
             *slot = sum;
         }
         card_vector[EMBEDDING_WIDTH_V1..].copy_from_slice(rows.dense_row(row));
+        card_vector
+    }
+
+    /// h(r) of one index row through `trunk`.
+    fn card_hidden_row(&self, trunk: TrunkV1, rows: &ModelCardRowsV1, row: usize, out: &mut [f32]) {
+        let ids = match trunk {
+            TrunkV1::Build => TensorIdV1::BUILD_TRUNK,
+            TrunkV1::Pick => TensorIdV1::PICK_TRUNK,
+        };
+        let [embedding, projection, mlp0_weight, mlp0_bias, mlp2_weight, mlp2_bias] = ids;
+        let card_vector = self.card_input(rows, row, embedding, projection);
         let mut first = [0.0f32; H];
         self.layer(mlp0_weight, Some(mlp0_bias))
             .forward(&card_vector, &mut first);
@@ -1652,3 +1663,6 @@ impl TypeContextV1<'_> {
 #[cfg(test)]
 #[path = "model_tests.rs"]
 mod tests;
+
+#[path = "training.rs"]
+pub mod training;

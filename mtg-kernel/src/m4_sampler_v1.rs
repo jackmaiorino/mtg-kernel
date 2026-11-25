@@ -405,6 +405,8 @@ mod tests {
 
     #[test]
     fn exact_quotas_loss_bounds_and_every_cdf_boundary() {
+        check_menu(&[0.75, 0.75], &[true; 2]);
+        check_menu(&[0.75, 1.75], &[true; 2]);
         for case in golden_cases::cases() {
             check_menu(&case.logits, &case.mask);
         }
