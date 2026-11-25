@@ -868,16 +868,6 @@ pub fn draw_league_chairs(
     Ok(chairs.map(|chair| (chair, uniform_index(&mut stream, league_len))))
 }
 
-#[cfg(test)]
-mod league_draw_tests {
-    #[test]
-    fn draws_snapshots_in_ascending_chair_order() {
-        assert_eq!(super::draw_league_chairs(0, 9).unwrap(), [(1, 1), (7, 7)]);
-        assert_eq!(super::draw_league_chairs(42, 9).unwrap(), [(5, 0), (6, 0)]);
-        assert!(super::draw_league_chairs(0, 0).is_err());
-    }
-}
-
 /// Constructs an 8-chair training role assignment with the two specified
 /// distinct chairs marked [`ChairRole::Older`] and the remaining six
 /// [`ChairRole::Learning`].
@@ -3159,4 +3149,14 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod league_draw_tests {
+    #[test]
+    fn draws_snapshots_in_ascending_chair_order() {
+        assert_eq!(super::draw_league_chairs(0, 9).unwrap(), [(1, 1), (7, 7)]);
+        assert_eq!(super::draw_league_chairs(42, 9).unwrap(), [(5, 0), (6, 0)]);
+        assert!(super::draw_league_chairs(0, 0).is_err());
+    }
 }
