@@ -343,10 +343,14 @@ fn d8_history_names_and_refuses_a_prep_receipt_with_an_invalid_schema() {
     for execution in [0, 1] {
         let receipt = prior_dir.join(format!("exec-{execution}/execution.json"));
         put(&receipt, b"{}");
+        let canonical_receipt = fs::canonicalize(&receipt).unwrap();
         let error = verify_d8_history(&next_dir, &next, Some(RestartKind::Note))
             .unwrap_err()
             .to_string();
-        assert!(error.contains(&receipt.display().to_string()), "{error}");
+        assert!(
+            error.contains(&canonical_receipt.display().to_string()),
+            "{error}"
+        );
         fs::remove_file(receipt).unwrap();
     }
     verify_d8_history(&next_dir, &next, Some(RestartKind::Note)).unwrap();
