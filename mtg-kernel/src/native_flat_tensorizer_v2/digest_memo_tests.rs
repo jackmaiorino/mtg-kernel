@@ -159,10 +159,9 @@ fn suppression_turns_off_only_a_program_default_digest_memo() {
     assert!(!suppressed());
 }
 
-/// With `memo_states` false the memo never sees a state message: no state
-/// entry is stored, no state lookup is counted, a repeated state is hashed
-/// again (through the prefix cache) to the same digests, and actions are
-/// still stored and reused. With it true, states are stored as before.
+/// With `memo_states` false, repeated states produce the expected digests
+/// without reading or adding memo entries. Actions are still stored and reused.
+/// With it true, states are stored as before.
 #[test]
 fn state_messages_bypass_the_memo_when_turned_off() {
     let state: Vec<u8> = (0..3_000).map(|i| b"{\"y\":[3,4],}"[i % 12]).collect();
@@ -210,7 +209,7 @@ fn state_messages_bypass_the_memo_when_turned_off() {
         assert_eq!(state_entries(&memo), 0, "round {round}");
         assert_eq!(action_entries(&memo), 2, "round {round}");
     }
-    // Two action misses, then four action hits; no state was looked up.
+    // Two action misses, then four action hits, with no state hits or misses.
     assert_eq!(
         DIGEST_MEMO_COUNTS_V1.with(|counts| counts.replace((0, 0))),
         (4, 2)
@@ -228,6 +227,28 @@ fn state_messages_bypass_the_memo_when_turned_off() {
         DIGEST_MEMO_COUNTS_V1.with(|counts| counts.replace((0, 0))),
         (2, 1)
     );
+
+    // The bypass uses hash zero. Seed that bucket too so an unguarded
+    // lookup hits even when state hash computation is still bypassed.
+    memo.insert(
+        1 << 20,
+        0,
+        STATE_HASH_NAMESPACE_V2,
+        slot.state_message(),
+        [[7; 64]; ACTION_HASH_BLOCK_COUNT_V1],
+    );
+    hash_prepared_slots_memoized_v2(
+        std::slice::from_ref(&slot),
+        &mut batch,
+        &mut memo,
+        1 << 20,
+        false,
+    );
+    assert_eq!(
+        DIGEST_MEMO_COUNTS_V1.with(|counts| counts.replace((0, 0))),
+        (2, 0)
+    );
+    assert_eq!(batch.blocks[..6], expected[..]);
 }
 
 /// The process default keeps state messages in the memo; only a program
