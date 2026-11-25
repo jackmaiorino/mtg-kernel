@@ -163,13 +163,18 @@ impl GamePilot for RepeatWatchdogPilot {
     }
 }
 
-struct OneHaltPilot {
-    target_action_seeds: Vec<u64>,
+struct StraddlingTripwirePilot {
+    halt_action_seeds: Vec<u64>,
+    watchdog_action_seed: u64,
+    watchdog: FirstWatchdogPilot,
 }
 
-impl GamePilot for OneHaltPilot {
+impl GamePilot for StraddlingTripwirePilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
-        if self.target_action_seeds.contains(&spec.action_seed) {
+        if spec.action_seed == self.watchdog_action_seed {
+            return self.watchdog.play(spec, caps);
+        }
+        if self.halt_action_seeds.contains(&spec.action_seed) {
             return AlwaysHaltPilot.play(spec, caps);
         }
         NaturalPilot.play(spec, caps)
@@ -517,12 +522,21 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     let temp = TempTestDir::new("resume");
     let cube = pool();
     let pod_seed = pod_play_seed("test", "b1", 0).expect("pod seed");
-    let target_action_seeds = (0..4)
+    use mtg_kernel::cube_training_driver_v1::PODS_PER_UPDATE;
+    let halt_action_seeds: Vec<_> = (0..4)
         .map(|group| attempt_seeds(game_seed(pod_seed, group), 0).2)
         .collect();
-    let pilot = FixturePilot(Arc::new(OneHaltPilot {
-        target_action_seeds,
-    }));
+    let watchdog_seed = pod_play_seed("test", "b1", PODS_PER_UPDATE).unwrap();
+    let new_pilot = || {
+        FixturePilot(Arc::new(StraddlingTripwirePilot {
+            halt_action_seeds: halt_action_seeds.clone(),
+            watchdog_action_seed: attempt_seeds(game_seed(watchdog_seed, 0), 0).2,
+            watchdog: FirstWatchdogPilot {
+                fired: AtomicBool::new(false),
+            },
+        }))
+    };
+    let pilot = new_pilot();
     let summary_path = temp.join("summary.json");
     let bytes = serde_json::to_vec(&serde_json::json!({
         "games": 2000, "completed": 1999, "halted": 1,
@@ -564,6 +578,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
         })
     );
 
+    let pilot = new_pilot();
     let resumed_root = temp.join("resumed");
     let mut resumed_config = config(&resumed_root, "b1", Segment::BuilderOnly, 2);
     bind(&mut resumed_config);
@@ -599,6 +614,8 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     )
     .expect("window stop JSON");
     assert_eq!(stop["firing"]["denominator"], 2_240);
+    assert_eq!(stop["first_watchdog_pod"], PODS_PER_UPDATE);
+    assert_eq!(stop["first_watchdog_game"], 0);
     let receipt = read_value(&resumed_root.join("updates/update-0000/update.json"));
     assert!(
         receipt["optimizer"]["gradient_norms"]["build"]
@@ -619,6 +636,18 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
             .as_u64()
             .unwrap()
             >= 5
+    );
+    let bands = receipt["game_statistics"]["cap_hits_by_stop_kind_and_basics_band"]
+        ["driver_decision_cap"]
+        .as_object()
+        .unwrap();
+    let cap_hits_by_deck: u64 = bands.values().map(|value| value.as_u64().unwrap()).sum();
+    assert_eq!(
+        cap_hits_by_deck,
+        2 * receipt["game_statistics"]["halts_by_stop_kind_and_attempt"]["driver_decision_cap"]
+            ["0"]
+            .as_u64()
+            .unwrap()
     );
     assert!(receipt["game_statistics"]["replays"].as_u64().unwrap() >= 5);
     assert_eq!(receipt["checkpoint_number"], 1);
