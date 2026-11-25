@@ -4,6 +4,8 @@
   "read_plan": "mtg-kernel-cube-read-plan/v3",
   "a6_sha256": null,
   "resamples": 10000,
+  "pins": null,
+  "inputs": null,
   "reads": {
     "a": {
       "namespace": "test",
@@ -71,7 +73,8 @@
     },
     "aa": {
       "namespace": "test",
-      "pairs": 4
+      "pairs": 4,
+      "level": 0.025
     },
     "dose": {
       "namespace": "test",
@@ -101,19 +104,23 @@
     },
     "size_a": {
       "namespace": "test",
-      "units": 3
+      "units": 3,
+      "level": 0.025
     },
     "size_a_early": {
       "namespace": "test",
-      "units": 3
+      "units": 3,
+      "level": 0.025
     },
     "size_b": {
       "namespace": "test",
-      "units": 3
+      "units": 3,
+      "level": 0.025
     },
     "size_c": {
       "namespace": "test",
-      "units": 3
+      "units": 3,
+      "level": 0.025
     }
   }
 }

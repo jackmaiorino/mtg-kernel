@@ -57,18 +57,56 @@ SIZED_GATE = {"size_a": "a", "size_a_early": "a_early", "size_b": "b", "size_c":
 COMPANION_PARENT = {"a_one": "a", "a_all": "a", "a_early_one": "a_early", "a_early_all": "a_early"}
 WIN = {1: Fraction(1), 0: Fraction(1, 2), -1: Fraction(0)}
 
-DECL_KEYS = ("schema", "interfaces", "read_plan", "a6_sha256", "resamples", "reads")
+A6_PART1_SHA256 = "fd189cb58321d6b8401b1eaab244759ee122f438d02948584716a18506d4fbd1"
+A6_PART1_HEADING = b"## Signature, part 1"
+A6_SIGNED_RESAMPLES = 10_000
+A6_SIGNED_LEVEL = Fraction(1, 40)
+A6_SIGNED_EXTENSION_FACTOR = 2
+A6_SIGNED_Z_SUM = Fraction(14, 5)
+A6_SIGNED_FLOOR = 128
+A6_SIGNED_CAP = 512
+
+A6_SIGNED_SIZING = {
+    "a": {"delta": Fraction(3, 50), "z_sum": A6_SIGNED_Z_SUM, "floor": A6_SIGNED_FLOOR, "cap": A6_SIGNED_CAP},
+    "a_early": {"delta": Fraction(3, 50), "z_sum": A6_SIGNED_Z_SUM, "floor": A6_SIGNED_FLOOR, "cap": A6_SIGNED_CAP},
+    "b": {"delta": Fraction(3, 100), "z_sum": A6_SIGNED_Z_SUM, "floor": A6_SIGNED_FLOOR, "cap": A6_SIGNED_CAP},
+    "c": {"delta": Fraction(1, 50), "z_sum": A6_SIGNED_Z_SUM, "floor": A6_SIGNED_FLOOR, "cap": A6_SIGNED_CAP},
+}
+
+A6_SIGNED_RULES: dict[str, dict[str, Any]] = {
+    "a": {"levels": [A6_SIGNED_LEVEL, A6_SIGNED_LEVEL], "cut": Fraction(1, 25),
+          "extension_factor": A6_SIGNED_EXTENSION_FACTOR, "sizing": A6_SIGNED_SIZING["a"]},
+    "a_early": {"levels": [A6_SIGNED_LEVEL, A6_SIGNED_LEVEL], "cut": Fraction(1, 25),
+                "extension_factor": A6_SIGNED_EXTENSION_FACTOR, "sizing": A6_SIGNED_SIZING["a_early"]},
+    "b": {"levels": [A6_SIGNED_LEVEL, A6_SIGNED_LEVEL], "cut": Fraction(13, 25),
+          "extension_factor": A6_SIGNED_EXTENSION_FACTOR, "sizing": A6_SIGNED_SIZING["b"]},
+    "c": {"levels": [A6_SIGNED_LEVEL, A6_SIGNED_LEVEL], "cut": Fraction(-1, 50),
+          "extension_factor": A6_SIGNED_EXTENSION_FACTOR, "sizing": A6_SIGNED_SIZING["c"]},
+    "aa": {"pairs": 4, "level": A6_SIGNED_LEVEL},
+    "dose": {"panel_drafts": 32, "level": A6_SIGNED_LEVEL},
+    "d13": {"panel_drafts": 32, "level": A6_SIGNED_LEVEL},
+    "a_one": {"level": A6_SIGNED_LEVEL},
+    "a_early_one": {"level": A6_SIGNED_LEVEL},
+    "a_all": {},
+    "a_early_all": {},
+    "size_a": {"units": 48, "level": A6_SIGNED_LEVEL},
+    "size_a_early": {"units": 48, "level": A6_SIGNED_LEVEL},
+    "size_b": {"units": 96, "level": A6_SIGNED_LEVEL},
+    "size_c": {"units": 48, "level": A6_SIGNED_LEVEL},
+}
+
+DECL_KEYS = ("schema", "interfaces", "read_plan", "a6_sha256", "resamples", "pins", "inputs", "reads")
 GATE_KEYS = ("namespace", "levels", "cut", "extension_factor", "n", "sizing")
 SIZING_KEYS = ("delta", "z_sum", "floor", "cap")
 SECTION_KEYS = {
     "a": GATE_KEYS, "a_early": GATE_KEYS, "b": GATE_KEYS, "c": GATE_KEYS,
-    "aa": ("namespace", "pairs"),
+    "aa": ("namespace", "pairs", "level"),
     "dose": ("namespace", "panel_drafts", "level", "panel_sha256"),
     "d13": ("namespace", "panel_drafts", "level", "panel_sha256"),
     "a_one": ("namespace", "level"), "a_early_one": ("namespace", "level"),
     "a_all": ("namespace",), "a_early_all": ("namespace",),
-    "size_a": ("namespace", "units"), "size_a_early": ("namespace", "units"),
-    "size_b": ("namespace", "units"), "size_c": ("namespace", "units"),
+    "size_a": ("namespace", "units", "level"), "size_a_early": ("namespace", "units", "level"),
+    "size_b": ("namespace", "units", "level"), "size_c": ("namespace", "units", "level"),
 }
 
 
@@ -110,6 +148,76 @@ def _level(value: Any, path: str) -> Fraction:
     return level
 
 
+def verify_countersigned_a6(a6_source: Path | bytes, expected_sha256: str) -> bytes:
+    """Verify the actual countersigned A6 declaration file against its pinned sha256, signed part 1
+    sha256, and part 2 countersignature."""
+    if not read_plans._is_sha(expected_sha256):
+        raise ReadError("expected A6 sha256 must be a lowercase sha256 hex string")
+    if isinstance(a6_source, (str, Path)):
+        try:
+            raw = Path(a6_source).read_bytes()
+        except OSError as exc:
+            raise ReadError(f"cannot read countersigned A6 file {a6_source}: {exc}") from exc
+    elif isinstance(a6_source, bytes):
+        raw = a6_source
+    else:
+        raise ReadError("a6_file must be a path or bytes")
+    actual_sha = hashlib.sha256(raw).hexdigest()
+    if actual_sha != expected_sha256:
+        raise ReadError(f"A6 file sha256 {actual_sha} differs from declared a6_sha256 {expected_sha256}")
+    normalized = raw.replace(b"\r\n", b"\n")
+    idx = normalized.find(A6_PART1_HEADING)
+    if idx < 0:
+        raise ReadError("A6 file lacks the signed part 1 signature block")
+    part1_bytes = normalized[:idx].rstrip(b"\n") + b"\n"
+    part1_sha = hashlib.sha256(part1_bytes).hexdigest()
+    if part1_sha != A6_PART1_SHA256:
+        raise ReadError(
+            f"A6 part 1 text sha256 {part1_sha} differs from signed part 1 {A6_PART1_SHA256}"
+        )
+    tail = normalized[idx:].decode("utf-8", errors="replace")
+    part2_marker = "## Signature, part 2"
+    p2_idx = tail.find(part2_marker)
+    if p2_idx < 0:
+        raise ReadError("A6 file has no countersigned part 2 signature section")
+    p2_block = tail[p2_idx:]
+    if "NOT signed yet" in p2_block or "TO FILL AT SIGNING" in p2_block:
+        raise ReadError("A6 part 2 is not countersigned (contains unsigned placeholder text)")
+    if "countersign" not in p2_block.lower():
+        raise ReadError("A6 part 2 section lacks a countersignature statement")
+    return raw
+
+
+def _check_signed_section_rules(name: str, sec: dict[str, Any], resamples: int, fail_fn: Callable[[str], None]) -> None:
+    """Enforce signed A6 part 1 constants on any non-test (live) read section."""
+    if resamples != A6_SIGNED_RESAMPLES:
+        fail_fn(f"live read requires signed resamples {A6_SIGNED_RESAMPLES}, got {resamples}")
+    signed = A6_SIGNED_RULES[name]
+    for key, expected in signed.items():
+        if sec.get(key) != expected:
+            fail_fn(f"live read {name}.{key} must equal signed A6 value {expected!r}, got {sec.get(key)!r}")
+
+
+def _validate_pins_field(value: Any, path: str) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or tuple(value) != pod_record.PINS_KEYS:
+        _dfail(path, f"keys must be {list(pod_record.PINS_KEYS)} in order or null")
+    if not all(read_plans._is_sha(v) for v in value.values()):
+        _dfail(path, "every pin must be a non-null sha256 string")
+    return dict(value)
+
+
+def _validate_inputs_field(value: Any, path: str) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or tuple(value) != read_plans.INPUT_KEYS:
+        _dfail(path, f"keys must be {list(read_plans.INPUT_KEYS)} in order or null")
+    if not all(read_plans._is_sha(v) for v in value.values()):
+        _dfail(path, "every input pin must be a non-null sha256 string")
+    return dict(value)
+
+
 def validate_declaration(doc: Any) -> dict[str, Any]:
     if not isinstance(doc, dict) or tuple(doc) != DECL_KEYS:
         _dfail("", f"keys must be {list(DECL_KEYS)} in order")
@@ -120,10 +228,13 @@ def validate_declaration(doc: Any) -> dict[str, Any]:
     if a6 is not None and not read_plans._is_sha(a6):
         _dfail("a6_sha256", "is the countersigned A6 file's sha256 or null")
     resamples = _count(doc["resamples"], "resamples")
+    pins = _validate_pins_field(doc["pins"], "pins")
+    inputs = _validate_inputs_field(doc["inputs"], "inputs")
     reads = doc["reads"]
     if not isinstance(reads, dict) or tuple(reads) != tuple(SECTION_KEYS):
         _dfail("reads", f"sections must be {list(SECTION_KEYS)} in order")
     out: dict[str, Any] = {}
+    has_live = False
     for name, keys in SECTION_KEYS.items():
         sec = reads[name]
         path = f"reads.{name}"
@@ -163,8 +274,13 @@ def validate_declaration(doc: Any) -> dict[str, Any]:
                 norm[key] = sec[key]
             else:
                 norm[key] = _count(sec[key], f"{path}.{key}")
+        if ns != TEST:
+            has_live = True
+            _check_signed_section_rules(name, norm, resamples, lambda msg, p=path: _dfail(p, msg))
         out[name] = norm
-    return {"a6_sha256": a6, "resamples": resamples, "reads": out}
+    if has_live and pins is None:
+        _dfail("pins", "a live declaration must bind the five input pins")
+    return {"a6_sha256": a6, "resamples": resamples, "pins": pins, "inputs": inputs, "reads": out}
 
 
 def load_declaration(path: str | Path) -> tuple[dict[str, Any], str]:
@@ -515,9 +631,42 @@ def aa_symmetry(records: dict[int, dict[str, Any]], units: range) -> dict[str, A
 # Running a read
 
 
-def _require_signed(declaration: dict[str, Any], namespace: str) -> None:
-    if declaration["a6_sha256"] is None and namespace != TEST:
+def _require_signed(declaration: dict[str, Any], sec_name: str, namespace: str,
+                    a6_file: Path | bytes | None) -> None:
+    if namespace == TEST:
+        return
+    if declaration["a6_sha256"] is None:
         raise ReadError(f"namespace {namespace!r} is read data: the declaration names no countersigned A6")
+    if a6_file is None:
+        raise ReadError(f"namespace {namespace!r} is read data: the countersigned A6 file must be verified")
+    verify_countersigned_a6(a6_file, declaration["a6_sha256"])
+    _check_signed_section_rules(
+        sec_name, declaration["reads"][sec_name], declaration["resamples"],
+        lambda msg: (_ for _ in ()).throw(ReadError(msg)),
+    )
+    if declaration.get("pins") is None:
+        raise ReadError(f"namespace {namespace!r} is read data: the declaration binds no input pins")
+    family = READ_FAMILY[sec_name]
+    if read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13") and declaration.get("inputs") is None:
+        raise ReadError(f"namespace {namespace!r} is read data: dealer family {family} binds no pool/constants inputs")
+
+
+def _check_declared_pins(declaration: dict[str, Any], family: str, sets: list[dict[str, Any]]) -> None:
+    pins = declaration.get("pins")
+    inputs = declaration.get("inputs")
+    a6_sha = declaration.get("a6_sha256")
+    dealer_family = read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13")
+    for s in sets:
+        man = s["manifest"]
+        if man["namespace"] != TEST and man["declaration_sha256"] != a6_sha:
+            raise ReadError(
+                f"set {man['set']} declaration_sha256 differs from countersigned A6 {a6_sha}"
+            )
+        for pid, plan in s["plans"].items():
+            if pins is not None and plan["pins"] != pins:
+                raise ReadError(f"set {man['set']} plan {pid} pins differ from declared pins")
+            if inputs is not None and dealer_family and plan["inputs"] != inputs:
+                raise ReadError(f"set {man['set']} plan {pid} dealer inputs differ from declared inputs")
 
 
 def _set_info(opened: dict[str, Any]) -> dict[str, Any]:
@@ -532,7 +681,7 @@ def _games(records: dict[int, dict[str, Any]]) -> dict[str, int]:
 
 
 def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
-             sets: list[dict[str, Any]]) -> dict[str, Any]:
+             sets: list[dict[str, Any]], *, a6_file: Path | bytes | None = None) -> dict[str, Any]:
     """One read's report. `sets` are read_sets.open_plan_set results: one set, or for a gate's look 2
     the look-1 and look-2 sets. For dose and D13 the look is the mark ordinal (D13 may take one set
     per pilot)."""
@@ -542,12 +691,13 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
     sec_name = "c" if read == "b_prime" else read
     section = declaration["reads"][sec_name]
     namespace = section["namespace"]
-    _require_signed(declaration, namespace)
+    _require_signed(declaration, sec_name, namespace, a6_file)
     for s in sets:
         man = s["manifest"]
         if man["family"] != family or man["namespace"] != namespace:
             raise ReadError(f"set {man['set']} is family {man['family']} in {man['namespace']}, "
                             f"not {family} in {namespace}")
+    _check_declared_pins(declaration, family, sets)
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA, "interfaces": pod_record.INTERFACES_VERSION, "read_plan": read_plans.PLAN_SCHEMA,
         "read": read, "family": family, "look": look, "declaration_sha256": decl_sha,
@@ -569,6 +719,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         return report
 
     resamples = declaration["resamples"]
+    level: Fraction | None = None
     if read in GATES or read == "b_prime":
         n = look_units(section, look)
         expected_sets = 1 if look == 1 else 2
@@ -586,7 +737,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         units = range(*sets[0]["manifest"]["units"])
         if len(units) != section["pairs"]:
             raise ReadError(f"the A/A has {section['pairs']} pairs")
-        level = Fraction(1, 40)
+        level = section["level"]
     elif read in ("dose", "d13"):
         units = range(*sets[0]["manifest"]["units"])
         if len(units) != section["panel_drafts"]:
@@ -602,12 +753,13 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         units = range(*sets[0]["manifest"]["units"])
         if len(units) != parent["n"]:
             raise ReadError(f"a companion has the parent's {parent['n']} first-look units")
-        level = section.get("level", Fraction(1, 40))
+        if read_plans.FAMILIES[family]["layout"] == "one":
+            level = section["level"]
     else:
         units = range(*sets[0]["manifest"]["units"])
         if len(units) != section["units"] or len(sets) != 1:
             raise ReadError(f"the probe has {section['units']} units in one set")
-        level = Fraction(1, 40)
+        level = section["level"]
 
     records: dict[int, dict[str, Any]] = {}
     plans: dict[int, dict[str, Any]] = {}
@@ -616,7 +768,8 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         plans.update(s["plans"])
     report["units"] = {"kind": "pair" if read_plans.FAMILIES[family]["layout"] == "a" else "cluster",
                        "first": units.start, "end": units.stop}
-    report["bootstrap"] = {"namespace": namespace, "resamples": resamples, "level": _num(level)}
+    if level is not None:
+        report["bootstrap"] = {"namespace": namespace, "resamples": resamples, "level": _num(level)}
     report["games"] = _games(records)
 
     def block(stats: dict[str, Callable], unit_list: list[Any]) -> dict[str, dict[str, Any]]:
@@ -751,6 +904,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--read", required=True, choices=READS)
     parser.add_argument("--look", required=True, type=int, help="1 or 2 for a gate; the mark ordinal for dose")
     parser.add_argument("--sets", required=True, nargs="+", type=Path, help="set directories, look 1 first")
+    parser.add_argument("--a6-file", type=Path, help="countersigned A6 declaration file (required for live reads)")
     parser.add_argument("--pool", type=Path)
     parser.add_argument("--constants", type=Path)
     parser.add_argument("--out", type=Path)
@@ -762,7 +916,7 @@ def main(argv: list[str] | None = None) -> int:
     want_decl = declaration["a6_sha256"] or decl_sha
     sets = [read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
                                     pinned_panel=sec.get("panel_sha256")) for d in args.sets]
-    text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets))
+    text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets, a6_file=args.a6_file))
     if args.out is None:
         sys.stdout.write(text)
     else:

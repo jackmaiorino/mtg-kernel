@@ -1292,6 +1292,119 @@ class DeclarationTests(unittest.TestCase):
         with self.assertRaisesRegex(readers.ReadError, "countersigned"):
             readers.run_read(decl_with(**{"c.namespace": "read-gate-c"}), DECL_SHA, "c", 1, [])
 
+    def test_live_declaration_verifies_countersigned_a6_constants_and_pins(self):
+        a6_path = Path("N:/cube-20261122/m4-docs/A6-READS.md")
+        raw_a6 = a6_path.read_bytes()
+        raw_a6_sha = hashlib.sha256(raw_a6).hexdigest()
+        # The unsigned part-2 A6 file must be refused.
+        with self.assertRaisesRegex(readers.ReadError, "countersigned|part 2"):
+            readers.verify_countersigned_a6(raw_a6, raw_a6_sha)
+
+        # Synthetic countersigned copy keeping the exact signed part 1 bytes verbatim.
+        countersigned_a6 = raw_a6 + (
+            b"\n\n## Signature, part 2\n\n"
+            b"Research lead countersigned part 2 pins on 2026-11-25 12:00 ET.\n"
+        )
+        cs_sha = hashlib.sha256(countersigned_a6).hexdigest()
+        readers.verify_countersigned_a6(countersigned_a6, cs_sha)
+
+        # Tampering with part 1 bytes must fail even when a6_sha256 matches the tampered file.
+        tampered_a6 = countersigned_a6.replace(b"9,999", b"9,998", 1)
+        tampered_sha = hashlib.sha256(tampered_a6).hexdigest()
+        with self.assertRaisesRegex(readers.ReadError, "part 1"):
+            readers.verify_countersigned_a6(tampered_a6, tampered_sha)
+
+        # Build a live declaration for read-d8-aa and verify validation + live run_read.
+        from decimal import Decimal
+        live_doc = self._doc()
+        live_doc["a6_sha256"] = cs_sha
+        live_doc["pins"] = dict(synth.PINS)
+        live_doc["inputs"] = {"pool_sha256": synth.POOL[1], "constants_sha256": synth.CONST[1]}
+        live_doc["reads"]["aa"]["namespace"] = "read-d8-aa"
+        live_doc["reads"]["b"]["namespace"] = "read-gate-b"
+        live_decl = readers.validate_declaration(live_doc)
+
+        # Mutating signed constants in a live declaration must fail validate_declaration.
+        for mutate, pattern in (
+            (lambda d: d.update(resamples=1), "resamples"),
+            (lambda d: d["reads"]["b"].update(levels=[Decimal("0.20"), Decimal("0.20")]), "levels"),
+            (lambda d: d["reads"]["b"].update(cut=Decimal("0")), "cut"),
+            (lambda d: d["reads"]["b"]["sizing"].update(cap=256), "sizing"),
+            (lambda d: d["reads"]["aa"].update(pairs=2), "pairs"),
+            (lambda d: d["reads"]["aa"].update(level=Decimal("0.05")), "level"),
+            (lambda d: d.update(pins=None), "pins"),
+        ):
+            bad = copy.deepcopy(live_doc)
+            mutate(bad)
+            with self.assertRaisesRegex(readers.DeclarationError, pattern):
+                readers.validate_declaration(bad)
+
+        # Build a valid live read-d8-aa set on disk and run_read through it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plans = [
+                read_plans.build_plan("aa", "read-d8-aa", u, pins=synth.PINS, pilot=synth.PILOT,
+                                      picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)}, mirror=m)
+                for u in range(4) for m in (0, 1)
+            ]
+            recs = {p["pod_index"]: synth.record(p, lambda p, g, pos: "draw") for p in plans}
+            entries = [(p["pod_index"], read_plans.doc_sha256(p)) for p in plans]
+            man = read_plans.build_manifest("plans", "aa", "read-d8-aa", "fixed", cs_sha, entries,
+                                            units=[0, 4], reserved=[0, 4])
+            man["executions"].append({"execution": 0, "reason": "first", "expired_games": [],
+                                      "binary": synth.BINARY, "platform": synth.PLATFORM})
+            set_dir = read_plans.write_set(root, man, {f"plans/pod-{p['pod_index']}.json": p for p in plans})
+            exec_dir = set_dir / "exec-0"
+            (exec_dir / "records").mkdir(parents=True, exist_ok=True)
+            listed = []
+            for i, rec in sorted(recs.items()):
+                text = json.dumps(rec, indent=2)
+                (exec_dir / "records" / f"pod-{i}.json").write_bytes(text.encode())
+                listed.append({"pod_index": i, "sha256": hashlib.sha256(text.encode()).hexdigest(),
+                               "status": rec["status"]})
+            receipt = {"execution": 0, "plan_set_sha256": man["plan_set_sha256"], "binary": synth.BINARY,
+                       "platform": synth.PLATFORM, "ended": "complete", "records": listed}
+            (exec_dir / "execution.json").write_bytes(read_plans.serialize(receipt).encode())
+            opened = read_sets.open_plan_set(set_dir, cs_sha)
+
+            # Live read passes with the countersigned A6 file.
+            rep = readers.run_read(live_decl, cs_sha, "aa", 1, [opened], a6_file=countersigned_a6)
+            self.assertEqual(rep["verdict"], "symmetric")
+
+            # Live read without the countersigned A6 file is refused.
+            with self.assertRaisesRegex(readers.ReadError, "A6 file"):
+                readers.run_read(live_decl, cs_sha, "aa", 1, [opened])
+
+            # Live read with mutated in-memory constants is still refused even when manifest repeats cs_sha.
+            bad_mem = copy.deepcopy(live_decl)
+            bad_mem["resamples"] = 1
+            with self.assertRaisesRegex(readers.ReadError, "resamples"):
+                readers.run_read(bad_mem, cs_sha, "aa", 1, [opened], a6_file=countersigned_a6)
+
+            bad_lvl = copy.deepcopy(live_decl)
+            bad_lvl["reads"]["aa"]["level"] = F(1, 5)
+            with self.assertRaisesRegex(readers.ReadError, "level"):
+                readers.run_read(bad_lvl, cs_sha, "aa", 1, [opened], a6_file=countersigned_a6)
+
+            # Live read whose plan pins differ from declaration pins is refused.
+            bad_pins = copy.deepcopy(live_decl)
+            bad_pins["pins"]["binary"] = "0" * 64
+            with self.assertRaisesRegex(readers.ReadError, "pins"):
+                readers.run_read(bad_pins, cs_sha, "aa", 1, [opened], a6_file=countersigned_a6)
+
+        # In `test`, A/A uses the declared level (not hardcoded), and a_all omits bootstrap fallback.
+        with tempfile.TemporaryDirectory() as tmp:
+            opened_aa = a_sets(Path(tmp), "aa", "swap", lambda p, g, pos: "draw",
+                               units=4, set_suffix="fixed", look=None)
+            rep_aa = readers.run_read(decl_with(**{"aa.level": F(1, 20)}), DECL_SHA, "aa", 1, [opened_aa])
+            self.assertEqual(exact(rep_aa["bootstrap"]["level"]), F(1, 20))
+            plans_all = [synth.plan("a_all", u) for u in range(2)]
+            recs_all = {p["pod_index"]: synth.record(p, lambda p, g, pos: "draw") for p in plans_all}
+            sd_all = synth.write_plan_set(Path(tmp), "a_all", "fx-a_all-all-count-d0-fixed", plans_all, DECL_SHA,
+                                          executions=[{"records": recs_all}], units=[0, 2])
+            rep_all = readers.run_read(DECL, DECL_SHA, "a_all", 1, [read_sets.open_plan_set(sd_all, DECL_SHA)])
+            self.assertNotIn("bootstrap", rep_all)
+
     def test_fast_indices_equal_deal_seed(self):
         for b in (0, 1, 9999):
             self.assertEqual(readers.resample_indices("read-gate-c", b, 37),
@@ -1325,7 +1438,7 @@ class DeterminismTests(unittest.TestCase):
             self.assertEqual(json.loads(outs[0])["verdict"], "win")
 
 
-REPORT_GOLDEN_SHA256 = "843a0513ec8de82c90dbd2511eccb2d509b6929b955d7604a5598d70afd335f3"
+REPORT_GOLDEN_SHA256 = "a454eb65d2a881117b89d60cc154752c8030c345cbcb36850bf80ea590ba942b"
 
 
 class UniformPodRecordTests(unittest.TestCase):
