@@ -15,6 +15,7 @@ fn source_for(state: &GameState, source: ObjectId) -> TargetingSource {
         power_lki: None,
         other_than: None,
         original_source_incarnation_only: false,
+        text_color_origin: None,
     }
 }
 

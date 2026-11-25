@@ -24159,7 +24159,7 @@
   },
   {
    "name": "Volrath's Shapeshifter",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}{U}",
    "mana_value": 3,
    "colors": [
