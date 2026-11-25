@@ -555,7 +555,17 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
     }
     voids = [s["void"] for s in sets if s["void"]]
     if voids:
-        report.update(verdict="void", void=voids[0], next="technical recovery (A6.7)")
+        reason = voids[0]
+        next_step = "attempt_ends" if "infrastructure failure" in reason else "technical recovery (A6.7)"
+        records_all: dict[int, dict[str, Any]] = {}
+        planned_games = 0
+        for s in sets:
+            records_all.update(s["records"])
+            planned_games += sum(len(p["games"]) for p in s["plans"].values())
+        g_counts = _games(records_all)
+        g_counts["planned"] = planned_games
+        g_counts["unplayed"] = planned_games - g_counts["played"]
+        report.update(verdict="void", void=reason, next=next_step, games=g_counts)
         return report
 
     resamples = declaration["resamples"]

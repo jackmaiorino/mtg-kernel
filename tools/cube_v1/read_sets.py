@@ -283,6 +283,13 @@ def _plan_receipt(exec_dir: Path, man: dict[str, Any], e: int) -> dict[str, Any]
     statuses = {r["status"] for r in records.values()}
     if rec["ended"] == "complete" and (set(names) != pods or statuses - {"complete"}):
         raise SetError(f"exec-{e} ended complete without every pod complete")
+    if rec["ended"] == "watchdog_stop":
+        stopped_pods = [i for i, r in sorted(records.items()) if r["status"] == "stopped"]
+        if len(stopped_pods) != 1:
+            raise SetError(f"exec-{e} ended watchdog_stop without exactly one stopped pod")
+        sp = records[stopped_pods[0]]
+        if not sp["games"] or sp["games"][-1]["attempts"][-1]["stop_kind"] != WATCHDOG_STOP_KIND:
+            raise SetError(f"exec-{e} watchdog_stop pod {stopped_pods[0]} did not stop on {WATCHDOG_STOP_KIND}")
     return {"receipt": rec, "records": records}
 
 

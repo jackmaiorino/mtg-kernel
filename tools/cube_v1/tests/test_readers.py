@@ -826,6 +826,99 @@ class ExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(read_sets.SetError, "declaration"):
             read_sets.open_plan_set(set_dir, "1" * 64)
 
+    def test_stopped_paired_read_reaches_technical_recovery(self):
+        # D5 copies the full plan's paired_builds (all 8 chairs, referencing games 0..63) into a
+        # stopped (c) pod that holds only a played prefix (games 0..3).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prep_name = "fx-b_c-shared-d0-prep-0-6"
+            _, outs = synth.write_prep_set(root, "b_c", "b_c", prep_name, range(0, 6), DECL_SHA, reserved=[0, 6])
+            prep_set = f"test/v1/{prep_name}/exec-0"
+            plans = [synth.plan("c", u, prep=outs[u]) for u in range(2)]
+
+            # Case 1: mid-pod process death after 4 games of pod 0 (pod 1 unplayed).
+            stopped_mid = synth.record(plans[0], lambda p, g, pos: "draw", games=4, status="stopped")
+            self.assertEqual(len(stopped_mid["games"]), 4)
+            self.assertEqual(len(stopped_mid["paired_builds"]), 8)
+            self.assertEqual(stopped_mid["stop"]["game"], 4)
+            self.assertEqual(stopped_mid["halts"], [])
+            read_plans.check_record_against_plan(stopped_mid, plans[0])
+
+            # Negative checks: complete record missing games fails; wrong stop metadata or pair metadata fails.
+            bad_complete = copy.deepcopy(stopped_mid)
+            bad_complete["status"] = "complete"
+            bad_complete["stop"] = None
+            with self.assertRaisesRegex(pod_record.RecordError, "not in the record"):
+                pod_record.validate_record(bad_complete)
+
+            bad_stop = copy.deepcopy(stopped_mid)
+            bad_stop["stop"]["game"] = 5
+            with self.assertRaisesRegex(pod_record.RecordError, "stop.game"):
+                read_plans.check_record_against_plan(bad_stop, plans[0])
+
+            bad_pair = copy.deepcopy(stopped_mid)
+            bad_pair["paired_builds"] = bad_pair["paired_builds"][:1]
+            with self.assertRaisesRegex(pod_record.RecordError, "paired_builds"):
+                read_plans.check_record_against_plan(bad_pair, plans[0])
+
+            set_int = synth.write_plan_set(
+                root, "c", "fx-c-shared-d0-look-1", plans, DECL_SHA,
+                executions=[{"records": {0: stopped_mid}, "ended": "interrupted"}],
+                look=1, units=[0, 2], reserved=[0, 6], prep_set=prep_set,
+            )
+            opened_int = read_sets.open_plan_set(set_int, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            self.assertIn("interrupted", opened_int["void"])
+            rep_int = readers.run_read(DECL, DECL_SHA, "c", 1, [opened_int])
+            self.assertEqual(rep_int["verdict"], "void")
+            self.assertIn("interrupted", rep_int["void"])
+            self.assertEqual(rep_int["next"], "technical recovery (A6.7)")
+            self.assertEqual(rep_int["games"], {"played": 4, "completed": 4, "halted": 0, "planned": 128, "unplayed": 124})
+            self.assertNotIn("statistics", rep_int)
+
+            # Case 2: second watchdog expiry (e = 1, watchdog_stop) on pod 0 after 4 games (game 3 expired).
+            def wd_at(target_game):
+                def outcome(p, g, pos):
+                    if p["pod_index"] == 0 and g["game"] == target_game:
+                        return ("halt", dict(synth.WATCHDOG_END), None, 50)
+                    return "draw"
+                return outcome
+
+            e0_recs = {p["pod_index"]: synth.record(p, wd_at(3)) for p in plans}
+            e1_same = {0: synth.record(plans[0], wd_at(3), games=4, status="stopped")}
+            self.assertEqual(len(e1_same[0]["paired_builds"]), 8)
+            self.assertEqual(e1_same[0]["stop"]["game"], 3)
+            self.assertEqual(len(e1_same[0]["halts"]), 1)
+
+            set_hang = synth.write_plan_set(
+                root, "c", "fx-c-halt-candidate-d0-look-1", plans, DECL_SHA,
+                executions=[{"records": e0_recs},
+                            {"records": e1_same, "ended": "watchdog_stop", "entry_expired": [[0, 3]]}],
+                look=1, units=[0, 2], reserved=[0, 6], prep_set=prep_set,
+            )
+            opened_hang = read_sets.open_plan_set(set_hang, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            rep_hang = readers.run_read(DECL, DECL_SHA, "c", 1, [opened_hang])
+            self.assertEqual(rep_hang["verdict"], "void")
+            self.assertIn("hang", rep_hang["void"])
+            self.assertEqual(rep_hang["next"], "technical recovery (A6.7)")
+            self.assertEqual(rep_hang["games"], {"played": 4, "completed": 3, "halted": 1, "planned": 128, "unplayed": 124})
+            self.assertNotIn("statistics", rep_hang)
+
+            # Case 3: second watchdog expiry on a different game (game 5) -> void infrastructure failure, attempt ends.
+            e1_diff = {0: synth.record(plans[0], wd_at(5), games=6, status="stopped")}
+            set_infra = synth.write_plan_set(
+                root, "c", "fx-c-halt-stated-d0-look-1", plans, DECL_SHA,
+                executions=[{"records": e0_recs},
+                            {"records": e1_diff, "ended": "watchdog_stop", "entry_expired": [[0, 3]]}],
+                look=1, units=[0, 2], reserved=[0, 6], prep_set=prep_set,
+            )
+            opened_infra = read_sets.open_plan_set(set_infra, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            rep_infra = readers.run_read(DECL, DECL_SHA, "c", 1, [opened_infra])
+            self.assertEqual(rep_infra["verdict"], "void")
+            self.assertIn("infrastructure failure", rep_infra["void"])
+            self.assertEqual(rep_infra["next"], "attempt_ends")
+            self.assertEqual(rep_infra["games"], {"played": 6, "completed": 5, "halted": 1, "planned": 128, "unplayed": 122})
+            self.assertNotIn("statistics", rep_infra)
+
 
 class AllocationTests(unittest.TestCase):
     def test_looks_restarts_and_shared_prefix(self):

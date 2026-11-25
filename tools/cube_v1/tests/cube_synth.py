@@ -227,10 +227,27 @@ def record(p: dict[str, Any], outcome: Callable[[dict[str, Any], dict[str, Any],
                     for g in rec["games"] for a in g["attempts"] if a["halted"]]
     if status == "stopped":
         last = rec["games"][-1] if rec["games"] else None
-        rec["stop"] = {"game": last["game"] if last else 0, "pairing": None, "decks": last["decks"] if last else [],
-                       "attempts": [{"deal_seed": a["deal_seed"], "stop_kind": a["stop_kind"],
-                                     "last_action_source": a["last_action_source"]} for a in
-                                    (last["attempts"] if last else [])]}
+        if last is not None and last["attempts"][-1]["halted"]:
+            rec["stop"] = {
+                "game": last["game"],
+                "pairing": last["pairing"],
+                "decks": list(last["decks"]),
+                "attempts": [
+                    {"deal_seed": a["deal_seed"], "stop_kind": a["stop_kind"],
+                     "last_action_source": a["last_action_source"]}
+                    for a in last["attempts"]
+                ],
+            }
+        else:
+            target_idx = len(rec["games"]) if len(rec["games"]) < len(p["games"]) else len(p["games"]) - 1
+            target = p["games"][target_idx]
+            rec["stop"] = {
+                "game": target["game"],
+                "pairing": target["pairing"],
+                "decks": list(target["decks"]),
+                "attempts": [{"deal_seed": target["game_seed"], "stop_kind": "process_death",
+                              "last_action_source": None}],
+            }
     return pod_record.validate_record(rec)
 
 

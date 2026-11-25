@@ -587,9 +587,12 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
             if game["seat_rule"] != "schedule":
                 _fail(f"{path}.games[{i}].seat_rule", "every game of a read pod uses seat_rule 'schedule'")
 
+    status = _enum(rec["status"], f"{path}.status", STATUSES)
+    stopped = status == "stopped"
+
     pairs = _list(rec["paired_builds"], f"{path}.paired_builds")
     for i, pair in enumerate(pairs):
-        _validate_paired(pair, f"{path}.paired_builds[{i}]", deck_by_id, game_by_id)
+        _validate_paired(pair, f"{path}.paired_builds[{i}]", deck_by_id, game_by_id, stopped=stopped)
     firsts = [pair["games_x"][0] for pair in pairs]
     if firsts != sorted(firsts) or len(set(firsts)) != len(firsts):
         _fail(f"{path}.paired_builds", "entries are ordered by the first game of games_x (change 4)")
@@ -608,7 +611,6 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
     if actual_halts != expected_halts:
         _fail(f"{path}.halts", "the ledger differs from the halted attempts of the games, in logical order")
 
-    status = _enum(rec["status"], f"{path}.status", STATUSES)
     stop = rec["stop"]
     if status == "complete":
         if stop is not None:
@@ -637,6 +639,8 @@ def _validate_paired(
     path: str,
     deck_by_id: dict[int, dict[str, Any]],
     game_by_id: dict[int, dict[str, Any]],
+    *,
+    stopped: bool = False,
 ) -> dict[str, Any]:
     pair = _object(value, path, PAIRED_KEYS)
     _enum(pair["kind"], f"{path}.kind", PAIRED_KINDS)
@@ -658,23 +662,43 @@ def _validate_paired(
     games_y = _uint_list(pair["games_y"], f"{path}.games_y", U32)
     if len(games_x) != len(games_y) or not games_x:
         _fail(path, "games_x and games_y must be non-empty and of equal length")
-    for i, (gx, gy) in enumerate(zip(games_x, games_y)):
-        for gid, deck_key in ((gx, "deck_x"), (gy, "deck_y")):
-            if gid not in game_by_id:
-                _fail(path, f"game {gid} is not in the record")
-            if pair[deck_key] not in game_by_id[gid]["decks"]:
-                _fail(path, f"game {gid} does not hold {deck_key} {pair[deck_key]}")
-        x_game, y_game = game_by_id[gx], game_by_id[gy]
-        x_seat = x_game["decks"].index(pair["deck_x"])
-        y_seat = y_game["decks"].index(pair["deck_y"])
-        if x_seat != y_seat:
-            _fail(path, f"matched games {gx} and {gy} put the paired decks in different seats")
-        if x_game["game_seed"] != y_game["game_seed"] or x_game["episode"] != y_game["episode"]:
-            _fail(path, f"matched games {gx} and {gy} are not coupled (game seed and episode)")
-        if x_game["decks"][1 - x_seat] != y_game["decks"][1 - y_seat]:
-            _fail(path, f"matched games {gx} and {gy} face different opponents")
-        if x_game["decks"][1 - x_seat] not in opponents:
-            _fail(path, f"game {gx}'s opponent is not listed in opponents")
+    if len(set(games_x)) != len(games_x) or len(set(games_y)) != len(games_y) or (set(games_x) & set(games_y)):
+        _fail(path, "games_x and games_y must hold distinct game ids")
+    played_len = len(game_by_id)
+    for gx, gy in zip(games_x, games_y):
+        has_x = gx in game_by_id
+        has_y = gy in game_by_id
+        if not stopped and not (has_x and has_y):
+            missing = gx if not has_x else gy
+            _fail(path, f"game {missing} is not in the record")
+        if stopped:
+            if not has_x and gx < played_len:
+                _fail(path, f"game {gx} is missing inside the played prefix")
+            if not has_y and gy < played_len:
+                _fail(path, f"game {gy} is missing inside the played prefix")
+        x_seat = y_seat = None
+        if has_x:
+            x_game = game_by_id[gx]
+            if pair["deck_x"] not in x_game["decks"]:
+                _fail(path, f"game {gx} does not hold deck_x {pair['deck_x']}")
+            x_seat = x_game["decks"].index(pair["deck_x"])
+            if x_game["decks"][1 - x_seat] not in opponents:
+                _fail(path, f"game {gx}'s opponent is not listed in opponents")
+        if has_y:
+            y_game = game_by_id[gy]
+            if pair["deck_y"] not in y_game["decks"]:
+                _fail(path, f"game {gy} does not hold deck_y {pair['deck_y']}")
+            y_seat = y_game["decks"].index(pair["deck_y"])
+            if y_game["decks"][1 - y_seat] not in opponents:
+                _fail(path, f"game {gy}'s opponent is not listed in opponents")
+        if has_x and has_y:
+            x_game, y_game = game_by_id[gx], game_by_id[gy]
+            if x_seat != y_seat:
+                _fail(path, f"matched games {gx} and {gy} put the paired decks in different seats")
+            if x_game["game_seed"] != y_game["game_seed"] or x_game["episode"] != y_game["episode"]:
+                _fail(path, f"matched games {gx} and {gy} are not coupled (game seed and episode)")
+            if x_game["decks"][1 - x_seat] != y_game["decks"][1 - y_seat]:
+                _fail(path, f"matched games {gx} and {gy} face different opponents")
     return pair
 
 

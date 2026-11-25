@@ -952,6 +952,36 @@ def check_record_against_plan(record: dict[str, Any], plan: dict[str, Any]) -> N
             fail(f"game {plan_game['game']}'s attempt seeds are not derived from its game seed")
     if record["paired_builds"] != plan["paired_builds"]:
         fail("paired_builds differ from the plan")
+    if record["status"] == "stopped":
+        stop = record["stop"]
+        plan_games = plan["games"]
+        if not plan_games:
+            fail("stopped pod has no planned games")
+        stop_game = stop["game"]
+        played_count = len(games)
+        on_last_played = played_count > 0 and stop_game == games[-1]["game"]
+        next_idx = played_count if played_count < len(plan_games) else len(plan_games) - 1
+        on_next_unplayed = stop_game == plan_games[next_idx]["game"]
+        if not (on_last_played or on_next_unplayed):
+            fail(f"stop.game {stop_game} does not match the played prefix length {played_count}")
+        pg = plan_games[stop_game]
+        if stop["pairing"] != pg["pairing"] or stop["decks"] != pg["decks"]:
+            fail(f"stop report metadata for game {stop_game} differs from the plan")
+        if not stop["attempts"]:
+            fail("stop.attempts must not be empty")
+        if on_last_played and games[-1]["attempts"][-1]["halted"]:
+            want_attempts = [
+                {"deal_seed": a["deal_seed"], "stop_kind": a["stop_kind"],
+                 "last_action_source": a["last_action_source"]}
+                for a in games[-1]["attempts"]
+            ]
+            if stop["attempts"] != want_attempts:
+                fail("stop.attempts differs from the halted last played game")
+        else:
+            if not on_next_unplayed:
+                fail("stop on a completed last played game must name the interrupted next game")
+            if stop["attempts"][0]["deal_seed"] != pg["game_seed"] or not stop["attempts"][0]["stop_kind"]:
+                fail("interrupted stop report attempt does not match the planned game seed and stop kind")
 
 
 # ---------------------------------------------------------------------------------------------
