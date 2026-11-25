@@ -1,17 +1,17 @@
-//! Unit tests of the D2 model on synthetic card rows. The tests that need
-//! D1's real provisional index and table belong in
-//! `tests/eternal/cube_draft_build_v1.rs`, which D1 creates.
+//! Unit tests of the D2 model. The forward goldens use D1's pinned table;
+//! focused model tests use synthetic rows.
 
 use std::collections::HashMap;
 
+use super::super::card_index::{CardIndexV1, CubeTableSourceV1};
 use super::*;
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const PROVISIONAL_ROWS: usize = 509;
-const COMMITTED_WIDTH: usize = 947;
+const PROVISIONAL_ROWS: usize = 545;
+const COMMITTED_WIDTH: usize = 978;
 const COMMITTED_DENSE: usize = 56;
 
 /// Small dims for the fast tests. d = 12 is not 56, so every width written
@@ -140,13 +140,16 @@ fn fill_history_columns(model: &mut ModelV1, seed: u64, bound: f32) {
 /// A valid pick state at `step` from consecutive index ids starting at
 /// `offset`: the pool, then the pack, then `history_len` history cards.
 fn pick_state(step: usize, history_len: usize, offset: usize) -> PickStateV1 {
+    pick_state_from_ids(step, history_len, |k| synthetic_id(offset + k))
+}
+
+fn pick_state_from_ids(step: usize, history_len: usize, id: impl Fn(usize) -> u16) -> PickStateV1 {
     let pick = step % PACK_SIZE;
     let round = step / PACK_SIZE;
     let pack_len = PACK_SIZE - pick;
-    let id = |k: usize| synthetic_id(offset + k);
     PickStateV1 {
-        pool: (0..step).map(id).collect(),
-        pack: (step..step + pack_len).map(id).collect(),
+        pool: (0..step).map(&id).collect(),
+        pack: (step..step + pack_len).map(&id).collect(),
         history: (step + pack_len..step + pack_len + history_len)
             .map(id)
             .collect(),
@@ -158,8 +161,12 @@ fn pick_state(step: usize, history_len: usize, offset: usize) -> PickStateV1 {
 /// A 45-card pool from index rows `offset..offset + 45`, listed in a scrambled
 /// order (the input order the forward must not depend on).
 fn build_pool(offset: usize) -> Vec<u16> {
+    build_pool_from_ids(|k| synthetic_id(offset + k))
+}
+
+fn build_pool_from_ids(id: impl Fn(usize) -> u16) -> Vec<u16> {
     let mut pool: Vec<u16> = (0..BUILD_POOL_CARDS_V1)
-        .map(|k| synthetic_id(offset + (k * 17) % BUILD_POOL_CARDS_V1))
+        .map(|k| id((k * 17) % BUILD_POOL_CARDS_V1))
         .collect();
     pool.rotate_left(5);
     pool
@@ -213,6 +220,10 @@ fn layout_count(rows: usize, width: usize, dense: usize) -> usize {
 
 #[test]
 fn parameter_counts_match_the_design() {
+    assert_eq!(
+        layout_count(PROVISIONAL_ROWS, COMMITTED_WIDTH, COMMITTED_DENSE),
+        166_410
+    );
     assert_eq!(layout_count(545, 947, 56), 165_418);
     assert_eq!(layout_count(509, 947, 56), 164_266);
     assert_eq!(layout_count(545, 947, 61), 166_058);
@@ -1145,10 +1156,36 @@ const GOLDEN_PATH: &str = concat!(
     "/tests/data/cube_draft_build_v1/model_forward_goldens_v1.txt"
 );
 
-fn golden_model() -> ModelV1 {
-    let mut model = provisional_model(INIT_SEED);
+fn golden_fixture() -> (ModelV1, ModelCardRowsV1) {
+    const CUBE_LIST: &str = include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007.json");
+    const TABLE_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../data/card_semantics_v1/cube_table_v1.json"
+    );
+    const TABLE_SHA256: &str = "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
+    let source = CubeTableSourceV1::read_v1(std::path::Path::new(TABLE_PATH), TABLE_SHA256)
+        .expect("the pinned provisional table");
+    let (index, left_out) = CardIndexV1::provisional_v1(CUBE_LIST, &source).unwrap();
+    assert!(left_out.is_empty());
+    let table = source.bind_v1(&index).unwrap();
+    let rows = ModelCardRowsV1::with_registry_basics_v1(
+        index.ids().to_vec(),
+        table.vector_width(),
+        table.scaled_rows().to_vec(),
+        table.dense_columns().len(),
+        table.dense_rows().to_vec(),
+    )
+    .unwrap();
+    let mut model = ModelV1::initialise_v1(
+        rows.rows(),
+        table.vector_width(),
+        table.dense_columns().len(),
+        INIT_SEED,
+    )
+    .unwrap();
+    assert_eq!(model.parameter_count(), 166_410);
     fill_zero_initialised(&mut model, FILL_SEED, 0.5);
-    model
+    (model, rows)
 }
 
 fn push_candidates(lines: &mut Vec<String>, prefix: &str, logits: &CandidateLogitsV1) {
@@ -1173,10 +1210,11 @@ fn golden_lines(model: &ModelV1, rows: &ModelCardRowsV1, threads: usize) -> Vec<
                 .collect::<Vec<u8>>()
         ))
     ));
-    for (index, state) in [pick_state(0, 0, 40), pick_state(23, 61, 100)]
-        .iter()
-        .enumerate()
-    {
+    let states = [
+        pick_state_from_ids(0, 0, |k| rows.ids()[240 + k]),
+        pick_state_from_ids(23, 61, |k| rows.ids()[255 + k]),
+    ];
+    for (index, state) in states.iter().enumerate() {
         push_candidates(
             &mut lines,
             &format!("pick state {index}"),
@@ -1198,7 +1236,7 @@ fn golden_lines(model: &ModelV1, rows: &ModelCardRowsV1, threads: usize) -> Vec<
                 .collect::<Vec<u8>>()
         ))
     ));
-    let pool = build_pool(200);
+    let pool = build_pool_from_ids(|k| rows.ids()[340 + k]);
     let context = build.build_context_v1(&pool).unwrap();
     for (b, logit) in context.count_logits_v1().iter().enumerate() {
         lines.push(format!("count B {b} {:08x}", logit.to_bits()));
@@ -1230,8 +1268,7 @@ fn golden_lines(model: &ModelV1, rows: &ModelCardRowsV1, threads: usize) -> Vec<
 
 #[test]
 fn forward_matches_the_recorded_golden_bits() {
-    let rows = provisional_rows();
-    let model = golden_model();
+    let (model, rows) = golden_fixture();
     let computed = golden_lines(&model, &rows, 4).join("\n") + "\n";
     let recorded = match std::fs::read_to_string(GOLDEN_PATH) {
         Ok(text) => text.replace("\r\n", "\n"),
@@ -1264,8 +1301,7 @@ fn forward_matches_the_recorded_golden_bits() {
 
 #[test]
 fn outputs_do_not_depend_on_the_thread_count() {
-    let rows = provisional_rows();
-    let model = golden_model();
+    let (model, rows) = golden_fixture();
     for trunk in [TrunkV1::Build, TrunkV1::Pick] {
         let one = model.card_hidden_table(&rows, trunk, 1).unwrap();
         for threads in [2, 3, 8, PROVISIONAL_ROWS + 5] {
