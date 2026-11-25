@@ -15124,6 +15124,7 @@ pub(crate) mod tests {
         let initial_frozen = line_b_frozen_sha256_v1(&source).unwrap();
         let mut moved = Vec::new();
         let mut checkpoints = Vec::new();
+        let seed_drift = "issue #969: a catalog change moved the root; pick a new seed";
         for (label, direction) in [
             ("reverse", LineBDivergenceV1::Reverse),
             ("forward", LineBDivergenceV1::Forward),
@@ -15144,6 +15145,7 @@ pub(crate) mod tests {
             );
             assert_eq!(taught["census"], packet["census"]);
             assert_eq!(taught["census"]["selected_roots"], 1);
+            assert_eq!(taught["census"]["complete_roots"], 1, "{seed_drift}");
             // Census by learner list (review change 10) sums to the census.
             let by_list = taught["census_by_list"].as_object().unwrap();
             for key in [
@@ -15185,38 +15187,29 @@ pub(crate) mod tests {
             let permuted = &taught["permuted_control"];
             assert_eq!(permuted["backend"], "cpu");
             let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
+            assert!(auxiliary > 0.0, "{seed_drift} ({direction:?})");
             let root = &telemetry["roots"][0];
-            if taught["census"]["complete_roots"] == 1 {
-                // A single root is its width's only member: its own target
-                // rotated by one action, so a different divergence.
-                assert_eq!(permuted["kinds"], json!(["within_root"]));
-                assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
-                assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
-                assert_ne!(
-                    permuted["after_state_sha256"],
-                    receipt["after_state_sha256"]
-                );
-                eprintln!("{label} {direction:?} permuted control {permuted}");
-                let before = root["divergence_before"].as_f64().unwrap();
-                let rescore_before = root["rescore_before"].as_f64().unwrap();
-                let rescore_after = root["rescore_after"].as_f64().unwrap();
-                assert_eq!(
-                    root["signed_difference"].as_f64().unwrap(),
-                    rescore_after - rescore_before
-                );
-                if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
-                    // The CPU tape is the recorded collection forward.
-                    assert_eq!(rescore_before.to_bits(), before.to_bits());
-                } else {
-                    assert!((rescore_before - before).abs() < 1e-6);
-                }
+            // A single root is its width's only member: its own target
+            // rotated by one action, so a different divergence.
+            assert_eq!(permuted["kinds"], json!(["within_root"]));
+            assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
+            assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
+            assert_ne!(permuted["after_state_sha256"], receipt["after_state_sha256"]);
+            eprintln!("{label} {direction:?} permuted control {permuted}");
+            let before = root["divergence_before"].as_f64().unwrap();
+            let rescore_before = root["rescore_before"].as_f64().unwrap();
+            let rescore_after = root["rescore_after"].as_f64().unwrap();
+            assert_eq!(
+                root["signed_difference"].as_f64().unwrap(),
+                rescore_after - rescore_before
+            );
+            if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
+                // The CPU tape is the recorded collection forward.
+                assert_eq!(rescore_before.to_bits(), before.to_bits());
             } else {
-                assert!(root["divergence_before"].is_null());
-                assert!(root["rescore_after"].is_null());
-                assert_eq!(auxiliary, 0.0);
-                assert_eq!(permuted["kinds"], json!([null]));
+                assert!((rescore_before - before).abs() < 1e-6);
             }
-            moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
+            moved.push(receipt["after_state_sha256"].clone());
             checkpoints.push(receipt["checkpoint"].clone());
         }
         // Pinned treatment goldens (FABLE-REVIEW-20260927 change 4).
@@ -15226,7 +15219,7 @@ pub(crate) mod tests {
         };
         let observed: Vec<&str> = moved
             .iter()
-            .map(|(_, state)| state.as_str().unwrap())
+            .map(|state| state.as_str().unwrap())
             .collect();
         assert_eq!(
             observed.as_slice(),
@@ -15255,16 +15248,12 @@ pub(crate) mod tests {
         );
         assert!(reference > 0.0);
         assert_eq!(treated["relative_l2"].as_f64().unwrap(), l2 / reference);
-        if moved[0].0 {
-            assert!(l2 > 0.0, "the teacher must move the heads");
-        }
-        if moved.iter().all(|(nonzero, _)| *nonzero) {
-            assert_ne!(
-                moved[0].1, control["after_state_sha256"],
-                "the teacher must change the update"
-            );
-            assert_ne!(moved[0].1, moved[1].1, "the directions must differ");
-        }
+        assert!(l2 > 0.0, "the teacher must move the heads");
+        assert_ne!(
+            moved[0], control["after_state_sha256"],
+            "the teacher must change the update"
+        );
+        assert_ne!(moved[0], moved[1], "the directions must differ");
         for games in [Vec::new(), vec![None, None]] {
             assert!(update("refused", Some(teacher(LineBDivergenceV1::Reverse, games))).is_err());
         }

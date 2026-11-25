@@ -21162,10 +21162,8 @@ fn graveyard_ability_source_left_graveyard(
         })
 }
 
-/// The original graveyard incarnation must still be present. Sneaky Snacker's
-/// published move/tap program means "return this card ... tapped", so its
-/// battlefield entry is a single event. Other move-then-tap programs tap
-/// only the battlefield incarnation created by their own move.
+/// A graveyard-source move-then-tap program taps only the battlefield
+/// incarnation created by its own move of the original graveyard object.
 fn execute_graveyard_return_tapped(
     ops: &[EffectOp],
     ctx: &ExecCtx,
@@ -21194,18 +21192,6 @@ fn execute_graveyard_return_tapped(
     if contract.source != ctx.source
         || graveyard_ability_source_left_graveyard(ObjectRef::ThisSource, ctx, state)
     {
-        return true;
-    }
-    if crate::card_def::CARD_DEFS
-        .get(usize::from(contract.card_def))
-        .is_some_and(|definition| definition.name == "Sneaky Snacker")
-    {
-        execute_native_child_v1(
-            &EffectOp::ReturnAbilitySourceFromGraveyard { tapped: true },
-            ctx,
-            state,
-            native_row,
-        );
         return true;
     }
     execute_native_child_v1(&ops[0], ctx, state, native_row);
