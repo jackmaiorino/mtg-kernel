@@ -125,6 +125,7 @@ fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
 pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
+mod json_writer_v1;
 mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
@@ -6602,7 +6603,9 @@ const SERIALIZED_LENGTH_NAMES_V1: usize = 4096;
 /// `serde_json::to_vec(value)`, which is `to_writer` into a 128-byte buffer,
 /// with the buffer presized from the last serialization of the same document
 /// name in this process, so a 20 MB checkpoint is not regrown from 128 bytes
-/// at every update. The bytes and any error are `to_vec`'s.
+/// at every update. The bytes and any error are `to_vec`'s; they are written
+/// by `json_writer_v1`, which writes one-digit integers and short pieces
+/// with less work.
 fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, String> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock, PoisonError};
@@ -6619,7 +6622,7 @@ fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, Str
         .saturating_add(previous / 16)
         .clamp(128, MAX_FILE_BYTES as usize);
     let mut bytes = Vec::with_capacity(capacity);
-    serde_json::to_writer(&mut bytes, value).map_err(err)?;
+    json_writer_v1::to_vec_into_v1(&mut bytes, value).map_err(err)?;
     let mut lengths = lengths.lock().unwrap_or_else(PoisonError::into_inner);
     if lengths.len() < SERIALIZED_LENGTH_NAMES_V1 || lengths.contains_key(name) {
         lengths.insert(name.to_owned(), bytes.len());
