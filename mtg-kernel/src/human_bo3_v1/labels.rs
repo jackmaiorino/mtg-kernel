@@ -590,7 +590,8 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseDivineKickerV44 { actor, .. }
         | A::ChooseDivineTargetV44 { actor, .. }
         | A::FinishDivineTargetsV44 { actor, .. }
-        | A::ChooseMeddlingMageNameV1 { actor, .. } => Some(*actor),
+        | A::ChooseMeddlingMageNameV1 { actor, .. }
+        | A::ChooseTextColorWordV1 { actor, .. } => Some(*actor),
         #[cfg(feature = "limited-fdn-fixtures")]
         A::ChooseTriggerOrderNext { actor, .. } => Some(*actor),
         A::Ambiguous { .. } => None,
@@ -2548,7 +2549,8 @@ fn label_common(
         | A::ChooseDivineTargetV44 { .. }
         | A::ChooseFullRangeCastXValueV59 { .. }
         | A::FinishDivineTargetsV44 { .. }
-        | A::ChooseMeddlingMageNameV1 { .. } => return Err(Error::UnsupportedPrompt),
+        | A::ChooseMeddlingMageNameV1 { .. }
+        | A::ChooseTextColorWordV1 { .. } => return Err(Error::UnsupportedPrompt),
     })
 }
 
