@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use super::super::card_index::{CardIndexV1, CubeTableSourceV1, PROVISIONAL_TABLE_SHA256_V1};
+use super::super::card_index::{CardIndexV1, CubeTableSourceV1};
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ use super::*;
 
 const PROVISIONAL_ROWS: usize = 545;
 const COMMITTED_WIDTH: usize = 978;
-const COMMITTED_DENSE: usize = 56;
+const COMMITTED_DENSE: usize = 58;
 
 /// Small dims for the fast tests. d = 12 is not 56, so every width written
 /// from d is exercised.
@@ -222,7 +222,7 @@ fn layout_count(rows: usize, width: usize, dense: usize) -> usize {
 fn parameter_counts_match_the_design() {
     assert_eq!(
         layout_count(PROVISIONAL_ROWS, COMMITTED_WIDTH, COMMITTED_DENSE),
-        166_410
+        166_666
     );
     assert_eq!(layout_count(545, 947, 56), 165_418);
     assert_eq!(layout_count(509, 947, 56), 164_266);
@@ -242,14 +242,16 @@ fn parameter_counts_match_the_design() {
         );
     }
 
-    // card_mlp.0's in-width follows d: 77 on the frozen table.
-    let frozen = parameter_layout_v1(545, 947, 61).unwrap();
-    for name in [
-        "build_trunk.card_mlp.0.weight",
-        "pick_trunk.card_mlp.0.weight",
-    ] {
-        let spec = frozen.iter().find(|spec| spec.name == name).unwrap();
-        assert_eq!(spec.shape, vec![64, 77]);
+    for (width, dense, card_vector_width) in [(COMMITTED_WIDTH, COMMITTED_DENSE, 74), (947, 61, 77)]
+    {
+        let specs = parameter_layout_v1(PROVISIONAL_ROWS, width, dense).unwrap();
+        for name in [
+            "build_trunk.card_mlp.0.weight",
+            "pick_trunk.card_mlp.0.weight",
+        ] {
+            let spec = specs.iter().find(|spec| spec.name == name).unwrap();
+            assert_eq!(spec.shape, vec![64, card_vector_width]);
+        }
     }
 }
 
@@ -1162,11 +1164,9 @@ fn golden_fixture() -> (ModelV1, ModelCardRowsV1) {
         env!("CARGO_MANIFEST_DIR"),
         "/../data/card_semantics_v1/cube_table_v1.json"
     );
-    let source = CubeTableSourceV1::read_v1(
-        std::path::Path::new(TABLE_PATH),
-        PROVISIONAL_TABLE_SHA256_V1,
-    )
-    .expect("the pinned provisional table");
+    const TABLE_SHA256: &str = "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
+    let source = CubeTableSourceV1::read_v1(std::path::Path::new(TABLE_PATH), TABLE_SHA256)
+        .expect("the pinned provisional table");
     let (index, left_out) = CardIndexV1::provisional_v1(CUBE_LIST, &source).unwrap();
     assert!(left_out.is_empty());
     let table = source.bind_v1(&index).unwrap();
@@ -1185,7 +1185,7 @@ fn golden_fixture() -> (ModelV1, ModelCardRowsV1) {
         INIT_SEED,
     )
     .unwrap();
-    assert_eq!(model.parameter_count(), 166_410);
+    assert_eq!(model.parameter_count(), 166_666);
     fill_zero_initialised(&mut model, FILL_SEED, 0.5);
     (model, rows)
 }

@@ -1,885 +1,885 @@
-layout_sha256 7d2c6692d675436dd17c85d060b11022b8d88eb4ac9a0e943e8dbe8eba642c60
-parameter_sha256 1375332bdb0e0f0792f51929b84bf6d47abab81af7044ecede82a9745c0ab321
-pick_hidden_sha256 80b73d8c1ffadec344d3d18f31a38f5606fd6aef3b0689d5a0ac0e3e6d467696
-pick state 0 card 895 3e31facc
-pick state 0 card 896 3e1ac0d8
-pick state 0 card 899 3e2a4e70
-pick state 0 card 902 3e81d170
-pick state 0 card 903 3e349a86
-pick state 0 card 905 3e60848c
-pick state 0 card 910 3e9cf46c
-pick state 0 card 911 3e07b386
-pick state 0 card 914 bd14ca28
-pick state 0 card 915 3e245702
-pick state 0 card 917 3e88732a
-pick state 0 card 920 3e6bde78
-pick state 0 card 922 3eb8c205
-pick state 0 card 924 3e50cdbe
-pick state 0 card 926 3e045e6e
-value state 0 3f315280
-pick state 1 card 1116 3d5a6070
-pick state 1 card 1123 3dd52a5f
-pick state 1 card 1151 3d41fd7a
-pick state 1 card 1159 3e68a63f
-pick state 1 card 1162 3e513248
-pick state 1 card 1181 3d47a168
-pick state 1 card 1187 3d3bbfa8
-value state 1 3fa44c56
-build_hidden_sha256 902b5e92cf8ab7e52a452b34f79e52d597bb31ecb2de8131e4e141d08de6b568
-count B 0 3f05b7c3
-count B 1 3d9bc284
-count B 2 bf24dd1d
-count B 3 3f8dd762
-count B 4 bf0e377e
-count B 5 3f3fbb30
-count B 6 3f1e3ab5
-count B 7 3f475150
-count B 8 bee31ef8
-count B 9 bfab925c
-count B 10 bd582aae
-count B 11 bfc679ed
-count B 12 bfea3318
-count B 13 bf5157d9
-count B 14 3eaac2d9
-count B 15 bfc5746e
-count B 16 3f1cdf96
-count B 17 be60dee6
-count B 18 bf133f1e
-count B 19 bfb9d9f7
-count B 20 be07cedc
-count B 21 3f56d024
-count B 22 bfa795d9
-count B 23 3d2c3c12
-count B 24 3f72a5ee
-count B 25 bdbf8898
-count B 26 bf9a3d3b
-count B 27 3e619364
-count B 28 3f3cff72
-count B 29 3ea115ed
-count B 30 bf5d857a
-count B 31 be83ddf2
-count B 32 bf2b6e4d
-count B 33 beb7a2a8
-count B 34 3eb7f8ce
-count B 35 3fc460aa
-count B 36 3f4e9373
-count B 37 3f04d70d
-count B 38 bef2743d
-count B 39 bf1e69de
-count B 40 3db28fc3
-pointer B 17 step 0 card 1414 bf366e2c
-pointer B 17 step 0 card 1415 bf3ef2e1
-pointer B 17 step 0 card 1416 bf370b10
-pointer B 17 step 0 card 1417 bf23a865
-pointer B 17 step 0 card 1418 bf36e944
-pointer B 17 step 0 card 1421 bf4ae34a
-pointer B 17 step 0 card 1422 bf34b253
-pointer B 17 step 0 card 1423 bf3b1d74
-pointer B 17 step 0 card 1424 bf2c819e
-pointer B 17 step 0 card 1425 bf23d14f
-pointer B 17 step 0 card 1426 bf3fa262
-pointer B 17 step 0 card 1427 bf1db98a
-pointer B 17 step 0 card 1428 bf2dbaa9
-pointer B 17 step 0 card 1429 bf2ed371
-pointer B 17 step 0 card 1430 bf2f3c9b
-pointer B 17 step 0 card 1431 bf3f467b
-pointer B 17 step 0 card 1432 bf20c9e8
-pointer B 17 step 0 card 1433 bf30e80f
-pointer B 17 step 0 card 1434 bf31df4e
-pointer B 17 step 0 card 1435 bf21a40d
-pointer B 17 step 0 card 1436 bf227100
-pointer B 17 step 0 card 1437 bf3e7d1e
-pointer B 17 step 0 card 1438 bf2b09d1
-pointer B 17 step 0 card 1439 bf33f472
-pointer B 17 step 0 card 1440 bf417c30
-pointer B 17 step 0 card 1441 bf39b116
-pointer B 17 step 0 card 1442 bf339871
-pointer B 17 step 0 card 1443 bf304dbf
-pointer B 17 step 0 card 1444 bf2bf717
-pointer B 17 step 0 card 1445 bf40396b
-pointer B 17 step 0 card 1446 bf389bf0
-pointer B 17 step 0 card 1447 bf407f96
-pointer B 17 step 0 card 1448 bf1c6bed
-pointer B 17 step 0 card 1449 bf321287
-pointer B 17 step 0 card 1450 bf049f3c
-pointer B 17 step 0 card 1451 bf2b1137
-pointer B 17 step 0 card 1452 bf2ba8d2
-pointer B 17 step 0 card 1453 bf64c18f
-pointer B 17 step 0 card 1454 bf6d5f7b
-pointer B 17 step 0 card 1455 bf6a8eb3
-pointer B 17 step 0 card 1456 bf555b1b
-pointer B 17 step 0 card 1457 bf5e200d
-pointer B 17 step 0 card 1458 bf5982bd
-pointer B 17 step 0 card 1459 bf4125c1
-pointer B 17 step 0 card 1460 bf5bf5cc
-pointer B 17 step 1 card 1414 bf3da352
-pointer B 17 step 1 card 1415 bf46558e
-pointer B 17 step 1 card 1416 bf3e7441
-pointer B 17 step 1 card 1417 bf2b7e8b
-pointer B 17 step 1 card 1418 bf3e85a2
-pointer B 17 step 1 card 1421 bf533c9a
-pointer B 17 step 1 card 1422 bf3b98b2
-pointer B 17 step 1 card 1423 bf438ab7
-pointer B 17 step 1 card 1424 bf32fbf0
-pointer B 17 step 1 card 1425 bf2b03cb
-pointer B 17 step 1 card 1426 bf478bab
-pointer B 17 step 1 card 1427 bf24e2f6
-pointer B 17 step 1 card 1428 bf3528be
-pointer B 17 step 1 card 1429 bf36d580
-pointer B 17 step 1 card 1430 bf3729b8
-pointer B 17 step 1 card 1431 bf4662a2
-pointer B 17 step 1 card 1432 bf28a308
-pointer B 17 step 1 card 1433 bf3882b6
-pointer B 17 step 1 card 1434 bf3a072e
-pointer B 17 step 1 card 1435 bf28e43c
-pointer B 17 step 1 card 1436 bf291bb0
-pointer B 17 step 1 card 1437 bf469fa0
-pointer B 17 step 1 card 1438 bf3254e8
-pointer B 17 step 1 card 1439 bf3af790
-pointer B 17 step 1 card 1440 bf488d69
-pointer B 17 step 1 card 1441 bf410939
-pointer B 17 step 1 card 1442 bf3ba977
-pointer B 17 step 1 card 1443 bf384277
-pointer B 17 step 1 card 1444 bf32f6fa
-pointer B 17 step 1 card 1445 bf485973
-pointer B 17 step 1 card 1446 bf3fe59e
-pointer B 17 step 1 card 1447 bf483b9e
-pointer B 17 step 1 card 1448 bf243176
-pointer B 17 step 1 card 1449 bf3a2094
-pointer B 17 step 1 card 1450 bf0becb1
-pointer B 17 step 1 card 1451 bf325740
-pointer B 17 step 1 card 1452 bf3359c8
-pointer B 17 step 1 card 1453 bf6bc98e
-pointer B 17 step 1 card 1454 bf74d15e
-pointer B 17 step 1 card 1455 bf718112
-pointer B 17 step 1 card 1457 bf6574b2
-pointer B 17 step 1 card 1458 bf607c47
-pointer B 17 step 1 card 1459 bf47d2eb
-pointer B 17 step 1 card 1460 bf62b9d7
-pointer B 17 step 2 card 1414 bf3eb552
-pointer B 17 step 2 card 1415 bf4752ea
-pointer B 17 step 2 card 1416 bf3f9abf
-pointer B 17 step 2 card 1417 bf2cac87
-pointer B 17 step 2 card 1418 bf3fa183
-pointer B 17 step 2 card 1421 bf54581f
-pointer B 17 step 2 card 1422 bf3cb3b0
-pointer B 17 step 2 card 1423 bf44c548
-pointer B 17 step 2 card 1424 bf341470
-pointer B 17 step 2 card 1425 bf2c2844
-pointer B 17 step 2 card 1426 bf48ba20
-pointer B 17 step 2 card 1427 bf260390
-pointer B 17 step 2 card 1429 bf380bbf
-pointer B 17 step 2 card 1430 bf38549d
-pointer B 17 step 2 card 1431 bf478238
-pointer B 17 step 2 card 1432 bf29dc27
-pointer B 17 step 2 card 1433 bf39a627
-pointer B 17 step 2 card 1434 bf3b4399
-pointer B 17 step 2 card 1435 bf2a0a16
-pointer B 17 step 2 card 1436 bf2a2c78
-pointer B 17 step 2 card 1437 bf47cfea
-pointer B 17 step 2 card 1438 bf337259
-pointer B 17 step 2 card 1439 bf3c1c55
-pointer B 17 step 2 card 1440 bf49b396
-pointer B 17 step 2 card 1441 bf424418
-pointer B 17 step 2 card 1442 bf3cdcd6
-pointer B 17 step 2 card 1443 bf397685
-pointer B 17 step 2 card 1444 bf341c2b
-pointer B 17 step 2 card 1445 bf498795
-pointer B 17 step 2 card 1446 bf40fa6e
-pointer B 17 step 2 card 1447 bf497ff0
-pointer B 17 step 2 card 1448 bf25735a
-pointer B 17 step 2 card 1449 bf3b5f54
-pointer B 17 step 2 card 1450 bf0d22ee
-pointer B 17 step 2 card 1451 bf33912c
-pointer B 17 step 2 card 1452 bf348006
-pointer B 17 step 2 card 1453 bf6cd7dd
-pointer B 17 step 2 card 1454 bf75e042
-pointer B 17 step 2 card 1455 bf72986f
-pointer B 17 step 2 card 1457 bf66af08
-pointer B 17 step 2 card 1458 bf61afdc
-pointer B 17 step 2 card 1459 bf490e61
-pointer B 17 step 2 card 1460 bf63b68c
-pointer B 17 step 3 card 1414 bf419b3c
-pointer B 17 step 3 card 1415 bf4a2fac
-pointer B 17 step 3 card 1416 bf427a0f
-pointer B 17 step 3 card 1417 bf2f9a50
-pointer B 17 step 3 card 1418 bf4271ad
-pointer B 17 step 3 card 1421 bf572480
-pointer B 17 step 3 card 1422 bf3f94ac
-pointer B 17 step 3 card 1423 bf47ae3a
-pointer B 17 step 3 card 1424 bf370534
-pointer B 17 step 3 card 1425 bf2f295f
-pointer B 17 step 3 card 1426 bf4b8f53
-pointer B 17 step 3 card 1427 bf290a33
-pointer B 17 step 3 card 1429 bf3afeb0
-pointer B 17 step 3 card 1430 bf3b4d1c
-pointer B 17 step 3 card 1431 bf4a56a8
-pointer B 17 step 3 card 1432 bf2cd130
-pointer B 17 step 3 card 1433 bf3c8b3f
-pointer B 17 step 3 card 1434 bf3e35bb
-pointer B 17 step 3 card 1435 bf2d0bbc
-pointer B 17 step 3 card 1436 bf2d2310
-pointer B 17 step 3 card 1437 bf4a9ca8
-pointer B 17 step 3 card 1438 bf365797
-pointer B 17 step 3 card 1439 bf3efe1e
-pointer B 17 step 3 card 1440 bf4c9e91
-pointer B 17 step 3 card 1441 bf452929
-pointer B 17 step 3 card 1442 bf3fb99e
-pointer B 17 step 3 card 1443 bf3c6df1
-pointer B 17 step 3 card 1444 bf371b29
-pointer B 17 step 3 card 1446 bf43e9f8
-pointer B 17 step 3 card 1447 bf4c582f
-pointer B 17 step 3 card 1448 bf286191
-pointer B 17 step 3 card 1449 bf3e3cf9
-pointer B 17 step 3 card 1450 bf103672
-pointer B 17 step 3 card 1451 bf3681ed
-pointer B 17 step 3 card 1452 bf377267
-pointer B 17 step 3 card 1453 bf6f9855
-pointer B 17 step 3 card 1454 bf788c9a
-pointer B 17 step 3 card 1455 bf7548f6
-pointer B 17 step 3 card 1457 bf6963bc
-pointer B 17 step 3 card 1458 bf646ac4
-pointer B 17 step 3 card 1459 bf4beeca
-pointer B 17 step 3 card 1460 bf6680f0
-pointer B 17 step 4 card 1414 bf4006a8
-pointer B 17 step 4 card 1416 bf40e46e
-pointer B 17 step 4 card 1417 bf2e0428
-pointer B 17 step 4 card 1418 bf40e552
-pointer B 17 step 4 card 1421 bf559dff
-pointer B 17 step 4 card 1422 bf3e1625
-pointer B 17 step 4 card 1423 bf46285a
-pointer B 17 step 4 card 1424 bf35778d
-pointer B 17 step 4 card 1425 bf2da629
-pointer B 17 step 4 card 1426 bf49f807
-pointer B 17 step 4 card 1427 bf279bde
-pointer B 17 step 4 card 1429 bf398d5d
-pointer B 17 step 4 card 1430 bf39ca8c
-pointer B 17 step 4 card 1431 bf48b9c9
-pointer B 17 step 4 card 1432 bf2b4639
-pointer B 17 step 4 card 1433 bf3aeb6c
-pointer B 17 step 4 card 1434 bf3cb4f7
-pointer B 17 step 4 card 1435 bf2b8439
-pointer B 17 step 4 card 1436 bf2b9b2e
-pointer B 17 step 4 card 1437 bf48f0bc
-pointer B 17 step 4 card 1438 bf34b43f
-pointer B 17 step 4 card 1439 bf3d66b7
-pointer B 17 step 4 card 1440 bf4b1a0a
-pointer B 17 step 4 card 1441 bf43906b
-pointer B 17 step 4 card 1442 bf3e2811
-pointer B 17 step 4 card 1443 bf3aea0e
-pointer B 17 step 4 card 1444 bf35a42f
-pointer B 17 step 4 card 1446 bf4261c5
-pointer B 17 step 4 card 1447 bf4ac298
-pointer B 17 step 4 card 1448 bf26b64d
-pointer B 17 step 4 card 1449 bf3c8d5f
-pointer B 17 step 4 card 1450 bf0eace9
-pointer B 17 step 4 card 1451 bf34f431
-pointer B 17 step 4 card 1452 bf35debc
-pointer B 17 step 4 card 1453 bf6dfcce
-pointer B 17 step 4 card 1454 bf76eac7
-pointer B 17 step 4 card 1455 bf7393cd
-pointer B 17 step 4 card 1457 bf67bbfa
-pointer B 17 step 4 card 1458 bf62c684
-pointer B 17 step 4 card 1459 bf4a6275
-pointer B 17 step 4 card 1460 bf64f70c
-pointer B 17 step 5 card 1414 bf42015c
-pointer B 17 step 5 card 1416 bf42df08
-pointer B 17 step 5 card 1417 bf300040
-pointer B 17 step 5 card 1418 bf42d73b
-pointer B 17 step 5 card 1421 bf5780a1
-pointer B 17 step 5 card 1422 bf4006a4
-pointer B 17 step 5 card 1423 bf481900
-pointer B 17 step 5 card 1424 bf376da3
-pointer B 17 step 5 card 1425 bf2f91fb
-pointer B 17 step 5 card 1426 bf4bf294
-pointer B 17 step 5 card 1427 bf298c8a
-pointer B 17 step 5 card 1429 bf3b82d3
-pointer B 17 step 5 card 1430 bf3bc45d
-pointer B 17 step 5 card 1431 bf4aa973
-pointer B 17 step 5 card 1432 bf2d3c37
-pointer B 17 step 5 card 1433 bf3ce344
-pointer B 17 step 5 card 1435 bf2d6b9f
-pointer B 17 step 5 card 1436 bf2d8568
-pointer B 17 step 5 card 1437 bf4ae129
-pointer B 17 step 5 card 1438 bf369f8c
-pointer B 17 step 5 card 1439 bf3f4f51
-pointer B 17 step 5 card 1440 bf4d0db7
-pointer B 17 step 5 card 1441 bf458d15
-pointer B 17 step 5 card 1442 bf401b47
-pointer B 17 step 5 card 1443 bf3ce321
-pointer B 17 step 5 card 1444 bf379434
-pointer B 17 step 5 card 1446 bf44560f
-pointer B 17 step 5 card 1447 bf4cb83e
-pointer B 17 step 5 card 1448 bf28afe6
-pointer B 17 step 5 card 1449 bf3e83d1
-pointer B 17 step 5 card 1450 bf10a9ad
-pointer B 17 step 5 card 1451 bf36eb38
-pointer B 17 step 5 card 1452 bf37cf63
-pointer B 17 step 5 card 1453 bf6fe713
-pointer B 17 step 5 card 1454 bf78d3ba
-pointer B 17 step 5 card 1455 bf758624
-pointer B 17 step 5 card 1457 bf69afad
-pointer B 17 step 5 card 1458 bf64b875
-pointer B 17 step 5 card 1459 bf4c5222
-pointer B 17 step 5 card 1460 bf66e114
-pointer B 17 step 6 card 1414 bf4228bc
-pointer B 17 step 6 card 1416 bf430c65
-pointer B 17 step 6 card 1417 bf302e3e
-pointer B 17 step 6 card 1418 bf4301b7
-pointer B 17 step 6 card 1421 bf57af2a
-pointer B 17 step 6 card 1422 bf402a10
-pointer B 17 step 6 card 1423 bf484efc
-pointer B 17 step 6 card 1424 bf378b01
-pointer B 17 step 6 card 1425 bf2fbc9d
-pointer B 17 step 6 card 1426 bf4c1f77
-pointer B 17 step 6 card 1427 bf29b847
-pointer B 17 step 6 card 1429 bf3bb73a
-pointer B 17 step 6 card 1430 bf3bf4f7
-pointer B 17 step 6 card 1431 bf4acda5
-pointer B 17 step 6 card 1432 bf2d6b68
-pointer B 17 step 6 card 1433 bf3d0f4d
-pointer B 17 step 6 card 1435 bf2d9bab
-pointer B 17 step 6 card 1436 bf2da962
-pointer B 17 step 6 card 1437 bf4b140e
-pointer B 17 step 6 card 1438 bf36c881
-pointer B 17 step 6 card 1439 bf3f7903
-pointer B 17 step 6 card 1440 bf4d35a5
-pointer B 17 step 6 card 1441 bf45b8c0
-pointer B 17 step 6 card 1442 bf404e6b
-pointer B 17 step 6 card 1443 bf3d1da6
-pointer B 17 step 6 card 1444 bf37c36a
-pointer B 17 step 6 card 1446 bf447c75
-pointer B 17 step 6 card 1447 bf4ceabf
-pointer B 17 step 6 card 1448 bf28e293
-pointer B 17 step 6 card 1449 bf3eb5c6
-pointer B 17 step 6 card 1450 bf10cfa3
-pointer B 17 step 6 card 1452 bf380285
-pointer B 17 step 6 card 1453 bf700855
-pointer B 17 step 6 card 1454 bf78f6f4
-pointer B 17 step 6 card 1455 bf75a0bc
-pointer B 17 step 6 card 1457 bf69d869
-pointer B 17 step 6 card 1458 bf64dc65
-pointer B 17 step 6 card 1459 bf4c7276
-pointer B 17 step 6 card 1460 bf66f9bc
-pointer B 17 step 7 card 1414 bf4328da
-pointer B 17 step 7 card 1416 bf440e6b
-pointer B 17 step 7 card 1417 bf312cee
-pointer B 17 step 7 card 1418 bf43fbe6
-pointer B 17 step 7 card 1421 bf58a675
-pointer B 17 step 7 card 1422 bf411ff0
-pointer B 17 step 7 card 1424 bf3890e9
-pointer B 17 step 7 card 1425 bf30c151
-pointer B 17 step 7 card 1426 bf4d1b90
-pointer B 17 step 7 card 1427 bf2aaf45
-pointer B 17 step 7 card 1429 bf3ca7bb
-pointer B 17 step 7 card 1430 bf3cf392
-pointer B 17 step 7 card 1431 bf4bd4ec
-pointer B 17 step 7 card 1432 bf2e68b4
-pointer B 17 step 7 card 1433 bf3e1044
-pointer B 17 step 7 card 1435 bf2e99d1
-pointer B 17 step 7 card 1436 bf2ea4ca
-pointer B 17 step 7 card 1437 bf4c18bf
-pointer B 17 step 7 card 1438 bf37d272
-pointer B 17 step 7 card 1439 bf407864
-pointer B 17 step 7 card 1440 bf4e31db
-pointer B 17 step 7 card 1441 bf46bb72
-pointer B 17 step 7 card 1442 bf414c80
-pointer B 17 step 7 card 1443 bf3e144f
-pointer B 17 step 7 card 1444 bf38bb67
-pointer B 17 step 7 card 1446 bf45744e
-pointer B 17 step 7 card 1447 bf4def69
-pointer B 17 step 7 card 1448 bf29e3fc
-pointer B 17 step 7 card 1449 bf3fba3b
-pointer B 17 step 7 card 1450 bf11cb3d
-pointer B 17 step 7 card 1452 bf3900f2
-pointer B 17 step 7 card 1453 bf710e39
-pointer B 17 step 7 card 1454 bf79fb32
-pointer B 17 step 7 card 1455 bf76af39
-pointer B 17 step 7 card 1457 bf6ae30f
-pointer B 17 step 7 card 1458 bf65e4b8
-pointer B 17 step 7 card 1459 bf4d76a2
-pointer B 17 step 7 card 1460 bf67f56b
-pointer B 17 step 8 card 1414 bf41c487
-pointer B 17 step 8 card 1416 bf42adbd
-pointer B 17 step 8 card 1417 bf2fc711
-pointer B 17 step 8 card 1418 bf4299b6
-pointer B 17 step 8 card 1421 bf57500e
-pointer B 17 step 8 card 1422 bf3fbc19
-pointer B 17 step 8 card 1424 bf372c7c
-pointer B 17 step 8 card 1425 bf2f63b9
-pointer B 17 step 8 card 1426 bf4bba7c
-pointer B 17 step 8 card 1427 bf294d68
-pointer B 17 step 8 card 1429 bf3b4835
-pointer B 17 step 8 card 1430 bf3b9495
-pointer B 17 step 8 card 1431 bf4a7566
-pointer B 17 step 8 card 1432 bf2d074e
-pointer B 17 step 8 card 1433 bf3cad54
-pointer B 17 step 8 card 1435 bf2d398e
-pointer B 17 step 8 card 1436 bf2d4067
-pointer B 17 step 8 card 1437 bf4abac0
-pointer B 17 step 8 card 1438 bf367299
-pointer B 17 step 8 card 1439 bf3f171e
-pointer B 17 step 8 card 1441 bf455a60
-pointer B 17 step 8 card 1442 bf3feb1f
-pointer B 17 step 8 card 1443 bf3cb321
-pointer B 17 step 8 card 1444 bf375c11
-pointer B 17 step 8 card 1446 bf440c76
-pointer B 17 step 8 card 1447 bf4c9792
-pointer B 17 step 8 card 1448 bf2879e2
-pointer B 17 step 8 card 1449 bf3e54cb
-pointer B 17 step 8 card 1450 bf1060a9
-pointer B 17 step 8 card 1452 bf379b6c
-pointer B 17 step 8 card 1453 bf6fb343
-pointer B 17 step 8 card 1454 bf78a28f
-pointer B 17 step 8 card 1455 bf75529d
-pointer B 17 step 8 card 1457 bf698df3
-pointer B 17 step 8 card 1458 bf648b55
-pointer B 17 step 8 card 1459 bf4c1a35
-pointer B 17 step 8 card 1460 bf669054
-pointer B 17 step 9 card 1414 bf40a0c0
-pointer B 17 step 9 card 1416 bf418a5a
-pointer B 17 step 9 card 1417 bf2e9fc3
-pointer B 17 step 9 card 1418 bf41747a
-pointer B 17 step 9 card 1421 bf5630f7
-pointer B 17 step 9 card 1422 bf3e9651
-pointer B 17 step 9 card 1424 bf360a2f
-pointer B 17 step 9 card 1425 bf2e4697
-pointer B 17 step 9 card 1426 bf4a9161
-pointer B 17 step 9 card 1427 bf28293b
-pointer B 17 step 9 card 1429 bf3a1e2c
-pointer B 17 step 9 card 1430 bf3a6d89
-pointer B 17 step 9 card 1431 bf495738
-pointer B 17 step 9 card 1432 bf2be06e
-pointer B 17 step 9 card 1433 bf3b8930
-pointer B 17 step 9 card 1435 bf2c1c04
-pointer B 17 step 9 card 1436 bf2c226e
-pointer B 17 step 9 card 1437 bf4999f0
-pointer B 17 step 9 card 1438 bf355887
-pointer B 17 step 9 card 1439 bf3df984
-pointer B 17 step 9 card 1441 bf4431ee
-pointer B 17 step 9 card 1442 bf3ec77c
-pointer B 17 step 9 card 1443 bf3b8fcf
-pointer B 17 step 9 card 1444 bf363b97
-pointer B 17 step 9 card 1446 bf42e637
-pointer B 17 step 9 card 1447 bf4b767d
-pointer B 17 step 9 card 1448 bf27519d
-pointer B 17 step 9 card 1449 bf3d2eb1
-pointer B 17 step 9 card 1450 bf0f3517
-pointer B 17 step 9 card 1452 bf367d4e
-pointer B 17 step 9 card 1453 bf6e98f8
-pointer B 17 step 9 card 1454 bf7789d2
-pointer B 17 step 9 card 1455 bf7435ac
-pointer B 17 step 9 card 1458 bf636cee
-pointer B 17 step 9 card 1459 bf4af708
-pointer B 17 step 9 card 1460 bf656d2c
-pointer B 17 step 10 card 1414 bf3f66d0
-pointer B 17 step 10 card 1416 bf4056b0
-pointer B 17 step 10 card 1417 bf2d63a2
-pointer B 17 step 10 card 1418 bf40378b
-pointer B 17 step 10 card 1421 bf54fc3b
-pointer B 17 step 10 card 1422 bf3d53d4
-pointer B 17 step 10 card 1424 bf34cc6c
-pointer B 17 step 10 card 1425 bf2d0e58
-pointer B 17 step 10 card 1426 bf4957e8
-pointer B 17 step 10 card 1427 bf26e9b3
-pointer B 17 step 10 card 1430 bf393605
-pointer B 17 step 10 card 1431 bf481d9d
-pointer B 17 step 10 card 1432 bf2aa606
-pointer B 17 step 10 card 1433 bf3a4e26
-pointer B 17 step 10 card 1435 bf2ade0c
-pointer B 17 step 10 card 1436 bf2adf54
-pointer B 17 step 10 card 1437 bf4862a1
-pointer B 17 step 10 card 1438 bf341ee4
-pointer B 17 step 10 card 1439 bf3cba07
-pointer B 17 step 10 card 1441 bf42f9d5
-pointer B 17 step 10 card 1442 bf3d8cf4
-pointer B 17 step 10 card 1443 bf3a5491
-pointer B 17 step 10 card 1444 bf34fe8a
-pointer B 17 step 10 card 1446 bf41a3b5
-pointer B 17 step 10 card 1447 bf4a46ae
-pointer B 17 step 10 card 1448 bf2611c3
-pointer B 17 step 10 card 1449 bf3bf274
-pointer B 17 step 10 card 1450 bf0df567
-pointer B 17 step 10 card 1452 bf353f7f
-pointer B 17 step 10 card 1453 bf6d6437
-pointer B 17 step 10 card 1454 bf765856
-pointer B 17 step 10 card 1455 bf730371
-pointer B 17 step 10 card 1458 bf623bf7
-pointer B 17 step 10 card 1459 bf49c1f4
-pointer B 17 step 10 card 1460 bf642b0f
-pointer B 17 step 11 card 1414 bf3f6d72
-pointer B 17 step 11 card 1416 bf405e75
-pointer B 17 step 11 card 1417 bf2d695b
-pointer B 17 step 11 card 1418 bf403db8
-pointer B 17 step 11 card 1421 bf550a18
-pointer B 17 step 11 card 1422 bf3d5914
-pointer B 17 step 11 card 1424 bf34d3d1
-pointer B 17 step 11 card 1425 bf2d17c4
-pointer B 17 step 11 card 1426 bf4960e8
-pointer B 17 step 11 card 1427 bf26f07f
-pointer B 17 step 11 card 1430 bf394136
-pointer B 17 step 11 card 1431 bf482609
-pointer B 17 step 11 card 1432 bf2aaf0c
-pointer B 17 step 11 card 1433 bf3a55c3
-pointer B 17 step 11 card 1435 bf2ae3cf
-pointer B 17 step 11 card 1436 bf2ae334
-pointer B 17 step 11 card 1437 bf486b45
-pointer B 17 step 11 card 1438 bf34260f
-pointer B 17 step 11 card 1439 bf3cbe98
-pointer B 17 step 11 card 1441 bf4303b9
-pointer B 17 step 11 card 1442 bf3d93c7
-pointer B 17 step 11 card 1443 bf3a591a
-pointer B 17 step 11 card 1444 bf3504fc
-pointer B 17 step 11 card 1447 bf4a543b
-pointer B 17 step 11 card 1448 bf26135c
-pointer B 17 step 11 card 1449 bf3bf7e4
-pointer B 17 step 11 card 1450 bf0df9f3
-pointer B 17 step 11 card 1452 bf3541fb
-pointer B 17 step 11 card 1453 bf6d6e93
-pointer B 17 step 11 card 1454 bf766337
-pointer B 17 step 11 card 1455 bf730eb4
-pointer B 17 step 11 card 1458 bf62472f
-pointer B 17 step 11 card 1459 bf49cdd5
-pointer B 17 step 11 card 1460 bf642ece
-pointer B 17 step 12 card 1414 bf3f14c9
-pointer B 17 step 12 card 1417 bf2d13e8
-pointer B 17 step 12 card 1418 bf3fe6c6
-pointer B 17 step 12 card 1421 bf54b797
-pointer B 17 step 12 card 1422 bf3d0412
-pointer B 17 step 12 card 1424 bf347f5c
-pointer B 17 step 12 card 1425 bf2ccd92
-pointer B 17 step 12 card 1426 bf490676
-pointer B 17 step 12 card 1427 bf26a137
-pointer B 17 step 12 card 1430 bf38ed61
-pointer B 17 step 12 card 1431 bf47d346
-pointer B 17 step 12 card 1432 bf2a5af8
-pointer B 17 step 12 card 1433 bf39fcb9
-pointer B 17 step 12 card 1435 bf2a975e
-pointer B 17 step 12 card 1436 bf2a9262
-pointer B 17 step 12 card 1437 bf48157b
-pointer B 17 step 12 card 1438 bf33d6cb
-pointer B 17 step 12 card 1439 bf3c6dfb
-pointer B 17 step 12 card 1441 bf42a9cd
-pointer B 17 step 12 card 1442 bf3d4195
-pointer B 17 step 12 card 1443 bf3a0672
-pointer B 17 step 12 card 1444 bf34b3e8
-pointer B 17 step 12 card 1447 bf49ffd8
-pointer B 17 step 12 card 1448 bf25be4f
-pointer B 17 step 12 card 1449 bf3ba0ff
-pointer B 17 step 12 card 1450 bf0da58d
-pointer B 17 step 12 card 1452 bf34f1f2
-pointer B 17 step 12 card 1453 bf6d1895
-pointer B 17 step 12 card 1454 bf760d83
-pointer B 17 step 12 card 1455 bf72b352
-pointer B 17 step 12 card 1458 bf61ef9f
-pointer B 17 step 12 card 1459 bf4979f8
-pointer B 17 step 12 card 1460 bf63d839
-pointer B 17 step 13 card 1414 bf401b9b
-pointer B 17 step 13 card 1417 bf2e1e91
-pointer B 17 step 13 card 1418 bf40ee9a
-pointer B 17 step 13 card 1421 bf55bdfe
-pointer B 17 step 13 card 1422 bf3e10b0
-pointer B 17 step 13 card 1424 bf3589ca
-pointer B 17 step 13 card 1425 bf2dd360
-pointer B 17 step 13 card 1426 bf4a13c5
-pointer B 17 step 13 card 1427 bf27aa26
-pointer B 17 step 13 card 1430 bf39f6e4
-pointer B 17 step 13 card 1431 bf48dda2
-pointer B 17 step 13 card 1432 bf2b66f8
-pointer B 17 step 13 card 1433 bf3b07e7
-pointer B 17 step 13 card 1436 bf2b9be3
-pointer B 17 step 13 card 1437 bf491ffe
-pointer B 17 step 13 card 1438 bf34dea9
-pointer B 17 step 13 card 1439 bf3d7845
-pointer B 17 step 13 card 1441 bf43b650
-pointer B 17 step 13 card 1442 bf3e4cc9
-pointer B 17 step 13 card 1443 bf3b115d
-pointer B 17 step 13 card 1444 bf35bc89
-pointer B 17 step 13 card 1447 bf4b0a9e
-pointer B 17 step 13 card 1448 bf26cb32
-pointer B 17 step 13 card 1449 bf3cae08
-pointer B 17 step 13 card 1450 bf0eb2ee
-pointer B 17 step 13 card 1452 bf35fc6c
-pointer B 17 step 13 card 1453 bf6e1dfa
-pointer B 17 step 13 card 1454 bf77136f
-pointer B 17 step 13 card 1455 bf73bb4f
-pointer B 17 step 13 card 1458 bf62f84d
-pointer B 17 step 13 card 1459 bf4a8433
-pointer B 17 step 13 card 1460 bf64de28
-pointer B 17 step 14 card 1414 bf410e84
-pointer B 17 step 14 card 1417 bf2f159c
-pointer B 17 step 14 card 1418 bf41e1a8
-pointer B 17 step 14 card 1421 bf56b0ad
-pointer B 17 step 14 card 1422 bf3f04d1
-pointer B 17 step 14 card 1424 bf36818d
-pointer B 17 step 14 card 1425 bf2ece23
-pointer B 17 step 14 card 1426 bf4b0726
-pointer B 17 step 14 card 1427 bf28a0fc
-pointer B 17 step 14 card 1430 bf3aed3c
-pointer B 17 step 14 card 1431 bf49d4ef
-pointer B 17 step 14 card 1432 bf2c606f
-pointer B 17 step 14 card 1433 bf3bfcf5
-pointer B 17 step 14 card 1436 bf2c92de
-pointer B 17 step 14 card 1437 bf4a15f5
-pointer B 17 step 14 card 1438 bf35d865
-pointer B 17 step 14 card 1439 bf3e6fe6
-pointer B 17 step 14 card 1441 bf44abbf
-pointer B 17 step 14 card 1442 bf3f4440
-pointer B 17 step 14 card 1443 bf3c0660
-pointer B 17 step 14 card 1444 bf36b22a
-pointer B 17 step 14 card 1447 bf4c0052
-pointer B 17 step 14 card 1448 bf27c4b9
-pointer B 17 step 14 card 1449 bf3da6d2
-pointer B 17 step 14 card 1450 bf0faefa
-pointer B 17 step 14 card 1453 bf6f0e02
-pointer B 17 step 14 card 1454 bf780249
-pointer B 17 step 14 card 1455 bf74ab2b
-pointer B 17 step 14 card 1458 bf63e883
-pointer B 17 step 14 card 1459 bf4b7b28
-pointer B 17 step 14 card 1460 bf65cddb
-pointer B 17 step 15 card 1414 bf40e6a8
-pointer B 17 step 15 card 1417 bf2eee57
-pointer B 17 step 15 card 1418 bf41b9cd
-pointer B 17 step 15 card 1421 bf569123
-pointer B 17 step 15 card 1422 bf3ede8d
-pointer B 17 step 15 card 1425 bf2eb0fc
-pointer B 17 step 15 card 1426 bf4ae2a6
-pointer B 17 step 15 card 1427 bf287bdd
-pointer B 17 step 15 card 1430 bf3acae9
-pointer B 17 step 15 card 1431 bf49b764
-pointer B 17 step 15 card 1432 bf2c3cbc
-pointer B 17 step 15 card 1433 bf3bdad2
-pointer B 17 step 15 card 1436 bf2c708e
-pointer B 17 step 15 card 1437 bf49f87a
-pointer B 17 step 15 card 1438 bf35bd48
-pointer B 17 step 15 card 1439 bf3e508d
-pointer B 17 step 15 card 1441 bf4488eb
-pointer B 17 step 15 card 1442 bf3f20d9
-pointer B 17 step 15 card 1443 bf3be0bc
-pointer B 17 step 15 card 1444 bf368dec
-pointer B 17 step 15 card 1447 bf4be3ba
-pointer B 17 step 15 card 1448 bf279e7c
-pointer B 17 step 15 card 1449 bf3d8480
-pointer B 17 step 15 card 1450 bf0f8570
-pointer B 17 step 15 card 1453 bf6eef58
-pointer B 17 step 15 card 1454 bf77e411
-pointer B 17 step 15 card 1455 bf748d7b
-pointer B 17 step 15 card 1458 bf63c9b4
-pointer B 17 step 15 card 1459 bf4b5ac1
-pointer B 17 step 15 card 1460 bf65a50b
-pointer B 17 step 16 card 1414 bf410184
-pointer B 17 step 16 card 1417 bf2f08af
-pointer B 17 step 16 card 1418 bf41d371
-pointer B 17 step 16 card 1421 bf56b141
-pointer B 17 step 16 card 1422 bf3ef758
-pointer B 17 step 16 card 1425 bf2ed133
-pointer B 17 step 16 card 1426 bf4afd5a
-pointer B 17 step 16 card 1427 bf289868
-pointer B 17 step 16 card 1430 bf3ae9fc
-pointer B 17 step 16 card 1431 bf49d410
-pointer B 17 step 16 card 1432 bf2c58a1
-pointer B 17 step 16 card 1433 bf3bf6d7
-pointer B 17 step 16 card 1436 bf2c8b9b
-pointer B 17 step 16 card 1437 bf4a1636
-pointer B 17 step 16 card 1438 bf35dbd1
-pointer B 17 step 16 card 1439 bf3e6c14
-pointer B 17 step 16 card 1442 bf3f3d4a
-pointer B 17 step 16 card 1443 bf3bfd82
-pointer B 17 step 16 card 1444 bf36aa80
-pointer B 17 step 16 card 1447 bf4c039e
-pointer B 17 step 16 card 1448 bf27b6cf
-pointer B 17 step 16 card 1449 bf3d9ecc
-pointer B 17 step 16 card 1450 bf0f9d2c
-pointer B 17 step 16 card 1453 bf6f0cf1
-pointer B 17 step 16 card 1454 bf78021a
-pointer B 17 step 16 card 1455 bf74a91d
-pointer B 17 step 16 card 1458 bf63e69e
-pointer B 17 step 16 card 1459 bf4b773f
-pointer B 17 step 16 card 1460 bf65bc47
-pointer B 17 step 17 card 1414 bf4069cd
-pointer B 17 step 17 card 1417 bf2e6efa
-pointer B 17 step 17 card 1418 bf413b68
-pointer B 17 step 17 card 1421 bf561d41
-pointer B 17 step 17 card 1422 bf3e5ce8
-pointer B 17 step 17 card 1425 bf2e3dc8
-pointer B 17 step 17 card 1426 bf4a6327
-pointer B 17 step 17 card 1427 bf27fe42
-pointer B 17 step 17 card 1430 bf3a508a
-pointer B 17 step 17 card 1431 bf494175
-pointer B 17 step 17 card 1432 bf2bbeef
-pointer B 17 step 17 card 1433 bf3b5ebf
-pointer B 17 step 17 card 1436 bf2bf4f7
-pointer B 17 step 17 card 1437 bf4981f0
-pointer B 17 step 17 card 1438 bf354b0a
-pointer B 17 step 17 card 1439 bf3dd755
-pointer B 17 step 17 card 1442 bf3ea680
-pointer B 17 step 17 card 1443 bf3b64dd
-pointer B 17 step 17 card 1444 bf3612f2
-pointer B 17 step 17 card 1447 bf4b708e
-pointer B 17 step 17 card 1448 bf271b58
-pointer B 17 step 17 card 1449 bf3d05ee
-pointer B 17 step 17 card 1450 bf0efe7f
-pointer B 17 step 17 card 1453 bf6e7d25
-pointer B 17 step 17 card 1454 bf77744f
-pointer B 17 step 17 card 1455 bf741914
-pointer B 17 step 17 card 1459 bf4ae0cb
-pointer B 17 step 17 card 1460 bf6523ae
-pointer B 17 step 18 card 1414 bf4052a2
-pointer B 17 step 18 card 1417 bf2e5654
-pointer B 17 step 18 card 1418 bf412160
-pointer B 17 step 18 card 1421 bf5607a8
-pointer B 17 step 18 card 1422 bf3e419c
-pointer B 17 step 18 card 1425 bf2e2a55
-pointer B 17 step 18 card 1426 bf4a4b86
-pointer B 17 step 18 card 1427 bf27e625
-pointer B 17 step 18 card 1431 bf492b89
-pointer B 17 step 18 card 1432 bf2ba7d8
-pointer B 17 step 18 card 1433 bf3b485a
-pointer B 17 step 18 card 1436 bf2bdb70
-pointer B 17 step 18 card 1437 bf496cad
-pointer B 17 step 18 card 1438 bf35368f
-pointer B 17 step 18 card 1439 bf3dbeae
-pointer B 17 step 18 card 1442 bf3e8efe
-pointer B 17 step 18 card 1443 bf3b4d8e
-pointer B 17 step 18 card 1444 bf35fae2
-pointer B 17 step 18 card 1447 bf4b5de4
-pointer B 17 step 18 card 1448 bf270162
-pointer B 17 step 18 card 1449 bf3cee00
-pointer B 17 step 18 card 1450 bf0ee4e3
-pointer B 17 step 18 card 1453 bf6e681d
-pointer B 17 step 18 card 1454 bf775f85
-pointer B 17 step 18 card 1455 bf7404b0
-pointer B 17 step 18 card 1459 bf4acbe8
-pointer B 17 step 18 card 1460 bf650825
-pointer B 17 step 19 card 1414 bf406344
-pointer B 17 step 19 card 1417 bf2e682f
-pointer B 17 step 19 card 1418 bf413135
-pointer B 17 step 19 card 1421 bf561c04
-pointer B 17 step 19 card 1422 bf3e529e
-pointer B 17 step 19 card 1425 bf2e43b6
-pointer B 17 step 19 card 1426 bf4a5ad4
-pointer B 17 step 19 card 1427 bf27fcac
-pointer B 17 step 19 card 1431 bf493e6d
-pointer B 17 step 19 card 1432 bf2bbbe3
-pointer B 17 step 19 card 1433 bf3b5a58
-pointer B 17 step 19 card 1436 bf2bf0cc
-pointer B 17 step 19 card 1437 bf497f6a
-pointer B 17 step 19 card 1438 bf354d0f
-pointer B 17 step 19 card 1439 bf3dd379
-pointer B 17 step 19 card 1442 bf3ea2e5
-pointer B 17 step 19 card 1443 bf3b630e
-pointer B 17 step 19 card 1444 bf361119
-pointer B 17 step 19 card 1448 bf27132e
-pointer B 17 step 19 card 1449 bf3cffac
-pointer B 17 step 19 card 1450 bf0ef77d
-pointer B 17 step 19 card 1453 bf6e7972
-pointer B 17 step 19 card 1454 bf777022
-pointer B 17 step 19 card 1455 bf74126e
-pointer B 17 step 19 card 1459 bf4adf96
-pointer B 17 step 19 card 1460 bf65155b
-pointer B 17 step 20 card 1414 bf3fee2c
-pointer B 17 step 20 card 1418 bf40ba44
-pointer B 17 step 20 card 1421 bf55a7f5
-pointer B 17 step 20 card 1422 bf3dd9fa
-pointer B 17 step 20 card 1425 bf2dcd12
-pointer B 17 step 20 card 1426 bf49e60c
-pointer B 17 step 20 card 1427 bf278254
-pointer B 17 step 20 card 1431 bf48cb13
-pointer B 17 step 20 card 1432 bf2b43b0
-pointer B 17 step 20 card 1433 bf3ae3cc
-pointer B 17 step 20 card 1436 bf2b7659
-pointer B 17 step 20 card 1437 bf490cba
-pointer B 17 step 20 card 1438 bf34d7db
-pointer B 17 step 20 card 1439 bf3d5c26
-pointer B 17 step 20 card 1442 bf3e2d18
-pointer B 17 step 20 card 1443 bf3aea7e
-pointer B 17 step 20 card 1444 bf359850
-pointer B 17 step 20 card 1448 bf269b6f
-pointer B 17 step 20 card 1449 bf3c8a45
-pointer B 17 step 20 card 1450 bf0e7c8d
-pointer B 17 step 20 card 1453 bf6e0863
-pointer B 17 step 20 card 1454 bf770184
-pointer B 17 step 20 card 1455 bf73a396
-pointer B 17 step 20 card 1459 bf4a6a5c
-pointer B 17 step 20 card 1460 bf649e12
-pointer B 17 step 21 card 1414 bf3ff152
-pointer B 17 step 21 card 1418 bf40bd85
-pointer B 17 step 21 card 1421 bf55af46
-pointer B 17 step 21 card 1422 bf3ddf59
-pointer B 17 step 21 card 1425 bf2dd486
-pointer B 17 step 21 card 1426 bf49ed20
-pointer B 17 step 21 card 1427 bf2787de
-pointer B 17 step 21 card 1431 bf48d267
-pointer B 17 step 21 card 1432 bf2b4a9d
-pointer B 17 step 21 card 1433 bf3ae9e5
-pointer B 17 step 21 card 1437 bf4914ad
-pointer B 17 step 21 card 1438 bf34df1e
-pointer B 17 step 21 card 1439 bf3d629b
-pointer B 17 step 21 card 1442 bf3e33a9
-pointer B 17 step 21 card 1443 bf3af118
-pointer B 17 step 21 card 1444 bf359dfa
-pointer B 17 step 21 card 1448 bf26a0a8
-pointer B 17 step 21 card 1449 bf3c90a5
-pointer B 17 step 21 card 1450 bf0e818b
-pointer B 17 step 21 card 1453 bf6e0ce0
-pointer B 17 step 21 card 1454 bf770738
-pointer B 17 step 21 card 1455 bf73a89a
-pointer B 17 step 21 card 1459 bf4a711a
-pointer B 17 step 21 card 1460 bf649e07
-pointer B 17 step 22 card 1414 bf3f8f2e
-pointer B 17 step 22 card 1418 bf405bab
-pointer B 17 step 22 card 1421 bf555138
-pointer B 17 step 22 card 1422 bf3d7c97
-pointer B 17 step 22 card 1425 bf2d735c
-pointer B 17 step 22 card 1426 bf498a47
-pointer B 17 step 22 card 1427 bf27235b
-pointer B 17 step 22 card 1431 bf48738d
-pointer B 17 step 22 card 1432 bf2ae795
-pointer B 17 step 22 card 1433 bf3a86c9
-pointer B 17 step 22 card 1437 bf48b376
-pointer B 17 step 22 card 1438 bf347f71
-pointer B 17 step 22 card 1439 bf3d010a
-pointer B 17 step 22 card 1442 bf3dd188
-pointer B 17 step 22 card 1443 bf3a8b4c
-pointer B 17 step 22 card 1444 bf353ac0
-pointer B 17 step 22 card 1448 bf2639c5
-pointer B 17 step 22 card 1449 bf3c2ca2
-pointer B 17 step 22 card 1450 bf0e1b54
-pointer B 17 step 22 card 1454 bf76ac7d
-pointer B 17 step 22 card 1455 bf734ce1
-pointer B 17 step 22 card 1459 bf4a12d6
-pointer B 17 step 22 card 1460 bf643d7d
-typeset mask 1 3fb1d435
-typeset mask 2 3fb5cfaf
-typeset mask 3 3fb129c7
-typeset mask 4 3faba8a7
-typeset mask 5 3fac23fc
-typeset mask 6 3fae3232
-typeset mask 7 3fabd2a6
-typeset mask 8 3fafe6e2
-typeset mask 9 3fae57a7
-typeset mask 10 3fb05a40
-typeset mask 11 3fad4c10
-typeset mask 12 3fab4755
-typeset mask 13 3fa9edf0
-typeset mask 14 3fab4f7d
-typeset mask 15 3fa8dfd4
-typeset mask 16 3fa36c06
-typeset mask 17 3fa81ced
-typeset mask 18 3faa2982
-typeset mask 19 3fa92bbc
-typeset mask 20 3fa4f759
-typeset mask 21 3fa5bf89
-typeset mask 22 3fa725bf
-typeset mask 23 3fa5c355
-typeset mask 24 3fa71e4c
-typeset mask 25 3fa73922
-typeset mask 26 3fa899e3
-typeset mask 27 3fa6e08c
-typeset mask 28 3fa52808
-typeset mask 29 3fa44ef2
-typeset mask 30 3fa55e26
-typeset mask 31 3fa37c31
-split mask 21 type 1 3e35b2b6
-split mask 21 type 4 3dc6226b
-split mask 21 type 16 3e061af9
+layout_sha256 da3770aecef52011764d3cc330fb783eaf76ab63cdafefc843c9381aeff1fd0b
+parameter_sha256 a49a359fd9de45c24f4c40d378104e80951e4d9517a9c59329b711592fe4f599
+pick_hidden_sha256 f2bf38535232103089f2ae061a3b2d5124bc7a63f781d0c160363a94f6387932
+pick state 0 card 895 3f03d532
+pick state 0 card 896 3f09e649
+pick state 0 card 899 3ee27f19
+pick state 0 card 902 3ee960e1
+pick state 0 card 903 3f1f32bb
+pick state 0 card 905 3f03f672
+pick state 0 card 910 3ef4ecf3
+pick state 0 card 911 3ee7a9c2
+pick state 0 card 914 3f12ab5c
+pick state 0 card 915 3ea0930c
+pick state 0 card 917 3f44a40d
+pick state 0 card 920 3eecbff2
+pick state 0 card 922 3f054f3c
+pick state 0 card 924 3ee4e478
+pick state 0 card 926 3ef41c97
+value state 0 3f7039de
+pick state 1 card 1116 3f2e9687
+pick state 1 card 1123 3f6354ff
+pick state 1 card 1151 3f81d7b0
+pick state 1 card 1159 3f5b2fe4
+pick state 1 card 1162 3f760b19
+pick state 1 card 1181 3f4af76f
+pick state 1 card 1187 3f591598
+value state 1 3f92ea0a
+build_hidden_sha256 7a2ab20039e467f55533a6d90d85a88105a5b7ee6858e79ce76fd5e02921e1f2
+count B 0 3f2353e7
+count B 1 be85e598
+count B 2 bf44272e
+count B 3 3f1a2b6c
+count B 4 bf63f545
+count B 5 3e524160
+count B 6 3f3b49d7
+count B 7 3f01facc
+count B 8 be57dc6c
+count B 9 c003e4d1
+count B 10 be961238
+count B 11 bf55f20e
+count B 12 c008d422
+count B 13 bf348f29
+count B 14 3f02dadd
+count B 15 c0039b4c
+count B 16 befdf2c6
+count B 17 be849d45
+count B 18 bf3fdafa
+count B 19 bfd32b64
+count B 20 bf03d3ab
+count B 21 3f16161a
+count B 22 bfea79b7
+count B 23 3f2b7819
+count B 24 3fd178d6
+count B 25 bf1e80fe
+count B 26 bfa5b57b
+count B 27 3e18d409
+count B 28 3f8d0625
+count B 29 3fa640e7
+count B 30 bfd7ef5c
+count B 31 bf635455
+count B 32 bec947c2
+count B 33 beaf0283
+count B 34 bd740f16
+count B 35 3fd7937f
+count B 36 3f39f06a
+count B 37 3e8b74b9
+count B 38 bd113790
+count B 39 bef45daa
+count B 40 bf178910
+pointer B 17 step 0 card 1414 bf28e25c
+pointer B 17 step 0 card 1415 bf222990
+pointer B 17 step 0 card 1416 bf36d332
+pointer B 17 step 0 card 1417 bf244a99
+pointer B 17 step 0 card 1418 bf14dc33
+pointer B 17 step 0 card 1421 bf342e2c
+pointer B 17 step 0 card 1422 bf1fc6fa
+pointer B 17 step 0 card 1423 bf1b3b18
+pointer B 17 step 0 card 1424 bf09c535
+pointer B 17 step 0 card 1425 bf130e01
+pointer B 17 step 0 card 1426 bf16e53d
+pointer B 17 step 0 card 1427 bf1c8967
+pointer B 17 step 0 card 1428 bf1b0f01
+pointer B 17 step 0 card 1429 bf1b0162
+pointer B 17 step 0 card 1430 bf19eb49
+pointer B 17 step 0 card 1431 bf1cb975
+pointer B 17 step 0 card 1432 bf2abd7e
+pointer B 17 step 0 card 1433 bf135d49
+pointer B 17 step 0 card 1434 bf1b7b14
+pointer B 17 step 0 card 1435 bf0d36fb
+pointer B 17 step 0 card 1436 bf169a65
+pointer B 17 step 0 card 1437 bf1ddfe6
+pointer B 17 step 0 card 1438 bf108545
+pointer B 17 step 0 card 1439 bf170ebf
+pointer B 17 step 0 card 1440 bf2558b1
+pointer B 17 step 0 card 1441 bf20a30c
+pointer B 17 step 0 card 1442 bf108e24
+pointer B 17 step 0 card 1443 bf17a59d
+pointer B 17 step 0 card 1444 bf20186c
+pointer B 17 step 0 card 1445 bf189a94
+pointer B 17 step 0 card 1446 bf097657
+pointer B 17 step 0 card 1447 bf363450
+pointer B 17 step 0 card 1448 bf193172
+pointer B 17 step 0 card 1449 bf2cbaf2
+pointer B 17 step 0 card 1450 bf363665
+pointer B 17 step 0 card 1451 bf170326
+pointer B 17 step 0 card 1452 bf1c04fb
+pointer B 17 step 0 card 1453 bf157eae
+pointer B 17 step 0 card 1454 bf0fea50
+pointer B 17 step 0 card 1455 bf13e91c
+pointer B 17 step 0 card 1456 bf0c1a6c
+pointer B 17 step 0 card 1457 bf24f8b4
+pointer B 17 step 0 card 1458 bf149b87
+pointer B 17 step 0 card 1459 bf0e639e
+pointer B 17 step 0 card 1460 bef5d9dc
+pointer B 17 step 1 card 1414 bf37ab54
+pointer B 17 step 1 card 1415 bf30e5ed
+pointer B 17 step 1 card 1416 bf457bdf
+pointer B 17 step 1 card 1417 bf345c9f
+pointer B 17 step 1 card 1418 bf23b3f7
+pointer B 17 step 1 card 1421 bf43c6c0
+pointer B 17 step 1 card 1422 bf2fbc1c
+pointer B 17 step 1 card 1423 bf2aefd0
+pointer B 17 step 1 card 1424 bf19faf6
+pointer B 17 step 1 card 1425 bf22bb20
+pointer B 17 step 1 card 1426 bf26f650
+pointer B 17 step 1 card 1427 bf2c2ee8
+pointer B 17 step 1 card 1428 bf2a871d
+pointer B 17 step 1 card 1429 bf2aa8e8
+pointer B 17 step 1 card 1430 bf297e30
+pointer B 17 step 1 card 1431 bf2c69ff
+pointer B 17 step 1 card 1432 bf3a8116
+pointer B 17 step 1 card 1433 bf2337c5
+pointer B 17 step 1 card 1434 bf2ad1a0
+pointer B 17 step 1 card 1435 bf1c5497
+pointer B 17 step 1 card 1436 bf267a3f
+pointer B 17 step 1 card 1437 bf2d6561
+pointer B 17 step 1 card 1438 bf2032e7
+pointer B 17 step 1 card 1439 bf26b3d0
+pointer B 17 step 1 card 1440 bf35007a
+pointer B 17 step 1 card 1441 bf3055c2
+pointer B 17 step 1 card 1442 bf201553
+pointer B 17 step 1 card 1443 bf26ad25
+pointer B 17 step 1 card 1444 bf2fbeb1
+pointer B 17 step 1 card 1445 bf28794c
+pointer B 17 step 1 card 1446 bf18e12c
+pointer B 17 step 1 card 1447 bf45eecf
+pointer B 17 step 1 card 1448 bf28b560
+pointer B 17 step 1 card 1449 bf3c0746
+pointer B 17 step 1 card 1450 bf459bf0
+pointer B 17 step 1 card 1451 bf26785c
+pointer B 17 step 1 card 1452 bf2b8955
+pointer B 17 step 1 card 1453 bf24ab12
+pointer B 17 step 1 card 1454 bf1f556d
+pointer B 17 step 1 card 1455 bf232a68
+pointer B 17 step 1 card 1457 bf3493cb
+pointer B 17 step 1 card 1458 bf249ad4
+pointer B 17 step 1 card 1459 bf1f01c0
+pointer B 17 step 1 card 1460 bf09a38d
+pointer B 17 step 2 card 1414 bf307322
+pointer B 17 step 2 card 1415 bf29ab9a
+pointer B 17 step 2 card 1416 bf3e5934
+pointer B 17 step 2 card 1417 bf2d19d6
+pointer B 17 step 2 card 1418 bf1c33d9
+pointer B 17 step 2 card 1421 bf3c6291
+pointer B 17 step 2 card 1422 bf287c8b
+pointer B 17 step 2 card 1423 bf23c4c9
+pointer B 17 step 2 card 1424 bf129e58
+pointer B 17 step 2 card 1425 bf1b7b42
+pointer B 17 step 2 card 1426 bf1fb72e
+pointer B 17 step 2 card 1427 bf24dccd
+pointer B 17 step 2 card 1429 bf236e06
+pointer B 17 step 2 card 1430 bf223e93
+pointer B 17 step 2 card 1431 bf253f49
+pointer B 17 step 2 card 1432 bf334328
+pointer B 17 step 2 card 1433 bf1be7b2
+pointer B 17 step 2 card 1434 bf239d6a
+pointer B 17 step 2 card 1435 bf150907
+pointer B 17 step 2 card 1436 bf1f2090
+pointer B 17 step 2 card 1437 bf263cc4
+pointer B 17 step 2 card 1438 bf18ef45
+pointer B 17 step 2 card 1439 bf1f7934
+pointer B 17 step 2 card 1440 bf2db3f7
+pointer B 17 step 2 card 1441 bf29062d
+pointer B 17 step 2 card 1442 bf18dbc5
+pointer B 17 step 2 card 1443 bf1f85fd
+pointer B 17 step 2 card 1444 bf284f99
+pointer B 17 step 2 card 1445 bf212cde
+pointer B 17 step 2 card 1446 bf118aa5
+pointer B 17 step 2 card 1447 bf3eafef
+pointer B 17 step 2 card 1448 bf217a29
+pointer B 17 step 2 card 1449 bf34e9a3
+pointer B 17 step 2 card 1450 bf3e776c
+pointer B 17 step 2 card 1451 bf1f323a
+pointer B 17 step 2 card 1452 bf2437a4
+pointer B 17 step 2 card 1453 bf1d43d4
+pointer B 17 step 2 card 1454 bf1801a0
+pointer B 17 step 2 card 1455 bf1bd89b
+pointer B 17 step 2 card 1457 bf2d3c75
+pointer B 17 step 2 card 1458 bf1d388e
+pointer B 17 step 2 card 1459 bf178c3d
+pointer B 17 step 2 card 1460 bf02488f
+pointer B 17 step 3 card 1414 bf2dcc88
+pointer B 17 step 3 card 1415 bf26f6fb
+pointer B 17 step 3 card 1416 bf3bb752
+pointer B 17 step 3 card 1417 bf2a6ceb
+pointer B 17 step 3 card 1418 bf19613b
+pointer B 17 step 3 card 1421 bf39b2aa
+pointer B 17 step 3 card 1422 bf25ba3a
+pointer B 17 step 3 card 1423 bf20fa06
+pointer B 17 step 3 card 1424 bf0fcd2a
+pointer B 17 step 3 card 1425 bf18b144
+pointer B 17 step 3 card 1426 bf1cecde
+pointer B 17 step 3 card 1427 bf22140c
+pointer B 17 step 3 card 1429 bf20a307
+pointer B 17 step 3 card 1430 bf1f70a2
+pointer B 17 step 3 card 1431 bf2282f1
+pointer B 17 step 3 card 1432 bf308416
+pointer B 17 step 3 card 1433 bf1919d8
+pointer B 17 step 3 card 1434 bf20d832
+pointer B 17 step 3 card 1435 bf12466b
+pointer B 17 step 3 card 1436 bf1c5867
+pointer B 17 step 3 card 1437 bf237de2
+pointer B 17 step 3 card 1438 bf162dc4
+pointer B 17 step 3 card 1439 bf1cb9b0
+pointer B 17 step 3 card 1440 bf2ae488
+pointer B 17 step 3 card 1441 bf264239
+pointer B 17 step 3 card 1442 bf161020
+pointer B 17 step 3 card 1443 bf1cb7dc
+pointer B 17 step 3 card 1444 bf25728c
+pointer B 17 step 3 card 1446 bf0ea6f8
+pointer B 17 step 3 card 1447 bf3bf377
+pointer B 17 step 3 card 1448 bf1eb7bf
+pointer B 17 step 3 card 1449 bf32372f
+pointer B 17 step 3 card 1450 bf3bb4d3
+pointer B 17 step 3 card 1451 bf1c6e52
+pointer B 17 step 3 card 1452 bf215d89
+pointer B 17 step 3 card 1453 bf1a7f69
+pointer B 17 step 3 card 1454 bf153b40
+pointer B 17 step 3 card 1455 bf191dfd
+pointer B 17 step 3 card 1457 bf2a8916
+pointer B 17 step 3 card 1458 bf1a7c22
+pointer B 17 step 3 card 1459 bf14c401
+pointer B 17 step 3 card 1460 befed8c0
+pointer B 17 step 4 card 1414 bf2ea2ee
+pointer B 17 step 4 card 1416 bf3c9dda
+pointer B 17 step 4 card 1417 bf2b52cd
+pointer B 17 step 4 card 1418 bf1a4d3a
+pointer B 17 step 4 card 1421 bf3a8525
+pointer B 17 step 4 card 1422 bf26a4be
+pointer B 17 step 4 card 1423 bf21d63e
+pointer B 17 step 4 card 1424 bf10cfc9
+pointer B 17 step 4 card 1425 bf199282
+pointer B 17 step 4 card 1426 bf1de13f
+pointer B 17 step 4 card 1427 bf22fbbf
+pointer B 17 step 4 card 1429 bf218555
+pointer B 17 step 4 card 1430 bf205cd4
+pointer B 17 step 4 card 1431 bf23675d
+pointer B 17 step 4 card 1432 bf316015
+pointer B 17 step 4 card 1433 bf1a1e8e
+pointer B 17 step 4 card 1434 bf21b171
+pointer B 17 step 4 card 1435 bf132bda
+pointer B 17 step 4 card 1436 bf1d55f4
+pointer B 17 step 4 card 1437 bf2468e5
+pointer B 17 step 4 card 1438 bf1721c0
+pointer B 17 step 4 card 1439 bf1da07a
+pointer B 17 step 4 card 1440 bf2bd199
+pointer B 17 step 4 card 1441 bf272cff
+pointer B 17 step 4 card 1442 bf16ef28
+pointer B 17 step 4 card 1443 bf1da30d
+pointer B 17 step 4 card 1444 bf265941
+pointer B 17 step 4 card 1446 bf0f9e46
+pointer B 17 step 4 card 1447 bf3cd038
+pointer B 17 step 4 card 1448 bf1f9945
+pointer B 17 step 4 card 1449 bf331572
+pointer B 17 step 4 card 1450 bf3c83f6
+pointer B 17 step 4 card 1451 bf1d4c74
+pointer B 17 step 4 card 1452 bf2243a0
+pointer B 17 step 4 card 1453 bf1b5b54
+pointer B 17 step 4 card 1454 bf161e7e
+pointer B 17 step 4 card 1455 bf1a001a
+pointer B 17 step 4 card 1457 bf2b67d7
+pointer B 17 step 4 card 1458 bf1b5f58
+pointer B 17 step 4 card 1459 bf15a611
+pointer B 17 step 4 card 1460 bf005f80
+pointer B 17 step 5 card 1414 bf2f3b95
+pointer B 17 step 5 card 1416 bf3d2fe9
+pointer B 17 step 5 card 1417 bf2be338
+pointer B 17 step 5 card 1418 bf1adccc
+pointer B 17 step 5 card 1421 bf3b169e
+pointer B 17 step 5 card 1422 bf273c4e
+pointer B 17 step 5 card 1423 bf226b75
+pointer B 17 step 5 card 1424 bf115889
+pointer B 17 step 5 card 1425 bf1a2746
+pointer B 17 step 5 card 1426 bf1e6fd9
+pointer B 17 step 5 card 1427 bf238f7e
+pointer B 17 step 5 card 1429 bf221b12
+pointer B 17 step 5 card 1430 bf20eb11
+pointer B 17 step 5 card 1431 bf23fc97
+pointer B 17 step 5 card 1432 bf31f89e
+pointer B 17 step 5 card 1433 bf1aa249
+pointer B 17 step 5 card 1435 bf13bd81
+pointer B 17 step 5 card 1436 bf1ddfd8
+pointer B 17 step 5 card 1437 bf24f7bd
+pointer B 17 step 5 card 1438 bf17ab1e
+pointer B 17 step 5 card 1439 bf1e34d3
+pointer B 17 step 5 card 1440 bf2c661e
+pointer B 17 step 5 card 1441 bf27bd87
+pointer B 17 step 5 card 1442 bf177fd5
+pointer B 17 step 5 card 1443 bf1e34d3
+pointer B 17 step 5 card 1444 bf26ecda
+pointer B 17 step 5 card 1446 bf102c56
+pointer B 17 step 5 card 1447 bf3d6322
+pointer B 17 step 5 card 1448 bf202e6e
+pointer B 17 step 5 card 1449 bf33ac0b
+pointer B 17 step 5 card 1450 bf3d27d7
+pointer B 17 step 5 card 1451 bf1ddf42
+pointer B 17 step 5 card 1452 bf22d4d9
+pointer B 17 step 5 card 1453 bf1bedab
+pointer B 17 step 5 card 1454 bf16aa51
+pointer B 17 step 5 card 1455 bf1a91a4
+pointer B 17 step 5 card 1457 bf2bf7aa
+pointer B 17 step 5 card 1458 bf1bf20b
+pointer B 17 step 5 card 1459 bf163ec8
+pointer B 17 step 5 card 1460 bf00ef97
+pointer B 17 step 6 card 1414 bf2f325a
+pointer B 17 step 6 card 1416 bf3d26a7
+pointer B 17 step 6 card 1417 bf2bdf49
+pointer B 17 step 6 card 1418 bf1acbb3
+pointer B 17 step 6 card 1421 bf3b1013
+pointer B 17 step 6 card 1422 bf274073
+pointer B 17 step 6 card 1423 bf22690f
+pointer B 17 step 6 card 1424 bf1153f7
+pointer B 17 step 6 card 1425 bf1a24a6
+pointer B 17 step 6 card 1426 bf1e6c95
+pointer B 17 step 6 card 1427 bf238b65
+pointer B 17 step 6 card 1429 bf22174b
+pointer B 17 step 6 card 1430 bf20dfdb
+pointer B 17 step 6 card 1431 bf24011a
+pointer B 17 step 6 card 1432 bf31f772
+pointer B 17 step 6 card 1433 bf1a9706
+pointer B 17 step 6 card 1435 bf13bad5
+pointer B 17 step 6 card 1436 bf1ddc52
+pointer B 17 step 6 card 1437 bf24f7b9
+pointer B 17 step 6 card 1438 bf17a828
+pointer B 17 step 6 card 1439 bf1e3879
+pointer B 17 step 6 card 1440 bf2c628a
+pointer B 17 step 6 card 1441 bf27ba2a
+pointer B 17 step 6 card 1442 bf177ec9
+pointer B 17 step 6 card 1443 bf1e2fe9
+pointer B 17 step 6 card 1444 bf26e426
+pointer B 17 step 6 card 1446 bf10246c
+pointer B 17 step 6 card 1447 bf3d5f0f
+pointer B 17 step 6 card 1448 bf2032f0
+pointer B 17 step 6 card 1449 bf33b2db
+pointer B 17 step 6 card 1450 bf3d27cf
+pointer B 17 step 6 card 1452 bf22d303
+pointer B 17 step 6 card 1453 bf1be2b8
+pointer B 17 step 6 card 1454 bf169fa1
+pointer B 17 step 6 card 1455 bf1a8a6b
+pointer B 17 step 6 card 1457 bf2bf155
+pointer B 17 step 6 card 1458 bf1bee6b
+pointer B 17 step 6 card 1459 bf163dec
+pointer B 17 step 6 card 1460 bf00e4f1
+pointer B 17 step 7 card 1414 bf2e6d42
+pointer B 17 step 7 card 1416 bf3c6175
+pointer B 17 step 7 card 1417 bf2b1f74
+pointer B 17 step 7 card 1418 bf19fb6e
+pointer B 17 step 7 card 1421 bf3a4a5a
+pointer B 17 step 7 card 1422 bf267bf3
+pointer B 17 step 7 card 1424 bf108d82
+pointer B 17 step 7 card 1425 bf195dad
+pointer B 17 step 7 card 1426 bf1da5aa
+pointer B 17 step 7 card 1427 bf22c431
+pointer B 17 step 7 card 1429 bf214d1d
+pointer B 17 step 7 card 1430 bf201561
+pointer B 17 step 7 card 1431 bf233eb3
+pointer B 17 step 7 card 1432 bf3131ce
+pointer B 17 step 7 card 1433 bf19d0e2
+pointer B 17 step 7 card 1435 bf12f755
+pointer B 17 step 7 card 1436 bf1d1842
+pointer B 17 step 7 card 1437 bf2435e4
+pointer B 17 step 7 card 1438 bf16e737
+pointer B 17 step 7 card 1439 bf1d7775
+pointer B 17 step 7 card 1440 bf2b985b
+pointer B 17 step 7 card 1441 bf26f494
+pointer B 17 step 7 card 1442 bf16b824
+pointer B 17 step 7 card 1443 bf1d6617
+pointer B 17 step 7 card 1444 bf261682
+pointer B 17 step 7 card 1446 bf0f552d
+pointer B 17 step 7 card 1447 bf3c9ba9
+pointer B 17 step 7 card 1448 bf1f6fb6
+pointer B 17 step 7 card 1449 bf32f2c6
+pointer B 17 step 7 card 1450 bf3c5db2
+pointer B 17 step 7 card 1452 bf2207ce
+pointer B 17 step 7 card 1453 bf1b1ba9
+pointer B 17 step 7 card 1454 bf15da11
+pointer B 17 step 7 card 1455 bf19c835
+pointer B 17 step 7 card 1457 bf2b3159
+pointer B 17 step 7 card 1458 bf1b2ee2
+pointer B 17 step 7 card 1459 bf157caa
+pointer B 17 step 7 card 1460 bf0015be
+pointer B 17 step 8 card 1414 bf2d60b0
+pointer B 17 step 8 card 1416 bf3b544f
+pointer B 17 step 8 card 1417 bf2a097e
+pointer B 17 step 8 card 1418 bf18f4f9
+pointer B 17 step 8 card 1421 bf3945e3
+pointer B 17 step 8 card 1422 bf256451
+pointer B 17 step 8 card 1424 bf0f7910
+pointer B 17 step 8 card 1425 bf1852d6
+pointer B 17 step 8 card 1426 bf1c91e2
+pointer B 17 step 8 card 1427 bf21b84b
+pointer B 17 step 8 card 1429 bf2041c3
+pointer B 17 step 8 card 1430 bf1f0ee3
+pointer B 17 step 8 card 1431 bf2227d5
+pointer B 17 step 8 card 1432 bf301f67
+pointer B 17 step 8 card 1433 bf18c4db
+pointer B 17 step 8 card 1435 bf11eedd
+pointer B 17 step 8 card 1436 bf1c0783
+pointer B 17 step 8 card 1437 bf232472
+pointer B 17 step 8 card 1438 bf15d762
+pointer B 17 step 8 card 1439 bf1c61bc
+pointer B 17 step 8 card 1441 bf25e430
+pointer B 17 step 8 card 1442 bf15ad32
+pointer B 17 step 8 card 1443 bf1c59e7
+pointer B 17 step 8 card 1444 bf250c19
+pointer B 17 step 8 card 1446 bf0e49e0
+pointer B 17 step 8 card 1447 bf3b9035
+pointer B 17 step 8 card 1448 bf1e60a4
+pointer B 17 step 8 card 1449 bf31dfc7
+pointer B 17 step 8 card 1450 bf3b493d
+pointer B 17 step 8 card 1452 bf20fc2e
+pointer B 17 step 8 card 1453 bf1a13e3
+pointer B 17 step 8 card 1454 bf14d50a
+pointer B 17 step 8 card 1455 bf18bb50
+pointer B 17 step 8 card 1457 bf2a27e6
+pointer B 17 step 8 card 1458 bf1a237e
+pointer B 17 step 8 card 1459 bf146a44
+pointer B 17 step 8 card 1460 befe18ae
+pointer B 17 step 9 card 1414 bf2c8b6a
+pointer B 17 step 9 card 1416 bf3a7edc
+pointer B 17 step 9 card 1417 bf292d86
+pointer B 17 step 9 card 1418 bf18294f
+pointer B 17 step 9 card 1421 bf387d0d
+pointer B 17 step 9 card 1422 bf247e57
+pointer B 17 step 9 card 1424 bf0e9867
+pointer B 17 step 9 card 1425 bf1772a0
+pointer B 17 step 9 card 1426 bf1bb32a
+pointer B 17 step 9 card 1427 bf20db5d
+pointer B 17 step 9 card 1429 bf1f658a
+pointer B 17 step 9 card 1430 bf1e3948
+pointer B 17 step 9 card 1431 bf213e26
+pointer B 17 step 9 card 1432 bf2f3ff3
+pointer B 17 step 9 card 1433 bf17ec72
+pointer B 17 step 9 card 1435 bf110fcc
+pointer B 17 step 9 card 1436 bf1b2757
+pointer B 17 step 9 card 1437 bf224081
+pointer B 17 step 9 card 1438 bf14f458
+pointer B 17 step 9 card 1439 bf1b786b
+pointer B 17 step 9 card 1441 bf250642
+pointer B 17 step 9 card 1442 bf14cf62
+pointer B 17 step 9 card 1443 bf1b7696
+pointer B 17 step 9 card 1444 bf243135
+pointer B 17 step 9 card 1446 bf0d6cff
+pointer B 17 step 9 card 1447 bf3ab704
+pointer B 17 step 9 card 1448 bf1d7ea2
+pointer B 17 step 9 card 1449 bf30fa2c
+pointer B 17 step 9 card 1450 bf3a628a
+pointer B 17 step 9 card 1452 bf201e74
+pointer B 17 step 9 card 1453 bf193e16
+pointer B 17 step 9 card 1454 bf14035d
+pointer B 17 step 9 card 1455 bf17e0d9
+pointer B 17 step 9 card 1458 bf194c4a
+pointer B 17 step 9 card 1459 bf138f06
+pointer B 17 step 9 card 1460 befc66c8
+pointer B 17 step 10 card 1414 bf2c00bb
+pointer B 17 step 10 card 1416 bf39f858
+pointer B 17 step 10 card 1417 bf28a1bc
+pointer B 17 step 10 card 1418 bf17a133
+pointer B 17 step 10 card 1421 bf37f860
+pointer B 17 step 10 card 1422 bf23f512
+pointer B 17 step 10 card 1424 bf0e0ccc
+pointer B 17 step 10 card 1425 bf16ecba
+pointer B 17 step 10 card 1426 bf1b2834
+pointer B 17 step 10 card 1427 bf2057b8
+pointer B 17 step 10 card 1430 bf1db4cb
+pointer B 17 step 10 card 1431 bf20b1ed
+pointer B 17 step 10 card 1432 bf2eb661
+pointer B 17 step 10 card 1433 bf1765c5
+pointer B 17 step 10 card 1435 bf108de9
+pointer B 17 step 10 card 1436 bf1aa0d8
+pointer B 17 step 10 card 1437 bf21b7d8
+pointer B 17 step 10 card 1438 bf146c61
+pointer B 17 step 10 card 1439 bf1aef7a
+pointer B 17 step 10 card 1441 bf247d40
+pointer B 17 step 10 card 1442 bf144ae8
+pointer B 17 step 10 card 1443 bf1af031
+pointer B 17 step 10 card 1444 bf23a897
+pointer B 17 step 10 card 1446 bf0ce64e
+pointer B 17 step 10 card 1447 bf3a3191
+pointer B 17 step 10 card 1448 bf1cf9e8
+pointer B 17 step 10 card 1449 bf307581
+pointer B 17 step 10 card 1450 bf39d60f
+pointer B 17 step 10 card 1452 bf1f97a6
+pointer B 17 step 10 card 1453 bf18b6cf
+pointer B 17 step 10 card 1454 bf137e8b
+pointer B 17 step 10 card 1455 bf17579f
+pointer B 17 step 10 card 1458 bf18c62b
+pointer B 17 step 10 card 1459 bf1303f4
+pointer B 17 step 10 card 1460 befb5b67
+pointer B 17 step 11 card 1414 bf2cc324
+pointer B 17 step 11 card 1416 bf3ab5ab
+pointer B 17 step 11 card 1417 bf29641a
+pointer B 17 step 11 card 1418 bf186543
+pointer B 17 step 11 card 1421 bf38bd6f
+pointer B 17 step 11 card 1422 bf24bde9
+pointer B 17 step 11 card 1424 bf0ed4a2
+pointer B 17 step 11 card 1425 bf17b868
+pointer B 17 step 11 card 1426 bf1bebab
+pointer B 17 step 11 card 1427 bf212250
+pointer B 17 step 11 card 1430 bf1e79d0
+pointer B 17 step 11 card 1431 bf217b91
+pointer B 17 step 11 card 1432 bf2f7dd3
+pointer B 17 step 11 card 1433 bf182af2
+pointer B 17 step 11 card 1435 bf115bbb
+pointer B 17 step 11 card 1436 bf1b6b70
+pointer B 17 step 11 card 1437 bf228005
+pointer B 17 step 11 card 1438 bf15372d
+pointer B 17 step 11 card 1439 bf1bbc8f
+pointer B 17 step 11 card 1441 bf2544f9
+pointer B 17 step 11 card 1442 bf15133e
+pointer B 17 step 11 card 1443 bf1bbabf
+pointer B 17 step 11 card 1444 bf2474b1
+pointer B 17 step 11 card 1447 bf3af792
+pointer B 17 step 11 card 1448 bf1dc344
+pointer B 17 step 11 card 1449 bf313e1f
+pointer B 17 step 11 card 1450 bf3a9ff7
+pointer B 17 step 11 card 1452 bf20619e
+pointer B 17 step 11 card 1453 bf198297
+pointer B 17 step 11 card 1454 bf144604
+pointer B 17 step 11 card 1455 bf18222d
+pointer B 17 step 11 card 1458 bf1990cb
+pointer B 17 step 11 card 1459 bf13d207
+pointer B 17 step 11 card 1460 befceeeb
+pointer B 17 step 12 card 1414 bf2c520d
+pointer B 17 step 12 card 1417 bf28ee50
+pointer B 17 step 12 card 1418 bf17f7b0
+pointer B 17 step 12 card 1421 bf384d9c
+pointer B 17 step 12 card 1422 bf244012
+pointer B 17 step 12 card 1424 bf0e5eab
+pointer B 17 step 12 card 1425 bf173a2d
+pointer B 17 step 12 card 1426 bf1b74df
+pointer B 17 step 12 card 1427 bf20a5c7
+pointer B 17 step 12 card 1430 bf1e0430
+pointer B 17 step 12 card 1431 bf20fd0e
+pointer B 17 step 12 card 1432 bf2f020e
+pointer B 17 step 12 card 1433 bf17ba9d
+pointer B 17 step 12 card 1435 bf10de19
+pointer B 17 step 12 card 1436 bf1af38f
+pointer B 17 step 12 card 1437 bf220581
+pointer B 17 step 12 card 1438 bf14bdf1
+pointer B 17 step 12 card 1439 bf1b3c96
+pointer B 17 step 12 card 1441 bf24cc70
+pointer B 17 step 12 card 1442 bf149684
+pointer B 17 step 12 card 1443 bf1b3f01
+pointer B 17 step 12 card 1444 bf23f8d6
+pointer B 17 step 12 card 1447 bf3a8134
+pointer B 17 step 12 card 1448 bf1d43a0
+pointer B 17 step 12 card 1449 bf30bfd1
+pointer B 17 step 12 card 1450 bf3a1b54
+pointer B 17 step 12 card 1452 bf1fe4cd
+pointer B 17 step 12 card 1453 bf190cdc
+pointer B 17 step 12 card 1454 bf13d4d8
+pointer B 17 step 12 card 1455 bf17ae70
+pointer B 17 step 12 card 1458 bf191d6e
+pointer B 17 step 12 card 1459 bf135919
+pointer B 17 step 12 card 1460 befbff4d
+pointer B 17 step 13 card 1414 bf2d7ccc
+pointer B 17 step 13 card 1417 bf2a11c8
+pointer B 17 step 13 card 1418 bf192458
+pointer B 17 step 13 card 1421 bf397b45
+pointer B 17 step 13 card 1422 bf256ba2
+pointer B 17 step 13 card 1424 bf0f845b
+pointer B 17 step 13 card 1425 bf18667f
+pointer B 17 step 13 card 1426 bf1c9af5
+pointer B 17 step 13 card 1427 bf21d0eb
+pointer B 17 step 13 card 1430 bf1f2c00
+pointer B 17 step 13 card 1431 bf2226e9
+pointer B 17 step 13 card 1432 bf302efb
+pointer B 17 step 13 card 1433 bf18dc3d
+pointer B 17 step 13 card 1436 bf1c196c
+pointer B 17 step 13 card 1437 bf232b82
+pointer B 17 step 13 card 1438 bf15e22a
+pointer B 17 step 13 card 1439 bf1c66cb
+pointer B 17 step 13 card 1441 bf25f576
+pointer B 17 step 13 card 1442 bf15bfc5
+pointer B 17 step 13 card 1443 bf1c6917
+pointer B 17 step 13 card 1444 bf2527ca
+pointer B 17 step 13 card 1447 bf3baa0f
+pointer B 17 step 13 card 1448 bf1e6d41
+pointer B 17 step 13 card 1449 bf31e90f
+pointer B 17 step 13 card 1450 bf3b4f6d
+pointer B 17 step 13 card 1452 bf2110ba
+pointer B 17 step 13 card 1453 bf1a3a79
+pointer B 17 step 13 card 1454 bf14fdb3
+pointer B 17 step 13 card 1455 bf18d9dd
+pointer B 17 step 13 card 1458 bf1a494d
+pointer B 17 step 13 card 1459 bf148ba6
+pointer B 17 step 13 card 1460 befe5903
+pointer B 17 step 14 card 1414 bf2d8de8
+pointer B 17 step 14 card 1417 bf2a2085
+pointer B 17 step 14 card 1418 bf193285
+pointer B 17 step 14 card 1421 bf3991e6
+pointer B 17 step 14 card 1422 bf2579d2
+pointer B 17 step 14 card 1424 bf0f8da6
+pointer B 17 step 14 card 1425 bf18752a
+pointer B 17 step 14 card 1426 bf1ca440
+pointer B 17 step 14 card 1427 bf21e06b
+pointer B 17 step 14 card 1430 bf1f36ef
+pointer B 17 step 14 card 1431 bf2234cb
+pointer B 17 step 14 card 1432 bf303d3d
+pointer B 17 step 14 card 1433 bf18e545
+pointer B 17 step 14 card 1436 bf1c26d4
+pointer B 17 step 14 card 1437 bf2338bf
+pointer B 17 step 14 card 1438 bf15efc8
+pointer B 17 step 14 card 1439 bf1c7764
+pointer B 17 step 14 card 1441 bf2602a2
+pointer B 17 step 14 card 1442 bf15cb76
+pointer B 17 step 14 card 1443 bf1c7364
+pointer B 17 step 14 card 1444 bf253541
+pointer B 17 step 14 card 1447 bf3bb9c4
+pointer B 17 step 14 card 1448 bf1e7a89
+pointer B 17 step 14 card 1449 bf31f7a4
+pointer B 17 step 14 card 1450 bf3b5c57
+pointer B 17 step 14 card 1453 bf1a4e7c
+pointer B 17 step 14 card 1454 bf150e12
+pointer B 17 step 14 card 1455 bf18ec66
+pointer B 17 step 14 card 1458 bf1a5caa
+pointer B 17 step 14 card 1459 bf149f6f
+pointer B 17 step 14 card 1460 befe71fc
+pointer B 17 step 15 card 1414 bf2db97c
+pointer B 17 step 15 card 1417 bf2a4d75
+pointer B 17 step 15 card 1418 bf196196
+pointer B 17 step 15 card 1421 bf39c415
+pointer B 17 step 15 card 1422 bf25ab61
+pointer B 17 step 15 card 1425 bf18a895
+pointer B 17 step 15 card 1426 bf1cd3ae
+pointer B 17 step 15 card 1427 bf22134d
+pointer B 17 step 15 card 1430 bf1f67a5
+pointer B 17 step 15 card 1431 bf22668a
+pointer B 17 step 15 card 1432 bf306d52
+pointer B 17 step 15 card 1433 bf1916e1
+pointer B 17 step 15 card 1436 bf1c5ab9
+pointer B 17 step 15 card 1437 bf236a63
+pointer B 17 step 15 card 1438 bf16234e
+pointer B 17 step 15 card 1439 bf1caa9f
+pointer B 17 step 15 card 1441 bf2634df
+pointer B 17 step 15 card 1442 bf15ff4a
+pointer B 17 step 15 card 1443 bf1ca4fc
+pointer B 17 step 15 card 1444 bf256793
+pointer B 17 step 15 card 1447 bf3bec5d
+pointer B 17 step 15 card 1448 bf1eadbb
+pointer B 17 step 15 card 1449 bf322a81
+pointer B 17 step 15 card 1450 bf3b8921
+pointer B 17 step 15 card 1453 bf1a8289
+pointer B 17 step 15 card 1454 bf154272
+pointer B 17 step 15 card 1455 bf1920c9
+pointer B 17 step 15 card 1458 bf1a93c8
+pointer B 17 step 15 card 1459 bf14d6fb
+pointer B 17 step 15 card 1460 befed7d4
+pointer B 17 step 16 card 1414 bf2d882f
+pointer B 17 step 16 card 1417 bf2a1979
+pointer B 17 step 16 card 1418 bf193375
+pointer B 17 step 16 card 1421 bf39970f
+pointer B 17 step 16 card 1422 bf257661
+pointer B 17 step 16 card 1425 bf1874ac
+pointer B 17 step 16 card 1426 bf1c9e72
+pointer B 17 step 16 card 1427 bf21e120
+pointer B 17 step 16 card 1430 bf1f3588
+pointer B 17 step 16 card 1431 bf222f7a
+pointer B 17 step 16 card 1432 bf3038f6
+pointer B 17 step 16 card 1433 bf18e3f7
+pointer B 17 step 16 card 1436 bf1c27a2
+pointer B 17 step 16 card 1437 bf233428
+pointer B 17 step 16 card 1438 bf15ee47
+pointer B 17 step 16 card 1439 bf1c7491
+pointer B 17 step 16 card 1442 bf15cb15
+pointer B 17 step 16 card 1443 bf1c6fa5
+pointer B 17 step 16 card 1444 bf25351d
+pointer B 17 step 16 card 1447 bf3bb97b
+pointer B 17 step 16 card 1448 bf1e78d2
+pointer B 17 step 16 card 1449 bf31f527
+pointer B 17 step 16 card 1450 bf3b52c5
+pointer B 17 step 16 card 1453 bf1a5349
+pointer B 17 step 16 card 1454 bf151290
+pointer B 17 step 16 card 1455 bf18efab
+pointer B 17 step 16 card 1458 bf1a6392
+pointer B 17 step 16 card 1459 bf14a623
+pointer B 17 step 16 card 1460 befe76ac
+pointer B 17 step 17 card 1414 bf2ccba4
+pointer B 17 step 17 card 1417 bf295c7d
+pointer B 17 step 17 card 1418 bf187d0a
+pointer B 17 step 17 card 1421 bf38e482
+pointer B 17 step 17 card 1422 bf24b542
+pointer B 17 step 17 card 1425 bf17b758
+pointer B 17 step 17 card 1426 bf1be050
+pointer B 17 step 17 card 1427 bf212781
+pointer B 17 step 17 card 1430 bf1e7e75
+pointer B 17 step 17 card 1431 bf216ade
+pointer B 17 step 17 card 1432 bf2f7aa2
+pointer B 17 step 17 card 1433 bf182c16
+pointer B 17 step 17 card 1436 bf1b6c7f
+pointer B 17 step 17 card 1437 bf2273d4
+pointer B 17 step 17 card 1438 bf153067
+pointer B 17 step 17 card 1439 bf1bb22f
+pointer B 17 step 17 card 1442 bf150f97
+pointer B 17 step 17 card 1443 bf1bb063
+pointer B 17 step 17 card 1444 bf247988
+pointer B 17 step 17 card 1447 bf3aff81
+pointer B 17 step 17 card 1448 bf1dbb3a
+pointer B 17 step 17 card 1449 bf31357e
+pointer B 17 step 17 card 1450 bf3a8f40
+pointer B 17 step 17 card 1453 bf199915
+pointer B 17 step 17 card 1454 bf145bc6
+pointer B 17 step 17 card 1455 bf183323
+pointer B 17 step 17 card 1459 bf13eab1
+pointer B 17 step 17 card 1460 befd0107
+pointer B 17 step 18 card 1414 bf2d136c
+pointer B 17 step 18 card 1417 bf29a35b
+pointer B 17 step 18 card 1418 bf18c41c
+pointer B 17 step 18 card 1421 bf392f66
+pointer B 17 step 18 card 1422 bf24fd87
+pointer B 17 step 18 card 1425 bf17ff0d
+pointer B 17 step 18 card 1426 bf1c2548
+pointer B 17 step 18 card 1427 bf217095
+pointer B 17 step 18 card 1431 bf21b19a
+pointer B 17 step 18 card 1432 bf2fc1e9
+pointer B 17 step 18 card 1433 bf18726f
+pointer B 17 step 18 card 1436 bf1bb5cc
+pointer B 17 step 18 card 1437 bf22ba57
+pointer B 17 step 18 card 1438 bf15786a
+pointer B 17 step 18 card 1439 bf1bfab8
+pointer B 17 step 18 card 1442 bf1555d8
+pointer B 17 step 18 card 1443 bf1bf5bb
+pointer B 17 step 18 card 1444 bf24c07b
+pointer B 17 step 18 card 1447 bf3b46f7
+pointer B 17 step 18 card 1448 bf1e03ab
+pointer B 17 step 18 card 1449 bf317e29
+pointer B 17 step 18 card 1450 bf3ad531
+pointer B 17 step 18 card 1453 bf19e1a4
+pointer B 17 step 18 card 1454 bf14a2eb
+pointer B 17 step 18 card 1455 bf187bce
+pointer B 17 step 18 card 1459 bf1435c7
+pointer B 17 step 18 card 1460 befd8d70
+pointer B 17 step 19 card 1414 bf2c2b3f
+pointer B 17 step 19 card 1417 bf28b80e
+pointer B 17 step 19 card 1418 bf17dd53
+pointer B 17 step 19 card 1421 bf384cba
+pointer B 17 step 19 card 1422 bf240e25
+pointer B 17 step 19 card 1425 bf1713c3
+pointer B 17 step 19 card 1426 bf1b3768
+pointer B 17 step 19 card 1427 bf208824
+pointer B 17 step 19 card 1431 bf20bfd7
+pointer B 17 step 19 card 1432 bf2ed609
+pointer B 17 step 19 card 1433 bf178951
+pointer B 17 step 19 card 1436 bf1aca70
+pointer B 17 step 19 card 1437 bf21cb15
+pointer B 17 step 19 card 1438 bf148b4b
+pointer B 17 step 19 card 1439 bf1b09dc
+pointer B 17 step 19 card 1442 bf146b50
+pointer B 17 step 19 card 1443 bf1b08d2
+pointer B 17 step 19 card 1444 bf23d506
+pointer B 17 step 19 card 1448 bf1d177c
+pointer B 17 step 19 card 1449 bf309182
+pointer B 17 step 19 card 1450 bf39e683
+pointer B 17 step 19 card 1453 bf18fa1d
+pointer B 17 step 19 card 1454 bf13bc8d
+pointer B 17 step 19 card 1455 bf179219
+pointer B 17 step 19 card 1459 bf134a65
+pointer B 17 step 19 card 1460 befbb92d
+pointer B 17 step 20 card 1414 bf2bc490
+pointer B 17 step 20 card 1418 bf177cb0
+pointer B 17 step 20 card 1421 bf37f11a
+pointer B 17 step 20 card 1422 bf239f11
+pointer B 17 step 20 card 1425 bf16a5cc
+pointer B 17 step 20 card 1426 bf1acbbb
+pointer B 17 step 20 card 1427 bf201d12
+pointer B 17 step 20 card 1431 bf204d6e
+pointer B 17 step 20 card 1432 bf2e69de
+pointer B 17 step 20 card 1433 bf172164
+pointer B 17 step 20 card 1436 bf1a5eeb
+pointer B 17 step 20 card 1437 bf215c13
+pointer B 17 step 20 card 1438 bf141cdd
+pointer B 17 step 20 card 1439 bf1a986f
+pointer B 17 step 20 card 1442 bf13fe37
+pointer B 17 step 20 card 1443 bf1a9904
+pointer B 17 step 20 card 1444 bf236a65
+pointer B 17 step 20 card 1448 bf1ca6d0
+pointer B 17 step 20 card 1449 bf302062
+pointer B 17 step 20 card 1450 bf39723b
+pointer B 17 step 20 card 1453 bf189513
+pointer B 17 step 20 card 1454 bf1359a6
+pointer B 17 step 20 card 1455 bf1729e0
+pointer B 17 step 20 card 1459 bf12e34e
+pointer B 17 step 20 card 1460 befae430
+pointer B 17 step 21 card 1414 bf2c0807
+pointer B 17 step 21 card 1418 bf17c426
+pointer B 17 step 21 card 1421 bf3839f0
+pointer B 17 step 21 card 1422 bf23e2d9
+pointer B 17 step 21 card 1425 bf16ed74
+pointer B 17 step 21 card 1426 bf1b0dce
+pointer B 17 step 21 card 1427 bf2063f3
+pointer B 17 step 21 card 1431 bf20902b
+pointer B 17 step 21 card 1432 bf2eaf22
+pointer B 17 step 21 card 1433 bf1763c4
+pointer B 17 step 21 card 1437 bf219e79
+pointer B 17 step 21 card 1438 bf145f0e
+pointer B 17 step 21 card 1439 bf1adbf5
+pointer B 17 step 21 card 1442 bf1444aa
+pointer B 17 step 21 card 1443 bf1adf06
+pointer B 17 step 21 card 1444 bf23b312
+pointer B 17 step 21 card 1448 bf1cec0e
+pointer B 17 step 21 card 1449 bf306469
+pointer B 17 step 21 card 1450 bf39b8a2
+pointer B 17 step 21 card 1453 bf18de91
+pointer B 17 step 21 card 1454 bf13a1e6
+pointer B 17 step 21 card 1455 bf17711f
+pointer B 17 step 21 card 1459 bf132e0f
+pointer B 17 step 21 card 1460 befb75f6
+pointer B 17 step 22 card 1414 bf2bf8af
+pointer B 17 step 22 card 1418 bf17bb97
+pointer B 17 step 22 card 1421 bf3834c2
+pointer B 17 step 22 card 1422 bf23cd8d
+pointer B 17 step 22 card 1425 bf16dd7b
+pointer B 17 step 22 card 1426 bf1afa05
+pointer B 17 step 22 card 1427 bf205625
+pointer B 17 step 22 card 1431 bf2077e4
+pointer B 17 step 22 card 1432 bf2e9da3
+pointer B 17 step 22 card 1433 bf175527
+pointer B 17 step 22 card 1437 bf2189b3
+pointer B 17 step 22 card 1438 bf144c8b
+pointer B 17 step 22 card 1439 bf1ac6ae
+pointer B 17 step 22 card 1442 bf143411
+pointer B 17 step 22 card 1443 bf1acbe8
+pointer B 17 step 22 card 1444 bf23a677
+pointer B 17 step 22 card 1448 bf1cd9a8
+pointer B 17 step 22 card 1449 bf304f02
+pointer B 17 step 22 card 1450 bf39a3f6
+pointer B 17 step 22 card 1454 bf1397d5
+pointer B 17 step 22 card 1455 bf17626d
+pointer B 17 step 22 card 1459 bf1321f9
+pointer B 17 step 22 card 1460 befb58c2
+typeset mask 1 3fd09ef1
+typeset mask 2 3fd00efc
+typeset mask 3 3fcd6925
+typeset mask 4 3fe78b2e
+typeset mask 5 3fd9217d
+typeset mask 6 3fd8df64
+typeset mask 7 3fd216c8
+typeset mask 8 3fc7c255
+typeset mask 9 3fc92296
+typeset mask 10 3fc8f730
+typeset mask 11 3fc76f11
+typeset mask 12 3fd4b263
+typeset mask 13 3fcf3966
+typeset mask 14 3fcf2175
+typeset mask 15 3fcad585
+typeset mask 16 3fdc036c
+typeset mask 17 3fd35326
+typeset mask 18 3fd32420
+typeset mask 19 3fce3bcd
+typeset mask 20 3fdecbf6
+typeset mask 21 3fd5fd40
+typeset mask 22 3fd5e3bd
+typeset mask 23 3fcfea41
+typeset mask 24 3fcedd1b
+typeset mask 25 3fcb52a1
+typeset mask 26 3fcb437a
+typeset mask 27 3fc7eaec
+typeset mask 28 3fd30664
+typeset mask 29 3fcdb805
+typeset mask 30 3fcdb1d7
+typeset mask 31 3fc935ba
+split mask 21 type 1 bf0a64b3
+split mask 21 type 4 bf3b7d42
+split mask 21 type 16 bf3ea0fa
