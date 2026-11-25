@@ -456,15 +456,26 @@ fn iceberg_waterbend_taps(components: &[CostComponent]) -> u8 {
         .unwrap_or(0)
 }
 
+/// Enforce the printed waterbend tap cap in both the activation menu and a
+/// restored pending payment. Granted abilities carry their own cost slices.
+pub(crate) fn waterbend_taps_within_cap(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+) -> bool {
+    !iceberg_waterbend_components(state, source, components)
+        || usize::from(iceberg_waterbend_taps(components)) <= iceberg_waterbend_cap(state, source)
+}
+
 /// The Iceberg's waterbend payment `ability_index` while `source` is an Aang's
-/// Iceberg on the battlefield: its controller, how many permanents it taps,
-/// and the mana it still charges as the engine charges it (the printed {3}
-/// with its increases and reductions, less the taps).
+/// Iceberg on the battlefield: its controller, the cost slice of that printed
+/// ability, and the mana it still charges as the engine charges it (the
+/// printed {3} with its increases and reductions, less the taps).
 fn iceberg_waterbend_payment(
     state: &GameState,
     source: ObjectId,
     ability_index: usize,
-) -> Option<(PlayerId, usize, Cost)> {
+) -> Option<(PlayerId, &'static [CostComponent], Cost)> {
     let live = state.objects.try_get(source)?;
     if live.zone != Zone::Battlefield || definition(state, source)?.name != AANGS_ICEBERG {
         return None;
@@ -474,38 +485,34 @@ fn iceberg_waterbend_payment(
         .get(ability_index)?;
     let cost = crate::engine::activation_mana_payment(ability.cost, live.controller, source, state)
         .unwrap_or_else(Cost::zero);
-    Some((
-        live.controller,
-        usize::from(iceberg_waterbend_taps(ability.cost)),
-        cost,
-    ))
+    Some((live.controller, ability.cost, cost))
 }
 
-/// Aang's Iceberg's waterbend: a payment is offered only if some choice of
-/// its taps leaves its mana part payable without the tapped permanents among
-/// the mana sources (Invasion Submersible's rule, wave S1q). Without it a
-/// payment whose only tappable artifact is also the mana it needs was offered
-/// and halted the engine at payment.
+/// Aang's Iceberg's waterbend: a payment is offered only if it is within the
+/// tap cap and some choice of its taps leaves its mana part payable without
+/// the tapped permanents among the mana sources (Invasion Submersible's rule,
+/// wave S1q). Without it a payment whose only tappable artifact is also the
+/// mana it needs was offered and halted the engine at payment.
 fn iceberg_waterbend_payable(state: &GameState, source: ObjectId, ability_index: usize) -> bool {
-    let Some((controller, taps, cost)) = iceberg_waterbend_payment(state, source, ability_index)
+    let Some((controller, components, cost)) =
+        iceberg_waterbend_payment(state, source, ability_index)
     else {
         return true;
     };
-    taps <= iceberg_waterbend_cap(state, source)
+    waterbend_taps_within_cap(state, source, components)
         && crate::eternal_sideboard_s1q_v1::completion_exists(
             state,
             controller,
             source,
             &cost,
             &[],
-            taps,
+            usize::from(iceberg_waterbend_taps(components)),
         )
 }
 
 /// Keeps only the waterbend taps after which the rest of the Iceberg's pending
-/// waterbend payment can still be completed. Called with the candidates of a
-/// pending activation's `TapControlled` cost; any other pending activation is
-/// left alone.
+/// waterbend payment can still be completed. The pending activation has
+/// already passed the same tap cap as the menu.
 pub(crate) fn retain_payable_waterbend_taps(
     state: &GameState,
     source: ObjectId,
@@ -523,11 +530,12 @@ pub(crate) fn retain_payable_waterbend_taps(
     else {
         return;
     };
-    let Some((controller, taps, cost)) =
+    let Some((controller, components, cost)) =
         iceberg_waterbend_payment(state, source, usize::from(pending.ability_index))
     else {
         return;
     };
+    let taps = usize::from(iceberg_waterbend_taps(components));
     let chosen: Vec<ObjectId> = already_chosen
         .iter()
         .map(|binding| binding.object)

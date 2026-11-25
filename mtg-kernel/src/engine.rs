@@ -2334,6 +2334,18 @@ fn validate_spell_copy_origin_chain(
     child_card_def: u16,
     origin: SpellCopyOriginV4,
 ) -> Result<(), String> {
+    spell_copy_origin_chain(state, child, child_card_def, origin, false)
+}
+
+/// A finalized cast receipt can establish the parent's stack printing after
+/// it changes zones and gains a different definition.
+fn spell_copy_origin_chain(
+    state: &GameState,
+    child: ObjectId,
+    child_card_def: u16,
+    origin: SpellCopyOriginV4,
+    parent_cast_proven: bool,
+) -> Result<(), String> {
     if !crate::source_type_hexproof_v1::enabled() && !origin.source_types_v1.is_empty() {
         return Err("copy source-type projection requires its selected catalog".into());
     }
@@ -2346,7 +2358,11 @@ fn validate_spell_copy_origin_chain(
         .ok_or("spell copy parent object no longer exists")?;
     let storm_parent = effect::thousand_year_storm_v1::historical_parent_cast(state, origin)?;
     if child_card_def != origin.parent_card_def
-        || (parent.card_def != origin.parent_card_def && storm_parent.is_none())
+        || (parent.card_def != origin.parent_card_def
+            && storm_parent.is_none()
+            && !(parent_cast_proven
+                && !origin.parent_was_copy
+                && parent.zone_change_count > origin.parent_stack_zone_change_count))
         || parent.owner != origin.parent_owner
         || origin.parent_was_copy != parent.spell_copy_origin.is_some()
         || if origin.parent_was_copy {
@@ -3109,18 +3125,93 @@ fn copy_entries(state: &GameState) -> Option<std::rc::Rc<CopyEntriesV1>> {
     ))
 }
 
-/// A resolved permanent spell copy is now a token, but keeps its immutable
-/// spell ancestry. Its independent entry snapshot, not a mutable token flag,
-/// distinguishes that ability source from an unentered or ceased Stack copy.
-/// Authenticates a resolved permanent spell copy (707.10f, the token Sage of
-/// the Skies' copy becomes) from the event history: its copy origin names
-/// the exact stack incarnation of a genuinely cast parent (its published
-/// cast receipt at that generation, of that owner, controller and
-/// definition), and the copy's arena object, allocated on the stack after
-/// that cast, has its one entry from the stack as its first zone change;
-/// it is no cast spell and is not on the stack as a spell. The ability-source
-/// and stack-target paths share this check. A copy that later left the
-/// battlefield keeps all of this, so it stays a valid stale target.
+/// Establish whether this exact cast was still on the stack when the child
+/// entered. A subsequent cast of the same card cannot witness this one's exit.
+fn cast_was_on_stack_at_entry(
+    state: &GameState,
+    receipt: &crate::cast_identity_v1::ReceiptV1,
+    cast_at: usize,
+    entry_at: usize,
+) -> bool {
+    let history = &state.engine.event_history;
+    for (at, event) in history.range_v2(cast_at + 1..).iter().enumerate() {
+        match event {
+            CommittedEvent::ZoneChange { object, from, .. } if *object == receipt.spell => {
+                return *from == Zone::Stack && cast_at + 1 + at > entry_at;
+            }
+            CommittedEvent::PublishedCastIdentityV1 { receipt: later }
+                if later.spell == receipt.spell =>
+            {
+                return false
+            }
+            _ => {}
+        }
+    }
+    state.objects.try_get(receipt.spell).is_some_and(|spell| {
+        spell.zone == Zone::Stack && spell.zone_change_count == receipt.stack_zone_change_count
+    }) && state.stack.iter().any(|item| {
+        item.kind == StackItemKind::Spell
+            && item.source == receipt.spell
+            && item.v4.stack_item_id == receipt.stack_item_id
+    })
+}
+
+/// Check whether the claimed cast could have produced this child. The
+/// history does not record which eligible Sage trigger created a copy.
+fn cast_matches_copy_entry(
+    state: &GameState,
+    claimed: &crate::cast_identity_v1::ReceiptV1,
+    printing: u16,
+    cast_at: usize,
+    entry_at: usize,
+) -> bool {
+    if cast_at >= entry_at {
+        return false;
+    }
+    let history = &state.engine.event_history;
+    if card_def::CARD_DEFS[usize::from(printing)].name == crate::eternal_cube_c4b_v1::SAGE_OF_THE_SKIES
+        && !history.range_v2(..cast_at).iter().rev()
+            .take_while(|event| !matches!(event, CommittedEvent::UpkeepBegan { .. }))
+            .any(|event| matches!(event, CommittedEvent::SpellCast { controller, .. } if *controller == claimed.controller))
+    {
+        return false;
+    }
+    let mut parent_left = false;
+    for (offset, event) in history.range_v2(cast_at + 1..entry_at).iter().enumerate() {
+        match event {
+            // Each of these step changes required the stack to empty.
+            CommittedEvent::UpkeepBegan { .. }
+            | CommittedEvent::BeginningPrecombatMainV1 { .. }
+            | CommittedEvent::BeginningOfCombat { .. }
+            | CommittedEvent::BeginningEndStep { .. } => return false,
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Stack,
+                to,
+                ..
+            } if *object == claimed.spell && !parent_left => {
+                // A resolved original was below its own copy. Only the
+                // first exit belongs to the claimed incarnation.
+                if *to == Zone::Battlefield {
+                    return false;
+                }
+                parent_left = true;
+            }
+            CommittedEvent::PublishedCastIdentityV1 { receipt: later } if parent_left => {
+                // Once the original is gone, its copy must already exist.
+                // A later spell above that waiting copy must leave first.
+                if cast_was_on_stack_at_entry(state, later, cast_at + 1 + offset, entry_at) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Validate a resolved permanent spell copy (707.10f) as an ability source
+/// or target using its pre-copy printing, finalized parent cast and entry order.
 pub(crate) fn authenticate_resolved_permanent_copy(
     state: &GameState,
     object: ObjectId,
@@ -3128,14 +3219,23 @@ pub(crate) fn authenticate_resolved_permanent_copy(
 ) -> Result<(), String> {
     let invalid = || "resolved permanent spell copy lost its exact ancestry".to_string();
     let live = state.objects.try_get(object).ok_or_else(invalid)?;
-    let parent = state.objects.try_get(origin.parent).ok_or_else(invalid)?;
+    let printing = if live.zone == Zone::Battlefield {
+        crate::standard_cards_v1::archived_copy_printing(
+            state,
+            ObjectLinkV4 {
+                object,
+                zone_change_count: live.zone_change_count,
+            },
+            live.card_def,
+        )
+        .ok_or_else(invalid)?
+    } else {
+        live.card_def
+    };
     if !live.v4.is_token
         || live.spell_copy_origin != Some(origin)
         || live.v4.spell_cast_origin.is_some()
-        || live.card_def != origin.parent_card_def
         || origin.parent_was_copy
-        || origin.parent.0 >= object.0
-        || parent.owner != origin.parent_owner
         || state
             .stack
             .iter()
@@ -3157,15 +3257,13 @@ pub(crate) fn authenticate_resolved_permanent_copy(
         });
     let (cast_at, receipt) = casts.next().ok_or_else(invalid)?;
     if casts.next().is_some()
-        || receipt.owner != origin.parent_owner
         || receipt.controller != origin.parent_controller
-        || receipt.public_identity
-            != (crate::cast_identity_v1::PublicIdentityV1::Known {
-                card_def: origin.parent_card_def,
-            })
+        || crate::cast_identity_v1::checked_printing(state, cast_at, &receipt, origin.parent_owner)
+            != Ok(Some(origin.parent_card_def))
     {
         return Err(invalid());
     }
+    spell_copy_origin_chain(state, object, printing, origin, true)?;
     let mut changes = history
         .of_kinds_v2(&[crate::event_history_v1::EventKindV1::ZoneChange])
         .filter_map(|(at, event)| match event {
@@ -3178,10 +3276,19 @@ pub(crate) fn authenticate_resolved_permanent_copy(
             _ => None,
         });
     match changes.next() {
-        Some((entry_at, Zone::Stack, Zone::Battlefield)) if entry_at > cast_at => {}
+        Some((entry_at, Zone::Stack, Zone::Battlefield))
+            if cast_matches_copy_entry(
+                state,
+                &receipt,
+                origin.parent_card_def,
+                cast_at,
+                entry_at,
+            ) => {}
         _ => return Err(invalid()),
     }
-    if changes.any(|(_, from, to)| from == Zone::Stack && to == Zone::Battlefield) {
+    // A token that left the battlefield ceases to exist (704.5d, 111.7): no
+    // later move of it, from any zone, puts it onto the battlefield again.
+    if changes.any(|(_, _, to)| to == Zone::Battlefield) {
         return Err(invalid());
     }
     Ok(())
@@ -19828,6 +19935,11 @@ pub(crate) fn validate_pending_activation(
     {
         return Err("activation condition is not met".to_string());
     }
+    // Aang's Iceberg (wave C5c): the menu's waterbend tap cap binds a pending
+    // payment of its printed abilities too, before taps are offered or paid.
+    if !crate::eternal_cube_c5c_v1::waterbend_taps_within_cap(state, pending.source, ability.cost) {
+        return Err("pending waterbend payment taps more than its cap".to_string());
+    }
     if ability.target_spec != pending.target_spec {
         return Err("pending activation target specification changed".to_string());
     }
@@ -22351,7 +22463,8 @@ fn validated_stack_item_target_metadata(
             return Err("stack target contract is structurally malformed".to_string());
         }
         // A resolved permanent spell copy (a token) named on the battlefield
-        // carries the same immutable ancestry as a copy on the stack.
+        // carries the same immutable ancestry as a copy on the stack; the
+        // shared check validates its origin chain too.
         if let StackTargetContractV4::Object {
             object,
             zone: Zone::Battlefield,
@@ -22359,12 +22472,6 @@ fn validated_stack_item_target_metadata(
             ..
         } = contract
         {
-            validate_spell_copy_origin_chain(
-                state,
-                object,
-                state.objects.get(object).card_def,
-                origin,
-            )?;
             authenticate_resolved_permanent_copy(state, object, origin)?;
         }
         if let StackTargetContractV4::Object {
@@ -42632,25 +42739,49 @@ mod tests {
             state,
             crate::event::ProposedEvent::zone_change(decoy, Zone::Graveyard),
         );
+        fence_cast_prior_bolt(state);
+        let sage = put_in_hand(state, PlayerId::P0, "Sage of the Skies");
+        let token = fence_resolve_sage_with_copy(state, sage);
+        (decoy, sage, token)
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_cast_prior_bolt(state: &mut GameState) {
         let bolt = put_in_hand(state, PlayerId::P0, "Lightning Bolt");
         fence_pool(state, PlayerId::P0, &[ManaColor::R], 0);
         step(state, Action::CastSpell(bolt)).unwrap();
         step(state, Action::ChooseTarget(Target::Player(PlayerId::P1))).unwrap();
         pass_until_stack_resolves(state);
-        let sage = put_in_hand(state, PlayerId::P0, "Sage of the Skies");
+        assert!(state.stack.is_empty());
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_resolve_sage_with_copy(state: &mut GameState, sage: ObjectId) -> ObjectId {
+        let first_unused = state.objects.len();
         fence_pool(state, PlayerId::P0, &[ManaColor::W], 2);
         step(state, Action::CastSpell(sage)).unwrap();
         pass_until_stack_resolves(state);
-        let token = state.players[PlayerId::P0.index()]
+        assert!(state.engine.halted.is_none());
+        state.players[PlayerId::P0.index()]
             .battlefield
             .iter()
             .copied()
             .find(|&object| {
-                state.objects.get(object).v4.is_token
+                object.0 as usize >= first_unused
+                    && state.objects.get(object).v4.is_token
                     && state.objects.get(object).card_def == state.objects.get(sage).card_def
             })
-            .expect("the copy became a token");
-        (decoy, sage, token)
+            .expect("the cast produced a new Sage token")
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_two_resolved_sage_casts() -> (GameState, ObjectId, ObjectId) {
+        let mut state = ready_game_in_main1(0);
+        // Both cards predate both tokens in the arena, as in a real deck.
+        let second = put_in_hand(&mut state, PlayerId::P0, "Sage of the Skies");
+        let (_, _, first_token) = fence_sage_and_token(&mut state);
+        let second_token = fence_resolve_sage_with_copy(&mut state, second);
+        (state, first_token, second_token)
     }
 
     /// The token's copy origin replaced by an earlier Sage card of the same
@@ -42691,27 +42822,418 @@ mod tests {
         .is_err());
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_bolt_targeting_token(state: &mut GameState, token: ObjectId) -> StackItem {
+        let bolt = put_in_hand(state, PlayerId::P0, "Lightning Bolt");
+        fence_pool(state, PlayerId::P0, &[ManaColor::R], 0);
+        step(state, Action::CastSpell(bolt)).unwrap();
+        step(state, Action::ChooseTarget(Target::Object(token))).unwrap();
+        // The cast is finalized as the engine advances.
+        assert!(matches!(
+            advance_until_decision(state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        let item = state.stack.last().unwrap().clone();
+        assert_eq!(item.source, bolt);
+        assert_eq!(stack_targets_still_legal(&item, state), Ok(true));
+        item
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_tokens_from_two_resolved_casts_are_both_legal_targets() {
+        let (state, first, second) = fence_two_resolved_sage_casts();
+        for token in [first, second] {
+            let mut game = state.clone();
+            fence_bolt_targeting_token(&mut game, token);
+            pass_until_stack_resolves(&mut game);
+            assert!(game.engine.halted.is_none());
+            assert!(!game.players[0].battlefield.contains(&token));
+        }
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_target_rejects_substitution_of_an_earlier_genuine_cast() {
+        let (mut state, first, second) = fence_two_resolved_sage_casts();
+        fence_bolt_targeting_token(&mut state, second);
+        let earlier = state.objects.get(first).spell_copy_origin.unwrap();
+        assert_ne!(Some(earlier), state.objects.get(second).spell_copy_origin);
+        fence_check_substituted_sage(&mut state, second, earlier, false);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_check_substituted_sage(
+        state: &mut GameState,
+        token: ObjectId,
+        claimed: SpellCopyOriginV4,
+        accepted: bool,
+    ) {
+        state.objects.get_mut(token).spell_copy_origin = Some(claimed);
+        let item = state.stack.last_mut().unwrap();
+        let [StackTargetContractV4::Object {
+            spell_copy_origin,
+            object,
+            ..
+        }] = item.v4.target_contracts.as_mut_slice()
+        else {
+            panic!("expected a single object target");
+        };
+        assert_eq!(*object, token);
+        *spell_copy_origin = Some(claimed);
+        let legal = stack_targets_still_legal(state.stack.last().unwrap(), state);
+        if accepted {
+            assert_eq!(legal, Ok(true));
+        } else {
+            assert!(legal.is_err());
+        }
+        assert_eq!(
+            validate_historical_ability_source_contract(
+                state,
+                AbilitySourceContractV4::capture(state, token)
+            )
+            .is_ok(),
+            accepted
+        );
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_resolve_top(state: &mut GameState) {
+        for _ in 0..2 {
+            assert!(matches!(
+                advance_until_decision(state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert!(!state.stack.is_empty());
+            step(state, Action::Pass).unwrap();
+        }
+        assert!(matches!(
+            advance_until_decision(state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_counter_original(state: &mut GameState, sage: ObjectId, counter: ObjectId) {
+        assert!(matches!(
+            advance_until_decision(state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        step(state, Action::Pass).unwrap();
+        step(state, Action::CastSpell(counter)).unwrap();
+        step(state, Action::ChooseTarget(Target::Object(sage))).unwrap();
+        fence_resolve_top(state);
+        assert_eq!(state.objects.get(sage).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(counter).zone, Zone::Graveyard);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    fn fence_counter_sage_while_its_copy_waits(state: &mut GameState, sage: ObjectId) -> ObjectId {
+        let player = PlayerId::P0;
+        let opponent = PlayerId::P1;
+        fence_pool(state, player, &[ManaColor::W], 2);
+        step(state, Action::CastSpell(sage)).unwrap();
+        fence_resolve_top(state);
+        let copy = state.stack.last().unwrap();
+        assert!(copy.is_copy);
+        let token = copy.source;
+        let counter = put_in_hand(state, opponent, "Counterspell");
+        fence_pool(state, opponent, &[ManaColor::U, ManaColor::U], 0);
+        fence_counter_original(state, sage, counter);
+        pass_until_stack_resolves(state);
+        assert_eq!(state.objects.get(token).zone, Zone::Battlefield);
+        token
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_tokens_remain_bound_when_the_first_parent_is_countered() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let first = put_in_hand(&mut state, p, "Sage of the Skies");
+        let second = put_in_hand(&mut state, p, "Sage of the Skies");
+        fence_cast_prior_bolt(&mut state);
+        let token = fence_counter_sage_while_its_copy_waits(&mut state, first);
+        let origin = state.objects.get(token).spell_copy_origin.unwrap();
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_ok());
+
+        // A copy left waiting by the countered parent would have been below
+        // this later cast. Here the second token enters above the second cast.
+        let mut resolved = state.clone();
+        let resolved_token = fence_resolve_sage_with_copy(&mut resolved, second);
+        let resolved_origin = resolved
+            .objects
+            .get(resolved_token)
+            .spell_copy_origin
+            .unwrap();
+        assert!(
+            authenticate_resolved_permanent_copy(&resolved, resolved_token, resolved_origin)
+                .is_ok()
+        );
+
+        // A real intervening combat phase supplies an empty-stack boundary
+        // even when the second parent is countered before its token enters.
+        let mut after_combat = state.clone();
+        for _ in 0..32 {
+            let action = match advance_until_decision(&mut after_combat) {
+                Decision::CastSpellOrPass { .. } if after_combat.step == Step::Main2 => break,
+                Decision::CastSpellOrPass { .. } => Action::Pass,
+                Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
+                other => panic!("unexpected combat decision: {other:?}"),
+            };
+            step(&mut after_combat, action).unwrap();
+        }
+        assert_eq!(after_combat.step, Step::Main2);
+        let later = fence_counter_sage_while_its_copy_waits(&mut after_combat, second);
+        let later_origin = after_combat.objects.get(later).spell_copy_origin.unwrap();
+        assert!(authenticate_resolved_permanent_copy(&after_combat, later, later_origin).is_ok());
+
+        // A claim across that step boundary is impossible even if the
+        // earlier countered original never resolved to the battlefield.
+        fence_bolt_targeting_token(&mut after_combat, later);
+        fence_check_substituted_sage(&mut after_combat, later, origin, false);
+
+        // The later cast was still on stack when its token entered. The
+        // earlier countered parent's waiting copy could not resolve above it.
+        fence_bolt_targeting_token(&mut resolved, resolved_token);
+        fence_check_substituted_sage(&mut resolved, resolved_token, origin, false);
+
+        // In one main phase both countered parents can fit the later entry.
+        let later = fence_counter_sage_while_its_copy_waits(&mut state, second);
+        fence_bolt_targeting_token(&mut state, later);
+        fence_check_substituted_sage(&mut state, later, origin, true);
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_ok());
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_after_countered_first_spell_accepts_only_the_eligible_cast() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let first = put_in_hand(&mut state, p, "Sage of the Skies");
+        let second = put_in_hand(&mut state, p, "Sage of the Skies");
+        let counter = put_in_hand(&mut state, p.opponent(), "Counterspell");
+        fence_pool(&mut state, p, &[ManaColor::W], 2);
+        fence_pool(&mut state, p.opponent(), &[ManaColor::U; 2], 0);
+        step(&mut state, Action::CastSpell(first)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.stack.len(), 1, "the first spell has no copy trigger");
+        let first_generation = state.objects.get(first).zone_change_count;
+        fence_counter_original(&mut state, first, counter);
+        assert!(state.stack.is_empty());
+        fence_cast_prior_bolt(&mut state);
+        let token = fence_counter_sage_while_its_copy_waits(&mut state, second);
+        fence_bolt_targeting_token(&mut state, token);
+        let mut forged = state.objects.get(token).spell_copy_origin.unwrap();
+        assert_eq!(forged.parent, second);
+        forged.parent = first;
+        forged.parent_stack_zone_change_count = first_generation;
+        fence_check_substituted_sage(&mut state, token, forged, false);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_from_flash_overlap_is_a_legal_target_above_both_originals() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        put_on_battlefield(&mut state, p, "Aluren");
+        let first = put_in_hand(&mut state, p, "Sage of the Skies");
+        let second = put_in_hand(&mut state, p, "Sage of the Skies");
+        fence_cast_prior_bolt(&mut state);
+        step(&mut state, Action::CastSpell(first)).unwrap();
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.stack.len(), 2);
+        step(&mut state, Action::CastSpell(second)).unwrap();
+        fence_resolve_top(&mut state); // second Sage's trigger
+        let copy = state.stack.last().unwrap();
+        assert!(copy.is_copy);
+        let token = copy.source;
+        assert_eq!(
+            state.objects.get(token).spell_copy_origin.unwrap().parent,
+            second
+        );
+        fence_resolve_top(&mut state); // second Sage's copy
+        for original in [first, second] {
+            assert_eq!(state.objects.get(original).zone, Zone::Stack);
+        }
+        fence_bolt_targeting_token(&mut state, token);
+        pass_until_stack_resolves(&mut state);
+        assert!(state.engine.halted.is_none());
+        assert!(!state.players[0].battlefield.contains(&token));
+        for original in [first, second] {
+            assert_eq!(state.objects.get(original).zone, Zone::Battlefield);
+        }
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_accepts_either_indistinguishable_aluren_cast_history() {
+        let p = PlayerId::P0;
+        let mut start = ready_game_in_main1(0);
+        put_on_battlefield(&mut start, p, "Aluren");
+        let monolith = put_on_battlefield(&mut start, p, "Basalt Monolith");
+        let first = put_in_hand(&mut start, p, "Sage of the Skies");
+        let second = put_in_hand(&mut start, p, "Sage of the Skies");
+        let counter_a = put_in_hand(&mut start, p.opponent(), "Counterspell");
+        let counter_b = put_in_hand(&mut start, p.opponent(), "Counterspell");
+        fence_cast_prior_bolt(&mut start);
+        fence_pool(&mut start, p.opponent(), &[ManaColor::U; 4], 0);
+        step(&mut start, Action::ActivateManaAbility(monolith)).unwrap();
+
+        // Each schedule creates one token. The untap and copy exchange stack
+        // IDs while every physical cast keeps the same receipt in both games.
+        let play = |first_produces: bool| {
+            let mut state = start.clone();
+            let mut token = None;
+            for (sage, counter, produces) in [
+                (first, counter_a, first_produces),
+                (second, counter_b, !first_produces),
+            ] {
+                step(&mut state, Action::CastSpell(sage)).unwrap();
+                assert!(matches!(
+                    advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                if produces {
+                    fence_resolve_top(&mut state);
+                    let copy = state.stack.last().unwrap();
+                    assert!(copy.is_copy);
+                    assert!(token.replace(copy.source).is_none());
+                    assert_eq!(
+                        state
+                            .objects
+                            .get(copy.source)
+                            .spell_copy_origin
+                            .unwrap()
+                            .parent,
+                        sage
+                    );
+                } else {
+                    step(&mut state, Action::ActivateAbility(monolith, 0)).unwrap();
+                    fence_resolve_top(&mut state);
+                    assert!(!state.objects.get(monolith).tapped);
+                }
+                fence_counter_original(&mut state, sage, counter);
+                if !produces {
+                    fence_resolve_top(&mut state); // trigger with its original gone
+                }
+            }
+            let token = token.unwrap();
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(state.stack[0].source, token);
+            fence_resolve_top(&mut state);
+            assert_eq!(state.objects.get(token).zone, Zone::Battlefield);
+            let casts: Vec<_> = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::PublishedCastIdentityV1 { receipt } => {
+                        Some((receipt.spell, receipt.stack_item_id))
+                    }
+                    _ => None,
+                })
+                .collect();
+            fence_bolt_targeting_token(&mut state, token);
+            let mut claim = state.objects.get(token).spell_copy_origin.unwrap();
+            let other = if first_produces { second } else { first };
+            let other_receipt = state
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::PublishedCastIdentityV1 { receipt }
+                        if receipt.spell == other =>
+                    {
+                        Some(receipt)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            claim.parent = other;
+            claim.parent_stack_zone_change_count = other_receipt.stack_zone_change_count;
+            fence_check_substituted_sage(&mut state, token, claim, true);
+            pass_until_stack_resolves(&mut state);
+            assert!(state.engine.halted.is_none());
+            assert!(!state.players[0].battlefield.contains(&token));
+            (casts, token)
+        };
+        assert_eq!(play(true), play(false));
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_target_rejects_battlefield_reentry_from_exile() {
+        let mut state = ready_game_in_main1(0);
+        let (_, _, token) = fence_sage_and_token(&mut state);
+        let item = fence_bolt_targeting_token(&mut state, token);
+        for (from, to) in [
+            (Zone::Battlefield, Zone::Exile),
+            (Zone::Exile, Zone::Battlefield),
+        ] {
+            state.engine.event_history.push(CommittedEvent::ZoneChange {
+                object: token,
+                from,
+                to,
+                controller_before: PlayerId::P0,
+            });
+        }
+        state.objects.get_mut(token).zone_change_count = 3;
+        assert!(stack_targets_still_legal(&item, &state).is_err());
+    }
+
     /// Review round 2, finding 4, the stack-target path: the forged origin is
     /// mirrored into the Bolt's target contract.
     #[cfg(feature = "eternal-fixtures")]
     #[test]
     fn sage_token_target_rejects_a_forged_parent_that_was_never_cast() {
         let mut state = ready_game_in_main1(0);
-        let (decoy, _, token) = fence_sage_and_token(&mut state);
-        let bolt = put_in_hand(&mut state, PlayerId::P0, "Lightning Bolt");
-        fence_pool(&mut state, PlayerId::P0, &[ManaColor::R], 0);
-        step(&mut state, Action::CastSpell(bolt)).unwrap();
-        step(&mut state, Action::ChooseTarget(Target::Object(token))).unwrap();
-        // The cast is finalized as the engine advances.
-        assert!(matches!(
-            advance_until_decision(&mut state),
-            Decision::CastSpellOrPass { .. }
-        ));
-        let item = state.stack.last().unwrap().clone();
-        assert_eq!(item.source, bolt);
-        assert_eq!(stack_targets_still_legal(&item, &state), Ok(true));
+        let (decoy, sage, token) = fence_sage_and_token(&mut state);
+        fence_bolt_targeting_token(&mut state, token);
 
-        let origin = fence_forged_origin(&state, token, decoy);
+        // The decoy has a later live incarnation, so generation one is a
+        // possible historical stack generation. Give it the Sage receipt
+        // at the genuine publication index, with its unique stack id intact.
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(decoy, Zone::Hand),
+        );
+        let at = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(event,
+                    CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell == sage
+                )
+            })
+            .unwrap();
+        let CommittedEvent::PublishedCastIdentityV1 { receipt } =
+            &mut state.engine.event_history[at]
+        else {
+            unreachable!()
+        };
+        receipt.spell = decoy;
+        let mut origin = state.objects.get(token).spell_copy_origin.unwrap();
+        origin.parent = decoy;
+        assert_eq!(
+            origin.parent_stack_zone_change_count,
+            receipt.stack_zone_change_count
+        );
+        assert!(state.objects.get(decoy).zone_change_count > origin.parent_stack_zone_change_count);
+        // The adjacent SpellCast marker still names Sage, never the decoy.
         state.objects.get_mut(token).spell_copy_origin = Some(origin);
         let forged = state.stack.last_mut().unwrap();
         let Some(StackTargetContractV4::Object {
@@ -42722,7 +43244,90 @@ mod tests {
         };
         *spell_copy_origin = Some(origin);
         let forged = forged.clone();
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_err());
         assert!(stack_targets_still_legal(&forged, &state).is_err());
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_rejects_a_parent_receipt_with_a_reused_stack_id() {
+        let mut state = ready_game_in_main1(0);
+        let (_, sage, token) = fence_sage_and_token(&mut state);
+        let origin = state.objects.get(token).spell_copy_origin.unwrap();
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_ok());
+        let history = &mut state.engine.event_history;
+        let other_id = history
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell != sage => {
+                    Some(receipt.stack_item_id)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let at = history.iter().position(|event| {
+            matches!(event, CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell == sage)
+        }).unwrap();
+        let CommittedEvent::PublishedCastIdentityV1 { receipt } = &mut history[at] else {
+            unreachable!()
+        };
+        receipt.stack_item_id = other_id;
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_err());
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn iceberg_restored_two_tap_activation_under_zirda_rejects_choices_and_payment() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let iceberg = put_on_battlefield(&mut state, p, "Aang's Iceberg");
+        let zirda = put_on_battlefield(&mut state, p, "Zirda, the Dawnwaker");
+        let pup = put_on_battlefield(&mut state, p, "Jackal Pup");
+        let menu = available_activatable_abilities(p, &state);
+        assert!(menu.contains(&(iceberg, 1)));
+        assert!(!menu.contains(&(iceberg, 2)));
+        begin_activation(&mut state, p, iceberg, 1);
+        assert!(validate_pending_activation(
+            &state,
+            state.engine.pending_activation.as_ref().unwrap()
+        )
+        .is_ok());
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .unwrap()
+            .ability_index = 2;
+        let mut picker = state.clone();
+        assert!(matches!(
+            drain_pending_activation_or_decide(&mut picker),
+            Some(Decision::Halted { .. })
+        ));
+        assert!(apply_choose_cost_target(&mut state, pup).is_err());
+
+        // A second restored state already contains both otherwise eligible
+        // selections. Finalization must enforce the cap even with no picks left.
+        let bindings = [zirda, pup]
+            .into_iter()
+            .map(|object| EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(object).zone_change_count,
+            })
+            .collect();
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .unwrap()
+            .object_cost_chosen = bindings;
+        assert_eq!(state.players[p.index()].mana_pool, [0; 6]);
+        finalize_activation(&mut state);
+        assert!(
+            matches!(state.engine.halted, Some((UnsupportedMechanic::InvalidEffectContinuation, source)) if source == iceberg)
+        );
+        assert!(state.stack.is_empty());
+        assert!(!state.objects.get(zirda).tapped && !state.objects.get(pup).tapped);
     }
 
     /// Review round 2, finding 3: the Iceberg's waterbend pricing applies

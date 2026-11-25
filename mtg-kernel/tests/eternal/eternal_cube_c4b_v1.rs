@@ -1414,6 +1414,60 @@ fn sage_and_token(state: &mut GameState) -> (ObjectId, ObjectId) {
     (sage, token)
 }
 
+/// Swift Reconfiguration makes either Sage an artifact that Saheeli can copy over.
+fn reconfigure_and_copy(state: &mut GameState, host: ObjectId) {
+    let swift = put(state, P0, "Swift Reconfiguration", Zone::Hand);
+    cast_and_resolve(state, swift, &[ManaColor::W], 0, &[Target::Object(host)]);
+    let saheeli = put(state, P0, "Saheeli, Sublime Artificer", Zone::Hand);
+    cast_and_resolve(state, saheeli, &[ManaColor::U, ManaColor::R], 1, &[]);
+    let creature = put(state, P0, "Jackal Pup", Zone::Battlefield);
+    activate(
+        state,
+        saheeli,
+        0,
+        &[Target::Object(host), Target::Object(creature)],
+    );
+    settled(state);
+    assert_eq!(state.objects.get(host).card_def, id("Jackal Pup"));
+}
+
+#[test]
+fn sage_of_the_skies_token_remains_a_bolt_target_after_saheeli_copies_over_its_parent() {
+    let mut state = plains();
+    let (sage, token) = sage_and_token(&mut state);
+    reconfigure_and_copy(&mut state, sage);
+    let bolt = opponent_bolts(&mut state, Target::Object(token));
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert!(!state.players[0].battlefield.contains(&token));
+    assert_eq!(zone(&state, sage), Zone::Battlefield);
+}
+
+#[test]
+fn sage_of_the_skies_token_copied_by_saheeli_uses_its_current_target_types() {
+    let mut state = plains();
+    let (sage, token) = sage_and_token(&mut state);
+    reconfigure_and_copy(&mut state, token);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    let targets = cast_targets(&state, bolt);
+    assert!(targets.contains(&Target::Object(sage)));
+    assert!(
+        !targets.contains(&Target::Object(token)),
+        "the enchanted token is a noncreature Vehicle"
+    );
+    let disenchant = put(&mut state, P0, "Disenchant", Zone::Hand);
+    cast_and_resolve(
+        &mut state,
+        disenchant,
+        &[ManaColor::W],
+        1,
+        &[Target::Object(token)],
+    );
+    assert!(!state.players[0].battlefield.contains(&token));
+    assert_eq!(zone(&state, sage), Zone::Battlefield);
+}
+
 /// Attaches P0's `equipment` to `creature` through its equip ability, paying
 /// with `generic` colorless mana.
 fn equip(state: &mut GameState, equipment: ObjectId, creature: ObjectId, generic: u8) {
