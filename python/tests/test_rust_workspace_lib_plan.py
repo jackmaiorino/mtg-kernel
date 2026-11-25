@@ -212,7 +212,7 @@ class TableTests(unittest.TestCase):
         self.assertEqual(table["threads"], plan.THREADS)
         for system in ("Linux", "Windows"):
             weight = plan.load_weights(system)
-            # The 17-minute (Windows) test the plan gives a part of its own.
+            # The longest test on Windows (about 10 minutes), which the plan gives a part of its own there.
             self.assertGreater(weight("infoset_v1::harness::l13_over_the_ac1_engine_families"), 300)
             self.assertLess(weight("an::unrecorded::test"), 1)
 

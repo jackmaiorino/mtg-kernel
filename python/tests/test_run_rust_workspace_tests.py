@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -460,6 +461,98 @@ class LibraryRunnerTests(unittest.TestCase):
             with self.subTest(arguments=arguments), patch.object(sys, "argv", ["run", *arguments]), \
                     patch("sys.stderr"), self.assertRaises(SystemExit):
                 workspace.main()
+
+
+def child_run(statuses, stdout=""):
+    """(subprocess.run, commands run) for children exiting with `statuses` in turn, the last one repeating.
+
+    As the real one does, it raises CalledProcessError for a nonzero status under check=True.
+    """
+    commands = []
+
+    def run(command, check=False, **_):
+        commands.append(command)
+        status = statuses[min(len(commands), len(statuses)) - 1]
+        if check and status:
+            raise subprocess.CalledProcessError(status, command, output=stdout)
+        return subprocess.CompletedProcess(command, status, stdout=stdout)
+    return run, commands
+
+
+class FailurePropagationTests(unittest.TestCase):
+    """A failing child (Cargo, the test binary or its listing) makes the tool exit nonzero wherever its status
+    is read: Cargo's own status in every mode, and the runner's status that Cargo reports."""
+
+    def main(self, *arguments, run, environment=None):
+        environment = environment or {}
+        with patch.object(workspace, "suite_modules"), patch.object(workspace.subprocess, "run", run), \
+                patch.object(sys, "argv", ["run_rust_workspace_tests.py", *arguments]), \
+                patch.dict(os.environ, environment), patch("builtins.print"):
+            for name in (workspace.LIST_ENV, workspace.SHARD_ENV, workspace.EXECUTED_ENV):
+                if name not in environment:
+                    os.environ.pop(name, None)
+            return workspace.main()
+
+    def test_cargos_failure_is_the_exit_status_in_list_build_part_and_unsplit_mode(self):
+        for arguments in (["--part", "lib", "--list-only", "tests.json"], ["--part", "lib", "--no-run"],
+                          ["--part", "lib", "--shard-index", "1", "--shard-count", "4", "--executed-list", "x.json"],
+                          ["--part", "lib"], []):
+            run, commands = child_run([101])
+            with self.subTest(arguments=arguments):
+                self.assertEqual(self.main(*arguments, run=run), 101)
+                ((program, subcommand, *_),) = commands
+                self.assertEqual((program, subcommand), ("cargo", "test"))
+
+    def test_a_failing_cargo_metadata_stops_the_targets_part_before_any_test(self):
+        run, commands = child_run([101], stdout=json.dumps(METADATA))
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.main("--part", "targets", run=run)
+        self.assertEqual([command[:2] for command in commands], [["cargo", "metadata"]])
+
+    def test_a_failing_list_of_the_binary_fails_the_runner_in_list_and_part_mode(self):
+        # The binary printed some names before it failed: they are not its list.
+        partial = "".join(f"{test}: test\n" for test in LIBRARY[:3])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.json"
+            for environment in ({workspace.LIST_ENV: str(path)},
+                                {workspace.SHARD_ENV: "[0, 4]", workspace.EXECUTED_ENV: str(path)}):
+                run, commands = child_run([101], stdout=partial)
+                with self.subTest(environment=environment):
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.main("--run", "deps/mtg_kernel-abc", run=run, environment=environment)
+                    self.assertFalse(path.exists())
+                    self.assertEqual(commands[0], ["deps/mtg_kernel-abc", "--list", "--format=terse"])
+
+    def test_a_failing_part_process_is_the_runners_failure(self):
+        first, second, third = plan_patches()
+        listed = libtest(LIBRARY)
+        gates = []
+        run, commands = child_run([0])
+        with tempfile.TemporaryDirectory() as directory, first, second, third, \
+                patch.object(workspace, "run_recorded", lambda command: (101, listed(None, *command[1:]))), \
+                patch.object(workspace, "run_timing_gate", lambda *args: gates.append(args) or (0, True)):
+            path = Path(directory) / "executed.json"
+            for index in range(4):
+                with self.subTest(index=index):
+                    environment = {workspace.SHARD_ENV: json.dumps([index, 4]), workspace.EXECUTED_ENV: str(path)}
+                    self.assertEqual(self.main("--run", "deps/mtg_kernel-abc", run=run, environment=environment), 1)
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["failed"], 1)
+        self.assertEqual((gates, commands), ([], []))
+
+    def test_the_unsplit_library_run_fails_with_its_tests_or_its_timing_gate(self):
+        # [101, 0]: the tests fail and the gate would pass; [0, 3]: the tests pass and the gate fails.
+        for statuses, expected, processes in (([101, 0], 101, 1), ([0, 3], 3, 2)):
+            run, commands = child_run(statuses)
+            with self.subTest(statuses=statuses):
+                self.assertEqual(self.main("--run", "deps/mtg_kernel-abc", run=run), expected)
+                self.assertEqual(len(commands), processes)
+
+    def test_a_failing_suite_or_other_test_executable_fails_the_runner(self):
+        run, commands = child_run([101])
+        with patch.object(workspace, "run_suite", lambda executable, **_: 101):
+            self.assertEqual(self.main("--run", "deps/eternal_integration-abc", run=run), 101)
+        self.assertEqual(self.main("--run", "deps/tool-abc", "--bench", run=run), 101)
+        self.assertEqual(commands, [["deps/tool-abc", "--bench"]])
 
 
 if __name__ == "__main__":
