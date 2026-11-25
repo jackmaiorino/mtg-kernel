@@ -1009,6 +1009,24 @@ fn ledger_path_for_update(
     Ok(None)
 }
 
+fn batch_has_stop(root: &Path, update: u64, pending: &Path) -> Result<bool, TrainingDriverError> {
+    if ledger_path_for_update(root, update)?.is_some() {
+        return Ok(true);
+    }
+    // A committed stop is authoritative even if publishing the batch or its
+    // ledger copy failed. Recovery will finish publishing the original stop.
+    let published = root.join("updates").join(update_name(update));
+    for directory in [pending, published.as_path()] {
+        if directory.join("stop.json").is_file()
+            && read_commit(directory, update, false)?
+                .is_some_and(|commit| commit.files.contains_key("stop.json"))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn ledger_path_for_kind(
     root: &Path,
     stop: &StopRecord,
@@ -2117,6 +2135,7 @@ impl TrainingDriver {
         let kind = match error {
             TrainingDriverError::Update(_) => "update_failed",
             TrainingDriverError::Io(_) => "io_error",
+            TrainingDriverError::Invalid(_) => "invalid",
             _ => "collection_failed",
         };
         let batch = pods.map_or_else(
@@ -2221,12 +2240,8 @@ impl TrainingDriver {
         }
         self.runner.start_batch();
         let result = self.run_started_batch(pool, update, &selection, pilot.as_ref(), &pending);
-        if let Err(error @ TrainingDriverError::Io(_)) = &result {
-            let recorded = stop_paths(&self.config.root)?.iter().any(|path| {
-                read_json::<StopRecord>(path)
-                    .is_ok_and(|stop| stop.batch_index == update && stop.kind == "io_error")
-            });
-            if !recorded {
+        if let Err(error) = &result {
+            if !batch_has_stop(&self.config.root, update, &pending)? {
                 let first = first_watchdog(&self.config.root, update).unwrap_or_default();
                 self.abandon_error(update, &pending, first, error, None)?;
             }

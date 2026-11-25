@@ -1044,6 +1044,24 @@ fn live_runner_lock_prevents_a_process_death_record() {
 }
 
 #[test]
+fn missing_runner_lock_refuses_an_interrupted_run_without_writes() {
+    let temp = TempTestDir::new("missing-runner-lock");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    fs::remove_file(root.join("runner.lock")).unwrap();
+    let before = directory_bytes(&root);
+    let error = TrainingDriver::open(
+        config(&root, "b1", Segment::BuilderOnly, 2),
+        model_rows(),
+        1234,
+    )
+    .err()
+    .unwrap();
+    assert!(error.to_string().contains("without runner.lock"));
+    assert_eq!(directory_bytes(&root), before);
+}
+
+#[test]
 fn invalid_host_loss_proof_refuses_without_writes() {
     let temp = TempTestDir::new("resume-refusal");
     let root = temp.join("b1");
@@ -1939,6 +1957,119 @@ fn publication_io_failure_ledgers_the_batch_and_refuses_resume() {
         assert!(!pending.exists());
         assert_eq!(published.join("commit.json").exists(), fail_rename);
     }
+}
+
+#[test]
+fn retry_exhausted_stop_survives_cleanup_io_failure_without_a_second_stop() {
+    struct ReplacePendingOnFirstAttempt {
+        pending: PathBuf,
+        replaced: AtomicBool,
+    }
+
+    impl GamePilot for ReplacePendingOnFirstAttempt {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            if !self.replaced.swap(true, Ordering::SeqCst) {
+                fs::rename(&self.pending, self.pending.with_extension("saved")).unwrap();
+                fs::write(&self.pending, b"blocks directory cleanup").unwrap();
+            }
+            AlwaysHaltPilot.play(spec, caps)
+        }
+    }
+
+    let temp = TempTestDir::new("cleanup-io-after-stop");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 1);
+    let mut driver = TrainingDriver::open(config, model_rows(), 1234).unwrap();
+    let pilot = FixturePilot(Arc::new(ReplacePendingOnFirstAttempt {
+        pending: root.join("pending/update-0000"),
+        replaced: AtomicBool::new(false),
+    }));
+    assert!(matches!(
+        driver.run_next_update(&pool(), &pilot),
+        Err(TrainingDriverError::Io(_))
+    ));
+    assert_eq!(fs::read_dir(root.join("stops")).unwrap().count(), 1);
+    let stop = read_value(&root.join("stops/stop-0000.json"));
+    assert_eq!(stop["kind"], "retry_exhausted");
+    assert_eq!(stop["batch_index"], 0);
+}
+
+#[test]
+fn non_io_publication_failure_records_its_kind_before_reopen() {
+    let temp = TempTestDir::new("publication-invalid");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 1);
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    fs::create_dir(root.join("watchdog")).unwrap();
+    let void_path = root.join("watchdog/update-0000.json");
+    fs::write(&void_path, b"conflicting immutable void-execution evidence").unwrap();
+    let pilot = FixturePilot(Arc::new(FirstWatchdogPilot {
+        fired: AtomicBool::new(false),
+    }));
+    let error = driver.run_next_update(&pool(), &pilot).unwrap_err();
+    assert!(
+        matches!(&error, TrainingDriverError::Invalid(message) if message.contains("immutable file differs"))
+    );
+
+    let stop_path = root.join("stops/stop-0000.json");
+    let stop = read_value(&stop_path);
+    assert_eq!(stop["kind"], "invalid");
+    assert_eq!(stop["batch_index"], 0);
+    assert_eq!(stop["error"], error.to_string());
+    assert_eq!(fs::read_dir(root.join("stops")).unwrap().count(), 1);
+    drop(driver);
+    assert_eq!(
+        TrainingDriver::open(config, model_rows(), 1234).err(),
+        Some(TrainingDriverError::StoppedWithoutResolution)
+    );
+    assert_eq!(read_value(&stop_path), stop);
+    assert_eq!(fs::read_dir(root.join("stops")).unwrap().count(), 1);
+}
+
+#[test]
+fn committed_tripwire_survives_rename_failure_without_a_second_stop() {
+    let temp = TempTestDir::new("rename-io-after-tripwire");
+    let root = temp.join("b1");
+    let mut config = config(&root, "b1", Segment::BuilderOnly, 1);
+    let summary = br#"{"games":1,"completed":1,"halted":0,"stop_kinds":[],"cards":[],"order_errors":[],"stop_kind_mismatches":[]}"#;
+    let (baseline, files) = baseline_fixture(&temp, "census-b", summary);
+    config.pins.binary = Some(baseline.build_sha256.clone());
+    config.pins.fence_record = Some(baseline.fence_sha256.clone());
+    config.tripwire = TripwireMode::Full { baseline };
+    config.tripwire_files = Some(files);
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    let published = root.join("updates/update-0000");
+    fs::create_dir(&published).unwrap();
+    fs::write(published.join("blocker"), b"blocks publication").unwrap();
+
+    let seed = pod_play_seed("test", "b1", 0).unwrap();
+    let pilot = FixturePilot(Arc::new(StraddlingTripwirePilot {
+        halt_action_seeds: (0..8)
+            .map(|group| attempt_seeds(game_seed(seed, group), 0).2)
+            .collect(),
+        watchdog_action_seed: attempt_seeds(game_seed(seed, 8), 0).2,
+        watchdog: FirstWatchdogPilot {
+            fired: AtomicBool::new(false),
+        },
+    }));
+    assert!(matches!(
+        driver.run_next_update(&pool(), &pilot),
+        Err(TrainingDriverError::Io(_))
+    ));
+    let staged_stop = root.join("pending/update-0000/stop.json");
+    let bytes = fs::read(staged_stop).unwrap();
+    let stop: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(stop["kind"], "tripwire");
+    assert!(!root.join("stops").exists());
+    fs::remove_file(published.join("blocker")).unwrap();
+    fs::remove_dir(published).unwrap();
+    drop(driver);
+    assert_eq!(
+        TrainingDriver::open(config, model_rows(), 1234).err(),
+        Some(TrainingDriverError::StoppedWithoutResolution)
+    );
+    assert_eq!(fs::read_dir(root.join("stops")).unwrap().count(), 1);
+    assert_eq!(fs::read(root.join("stops/stop-0000.json")).unwrap(), bytes);
 }
 
 #[test]
