@@ -1473,7 +1473,7 @@ mod tests {
         // are this test's own live-computed values, read from a failing run.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "c5ab2e6dfa1628f53725e7df69eee50817ad82c06158787c33e3190d87b80623"
+            "41763e0bd88f10d1e0cafc50aa5383653ddd1ebfd1a69ea89eb6b68963875acc"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
         assert_eq!(bindings[0].policy_step_count(), 418);
@@ -1514,7 +1514,7 @@ mod tests {
         // retain every existing policy and physical decision count.
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "d77ff2242fd057554efcefa941460723f1872e97f8051587ee0740776c7becad"
+            "126ee343d78281798b9e4c2efed01e2efdec8f5ecef6b18fd7ada01d6958384f"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE

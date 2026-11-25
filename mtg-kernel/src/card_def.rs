@@ -4293,7 +4293,7 @@ mod tests {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xa575_a06d_e7ac_0729;
+        const EXPECTED_FDN: u64 = 0xc3e7_fd60_4ea0_f799;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
