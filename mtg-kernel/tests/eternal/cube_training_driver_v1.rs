@@ -16,7 +16,8 @@ use mtg_kernel::cube_training_driver_v1::fixtures::{
 use mtg_kernel::cube_training_driver_v1::{
     check_stop_ledger, load_checkpoint_read_only_v1, prune_checkpoint, tripwire_games_for_test,
     CensusBaselinePin, LineageSegment, PilotPin, PilotProvider, PilotSchedule, PilotSelection,
-    PilotSwitch, RunConfig, RunOutcome, Segment, TrainingDriver, TrainingDriverError, TripwireMode,
+    PilotSwitch, ResumeAuthorization, RunConfig, RunOutcome, Segment, TrainingDriver,
+    TrainingDriverError, TripwireMode,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -202,23 +203,23 @@ fn pilot_pin() -> PilotPin {
     }
 }
 
-fn directory_bytes(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
-    fn visit(root: &Path, directory: &Path, output: &mut BTreeMap<PathBuf, Vec<u8>>) {
+fn directory_bytes(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    fn visit(root: &Path, directory: &Path, output: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
         let mut entries: Vec<_> = fs::read_dir(directory)
             .expect("read directory")
             .map(|entry| entry.expect("directory entry").path())
             .collect();
         entries.sort();
         for path in entries {
+            let key = path
+                .strip_prefix(root)
+                .expect("relative path")
+                .to_path_buf();
             if path.is_dir() {
+                output.insert(key, None);
                 visit(root, &path, output);
             } else {
-                output.insert(
-                    path.strip_prefix(root)
-                        .expect("relative path")
-                        .to_path_buf(),
-                    fs::read(&path).expect("read file"),
-                );
+                output.insert(key, Some(fs::read(&path).expect("read file")));
             }
         }
     }
@@ -595,6 +596,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     )
     .expect("simulate committed pending update");
 
+    resumed_config.resume = Some(manifest_resume(&temp.join("manifest.md"), "b1", 1));
     let mut resumed =
         TrainingDriver::open(resumed_config, model_rows(), 1234).expect("recover committed update");
     assert_eq!(resumed.next_update(), 1);
@@ -656,6 +658,8 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
         0
     );
     assert!(stop["firing"]["games"].as_u64().unwrap() >= 5);
+    drop(direct);
+    drop(resumed);
     assert_eq!(
         directory_bytes(&uninterrupted_root),
         directory_bytes(&resumed_root)
@@ -766,16 +770,15 @@ fn first_watchdog_expiry_reruns_the_same_batch_once() {
     fs::create_dir_all(interrupted.join("watchdog")).unwrap();
     fs::create_dir_all(interrupted.join("pending/update-0000")).unwrap();
     fs::write(interrupted.join("watchdog/update-0000.json"), &void).unwrap();
+    let before = directory_bytes(&interrupted);
     let config = config(&interrupted, "b1", Segment::BuilderOnly, 1);
     for _ in 0..2 {
         let error = TrainingDriver::open(config.clone(), model_rows(), 1234)
             .err()
             .unwrap();
-        assert_eq!(error, TrainingDriverError::StoppedWithoutResolution);
+        assert_eq!(error, TrainingDriverError::ResumeAuthorizationRequired);
     }
-    let stop = read_value(&interrupted.join("stops/stop-0000.json"));
-    assert_eq!(stop["kind"], "process_death");
-    assert_eq!(stop["first_watchdog_game"], 0);
+    assert_eq!(directory_bytes(&interrupted), before);
     assert_eq!(
         fs::read(interrupted.join("watchdog/update-0000.json")).unwrap(),
         void
@@ -813,27 +816,140 @@ fn repeat_watchdog_on_same_game_number_in_another_pod_is_not_a_hang() {
     assert_eq!(stop["second_watchdog_game"], 0);
 }
 
+fn manifest_resume(manifest: &Path, run: &str, next: u64) -> ResumeAuthorization {
+    let entry = serde_json::json!({
+        "kind": "resume",
+        "run": run,
+        "host_loss_evidence": "fixture host boot record",
+        "last_published_update": next.checked_sub(1),
+        "next_untouched_batch": next,
+    });
+    let bytes = format!("# Shakedown manifest\n\n```json\n{entry}\n```\n");
+    fs::write(manifest, &bytes).unwrap();
+    ResumeAuthorization {
+        manifest: manifest.to_owned(),
+        manifest_sha256: sha256_hex(bytes.as_bytes()),
+        entry_line: 4,
+    }
+}
+
+fn exit_after_one_update(root: &Path) {
+    let name = "host_loss_resume_with_pinned_manifest_is_bit_identical";
+    let test = module_path!().split_once("::").map_or_else(
+        || name.to_owned(),
+        |(_, module)| format!("{module}::{name}"),
+    );
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &test])
+        .env("D6_TEST_UNRECORDED_EXIT_ROOT", root)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(86), "{output:?}");
+}
+
 #[test]
-fn invalid_pending_batch_is_abandoned_not_published() {
+fn unrecorded_exit_requires_manifest_without_writes() {
+    let temp = TempTestDir::new("resume-refusal");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    assert!(root.join("runner-active.json").exists());
+    assert!(root.join("updates/update-0000/commit.json").exists());
+    assert!(!root.join("pending/update-0001").exists());
+    let before = directory_bytes(&root);
+    let config = config(&root, "b1", Segment::BuilderOnly, 2);
+    let refuse = |config: RunConfig| {
+        let error = TrainingDriver::open(config, model_rows(), 1234)
+            .err()
+            .unwrap();
+        assert_eq!(directory_bytes(&root), before);
+        error
+    };
+    assert_eq!(
+        refuse(config.clone()),
+        TrainingDriverError::ResumeAuthorizationRequired
+    );
+
+    let mut unauthorized = config.clone();
+    let mut bad_hash = manifest_resume(&temp.join("wrong-hash.md"), "b1", 1);
+    bad_hash.manifest_sha256 = "11".repeat(32);
+    unauthorized.resume = Some(bad_hash);
+    assert!(refuse(unauthorized.clone()).to_string().contains("sha256"));
+    for (run, batch) in [("wrong-run", 1), ("b1", 0)] {
+        unauthorized.resume = Some(manifest_resume(&temp.join("wrong-entry.md"), run, batch));
+        assert!(refuse(unauthorized.clone())
+            .to_string()
+            .contains("run or next untouched batch"));
+    }
+}
+
+#[test]
+fn host_loss_resume_with_pinned_manifest_is_bit_identical() {
+    let pilot = FixturePilot(Arc::new(NaturalPilot));
+    let cube = pool();
+    if let Some(root) = std::env::var_os("D6_TEST_UNRECORDED_EXIT_ROOT") {
+        let config = config(Path::new(&root), "b1", Segment::BuilderOnly, 2);
+        let mut driver = TrainingDriver::open(config, model_rows(), 1234).unwrap();
+        assert_eq!(
+            driver.run_next_update(&cube, &pilot),
+            Ok(RunOutcome::Published { update: 0 })
+        );
+        // Exit without running the driver's destructors, as on host loss.
+        std::process::exit(86);
+    }
+
+    let temp = TempTestDir::new("pinned-manifest");
+    let direct_root = temp.join("direct");
+    let direct = config(&direct_root, "b1", Segment::BuilderOnly, 2);
+    let mut direct = TrainingDriver::open(direct, model_rows(), 1234).unwrap();
+    for update in 0..2 {
+        assert_eq!(
+            direct.run_next_update(&cube, &pilot),
+            Ok(RunOutcome::Published { update })
+        );
+    }
+    drop(direct);
+
+    let resumed_root = temp.join("resumed");
+    exit_after_one_update(&resumed_root);
+    let mut resumed = config(&resumed_root, "b1", Segment::BuilderOnly, 2);
+    resumed.resume = Some(manifest_resume(
+        &temp.join("SHAKEDOWN-MANIFEST.md"),
+        "b1",
+        1,
+    ));
+    let mut resumed = TrainingDriver::open(resumed, model_rows(), 1234).unwrap();
+    assert_eq!(resumed.next_update(), 1);
+    assert_eq!(
+        resumed.run_next_update(&cube, &pilot),
+        Ok(RunOutcome::Published { update: 1 })
+    );
+    drop(resumed);
+    assert_eq!(
+        directory_bytes(&resumed_root),
+        directory_bytes(&direct_root)
+    );
+}
+
+#[test]
+fn resume_never_replays_a_touched_batch() {
     let temp = TempTestDir::new("abandoned");
     let root = temp.join("b1");
-    fs::create_dir_all(root.join("pending/update-0000")).expect("pending batch");
-    fs::write(root.join("pending/update-0000/commit.json"), b"{").expect("torn commit");
-    let error = TrainingDriver::open(
-        config(&root, "b1", Segment::BuilderOnly, 1),
-        model_rows(),
-        1234,
-    )
-    .err()
-    .expect("unfinished batch stops the run");
-    assert_eq!(error, TrainingDriverError::StoppedWithoutResolution);
-    assert!(!root.join("updates/update-0000").exists());
-    assert!(!root.join("pending/update-0000").exists());
-    let stop = fs::read_to_string(root.join("stops/stop-0000.json")).expect("stop record");
-    let stop: serde_json::Value = serde_json::from_str(&stop).unwrap();
-    assert_eq!(stop["kind"], "process_death");
-    assert_eq!(stop["firing"]["rule"]["target"], "process_death");
-    assert_eq!(stop["firing"]["games"], 1);
+    fs::create_dir_all(root.join("pending/update-0000")).unwrap();
+    fs::write(root.join("pending/update-0000/commit.json"), b"{").unwrap();
+    let before = directory_bytes(&root);
+    let mut config = config(&root, "b1", Segment::BuilderOnly, 1);
+    let error = TrainingDriver::open(config.clone(), model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert_eq!(error, TrainingDriverError::ResumeAuthorizationRequired);
+    assert_eq!(directory_bytes(&root), before);
+
+    config.resume = Some(manifest_resume(&temp.join("manifest.md"), "b1", 0));
+    let error = TrainingDriver::open(config, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("batch that was touched"));
+    assert_eq!(directory_bytes(&root), before);
 }
 
 #[test]

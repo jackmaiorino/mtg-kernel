@@ -10,6 +10,10 @@ use model::TrainingModel;
 mod tripwire;
 pub use tripwire::CensusBaselinePin;
 use tripwire::{tripwire_window_sizes, CensusRates, TripwireTracker};
+#[path = "cube_training_resume_v1.rs"]
+mod resume;
+pub use resume::ResumeAuthorization;
+use resume::{check_resume, RunnerMarker};
 
 use crate::cube_draft_v1::{uniform_index, CubePool, SEATS};
 use crate::cube_learned_seat_v1::{LearnedSeatBuilder, LearnedSeatPicker, SeatForward};
@@ -53,6 +57,7 @@ pub enum TrainingDriverError {
     Update(String),
     StoppedWithoutResolution,
     StoppedRequiresRestart,
+    ResumeAuthorizationRequired,
     PinnedCheckpoint,
 }
 
@@ -65,6 +70,12 @@ impl fmt::Display for TrainingDriverError {
             Self::Update(message) => write!(f, "update failed closed: {message}"),
             Self::StoppedWithoutResolution => {
                 write!(f, "the stop ledger has no resolution record")
+            }
+            Self::ResumeAuthorizationRequired => {
+                write!(
+                    f,
+                    "an unrecorded exit requires a pinned shakedown manifest resume entry"
+                )
             }
             Self::PinnedCheckpoint => write!(f, "cannot prune a pinned checkpoint"),
             Self::StoppedRequiresRestart => {
@@ -326,6 +337,9 @@ pub struct RunConfig {
     /// Local path to the admitted census summary. The content pin goes in run.json.
     #[serde(skip)]
     pub tripwire_summary: Option<PathBuf>,
+    /// Launcher-provided D0.3b proof for this open, outside the immutable run plan.
+    #[serde(skip)]
+    pub resume: Option<ResumeAuthorization>,
     #[serde(default)]
     pub tripwire_window_games: Vec<u64>,
     pub pins: PodPins,
@@ -354,6 +368,7 @@ impl RunConfig {
             pilot: PilotSchedule::uniform(),
             tripwire: TripwireMode::Q9,
             tripwire_summary: None,
+            resume: None,
             tripwire_window_games: Vec::new(),
             pins: PodPins::default(),
             metadata: CheckpointMetadata::default(),
@@ -1119,20 +1134,27 @@ fn read_partial_pods(directory: &Path) -> Result<Vec<Value>, TrainingDriverError
     Ok(batch)
 }
 
-fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
-    let pending = root.join("pending");
-    let updates = root.join("updates");
-    fs::create_dir_all(&pending)?;
-    fs::create_dir_all(&updates)?;
+fn update_directories(directory: &Path) -> Result<Vec<PathBuf>, TrainingDriverError> {
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
     let mut directories = Vec::new();
-    for entry in fs::read_dir(&pending)? {
+    for entry in fs::read_dir(directory)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             directories.push(entry.path());
         }
     }
     directories.sort();
-    for directory in directories {
+    Ok(directories)
+}
+
+fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
+    let pending = root.join("pending");
+    let updates = root.join("updates");
+    fs::create_dir_all(&pending)?;
+    fs::create_dir_all(&updates)?;
+    for directory in update_directories(&pending)? {
         let name = directory
             .file_name()
             .and_then(|name| name.to_str())
@@ -1216,13 +1238,10 @@ fn published_update_indices(root: &Path) -> Result<Vec<u64>, TrainingDriverError
     if !updates.exists() {
         return Ok(Vec::new());
     }
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(&updates)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            entries.push((index_from_update_path(&entry.path())?, entry.path()));
-        }
-    }
+    let mut entries = update_directories(&updates)?
+        .into_iter()
+        .map(|path| Ok((index_from_update_path(&path)?, path)))
+        .collect::<Result<Vec<_>, TrainingDriverError>>()?;
     entries.sort_by_key(|(index, _)| *index);
     for (position, (index, path)) in entries.iter().enumerate() {
         if *index != position as u64 {
@@ -1445,6 +1464,7 @@ pub struct TrainingDriver {
     tripwire: TripwireTracker,
     census_rates: Option<CensusRates>,
     snapshots: BTreeMap<String, Arc<TrainingModel>>,
+    runner: RunnerMarker,
 }
 
 impl TrainingDriver {
@@ -1523,11 +1543,21 @@ impl TrainingDriver {
                 "a non-shakedown run cannot start from a uniform-pilot lineage",
             ));
         }
+        let resume_receipt = check_resume(&config)?;
+        let run_path = config.root.join("run.json");
+        let mut runner = None;
+        if let Some(receipt) = resume_receipt {
+            let saved: RunConfig = read_json(&run_path)?;
+            if config.segment == Segment::PickPhase && config.boundary.is_none() {
+                config.boundary = saved.boundary.clone();
+            }
+            check_run_plan(&saved, &config)?;
+            runner = Some(RunnerMarker::open(&config.root, Some(receipt))?);
+        }
         fs::create_dir_all(&config.root)?;
         recover(&config.root, &config.run)?;
         check_stop_ledger(&config.root)?;
         let indices = published_update_indices(&config.root)?;
-        let run_path = config.root.join("run.json");
         let initial_path = config.root.join("initial/checkpoint.json");
         if config.segment == Segment::PickPhase {
             let journal = config.root.join("pick-boundary.json");
@@ -1731,11 +1761,18 @@ impl TrainingDriver {
             .model
             .restore(initial_model, checkpoint.head_updates)
             .map_err(TrainingDriverError::Update)?;
+        let model =
+            Arc::new(TrainingModel::new(model, rows.clone()).map_err(TrainingDriverError::Update)?);
+        let runner = match runner {
+            Some(mut runner) => {
+                runner.finish_batch();
+                runner
+            }
+            None => RunnerMarker::open(&config.root, None)?,
+        };
         Ok(Self {
             current_pin: checkpoint.state_sha256,
-            model: Arc::new(
-                TrainingModel::new(model, rows.clone()).map_err(TrainingDriverError::Update)?,
-            ),
+            model,
             optimizer,
             rows,
             next_update,
@@ -1744,6 +1781,7 @@ impl TrainingDriver {
             tripwire,
             census_rates,
             snapshots: BTreeMap::new(),
+            runner,
             config,
         })
     }
@@ -2072,6 +2110,7 @@ impl TrainingDriver {
         if pending.exists() {
             return Err(invalid("an unrecovered pending update remains"));
         }
+        self.runner.start_batch();
         fs::create_dir_all(&pending)?;
         sync_directory(&pending)?;
         sync_directory(&self.config.root.join("pending"))?;
@@ -2281,6 +2320,7 @@ impl TrainingDriver {
         self.current_pin = state_pin;
         self.tripwire = tripwire;
         self.lineage = checkpoint.lineage;
+        self.runner.finish_batch();
         if firing.is_some() {
             Ok(RunOutcome::Stopped {
                 update,
