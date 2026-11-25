@@ -13,10 +13,10 @@ vector_width 978
 pauper_columns 490
 new_columns_beyond_pauper 488
 not_implemented_cube_cards 0
-all tokens, before mapping: distinct tokens 797, tokens on exactly one card 362, cards with a token no other row shares 193, cards with no effect-tree token 93
-all tokens, after mapping: distinct tokens 797, tokens on exactly one card 362, cards with a token no other row shares 193, cards with no effect-tree token 93
-effect-tree tokens (leaf:, op:, cond:), before mapping: distinct tokens 408, tokens on exactly one card 209, cards with a token no other row shares 98, cards with no effect-tree token 93
-effect-tree tokens (leaf:, op:, cond:), after mapping: distinct tokens 408, tokens on exactly one card 209, cards with a token no other row shares 98, cards with no effect-tree token 93
+all tokens, before mapping: distinct tokens 796, tokens on exactly one card 361, cards with a token no other row shares 193, cards with no effect-tree token 93
+all tokens, after mapping: distinct tokens 796, tokens on exactly one card 361, cards with a token no other row shares 193, cards with no effect-tree token 93
+effect-tree tokens (leaf:, op:, cond:), before mapping: distinct tokens 407, tokens on exactly one card 208, cards with a token no other row shares 98, cards with no effect-tree token 93
+effect-tree tokens (leaf:, op:, cond:), after mapping: distinct tokens 407, tokens on exactly one card 208, cards with a token no other row shares 98, cards with no effect-tree token 93
 mapping entries 0, used by the pool 0
 low-distinctiveness cards (at least 10 other rows with overlap >= 0.75): 66
   Multiversal Passage (100 other rows, 3 nonzero features)
@@ -8219,12 +8219,11 @@ Tamiyo, Collector of Tales (card id 1675)
   costpart:Loyalty.n = 1
   flag:permanent
   flag:permanent_entry
-  leaf:StandardV1 x1331
-  leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1.named = 1000
-  leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1=named x1330
-  leaf:StandardV1.EternalV1=C9cV1 x1331
-  op:Choice x27
-  op:Choice.options = 169
+  leaf:StandardV1 x2
+  leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1=named
+  leaf:StandardV1.EternalV1=C9cV1 x2
+  op:Choice
+  op:Choice.options = 1
   stat:loyalty = 5
   stat:mana_value = 4
   subtype:Tamiyo
@@ -10961,7 +10960,7 @@ Forest (card id 39)
  953 value   1 kicker:x
  954 count   1 kw:INFECT
  955 count   1 leaf:StandardV1.0=AuraEnters
- 956 value   1 leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1.named
+ 956 value   0 leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1.named
  957 count   1 leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1=named
  958 count   5 leaf:StandardV1.EternalV1=C8aV1
  959 count   3 leaf:StandardV1.EternalV1=C8bV1
