@@ -1777,10 +1777,9 @@ fn publication_io_failure_ledgers_the_batch_and_refuses_resume() {
     }
     impl GamePilot for BlockingPilot {
         fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            fs::create_dir_all(&self.path).unwrap();
             if self.fail_rename {
-                fs::write(&self.path, b"blocks publication").unwrap();
-            } else {
-                fs::create_dir_all(&self.path).unwrap();
+                fs::write(self.path.join("blocker"), b"blocks publication").unwrap();
             }
             NaturalPilot.play(spec, caps)
         }
@@ -1801,19 +1800,21 @@ fn publication_io_failure_ledgers_the_batch_and_refuses_resume() {
             },
             fail_rename,
         }));
-        assert!(matches!(
-            driver.run_next_update(&pool(), &pilot),
-            Err(TrainingDriverError::Io(_))
-        ));
+        let result = driver.run_next_update(&pool(), &pilot);
+        assert!(
+            matches!(result, Err(TrainingDriverError::Io(_))),
+            "fail_rename={fail_rename}: {result:?}"
+        );
         let stop = read_value(&root.join("stops/stop-0000.json"));
         assert_eq!(stop["kind"], "io_error");
         assert_eq!(stop["batch_index"], 0);
         assert!(stop.get("update").is_none());
         assert_eq!(stop["batch"].as_array().unwrap().len(), 16);
         assert_eq!(pending.join("commit.json").exists(), fail_rename);
-        assert!(!published.is_dir());
+        assert!(!published.join("commit.json").exists());
         if fail_rename {
-            fs::remove_file(&published).unwrap();
+            fs::remove_file(published.join("blocker")).unwrap();
+            fs::remove_dir(&published).unwrap();
         } else {
             assert!(!pending.exists());
         }
