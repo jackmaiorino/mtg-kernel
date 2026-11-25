@@ -64,11 +64,11 @@ fn small_model(seed: u64) -> ModelV1 {
     ModelV1::initialise_v1(SMALL_ROWS, SMALL_WIDTH, SMALL_DENSE, seed).unwrap()
 }
 
-fn provisional_rows() -> ModelCardRowsV1 {
+fn synthetic_provisional_shape_rows() -> ModelCardRowsV1 {
     synthetic_rows(PROVISIONAL_ROWS, COMMITTED_WIDTH, COMMITTED_DENSE, 13)
 }
 
-fn provisional_model(seed: u64) -> ModelV1 {
+fn synthetic_provisional_shape_model(seed: u64) -> ModelV1 {
     ModelV1::initialise_v1(PROVISIONAL_ROWS, COMMITTED_WIDTH, COMMITTED_DENSE, seed).unwrap()
 }
 
@@ -393,7 +393,7 @@ fn layout_and_parameter_digest_bytes_are_the_stated_format() {
 
 #[test]
 fn initialiser_zero_rules_and_bounds() {
-    let model = provisional_model(INIT_SEED);
+    let model = synthetic_provisional_shape_model(INIT_SEED);
     let mut zero_tensors = Vec::new();
     for (spec, values) in model.layout().iter().zip(&model.values) {
         match &spec.init {
@@ -479,11 +479,15 @@ fn initialiser_zero_rules_and_bounds() {
     assert_eq!(uniform_bound_v1(EMBEDDING_INIT_FAN_IN_V1), 0.25);
 
     assert_eq!(
-        provisional_model(INIT_SEED).parameter_sha256(),
+        hex(&model.parameter_sha256()),
+        "e1439cde01be55596452f45308db0adae3210f11f9a9bf085684a59d31017a7f"
+    );
+    assert_eq!(
+        synthetic_provisional_shape_model(INIT_SEED).parameter_sha256(),
         model.parameter_sha256()
     );
     assert_ne!(
-        provisional_model(INIT_SEED + 1).parameter_sha256(),
+        synthetic_provisional_shape_model(INIT_SEED + 1).parameter_sha256(),
         model.parameter_sha256()
     );
 }
@@ -515,7 +519,7 @@ fn drawn_spec(name: &str, zero_columns: Option<Range<usize>>) -> TensorSpecV1 {
 }
 
 #[test]
-fn draw_rule_is_exact_and_zero_tensors_draw_nothing() {
+fn draw_rule_is_exact_and_zero_entries_draw_nothing() {
     let seed = 0x1234_5678_9abc_def0;
     let values = initial_values_v1(&[drawn_spec("t", None)], seed);
     let mut stream = SplitMix64::seed(seed);
@@ -524,15 +528,10 @@ fn draw_rule_is_exact_and_zero_tensors_draw_nothing() {
         .collect();
     assert_eq!(bits(&values[0]), bits(&expected));
 
-    // Zeroed columns still draw: the other columns keep their values.
+    // Each eligible column takes the next draw across row boundaries.
     let zeroed = initial_values_v1(&[drawn_spec("t", Some(1..2))], seed);
-    for (index, (got, want)) in zeroed[0].iter().zip(&expected).enumerate() {
-        if index % 3 == 1 {
-            assert_eq!(got.to_bits(), 0);
-        } else {
-            assert_eq!(got.to_bits(), want.to_bits());
-        }
-    }
+    let expected_skipping_columns = [expected[0], 0.0, expected[1], expected[2], 0.0, expected[3]];
+    assert_eq!(bits(&zeroed[0]), bits(&expected_skipping_columns));
 
     // A zero tensor before a drawn one consumes no draw.
     let zero = TensorSpecV1 {
@@ -567,11 +566,14 @@ fn whole_layout_follows_the_draw_rule_in_layout_order() {
         };
         let in_width = spec.shape[1];
         for (index, value) in values.iter().enumerate() {
-            let drawn = expected_draw(stream.next_u64(), *fan_in);
             let zeroed = zero_columns
                 .as_ref()
                 .is_some_and(|columns| columns.contains(&(index % in_width)));
-            let expected = if zeroed { 0.0f32 } else { drawn };
+            let expected = if zeroed {
+                0.0f32
+            } else {
+                expected_draw(stream.next_u64(), *fan_in)
+            };
             assert_eq!(
                 value.to_bits(),
                 expected.to_bits(),
@@ -619,8 +621,8 @@ fn registry_basics_bind_in_type_bit_order() {
 
 #[test]
 fn every_output_is_positive_zero_at_initialisation() {
-    let rows = provisional_rows();
-    let model = provisional_model(INIT_SEED);
+    let rows = synthetic_provisional_shape_rows();
+    let model = synthetic_provisional_shape_model(INIT_SEED);
 
     let pick = model.pick_forward_v1(&rows, 4).unwrap();
     let states = [
@@ -1397,8 +1399,8 @@ fn assert_state_refused(forward: &PickForwardV1<'_>, state: &PickStateV1, what: 
 
 #[test]
 fn invalid_pick_states_are_refused() {
-    let rows = provisional_rows();
-    let model = provisional_model(INIT_SEED);
+    let rows = synthetic_provisional_shape_rows();
+    let model = synthetic_provisional_shape_model(INIT_SEED);
     let forward = model.pick_forward_v1(&rows, 2).unwrap();
 
     let valid = pick_state(20, 10, 0);

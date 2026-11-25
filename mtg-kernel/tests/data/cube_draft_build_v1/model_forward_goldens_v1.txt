@@ -1,30 +1,30 @@
 layout_sha256 da3770aecef52011764d3cc330fb783eaf76ab63cdafefc843c9381aeff1fd0b
-parameter_sha256 a49a359fd9de45c24f4c40d378104e80951e4d9517a9c59329b711592fe4f599
+parameter_sha256 ed3f163914fdec3d4d07b7e9c15c59486cd2e610625ce83b46a23b0da72be1d5
 pick_hidden_sha256 f2bf38535232103089f2ae061a3b2d5124bc7a63f781d0c160363a94f6387932
-pick state 0 card 895 3f03d532
-pick state 0 card 896 3f09e649
-pick state 0 card 899 3ee27f19
-pick state 0 card 902 3ee960e1
-pick state 0 card 903 3f1f32bb
-pick state 0 card 905 3f03f672
-pick state 0 card 910 3ef4ecf3
-pick state 0 card 911 3ee7a9c2
-pick state 0 card 914 3f12ab5c
-pick state 0 card 915 3ea0930c
-pick state 0 card 917 3f44a40d
-pick state 0 card 920 3eecbff2
-pick state 0 card 922 3f054f3c
-pick state 0 card 924 3ee4e478
-pick state 0 card 926 3ef41c97
-value state 0 3f7039de
-pick state 1 card 1116 3f2e9687
-pick state 1 card 1123 3f6354ff
-pick state 1 card 1151 3f81d7b0
-pick state 1 card 1159 3f5b2fe4
-pick state 1 card 1162 3f760b19
-pick state 1 card 1181 3f4af76f
-pick state 1 card 1187 3f591598
-value state 1 3f92ea0a
+pick state 0 card 895 3e7d8e45
+pick state 0 card 896 3e8ff6e2
+pick state 0 card 899 3dee0e16
+pick state 0 card 902 3df95732
+pick state 0 card 903 3e9d1737
+pick state 0 card 905 3e8d7835
+pick state 0 card 910 3e9cf80f
+pick state 0 card 911 3ddc5f7a
+pick state 0 card 914 3e599016
+pick state 0 card 915 3d67047c
+pick state 0 card 917 3e6004e1
+pick state 0 card 920 3e4cf940
+pick state 0 card 922 3e2462c6
+pick state 0 card 924 3dd7fc82
+pick state 0 card 926 3e2e6243
+value state 0 3fbcb11a
+pick state 1 card 1116 3e98929c
+pick state 1 card 1123 3ec480ba
+pick state 1 card 1151 3eb4f8a5
+pick state 1 card 1159 3f072a3a
+pick state 1 card 1162 3eaaa622
+pick state 1 card 1181 3ea527ca
+pick state 1 card 1187 3eca36a4
+value state 1 3f616deb
 build_hidden_sha256 7a2ab20039e467f55533a6d90d85a88105a5b7ee6858e79ce76fd5e02921e1f2
 count B 0 3f2353e7
 count B 1 be85e598
