@@ -19,7 +19,7 @@ A ready pull request whose files all map to one scope runs only that scope's che
 | `mtg-kernel/src/native_expanded_training_run_v1.rs`, `mtg-kernel/src/native_expanded_training_run_v1/*`, `mtg-kernel/src/bin/native_expanded_training_run_v1.rs` | trainer |
 | `mtg-kernel/src/bin/kernel_limited_training_v1.rs` | pr |
 | `mtg-kernel/src/bin/kernel_limited_*` | rules-limited |
-| `python/tools/run_rust_workspace_tests.py`, `python/tools/run_rust_lib_filters.py`, `python/tools/rust_case_seconds.json`, `python/tools/rust_case_timeout_seconds.json`, `python/tools/rust_limited_only_known_failures.json`, `python/tools/run_rust_integration_tests.py`, `python/tools/rust_integration_module_seconds.json`, `python/tools/check_rust_integration_inventory.py`, `python/tools/check_rust_integration_parts.py`, `python/tools/limited_*_session_v*.py` | pr |
+| `python/tools/run_rust_workspace_tests.py`, `python/tools/rust_workspace_lib_plan.py`, `python/tools/rust_workspace_lib_seconds.json`, `python/tools/run_rust_lib_filters.py`, `python/tools/rust_case_seconds.json`, `python/tools/rust_case_timeout_seconds.json`, `python/tools/rust_limited_only_known_failures.json`, `python/tools/run_rust_integration_tests.py`, `python/tools/rust_integration_module_seconds.json`, `python/tools/check_rust_integration_inventory.py`, `python/tools/check_rust_integration_parts.py`, `python/tools/limited_*_session_v*.py` | pr |
 | `python/tests/*`, `python/tools/*` | python |
 | anything else | pr |
 

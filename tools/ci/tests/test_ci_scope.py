@@ -46,7 +46,8 @@ class TableTests(unittest.TestCase):
     def test_the_whole_set_jobs_run_for_all_and_never_for_an_unrelated_scope(self):
         jobs = workflow()["jobs"]
         for job in ("rust-test-groups", "rust-tests", "eternal-integration-build", "rust-eternal-integration-parts",
-                    "eternal-integration-inventory"):
+                    "eternal-integration-inventory", "workspace-lib-build", "rust-workspace-lib-parts",
+                    "workspace-lib-inventory"):
             self.assertIn("needs.detect-changes.outputs.checks == 'all'", jobs[job]["if"])
         for job in ("python-env-build", "python-tests"):
             self.assertIn("""contains(fromJSON('["all", "python"]'), needs.detect-changes.outputs.checks)""", jobs[job]["if"])
@@ -104,6 +105,16 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(self.scope("python/tools/check_limited_common_client_v1.py"), "python")
         self.assertEqual(self.scope(".github/workflows/viewer.yml"), "workflow")
         self.assertEqual(self.scope("docs/a.md", "README.md"), "docs")
+
+    def test_the_files_that_choose_rust_tests_run_the_whole_set_and_the_rust_jobs(self):
+        (line,) = [line for line in WORKFLOW.read_text(encoding="utf-8").splitlines()
+                   if "python/tools/run_rust_integration_tests.py|" in line]
+        relevant = line.strip().rstrip(")").split("|")
+        for name in ("run_rust_workspace_tests.py", "rust_workspace_lib_plan.py", "rust_workspace_lib_seconds.json",
+                     "run_rust_integration_tests.py", "check_rust_integration_parts.py"):
+            with self.subTest(file=name):
+                self.assertEqual(ci_scope.scope_of(f"python/tools/{name}"), "pr")
+                self.assertIn(f"python/tools/{name}", relevant)
 
     def test_shared_files_make_a_trainer_change_mixed(self):
         for shared in ("mtg-kernel/src/sideboard_play_policy_v1.rs", "mtg-kernel/src/rl_session.rs",
