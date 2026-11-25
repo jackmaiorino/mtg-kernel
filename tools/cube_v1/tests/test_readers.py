@@ -31,6 +31,7 @@ import readers  # noqa: E402
 import seeds_v1  # noqa: E402
 
 FIXTURES = TESTS_DIR / "fixtures"
+A6_PART1_FIXTURE = FIXTURES / "a6_part1_signed.md"
 DECLARATION = FIXTURES / "read_declaration_test.json"
 DECL, DECL_SHA = readers.load_declaration(DECLARATION)
 RUST_GOLDENS = CUBE_V1_DIR.parent.parent / "mtg-kernel" / "tests" / "cube_read_seed_goldens_v1.rs"
@@ -1708,9 +1709,20 @@ class DeclarationTests(unittest.TestCase):
         with self.assertRaisesRegex(readers.ReadError, "countersigned"):
             readers.run_read(decl_with(**{"c.namespace": "read-gate-c"}), DECL_SHA, "c", 1, [])
 
+    def test_a6_fixture_is_self_contained_in_repo(self):
+        self.assertTrue(A6_PART1_FIXTURE.is_file())
+        raw = A6_PART1_FIXTURE.read_bytes()
+        norm = raw.replace(b"\r\n", b"\n")
+        idx = norm.find(readers.A6_PART1_HEADING)
+        self.assertGreater(idx, 0)
+        part1 = norm[:idx].rstrip(b"\n") + b"\n"
+        self.assertEqual(hashlib.sha256(part1).hexdigest(), readers.A6_PART1_SHA256)
+        src = Path(__file__).read_text(encoding="utf-8")
+        self.assertNotIn("m4-docs" + "/A6-READS.md", src)
+        self.assertNotIn("m4-docs" + "\\A6-READS.md", src)
+
     def test_live_declaration_verifies_countersigned_a6_constants_and_pins(self):
-        a6_path = Path("N:/cube-20261122/m4-docs/A6-READS.md")
-        raw_a6 = a6_path.read_bytes()
+        raw_a6 = A6_PART1_FIXTURE.read_bytes()
         raw_a6_sha = hashlib.sha256(raw_a6).hexdigest()
         # The unsigned part-2 A6 file must be refused.
         with self.assertRaisesRegex(readers.ReadError, "countersigned|part 2"):
@@ -1757,7 +1769,7 @@ class DeclarationTests(unittest.TestCase):
 
         # Build a valid live read-d8-aa set on disk and run_read through it.
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = synth.assert_test_temp_root(Path(tmp))
             plans = [
                 read_plans.build_plan("aa", "read-d8-aa", u, pins=synth.PINS, pilot=synth.PILOT,
                                       picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)}, mirror=m)
@@ -1862,7 +1874,7 @@ class D8V3RestartTests(unittest.TestCase):
 
     @staticmethod
     def _countersigned_a6() -> tuple[bytes, str]:
-        raw = Path("N:/cube-20261122/m4-docs/A6-READS.md").read_bytes()
+        raw = A6_PART1_FIXTURE.read_bytes()
         cs = raw + (
             b"\n\n## Signature, part 2\n\n"
             b"Research lead countersigned part 2 pins on 2026-11-25 12:00 ET.\n"
