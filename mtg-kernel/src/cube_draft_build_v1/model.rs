@@ -26,6 +26,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
@@ -62,9 +63,7 @@ pub const BASICS_COUNT_OPTIONS_V1: usize = DECK_CARDS_V1 + 1;
 pub const BASIC_TYPE_COUNT_V1: usize = 5;
 /// Non-empty sets of basic land types, by 5-bit mask 1 to 31.
 pub const TYPE_SET_COUNT_V1: usize = (1 << BASIC_TYPE_COUNT_V1) - 1;
-/// Fan-in used for the uniform bound of both card embeddings E (bound
-/// 1/sqrt(16) = 0.25). The design does not state an embedding's fan-in; this
-/// is an open point for D0 to confirm.
+/// D0.5 gives both card embeddings a fan-in of 16 and a uniform bound of 0.25.
 pub const EMBEDDING_INIT_FAN_IN_V1: usize = EMBEDDING_WIDTH_V1;
 
 const H: usize = HIDDEN_WIDTH_V1;
@@ -132,11 +131,11 @@ pub enum TrunkV1 {
 /// How a tensor is initialised.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InitRuleV1 {
-    /// Every value +0.0; draws nothing from the stream.
+    /// Every value starts at +0.0 and takes no stream value.
     Zero,
-    /// One draw per element in row-major order, uniform in plus or minus
-    /// 1/sqrt(`fan_in`). The listed input columns of every row are then set
-    /// to +0.0, after their draws, so the draw count never depends on them.
+    /// In row-major order, draw each weight uniformly in plus or minus
+    /// 1/sqrt(`fan_in`). The listed input columns start at +0.0 and take no
+    /// stream values.
     Uniform {
         fan_in: usize,
         zero_columns: Option<Range<usize>>,
@@ -601,8 +600,8 @@ pub fn uniform_draw_v1(stream_value: u64, bound: f32) -> f32 {
 }
 
 /// Initial values of `specs`, in order, from one `SplitMix64::seed(seed)`
-/// stream. A zero tensor draws nothing; a drawn tensor draws one value per
-/// element in row-major order, including its zeroed columns.
+/// stream. Uniform weights draw in row-major order. Entries that start at
+/// +0.0 take no stream value.
 pub fn initial_values_v1(specs: &[TensorSpecV1], seed: u64) -> Vec<Vec<f32>> {
     let mut stream = SplitMix64::seed(seed);
     specs
@@ -616,16 +615,21 @@ pub fn initial_values_v1(specs: &[TensorSpecV1], seed: u64) -> Vec<Vec<f32>> {
                     zero_columns,
                 } => {
                     let bound = uniform_bound_v1(*fan_in);
-                    let mut values: Vec<f32> = (0..count)
-                        .map(|_| uniform_draw_v1(stream.next_u64(), bound))
-                        .collect();
+                    let mut draw = || uniform_draw_v1(stream.next_u64(), bound);
                     if let Some(columns) = zero_columns {
                         let in_width = spec.shape[spec.shape.len() - 1];
+                        let mut values = vec![0.0f32; count];
                         for row in values.chunks_exact_mut(in_width) {
-                            row[columns.clone()].fill(0.0f32);
+                            let (through_zero_columns, suffix) = row.split_at_mut(columns.end);
+                            let prefix = &mut through_zero_columns[..columns.start];
+                            for value in prefix.iter_mut().chain(suffix) {
+                                *value = draw();
+                            }
                         }
+                        values
+                    } else {
+                        (0..count).map(|_| draw()).collect()
                     }
-                    values
                 }
             }
         })
@@ -770,6 +774,7 @@ impl ModelCardRowsV1 {
 pub struct CardHiddenTableV1 {
     trunk: TrunkV1,
     rows: usize,
+    parameter_digest: [u8; 32],
     values: Vec<f32>,
 }
 
@@ -799,6 +804,7 @@ pub struct ModelV1 {
     dense_width: usize,
     specs: Vec<TensorSpecV1>,
     values: Vec<Vec<f32>>,
+    parameter_digest: OnceLock<[u8; 32]>,
 }
 
 impl ModelV1 {
@@ -819,6 +825,7 @@ impl ModelV1 {
             dense_width,
             specs,
             values,
+            parameter_digest: OnceLock::new(),
         })
     }
 
@@ -858,14 +865,16 @@ impl ModelV1 {
     /// Per tensor in layout order, the layout hash's bytes for it followed by
     /// its values as f32 bits little-endian.
     pub fn parameter_sha256(&self) -> [u8; 32] {
-        let mut digest = Sha256::new();
-        for (spec, values) in self.specs.iter().zip(&self.values) {
-            update_tensor_header_v1(&mut digest, &spec.name, &spec.shape);
-            for value in values {
-                digest.update(value.to_bits().to_le_bytes());
+        *self.parameter_digest.get_or_init(|| {
+            let mut digest = Sha256::new();
+            for (spec, values) in self.specs.iter().zip(&self.values) {
+                update_tensor_header_v1(&mut digest, &spec.name, &spec.shape);
+                for value in values {
+                    digest.update(value.to_bits().to_le_bytes());
+                }
             }
-        }
-        digest.finalize().into()
+            digest.finalize().into()
+        })
     }
 
     /// Calls `visit` on every tensor in layout order.
@@ -886,6 +895,7 @@ impl ModelV1 {
         &mut self,
         mut visit: impl FnMut(&str, ParameterSetV1, &[usize], &mut [f32]),
     ) {
+        self.parameter_digest.take();
         for (spec, values) in self.specs.iter().zip(self.values.iter_mut()) {
             visit(&spec.name, spec.set, &spec.shape, values);
         }
@@ -900,6 +910,7 @@ impl ModelV1 {
     /// The values of the tensor named `name`, mutable.
     pub fn tensor_mut_v1(&mut self, name: &str) -> Option<&mut [f32]> {
         let position = self.specs.iter().position(|spec| spec.name == name)?;
+        self.parameter_digest.take();
         Some(&mut self.values[position])
     }
 
@@ -907,6 +918,7 @@ impl ModelV1 {
     /// `card_mlp.2`, weights and biases) into the pick trunk, bit for bit.
     /// Nothing else changes.
     pub fn copy_build_trunk_to_pick_trunk(&mut self) {
+        self.parameter_digest.take();
         for (from, to) in TensorIdV1::BUILD_TRUNK.iter().zip(TensorIdV1::PICK_TRUNK) {
             let source = self.values[from.index()].clone();
             self.values[to.index()].copy_from_slice(&source);
@@ -945,13 +957,40 @@ impl ModelV1 {
         Ok(())
     }
 
-    fn card_input(
+    fn check_cached_hidden(
         &self,
         rows: &ModelCardRowsV1,
-        row: usize,
-        embedding: TensorIdV1,
-        projection: TensorIdV1,
-    ) -> Vec<f32> {
+        hidden: &CardHiddenTableV1,
+        trunk: TrunkV1,
+    ) -> Result<(), ModelErrorV1> {
+        self.check_rows(rows)?;
+        if hidden.trunk != trunk {
+            return Err(shape_error(format!(
+                "cached hidden table has trunk {:?}, expected {trunk:?}",
+                hidden.trunk
+            )));
+        }
+        if hidden.rows != self.index_rows {
+            return Err(shape_error(format!(
+                "cached hidden table has {} rows, expected {}",
+                hidden.rows, self.index_rows
+            )));
+        }
+        if hidden.parameter_digest != self.parameter_sha256() {
+            return Err(shape_error(
+                "cached hidden table was built from different model parameters",
+            ));
+        }
+        Ok(())
+    }
+
+    /// h(r) of one index row through `trunk`.
+    fn card_hidden_row(&self, trunk: TrunkV1, rows: &ModelCardRowsV1, row: usize, out: &mut [f32]) {
+        let ids = match trunk {
+            TrunkV1::Build => TensorIdV1::BUILD_TRUNK,
+            TrunkV1::Pick => TensorIdV1::PICK_TRUNK,
+        };
+        let [embedding, projection, mlp0_weight, mlp0_bias, mlp2_weight, mlp2_bias] = ids;
         let embedding_row =
             &self.t(embedding)[row * EMBEDDING_WIDTH_V1..(row + 1) * EMBEDDING_WIDTH_V1];
         let projection = self.t(projection);
@@ -967,17 +1006,6 @@ impl ModelV1 {
             *slot = sum;
         }
         card_vector[EMBEDDING_WIDTH_V1..].copy_from_slice(rows.dense_row(row));
-        card_vector
-    }
-
-    /// h(r) of one index row through `trunk`.
-    fn card_hidden_row(&self, trunk: TrunkV1, rows: &ModelCardRowsV1, row: usize, out: &mut [f32]) {
-        let ids = match trunk {
-            TrunkV1::Build => TensorIdV1::BUILD_TRUNK,
-            TrunkV1::Pick => TensorIdV1::PICK_TRUNK,
-        };
-        let [embedding, projection, mlp0_weight, mlp0_bias, mlp2_weight, mlp2_bias] = ids;
-        let card_vector = self.card_input(rows, row, embedding, projection);
         let mut first = [0.0f32; H];
         self.layer(mlp0_weight, Some(mlp0_bias))
             .forward(&card_vector, &mut first);
@@ -1023,6 +1051,7 @@ impl ModelV1 {
         Ok(CardHiddenTableV1 {
             trunk,
             rows: row_count,
+            parameter_digest: self.parameter_sha256(),
             values,
         })
     }
@@ -1305,18 +1334,18 @@ pub struct PickForwardV1<'m> {
 }
 
 impl<'m> PickForwardV1<'m> {
-    // The owner keeps these borrows tied to the model and rows that built H.
+    /// Borrows H after checking its trunk, dimensions and parameter digest.
     pub(crate) fn from_cached_hidden(
         model: &'m ModelV1,
         rows: &'m ModelCardRowsV1,
         hidden: &'m CardHiddenTableV1,
-    ) -> Self {
-        assert_eq!(hidden.trunk(), TrunkV1::Pick);
-        Self {
+    ) -> Result<Self, ModelErrorV1> {
+        model.check_cached_hidden(rows, hidden, TrunkV1::Pick)?;
+        Ok(Self {
             model,
             rows,
             hidden: Cow::Borrowed(hidden),
-        }
+        })
     }
 
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
@@ -1402,18 +1431,18 @@ pub struct BuildForwardV1<'m> {
 }
 
 impl<'m> BuildForwardV1<'m> {
-    // The owner keeps these borrows tied to the model and rows that built H.
+    /// Borrows H after checking its trunk, dimensions and parameter digest.
     pub(crate) fn from_cached_hidden(
         model: &'m ModelV1,
         rows: &'m ModelCardRowsV1,
         hidden: &'m CardHiddenTableV1,
-    ) -> Self {
-        assert_eq!(hidden.trunk(), TrunkV1::Build);
-        Self {
+    ) -> Result<Self, ModelErrorV1> {
+        model.check_cached_hidden(rows, hidden, TrunkV1::Build)?;
+        Ok(Self {
             model,
             rows,
             hidden: Cow::Borrowed(hidden),
-        }
+        })
     }
 
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
@@ -1692,6 +1721,3 @@ impl TypeContextV1<'_> {
 #[cfg(test)]
 #[path = "model_tests.rs"]
 mod tests;
-
-#[path = "training.rs"]
-pub mod training;

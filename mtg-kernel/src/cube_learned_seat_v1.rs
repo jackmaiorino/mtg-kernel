@@ -71,8 +71,9 @@ impl ModelSeatForward {
         })
     }
 
-    fn build_forward(&self) -> BuildForwardV1<'_> {
+    fn build_forward(&self) -> Result<BuildForwardV1<'_>, SeatError> {
         BuildForwardV1::from_cached_hidden(&self.model, &self.rows, &self.build_hidden)
+            .map_err(model_error)
     }
 }
 
@@ -107,7 +108,8 @@ impl SeatForward for ModelSeatForward {
             step: step as u8,
             direction,
         };
-        let forward = PickForwardV1::from_cached_hidden(&self.model, &self.rows, &self.pick_hidden);
+        let forward = PickForwardV1::from_cached_hidden(&self.model, &self.rows, &self.pick_hidden)
+            .map_err(model_error)?;
         let logits = forward.pick_logits_v1(&state).map_err(model_error)?;
         if logits.ids != input.pack {
             return Err(invalid("pick logits do not match the pack order"));
@@ -117,7 +119,7 @@ impl SeatForward for ModelSeatForward {
     }
 
     fn count(&self, pool: &[u16]) -> Result<[f32; 41], SeatError> {
-        self.build_forward()
+        self.build_forward()?
             .build_context_v1(pool)
             .map_err(model_error)?
             .count_logits_v1()
@@ -127,7 +129,7 @@ impl SeatForward for ModelSeatForward {
 
     fn pointer(&self, input: &BuildInputs<'_>, remaining: &[u16]) -> Result<Vec<f32>, SeatError> {
         let logits = self
-            .build_forward()
+            .build_forward()?
             .build_context_v1(input.pool)
             .map_err(model_error)?
             .pointer_logits_v1(usize::from(input.basics), input.chosen, remaining)
@@ -148,7 +150,7 @@ impl SeatForward for ModelSeatForward {
             return Err(invalid("infeasible basic type mask"));
         }
         let logits = self
-            .build_forward()
+            .build_forward()?
             .build_context_v1(input.pool)
             .map_err(model_error)?
             .type_context_v1(usize::from(input.basics), input.chosen)
@@ -170,7 +172,7 @@ impl SeatForward for ModelSeatForward {
         }
         let mask = bits.iter().fold(0u8, |mask, &bit| mask | bit as u8);
         let logits = self
-            .build_forward()
+            .build_forward()?
             .build_context_v1(input.pool)
             .map_err(model_error)?
             .type_context_v1(usize::from(input.basics), input.chosen)
