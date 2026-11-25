@@ -849,26 +849,38 @@ def verify_d8_v3_against_root(root: Path, man: dict[str, Any], *,
         if ns == "dose-d8" and n >= 2 and man["set"] != "prep-panel":
             base_name, _ = _set_base_and_k(man["set"])
             is_full_restart = restart_auth is not None and restart_auth.get("restart_kind") == "amendment"
-            for _, prev_dir, prev_man in earlier_sets:
-                prev_base, _ = _set_base_and_k(prev_man["set"])
-                if prev_man["kind"] == man["kind"] and prev_base == base_name:
-                    interrupted, _ = is_d8_interrupted_set(prev_dir, prev_man)
-                    if interrupted:
+            same_kind_earlier = [
+                (r_num, _set_base_and_k(s_man["set"])[1], s_dir, s_man)
+                for r_num, s_dir, s_man in earlier_sets
+                if s_man["kind"] == man["kind"] and _set_base_and_k(s_man["set"])[0] == base_name
+            ]
+            if same_kind_earlier:
+                _, _, latest_dir, latest_man = max(same_kind_earlier, key=lambda item: (item[0], item[1]))
+                interrupted, _ = is_d8_interrupted_set(latest_dir, latest_man)
+                if interrupted:
+                    raise SetError(
+                        f"{ns}/{man['run']}/{man['set']}: earlier set {latest_man['run']}/{latest_man['set']} was interrupted, "
+                        f"so this ordinal must use a -restart-<k> name and replaces"
+                    )
+                if man["kind"] == "plans" and _is_d8_completed_set(latest_dir, latest_man) and not is_full_restart:
+                    raise SetError(
+                        f"{ns}/{man['run']}/{man['set']}: earlier set {latest_man['run']}/{latest_man['set']} already completed "
+                        f"on this build and cannot be replayed under a fresh name"
+                    )
+            if man["kind"] == "prep" and base_name.startswith("prep-dose-"):
+                plan_base = base_name[len("prep-"):]
+                plan_earlier = [
+                    (r_num, _set_base_and_k(s_man["set"])[1], s_dir, s_man)
+                    for r_num, s_dir, s_man in earlier_sets
+                    if s_man["kind"] == "plans" and _set_base_and_k(s_man["set"])[0] == plan_base
+                ]
+                if plan_earlier:
+                    _, _, latest_plan_dir, latest_plan_man = max(plan_earlier, key=lambda item: (item[0], item[1]))
+                    if _is_d8_completed_set(latest_plan_dir, latest_plan_man) and not is_full_restart:
                         raise SetError(
-                            f"{ns}/{man['run']}/{man['set']}: earlier set {prev_man['run']}/{prev_man['set']} was interrupted, "
-                            f"so this ordinal must use a -restart-<k> name and replaces"
-                        )
-                    if man["kind"] == "plans" and _is_d8_completed_set(prev_dir, prev_man) and not is_full_restart:
-                        raise SetError(
-                            f"{ns}/{man['run']}/{man['set']}: earlier set {prev_man['run']}/{prev_man['set']} already completed "
-                            f"on this build and cannot be replayed under a fresh name"
-                        )
-                if (man["kind"] == "prep" and base_name.startswith("prep-dose-")
-                        and prev_man["kind"] == "plans" and prev_base == base_name[len("prep-"):]):
-                    if _is_d8_completed_set(prev_dir, prev_man) and not is_full_restart:
-                        raise SetError(
-                            f"{ns}/{man['run']}/{man['set']}: earlier plan set {prev_man['run']}/{prev_man['set']} already "
-                            f"completed on this build; cannot replay its prep under a fresh name"
+                            f"{ns}/{man['run']}/{man['set']}: earlier plan set "
+                            f"{latest_plan_man['run']}/{latest_plan_man['set']} already completed on this build; "
+                            "cannot replay its prep under a fresh name"
                         )
         return
 
@@ -893,16 +905,33 @@ def verify_d8_v3_against_root(root: Path, man: dict[str, Any], *,
         raise SetError(
             f"{ns}/{man['run']}/{man['set']}: base set {cur_base!r} does not match predecessor {pred_man['set']!r}"
         )
-    if cur_k != pred_k + 1:
-        raise SetError(
-            f"{ns}/{man['run']}/{man['set']}: restart index k = {cur_k} must follow predecessor k = {pred_k}"
-        )
-    # Require replacing the latest earlier instance of (kind, cur_base) across all earlier runs.
     same_base_earlier = [
         (r_num, _set_base_and_k(s_man["set"])[1], s_man)
         for r_num, _, s_man in earlier_sets
         if s_man["kind"] == man["kind"] and _set_base_and_k(s_man["set"])[0] == cur_base
     ]
+    if ns == "read-d8-aa":
+        if cur_k != pred_k + 1:
+            raise SetError(
+                f"{ns}/{man['run']}/{man['set']}: restart index k = {cur_k} must follow predecessor k = {pred_k}"
+            )
+    else:
+        # READ-PLAN-v3 section 5: in dose-d8, -restart-<k> numbers restarts of that ordinal across
+        # the namespace starting at 1 (k = 1 + count of earlier restart sets of that ordinal).
+        earlier_restart_count = sum(1 for _, k_val, _ in same_base_earlier if k_val > 0)
+        want_k = 1 + earlier_restart_count
+        if cur_k != want_k:
+            raise SetError(
+                f"{ns}/{man['run']}/{man['set']}: restart index k = {cur_k}, expected {want_k} "
+                f"(1 + {earlier_restart_count} earlier restart(s) of {cur_base})"
+            )
+        for _, _, other_man in all_other_sets:
+            if other_man["kind"] == man["kind"] and _set_base_and_k(other_man["set"]) == (cur_base, cur_k):
+                raise SetError(
+                    f"{ns}/{man['run']}/{man['set']}: duplicate restart index k = {cur_k} for {cur_base} "
+                    f"(already used by {other_man['run']}/{other_man['set']})"
+                )
+    # Require replacing the latest earlier instance of (kind, cur_base) across all earlier runs.
     if same_base_earlier:
         _, _, latest_man = max(same_base_earlier, key=lambda item: (item[0], item[1]))
         latest_ref = f"{latest_man['run']}/{latest_man['set']}"
