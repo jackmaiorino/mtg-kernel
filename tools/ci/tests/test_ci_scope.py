@@ -47,7 +47,8 @@ class TableTests(unittest.TestCase):
     def test_the_whole_set_jobs_run_for_all_and_never_for_an_unrelated_scope(self):
         jobs = workflow()["jobs"]
         for job in ("rust-test-groups", "rust-tests", "eternal-integration-build", "rust-eternal-integration-parts",
-                    "eternal-integration-inventory"):
+                    "eternal-integration-inventory", "workspace-lib-build", "rust-workspace-lib-parts",
+                    "workspace-lib-inventory"):
             self.assertIn("needs.detect-changes.outputs.checks == 'all'", jobs[job]["if"])
         for job in ("python-env-build", "python-tests"):
             self.assertIn("""contains(fromJSON('["all", "python"]'), needs.detect-changes.outputs.checks)""", jobs[job]["if"])
@@ -105,6 +106,16 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(self.scope("python/tools/check_limited_common_client_v1.py"), "python")
         self.assertEqual(self.scope(".github/workflows/viewer.yml"), "workflow")
         self.assertEqual(self.scope("docs/a.md", "README.md"), "docs")
+
+    def test_the_files_that_choose_rust_tests_run_the_whole_set_and_the_rust_jobs(self):
+        (line,) = [line for line in WORKFLOW.read_text(encoding="utf-8").splitlines()
+                   if "python/tools/run_rust_integration_tests.py|" in line]
+        relevant = line.strip().rstrip(")").split("|")
+        for name in ("run_rust_workspace_tests.py", "rust_workspace_lib_plan.py", "rust_workspace_lib_seconds.json",
+                     "run_rust_integration_tests.py", "check_rust_integration_parts.py"):
+            with self.subTest(file=name):
+                self.assertEqual(ci_scope.scope_of(f"python/tools/{name}"), "pr")
+                self.assertIn(f"python/tools/{name}", relevant)
 
     def test_shared_files_make_a_trainer_change_mixed(self):
         for shared in ("mtg-kernel/src/sideboard_play_policy_v1.rs", "mtg-kernel/src/rl_session.rs",
@@ -203,8 +214,12 @@ SAME_CHANGE = [WEBSITE + ["tools/ci/hosted_fallback.py"], ["tools/ci/hosted_fall
                WEBSITE + [".github/workflows/ci.yml"], WEBSITE + [".github/workflows/s-transformer-v1.yml"],
                WEBSITE + ["data/eternal_v1/cards.json"]] + [WEBSITE + other for other in OTHERS] + OTHERS
 RUST_SET = {"rust-quality", "rust-test-groups", "limited-build", "rust-limited-groups", "rust-tests",
-            "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory"}
+            "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory",
+            "workspace-lib-build", "rust-workspace-lib-parts", "workspace-lib-inventory"}
 PYTHON_SET = {"python-env-build", "python-tests"}
+# The workspace library jobs (build once, four parts, inventory): in the pull request set they run Linux and
+# Windows, which is all their rows, and the complement does not run them.
+LIBRARY_SET = {"workspace-lib-build", "rust-workspace-lib-parts", "workspace-lib-inventory"}
 FULL_PR = {(job, "pr") for job in RUST_SET | PYTHON_SET}
 # Files outside viewer/ that name a path under it today (a few only as message text). A new reader of a website
 # file must be added here, and then its files must leave the viewer scope.
@@ -237,13 +252,25 @@ def linux_only_jobs():
 def coverage(scheduled):
     """A Linux-only job (lint, trainer and tools tests) covers only Linux, in any group set. The Python jobs have
     the same rows in the pull request set and the full set (Windows is in both; a test keeps it so), so they have
-    no part outside the pull request set for the complement to leave out."""
+    no part outside the pull request set for the complement to leave out. The same holds for the workspace library
+    jobs (CoverageModelTests pins their rows and that the complement skips them)."""
     linux_only = linux_only_jobs()
     return {(job, "linux" if job in linux_only else part) for job, group_set in scheduled for part in PARTS[group_set]
-            if not (job in PYTHON_SET and part == "windows-rest")}
+            if not (job in PYTHON_SET | LIBRARY_SET and part == "windows-rest")}
 
 
 class CoverageModelTests(unittest.TestCase):
+    def test_the_workspace_library_jobs_have_all_their_rows_in_the_pull_request_set(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        for job in sorted(LIBRARY_SET):
+            block = text[text.index(f"\n  {job}:\n"):]
+            block = block[:block.index("\n    steps:\n")]
+            with self.subTest(job=job):
+                self.assertIn("""os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) """
+                              """&& '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}""", block)
+                self.assertNotIn("exclude:", block)
+                self.assertIn("needs.detect-changes.outputs.scope != 'windows-complement'", block)
+
     def test_the_python_jobs_have_the_same_rows_in_the_pull_request_and_full_sets(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         for job in sorted(PYTHON_SET):

@@ -1,7 +1,11 @@
-"""The two parts of the workspace suite select disjoint targets."""
+"""The two parts of the workspace suite select disjoint targets, and the library's parts run each test once."""
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +14,8 @@ TOOLS = Path(__file__).resolve().parents[1] / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
+import check_rust_integration_parts as inventory  # noqa: E402
+from run_rust_integration_tests import run_recorded as recorded_run  # noqa: E402
 import run_rust_workspace_tests as workspace  # noqa: E402
 
 # Cargo flags that select the library in test mode: the library has `test = true` and `bench = true` by
@@ -69,6 +75,484 @@ class WorkspacePartsTests(unittest.TestCase):
     def test_the_lib_part_selects_only_the_library(self):
         command = self.run_part("lib")
         self.assertEqual(command[command.index("--workspace") + 1:], ["--lib", "--no-fail-fast"])
+
+
+
+TIMING = workspace.TIMING_TEST
+# Module names that are substrings of each other, a name inside another name, and the timing gate.
+LIBRARY = sorted(["alpha::one", "alpha::two", "beta_alpha::one", "gamma::slow", "gamma::slow_more", "delta::one",
+                  "delta::two", "epsilon::one", "zeta::x::one", "zeta::y::one", "snapshot::tests::fast", TIMING])
+TIMES = {"gamma::slow": 300, "zeta::x::one": 40, "alpha::two": 30}
+
+
+def libtest(tests, swap=None):
+    """`listed_tests` of a binary with libtest's selection: substring filters or-ed, then substring skips.
+
+    `swap` = (a, b): the binary selects b wherever the filters select a, and a wherever they select b.
+    """
+    def listed(_executable, *selection):
+        filters, skips, words = [], [], list(selection)
+        while words:
+            word = words.pop(0)
+            if word == "--skip":
+                skips.append(words.pop(0))
+            else:
+                filters.append(word)
+        chosen = [test for test in tests if (not filters or any(item in test for item in filters))
+                  and not any(item in test for item in skips)]
+        if swap:
+            chosen = sorted({swap[1] if test == swap[0] else swap[0] if test == swap[1] else test
+                             for test in chosen})
+        return chosen
+    return listed
+
+
+def plan_patches(tests=LIBRARY, **libtest_options):
+    return (patch.object(workspace, "listed_tests", libtest(tests, **libtest_options)),
+            patch.object(workspace.lib_plan, "load_weights", lambda: lambda name: TIMES.get(name, 1.0)),
+            patch("builtins.print"))
+
+
+class LibraryPlanTests(unittest.TestCase):
+    def plan(self, count=4, tests=LIBRARY, **options):
+        first, second, third = plan_patches(tests, **options)
+        with first, second, third:
+            return workspace.library_plan("mtg_kernel-1", count)
+
+    def test_the_binary_lists_every_test_but_the_timing_gate_in_exactly_one_part(self):
+        listed, plan, selections = self.plan()
+        self.assertEqual(listed, LIBRARY)
+        self.assertEqual(len(plan), 4)
+        self.assertEqual(sorted(test for selection in selections for test in selection),
+                         [test for test in LIBRARY if test != TIMING])
+        # Units: `alpha::one` selects beta_alpha::one, `gamma::slow` selects gamma::slow_more.
+        (alpha,) = [filters for filters in plan if "alpha::one" in filters]
+        self.assertIn("beta_alpha::", alpha)
+        (gamma,) = [selection for selection in selections if "gamma::slow" in selection]
+        self.assertIn("gamma::slow_more", gamma)
+
+    def test_a_binary_that_selects_otherwise_than_the_model_stops_every_part(self):
+        # The two parts still hold every test once between them, but not as the plan says.
+        _, plan, selections = self.plan()
+        first, second = selections[0][0], selections[1][0]
+        with self.assertRaisesRegex(ValueError, "other tests for part 0 than the plan's model"):
+            self.plan(swap=(first, second))
+
+    def test_a_plan_that_gives_a_test_to_two_parts_stops_every_part(self):
+        overlapping = ([["alpha::", "beta_alpha::", "delta::", "epsilon::", "gamma::", "snapshot::", "zeta::"],
+                        ["delta::two"]], [1.0, 1.0])
+        with patch.object(workspace.lib_plan, "plan_parts", lambda *_args: overlapping):
+            with self.assertRaisesRegex(ValueError, "not in exactly one part: \\['delta::two'\\]"):
+                self.plan(count=2)
+
+    def test_a_part_without_filters_or_with_an_option_stops_every_part(self):
+        for broken in ([[], ["alpha::"]], [["--include-ignored"], ["alpha::"]]):
+            with self.subTest(plan=broken), patch.object(workspace.lib_plan, "plan_parts",
+                                                         lambda *_args, plan=broken: (plan, [1.0, 1.0])):
+                with self.assertRaisesRegex(ValueError, "no filters or an option"):
+                    self.plan(count=2)
+
+    def test_the_timing_gate_must_be_a_test_and_hide_no_other(self):
+        with self.assertRaisesRegex(ValueError, "is not a test of the binary"):
+            self.plan(tests=[test for test in LIBRARY if test != TIMING])
+        with self.assertRaisesRegex(ValueError, "would hide"):
+            self.plan(tests=[*LIBRARY, TIMING + "_too"])
+
+    def test_filters_too_long_for_one_command_stop_every_part(self):
+        with patch.object(workspace, "MAX_COMMAND", 40), self.assertRaisesRegex(ValueError, "too long"):
+            self.plan()
+
+
+class LibraryPartTests(unittest.TestCase):
+    def run_part(self, index, count=4, reports=None, returncode=0, gate=(0, True), recorder=None):
+        """(exit code, record, gate calls) of one part; `reports` maps the shard command to its result lines.
+
+        `recorder(selected names)` replaces the recorded run; self.commands keeps the commands run.
+        """
+        first, second, third = plan_patches()
+        listed = libtest(LIBRARY)
+        gates = []
+        self.commands = []
+
+        def run_recorded(command):
+            self.commands.append(command)
+            selected = listed(None, *command[1:])
+            if recorder:
+                return recorder(selected)
+            return returncode, (reports or (lambda names: names))(selected)
+
+        def run_timing_gate(executable, count_listed):
+            gates.append(count_listed)
+            return gate
+
+        with tempfile.TemporaryDirectory() as directory, first, second, third, \
+                patch.object(workspace, "run_recorded", run_recorded), \
+                patch.object(workspace, "run_timing_gate", run_timing_gate), \
+                patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "2"}):
+            path = Path(directory) / "executed.json"
+            code = workspace.run_library_part("mtg_kernel-1", index, count, str(path))
+            return code, json.loads(path.read_text(encoding="utf-8")), gates
+
+    def test_the_parts_together_execute_every_listed_test_once(self):
+        records = []
+        for index in range(4):
+            code, record, gates = self.run_part(index)
+            self.assertEqual(code, 0)
+            self.assertEqual(record["failed"], 0)
+            # Only part 0 runs the timing gate, after its tests.
+            self.assertEqual(gates, [len(LIBRARY)] if index == 0 else [])
+            self.assertEqual(TIMING in record["executed"], index == 0)
+            records.append(record)
+        self.assertEqual(inventory.check(LIBRARY, records, 4), [])
+
+    def test_a_part_runs_its_filters_without_ignored_bodies(self):
+        # --include-ignored (or --ignored) would run ignored bodies while the selected names, and so the
+        # inventory, stayed the same.
+        for index in range(4):
+            self.run_part(index)
+            (command,) = self.commands
+            self.assertEqual(command[:3], ["mtg_kernel-1", "--skip", TIMING])
+            self.assertFalse({"--include-ignored", "--ignored", "--exact"} & set(command))
+            self.assertTrue(all(not word.startswith("-") for word in command[3:]))
+
+    def test_an_ignored_tests_result_line_is_its_report(self):
+        # libtest prints "ignored" for an ignored test it did not run; that line accounts for the test.
+        def recorder(selected):
+            script = "".join(f"print('test {name} ... ignored')\n" for name in selected[:1]) + \
+                "".join(f"print('test {name} ... ok')\n" for name in selected[1:])
+            fake = type("Out", (), {"flush": lambda self: None,
+                                    "buffer": type("Buffer", (), {"write": lambda self, raw: None,
+                                                                  "flush": lambda self: None})()})()
+            with patch.object(workspace.sys, "stdout", fake):
+                return recorded_run([sys.executable, "-c", script])
+
+        code, record, _ = self.run_part(1, recorder=recorder)
+        self.assertEqual((code, record["failed"]), (0, 0))
+        self.assertEqual(set(record["executed"]), set(self.run_part(1)[1]["executed"]))
+
+    def test_a_selected_test_without_a_result_line_fails_the_part(self):
+        code, record, gates = self.run_part(0, reports=lambda names: names[1:])
+        self.assertEqual((code, record["failed"]), (1, 1))
+        self.assertEqual(gates, [])
+
+    def test_a_result_line_for_a_test_of_another_part_fails_the_part(self):
+        own = set(self.run_part(1)[1]["executed"])
+        foreign = [test for test in LIBRARY if test not in own and test != TIMING][:2]
+        code, record, _ = self.run_part(1, reports=lambda names: [*names, *foreign])
+        self.assertEqual((code, record["failed"]), (1, 1))
+        self.assertEqual(set(record["executed"]), own)
+
+    def test_a_replayed_result_line_is_one_execution(self):
+        code, record, _ = self.run_part(2, reports=lambda names: names * 2)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(record["executed"]), len(set(record["executed"])))
+
+    def test_a_failed_part_skips_the_timing_gate(self):
+        code, record, gates = self.run_part(0, returncode=101)
+        self.assertEqual((code, record["failed"], gates), (1, 1, []))
+        self.assertNotIn(TIMING, record["executed"])
+
+    def test_a_failed_or_unproven_timing_gate_fails_part_0(self):
+        for gate in ((1, False), (0, False), (1, True)):
+            with self.subTest(gate=gate):
+                code, record, gates = self.run_part(0, gate=gate)
+                self.assertEqual((code, record["failed"]), (1, 1))
+                self.assertEqual(TIMING in record["executed"], gate[1])
+
+
+class FakePopen:
+    """A finished process: records the command and options it was started with."""
+    calls = []
+
+    def __init__(self, command, **options):
+        FakePopen.calls.append((command, options))
+        self.stdout = iter([b"test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out\n"])
+        self.returncode = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class TimingInvocationTests(unittest.TestCase):
+    COMMAND = ["mtg_kernel-1", TIMING, "--exact", "--include-ignored", "--test-threads=1", "--nocapture"]
+
+    def started(self, platform, unsplit=False):
+        """(command, options) the timing gate starts with on `platform`."""
+        FakePopen.calls = []
+        runs = []
+
+        def run(command, **options):
+            runs.append((command, options))
+            return type("Result", (), {"returncode": 0})()
+
+        fake = type("Out", (), {"flush": lambda self: None,
+                                "buffer": type("Buffer", (), {"write": lambda self, raw: None,
+                                                              "flush": lambda self: None})()})()
+        with patch.object(workspace.sys, "platform", platform), \
+                patch.object(workspace.subprocess, "HIGH_PRIORITY_CLASS", 0x80, create=True), \
+                patch.object(workspace.subprocess, "Popen", FakePopen), \
+                patch.object(workspace.subprocess, "run", run), patch.object(workspace.sys, "stdout", fake), \
+                patch("builtins.print"):
+            if unsplit:
+                self.assertEqual(workspace.run_library("mtg_kernel-1"), 0)
+                self.assertEqual(runs[0], (["mtg_kernel-1", "--skip", TIMING], {"check": False}))
+                (gate,) = runs[1:]
+                options = dict(gate[1])
+                options.pop("check")
+                return gate[0], options
+            self.assertEqual(workspace.run_timing_gate("mtg_kernel-1", 10), (0, False))
+            ((command, options),) = FakePopen.calls
+            options = dict(options)
+            options.pop("stdout")
+            return command, options
+
+    def test_the_gate_runs_alone_with_its_flags_at_high_priority_on_windows(self):
+        for unsplit in (False, True):
+            with self.subTest(unsplit=unsplit):
+                self.assertEqual(self.started("win32", unsplit), (self.COMMAND, {"creationflags": 0x80}))
+                self.assertEqual(self.started("linux", unsplit), (self.COMMAND, {}))
+
+
+class TimingGateTests(unittest.TestCase):
+    def gate(self, output, listed=10, exit_code=0):
+        script = f"import sys\nsys.stdout.write({output!r})\nsys.exit({exit_code})\n"
+        fake = type("Out", (), {"flush": lambda self: None,
+                                "buffer": type("Buffer", (), {"write": lambda self, raw: None,
+                                                              "flush": lambda self: None})()})()
+        with patch.object(workspace, "timing_command", lambda _: [sys.executable, "-c", script]), \
+                patch.object(workspace, "timing_options", dict), patch.object(workspace.sys, "stdout", fake), \
+                patch("builtins.print"):
+            return workspace.run_timing_gate("mtg_kernel-1", listed)
+
+    PASS = (f"\nrunning 1 test\ntest {TIMING} ... snapshot clone: 2.172us/call over 2000 iterations\nok\n\n"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s\n")
+
+    def test_the_gate_alone_passing_is_proven_by_its_start_line_and_the_summary(self):
+        # With --nocapture the test's own output splits libtest's result line.
+        self.assertEqual(self.gate(self.PASS), (0, True))
+
+    def test_anything_else_is_not_proof(self):
+        for output, listed in ((self.PASS.replace("1 passed", "0 passed"), 10),
+                               (self.PASS.replace("0 ignored", "1 ignored"), 10),
+                               (self.PASS, 11),
+                               (self.PASS.replace(TIMING, "snapshot::tests::other"), 10),
+                               (self.PASS.replace("\nok\n", "\nok\ntest snapshot::tests::other ... ok\n"), 10),
+                               ("\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; "
+                                "10 filtered out\n", 10)):
+            with self.subTest(output=output, listed=listed):
+                self.assertEqual(self.gate(output, listed), (0, False))
+        self.assertEqual(self.gate(self.PASS.replace("result: ok", "result: FAILED"), exit_code=101), (101, False))
+
+
+class LibraryRunnerTests(unittest.TestCase):
+    def dispatch(self, environment):
+        calls = []
+        with patch.object(workspace, "list_library", lambda *args: calls.append(("list", *args)) or 0), \
+                patch.object(workspace, "run_library_part", lambda *args: calls.append(("part", *args)) or 0), \
+                patch.object(workspace, "run_library", lambda *args: calls.append(("all", *args)) or 0), \
+                patch.dict(os.environ, environment):
+            for name in (workspace.LIST_ENV, workspace.SHARD_ENV, workspace.EXECUTED_ENV):
+                if name not in environment:
+                    os.environ.pop(name, None)
+            self.assertEqual(workspace.run_tests("target/release/deps/mtg_kernel-abc", []), 0)
+        return calls
+
+    def test_another_library_is_refused_in_list_and_part_mode(self):
+        # Cargo runs every workspace library's tests for --workspace --lib. Only mtg-kernel's are listed,
+        # planned and inventoried, so another library's would run unrecorded in the build job and in every part.
+        # Near misses of mtg-kernel's executable (mtg_kernel-<hash>) are other libraries too.
+        ran = []
+        for environment in ({workspace.LIST_ENV: "list.json"},
+                            {workspace.SHARD_ENV: "[1, 4]", workspace.EXECUTED_ENV: "out.json"}):
+            for name in ("other_lib-abc", "mtg_kernel_extra-abc", "mtg_kernel", "mtg_kernelx-abc", "mtg-kernel-abc"):
+                with self.subTest(environment=environment, name=name), \
+                        patch.object(workspace.subprocess, "run", lambda *args, **_: ran.append(args)), \
+                        patch.object(workspace, "run_suite", lambda *args, **_: ran.append(args)), \
+                        patch.object(workspace, "list_library", lambda *args: ran.append(args) or 0), \
+                        patch.object(workspace, "run_library_part", lambda *args: ran.append(args) or 0), \
+                        patch.object(workspace, "run_library", lambda *args: ran.append(args) or 0), \
+                        patch.dict(os.environ, environment), \
+                        self.assertRaisesRegex(ValueError, "Only the mtg-kernel library's tests"):
+                    workspace.run_tests(f"target/release/deps/{name}", [])
+        self.assertEqual(ran, [])
+
+    def test_an_unsplit_run_keeps_every_executable_as_before(self):
+        ran = []
+
+        def run(command, **_):
+            ran.append(command)
+            return type("Result", (), {"returncode": 0})()
+
+        with patch.object(workspace.subprocess, "run", run), \
+                patch.object(workspace, "run_suite", lambda executable, **_: ran.append(["suite", executable]) or 0), \
+                patch.object(workspace, "run_library", lambda executable: ran.append(["library", executable]) or 0), \
+                patch.dict(os.environ, {}):
+            for name in (workspace.LIST_ENV, workspace.SHARD_ENV, workspace.EXECUTED_ENV):
+                os.environ.pop(name, None)
+            for executable in ("deps/other_lib-abc", "deps/tool-abc", "deps/eternal_integration-abc",
+                               "deps/mtg_kernel-abc"):
+                self.assertEqual(workspace.run_tests(executable, []), 0)
+            self.assertEqual(workspace.run_tests("deps/bench-abc", ["--bench"]), 0)
+        self.assertEqual(ran, [["deps/other_lib-abc"], ["deps/tool-abc"], ["suite", "deps/eternal_integration-abc"],
+                               ["library", "deps/mtg_kernel-abc"], ["deps/bench-abc", "--bench"]])
+
+    def test_the_cargo_runner_lists_runs_a_part_or_runs_everything(self):
+        self.assertEqual(self.dispatch({workspace.LIST_ENV: "list.json"}),
+                         [("list", "target/release/deps/mtg_kernel-abc", "list.json")])
+        self.assertEqual(self.dispatch({workspace.SHARD_ENV: "[2, 4]", workspace.EXECUTED_ENV: "out.json"}),
+                         [("part", "target/release/deps/mtg_kernel-abc", 2, 4, "out.json")])
+        self.assertEqual(self.dispatch({}), [("all", "target/release/deps/mtg_kernel-abc")])
+
+    def test_the_list_mode_writes_the_names_and_runs_nothing(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(workspace, "listed_tests", libtest(LIBRARY)), patch("builtins.print"), \
+                patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "3"}):
+            path = Path(directory) / "tests.json"
+            self.assertEqual(workspace.list_library("mtg_kernel-1", str(path)), 0)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"attempt": 3, "tests": LIBRARY})
+
+    def cargo(self, *arguments, environment=None):
+        commands = []
+
+        def run(command, env=None, **_):
+            commands.append((command, env))
+            return type("Result", (), {"returncode": 0})()
+
+        stale = {workspace.SHARD_ENV: "[0, 1]", workspace.LIST_ENV: "stale", workspace.EXECUTED_ENV: "stale"}
+        with patch.object(workspace, "suite_modules"), patch.object(workspace.subprocess, "run", run), \
+                patch.object(sys, "argv", ["run_rust_workspace_tests.py", *arguments]), \
+                patch.dict(os.environ, environment if environment is not None else stale):
+            self.assertEqual(workspace.main(), 0)
+        ((command, env),) = commands
+        return command, env
+
+    def test_the_build_the_check_and_the_parts_run_one_cargo_command(self):
+        listing, listing_env = self.cargo("--part", "lib", "--list-only", "tests.json")
+        check, check_env = self.cargo("--part", "lib", "--no-run")
+        part, part_env = self.cargo("--part", "lib", "--shard-index", "3", "--shard-count", "4",
+                                    "--executed-list", "executed.json")
+        # Cargo reuses the build job's output only for the same command; --no-run only stops before running.
+        self.assertEqual(check[-1], "--no-run")
+        self.assertEqual(listing, check[:-1])
+        self.assertEqual(listing, part)
+        self.assertEqual(listing[listing.index("--workspace"):], ["--workspace", "--lib"])
+        self.assertEqual(listing_env[workspace.LIST_ENV], str(Path("tests.json").resolve()))
+        self.assertEqual(json.loads(part_env[workspace.SHARD_ENV]), [3, 4])
+        self.assertEqual(part_env[workspace.EXECUTED_ENV], str(Path("executed.json").resolve()))
+        # Stale settings from the job's environment never reach the runner.
+        for env, kept in ((listing_env, {workspace.LIST_ENV}), (check_env, set()),
+                          (part_env, {workspace.SHARD_ENV, workspace.EXECUTED_ENV})):
+            for name in {workspace.SHARD_ENV, workspace.LIST_ENV, workspace.EXECUTED_ENV} - kept:
+                self.assertNotIn(name, env)
+
+    def test_inconsistent_options_are_refused(self):
+        for arguments in (["--part", "targets", "--no-run"], ["--list-only", "x.json"],
+                          ["--part", "lib", "--shard-index", "0", "--shard-count", "4"],
+                          ["--part", "lib", "--shard-index", "4", "--shard-count", "4", "--executed-list", "x"],
+                          ["--part", "lib", "--shard-index", "0", "--executed-list", "x"],
+                          ["--part", "lib", "--executed-list", "x"],
+                          ["--part", "lib", "--no-run", "--list-only", "x.json"],
+                          ["--part", "lib", "--no-run", "--shard-index", "0", "--shard-count", "4",
+                           "--executed-list", "x"],
+                          ["--part", "other"]):
+            with self.subTest(arguments=arguments), patch.object(sys, "argv", ["run", *arguments]), \
+                    patch("sys.stderr"), self.assertRaises(SystemExit):
+                workspace.main()
+
+
+def child_run(statuses, stdout=""):
+    """(subprocess.run, commands run) for children exiting with `statuses` in turn, the last one repeating.
+
+    As the real one does, it raises CalledProcessError for a nonzero status under check=True.
+    """
+    commands = []
+
+    def run(command, check=False, **_):
+        commands.append(command)
+        status = statuses[min(len(commands), len(statuses)) - 1]
+        if check and status:
+            raise subprocess.CalledProcessError(status, command, output=stdout)
+        return subprocess.CompletedProcess(command, status, stdout=stdout)
+    return run, commands
+
+
+class FailurePropagationTests(unittest.TestCase):
+    """A failing child (Cargo, the test binary or its listing) makes the tool exit nonzero wherever its status
+    is read: Cargo's own status in every mode, and the runner's status that Cargo reports."""
+
+    def main(self, *arguments, run, environment=None):
+        environment = environment or {}
+        with patch.object(workspace, "suite_modules"), patch.object(workspace.subprocess, "run", run), \
+                patch.object(sys, "argv", ["run_rust_workspace_tests.py", *arguments]), \
+                patch.dict(os.environ, environment), patch("builtins.print"):
+            for name in (workspace.LIST_ENV, workspace.SHARD_ENV, workspace.EXECUTED_ENV):
+                if name not in environment:
+                    os.environ.pop(name, None)
+            return workspace.main()
+
+    def test_cargos_failure_is_the_exit_status_in_list_build_part_and_unsplit_mode(self):
+        for arguments in (["--part", "lib", "--list-only", "tests.json"], ["--part", "lib", "--no-run"],
+                          ["--part", "lib", "--shard-index", "1", "--shard-count", "4", "--executed-list", "x.json"],
+                          ["--part", "lib"], []):
+            run, commands = child_run([101])
+            with self.subTest(arguments=arguments):
+                self.assertEqual(self.main(*arguments, run=run), 101)
+                ((program, subcommand, *_),) = commands
+                self.assertEqual((program, subcommand), ("cargo", "test"))
+
+    def test_a_failing_cargo_metadata_stops_the_targets_part_before_any_test(self):
+        run, commands = child_run([101], stdout=json.dumps(METADATA))
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.main("--part", "targets", run=run)
+        self.assertEqual([command[:2] for command in commands], [["cargo", "metadata"]])
+
+    def test_a_failing_list_of_the_binary_fails_the_runner_in_list_and_part_mode(self):
+        # The binary printed some names before it failed: they are not its list.
+        partial = "".join(f"{test}: test\n" for test in LIBRARY[:3])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.json"
+            for environment in ({workspace.LIST_ENV: str(path)},
+                                {workspace.SHARD_ENV: "[0, 4]", workspace.EXECUTED_ENV: str(path)}):
+                run, commands = child_run([101], stdout=partial)
+                with self.subTest(environment=environment):
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.main("--run", "deps/mtg_kernel-abc", run=run, environment=environment)
+                    self.assertFalse(path.exists())
+                    self.assertEqual(commands[0], ["deps/mtg_kernel-abc", "--list", "--format=terse"])
+
+    def test_a_failing_part_process_is_the_runners_failure(self):
+        first, second, third = plan_patches()
+        listed = libtest(LIBRARY)
+        gates = []
+        run, commands = child_run([0])
+        with tempfile.TemporaryDirectory() as directory, first, second, third, \
+                patch.object(workspace, "run_recorded", lambda command: (101, listed(None, *command[1:]))), \
+                patch.object(workspace, "run_timing_gate", lambda *args: gates.append(args) or (0, True)):
+            path = Path(directory) / "executed.json"
+            for index in range(4):
+                with self.subTest(index=index):
+                    environment = {workspace.SHARD_ENV: json.dumps([index, 4]), workspace.EXECUTED_ENV: str(path)}
+                    self.assertEqual(self.main("--run", "deps/mtg_kernel-abc", run=run, environment=environment), 1)
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["failed"], 1)
+        self.assertEqual((gates, commands), ([], []))
+
+    def test_the_unsplit_library_run_fails_with_its_tests_or_its_timing_gate(self):
+        # [101, 0]: the tests fail and the gate would pass; [0, 3]: the tests pass and the gate fails.
+        for statuses, expected, processes in (([101, 0], 101, 1), ([0, 3], 3, 2)):
+            run, commands = child_run(statuses)
+            with self.subTest(statuses=statuses):
+                self.assertEqual(self.main("--run", "deps/mtg_kernel-abc", run=run), expected)
+                self.assertEqual(len(commands), processes)
+
+    def test_a_failing_suite_or_other_test_executable_fails_the_runner(self):
+        run, commands = child_run([101])
+        with patch.object(workspace, "run_suite", lambda executable, **_: 101):
+            self.assertEqual(self.main("--run", "deps/eternal_integration-abc", run=run), 101)
+        self.assertEqual(self.main("--run", "deps/tool-abc", "--bench", run=run), 101)
+        self.assertEqual(commands, [["deps/tool-abc", "--bench"]])
 
 
 if __name__ == "__main__":
