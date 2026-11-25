@@ -191,8 +191,12 @@ class ScopeTests(unittest.TestCase):
 
 
 RUST_SET = {"rust-quality", "rust-test-groups", "limited-build", "rust-limited-groups", "rust-tests",
-            "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory"}
+            "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory",
+            "workspace-lib-build", "rust-workspace-lib-parts", "workspace-lib-inventory"}
 PYTHON_SET = {"python-env-build", "python-tests"}
+# The workspace library jobs (build once, four parts, inventory): in the pull request set they run Linux and
+# Windows, which is all their rows, and the complement does not run them.
+LIBRARY_SET = {"workspace-lib-build", "rust-workspace-lib-parts", "workspace-lib-inventory"}
 # What part of the matrix a job covers in each group set: the pull request set runs Linux and the pull request's
 # Windows groups, the complement only the Windows groups that set leaves out, a draft only Linux lint. The model
 # sees job-level conditions and the group set, not matrix rows, runner routing or step conditions.
@@ -210,10 +214,24 @@ def linux_only_jobs():
 def coverage(scheduled):
     """A Linux-only job (lint, trainer and tools tests) covers only Linux, in any group set. The Python jobs have
     the same rows in the pull request set and the full set (Windows is in both; test_pr_lookup pins the build
-    matrix), so they have no part outside the pull request set for the complement to leave out."""
+    matrix), so they have no part outside the pull request set for the complement to leave out. The same holds
+    for the workspace library jobs (CoverageModelTests pins their rows and that the complement skips them)."""
     linux_only = linux_only_jobs()
     return {(job, "linux" if job in linux_only else part) for job, group_set in scheduled for part in PARTS[group_set]
-            if not (job in PYTHON_SET and part == "windows-rest")}
+            if not (job in PYTHON_SET | LIBRARY_SET and part == "windows-rest")}
+
+
+class CoverageModelTests(unittest.TestCase):
+    def test_the_workspace_library_jobs_have_all_their_rows_in_the_pull_request_set(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        for job in sorted(LIBRARY_SET):
+            block = text[text.index(f"\n  {job}:\n"):]
+            block = block[:block.index("\n    steps:\n")]
+            with self.subTest(job=job):
+                self.assertIn("""os: ${{ fromJSON(contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) """
+                              """&& '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}""", block)
+                self.assertNotIn("exclude:", block)
+                self.assertIn("needs.detect-changes.outputs.scope != 'windows-complement'", block)
 
 
 def classify_arms():

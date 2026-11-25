@@ -19,7 +19,8 @@ latest-attempt jobs:
      (`Build Python test binaries (ubuntu-24.04)` and `(windows-2025)`) are present and not skipped.
 Anything else, and any error, is partial: the full set. Established directly: the plan, the Linux Rust rows, the
 Python build rows and no failed job so far. What else the pull request set runs (lint, the Limited and Eternal
-families, the Python shards) follows from the workflow's own conditions on those same outputs; a failed job is the
+families, the workspace library build and parts, the Python shards) follows from the workflow's own conditions on
+those same outputs; a failed job is the
 one way a scheduled family goes missing, and rule 0 excludes it. In use: a default dispatch at a head whose pull
 request run already has a failed or cancelled job runs the full matrix; the complement is for a run that is passing
 so far or has passed. The decision reads that run's actual jobs, never a file list (GitHub's three-dot list can
@@ -55,10 +56,11 @@ import self_hosted_budget
 
 WORKFLOW_PATH = ".github/workflows/ci.yml"
 # The rust-test-groups matrix groups (tools/ci/tests/test_pr_lookup.py keeps this equal to ci.yml and disjoint from
-# the other jobs named `Rust tests (<os>, <group>)`: the Limited groups and the Eternal integration parts, which
-# can run without the pull request set).
-RUST_TEST_GROUPS = ("workspace-lib", "workspace-targets", "standard", "eternal", "cuda", "native-store",
-                    "native-store-1", "trace", "saved-input", "limited-store")
+# the other jobs named `Rust tests (<os>, <group>)`: the Limited groups, the Eternal integration parts and the
+# workspace library parts. Those are no evidence: the Limited and Eternal ones can run without the pull request
+# set, and parts appear in a run only after their build job has finished).
+RUST_TEST_GROUPS = ("workspace-targets", "standard", "eternal", "cuda", "native-store", "native-store-1", "trace",
+                    "saved-input", "limited-store")
 # The Linux rows of that matrix in the pull request set (its exclude expression drops native-store-1 on Linux; the
 # test pins it).
 LINUX_RUST_GROUPS = tuple(group for group in RUST_TEST_GROUPS if group != "native-store-1")

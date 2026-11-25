@@ -286,14 +286,14 @@ class EvidenceTests(unittest.TestCase):
         for status, conclusion in (("queued", None), ("in_progress", None), ("waiting", None),
                                    ("completed", "success")):
             with self.subTest(status=status, conclusion=conclusion):
-                rows = replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-lib)", status, conclusion)
+                rows = replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-targets)", status, conclusion)
                 self.assertTrue(whole(rows))
         self.assertTrue(whole(DONE, run(7, status="completed", conclusion="success")))
         # A failed row is no longer evidence: the run is not green so far.
-        self.assertFalse(whole(replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-lib)", "completed", "failure")))
+        self.assertFalse(whole(replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-targets)", "completed", "failure")))
 
     def test_a_cancelled_or_unstarted_run_or_evidence_job_is_not_evidence(self):
-        for name in ("Rust tests (ubuntu-24.04, workspace-lib)", "Build Python test binaries (windows-2025)"):
+        for name in ("Rust tests (ubuntu-24.04, workspace-targets)", "Build Python test binaries (windows-2025)"):
             for status, conclusion in (("completed", "cancelled"), ("completed", "timed_out"),
                                        ("completed", "startup_failure"), ("completed", "neutral")):
                 with self.subTest(job=name, conclusion=conclusion):
@@ -330,13 +330,19 @@ class EvidenceTests(unittest.TestCase):
         cases = {
             "draft run (lint only)": DRAFT_RUN_JOBS + [plan(scope="draft")],
             "pending run, no jobs": PENDING_RUN_JOBS + [plan()],
-            "only skipped rows": [("Rust tests (ubuntu-24.04, workspace-lib)", "completed", "skipped"), plan()],
+            "only skipped rows": [("Rust tests (ubuntu-24.04, workspace-targets)", "completed", "skipped"), plan()],
             "unexpanded names": [("Rust tests (${{ matrix.os }}, ${{ matrix.group }})", "queued", None), plan()],
-            "windows rows only": [("Rust tests (windows-2025, workspace-lib)", "in_progress", None), plan()],
+            "windows rows only": [("Rust tests (windows-2025, workspace-targets)", "in_progress", None), plan()],
             "gate alone": [("Rust tests (ubuntu-24.04)", "completed", "success"), plan()],
             "limited group rows": [("Rust tests (ubuntu-24.04, limited-model)", "queued", None), plan()],
             "eternal integration parts": [("Rust tests (ubuntu-24.04, eternal-integration-1)", "queued", None), plan()],
-            "lookalike group": [("Rust tests (ubuntu-24.04, workspace-lib-x)", "queued", None), plan()],
+            "lookalike group": [("Rust tests (ubuntu-24.04, workspace-targets-x)", "queued", None), plan()],
+            "workspace library build and parts": [
+                ("Build shared workspace library tests (ubuntu-24.04)", "completed", "success"),
+                ("Rust tests (ubuntu-24.04, workspace-lib)", "queued", None),
+                ("Rust tests (ubuntu-24.04, workspace-lib-1)", "queued", None),
+                ("Rust tests (ubuntu-24.04, workspace-lib-2)", "queued", None),
+                ("Rust tests (ubuntu-24.04, workspace-lib-3)", "queued", None), plan()],
         }
         for name, rows in cases.items():
             with self.subTest(case=name):
@@ -441,7 +447,7 @@ class EvidenceTests(unittest.TestCase):
                          tuple(g for g in pr_lookup.RUST_TEST_GROUPS if g not in linux_excluded))
         self.assertIn("    name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})\n", block("rust-test-groups"))
         self.assertIn('"ubuntu-24.04"', block("rust-test-groups").split("        os: ", 1)[1].split("\n", 1)[0])
-        for other in ("rust-limited-groups", "rust-eternal-integration-parts"):
+        for other in ("rust-limited-groups", "rust-eternal-integration-parts", "rust-workspace-lib-parts"):
             with self.subTest(job=other):
                 self.assertTrue(groups(other))
                 self.assertFalse(set(groups(other)) & set(pr_lookup.RUST_TEST_GROUPS))
@@ -493,7 +499,7 @@ class RunSelectionTests(unittest.TestCase):
     def test_a_rerun_of_failed_jobs_is_judged_on_the_latest_attempt(self):
         # filter=latest after a rerun of failed jobs: the rerun group rows are on their way, the rest kept from
         # attempt 1 (finished). The API returns only those rows; attempt 1's failed rows are not listed.
-        latest = replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-lib)", "queued", None)
+        latest = replace(RUST_ONLY, "Rust tests (ubuntu-24.04, workspace-targets)", "queued", None)
         latest = [(n, "completed", "success") if s == "in_progress" else (n, s, c) for n, s, c in latest]
         self.assertEqual(decide([run(1, status="queued")], {1: jobs(latest, 1)})[0], "whole-set")
         self.assertEqual(decide([run(1, status="completed", conclusion="failure")], {1: jobs(latest, 1)})[0], "partial")
