@@ -3886,6 +3886,8 @@ fn read_d8_history(
     run_number: u64,
 ) -> Result<Vec<(u64, PathBuf, SetManifest)>, PodRunnerError> {
     let mut earlier = Vec::new();
+    let dose_restart = current.namespace == "dose-d8" && current.replaces.is_some();
+    let current_name = d8_set_name(&current.set);
     for entry in read_dir_if_present(namespace_dir)? {
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -3915,6 +3917,15 @@ fn read_d8_history(
                 return Err(plan_err(
                     "D8 predecessor is already replaced (forked history)",
                 ));
+            }
+            if dose_restart
+                && manifest.kind == current.kind
+                && d8_set_name(&manifest.set) == current_name
+            {
+                return Err(plan_err(format!(
+                    "duplicate dose restart index {} for {} already used by {}/{}",
+                    current_name.1, current_name.0, manifest.run, manifest.set
+                )));
             }
             if n < run_number {
                 earlier.push((n, path, manifest));

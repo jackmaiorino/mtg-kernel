@@ -397,6 +397,28 @@ fn dose_restart_chains_follow_the_ordinal_across_runs() {
 }
 
 #[test]
+fn dose_history_rejects_a_duplicate_restart_index_in_a_later_run() {
+    let root = HistoryDir::new("dose-duplicate-index");
+    let v1 = interrupted_dose("v1", "dose-0");
+    root.set(&v1);
+    let mut v2 = interrupted_dose("v2", "dose-0-restart-1");
+    v2.replaces = Some("v1/dose-0".to_owned());
+    v2.retired = vec![v1.units];
+    let path_v2 = root.set(&v2);
+    verify_d8_history(&path_v2, &v2, Some(RestartKind::Note)).unwrap();
+
+    let mut v3 = interrupted_dose("v3", "dose-0-restart-1");
+    v3.replaces = Some("v2/dose-0".to_owned());
+    v3.retired = vec![v2.units];
+    root.set(&v3);
+    let error = verify_d8_history(&path_v2, &v2, Some(RestartKind::Note))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("duplicate dose restart index 1"), "{error}");
+    assert!(error.contains("v3/dose-0-restart-1"), "{error}");
+}
+
+#[test]
 fn dose_restart_index_survives_a_fresh_ordinal_on_a_new_build() {
     let root = HistoryDir::new("dose-nonconsecutive");
     let v1 = interrupted_dose("v1", "dose-0");
