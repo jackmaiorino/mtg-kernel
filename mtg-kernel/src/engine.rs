@@ -10126,6 +10126,223 @@ fn escape_extra_exile_open(state: &GameState) -> bool {
     })
 }
 
+/// One object-cost group of a staged Escape cast, in payment order: the
+/// escape cost's own graveyard exile, or a printed cost paid with it (an
+/// additional cost, or a bargain or casualty sacrifice).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StagedEscapeCostGroupV1 {
+    pub(crate) kind: CostKind,
+    /// Whether this group is the escape cost's "exile other cards from your
+    /// graveyard".
+    pub(crate) escape: bool,
+    /// Exactly this many objects. `None` for Nethergoyf's escape, which
+    /// exiles any number of cards with `min_card_types` card types among them.
+    pub(crate) count: Option<u8>,
+    pub(crate) min_card_types: Option<u8>,
+    /// The objects chosen so far, in order. Each stays where it is until the
+    /// whole cost is paid.
+    pub(crate) selected: Vec<ObjectId>,
+    /// Nethergoyf's escape: the caster stopped exiling further cards.
+    pub(crate) finished: bool,
+}
+
+/// A pending Escape cast as its caster stages it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StagedEscapeV1 {
+    /// The caster still chooses how to cast the card from its graveyard;
+    /// option `i` takes `routes[i]`.
+    ChoosingRoute(Vec<sphinx_lore_cast_v1::RouteV1>),
+    Paying {
+        /// Underworld Breach's escape (the card's mana cost and three other
+        /// graveyard cards) rather than the card's printed escape.
+        breach: bool,
+        /// False while a choice that can add or change an object cost is
+        /// still open (kicker, spell mode, targets, cast mode, an optional or
+        /// alternative additional cost, an X that sets a cost): `groups` then
+        /// holds only the escape exile, with nothing chosen.
+        costs_chosen: bool,
+        /// False while the caster still orders two groups: option 0 pays
+        /// `groups` in the listed order, option 1 the escape exile first.
+        order_chosen: bool,
+        groups: Vec<StagedEscapeCostGroupV1>,
+        /// While X is being chosen: the X each option announces, in option
+        /// order. `None` otherwise, and for the full-range X choice
+        /// (`ChooseFullRangeCastXValueV59`), which the schema 5 action path
+        /// refuses (requiring a v59+ successor whose actions carry their own
+        /// value).
+        x_options: Option<Vec<u16>>,
+    },
+}
+
+/// The X values a staged cast's X choice offers, in option order, as
+/// `decide_cast_x` derives them. `Ok(None)` for the full-range choice.
+fn staged_cast_x_options_v1(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Result<Option<Vec<u16>>, String> {
+    if payable_splice_codes(def, pending, state).is_some() {
+        return Err("a staged Escape cast choosing splices has no cost record".to_string());
+    }
+    let minimum = minimum_payable_cast_x(def, pending, state).ok_or("no payable X")?;
+    let maximum = maximum_payable_x(def, pending, state)
+        .filter(|&maximum| maximum >= minimum)
+        .ok_or("no payable X")?;
+    if minimum == 0 && maximum == u16::MAX {
+        return Ok(None);
+    }
+    Ok(Some((minimum..=maximum).collect()))
+}
+
+/// The staged Escape cast `pending`, read from the same cost definitions and
+/// payment order the engine stages it with. Errors when `pending` is not an
+/// Escape cast, or stages a shape this record does not describe.
+pub(crate) fn staged_escape_v1(
+    state: &GameState,
+    pending: &PendingCast,
+) -> Result<StagedEscapeV1, String> {
+    validate_pending_cast(state, pending)?;
+    if pending.source_contract.cast_method != CastMethodV4::Escape {
+        return Err("the pending cast is not an Escape cast".to_string());
+    }
+    if sphinx_lore_cast_v1::waiting(pending) {
+        let choice = pending
+            .sphinx_lore_v1
+            .ok_or("graveyard cast route stage absent")?;
+        let options = sphinx_lore_cast_v1::options_record(state, choice.options_history_index)?;
+        return Ok(StagedEscapeV1::ChoosingRoute(options.routes.clone()));
+    }
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
+    // Payments staged outside the shared object prefix have no record yet:
+    // fail closed rather than drop them. An ordered bargain or casualty
+    // sacrifice is also mirrored in `optional_additional_cost_chosen`;
+    // `validate_pending_cast` binds that mirror to its prefix pick.
+    let optional_in_prefix = compound.is_some_and(|costs| costs.pays_optional());
+    for (unrecorded, payment) in [
+        (
+            has_chosen_creature_additional_cost(def),
+            "a chosen-creature additional cost",
+        ),
+        (
+            pending_collect_evidence_minimum(def, pending).is_some(),
+            "collect evidence",
+        ),
+        (
+            !optional_in_prefix
+                && (pending.optional_additional_cost_paid == Some(true)
+                    || !pending.optional_additional_cost_chosen.is_empty()),
+            "an optional additional cost",
+        ),
+        (
+            pending
+                .additional_cost_discarded
+                .as_ref()
+                .is_some_and(|discarded| !discarded.is_empty()),
+            "an additional discard",
+        ),
+        (standard_cast_convoke::active(state, pending), "convoke"),
+        (state.engine.pending_discard.is_some(), "a pending discard"),
+    ] {
+        if unrecorded {
+            return Err(format!(
+                "a staged Escape cast stages {payment}, which has no record"
+            ));
+        }
+    }
+    let breach_route = pending.source_contract.breach_escape();
+    // A card without a printed escape escapes only by Breach's grant.
+    let breach = breach_route || def.escape.is_none();
+    let mut escape = spell_costs_v1::escape_cost_v1(def, breach_route)
+        .ok_or("escape cost definition is absent")?
+        .iter()
+        .find_map(|component| match *component {
+            CostComponent::ExileOtherCardsFromOwnGraveyard(count) => Some((Some(count), None)),
+            CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(minimum) => {
+                Some((None, Some(minimum)))
+            }
+            _ => None,
+        })
+        .map(|(count, min_card_types)| StagedEscapeCostGroupV1 {
+            kind: CostKind::ExileFromGraveyard,
+            escape: true,
+            count,
+            min_card_types,
+            selected: Vec::new(),
+            finished: false,
+        })
+        .ok_or("escape exile cost is absent")?;
+    let stage = pending_cast_action_stage(state, pending)?;
+    let x_options = if stage == PendingCastActionStage::ChooseXValue {
+        staged_cast_x_options_v1(def, pending, state)?
+    } else {
+        None
+    };
+    // Choices that can still add or change an object cost come first; the
+    // printed group of a compound cost exists only once they are made.
+    let announcing = matches!(
+        stage,
+        PendingCastActionStage::ChooseOmniscienceRoute
+            | PendingCastActionStage::ChooseGreatwurmCost
+            | PendingCastActionStage::ChooseKicker
+            | PendingCastActionStage::ChooseThornscapeWhiteKicker
+            | PendingCastActionStage::ChooseOptionalAdditionalCost
+            | PendingCastActionStage::ChooseSpellMode
+            | PendingCastActionStage::ChooseTarget
+            | PendingCastActionStage::ChooseOptionalTarget
+            | PendingCastActionStage::ChooseCastMode
+            | PendingCastActionStage::ChooseFreeCastV1
+            | PendingCastActionStage::ChooseMandatoryAdditionalCost
+    ) || (stage == PendingCastActionStage::ChooseXValue
+        && compound.is_some()
+        && compound_cast_cost_v1::Costs::waiting_for_x(pending, def));
+    if announcing {
+        if !pending.sacrifice_chosen.is_empty() {
+            return Err("staged Escape picks precede the cast's choices".to_string());
+        }
+        return Ok(StagedEscapeV1::Paying {
+            breach,
+            costs_chosen: false,
+            order_chosen: true,
+            groups: vec![escape],
+            x_options,
+        });
+    }
+    if let Some(costs) = compound {
+        let groups = costs.staged_groups_v1(pending)?;
+        if !groups
+            .iter()
+            .any(|group| group.escape && group.count == escape.count)
+        {
+            return Err("staged Escape groups disagree with the escape cost".to_string());
+        }
+        return Ok(StagedEscapeV1::Paying {
+            breach,
+            costs_chosen: true,
+            order_chosen: pending.graveyard_cost_first_v1.is_some(),
+            groups,
+            x_options,
+        });
+    }
+    // Without a printed cost paid alongside, every staged pick is an escape
+    // exile: the exile is staged before any later object cost.
+    if escape
+        .count
+        .is_some_and(|count| pending.sacrifice_chosen.len() > usize::from(count))
+    {
+        return Err("a staged Escape cast stages an object cost with no record".to_string());
+    }
+    escape.selected = pending.sacrifice_chosen.clone();
+    escape.finished = escape.min_card_types.is_some() && pending.escape_exile_finished_v1;
+    Ok(StagedEscapeV1::Paying {
+        breach,
+        costs_chosen: true,
+        order_chosen: true,
+        groups: vec![escape],
+        x_options,
+    })
+}
+
 /// The cards of `color` in `player`'s hand other than `source`: the
 /// candidates for "exile a blue card from your hand" (Force of Will).
 pub(crate) fn hand_exile_cost_candidates(
@@ -11657,6 +11874,26 @@ fn pending_cast_form_timing_ok(
         || sorcery_timing
 }
 
+/// Whether this staged Escape cast is restricted to its first (base) form:
+/// under the public shroud contract (`state.public_shroud_v1`), a bestow,
+/// Adventure, split, overload, or Omen card cast with escape uses only form 0
+/// for the escape cost. Bestow and overload are alternative costs, which
+/// cannot combine with escape (CR 118.9a); escaping an Adventure or a split
+/// card's other half is a recorded follow-up. Legacy sessions
+/// (`!state.public_shroud_v1`) keep the parent's form rules unchanged.
+fn escape_restricted_to_first_form(
+    state: &GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && state.public_shroud_v1
+        && pending.source_contract.cast_method == CastMethodV4::Escape
+        && (supported_bestow(def).is_some()
+            || supported_adventure(def).is_some()
+            || supported_omen(def).is_some())
+}
+
 /// Spell forms that remain both target-completable and payable after the
 /// source has moved to the stack. Printed modal spells share one cost, while
 /// an Omen card's creature and Omen forms each use their own types and cost.
@@ -11722,17 +11959,25 @@ fn viable_pending_spell_forms(
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
     };
+    let escaped_form = escape_restricted_to_first_form(state, pending, def);
+    let alternative = alternative.filter(|_| !escaped_form);
     if supported_bestow(def).is_some()
         || supported_adventure(def).is_some()
         || supported_omen(def).is_some()
     {
         let mut forms = Vec::with_capacity(2);
         let source = targeting_source_for_object(state, pending.spell);
+        let creature_method = if escaped_form {
+            CastMethodV4::Escape
+        } else {
+            CastMethodV4::Normal
+        };
         for (form, method, types, keywords) in
-            std::iter::once((0, CastMethodV4::Normal, def.types, def.keywords))
+            std::iter::once((0, creature_method, def.types, def.keywords))
                 .chain(alternative.map(|(method, types)| (1, method, types, Keywords::NONE)))
         {
             if form == 0
+                && !escaped_form
                 && pending.origin_zone == Zone::Graveyard
                 && (supported_adventure(def).is_some() || supported_bestow(def).is_some())
                 && !pending_has_graveyard_creature_permission(pending, state)
@@ -17886,12 +18131,17 @@ pub(crate) fn validate_pending_cast(
                 && (has_spell_form_choice(def) || mode == 0)
         }
     };
+    let escape_first_form = escape_restricted_to_first_form(state, pending, def);
+    if escape_first_form && pending.mode_chosen.is_some_and(|mode| mode != 0) {
+        return Err("escape cast can only use its first form".to_string());
+    }
     if pending.origin_zone == Zone::Graveyard && supported_adventure(def).is_some() {
         let malcolm_free = cfg!(feature = "eternal-fixtures")
             && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, pending.spell);
         if pending.mode_chosen == Some(0)
             && !pending_has_graveyard_creature_permission(pending, state)
             && !malcolm_free
+            && !escape_first_form
         {
             return Err(
                 "graveyard Adventure permission cannot cast the permanent form".to_string(),
