@@ -1171,8 +1171,10 @@ pub enum PublicStagedEscapeStageV1 {
         cost_groups: Vec<PublicEscapeCostGroupV1>,
         /// While X is being chosen: the X announced by the
         /// `choose_effect_option` action with `option_index` i is
-        /// `x_options[i]`. Absent otherwise, and for the full-range X choice,
-        /// whose actions carry their value.
+        /// `x_options[i]`. Absent otherwise, and for the full-range X choice
+        /// (`ChooseFullRangeCastXValueV59`), which this schema 5 action path
+        /// refuses (requiring a v59+ successor whose actions carry their
+        /// value).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         x_options: Option<Vec<u16>>,
     },

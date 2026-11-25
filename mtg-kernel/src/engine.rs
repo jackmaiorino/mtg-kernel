@@ -9919,8 +9919,10 @@ pub(crate) enum StagedEscapeV1 {
         order_chosen: bool,
         groups: Vec<StagedEscapeCostGroupV1>,
         /// While X is being chosen: the X each option announces, in option
-        /// order. `None` otherwise, and for the full-range X choice, whose
-        /// actions carry their own value.
+        /// order. `None` otherwise, and for the full-range X choice
+        /// (`ChooseFullRangeCastXValueV59`), which the schema 5 action path
+        /// refuses (requiring a v59+ successor whose actions carry their own
+        /// value).
         x_options: Option<Vec<u16>>,
     },
 }
@@ -11625,6 +11627,26 @@ fn pending_cast_form_timing_ok(
         || sorcery_timing
 }
 
+/// Whether this staged Escape cast is restricted to its first (base) form:
+/// under the public shroud contract (`state.public_shroud_v1`), a bestow,
+/// Adventure, split, overload, or Omen card cast with escape uses only form 0
+/// for the escape cost. Bestow and overload are alternative costs, which
+/// cannot combine with escape (CR 118.9a); escaping an Adventure or a split
+/// card's other half is a recorded follow-up. Legacy sessions
+/// (`!state.public_shroud_v1`) keep the parent's form rules unchanged.
+fn escape_restricted_to_first_form(
+    state: &GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && state.public_shroud_v1
+        && pending.source_contract.cast_method == CastMethodV4::Escape
+        && (supported_bestow(def).is_some()
+            || supported_adventure(def).is_some()
+            || supported_omen(def).is_some())
+}
+
 /// Spell forms that remain both target-completable and payable after the
 /// source has moved to the stack. Printed modal spells share one cost, while
 /// an Omen card's creature and Omen forms each use their own types and cost.
@@ -11690,18 +11712,7 @@ fn viable_pending_spell_forms(
     } else {
         supported_omen(def).map(|omen| (CastMethodV4::Omen, omen.types))
     };
-    // A card cast with escape (Underworld Breach's grant) is cast in its
-    // first form for the escape cost: a bestow or Adventure card as its
-    // creature, a split card as its first half, an overload card without
-    // overload. Bestow and overload are alternative costs, which cannot
-    // combine with escape (CR 118.9a). Escaping an Adventure or a split card's
-    // other half is not offered (a conservative reading, recorded as a
-    // follow-up).
-    let escaped_form = cfg!(feature = "eternal-fixtures")
-        && pending.source_contract.cast_method == CastMethodV4::Escape
-        && (supported_bestow(def).is_some()
-            || supported_adventure(def).is_some()
-            || supported_omen(def).is_some());
+    let escaped_form = escape_restricted_to_first_form(state, pending, def);
     let alternative = alternative.filter(|_| !escaped_form);
     if supported_bestow(def).is_some()
         || supported_adventure(def).is_some()
@@ -17871,16 +17882,17 @@ pub(crate) fn validate_pending_cast(
                 && (has_spell_form_choice(def) || mode == 0)
         }
     };
+    let escape_first_form = escape_restricted_to_first_form(state, pending, def);
+    if escape_first_form && pending.mode_chosen.is_some_and(|mode| mode != 0) {
+        return Err("escape cast can only use its first form".to_string());
+    }
     if pending.origin_zone == Zone::Graveyard && supported_adventure(def).is_some() {
         let malcolm_free = cfg!(feature = "eternal-fixtures")
             && crate::eternal_cube_c7a_v1::is_malcolm_free_cast(state, pending.spell);
-        // Escape permits casting the card itself in its first form.
-        let escaped = cfg!(feature = "eternal-fixtures")
-            && pending.source_contract.cast_method == CastMethodV4::Escape;
         if pending.mode_chosen == Some(0)
             && !pending_has_graveyard_creature_permission(pending, state)
             && !malcolm_free
-            && !escaped
+            && !escape_first_form
         {
             return Err(
                 "graveyard Adventure permission cannot cast the permanent form".to_string(),

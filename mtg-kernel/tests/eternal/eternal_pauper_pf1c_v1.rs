@@ -4075,6 +4075,7 @@ fn monstrous_emergence_escape_pays_three_exiles_and_uses_its_chosen_creature() {
             Zone::Battlefield
         };
         let creature = put(&mut state, P0, "Kor Skyfisher", origin);
+        put(&mut state, P0, "Llanowar Elves", origin);
         cast(&mut state, spell, &[Target::Object(target)]);
         for object in grave {
             if !matches!(
@@ -4088,8 +4089,28 @@ fn monstrous_emergence_escape_pays_three_exiles_and_uses_its_chosen_creature() {
             }
             payment_pick(&mut state, CostKind::ExileFromGraveyard, object);
         }
-        assert!(grave.iter().all(|id| zone(&state, *id) == Zone::Exile));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseCostTargets {
+                cost_kind: CostKind::ChooseCreatureOrRevealCreature,
+                ..
+            }
+        ));
+        assert_eq!(
+            state.engine.pending_cast.as_ref().unwrap().sacrifice_chosen.len(),
+            3
+        );
+        // With the three exiles staged and the creature choice still open,
+        // schema 5 must refuse by name rather than drop the creature cost.
+        let error = public_observation(&state).unwrap_err();
+        assert!(error.contains("chosen-creature additional cost"), "{error}");
+        payment_pick(
+            &mut state,
+            CostKind::ChooseCreatureOrRevealCreature,
+            creature,
+        );
         assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(grave.iter().all(|id| zone(&state, *id) == Zone::Exile));
         let refs = &state.stack.last().unwrap().v4.paid_cost_refs;
         assert_eq!(refs.len(), 4);
         assert!(refs[..3]
@@ -4177,8 +4198,10 @@ fn staged_escape(state: &GameState) -> Value {
     assert_eq!(staged.is_object(), escaping, "{staged}");
     assert_eq!(observation.to_string().contains("staged_escape"), escaping);
     if !staged.is_null() {
+        let mut legacy_state = state.clone();
+        legacy_state.public_shroud_v1 = false;
         let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
-        let legacy = mtg_kernel::rl::observe_policy_v5(state, &surface, P0, 0, 0, 0, 1);
+        let legacy = mtg_kernel::rl::observe_policy_v5(&legacy_state, &surface, P0, 0, 0, 0, 1);
         assert!(legacy.unwrap_err().0.contains("staged Escape"));
         // The legacy sacrifice binding keeps its frozen meaning.
         assert_eq!(
@@ -4683,6 +4706,7 @@ fn cube_nonland_cards() -> Vec<String> {
 /// the stack.
 fn breach_board(card: &str, opposing_spell: bool) -> (GameState, ObjectId) {
     let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
     put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
     for name in [
         "Llanowar Elves",
@@ -4761,6 +4785,51 @@ struct SweepOutcome {
     stages: std::collections::BTreeMap<String, usize>,
 }
 
+/// Whether `card` is expected to be offered from P0's graveyard on
+/// `breach_board(card, opposing_spell)`.
+///
+/// Timing and stack-only target requirements are derived from `CardDef`.
+/// Cards that are not offered on this board are listed by name with their
+/// reason rather than skipped silently:
+/// - `Emry, Lurker of the Loch`: an engine limitation, not a rule. It carries a
+///   spell-local `generic_cost_reduction`, and the engine excludes such
+///   reducers from `CastMethodV4::Escape`, although the reduction could
+///   legally apply to an escape cost. Recorded as a follow-up.
+/// - `Stern Scolding`: targets only a creature spell on the stack with power
+///   or toughness 2 or less; the sweep's opposing spell is Lightning Bolt (an
+///   Instant), so no legal target exists in either board state.
+fn expected_breach_offered(card: &str, opposing_spell: bool) -> bool {
+    use mtg_kernel::standard_cards_v1::StandardTargetV1;
+    let definition = def(card);
+    if opposing_spell
+        && !definition.types.contains(&CardType::Instant)
+        && !definition.keywords.has(Keywords::FLASH)
+    {
+        return false;
+    }
+    if card == "Emry, Lurker of the Loch" {
+        assert!(definition.generic_cost_reduction.is_some());
+        return false;
+    }
+    if card == "Stern Scolding" {
+        assert_eq!(
+            definition.target_spec,
+            TargetSpec::StandardV1(StandardTargetV1::CreatureSpellPowerOrToughnessAtMostTwoV1)
+        );
+        return false;
+    }
+    let needs_stack_spell = definition.mode2.is_none()
+        && definition.kicked_target_spec.is_none()
+        && matches!(
+            definition.target_spec,
+            TargetSpec::AnySpellOnStack | TargetSpec::NoncreatureSpellOnStack
+        );
+    if needs_stack_spell && !opposing_spell {
+        return false;
+    }
+    true
+}
+
 /// Casts `card` from P0's graveyard and answers every staged choice with
 /// `policy` (`None` takes the first legal action, `Some(seed)` a seeded
 /// random one), observing P0's schema 5 view at each choice.
@@ -4771,17 +4840,31 @@ fn sweep_breach_cast(
     out: &mut SweepOutcome,
 ) {
     use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
+    let expected_offered = expected_breach_offered(card, opposing_spell);
+    let label = format!("{card} (stack={opposing_spell}, policy={policy:?})");
     let (mut state, spell) = breach_board(card, opposing_spell);
-    let castable = match engine::advance_until_decision(&mut state) {
+    let decision = engine::advance_until_decision(&mut state);
+    if let Decision::Halted { .. } = decision {
+        out.failures
+            .push(format!("{label}: halted before cast {decision:?}"));
+        return;
+    }
+    let castable = matches!(
+        decision,
         Decision::CastSpellOrPass {
-            castable_spells, ..
-        } => castable_spells.contains(&spell),
-        _ => false,
-    };
+            ref castable_spells,
+            ..
+        } if castable_spells.contains(&spell)
+    );
+    if castable != expected_offered {
+        out.failures.push(format!(
+            "{label}: offered={castable}, expected={expected_offered}"
+        ));
+        return;
+    }
     if !castable {
         return;
     }
-    let label = format!("{card} (stack={opposing_spell}, policy={policy:?})");
     if let Err(error) = engine::step(&mut state, Action::CastSpell(spell)) {
         out.failures.push(format!("{label}: cast refused: {error}"));
         return;
@@ -4790,13 +4873,12 @@ fn sweep_breach_cast(
     let mut choices = 0;
     for _ in 0..96 {
         let decision = engine::advance_until_decision(&mut state);
+        if let Decision::Halted { .. } = decision {
+            out.failures.push(format!("{label}: halted {decision:?}"));
+            return;
+        }
         if state.engine.pending_cast.is_none() {
             break;
-        }
-        if let Decision::Halted { .. } = decision {
-            out.failures
-                .push(format!("{label}: halted mid-cast {decision:?}"));
-            return;
         }
         let observation = match public_observation(&state) {
             Ok(observation) => observation,
@@ -4903,9 +4985,13 @@ fn sweep_breach_cast(
 fn public_escape_every_cube_card_through_breach_stages_its_cost() {
     let cards = cube_nonland_cards();
     let mut out = SweepOutcome::default();
+    let mut expected_casts = 0;
     for card in &cards {
         for opposing_spell in [false, true] {
             for policy in [None, Some(1), Some(2), Some(3)] {
+                if expected_breach_offered(card, opposing_spell) {
+                    expected_casts += 1;
+                }
                 let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut one = SweepOutcome::default();
                     sweep_breach_cast(card, opposing_spell, policy, &mut one);
@@ -4929,9 +5015,10 @@ fn public_escape_every_cube_card_through_breach_stages_its_cost() {
         }
     }
     println!(
-        "{} cube cards, {} Breach casts reached the stack, stages {:?}",
+        "{} cube cards, {}/{} Breach casts reached the stack, stages {:?}",
         cards.len(),
         out.casts,
+        expected_casts,
         out.stages
     );
     for line in &out.aborts {
@@ -4950,7 +5037,11 @@ fn public_escape_every_cube_card_through_breach_stages_its_cost() {
         "{} offered casts were reversed without a choice",
         out.silent_reversals.len()
     );
-    assert!(out.casts > 300, "only {} casts", out.casts);
+    assert_eq!(
+        out.casts, expected_casts,
+        "expected {expected_casts} casts, got {}",
+        out.casts
+    );
 }
 
 /// `player`'s schema 5 public policy observation of `state`, or the refusal.
@@ -5304,6 +5395,7 @@ fn public_escape_mid_payment_snapshot_restores_exactly() {
 #[test]
 fn public_escape_casts_a_bestow_card_as_its_creature() {
     let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
     put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
     put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     let nantuko = put(&mut state, P0, "Springheart Nantuko", Zone::Graveyard);
@@ -5329,6 +5421,44 @@ fn public_escape_casts_a_bestow_card_as_its_creature() {
     settle_first(&mut state);
     assert_eq!(zone(&state, nantuko), Zone::Battlefield);
     assert!(state.objects.get(nantuko).attachments.is_empty());
+}
+
+/// A forged staged Escape snapshot of Springheart Nantuko with `mode_chosen`
+/// set to 1 (the bestow form) is rejected by `validate_pending_cast`,
+/// matching the form menu.
+#[test]
+fn public_escape_rejects_forged_bestow_form_snapshot() {
+    let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let host = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let nantuko = put(&mut state, P0, "Springheart Nantuko", Zone::Graveyard);
+    for name in ["Island", "Forest", "Ponder", "Swamp"] {
+        put(&mut state, P0, name, Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::G], 4);
+    cast(&mut state, nantuko, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseCostTargets {
+            cost_kind: CostKind::ExileFromGraveyard,
+            ..
+        }
+    ));
+    assert_eq!(
+        state.engine.pending_cast.as_ref().unwrap().mode_chosen,
+        Some(0)
+    );
+    let mut forged: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    forged.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(1);
+    let error = public_observation(&forged).unwrap_err();
+    assert!(error.contains("first form"), "{error}");
+    assert!(engine::step(&mut forged, Action::ChooseTarget(Target::Object(host))).is_err());
+    assert!(matches!(
+        engine::advance_until_decision(&mut forged),
+        Decision::Halted { .. }
+    ));
 }
 
 /// Payments staged outside the object prefix have no record: Vitu-Ghazi
@@ -5388,6 +5518,7 @@ fn breach_cast_first_form(
     generic: u8,
 ) -> (GameState, ObjectId, ObjectId) {
     let mut state = plains();
+    mtg_kernel::rl::enable_public_shroud_v1(&mut state);
     put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
     let spell = put(&mut state, P0, card, Zone::Graveyard);
     let fuel = ["Island", "Forest", "Ponder", "Swamp"]
@@ -5461,6 +5592,36 @@ fn public_escape_casts_bonecrusher_giant_as_its_creature() {
     let (mut state, spell, _) = breach_cast_first_form("Bonecrusher Giant", &[ManaColor::R], 4);
     settle_first(&mut state);
     assert_eq!(zone(&state, spell), Zone::Battlefield);
+}
+
+/// Legacy sessions (`!state.public_shroud_v1`, schema 4) keep the parent's
+/// transition when casting an Adventure card through Underworld Breach:
+/// Bonecrusher Giant is offered, reversed before any staged decision, and
+/// P0 regains priority with no staged Escape and no observation refusal.
+#[test]
+fn public_escape_legacy_schema_4_reverses_bonecrusher_giant_through_breach() {
+    let mut state = plains();
+    assert!(!state.public_shroud_v1);
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let giant = put(&mut state, P0, "Bonecrusher Giant", Zone::Graveyard);
+    let fuel = ["Island", "Forest", "Ponder", "Swamp"]
+        .map(|name| put(&mut state, P0, name, Zone::Graveyard));
+    put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 4);
+    assert!(castable(&mut state, giant));
+    act(&mut state, Action::CastSpell(giant));
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P0, .. }
+    ));
+    assert!(state.engine.pending_cast.is_none());
+    assert_eq!(zone(&state, giant), Zone::Graveyard);
+    assert!(fuel.iter().all(|&id| zone(&state, id) == Zone::Graveyard));
+    let surface = mtg_kernel::policy_surface_v5::PolicySurfaceV5::new();
+    let legacy = mtg_kernel::rl::observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1)
+        .expect("legacy observation should accept the reversed cast");
+    let bytes = serde_json::to_string(&legacy).unwrap();
+    assert!(!bytes.contains("staged_escape"), "{bytes}");
 }
 
 /// A split card cast through Breach is cast as its first half.
