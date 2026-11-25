@@ -1236,21 +1236,34 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
     if peer_sets is not None:
         if read not in ("b", "c", "b_prime"):
             raise ReadError(f"peer_sets is only valid for reads b, c, or b_prime (not {read!r})")
+        peer_groups = [peer_sets]
+    elif read in ("b", "c", "b_prime") and sets:
         peer_family = "c" if read == "b" else "b"
         peer_ns = declaration["reads"][peer_family]["namespace"]
-        for ps in peer_sets:
-            pman = ps["manifest"]
-            if pman["family"] != peer_family or pman["namespace"] != peer_ns:
-                raise ReadError(f"peer set {pman['set']} is family {pman['family']} in {pman['namespace']}, "
-                                f"not {peer_family} in {peer_ns}")
-            read_sets.verify_set_restarts(
-                ps, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
-            )
-        _check_declared_pins(declaration, peer_family, peer_sets, a6_info)
-        if read == "b":
-            read_sets.check_shared_bc_prefix(sets, peer_sets)
-        else:
-            read_sets.check_shared_bc_prefix(peer_sets, sets)
+        want_decl_sha = sets[0]["manifest"]["declaration_sha256"]
+        peer_groups = read_sets.discover_peer_bc_sets(
+            sets, peer_family, peer_ns, want_decl_sha,
+            expected_pins=a6_info["pins"] if a6_info is not None else declaration.get("pins"),
+        )
+    else:
+        peer_groups = []
+    if peer_groups:
+        peer_family = "c" if read == "b" else "b"
+        peer_ns = declaration["reads"][peer_family]["namespace"]
+        for pgroup in peer_groups:
+            for ps in pgroup:
+                pman = ps["manifest"]
+                if pman["family"] != peer_family or pman["namespace"] != peer_ns:
+                    raise ReadError(f"peer set {pman['set']} is family {pman['family']} in {pman['namespace']}, "
+                                    f"not {peer_family} in {peer_ns}")
+                read_sets.verify_set_restarts(
+                    ps, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
+                )
+            _check_declared_pins(declaration, peer_family, pgroup, a6_info)
+            if read == "b":
+                read_sets.check_shared_bc_prefix(sets, pgroup)
+            else:
+                read_sets.check_shared_bc_prefix(pgroup, sets)
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA, "interfaces": pod_record.INTERFACES_VERSION, "read_plan": read_plans.PLAN_SCHEMA,
         "read": read, "family": family, "look": look, "declaration_sha256": decl_sha,

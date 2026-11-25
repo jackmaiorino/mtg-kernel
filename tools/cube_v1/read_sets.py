@@ -218,7 +218,7 @@ def accept_prep_set(set_dir: Path, man: dict[str, Any] | None = None, *,
                     read_plans.check_prep_result(result, requests[unit][0], requests[unit][1])
                 except (read_plans.PlanError, pod_record.RecordError) as exc:
                     raise SetError(f"prep result of unit {unit}: {exc}") from exc
-            return {"execution": e, "outputs": outputs, "manifest": man}
+            return {"execution": e, "outputs": outputs, "requests": requests, "manifest": man}
         reasons.append(f"exec-{e}: {reason}")
     raise SetError("no accepted prep execution: " + "; ".join(reasons or ["none ran"]))
 
@@ -398,9 +398,13 @@ def check_restart(interrupted: dict[str, Any], restart: dict[str, Any]) -> None:
 def check_shared_prefix_restart(prior_bc: list[dict[str, Any]], new_bc: dict[str, Any], n_b: int, n_c: int) -> None:
     """A6.7 shared prefix: the new b_c prep manifest reserves [f', f' + 3 max(n_b, n_c)) with f' the
     first read-gate-pools index above every earlier b_c reservation."""
-    f_new = max(m["reserved"][1] for m in prior_bc)
-    if new_bc["reserved"] != [f_new, f_new + 3 * max(n_b, n_c)] or new_bc["units"][0] != f_new:
-        raise SetError(f"the shared-prefix restart starts at f' = {f_new} and reserves 3 max(n_b, n_c)")
+    f_new = max((m["reserved"] or m["units"])[1] for m in prior_bc)
+    want_range = [f_new, f_new + 3 * max(n_b, n_c)]
+    if new_bc["reserved"] != want_range or new_bc["units"] != want_range:
+        raise SetError(
+            f"the shared-prefix restart must have units and reserved {want_range} "
+            f"(f' = {f_new}, 3 max(n_b, n_c) = {3 * max(n_b, n_c)})"
+        )
     check_restart(prior_bc[-1], new_bc)
 
 
@@ -436,9 +440,25 @@ def check_look_bindings(look1_set: dict[str, Any], look2_set: dict[str, Any]) ->
             raise SetError(f"look 2 {key} differs from look 1: policies and inputs must stay fixed across looks")
 
 
+def _is_restarted_bc_set(opened: dict[str, Any]) -> bool:
+    man = opened["manifest"]
+    if man["replaces"] is not None:
+        return True
+    if man["prep_set"] is not None:
+        prep_path, _, _ = man["prep_set"].rpartition("/exec-")
+        prep_dir = Path(opened["set_dir"]).parents[2] / prep_path
+        if (prep_dir / "manifest.json").exists():
+            prep_man = load_manifest(prep_dir)
+            if prep_man["replaces"] is not None:
+                return True
+    return False
+
+
 def check_shared_bc_prefix(b_sets: list[dict[str, Any]], c_sets: list[dict[str, Any]]) -> None:
-    """READ-PLAN-v1 section 7 & A6.16: for (b) and (c) on the same unit, check equal prep_sha256,
-    prep_set, seeds, pools, and candidate cards/bindings."""
+    """READ-PLAN-v1 section 7, A6.7 & A6.16: for (b) and (c) on the same unit, check equal
+    prep_sha256, prep_set, seeds, pools, and candidate cards/bindings. Different starting units are
+    permitted only when the earlier gate completed and the later gate restarted disjointly above
+    the completed gate's reservation (A6.7)."""
     b_by_unit: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
     for s in b_sets:
         if s["manifest"]["family"] != "b":
@@ -454,7 +474,15 @@ def check_shared_bc_prefix(b_sets: list[dict[str, Any]], c_sets: list[dict[str, 
     if not b_by_unit or not c_by_unit:
         raise SetError("shared (b)/(c) prefix check requires non-empty (b) and (c) sets")
     if min(b_by_unit) != min(c_by_unit):
-        raise SetError(f"shared (b)/(c) prefix: (b) starts at unit {min(b_by_unit)}, (c) at unit {min(c_by_unit)}")
+        if min(b_by_unit) < min(c_by_unit):
+            early_sets, late_sets, late_start = b_sets, c_sets, min(c_by_unit)
+        else:
+            early_sets, late_sets, late_start = c_sets, b_sets, min(b_by_unit)
+        early_completed = all(s.get("void") is None for s in early_sets)
+        early_reserved_end = max((s["manifest"]["reserved"] or s["manifest"]["units"])[1] for s in early_sets)
+        late_first = min(late_sets, key=lambda s: s["manifest"]["units"][0])
+        if not (early_completed and _is_restarted_bc_set(late_first) and late_start >= early_reserved_end):
+            raise SetError(f"shared (b)/(c) prefix: (b) starts at unit {min(b_by_unit)}, (c) at unit {min(c_by_unit)}")
     for unit in sorted(set(b_by_unit) & set(c_by_unit)):
         bp, bman = b_by_unit[unit]
         cp, cman = c_by_unit[unit]
@@ -473,6 +501,56 @@ def check_shared_bc_prefix(b_sets: list[dict[str, Any]], c_sets: list[dict[str, 
             c_cand = cp["decks"][3 * s_idx]
             if b_cand["builder"] != c_cand["builder"] or b_cand["cards"] != c_cand["cards"]:
                 raise SetError(f"shared unit {unit} chair {s_idx}: (b) and (c) have different candidate cards or builder")
+
+
+def discover_peer_bc_sets(sets: list[dict[str, Any]], peer_family: str, peer_ns: str,
+                          declaration_sha: str, *, expected_pins: Any = None) -> list[list[dict[str, Any]]]:
+    """Discover active (non-replaced) peer (b)/(c) plan sets on disk under <root>/<peer_ns>/<run>/."""
+    if not sets:
+        return []
+    root = Path(sets[0]["set_dir"]).parents[2]
+    run = sets[0]["manifest"]["run"]
+    peer_run_dir = root / peer_ns / run
+    if not peer_run_dir.is_dir():
+        return []
+    candidates: list[tuple[Path, dict[str, Any]]] = []
+    for s_dir in sorted(peer_run_dir.iterdir()):
+        if not (s_dir / "manifest.json").exists():
+            continue
+        s_man = load_manifest(s_dir)
+        if (s_man["kind"] == "plans" and s_man["family"] == peer_family
+                and s_man["declaration_sha256"] == declaration_sha):
+            candidates.append((s_dir, s_man))
+    if not candidates:
+        return []
+    replaced = {m["replaces"] for _, m in candidates if m["replaces"] is not None}
+    active = [(d, m) for d, m in candidates if m["set"] not in replaced]
+    if not active:
+        return []
+    pool, constants, card_index, cube_table = sets[0].get("_dealer", (None, None, None, None))
+    opened_all = [
+        open_plan_set(d, declaration_sha, pool=pool, constants=constants,
+                      card_index=card_index, cube_table=cube_table, expected_pins=expected_pins)
+        for d, _ in active
+    ]
+    by_sha = {o["manifest"]["plan_set_sha256"]: o for o in opened_all}
+    look1s = [o for o in opened_all if o["manifest"]["look"] == 1]
+    look2s = [o for o in opened_all if o["manifest"]["look"] == 2]
+    groups: list[list[dict[str, Any]]] = []
+    used: set[str] = set()
+    for l1 in look1s:
+        sha1 = l1["manifest"]["plan_set_sha256"]
+        grp = [l1]
+        used.add(sha1)
+        for l2 in look2s:
+            if l2["manifest"]["pools_with"] == sha1:
+                grp.append(l2)
+                used.add(l2["manifest"]["plan_set_sha256"])
+        groups.append(grp)
+    for o in opened_all:
+        if o["manifest"]["plan_set_sha256"] not in used and o["manifest"]["pools_with"] not in by_sha:
+            groups.append([o])
+    return groups
 
 
 def _merge_ranges(indices: list[int]) -> list[list[int]]:
@@ -809,7 +887,7 @@ def verify_set_restarts(opened_set: dict[str, Any], *, n_b: int | None = None, n
         if prep_man["family"] == "b_c" and prep_man["replaces"] is not None:
             if n_b is None or n_c is None:
                 raise SetError("shared-prefix restart check requires both n_b and n_c")
-            prior_bc: list[dict[str, Any]] = []
+            chain: list[dict[str, Any]] = []
             cur = prep_man
             seen = {cur["set"]}
             while cur["replaces"] is not None:
@@ -821,8 +899,33 @@ def verify_set_restarts(opened_set: dict[str, Any], *, n_b: int | None = None, n
                 if not (prev_dir / "manifest.json").exists():
                     raise SetError(f"replaced b_c prep set {prev_name!r} does not exist")
                 cur = load_manifest(prev_dir)
-                prior_bc.append(cur)
-            prior_bc.reverse()
+                chain.append(cur)
+            chain.reverse()
+            # Scan all sibling b_c prep manifests in the same run directory so any competing
+            # earlier b_c reservation (even outside this replaces chain) advances f'.
+            siblings: dict[str, dict[str, Any]] = {}
+            for s_dir in sorted(prep_dir.parent.iterdir()):
+                if not (s_dir / "manifest.json").exists():
+                    continue
+                s_man = load_manifest(s_dir)
+                if s_man["kind"] == "prep" and s_man["family"] == "b_c":
+                    siblings[s_man["set"]] = s_man
+            # Exclude prep_man itself and any later descendants whose replaces chain leads to prep_man.
+            descendants = {prep_man["set"]}
+            changed = True
+            while changed:
+                changed = False
+                for name, s_man in siblings.items():
+                    if name not in descendants and s_man["replaces"] in descendants:
+                        descendants.add(name)
+                        changed = True
+            chain_names = {m["set"] for m in chain}
+            extra_prior = [
+                s_man for name, s_man in sorted(siblings.items())
+                if name not in descendants and name not in chain_names
+            ]
+            # Place direct predecessor (chain[-1]) last so check_shared_prefix_restart checks replaces against it.
+            prior_bc = extra_prior + chain
             check_shared_prefix_restart(prior_bc, prep_man, n_b, n_c)
             if man["look"] == 1 and man["units"][0] != prep_man["units"][0]:
                 raise SetError(
@@ -1000,6 +1103,7 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         verify_d8_v3_against_root(root, man)
     plans = load_entries(set_dir, man)
     outputs: dict[str, tuple[dict[str, Any], str]] = {}
+    requests_by_sha: dict[str, dict[str, Any]] = {}
     if read_plans.FAMILIES[family].get("prep"):
         if man["prep_set"] is None:
             raise SetError("a plan set with prep names its accepted prep execution")
@@ -1017,6 +1121,7 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         if str(accepted["execution"]) != exec_name:
             raise SetError(f"prep_set names exec-{exec_name}, the accepted execution is {accepted['execution']}")
         outputs = {sha: (doc, sha) for doc, sha in accepted["outputs"].values()}
+        requests_by_sha = {sha: accepted["requests"][u][0] for u, (_, sha) in accepted["outputs"].items()}
     elif man["prep_set"] is not None:
         raise SetError("this family has no prep")
     panel = None
@@ -1033,12 +1138,13 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
     checked: dict[int, dict[str, Any]] = {}
     for index, (plan, _) in plans.items():
         prep = outputs.get(plan.get("prep_sha256")) if isinstance(plan, dict) else None
+        prep_req = requests_by_sha.get(plan.get("prep_sha256")) if isinstance(plan, dict) else None
         if read_plans.FAMILIES[family].get("prep") and prep is None:
             raise SetError(f"plan {index}'s prep_sha256 is not an output of the accepted prep execution")
         try:
             read_plans.check_plan(plan, prep, pool[0] if pool else None, constants[0] if constants else None,
                                   pool[1] if pool else None, constants[1] if constants else None,
-                                  card_index=card_index, cube_table=cube_table,
+                                  card_index=card_index, cube_table=cube_table, prep_request=prep_req,
                                   expected_pins=expected_pins, expected_pilot=expected_pilot,
                                   expected_picker=expected_picker, expected_builders=expected_builders)
         except (read_plans.PlanError, pod_record.RecordError) as exc:
@@ -1079,4 +1185,5 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
     return {"manifest": man, "plans": checked, "execution": chosen["execution"], "records": chosen["records"],
             "expired": chosen["expired"], "void": chosen["void"], "set_dir": set_dir,
             "timing": timing, "basic_ids": basic_ids,
-            "checked_card_index": card_index is not None, "checked_cube_table": cube_table is not None}
+            "checked_card_index": card_index is not None, "checked_cube_table": cube_table is not None,
+            "_dealer": (pool, constants, card_index, cube_table)}

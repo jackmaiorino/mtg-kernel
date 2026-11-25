@@ -1142,8 +1142,8 @@ class AllocationTests(unittest.TestCase):
                 )
                 opened1 = read_sets.open_plan_set(set1, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
 
-                # Look 2 built with mutated policy/pins (reusing prep for pilot/pins or a prep with mutated picker/builder).
-                if "picker" in look2_kw or "builders" in look2_kw:
+                # Look 2 built with mutated policy/pins (reusing prep for pilot, or a mutated prep for picker/builders/pins).
+                if "picker" in look2_kw or "builders" in look2_kw or "pins" in look2_kw:
                     prep2_name = "fx-b_c-halt-candidate-d0-prep-0-6"
                     prep_pins = look2_kw.get("pins", synth.PINS)
                     prep_picker = look2_kw.get("picker", dict(synth.UNIFORM))
@@ -1161,7 +1161,7 @@ class AllocationTests(unittest.TestCase):
                 else:
                     prep_set2 = prep_set1
                     plans2 = [
-                        read_plans.build_plan("c", "test", u, pins=look2_kw.get("pins", synth.PINS),
+                        read_plans.build_plan("c", "test", u, pins=synth.PINS,
                                               pilot=look2_kw.get("pilot", synth.PILOT),
                                               picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)},
                                               prep=outs1[u], **synth.DEALER)
@@ -1219,6 +1219,54 @@ class AllocationTests(unittest.TestCase):
             with self.assertRaisesRegex(readers.ReadError, "builders"):
                 readers.run_read(DECL, DECL_SHA, "c", 1, opened, expected_builders=other_builders)
 
+    def test_prep_to_plan_binding_mismatches_rejected(self):
+        # New 3 probe: accepted prep built with uniform builder/picker/pins; plan claims different builder/picker/pins.
+        learned_builder = {"kind": "learned", "pin": "1" * 64}
+        learned_picker = {"kind": "learned", "pin": "2" * 64}
+        other_pins = {**synth.PINS, "binary": "3" * 64}
+
+        req, _, res, res_sha = synth.prep_for("b_c", 0)
+        with self.assertRaisesRegex(read_plans.PlanError, "builder"):
+            read_plans.build_plan("c", "test", 0, pins=synth.PINS, pilot=synth.PILOT,
+                                  picker=dict(synth.UNIFORM), builders={"candidate": learned_builder},
+                                  prep=(res, res_sha), **synth.DEALER)
+        with self.assertRaisesRegex(read_plans.PlanError, "chairs/pickers"):
+            read_plans.build_plan("c", "test", 0, pins=synth.PINS, pilot=synth.PILOT,
+                                  picker=learned_picker, builders={"candidate": dict(synth.UNIFORM)},
+                                  prep=(res, res_sha), prep_request=req, **synth.DEALER)
+        with self.assertRaisesRegex(read_plans.PlanError, "pins"):
+            read_plans.build_plan("c", "test", 0, pins=other_pins, pilot=synth.PILOT,
+                                  picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)},
+                                  prep=(res, res_sha), prep_request=req, **synth.DEALER)
+
+        # End-to-end set check: forged plan on disk citing uniform prep while declaring learned builder or picker.
+        for label, mutate_plan, pattern in (
+            ("learned-builder-from-uniform-prep",
+             lambda p: [d.update(builder=dict(learned_builder)) for d in p["decks"] if d["row"] == "candidate"],
+             "builder"),
+            ("learned-picker-from-uniform-prep",
+             lambda p: [c.update(picker=dict(learned_picker)) for c in p["chairs"]],
+             "chairs/pickers"),
+            ("different-pins-from-prep",
+             lambda p: p.update(pins=dict(other_pins)),
+             "pins"),
+        ):
+            with self.subTest(prep_plan_mismatch=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                prep_name = "fx-b_c-shared-d0-prep-0-6"
+                _, outs = synth.write_prep_set(root, "b_c", "b_c", prep_name, range(0, 6), DECL_SHA, reserved=[0, 6])
+                plans = [synth.plan("c", u, prep=outs[u]) for u in range(2)]
+                for p in plans:
+                    mutate_plan(p)
+                set_dir = synth.write_plan_set(
+                    root, "c", "fx-c-shared-d0-look-1", plans, DECL_SHA,
+                    executions=[{"records": {p["pod_index"]: synth.record(p, lambda pl, gm, ps: "draw")
+                                             for p in plans}}],
+                    look=1, units=[0, 2], reserved=[0, 6], prep_set=f"test/v1/{prep_name}/exec-0",
+                )
+                with self.assertRaisesRegex(read_sets.SetError, pattern):
+                    read_sets.open_plan_set(set_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+
     def test_shared_bc_prefix_mismatches_rejected_by_run_read(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1242,11 +1290,13 @@ class AllocationTests(unittest.TestCase):
             b_open = read_sets.open_plan_set(b_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
             c_open = read_sets.open_plan_set(c_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
 
-            # Matching shared prefix passes from both (b) and (c) entry points.
+            # Matching shared prefix passes both with peer_sets and via automatic disk discovery (peer_sets=None).
             readers.run_read(DECL, DECL_SHA, "c", 1, [c_open], peer_sets=[b_open])
             readers.run_read(DECL, DECL_SHA, "b", 1, [b_open], peer_sets=[c_open])
+            readers.run_read(DECL, DECL_SHA, "c", 1, [c_open])
+            readers.run_read(DECL, DECL_SHA, "b", 1, [b_open])
 
-            # Separate accepted prep set for (b) -> rejected on prep_set mismatch.
+            # Separate accepted prep set for (b) -> rejected BOTH with peer_sets AND automatically without peer_sets.
             prep_alt = "fx-b_c-halt-candidate-d0-prep-0-6"
             _, outs_alt = synth.write_prep_set(root, "b_c", "b_c", prep_alt, range(0, 6), DECL_SHA, reserved=[0, 6])
             b_alt_plans = [synth.plan("b", u, prep=outs_alt[u]) for u in range(n)]
@@ -1259,6 +1309,8 @@ class AllocationTests(unittest.TestCase):
             b_alt_open = read_sets.open_plan_set(b_alt_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
             with self.assertRaisesRegex(read_sets.SetError, "prep_set"):
                 readers.run_read(DECL, DECL_SHA, "c", 1, [c_open], peer_sets=[b_alt_open])
+            with self.assertRaisesRegex(read_sets.SetError, "prep_set"):
+                readers.run_read(DECL, DECL_SHA, "c", 1, [c_open])
 
             # Mutated prep_sha256, pools, or candidate cards on shared unit -> rejected through run_read.
             for label, mutate, pattern in (
@@ -1271,6 +1323,66 @@ class AllocationTests(unittest.TestCase):
                     mutate(bad_b)
                     with self.assertRaisesRegex(read_sets.SetError, pattern):
                         readers.run_read(DECL, DECL_SHA, "c", 1, [c_open], peer_sets=[bad_b])
+
+        # A6.7 completed-peer rule: completed (b) on [0, 2) stands while interrupted (c) restarts on [6, 8).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            n = 2
+            prep0 = "fx-b_c-shared-d0-prep-0-6"
+            _, outs0 = synth.write_prep_set(root, "b_c", "b_c", prep0, range(0, 6), DECL_SHA, reserved=[0, 6])
+            b_plans = [synth.plan("b", u, prep=outs0[u]) for u in range(n)]
+            b_dir = synth.write_plan_set(
+                root, "b", "fx-b-score-d0-look-1", b_plans, DECL_SHA,
+                executions=[{"records": {p["pod_index"]: synth.record(p, lambda pl, gm, ps: "draw") for p in b_plans}}],
+                look=1, units=[0, n], reserved=[0, 6], prep_set=f"test/v1/{prep0}/exec-0",
+            )
+            c0_plans = [synth.plan("c", u, prep=outs0[u]) for u in range(n)]
+            synth.write_plan_set(
+                root, "c", "fx-c-shared-d0-look-1", c0_plans, DECL_SHA,
+                executions=[{"records": {0: synth.record(c0_plans[0], lambda pl, gm, ps: "draw", games=4,
+                                                         status="stopped")}, "ended": "interrupted"}],
+                look=1, units=[0, n], reserved=[0, 6], prep_set=f"test/v1/{prep0}/exec-0",
+            )
+            prep1 = f"{prep0}-restart-1"
+            _, outs1 = synth.write_prep_set(root, "b_c", "b_c", prep1, range(6, 12), DECL_SHA,
+                                            reserved=[6, 12], replaces=prep0, retired=[])
+            c1_plans = [synth.plan("c", u, prep=outs1[u]) for u in range(6, 6 + n)]
+            c1_dir = synth.write_plan_set(
+                root, "c", "fx-c-shared-d0-look-1-restart-1", c1_plans, DECL_SHA,
+                executions=[{"records": {p["pod_index"]: synth.record(p, lambda pl, gm, ps: "draw") for p in c1_plans}}],
+                look=1, units=[6, 8], reserved=[6, 12], prep_set=f"test/v1/{prep1}/exec-0",
+                replaces="fx-c-shared-d0-look-1", retired=[[2, 6]],
+            )
+            b_open = read_sets.open_plan_set(b_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            c1_open = read_sets.open_plan_set(c1_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            # Both reads pass automatically without peer_sets because (b) completed and (c) restarted disjointly.
+            readers.run_read(DECL, DECL_SHA, "c", 1, [c1_open])
+            readers.run_read(DECL, DECL_SHA, "b", 1, [b_open])
+
+        # Unrestarted (c) starting at [6, 8) while (b) starts at [0, 2) must still be refused.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            n = 2
+            prep0 = "fx-b_c-shared-d0-prep-0-6"
+            _, outs0 = synth.write_prep_set(root, "b_c", "b_c", prep0, range(0, 6), DECL_SHA, reserved=[0, 6])
+            b_plans = [synth.plan("b", u, prep=outs0[u]) for u in range(n)]
+            synth.write_plan_set(
+                root, "b", "fx-b-score-d0-look-1", b_plans, DECL_SHA,
+                executions=[{"records": {p["pod_index"]: synth.record(p, lambda pl, gm, ps: "draw") for p in b_plans}}],
+                look=1, units=[0, n], reserved=[0, 6], prep_set=f"test/v1/{prep0}/exec-0",
+            )
+            prep_shift = "fx-b_c-halt-candidate-d0-prep-6-12"
+            _, outs_s = synth.write_prep_set(root, "b_c", "b_c", prep_shift, range(6, 12), DECL_SHA, reserved=[6, 12])
+            c_shift_plans = [synth.plan("c", u, prep=outs_s[u]) for u in range(6, 6 + n)]
+            c_shift_dir = synth.write_plan_set(
+                root, "c", "fx-c-shared-d0-look-1", c_shift_plans, DECL_SHA,
+                executions=[{"records": {p["pod_index"]: synth.record(p, lambda pl, gm, ps: "draw")
+                                         for p in c_shift_plans}}],
+                look=1, units=[6, 8], reserved=[6, 12], prep_set=f"test/v1/{prep_shift}/exec-0",
+            )
+            c_shift_open = read_sets.open_plan_set(c_shift_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            with self.assertRaisesRegex(read_sets.SetError, "starts at unit"):
+                readers.run_read(DECL, DECL_SHA, "c", 1, [c_shift_open])
 
     def test_shared_prefix_restart_checked_from_run_read(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1301,27 +1413,50 @@ class AllocationTests(unittest.TestCase):
             rep = readers.run_read(DECL, DECL_SHA, "c", 1, [c1_open])
             self.assertEqual(rep["units"], {"kind": "cluster", "first": 6, "end": 8})
 
-            # Bad f' (starting at 4 instead of 6) on b_c restart -> rejected by run_read.
-            bad_prep = f"{prep0_name}-restart-2"
-            _, outs_bad = synth.write_prep_set(root, "b_c", "b_c", bad_prep, range(4, 10), DECL_SHA,
-                                               reserved=[4, 10], replaces=prep0_name, retired=[])
-            c_bad_plans = [synth.plan("c", u, prep=outs_bad[u]) for u in range(4, 4 + n)]
-            c_bad_dir = synth.write_plan_set(
-                root, "c", "fx-c-shared-d0-look-1-restart-2", c_bad_plans, DECL_SHA,
-                executions=[{"records": {p["pod_index"]: synth.record(p, lambda p, g, pos: "draw")
-                                         for p in c_bad_plans}}],
-                look=1, units=[4, 6], reserved=[4, 10], prep_set=f"test/v1/{bad_prep}/exec-0",
-                replaces="fx-c-shared-d0-look-1", retired=[[2, 6]],
-            )
-            c_bad_open = read_sets.open_plan_set(c_bad_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
-            with self.assertRaisesRegex(read_sets.SetError, "unreserved|f'"):
-                readers.run_read(DECL, DECL_SHA, "c", 1, [c_bad_open])
+            # Locally valid restart (passes check_restart) with wrong shared-prefix length when n_b != n_c:
+            # With b.n = 4, c.n = 2 -> 3 * max(4, 2) = 12, so prep1 reserving [6, 12) instead of [6, 18) MUST fail
+            # specifically in check_shared_prefix_restart (New 4 non-vacuous test).
+            asym_decl = decl_with(**{"b.n": 4, "c.n": 2})
+            with self.assertRaisesRegex(read_sets.SetError, "3 max\\(n_b, n_c\\)"):
+                readers.run_read(asym_decl, DECL_SHA, "c", 1, [c1_open])
 
             # Bad retired range on plan set restart -> rejected by run_read.
             bad_ret = copy.deepcopy(c1_open)
             bad_ret["manifest"]["retired"] = []
             with self.assertRaisesRegex(read_sets.SetError, "retires"):
                 readers.run_read(DECL, DECL_SHA, "c", 1, [bad_ret])
+
+        # Competing earlier sibling b_c reservation [6, 12) outside the replaces chain raises f' to 12.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            n = 2
+            prep0 = "fx-b_c-shared-d0-prep-0-6"
+            _, outs0 = synth.write_prep_set(root, "b_c", "b_c", prep0, range(0, 6), DECL_SHA, reserved=[0, 6])
+            c0_plans = [synth.plan("c", u, prep=outs0[u]) for u in range(n)]
+            synth.write_plan_set(
+                root, "c", "fx-c-shared-d0-look-1", c0_plans, DECL_SHA,
+                executions=[{"records": {0: synth.record(c0_plans[0], lambda p, g, pos: "draw", games=4,
+                                                         status="stopped")}, "ended": "interrupted"}],
+                look=1, units=[0, n], reserved=[0, 6], prep_set=f"test/v1/{prep0}/exec-0",
+            )
+            # Sibling b_c reservation [6, 12) outside prep0's replaces chain:
+            synth.write_prep_set(root, "b_c", "b_c", "fx-b_c-halt-candidate-d0-prep-6-12", range(6, 12), DECL_SHA,
+                                 reserved=[6, 12])
+            # Restarting prep0 at [6, 12) instead of [12, 18) passes check_restart(c0, c1) AND check_restart(prep0, prep1)
+            # yet MUST fail check_shared_prefix_restart because sibling reservation already claimed [6, 12).
+            prep1 = f"{prep0}-restart-1"
+            _, outs1 = synth.write_prep_set(root, "b_c", "b_c", prep1, range(6, 12), DECL_SHA,
+                                            reserved=[6, 12], replaces=prep0, retired=[])
+            c1_plans = [synth.plan("c", u, prep=outs1[u]) for u in range(6, 6 + n)]
+            c1_dir = synth.write_plan_set(
+                root, "c", "fx-c-shared-d0-look-1-restart-1", c1_plans, DECL_SHA,
+                executions=[{"records": {p["pod_index"]: synth.record(p, lambda p, g, pos: "draw") for p in c1_plans}}],
+                look=1, units=[6, 8], reserved=[6, 12], prep_set=f"test/v1/{prep1}/exec-0",
+                replaces="fx-c-shared-d0-look-1", retired=[[2, 6]],
+            )
+            c1_open = read_sets.open_plan_set(c1_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST)
+            with self.assertRaisesRegex(read_sets.SetError, "f' = 12"):
+                readers.run_read(DECL, DECL_SHA, "c", 1, [c1_open])
 
 
 class PanelTests(unittest.TestCase):

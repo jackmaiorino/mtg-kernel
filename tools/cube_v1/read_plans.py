@@ -732,7 +732,8 @@ def prep_cards(result: dict[str, Any]) -> dict[tuple[int, str], list[int]]:
 
 def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any, picker: Any = None,
                builders: dict[str, Any] | None = None, mirror: int | None = None, rotation: int | None = None,
-               mark: Any = None, prep: tuple[dict[str, Any], str] | None = None, pool_doc: Any = None,
+               mark: Any = None, prep: tuple[dict[str, Any], str] | None = None,
+               prep_request: dict[str, Any] | None = None, pool_doc: Any = None,
                constants_doc: Any = None, pool_sha256: str | None = None,
                constants_sha256: str | None = None, card_index: tuple[Any, str] | None = None,
                cube_table: tuple[Any, str] | None = None, run: str = RUN) -> dict[str, Any]:
@@ -792,10 +793,29 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
             raise PlanError("the prep result's draft is not this unit's draft")
         pools = [list(p) for p in result["draft"]["pools"]]
         built_cards = prep_cards(result)
+        prep_builds = {(b["chair"], b["row"]): b for b in result["builds"]}
         for s in range(SEATS):
             for row in _rows(family):
-                if (s, row) not in built_cards:
+                if (s, row) not in prep_builds:
                     raise PlanError(f"the prep result lacks chair {s}'s {row} build")
+                pb = prep_builds[(s, row)]
+                if pb["build"] != BUILD_INDEX[row]:
+                    raise PlanError(f"the prep result chair {s}'s {row} build index differs from the plan")
+                if pb["builder"] != bound[row]:
+                    raise PlanError(
+                        f"the prep result chair {s}'s {row} builder {pb['builder']!r} differs from plan builder {bound[row]!r}"
+                    )
+        if prep_request is not None:
+            if result.get("request_sha256") != doc_sha256(prep_request):
+                raise PlanError("prep result request_sha256 does not match the accepted prep request")
+            if prep_request["pins"] != pins:
+                raise PlanError("plan pins differ from the accepted prep request pins")
+            if prep_request["run"] != run:
+                raise PlanError("plan run differs from the accepted prep request run")
+            if prep_request["seeds"]["draft_seed"] != seeds["draft_seed"]:
+                raise PlanError("prep request draft_seed differs from the plan")
+            if prep_request["chairs"] != plan_chairs(family, mirror, rotation, pick):
+                raise PlanError("plan chairs/pickers differ from the accepted prep request chairs")
     elif prep is not None:
         raise PlanError(f"family {family} has no prep")
 
@@ -943,8 +963,8 @@ def plan_bindings(plan: dict[str, Any]) -> dict[str, Any]:
 def check_plan(plan: Any, prep: tuple[dict[str, Any], str] | None = None, pool_doc: Any = None,
                constants_doc: Any = None, pool_sha256: str | None = None,
                constants_sha256: str | None = None, card_index: tuple[Any, str] | None = None,
-               cube_table: tuple[Any, str] | None = None, *, expected_pins: Any = None,
-               expected_pilot: Any = None, expected_picker: Any = None,
+               cube_table: tuple[Any, str] | None = None, *, prep_request: dict[str, Any] | None = None,
+               expected_pins: Any = None, expected_pilot: Any = None, expected_picker: Any = None,
                expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
     """Strict validation: the plan must equal, byte for byte, the plan regenerated from its identity
     fields, bindings, prep result and dealer inputs (whose hashes must equal the plan's)."""
@@ -967,9 +987,10 @@ def check_plan(plan: Any, prep: tuple[dict[str, Any], str] | None = None, pool_d
     try:
         expected = build_plan(family, plan["namespace"], plan["unit"], pins=plan["pins"], pilot=plan["pilot"],
                               picker=bindings["picker"], builders=bindings["builders"], mirror=plan["mirror"],
-                              rotation=plan["rotation"], mark=plan["mark"], prep=prep, pool_doc=pool_doc,
-                              constants_doc=constants_doc, pool_sha256=pool_sha256, constants_sha256=constants_sha256,
-                              card_index=card_index, cube_table=cube_table, run=plan["run"])
+                              rotation=plan["rotation"], mark=plan["mark"], prep=prep, prep_request=prep_request,
+                              pool_doc=pool_doc, constants_doc=constants_doc, pool_sha256=pool_sha256,
+                              constants_sha256=constants_sha256, card_index=card_index, cube_table=cube_table,
+                              run=plan["run"])
     except (ValueError, KeyError, TypeError) as exc:
         raise PlanError(f"plan cannot be regenerated: {exc}") from exc
     if serialize(expected) != serialize(plan):
