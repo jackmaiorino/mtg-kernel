@@ -939,7 +939,21 @@ class ExecutionTests(unittest.TestCase):
             self.assertIn("interrupted", rep_int["void"])
             self.assertEqual(rep_int["next"], "technical recovery (A6.7)")
             self.assertEqual(rep_int["games"], {"played": 4, "completed": 4, "halted": 0, "planned": 128, "unplayed": 124})
+            self.assertIn("a2_3", rep_int)
+            self.assertIn("a2_1_warning", rep_int)
+            self.assertEqual(rep_int["a2_3"]["by_arm"], {
+                "candidate": {"completed": 2, "halted": 0},
+                "stated": {"completed": 2, "halted": 0},
+            })
             self.assertNotIn("statistics", rep_int)
+
+            # On the same interrupted set, (b') scopes denominators and A2.3 to stated-arm games only.
+            rep_bp_int = readers.run_read(DECL, DECL_SHA, "b_prime", 1, [opened_int])
+            self.assertEqual(rep_bp_int["verdict"], "void")
+            self.assertEqual(rep_bp_int["games"], {"played": 2, "completed": 2, "halted": 0, "planned": 64, "unplayed": 62})
+            self.assertEqual(rep_bp_int["a2_3"]["by_arm"], {"stated": {"completed": 2, "halted": 0}})
+            self.assertFalse(rep_bp_int["a2_1_warning"])
+            self.assertNotIn("statistics", rep_bp_int)
 
             # Case 2: second watchdog expiry (e = 1, watchdog_stop) on pod 0 after 4 games (game 3 expired).
             def wd_at(target_game):
@@ -1379,6 +1393,40 @@ class PanelTests(unittest.TestCase):
             self.assertEqual((rep_h["verdict"], rep_h["void"]), ("void", "all games halted"))
             self.assertTrue(rep_h["drop_interval_undefined"])
             self.assertEqual(rep_h["games"], {"played": 128, "completed": 0, "halted": 128})
+
+            # Technically interrupted dose preserves provenance, A2.3 breakdown and A2.1 warning without statistics.
+            int_dose_rec = synth.record(
+                plans[0],
+                lambda pl, gm, ps: ("halt", {"kind": "decision_cap"}, 77, 16384) if gm["game"] == 0 else "draw",
+                games=4, status="stopped",
+            )
+            int_dose_rec["games"][1]["attempts"][0]["decisions"] = 9000
+            int_dose_rec = pod_record.validate_record(int_dose_rec)
+            int_dose_dir = synth.write_plan_set(
+                root, "dose", f"{base}-dose-0-restart-3", plans, DECL_SHA,
+                executions=[{"records": {0: int_dose_rec}, "ended": "interrupted"}],
+                units=[0, 2], panel_sha256=digest, prep_set=f"test/v1/{base}-prep-dose-0/exec-0",
+            )
+            opened_int_dose = read_sets.open_plan_set(int_dose_dir, DECL_SHA, pool=synth.POOL, constants=synth.CONST,
+                                                      pinned_panel=digest)
+            rep_int_dose = readers.run_read(decl_with(**{"dose.panel_sha256": digest}), DECL_SHA, "dose", 0,
+                                            [opened_int_dose], d0_sha256=d0_sha)
+            self.assertEqual(rep_int_dose["verdict"], "void")
+            self.assertEqual(rep_int_dose["next"], "technical recovery (A6.7)")
+            self.assertEqual(rep_int_dose["games"], {"played": 4, "completed": 3, "halted": 1, "planned": 128, "unplayed": 124})
+            self.assertEqual(rep_int_dose["provenance"], {
+                "label": "shakedown, under random play, provisional pins",
+                "d0_sha256": d0_sha,
+                "panel_sha256": digest,
+                "panel_run": "v1",
+                "mark": mark,
+                "panel_pairing_note": "marks on different panels are not paired",
+            })
+            self.assertEqual(rep_int_dose["a2_3"]["by_stop_kind"], {"decision_cap": 1})
+            self.assertEqual(rep_int_dose["a2_3"]["by_card_charged"], {"77": 1})
+            self.assertEqual(rep_int_dose["a2_3"]["completed_over_8192"], 1)
+            self.assertTrue(rep_int_dose["a2_1_warning"])
+            self.assertNotIn("statistics", rep_int_dose)
 
 
 # ---------------------------------------------------------------------------------------------

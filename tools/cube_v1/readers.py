@@ -1019,6 +1019,35 @@ def _dose_first_basics_bands(records: dict[int, dict[str, Any]], plans: dict[int
     }
 
 
+def _dose_provenance(namespace: str, section: dict[str, Any], sets: list[dict[str, Any]],
+                     plans: dict[int, dict[str, Any]], d0_sha256: str | None,
+                     shakedown_manifest: tuple[Path | bytes, str] | None) -> dict[str, Any]:
+    """D0 provenance block for dose reads (A6.17, D0.20, Q2.4), used on both complete and void reports."""
+    if d0_sha256 is not None and not read_plans._is_sha(d0_sha256):
+        raise ReadError("d0_sha256 must be a sha256 hex digest")
+    if namespace == "dose-d8" and d0_sha256 is None:
+        raise ReadError("dose-d8 requires D0 provenance (d0_sha256)")
+    man0 = sets[0]["manifest"]
+    expected_panel = read_sets.resolve_pinned_panel(man0, section.get("panel_sha256"), shakedown_manifest)
+    if man0["panel_sha256"] != expected_panel:
+        raise ReadError(
+            f"dose set panel_sha256 {man0['panel_sha256']!r} differs from pinned panel {expected_panel!r} "
+            f"for run {man0['run']}"
+        )
+    mark0 = next(iter(plans.values()))["mark"]
+    prov: dict[str, Any] = {
+        "label": "shakedown, under random play, provisional pins" if namespace in ("dose-d8", TEST) else "m5",
+        "d0_sha256": d0_sha256,
+        "panel_sha256": man0["panel_sha256"],
+        "panel_run": man0["run"],
+        "mark": mark0,
+        "panel_pairing_note": "marks on different panels are not paired",
+    }
+    if shakedown_manifest is not None:
+        prov["shakedown_manifest_sha256"] = shakedown_manifest[1]
+    return prov
+
+
 def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
              sets: list[dict[str, Any]], *, a6_file: Path | bytes | None = None,
              peer_sets: list[dict[str, Any]] | None = None, expected_pilot: Any = None,
@@ -1080,14 +1109,27 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         reason = voids[0]
         next_step = "attempt_ends" if "infrastructure failure" in reason else "technical recovery (A6.7)"
         records_all: dict[int, dict[str, Any]] = {}
-        planned_games = 0
+        plans_all: dict[int, dict[str, Any]] = {}
         for s in sets:
             records_all.update(s["records"])
-            planned_games += sum(len(p["games"]) for p in s["plans"].values())
-        g_counts = _games(records_all)
+            plans_all.update(s["plans"])
+        scoped_void = _scoped_games(read, records_all)
+        g_counts = _games_from_scoped(scoped_void)
+        if read == "b_prime":
+            planned_games = sum(
+                len(pair["games_y"]) for p in plans_all.values() for pair in p["paired_builds"]
+            )
+        else:
+            planned_games = sum(len(p["games"]) for p in plans_all.values())
         g_counts["planned"] = planned_games
         g_counts["unplayed"] = planned_games - g_counts["played"]
-        report.update(verdict="void", void=reason, next=next_step, games=g_counts)
+        a2_3, a2_1_warn = _halts_and_lengths(read, records_all, plans_all, scoped_void)
+        report.update(verdict="void", void=reason, next=next_step, games=g_counts,
+                      a2_3=a2_3, a2_1_warning=a2_1_warn)
+        if read == "dose":
+            report["provenance"] = _dose_provenance(
+                namespace, section, sets, plans_all, d0_sha256, shakedown_manifest
+            )
         return report
 
     resamples = declaration["resamples"]
@@ -1204,29 +1246,9 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         report["pools"] = {"planned": len(pools), "empty": sum(all(w is None for w in p) for p in pools)}
 
     if read == "dose":
-        if d0_sha256 is not None and not read_plans._is_sha(d0_sha256):
-            raise ReadError("d0_sha256 must be a sha256 hex digest")
-        if namespace == "dose-d8" and d0_sha256 is None:
-            raise ReadError("dose-d8 requires D0 provenance (d0_sha256)")
-        man0 = sets[0]["manifest"]
-        expected_panel = read_sets.resolve_pinned_panel(man0, section.get("panel_sha256"), shakedown_manifest)
-        if man0["panel_sha256"] != expected_panel:
-            raise ReadError(
-                f"dose set panel_sha256 {man0['panel_sha256']!r} differs from pinned panel {expected_panel!r} "
-                f"for run {man0['run']}"
-            )
-        mark0 = next(iter(plans.values()))["mark"]
-        prov = {
-            "label": "shakedown, under random play, provisional pins" if namespace in ("dose-d8", TEST) else "m5",
-            "d0_sha256": d0_sha256,
-            "panel_sha256": man0["panel_sha256"],
-            "panel_run": man0["run"],
-            "mark": mark0,
-            "panel_pairing_note": "marks on different panels are not paired",
-        }
-        if shakedown_manifest is not None:
-            prov["shakedown_manifest_sha256"] = shakedown_manifest[1]
-        report["provenance"] = prov
+        report["provenance"] = _dose_provenance(
+            namespace, section, sets, plans, d0_sha256, shakedown_manifest
+        )
         if look == 0:
             timing0 = sets[0].get("timing")
             basic_ids0 = sets[0].get("basic_ids")
