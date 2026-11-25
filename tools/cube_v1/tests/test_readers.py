@@ -140,7 +140,10 @@ class SeedPortTests(unittest.TestCase):
         text = RUST_GOLDENS.read_text(encoding="utf-8")
         stream = {"Game": seeds_v1.GAME, "GameCoin": seeds_v1.GAME_COIN, "GameEnv": seeds_v1.GAME_ENV,
                   "GameActions": seeds_v1.GAME_ACTIONS}
-        rows = re.findall(r"\((\d+), SeedStream::(\w+), (\d+), (\d+)\)", text)
+        rows = re.findall(
+            r"\(\s*(\d+),\s*SeedStream::(\w+),\s*(\d+),\s*(\d+),?\s*\)",
+            text,
+        )
         self.assertGreater(len(rows), 20)
         for parent, name, index, value in rows:
             self.assertEqual(seeds_v1.derive_seed(int(parent), stream[name], int(index)), int(value))
