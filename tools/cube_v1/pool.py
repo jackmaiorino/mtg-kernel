@@ -72,6 +72,12 @@ def _parse_gaps(doc: Any) -> set[str]:
 
 
 def _parse_fence(doc: Any, cube_names: set[str]) -> list[dict[str, str]]:
+    # The signed fence files wrap the list as {"cards": [...]} beside provenance keys
+    # (schema, cube_list, source); the bare list is accepted too, as CubePool does.
+    if isinstance(doc, dict):
+        if not isinstance(doc.get("cards"), list):
+            raise ValueError("fence object must hold a 'cards' list of {name, reason} objects")
+        doc = doc["cards"]
     if not isinstance(doc, list):
         raise ValueError("fence file must be a JSON list of {name, reason} objects")
     entries: list[dict[str, str]] = []
@@ -258,6 +264,24 @@ def serialize_json(doc: dict[str, Any]) -> str:
     return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
 
 
+def write_output(text: str, out: str | Path | None) -> None:
+    """Write `text` as UTF-8 bytes with LF line endings on every OS, to `out` or to stdout."""
+    data = text.encode("utf-8")
+    if out is not None:
+        out_path = Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(data)
+        return
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        # A text-only stream such as io.StringIO does no newline translation.
+        sys.stdout.write(text)
+        return
+    sys.stdout.flush()
+    buffer.write(data)
+    buffer.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cube-list", required=True, help="Cube list JSON file (cube_list/v1)")
@@ -284,13 +308,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"pool.py: {exc}", file=sys.stderr)
         return 1
 
-    text = serialize_json(pool)
-    if args.out is not None:
-        out_path = Path(args.out)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(text, encoding="utf-8")
-    else:
-        sys.stdout.write(text)
+    write_output(serialize_json(pool), args.out)
     return 0
 
 

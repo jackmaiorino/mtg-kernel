@@ -1,5 +1,7 @@
 //! Consolidated integration tests; CI runs each module in its own process.
 
+#[path = "eternal/cube_b_census_v1.rs"]
+mod cube_b_census_v1;
 #[path = "eternal/cube_draft_v1.rs"]
 mod cube_draft_v1;
 #[path = "eternal/cube_foreign_adventure_v1.rs"]
@@ -134,6 +136,8 @@ mod eternal_premodern_p3f_v1;
 mod eternal_premodern_p3g_v1;
 #[path = "eternal/eternal_premodern_p3h_v1.rs"]
 mod eternal_premodern_p3h_v1;
+#[path = "eternal/eternal_premodern_p3i_v1.rs"]
+mod eternal_premodern_p3i_v1;
 #[path = "eternal/eternal_public_extra_turns_v1.rs"]
 mod eternal_public_extra_turns_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]

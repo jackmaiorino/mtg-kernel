@@ -42,6 +42,7 @@ fn assigned_draws_name_each_slot_its_member() {
             postboard: false,
             max_physical_decisions: 4000,
             max_policy_steps: 40000,
+            max_stack_objects: None,
             opponent: None,
             opponent_kind: None,
             opponent_search: None,
@@ -51,6 +52,7 @@ fn assigned_draws_name_each_slot_its_member() {
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         },
         opponent: ExpandedOpponentAssignmentV1::Current,
     };
@@ -206,6 +208,7 @@ fn members_are_distinct_valid_containers_over_one_import_v1() {
                 postboard: false,
                 max_physical_decisions: 4000,
                 max_policy_steps: 40000,
+                max_stack_objects: None,
                 opponent: Some(member.source.clone()),
                 opponent_kind: None,
                 opponent_search: None,
@@ -215,6 +218,7 @@ fn members_are_distinct_valid_containers_over_one_import_v1() {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             }
         })
         .collect();

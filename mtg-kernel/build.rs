@@ -75,6 +75,7 @@ mod build_eternal_p3e_v1;
 mod build_eternal_p3f_v1;
 mod build_eternal_p3g_v1;
 mod build_eternal_p3h_v1;
+mod build_eternal_p3i_v1;
 mod build_eternal_pf1a_v1;
 mod build_eternal_pf1b_v1;
 mod build_eternal_pf1c_v1;
