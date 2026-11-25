@@ -21,11 +21,13 @@ use std::collections::{BTreeMap, BTreeSet};
 mod leyline;
 #[path = "eternal_bo3_v1/eternal_bo3_native_v1.rs"]
 mod native;
+#[path = "eternal_bo3_v1/eternal_bo3_ordered_v1.rs"]
+pub(crate) mod ordered;
 
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 136] = [
+const PLAYABLE_75: [(&str, &str); 137] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -204,6 +206,7 @@ const PLAYABLE_75: [(&str, &str); 136] = [
     ("premodern", "premodern-bw-control"),
     ("premodern", "premodern-grow"),
     ("premodern", "premodern-other-control"),
+    ("premodern", "premodern-full-english-breakfast"),
 ];
 
 fn id(name: &str) -> u16 {
@@ -227,7 +230,8 @@ fn rows(cards: &[(&str, u32)]) -> Vec<CustomCardCountV1> {
 }
 
 /// Every snapshot deck's registration, with its format. A deck whose 75
-/// holds a Leyline registers with the native opening profile.
+/// holds a Leyline registers with the native opening profile; a deck whose 75
+/// holds Volrath's Shapeshifter registers with the ordered graveyard profile.
 fn registered_snapshot_decks() -> Vec<(String, EternalRegisteredDeckV1)> {
     snapshot_decks()
         .into_iter()
@@ -242,16 +246,20 @@ fn registered_snapshot_decks() -> Vec<(String, EternalRegisteredDeckV1)> {
                 deck.deck.companion.as_deref(),
             ) {
                 Err(EternalBo3ErrorV1::NativeOpeningSetup { .. }) => {
-                    let expand = |rows: &[CustomCardCountV1]| {
-                        rows.iter()
-                            .flat_map(|row| std::iter::repeat_n(id(&row.name), row.count as usize))
-                            .collect()
-                    };
                     EternalRegisteredDeckV1::new_with_native_opening_v1(
                         format,
                         deck.archetype.clone(),
-                        expand(&deck.deck.cards),
-                        expand(&deck.sideboard),
+                        expand_rows(&deck.deck.cards),
+                        expand_rows(&deck.sideboard),
+                        deck.deck.companion.as_deref().map(id),
+                    )
+                }
+                Err(EternalBo3ErrorV1::OrderedGraveyardSetup { .. }) => {
+                    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+                        format,
+                        deck.archetype.clone(),
+                        expand_rows(&deck.deck.cards),
+                        expand_rows(&deck.sideboard),
                         deck.deck.companion.as_deref().map(id),
                     )
                 }
@@ -284,6 +292,20 @@ fn needs_native_opening(deck: &EternalRegisteredDeckV1) -> bool {
 fn natively(deck: &EternalRegisteredDeckV1) -> EternalRegisteredDeckV1 {
     let configuration = deck.registered_configuration();
     EternalRegisteredDeckV1::new_with_native_opening_v1(
+        deck.format(),
+        deck.deck_id(),
+        configuration.mainboard().to_vec(),
+        configuration.sideboard().to_vec(),
+        deck.companion(),
+    )
+    .unwrap_or_else(|error| panic!("{}: {error}", deck.deck_id()))
+}
+
+/// `deck` registered with the Premodern ordered graveyard profile, as both
+/// decks of an ordered match must be.
+fn ordered_deck(deck: &EternalRegisteredDeckV1) -> EternalRegisteredDeckV1 {
+    let configuration = deck.registered_configuration();
+    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
         deck.format(),
         deck.deck_id(),
         configuration.mainboard().to_vec(),
@@ -725,6 +747,18 @@ fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_se
             format,
             "unrelated",
             unrelated,
+            vec![],
+            None
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { .. })
+    ));
+    let mut token = main.clone();
+    token[0] = id("Treasure Token");
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_native_opening_v1(
+            format,
+            "token-native",
+            token,
             vec![],
             None
         ),
@@ -1348,15 +1382,20 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     let (mut games, mut sideboarded, mut sided_in_casts, mut companion_games) = (0, 0, 0, 0);
     let mut index = 0u64;
     let mut native_matches = 0;
+    let mut ordered_matches = 0;
     let mut pairings = Vec::new();
     for (format, decks) in &by_format {
         // Each deck plays the next deck of its format, or a mirror when the
-        // format has one deck. A match with a deck that needs the native
-        // opening profile registers both decks with it.
+        // format has one deck. A match with a deck that needs the ordered
+        // graveyard or native opening profile registers both decks with it.
         for (position, first) in decks.iter().enumerate() {
             let second = decks[(position + 1) % decks.len()];
-            let native = needs_native_opening(first) || needs_native_opening(second);
-            let pair = if native {
+            let ordered = first.ordered_graveyard() || second.ordered_graveyard();
+            let native = !ordered && (needs_native_opening(first) || needs_native_opening(second));
+            let pair = if ordered {
+                ordered_matches += 1;
+                [ordered_deck(first), ordered_deck(second)]
+            } else if native {
                 native_matches += 1;
                 [natively(first), natively(second)]
             } else {
@@ -1364,21 +1403,32 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
             };
             let seed = 0x424f_3300_0000 + index;
             index += 1;
-            pairings.push((*format, *first, second, pair, seed, native));
+            pairings.push((*format, *first, second, pair, seed, native, ordered));
         }
     }
     // The matches run on worker threads (`in_parallel`); the lines, failures
     // and totals below take their results in this loop's order.
-    let outcomes = in_parallel(&pairings, |(_, _, _, pair, seed, native)| {
+    let outcomes = in_parallel(&pairings, |(_, _, _, pair, seed, native, ordered)| {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let record = play_match(pair.clone(), *seed, *native);
-            let replay = play_match(pair.clone(), *seed, *native);
-            assert_eq!(record.transcripts, replay.transcripts);
-            assert_eq!(record.winner, replay.winner);
-            record
+            if *ordered {
+                let (record, hashes) = play_ordered_match(pair.clone(), *seed);
+                let (replay, replay_hashes) = play_ordered_match(pair.clone(), *seed);
+                assert_eq!(record.transcripts, replay.transcripts);
+                assert_eq!(hashes, replay_hashes);
+                assert_eq!(record.winner, replay.winner);
+                record
+            } else {
+                let record = play_match(pair.clone(), *seed, *native);
+                let replay = play_match(pair.clone(), *seed, *native);
+                assert_eq!(record.transcripts, replay.transcripts);
+                assert_eq!(record.winner, replay.winner);
+                record
+            }
         }))
     });
-    for ((format, first, second, _, seed, native), outcome) in pairings.iter().zip(outcomes) {
+    for ((format, first, second, _, seed, native, ordered), outcome) in
+        pairings.iter().zip(outcomes)
+    {
         let Ok(record) = outcome else {
             failures.push(format!(
                 "{format}: {} / {} seed={seed}",
@@ -1388,7 +1438,7 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
             continue;
         };
         println!(
-            "{} / {} seed={seed} native={native} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
+            "{} / {} seed={seed} native={native} ordered={ordered} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
             first.deck_id(),
             second.deck_id(),
             record.games,
@@ -1414,6 +1464,10 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
         native_matches > 0,
         "no match used the native opening profile"
     );
+    assert!(
+        ordered_matches > 0,
+        "no match used the ordered graveyard profile"
+    );
     let companions = decks.iter().any(|(_, deck)| deck.companion().is_some());
     assert!(
         !companions || companion_games > 0,
@@ -1427,5 +1481,513 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
             .iter()
             .chain(configuration.sideboard())
             .all(|&card| CARD_DEFS[usize::from(card)].has_full_support()));
+    }
+}
+
+fn expand_rows(rows: &[CustomCardCountV1]) -> Vec<u16> {
+    rows.iter()
+        .flat_map(|row| std::iter::repeat_n(id(&row.name), row.count as usize))
+        .collect()
+}
+
+fn play_ordered_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> (MatchRecord, Vec<u64>) {
+    let policy = RandomSideboardPolicyV1 {
+        seed,
+        max_exchanges: 5,
+    };
+    let mut bo3 = EternalBestOfThreeMatchV1::new_v1(decks, PlayerId((seed % 2) as u8)).unwrap();
+    let mut record = MatchRecord {
+        transcripts: Vec::new(),
+        games: 0,
+        sideboarded_games: 0,
+        sided_in_casts: 0,
+        companion_games: 0,
+        opening_entries: BTreeMap::new(),
+        winner: None,
+    };
+    let mut state_hashes = Vec::new();
+    loop {
+        let (game_index, chooser) = match bo3.match_state().phase() {
+            MatchPhaseV1::AwaitingPlayDrawChoice {
+                game_index,
+                chooser,
+            } => (game_index, chooser),
+            MatchPhaseV1::Complete { outcome } => {
+                record.winner = match outcome {
+                    mtg_kernel::bo3_match::MatchOutcomeV1::Winner { winner } => Some(winner),
+                    mtg_kernel::bo3_match::MatchOutcomeV1::Draw => None,
+                };
+                return (record, state_hashes);
+            }
+            MatchPhaseV1::AwaitingGameResult { .. } => unreachable!("results are recorded"),
+        };
+        assert!(game_index <= 5, "seed={seed}: too many drawn games");
+        let configurations = [PlayerId::P0, PlayerId::P1]
+            .map(|player| policy.configure_v1(bo3.deck(player), player, game_index));
+        let game_seed = seed.wrapping_mul(8).wrapping_add(u64::from(game_index));
+        let (game, owner) = bo3
+            .start_game_with_ordered_graveyard_v1(
+                chooser,
+                PlayDrawChoiceV1::Play,
+                configurations,
+                game_seed,
+            )
+            .unwrap();
+        let played = ordered::play(owner, game_seed, Policy::Random(game_seed));
+        record.games += 1;
+        record.transcripts.push(played.transcript_sha256);
+        state_hashes.push(played.state_hash);
+        let mut exchanges = 0;
+        for (seat, casts) in played.cast_cards.iter().enumerate() {
+            let player = game.player_in_seat(seat);
+            let (came_in, _) = game
+                .configuration(player)
+                .exchanges_from(bo3.deck(player).registered_configuration());
+            exchanges += came_in.len();
+            let came_in: BTreeSet<u16> = came_in.into_iter().collect();
+            record.sided_in_casts += casts
+                .iter()
+                .filter(|(card, _)| came_in.contains(card))
+                .map(|(_, casts)| casts)
+                .sum::<usize>();
+        }
+        record.sideboarded_games += usize::from(exchanges > 0);
+        let outcome = match played.winner {
+            Some(seat) => GameOutcomeV1::Win {
+                winner: game.player_in_seat(seat),
+            },
+            None => GameOutcomeV1::Draw,
+        };
+        bo3.record_game_result_v1(outcome).unwrap();
+    }
+}
+
+#[test]
+fn ordered_graveyard_registration_enforces_premodern_pool_profile_and_match_rules() {
+    use mtg_kernel::premodern_ordered_public_v1::feb::REGISTERED_PROFILE_V1;
+
+    let [p0, p1] = [PlayerId::P0, PlayerId::P1];
+    let island = id("Island");
+    let clean_main = vec![island; 60];
+    let clean_side = ids(&[("Hydroblast", 4), ("Dominate", 1)]);
+
+    // Valid Premodern pool registration succeeds.
+    let ordered = EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        EternalFormatV1::Premodern,
+        "premodern-clean",
+        clean_main.clone(),
+        clean_side.clone(),
+        None,
+    )
+    .unwrap();
+    assert!(ordered.ordered_graveyard());
+
+    // Non-Premodern formats and companions are refused.
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+            EternalFormatV1::Legacy,
+            "legacy-ordered",
+            clean_main.clone(),
+            clean_side.clone(),
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { .. })
+    ));
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+            EternalFormatV1::Premodern,
+            "companion-ordered",
+            clean_main.clone(),
+            vec![id("Lurrus of the Dream-Den")],
+            Some(id("Lurrus of the Dream-Den")),
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { .. })
+    ));
+
+    // Native-opening cards are refused in the ordered profile.
+    for opening in [
+        "Leyline of the Void",
+        "Leyline of Sanctity",
+        "Chancellor of the Annex",
+    ] {
+        let mut with_opening = clean_main.clone();
+        with_opening[0] = id(opening);
+        assert!(matches!(
+            EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+                EternalFormatV1::Premodern,
+                "opening-in-ordered",
+                with_opening,
+                Vec::new(),
+                None,
+            ),
+            Err(EternalBo3ErrorV1::OrderedGraveyardSetup { .. })
+        ));
+    }
+
+    // Cards outside the 305-card Premodern snapshot pool are refused in either
+    // registered zone with `OutsidePremodernPoolV1`.
+    let mut outside_main = clean_main.clone();
+    outside_main[0] = id("Brainstorm");
+    assert_eq!(
+        EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+            EternalFormatV1::Premodern,
+            "outside-main",
+            outside_main,
+            Vec::new(),
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OutsidePremodernPoolV1 {
+            name: "Brainstorm".into(),
+        })
+    );
+    assert_eq!(
+        EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+            EternalFormatV1::Premodern,
+            "outside-side",
+            clean_main.clone(),
+            vec![id("Force of Will")],
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OutsidePremodernPoolV1 {
+            name: "Force of Will".into(),
+        })
+    );
+
+    // Volrath's Shapeshifter is Full (step B2): admitted by the general
+    // ordered-graveyard constructor, refused by ordinary and native-opening
+    // registration in either zone, while tokens remain refused.
+    let mut with_volrath = clean_main.clone();
+    with_volrath[0] = id("Volrath's Shapeshifter");
+    let volrath_ordered = EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        EternalFormatV1::Premodern,
+        "full-volrath-ordered",
+        with_volrath.clone(),
+        Vec::new(),
+        None,
+    )
+    .unwrap();
+    assert!(volrath_ordered.ordered_graveyard());
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_v1(
+            EternalFormatV1::Premodern,
+            "ordinary-volrath-main",
+            with_volrath.clone(),
+            Vec::new(),
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
+            if reason.contains("Volrath's Shapeshifter")
+    ));
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_v1(
+            EternalFormatV1::Premodern,
+            "ordinary-volrath-side",
+            clean_main.clone(),
+            vec![id("Volrath's Shapeshifter")],
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
+            if reason.contains("Volrath's Shapeshifter")
+    ));
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_native_opening_v1(
+            EternalFormatV1::Premodern,
+            "native-volrath",
+            with_volrath,
+            Vec::new(),
+            None,
+        ),
+        Err(EternalBo3ErrorV1::OrderedGraveyardSetup { reason })
+            if reason.contains("Volrath's Shapeshifter")
+    ));
+    let mut with_token = clean_main.clone();
+    with_token[0] = id("Treasure Token");
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+            EternalFormatV1::Premodern,
+            "token-ordered",
+            with_token,
+            Vec::new(),
+            None,
+        ),
+        Err(EternalBo3ErrorV1::UnsupportedCard { .. })
+    ));
+
+    let feb = EternalRegisteredDeckV1::frozen_feb_75_with_ordered_graveyard_v1().unwrap();
+    assert!(feb.ordered_graveyard());
+    assert_eq!(feb.registered_configuration().mainboard().len(), 60);
+    assert_eq!(feb.registered_configuration().sideboard().len(), 15);
+
+    // Profile mismatches are refused at match creation and game start without
+    // mutating match state.
+    let ordinary = EternalRegisteredDeckV1::new_v1(
+        EternalFormatV1::Premodern,
+        "premodern-ordinary",
+        clean_main.clone(),
+        clean_side.clone(),
+        None,
+    )
+    .unwrap();
+    assert!(matches!(
+        EternalBestOfThreeMatchV1::new_v1([ordinary.clone(), ordered.clone()], p0),
+        Err(EternalBo3ErrorV1::GraveyardProfileMismatch)
+    ));
+    let native = EternalRegisteredDeckV1::new_with_native_opening_v1(
+        EternalFormatV1::Premodern,
+        "premodern-native",
+        clean_main,
+        clean_side,
+        None,
+    )
+    .unwrap();
+    assert!(matches!(
+        EternalBestOfThreeMatchV1::new_v1([native, ordered.clone()], p0),
+        Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+    ));
+
+    let mut ordinary_match =
+        EternalBestOfThreeMatchV1::new_v1([ordinary.clone(), ordinary.clone()], p0).unwrap();
+    let ordinary_before = ordinary_match.match_state().clone();
+    assert!(matches!(
+        ordinary_match.start_game_with_ordered_graveyard_v1(
+            p0,
+            PlayDrawChoiceV1::Play,
+            [
+                ordinary.registered_configuration().clone(),
+                ordinary.registered_configuration().clone(),
+            ],
+            460_801,
+        ),
+        Err(EternalBo3ErrorV1::GraveyardProfileMismatch)
+    ));
+    assert_eq!(ordinary_match.match_state(), &ordinary_before);
+
+    for (chooser, choice, expected_starter) in [
+        (p0, PlayDrawChoiceV1::Play, p0),
+        (p0, PlayDrawChoiceV1::Draw, p1),
+        (p1, PlayDrawChoiceV1::Play, p1),
+        (p1, PlayDrawChoiceV1::Draw, p0),
+    ] {
+        let mut bo3 =
+            EternalBestOfThreeMatchV1::new_v1([feb.clone(), ordered.clone()], chooser).unwrap();
+        let configs = [
+            feb.registered_configuration().clone(),
+            ordered.registered_configuration().clone(),
+        ];
+        let before = bo3.match_state().clone();
+        assert!(matches!(
+            bo3.start_game_v1(chooser, choice, configs.clone()),
+            Err(EternalBo3ErrorV1::GraveyardProfileMismatch)
+        ));
+        assert!(matches!(
+            bo3.start_game_with_native_opening_v1(chooser, choice, configs.clone(), 460_802),
+            Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+        ));
+        assert_eq!(bo3.match_state(), &before);
+        let (prepared, owner) = bo3
+            .start_game_with_ordered_graveyard_v1(chooser, choice, configs, 460_802)
+            .unwrap();
+        assert_eq!(prepared.start().starting_player, expected_starter);
+        assert_eq!(prepared.player_in_seat(0), expected_starter);
+        assert_eq!(owner.profile(), REGISTERED_PROFILE_V1);
+    }
+}
+
+#[test]
+fn schema_5_refuses_feb_and_outside_volrath_while_admitting_clean_sideboard() {
+    use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
+    use mtg_kernel::premodern_ordered_public_v1::feb::frozen_mainboard_rows_v1;
+    use serde_json::{json, Value};
+
+    let feb_rows = frozen_mainboard_rows_v1().unwrap();
+    let feb_deck = json!({"cards": feb_rows, "companion": null});
+    let clean_deck = json!({"cards": [{"name": "Island", "count": 56}, {"name": "Extrapolate the Impossible", "count": 4}], "companion": null});
+
+    // Schema 5 FEB reset is refused with `unsupported_deck` in either seat.
+    for decks in [json!([feb_deck, clean_deck]), json!([clean_deck, feb_deck])] {
+        let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+        let req = json!({
+            "schema_version": 5,
+            "request_type": "reset",
+            "request_id": "feb-refused",
+            "decks": decks,
+            "episode_id": 460,
+            "env_seed": 460_810,
+            "max_physical_decisions": 65536,
+            "max_policy_steps": 65536,
+        });
+        let reply: Value = serde_json::from_str(&server.handle_line(&req.to_string())).unwrap();
+        assert_eq!(reply["response_type"], "error");
+        assert_eq!(reply["error"]["code"], "unsupported_deck");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("requires the ordered graveyard owner"),
+            "{reply}"
+        );
+    }
+
+    // Schema 5 reset with Extrapolate the Impossible in mainboard and
+    // Volrath's Shapeshifter outside the game is refused in either seat.
+    let volrath_side = json!([{"name": "Volrath's Shapeshifter", "count": 1}]);
+    let empty_side = json!([]);
+    for outside in [
+        json!([volrath_side, empty_side]),
+        json!([empty_side, volrath_side]),
+    ] {
+        let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+        let req = json!({
+            "schema_version": 5,
+            "request_type": "reset",
+            "request_id": "outside-volrath-refused",
+            "decks": [clean_deck, clean_deck],
+            "outside_the_game": outside,
+            "episode_id": 460,
+            "env_seed": 460_811,
+            "max_physical_decisions": 65536,
+            "max_policy_steps": 65536,
+        });
+        let reply: Value = serde_json::from_str(&server.handle_line(&req.to_string())).unwrap();
+        assert_eq!(reply["response_type"], "error");
+        assert_eq!(reply["error"]["code"], "unsupported_deck");
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("requires the ordered graveyard owner"),
+            "{reply}"
+        );
+    }
+
+    // A PLAYABLE_75 game's sideboard without a Shapeshifter is admitted cleanly.
+    let decks = snapshot_decks();
+    let psychatog = decks
+        .iter()
+        .find(|deck| deck.archetype == "premodern-psychatog")
+        .unwrap();
+    let sligh = decks
+        .iter()
+        .find(|deck| deck.archetype == "premodern-sligh-rdw")
+        .unwrap();
+    let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+    let req = json!({
+        "schema_version": 5,
+        "request_type": "reset",
+        "request_id": "clean-sideboard-admitted",
+        "decks": [psychatog.deck, sligh.deck],
+        "outside_the_game": [psychatog.sideboard, sligh.sideboard],
+        "episode_id": 460,
+        "env_seed": 460_812,
+        "max_physical_decisions": 65536,
+        "max_policy_steps": 65536,
+    });
+    let reply: Value = serde_json::from_str(&server.handle_line(&req.to_string())).unwrap();
+    assert_eq!(reply["response_type"], "decision", "{reply}");
+}
+
+#[test]
+fn registered_feb_plays_best_of_three_against_psychatog_and_allure_mage_and_replays() {
+    let feb = EternalRegisteredDeckV1::frozen_feb_75_with_ordered_graveyard_v1().unwrap();
+    let snapshots = snapshot_decks();
+    let psychatog_snapshot = snapshots
+        .iter()
+        .find(|deck| deck.archetype == "premodern-psychatog")
+        .unwrap();
+    let psychatog = EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        EternalFormatV1::Premodern,
+        psychatog_snapshot.archetype.clone(),
+        expand_rows(&psychatog_snapshot.deck.cards),
+        expand_rows(&psychatog_snapshot.sideboard),
+        None,
+    )
+    .unwrap();
+
+    // A Premodern-pool 75 with Legacy's Allure and Meddling Mage (Replenish
+    // cannot register before step C2 adds Alter Reality).
+    let allure_mage = EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        EternalFormatV1::Premodern,
+        "premodern-allure-mage-test",
+        ids(&[
+            ("Adarkar Wastes", 4),
+            ("Flooded Strand", 4),
+            ("Island", 8),
+            ("Plains", 8),
+            ("Legacy's Allure", 4),
+            ("Meddling Mage", 4),
+            ("Swords to Plowshares", 4),
+            ("Counterspell", 4),
+            ("Impulse", 4),
+            ("Frantic Search", 4),
+            ("Seal of Cleansing", 4),
+            ("Fact or Fiction", 4),
+            ("Disenchant", 4),
+        ]),
+        ids(&[
+            ("Blue Elemental Blast", 3),
+            ("Hydroblast", 3),
+            ("Sphere of Law", 3),
+            ("Light of Day", 3),
+            ("Tsabo's Web", 3),
+        ]),
+        None,
+    )
+    .unwrap();
+
+    for (label, opponent, base_seed) in [
+        ("psychatog", psychatog, 0x460b_1000_u64),
+        ("allure-mage", allure_mage, 0x460b_2000_u64),
+    ] {
+        // Ranked game one plays to natural terminal and replays identically.
+        let mut ranked_match =
+            EternalBestOfThreeMatchV1::new_v1([feb.clone(), opponent.clone()], PlayerId::P0)
+                .unwrap();
+        let configs = [
+            feb.registered_configuration().clone(),
+            opponent.registered_configuration().clone(),
+        ];
+        let (_, owner) = ranked_match
+            .start_game_with_ordered_graveyard_v1(
+                PlayerId::P0,
+                PlayDrawChoiceV1::Play,
+                configs.clone(),
+                base_seed,
+            )
+            .unwrap();
+        let ranked = ordered::play(owner, base_seed, Policy::Ranked);
+        let mut ranked_replay_match =
+            EternalBestOfThreeMatchV1::new_v1([feb.clone(), opponent.clone()], PlayerId::P0)
+                .unwrap();
+        let (_, replay_owner) = ranked_replay_match
+            .start_game_with_ordered_graveyard_v1(
+                PlayerId::P0,
+                PlayDrawChoiceV1::Play,
+                configs,
+                base_seed,
+            )
+            .unwrap();
+        let ranked_replay = ordered::play(replay_owner, base_seed, Policy::Ranked);
+        assert_eq!(
+            ranked.transcript_sha256, ranked_replay.transcript_sha256,
+            "{label}"
+        );
+        assert_eq!(ranked.state_hash, ranked_replay.state_hash, "{label}");
+        assert_eq!(ranked.winner, ranked_replay.winner, "{label}");
+
+        // Best-of-three matches with random sideboarding across both game-1
+        // choosers finish and replay to identical transcripts and state hashes.
+        for seed in [base_seed + 1, base_seed + 2] {
+            let pair = [feb.clone(), opponent.clone()];
+            let (record, hashes) = play_ordered_match(pair.clone(), seed);
+            let (replay, replay_hashes) = play_ordered_match(pair, seed);
+            assert!(record.games >= 2, "{label} seed={seed}");
+            assert!(record.sideboarded_games > 0, "{label} seed={seed}");
+            assert_eq!(
+                record.transcripts, replay.transcripts,
+                "{label} seed={seed}"
+            );
+            assert_eq!(hashes, replay_hashes, "{label} seed={seed}");
+            assert_eq!(record.winner, replay.winner, "{label} seed={seed}");
+        }
     }
 }

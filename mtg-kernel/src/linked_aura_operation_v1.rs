@@ -1408,6 +1408,37 @@ fn replay_general_current_slots_v69(
     )
 }
 
+fn replay_pending_step_v1(
+    state: &GameState,
+    original: &GameState,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+    current_slots: Option<&genesis_current_slots_v69::InputV69>,
+) -> Result<(GameState, Option<Decision>), String> {
+    if crate::graveyard_order_v1::has_runner(state) {
+        let mut seeded = original.clone();
+        crate::graveyard_order_v1::copy_runner_for_entry_replay(state, &mut seeded);
+        replay_general_current_slots_v69(
+            &seeded,
+            operation,
+            answers,
+            used_banner,
+            current_slots,
+            None,
+        )
+    } else {
+        replay_general_current_slots_v69(
+            original,
+            operation,
+            answers,
+            used_banner,
+            current_slots,
+            None,
+        )
+    }
+}
+
 enum ReplayInputV1<'a> {
     Borrowed(&'a GameState),
     DrakeValidation(Box<GameState>),
@@ -1450,13 +1481,20 @@ fn replay_general_input_v1(
         banner_start: None,
         color_plans: Vec::new(),
         used_banner,
-        original_world_v48: crate::doubling_season_v48::requires_successor(original)
-            .then(|| Box::new(original.clone())),
+        original_world_v48: crate::doubling_season_v48::requires_successor(original).then(|| {
+            let mut clean = original.clone();
+            crate::graveyard_order_v1::clear_runner_for_entry_checkpoint(&mut clean);
+            Box::new(clean)
+        }),
         attachment_input_v48: None,
         original_world_v50: crate::fake_your_own_death_v50::death_custody::has_unowned_roots(
             original,
         )
-        .then(|| Box::new(original.clone())),
+        .then(|| {
+            let mut clean = original.clone();
+            crate::graveyard_order_v1::clear_runner_for_entry_checkpoint(&mut clean);
+            Box::new(clean)
+        }),
         active_fake_aura_entry_v50: None,
         mage_start: None,
         mage_plans: Vec::new(),
@@ -1498,6 +1536,7 @@ fn replay_general_input_v1(
                 original_sha256: origin,
             });
     }
+    let dry_run_graveyard = crate::graveyard_order_v1::begin_dry_run_runner(&mut staged);
     let result = invoke(&mut staged, operation);
     let runner = staged
         .engine
@@ -1519,6 +1558,8 @@ fn replay_general_input_v1(
             None
         };
         let original = original.or(restored.as_ref()).expect("replay original");
+        let mut clean_original = original.clone();
+        crate::graveyard_order_v1::clear_runner_for_entry_checkpoint(&mut clean_original);
         if current_slots.is_some()
             && (!runner.used_banner
                 || !matches!(choice, GeneralChoiceV36::Color { .. })
@@ -1534,7 +1575,7 @@ fn replay_general_input_v1(
                 Some(Box::new(HallowCheckpointV1 {
                     circle_global_order: hallow_replay::stamp_circle_global(),
                     expanded_damage_order: hallow_replay::stamp_checkpoint(),
-                    original: Box::new(original.clone()),
+                    original: Box::new(clean_original),
                     operation: operation.clone(),
                     answers: answers.to_vec(),
                     choice,
@@ -1546,7 +1587,7 @@ fn replay_general_input_v1(
                 .linked_aura_operation_v1
                 .pending_fake_aura_v50 = Some(Box::new(
                 crate::fake_your_own_death_v50::return_aura::CheckpointV50 {
-                    original: Box::new(original.clone()),
+                    original: Box::new(clean_original),
                     operation: operation.clone(),
                     answers: answers.to_vec(),
                     input: *input,
@@ -1560,7 +1601,7 @@ fn replay_general_input_v1(
                 .linked_aura_operation_v1
                 .pending_token_attachment_v48 = Some(Box::new(
                 crate::season_token_attachment_v48::CheckpointV48 {
-                    original: Box::new(original.clone()),
+                    original: Box::new(clean_original),
                     operation: operation.clone(),
                     answers: answers.to_vec(),
                     choice,
@@ -1574,7 +1615,7 @@ fn replay_general_input_v1(
                 .linked_aura_operation_v1
                 .pending_kinship_v1 =
                 Some(Box::new(crate::banner_of_kinship_v1::entry::CheckpointV1 {
-                    original: Box::new(original.clone()),
+                    original: Box::new(clean_original),
                     operation: operation.clone(),
                     answers: answers.to_vec(),
                     choice,
@@ -1602,7 +1643,7 @@ fn replay_general_input_v1(
                 .engine
                 .linked_aura_operation_v1
                 .pending_meddling_mage_v1 = Some(Box::new(mage_entry::CheckpointV1 {
-                original: Box::new(original.clone()),
+                original: Box::new(clean_original),
                 operation: operation.clone(),
                 answers: answers.to_vec(),
                 confirmed_show_answers_sha256,
@@ -1615,7 +1656,7 @@ fn replay_general_input_v1(
                 .engine
                 .linked_aura_operation_v1
                 .pending_general_v36 = Some(Box::new(GeneralCheckpointV36 {
-                original: Box::new(original.clone()),
+                original: Box::new(clean_original),
                 operation: operation.clone(),
                 answers: answers.to_vec(),
                 choice,
@@ -1636,7 +1677,7 @@ fn replay_general_input_v1(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             checkpoint.engine.linked_aura_operation_v1.pending = Some(Box::new(CheckpointV1 {
-                original: Box::new(original.clone()),
+                original: Box::new(clean_original),
                 operation: operation.clone(),
                 answers,
                 choice,
@@ -1650,6 +1691,9 @@ fn replay_general_input_v1(
             runner.used_banner,
             &mut checkpoint,
         )?;
+        if dry_run_graveyard {
+            crate::graveyard_order_v1::finish_dry_run_runner(&mut checkpoint)?;
+        }
         return Ok((*checkpoint, None));
     }
     let result = result?;
@@ -1709,6 +1753,9 @@ fn replay_general_input_v1(
             runner.used_banner,
             &mut staged,
         )?;
+    }
+    if dry_run_graveyard {
+        crate::graveyard_order_v1::finish_dry_run_runner(&mut staged)?;
     }
     Ok((staged, result))
 }
@@ -2324,11 +2371,13 @@ fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
         });
         let marker = state.engine.linked_aura_operation_v1.damage_order;
         let (mut next, _) = order.with(marker, || {
-            replay_general(
+            replay_pending_step_v1(
+                state,
                 &pending.original,
                 &pending.operation,
                 &answers,
                 pending.used_banner,
+                None,
             )
         })?;
         if marker.is_none()
@@ -2356,11 +2405,13 @@ fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
         let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
         let mut answers = pending.answers.clone();
         answers.push(answer);
-        let (next, _) = replay_general(
+        let (next, _) = replay_pending_step_v1(
+            state,
             &pending.original,
             &pending.operation,
             &answers,
             pending.used_banner,
+            None,
         )?;
         *state = next;
         return Ok(());
@@ -2370,7 +2421,14 @@ fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
         let answer = answer_equipment_checkpoint_v48(&p.choice, action)?;
         let mut answers = p.answers.clone();
         answers.push(answer);
-        let (next, _) = replay_general(&p.original, &p.operation, &answers, p.used_banner)?;
+        let (next, _) = replay_pending_step_v1(
+            state,
+            &p.original,
+            &p.operation,
+            &answers,
+            p.used_banner,
+            None,
+        )?;
         *state = next;
         return Ok(());
     }
@@ -2379,11 +2437,13 @@ fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
         let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
         let mut answers = pending.answers.clone();
         answers.push(answer);
-        let (next, _) = replay_general(
+        let (next, _) = replay_pending_step_v1(
+            state,
             &pending.original,
             &pending.operation,
             &answers,
             pending.used_banner,
+            None,
         )?;
         *state = next;
         return Ok(());
@@ -2393,11 +2453,13 @@ fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
         let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
         let mut answers = pending.answers.clone();
         answers.push(answer);
-        let (next, _) = replay_general(
+        let (next, _) = replay_pending_step_v1(
+            state,
             &pending.original,
             &pending.operation,
             &answers,
             pending.used_banner,
+            None,
         )?;
         *state = next;
         return Ok(());
@@ -2437,13 +2499,13 @@ fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
         };
         let mut answers = pending.answers.clone();
         answers.push(answer);
-        let (next, _) = replay_general_current_slots_v69(
+        let (next, _) = replay_pending_step_v1(
+            state,
             &pending.original,
             &pending.operation,
             &answers,
             true,
             pending.genesis_current_slots_v69.as_ref(),
-            None,
         )?;
         *state = next;
         return Ok(());
@@ -2470,7 +2532,16 @@ fn step_in_order(state: &mut GameState, action: Action) -> Result<(), String> {
             choice: pending.choice.clone(),
             host: binding,
         });
-        let (next, _) = replay(&pending.original, &pending.operation, &answers)?;
+        let general_answers: Vec<GeneralAnswerV36> =
+            answers.into_iter().map(GeneralAnswerV36::Host).collect();
+        let (next, _) = replay_pending_step_v1(
+            state,
+            &pending.original,
+            &pending.operation,
+            &general_answers,
+            false,
+            None,
+        )?;
         *state = next;
         return Ok(());
     }

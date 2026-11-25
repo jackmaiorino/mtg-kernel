@@ -393,6 +393,12 @@ pub mod eternal_pauper_pf1a_v1;
 pub mod eternal_pauper_pf1b_v1;
 /// Pauper field card programs of the eternal catalog (wave Pf1c).
 pub mod eternal_pauper_pf1c_v1;
+/// Pauper field card programs of the eternal catalog (wave Pf2a).
+pub mod eternal_pauper_pf2a_v1;
+/// Pauper field card programs of the eternal catalog (wave Pf2b).
+pub mod eternal_pauper_pf2b_v1;
+/// Pauper field card programs of the eternal catalog (wave Pf2c).
+pub mod eternal_pauper_pf2c_v1;
 /// Premodern card programs of the eternal catalog (wave P1a).
 pub mod eternal_premodern_p1a_v1;
 /// Premodern Enchantress, Replenish, Oath, Landstill, Psychatog and Grow
@@ -481,6 +487,8 @@ pub mod premodern_ordered_public_v1;
 pub mod rules_meaning_divine_v44;
 pub mod rules_meaning_zul_ashur_v1;
 mod sampled_history_v1;
+/// Layer-3 color-word text replacement for Alter Reality (issue #460).
+pub mod text_color_change_v1;
 pub mod zul_ashur_observation_v1;
 pub mod zul_ashur_public_v1;
 mod zul_ashur_v1;
