@@ -20,8 +20,14 @@
 //!   of 1 to 16 bytes copied at a fixed length instead of through a call to
 //!   `memcpy`.
 //!
+//! The serializer's type changes, so a `Serialize` implementation that
+//! looked at its serializer's type name could tell the two apart. Every
+//! document written here is a derived or serde-provided implementation,
+//! which does not.
+//!
 //! `json_writer_v1/tests.rs` compares the result with `serde_json::to_vec`
-//! (the previous writer, kept there as the reference).
+//! (the previous writer, kept there as the reference): bytes, errors and the
+//! buffer's final capacity.
 
 use serde::Serialize;
 use serde_json::ser::{CompactFormatter, Formatter};
@@ -89,6 +95,11 @@ impl io::Write for VecSinkV1<'_> {
     fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
         append_v1(self.0, bytes);
         Ok(())
+    }
+
+    /// `Vec<u8>`'s own (serde_json does not call it).
+    fn write_vectored(&mut self, bytes: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        io::Write::write_vectored(&mut *self.0, bytes)
     }
 
     #[inline]

@@ -1,28 +1,63 @@
 //! `json_writer_v1` against the previous writer, `serde_json::to_writer` into
 //! a `Vec<u8>` (`reference_v1`, kept here verbatim), which is what
-//! `serde_json::to_vec` does. Any differing byte fails.
+//! `serde_json::to_vec` does. Any differing byte fails, and so does a
+//! different final capacity from the same starting capacity (the
+//! parse-ahead cache charges a plain record's capacity).
 
 use super::*;
-use crate::expanded_deck_training_v1::tests::replay_fixture;
+use crate::expanded_deck_training_v1::no_state_digest_v1::InputContractRecordV1;
+use crate::expanded_deck_training_v1::tests::{checkpoint_fixture_v1, replay_fixture};
 use crate::expanded_deck_training_v1::{
-    record_envelope_v1, serialize_json_v1, ExpandedTrajectoryV1, SearchPlayedRowV1, MAX_FILE_BYTES,
+    record_envelope_v1, serialize_json_v1, ExpandedTrajectoryV1, PinnedFileV1, SearchPlayedRowV1,
+    MAX_FILE_BYTES,
+};
+use crate::rl_session::pauper_london_v1::{
+    PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningSeatRecordV1, PauperOpeningV1,
 };
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
+use crate::training_math_v1::TrainingMathV1;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::Write as _;
 
-/// The previous `serialize_json_v1` writer.
-fn reference_v1<T: ?Sized + Serialize>(value: &T) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(128);
+/// The previous `serialize_json_v1` writer, into a buffer of `capacity`.
+fn reference_with_v1<T: ?Sized + Serialize>(value: &T, capacity: usize) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(capacity);
     serde_json::to_writer(&mut bytes, value).unwrap();
     bytes
 }
 
-fn written_v1<T: ?Sized + Serialize>(value: &T) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(128);
+fn reference_v1<T: ?Sized + Serialize>(value: &T) -> Vec<u8> {
+    reference_with_v1(value, 128)
+}
+
+fn written_with_v1<T: ?Sized + Serialize>(value: &T, capacity: usize) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(capacity);
     to_vec_into_v1(&mut bytes, value).unwrap();
     bytes
+}
+
+fn written_v1<T: ?Sized + Serialize>(value: &T) -> Vec<u8> {
+    written_with_v1(value, 128)
+}
+
+/// Equal final capacities of the two writers from the starting capacities
+/// `serialize_json_v1` uses: 128 for a first document, and the last length
+/// plus a sixteenth (also exactly the length, and one byte short of it).
+fn assert_same_capacity_v1<T: ?Sized + Serialize>(value: &T) {
+    let length = reference_v1(value).len();
+    for start in [
+        0,
+        128,
+        length.saturating_sub(1),
+        length,
+        length + length / 16,
+    ] {
+        let expected = reference_with_v1(value, start);
+        let got = written_with_v1(value, start);
+        assert!(got == expected, "bytes from capacity {start}");
+        assert_eq!(got.capacity(), expected.capacity(), "capacity from {start}");
+    }
 }
 
 fn first_difference_v1(a: &[u8], b: &[u8]) -> Option<usize> {
@@ -41,6 +76,7 @@ fn assert_same_bytes_v1<T: ?Sized + Serialize>(value: &T) {
         "the writers differ first at byte {:?}",
         first_difference_v1(&got, &expected)
     );
+    assert_same_capacity_v1(value);
 }
 
 /// xorshift64*: a fixed stream of test values.
@@ -190,6 +226,19 @@ fn vec_sink_appends_like_vec_write_v1() {
     }
     assert_eq!(sunk, expected);
     VecSinkV1(&mut sunk).flush().unwrap();
+    let slices = [
+        io::IoSlice::new(&source[..1]),
+        io::IoSlice::new(&[]),
+        io::IoSlice::new(&source[3..40]),
+    ];
+    let mut expected = Vec::with_capacity(3);
+    let mut sunk = Vec::with_capacity(3);
+    assert_eq!(
+        VecSinkV1(&mut sunk).write_vectored(&slices).unwrap(),
+        expected.write_vectored(&slices).unwrap()
+    );
+    assert_eq!(sunk, expected);
+    assert_eq!(sunk.capacity(), expected.capacity());
 }
 
 /// Strings needing every kind of escape: every ASCII character (all
@@ -234,7 +283,7 @@ fn f64_cases_v1() -> Vec<f64> {
         0.1,
         1.0 / 3.0,
         -2.0 / 3.0,
-        123_456_789.123_456_789,
+        123_456_789.123_456_79,
         1.5e300,
         -2.5e-300,
         f64::MAX,
@@ -429,6 +478,70 @@ fn errors_are_the_previous_errors_v1() {
     assert_eq!(now, previous);
     let message = serialize_json_v1("json-writer-test-refused.json", &refused).unwrap_err();
     assert_eq!(message, previous);
+    // Non-finite float keys are refused; a Serialize implementation's own
+    // error is passed through.
+    for key in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let refused = MapOfV1(vec![(FloatKeyV1(key), 1)]);
+        let previous = serde_json::to_vec(&refused).unwrap_err().to_string();
+        let now = to_vec_into_v1(&mut Vec::new(), &refused)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(now, previous);
+    }
+    let previous = serde_json::to_vec(&[FailsV1]).unwrap_err().to_string();
+    let now = to_vec_into_v1(&mut Vec::new(), &[FailsV1])
+        .unwrap_err()
+        .to_string();
+    assert_eq!(now, previous);
+    assert!(now.contains("refused by its implementation"));
+}
+
+/// A map from float keys, which serde_json writes as quoted numbers.
+struct MapOfV1(Vec<(FloatKeyV1, u32)>);
+
+impl Serialize for MapOfV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(k, v)| (k, v)))
+    }
+}
+
+struct FloatKeyV1(f64);
+
+impl Serialize for FloatKeyV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.0)
+    }
+}
+
+struct FailsV1;
+
+impl Serialize for FailsV1 {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("refused by its implementation"))
+    }
+}
+
+/// `collect_str`, which serde_json writes through its own `fmt::Write`
+/// adapter, escaping as it goes.
+struct DisplayedV1(String);
+
+impl Serialize for DisplayedV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&format_args!("<{}|{}>", self.0, 10))
+    }
+}
+
+#[test]
+fn collected_strings_and_float_keys_have_the_previous_bytes_v1() {
+    let displayed: Vec<DisplayedV1> = escape_cases_v1().into_iter().map(DisplayedV1).collect();
+    assert_same_bytes_v1(&displayed);
+    let keys = f64_cases_v1()
+        .into_iter()
+        .filter(|x| x.is_finite())
+        .take(5_000)
+        .map(|x| (FloatKeyV1(x), 9u32))
+        .collect();
+    assert_same_bytes_v1(&MapOfV1(keys));
 }
 
 /// `serialize_json_v1` against the previous writer, on its first call for a
@@ -443,17 +556,25 @@ fn assert_trajectory_bytes_v1(name: &str, trajectory: &ExpandedTrajectoryV1) {
             first_difference_v1(&got, &expected)
         );
     }
+    assert_same_capacity_v1(trajectory);
     let parsed: ExpandedTrajectoryV1 = serde_json::from_slice(&expected).unwrap();
     assert_eq!(&parsed, trajectory);
 }
 
-/// Real decision tensors (`replay_fixture`), then the same trajectory with
-/// every optional member present, extreme and boundary values in every
-/// integer member and escapes in its strings, then empty collections.
+/// Real decision tensors (`replay_fixture`, with and without seat
+/// behaviors), then the same trajectory with every optional member of the
+/// trajectory and its decisions present (training math at its non-default
+/// value), boundary values in every integer member of the decisions, the
+/// search rows and the opening record, escapes in its strings, then one
+/// decision of 200,000-element arrays, then empty collections.
 #[test]
 fn trajectories_have_the_previous_bytes_v1() {
     let mut learner = FrozenPlayPolicyV1::training_fixture_v3();
+    let mut opponent = FrozenPlayPolicyV1::training_fixture_v3();
     let actors: Vec<u8> = [0, 1, 1, 0, 1, 0, 0, 1].repeat(2);
+    let (paired, _, _) = replay_fixture(&mut learner, Some(&mut opponent), 1, &actors);
+    assert!(paired.seat_behaviors.is_some());
+    assert_trajectory_bytes_v1("json-writer-test-paired.json", &paired);
     let (trajectory, _, _) = replay_fixture(&mut learner, None, 0, &actors);
     assert!(trajectory
         .decisions
@@ -477,8 +598,39 @@ fn trajectories_have_the_previous_bytes_v1() {
     let i64_cases = [i64::MIN, -10, -9, -1, 0, 1, 9, 10, 1 << 40, i64::MAX];
     let u64_cases = [0, 9, 10, u64::from(u32::MAX) + 1, u64::MAX];
     let strings = escape_cases_v1();
-    let mut every = trajectory.clone();
+    let mut every = paired.clone();
     every.learner_sampler = Some(strings[2].clone());
+    every.training_math = TrainingMathV1::PortableV1;
+    every.input_contract = Some(InputContractRecordV1 {
+        contract: strings[2].clone(),
+        state_digest_columns: [0, usize::MAX],
+        conversion: PinnedFileV1 {
+            path: strings[3].clone().into(),
+            sha256: "0".repeat(64),
+        },
+    });
+    every.opening_record = Some(PauperOpeningRecordV1 {
+        opening: PauperOpeningV1::LondonV1,
+        seats: [
+            PauperOpeningSeatRecordV1 {
+                mode: PauperMulliganModeV1::Learned,
+                mulligans_taken: 0,
+                kept_hand_size: 9,
+                exposed_pregame_decisions: 10,
+                forced_zero_card_keep: false,
+            },
+            PauperOpeningSeatRecordV1 {
+                mode: PauperMulliganModeV1::KeepSeven,
+                mulligans_taken: u8::MAX,
+                kept_hand_size: 10,
+                exposed_pregame_decisions: u32::MAX,
+                forced_zero_card_keep: true,
+            },
+        ],
+    });
+    every.episode.seed = u64::MAX;
+    every.episode.max_physical_decisions = 10;
+    every.episode.max_policy_steps = 9;
     every.search_played = Some(
         u64_cases
             .iter()
@@ -529,6 +681,17 @@ fn trajectories_have_the_previous_bytes_v1() {
     }
     assert_trajectory_bytes_v1("json-writer-test-every.json", &every);
 
+    let mut maximal = every.clone();
+    maximal.decisions.truncate(1);
+    let decision = &mut maximal.decisions[0];
+    let cycle_u32 = |n: usize| -> Vec<u32> { u32_cases.iter().copied().cycle().take(n).collect() };
+    let cycle_i64 = |n: usize| -> Vec<i64> { i64_cases.iter().copied().cycle().take(n).collect() };
+    decision.logits = cycle_u32(4_096);
+    decision.tensor.object_features = cycle_u32(200_000);
+    decision.tensor.action_features = cycle_u32(200_000);
+    decision.tensor.object_card_ids = cycle_i64(200_000);
+    assert_trajectory_bytes_v1("json-writer-test-maximal.json", &maximal);
+
     let mut bare = trajectory.clone();
     bare.decisions.truncate(1);
     let decision = &mut bare.decisions[0];
@@ -561,6 +724,24 @@ fn trajectories_have_the_previous_bytes_v1() {
     let mut empty = trajectory;
     empty.decisions.clear();
     assert_trajectory_bytes_v1("json-writer-test-empty.json", &empty);
+}
+
+/// The JSON checkpoint (`checkpoint_fixture_v1`: real parameters and Adam
+/// moments), written by `serialize_json_v1` as the update publishes it.
+#[test]
+fn checkpoints_have_the_previous_bytes_v1() {
+    let (_, _, checkpoint) = checkpoint_fixture_v1();
+    let expected = reference_v1(&checkpoint);
+    assert!(expected.len() > 100_000);
+    for _ in 0..2 {
+        let got = serialize_json_v1("json-writer-test-checkpoint.json", &checkpoint).unwrap();
+        assert!(
+            got == expected,
+            "the writers differ first at byte {:?}",
+            first_difference_v1(&got, &expected)
+        );
+    }
+    assert_same_capacity_v1(&checkpoint);
 }
 
 /// Recorded trajectory files (plain or sealed) in the directory
