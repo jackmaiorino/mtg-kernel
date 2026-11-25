@@ -332,6 +332,12 @@ fn costs(items: &[CostComponent]) -> Result<Vec<Value>> {
                     count,
                     filter: PermanentFilter::Land,
                 } => json!({"SacrificeControlledLands": count}),
+                CostComponent::SacrificeControlled {
+                    count,
+                    filter: filter @ PermanentFilter::WithSubtypeV1(subtype),
+                } if crate::continuous_characteristics_v1::is_land_subtype(subtype.stable_id()) => {
+                    json!({"SacrificeControlled": [count, filter]})
+                }
                 _ => return Err(unsupported()),
             })
         })
@@ -662,6 +668,34 @@ fn eternal_trigger(t: crate::eternal_cards_v1::EternalTriggerV1) -> Result<Value
 #[cfg(all(test, feature = "eternal-fixtures"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subtype_filtered_sacrifice_costs_require_land_subtypes() {
+        let land_filter = PermanentFilter::WithSubtypeV1(Subtype::Mountain);
+        assert_eq!(
+            costs(&[CostComponent::SacrificeControlled {
+                count: 1,
+                filter: land_filter,
+            }])
+            .unwrap(),
+            [json!({"SacrificeControlled": [1, land_filter]})]
+        );
+        for subtype in [
+            Subtype::Goblin,
+            Subtype::Beast,
+            Subtype::Servo,
+            Subtype::Thopter,
+        ] {
+            assert!(
+                costs(&[CostComponent::SacrificeControlled {
+                    count: 1,
+                    filter: PermanentFilter::WithSubtypeV1(subtype),
+                }])
+                .is_err(),
+                "{subtype:?}"
+            );
+        }
+    }
 
     #[test]
     fn issue454_reported_mainboards_have_exact_printed_program_operands() {

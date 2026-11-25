@@ -2283,8 +2283,8 @@ pub enum PermanentFilter {
 
 /// One component of a composite cost. Composable (a real cost is `&'static
 /// [CostComponent]`) rather than card-shaped, matching the `EffectOp`
-/// philosophy in `effect.rs`: "sacrifice 2 Mountains" is
-/// `SacrificeLands(2)`, not a `FireblastCost` variant.
+/// philosophy in `effect.rs`. A filtered sacrifice carries its count and
+/// permanent filter independently of the card naming the cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CostComponent {
     /// Tap the source permanent (activated abilities only -- casting a
@@ -4284,14 +4284,14 @@ mod tests {
         // prior definitions. Version 33 folded in Fang Dragon's Adventure
         // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
         // `cant_be_blocked_by_monarchs_creatures` static flag.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x1291_b789_c9aa_a269);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x0777_a480_28de_38d7);
     }
 
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xa575_a06d_e7ac_0729;
+        const EXPECTED_FDN: u64 = 0x748d_36e2_5484_c9f3;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -4301,7 +4301,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x7fd4_42a7_12f0_cc4b;
+        const EXPECTED_ETERNAL: u64 = 0x3629_1805_5ae2_4c1d;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
@@ -5100,7 +5100,11 @@ mod tests {
         assert_eq!(
             def.alt_cost,
             Some(AltCostDef {
-                components: [CostComponent::SacrificeLands(2)].as_slice(),
+                components: [CostComponent::SacrificeControlled {
+                    count: 2,
+                    filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain)
+                }]
+                .as_slice(),
                 condition: AltCostCondition::Always,
             })
         );
@@ -5126,7 +5130,13 @@ mod tests {
         assert!(matches!(looting_cost, [CostComponent::Mana(_)]));
         let lava_dart = &CARD_DEFS[card_id_by_name("Lava Dart").unwrap() as usize];
         let lava_dart_cost = lava_dart.flashback.as_ref().unwrap().cost;
-        assert!(matches!(lava_dart_cost, [CostComponent::SacrificeLands(1)]));
+        assert!(matches!(
+            lava_dart_cost,
+            [CostComponent::SacrificeControlled {
+                count: 1,
+                filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain)
+            }]
+        ));
     }
 
     #[test]

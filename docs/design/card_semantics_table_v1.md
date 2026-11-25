@@ -23,11 +23,11 @@ The writer (`--write`, and `--cube --write` for the cube table below) takes an e
 
 ## The first table
 
-171 cards, 490 columns, card database `1291b789c9aaa269`. A card has 6 to 28 nonzero columns (median 14). Sneaky Snacker adds the two return-from-graveyard columns. The former source-move and source-tap columns retain their positions with zero carriers.
+171 cards, 490 columns, card database `0777a48028de38d7`. A card has 6 to 28 nonzero columns (median 14). Sneaky Snacker adds the two return-from-graveyard columns. The former source-move and source-tap columns retain their positions with zero carriers.
 
 | Census | All tokens | Effect tokens (`leaf:`, `op:`, `cond:`) |
 | --- | ---: | ---: |
-| Distinct tokens | 488 | 241 |
+| Distinct tokens | 486 | 241 |
 | Tokens on exactly one card | 286 | 164 |
 | Cards with a token no other pool card has | 120 | 76 |
 | Cards with no effect token | 34 | 34 |
