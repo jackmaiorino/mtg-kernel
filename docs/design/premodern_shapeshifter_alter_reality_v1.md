@@ -1,12 +1,12 @@
 # Volrath's Shapeshifter Full and Alter Reality
 
-Status: in progress, issue #460. The research lead ruled on its three contract points and
+Status: implemented, issue #460. The research lead ruled on its three contract points and
 on the eight questions it raised (section 9). Volrath's Shapeshifter donor scope (steps A1 #768,
-A2 #793), the registered Premodern ordered-graveyard owner (step B1 #927), and Volrath's
-Shapeshifter promotion to `full` (step B2: 304/305 Premodern cards Full, 90.0% playable
-mainboards, 84.0% full 75s; `premodern-full-english-breakfast` in `PLAYABLE` and `PLAYABLE_75`)
-are implemented; Alter Reality (steps C1 and C2, plus the section 4.7 interaction test) remains
-to reach 305/305 Full and close #460.
+A2 #793), the registered Premodern ordered-graveyard owner (step B1 #927), Volrath's Shapeshifter
+promotion to `full` (step B2 #937), the Layer-3 color-word infrastructure and 38 audited sites
+(step C1 #928), and Alter Reality Full + wave P3i + section 4.7 Volrath x Alter Reality
+interaction (step C2) are implemented, reaching 305/305 Premodern cards Full, 90.0% playable
+mainboards (24/24), and 90.0% full 75s (24/24; `premodern-replenish` joins `PLAYABLE_75`).
 
 Code references are to main at `fd9ff09a`. Line numbers drift; each reference also names
 the function or constant. Rules are cited from the
@@ -1017,33 +1017,33 @@ There is no typed halt for this case. The test lands with whichever of B2 and C2
 
 ### 5.2 Alter Reality
 
-- [ ] Rules: a spell target and a permanent target; the full 20-pair menu; a target without
+- [x] Rules: a spell target and a permanent target; the full 20-pair menu; a target without
       the word (recorded, no effect); flashback; 400.7a carry-over; two changes in timestamp
       order; zone change ends it; phasing, control change and face-up keep it; an ability
       already on the stack keeps its captured word; illegal target at resolution.
-- [ ] One test per site row of section 4.4 (rows sharing a function may share a test, each row
+- [x] One test per site row of section 4.4 (rows sharing a function may share a test, each row
       asserted): at least Light of Day with two instances of different colors, Sphere of Law,
       both Elemental Blasts fizzling, Pyroblast doing nothing, the protection masks, Absolute
       Law per instance, Anarchy on the stack, Gloom's two taxes, Chill, Warmth, Dystopia,
       Circle of Protection: Red with a non-red choice, Quirion Dryad, Plaguebearer, Snuff Out,
       a token-making spell, a token-making trigger, a token-making activation, Treetop
       Village and Ghitu Encampment.
-- [ ] The five cost-only cards and a sample of no-word cards record a change with no effect.
-- [ ] Refusal: a target outside the audit (Circle of Protection: Blue) halts with
+- [x] The five cost-only cards and a sample of no-word cards record a change with no effect.
+- [x] Refusal: a target outside the audit (Circle of Protection: Blue) halts with
       `TextColorChangeOutsideAuditV1`; a face-down target is accepted.
-- [ ] The audit table test: every snapshot card is listed or audited as having none.
-- [ ] Schema 5: the field's presence, order and absence; the `choose_text_color_word_v1`
+- [x] The audit table test: every snapshot card is listed or audited as having none.
+- [x] Schema 5: the field's presence, order and absence; the `choose_text_color_word_v1`
       actions; schema 4 and the flat encoders refuse; section 4.6's tests.
-- [ ] Storage: a state with an item on the stack, a pending trigger and no record hashes and
+- [x] Storage: a state with an item on the stack, a pending trigger and no record hashes and
       serializes as on main; a capture is written only for a changed source, read at
       resolution, removed when the item leaves the stack, and kept across snapshot and restore;
       a copy of a captured item halts.
-- [ ] Animation colors: a Treetop Village animated after a change to "blue" stays a blue Ape
+- [x] Animation colors: a Treetop Village animated after a change to "blue" stays a blue Ape
       when the land is changed again the same turn, loses the entry at cleanup, and an
       unchanged land writes no entry; the same for Ghitu Encampment.
-- [ ] Iridescent Angel: a change "black" to "green" on an Iridescent Angel, and on a
+- [x] Iridescent Angel: a change "black" to "green" on an Iridescent Angel, and on a
       Shapeshifter with its text, leaves protection from all five colors.
-- [ ] Volrath interaction, a test of exactly the ruled case (section 4.7), in both seats: a
+- [x] Volrath interaction, a test of exactly the ruled case (section 4.7), in both seats: a
       Shapeshifter that has gained Akroma's text is the target of Alter Reality changing
       "black" to "green"; the changed text governs (protection from green and from red: a green
       source's damage is prevented and a black one's is not, a green spell cannot target it);
@@ -1051,7 +1051,7 @@ There is no typed halt for this case. The test lands with whichever of B2 and C2
       (protection from white), then a noncreature card (no protection), and the change is still
       recorded; a snapshot restore in the middle keeps it; the Shapeshifter leaving the
       battlefield ends it.
-- [ ] Games: a one-copy sideboard card is cast too rarely, so, as S1k did, a blue-white deck
+- [x] Games: a one-copy sideboard card is cast too rarely, so, as S1k did, a blue-white deck
       with four Alter Realities in its mainboard plays a deck of color-word cards through
       schema 5 sessions in both seats with ranked and seeded random actions, terminal and
       replay, requiring changes chosen from the action list; then `premodern-replenish` joins

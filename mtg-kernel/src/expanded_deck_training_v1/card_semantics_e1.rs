@@ -909,9 +909,8 @@ mod tests {
         )
         .unwrap_err()
         .contains("weights snapshot refuses card semantics"));
-        assert!(checkpoint_container_v1::admit_writer_v1(&saved)
-            .unwrap_err()
-            .contains("v2"));
+        // The container carries the section (version 2).
+        checkpoint_container_v1::admit_writer_v1(&saved).unwrap();
         for field in ["binding", "schema"] {
             let mut invalid = saved.clone();
             let section = invalid.card_semantics.as_mut().unwrap();
@@ -931,6 +930,109 @@ mod tests {
             .contains("binding"));
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A flag-on checkpoint written as a container (version 2, P and both
+    /// moment arrays in their own sections) loads into exactly the state its
+    /// v1 JSON twin loads into, through the run's loader, the trainer's
+    /// readback and the update's metadata probe; a changed P bit decodes but
+    /// is refused by the state hash, as it is in JSON.
+    #[test]
+    fn a_flag_on_container_loads_the_state_its_v1_twin_loads() {
+        let (root, initial, config, mut saved) = fixture_files_v1("container-twin");
+        let mut section = config.load_v1().unwrap().section_v1();
+        // Negative zero, the smallest subnormal and values with long
+        // mantissas: bits a decimal detour through f32 arithmetic could lose.
+        let bits = |i: usize| match i % 4 {
+            0 => (-0.0f32).to_bits(),
+            1 => 1,
+            2 => (0.1f32 + i as f32).to_bits(),
+            _ => (-(i as f32) / 3.0).to_bits(),
+        };
+        let lengths = card_semantics_lengths(&section);
+        section.weight = (0..lengths[0]).map(bits).collect();
+        section.first_moments = (0..lengths[1]).map(|i| bits(i + 1)).collect();
+        section.second_moments = (0..lengths[2])
+            .map(|i| (i as f32 / 7.0 + 0.5).to_bits())
+            .collect();
+        section.p_step = 5;
+        saved.card_semantics = Some(section);
+        let json = write_saved(&root, "twin.json", &initial, &mut saved);
+        let v1 = fs::read(&json.checkpoint.as_ref().unwrap().path).unwrap();
+        checkpoint_container_v1::admit_writer_v1(&saved).unwrap();
+        let encoded = checkpoint_container_v1::encode_v1(&saved).unwrap();
+        assert_eq!(encoded[8..12], 2u32.to_le_bytes());
+        assert_eq!(checkpoint_container_v1::export_v1(&encoded).unwrap(), v1);
+        assert_eq!(
+            checkpoint_container_v1::convert_v1_bytes(&v1).unwrap(),
+            encoded
+        );
+        let container = ExpandedModelSourceV1 {
+            checkpoint: Some(
+                publish_checkpoint_file_v1(&root.join("twin.ckpt"), &encoded).unwrap(),
+            ),
+            ..initial.clone()
+        };
+        let load = |source: &ExpandedModelSourceV1| {
+            let mut projection = Some(config.load_v1().unwrap());
+            let mut identity =
+                load_run_initial_v1(source, TrainingMathV1::PlatformLibm, &mut projection).unwrap();
+            // The file's own hash is the one member that names the format.
+            assert_eq!(
+                identity.checkpoint_sha256.take().as_ref(),
+                Some(&source.checkpoint.as_ref().unwrap().sha256)
+            );
+            let (_, state) = initialize_any_math_v1(source).unwrap();
+            let pin = source.checkpoint.as_ref().unwrap();
+            let probe: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(pin).unwrap();
+            let readback = readback_v1(&initial, pin, Some(&config)).unwrap();
+            (
+                identity,
+                projection.unwrap().section_v1(),
+                state.loaded_card_semantics.clone(),
+                state.state_sha256_v1().unwrap(),
+                probe.card_semantics,
+                serde_json::to_vec(&readback).unwrap(),
+            )
+        };
+        let from_json = load(&json);
+        let from_container = load(&container);
+        assert_eq!(from_json.1.p_step, 5);
+        assert_eq!(Some(&from_json.1), saved.card_semantics.as_ref());
+        assert_eq!(from_json.2, saved.card_semantics);
+        assert_eq!(from_json.4, saved.card_semantics);
+        assert_eq!(from_json.5, v1);
+        assert_eq!(from_container.0, from_json.0);
+        assert_eq!(from_container.1, from_json.1);
+        assert_eq!(from_container.2, from_json.2);
+        assert_eq!(from_container.3, from_json.3);
+        assert_eq!(from_container.4, from_json.4);
+        assert_eq!(from_container.5, from_json.5);
+        // The file ends with the last second-moment value: a changed bit
+        // there is data to the container and a different state to the hash.
+        let mut corrupted = encoded.clone();
+        let last = corrupted.len() - 1;
+        corrupted[last] ^= 1;
+        assert!(checkpoint_container_v1::decode_v1(&corrupted).is_ok());
+        let corrupted = ExpandedModelSourceV1 {
+            checkpoint: Some(
+                publish_checkpoint_file_v1(&root.join("corrupted.ckpt"), &corrupted).unwrap(),
+            ),
+            ..initial.clone()
+        };
+        assert!(initialize_any_math_v1(&corrupted)
+            .err()
+            .unwrap()
+            .contains("state hash differs"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn card_semantics_lengths(section: &CardSemanticsSectionV1) -> [usize; 3] {
+        [
+            section.weight.len(),
+            section.first_moments.len(),
+            section.second_moments.len(),
+        ]
     }
 
     #[test]
