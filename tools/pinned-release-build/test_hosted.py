@@ -1,9 +1,13 @@
 """Exercise admission and owned-process cleanup without invoking Docker."""
 
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,6 +21,19 @@ import hosted
 HERE = Path(__file__).resolve().parent
 PORTABLE_SCHEMA = "fleet-combined-trainer-build/v1"
 VARIANT_SCHEMA = "fleet-combined-trainer-build-target-variant/v1"
+BASH = shutil.which("bash")
+BINS = ["native_expanded_training_run_v1", "checkpoint_container_v1"]
+SPECS = ["example-1:feature_1,f2", "_plain", "2nd:f2"]
+INVALID_SPECS = ("", "../escape", "-flag", "name:", "name:a,,b", "name:a,", "name:a/b",
+                 "name:--all-features", "name:a;b", "name:$(id)", "name\n", "námé",
+                 "name:a,b,a", "DONE", "SHA256SUMS", *BINS)
+
+
+def bash(*args, cwd=HERE, target_cpu=None):
+    env = {key: os.environ[key] for key in ("PATH", "SystemRoot", "TEMP", "TMP") if key in os.environ}
+    if target_cpu is not None:
+        env["PINNED_TARGET_CPU"] = target_cpu
+    return subprocess.run([BASH, *args], cwd=cwd, env=env, text=True, capture_output=True, timeout=60)
 
 
 def import_hosted(value):
@@ -30,11 +47,7 @@ def import_hosted(value):
 
 def build_sh(value):
     """Run build.sh as far as its first privilege check with PINNED_TARGET_CPU set to `value` (None: unset)."""
-    env = {key: item for key, item in os.environ.items() if key != "PINNED_TARGET_CPU"}
-    if value is not None:
-        env["PINNED_TARGET_CPU"] = value
-    return subprocess.run(["bash", "build.sh", "0" * 40, "/work/out"], cwd=HERE, env=env, capture_output=True,
-                          text=True, timeout=60)
+    return bash("build.sh", "0" * 40, "/work/out", target_cpu=value)
 
 
 class TargetVariantTests(unittest.TestCase):
@@ -69,7 +82,7 @@ class TargetVariantTests(unittest.TestCase):
         for script in re.findall(r"run: \|\n((?:(?: {10}.*)?\n)+)", workflow):
             self.assertNotIn("inputs.target_cpu", script)
 
-    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    @unittest.skipIf(not BASH or os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
                      "runs build.sh up to its root check: needs bash and a user that is not root")
     def test_build_helper_gives_a_variant_another_manifest_schema_and_refuses_an_unknown_name(self):
         result = build_sh("bogus")
@@ -90,6 +103,148 @@ class TargetVariantTests(unittest.TestCase):
             seen.add(line.group(3))
         self.assertEqual(len(seen), len(hosted.TARGET_CPUS) - 1)
         self.assertNotEqual(PORTABLE_SCHEMA, VARIANT_SCHEMA)
+
+
+class ExampleTests(unittest.TestCase):
+    cli = ["--work-root", "root", "--source-commit", hosted.SOURCE]
+
+    def test_default_dispatch_executes_the_original_guard_and_helper_bytes(self):
+        guard = HERE / "bin-only/hosted.py"
+        for extra in ([], ["--examples="]):
+            with self.subTest(extra=extra), patch.object(hosted.os, "execv", side_effect=SystemExit) as launch:
+                with self.assertRaises(SystemExit):
+                    hosted.main(self.cli + extra)
+                launch.assert_called_once_with(sys.executable, [sys.executable, "-B", str(guard), *self.cli,
+                                                                "--wall-seconds", str(hosted.MAX_WALL)])
+        self.assertEqual(hosted.sha256(guard), "40b712c9e376d9ced5743593b142cb40b0e727ad70f566ab50abc0c339bd7141")
+        self.assertEqual(hosted.sha256(guard.with_name("build.sh")),
+                         "ac283ee8d1b4f6725b16f3931128c7f61a83dbd9251bc924dbc1c5b494f51194")
+
+    def test_main_passes_valid_specs_to_run_without_starting_a_shell(self):
+        with (patch.object(hosted.sys, "platform", "linux"), patch.object(hosted.platform, "machine", return_value="x86_64"),
+              patch.object(hosted.os, "geteuid", return_value=0, create=True), patch.object(hosted.os, "umask"),
+              patch.object(hosted.signal, "signal"), patch.object(hosted, "create_root") as create,
+              patch.object(subprocess, "Popen", side_effect=AssertionError("unexpected subprocess")),
+              patch.object(sys, "stdout", new_callable=io.StringIO),
+              patch.object(hosted, "run", return_value={"pass": True, "error": None}) as run):
+            self.assertEqual(hosted.main([*self.cli, "--examples", " ".join(SPECS)]), 0)
+            create.assert_called_once_with(Path("root"))
+            run.assert_called_once_with(Path("root"), hosted.SOURCE, hosted.MAX_WALL, SPECS)
+
+    def test_main_rejects_invalid_examples_before_admission(self):
+        for raw in (" ", "a  b", " a", "a ", "a\tb", "a\nb", "name:a name:b", *INVALID_SPECS[1:]):
+            with (self.subTest(raw=raw), patch.object(sys, "stderr", new_callable=io.StringIO) as stderr,
+                  patch.object(subprocess, "Popen", side_effect=AssertionError("unexpected subprocess")),
+                  patch.object(hosted, "create_root") as create, patch.object(hosted, "run") as run):
+                with self.assertRaises(SystemExit) as caught:
+                    hosted.main([*self.cli, "--examples=" + raw])
+                self.assertEqual(caught.exception.code, 2)
+                self.assertIn("example", stderr.getvalue())
+                create.assert_not_called()
+                run.assert_not_called()
+
+    def test_run_rejects_invalid_direct_requests_before_admission(self):
+        with patch.object(hosted, "Resources", side_effect=AssertionError("unexpected admission")):
+            for request in (["bad name"], ["name:f", "name"], "plain"):
+                with self.subTest(request=request), self.assertRaises(ValueError):
+                    hosted.run(Path("root"), hosted.SOURCE, 1, request)
+
+    @unittest.skipUnless(BASH, "requires Bash")
+    def test_helper_validates_both_check_only_and_normal_invocations(self):
+        self.assertEqual(bash("build.sh", "--check-examples", *SPECS).returncode, 0)
+        for args in (["--check-examples"], [hosted.SOURCE, "/work/out"]):
+            for specs in [(spec,) for spec in INVALID_SPECS] + [("name", "name:other")]:
+                with self.subTest(args=args, specs=specs):
+                    # A bad CPU stops even a regressed helper before machine setup.
+                    # Let Bash pass literal newlines to the script, including on Windows.
+                    command = shlex.join(["exec", "bash", "build.sh", *args, *specs])
+                    result = bash("-c", command, target_cpu="invalid")
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("example", result.stderr.lower())
+
+    @unittest.skipUnless(BASH, "requires Bash")
+    def test_build_helper_builds_installs_verifies_and_syncs_each_example(self):
+        # Substitute only the machine-specific setup. Run argument parsing and the release steps as shipped.
+        helper = (HERE / "build.sh").read_text(encoding="utf-8")
+        setup = (HERE / "fixtures/example-build-setup.sh").read_text(encoding="utf-8")
+        start = helper.index("[[ $EUID == 0")
+        end = helper.index('mkdir -- "$work/home"', start)
+        script = helper[:start] + setup + "\n" + helper[end:]
+        names = ["example-1", "_plain", "2nd"]
+        triple = "x86_64-unknown-linux-gnu"
+        for cpu in ("default", "znver5"):
+            with self.subTest(cpu=cpu), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "build.sh").write_text(script, encoding="utf-8", newline="\n")
+                release = Path("release") if cpu == "default" else Path(triple, "release")
+                sources = [release / name for name in BINS] + [release / "examples" / name for name in names]
+                for src in sources:
+                    path = root / "prebuilt" / src
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(src.name.encode())
+
+                result = bash("build.sh", hosted.SOURCE, "/work/out", *SPECS, cwd=root, target_cpu=cpu)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+                def lines(file):
+                    return (root / file).read_text(encoding="utf-8").splitlines()
+
+                base = ["build", "--release", "--locked", "--jobs", "2", "-p", "mtg-kernel"]
+                target = [] if cpu == "default" else ["--target", triple]
+                calls = [["--bin", name] for name in BINS] + [
+                    ["--example", "example-1", "--features", "feature_1,f2"],
+                    ["--example", "_plain"], ["--example", "2nd", "--features", "f2"]]
+                self.assertEqual(lines("target/cargo-args"), ["\t".join(base + call + target) for call in calls])
+                self.assertEqual(lines("target/rustflags"), ["" if cpu == "default" else "-C target-cpu=znver5"] * len(calls))
+                self.assertEqual(lines("comparisons"), [f"{src.as_posix()}\t{src.name}" for src in sources])
+                self.assertEqual(lines("manifest-args")[-(1 + len(BINS) + len(SPECS)):], [*BINS, "--", *SPECS])
+                files = [*BINS, *names, "BUILD-MANIFEST.json", "rust-components.json", "debian-packages.tsv"]
+                for src in sources:
+                    self.assertEqual((root / "out" / src.name).read_bytes(), src.name.encode())
+                # GNU sha256sum may mark binary inputs with '*' on Windows.
+                sums = [line.replace(" *", "  ", 1) for line in lines("out/SHA256SUMS")]
+                self.assertEqual(sums, [f"{hashlib.sha256((root / 'out' / file).read_bytes()).hexdigest()}  {file}"
+                                        for file in files])
+                self.assertIn("--check SHA256SUMS", lines("checksum-commands"))
+                self.assertIn(" ".join(["--", *files, "SHA256SUMS", "build.log"]), lines("sync-commands"))
+                self.assertTrue((root / "out/DONE").is_file())
+
+    def test_manifest_records_installed_examples_using_the_binary_metadata(self):
+        # Execute the manifest writer against fixture files. Only its external Linux tool queries are mocked.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bins = ["native_expanded_training_run_v1", "checkpoint_container_v1"]
+            specs = ["cube_b_census_v1:eternal-fixtures,other_2", "plain"]
+            for name in [*bins, "Cargo.lock", "rust-components.json", "debian-packages.tsv", "cube_b_census_v1", "plain"]:
+                (root / name).write_bytes(name.encode())
+
+            def command(args, **kwargs):
+                if args[:2] == ("gcc", "-print-prog-name=ld"):
+                    return sys.executable
+                if args[0] == "readelf":
+                    return "Advanced Micro Devices X86-64 /lib64/ld-linux-x86-64.so.2"
+                return "fixture"
+
+            def write(script, arguments):
+                source = script.read_text(encoding="utf-8").split("<<'PY'\n")[-1].split("\nPY\n")[0]
+                argv = ["-", str(root), str(root), hosted.SOURCE, "origin", "123", *bins, *arguments]
+                with patch.object(sys, "argv", argv), patch.object(subprocess, "check_output", side_effect=command):
+                    exec(compile(source, str(script), "exec"), {})
+                return (root / "BUILD-MANIFEST.json").read_bytes()
+
+            for cpu, flags, schema in (("default", "", PORTABLE_SCHEMA), ("znver5", "-C target-cpu=znver5", VARIANT_SCHEMA)):
+                with patch.dict(os.environ, PINNED_VARIANT=cpu, PINNED_RUSTFLAGS=flags, PINNED_MANIFEST_SCHEMA=schema):
+                    original = write(HERE / "bin-only/build.sh", [])
+                    self.assertEqual(write(HERE / "build.sh", ["--"]), original)
+                    manifest = json.loads(write(HERE / "build.sh", ["--", *specs]))
+                    examples = manifest.pop("examples")
+                    self.assertEqual(manifest["build"].pop("examples"), specs)
+                    self.assertEqual(manifest, json.loads(original))
+                    for entry, name, features in zip(examples, ["cube_b_census_v1", "plain"],
+                                                     [["eternal-fixtures", "other_2"], []], strict=True):
+                        self.assertEqual(entry, dict(name=name, bytes=len(name), features=features,
+                                                     runtime_libraries=["fixture"],
+                                                     sha256=hashlib.sha256(name.encode()).hexdigest()))
 
 
 class HostedGuardTests(unittest.TestCase):
@@ -124,7 +279,12 @@ class HostedGuardTests(unittest.TestCase):
         with patch.object(hosted, "TARGET_CPU", "znver5"):
             self.exercise_cleanup(growth_stop=True, target_cpu="znver5")
 
-    def exercise_cleanup(self, growth_stop=False, swapoff_error=False, target_cpu="default"):
+    def test_examples_reach_the_container_as_separate_arguments(self):
+        _, receipt = self.exercise_cleanup(examples=SPECS)
+        self.assertEqual(receipt["examples"], SPECS)
+        self.assertEqual(json.loads((self.root / "guard.json").read_bytes())["examples"], SPECS)
+
+    def exercise_cleanup(self, growth_stop=False, swapoff_error=False, target_cpu="default", examples=()):
         free = 85 * hosted.GIB
         daemon = Mock(pid=101, returncode=None)
         daemon.poll.return_value = None
@@ -175,7 +335,7 @@ class HostedGuardTests(unittest.TestCase):
               patch.object(hosted.subprocess, "run", side_effect=docker),
               patch.object(hosted.signal, "SIGKILL", 9, create=True),
               patch.object(hosted.os, "killpg", side_effect=lambda pid, sig: events.append((pid, sig)), create=True)):
-            receipt = hosted.run(self.root, hosted.SOURCE, 60)
+            receipt = hosted.run(self.root, hosted.SOURCE, 60, examples)
 
         self.assertEqual(commands[0][1]["DOCKER_TMPDIR"], str(self.root / "tmp"))
         self.assertEqual(commands[0][1]["TMPDIR"], str(self.root / "tmp"))
@@ -184,7 +344,8 @@ class HostedGuardTests(unittest.TestCase):
         self.assertIn(f"type=bind,src={self.root / 'work'},dst=/work", commands[1][0])
         self.assertIn("--memory-swap=28g", commands[1][0])
         self.assertNotIn("--rm", commands[1][0])
-        self.assertEqual(commands[1][0][-4:], [hosted.IMAGE, "/build.sh", hosted.SOURCE, "/work/out"])
+        self.assertEqual(commands[1][0][-(4 + len(examples)):],
+                         [hosted.IMAGE, "/build.sh", hosted.SOURCE, "/work/out", *examples])
         # The target-flag variant reaches build.sh through the container's environment; the default is `default`.
         position = commands[1][0].index("PINNED_TARGET_CPU=" + target_cpu)
         self.assertEqual(commands[1][0][position - 1], "--env")
