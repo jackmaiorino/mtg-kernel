@@ -12254,7 +12254,20 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
             "Tidehollow Sculler" if cfg!(feature = "eternal-fixtures") => {
                 crate::engine::source_card_def_matches(state, record.source, source.card_def)
             }
-            _ => source.card_def == record.source.card_def,
+            // Becoming a copy is not a zone change (707.4, 400.7): the same
+            // battlefield incarnation keeps its linked exile while a copy
+            // effect it recorded (Saheeli's -2 on Portable Hole) changes its
+            // definition.
+            _ => {
+                source.card_def == record.source.card_def
+                    || (source.zone == Zone::Battlefield
+                        && source.zone_change_count == record.source.zone_change_count
+                        && crate::engine::source_card_def_matches(
+                            state,
+                            record.source,
+                            source.card_def,
+                        ))
+            }
         };
         if !source_matches
             || source.owner != record.source.owner
