@@ -929,6 +929,29 @@ pub enum UnsupportedMechanic {
     /// change was copied (`text_color_change_v1`).
     /// Appended to preserve prior unsupported-state discriminants.
     TextColorChangeOutsideAuditV1,
+    /// Not an unsupported mechanic but a run-length bound: a decision would
+    /// be exposed with more than [`STACK_SIZE_CAP_V1`] items on the stack (an
+    /// optional loop played without end, such as Zirda, the Dawnwaker with
+    /// Basalt Monolith stacking untap activations under random play). The
+    /// source is the source of the first item beyond the cap.
+    /// Appended to preserve prior unsupported-state discriminants.
+    StackSizeCapExceeded,
+}
+
+/// The most items the stack may hold when a decision is exposed. A decision
+/// with more halts the game with [`UnsupportedMechanic::StackSizeCapExceeded`]
+/// ([`advance_until_decision`]). A constant, so the bound is the same on every
+/// host and in every consumer of the engine.
+pub const STACK_SIZE_CAP_V1: usize = 512;
+
+/// Halts the game when the stack holds more than [`STACK_SIZE_CAP_V1`] items:
+/// records the halt in `state.engine.halted`, as every engine halt does, with
+/// the source of the first item beyond the cap, and returns the halt decision.
+fn stack_size_cap_halt(state: &mut GameState) -> Option<Decision> {
+    let source = state.stack.get(STACK_SIZE_CAP_V1)?.source;
+    let mechanic = UnsupportedMechanic::StackSizeCapExceeded;
+    state.engine.halted = Some((mechanic, source));
+    Some(Decision::Halted { mechanic, source })
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
@@ -15110,10 +15133,18 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     // Automatic work (state-based deaths, upkeep, draws) can change a top
     // without passing an event site: no decision or terminal leaves the engine
     // while an unsupported donor is in place.
-    match donor_refusal_at(state, DonorCheckSiteV1::AdvanceDecision) {
-        Some((mechanic, source)) => Decision::Halted { mechanic, source },
-        None => decision,
+    if let Some((mechanic, source)) = donor_refusal_at(state, DonorCheckSiteV1::AdvanceDecision) {
+        return Decision::Halted { mechanic, source };
     }
+    // A finished game or an earlier halt stands; otherwise no decision leaves
+    // the engine with the stack over its cap.
+    if matches!(
+        decision,
+        Decision::GameOver { .. } | Decision::Halted { .. }
+    ) {
+        return decision;
+    }
+    stack_size_cap_halt(state).unwrap_or(decision)
 }
 
 fn advance_until_decision_unaudited(state: &mut GameState) -> Decision {

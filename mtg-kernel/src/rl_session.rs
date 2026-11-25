@@ -869,6 +869,8 @@ pub(crate) mod heartfire_v12;
 pub(crate) mod raid_entry_v21;
 mod raid_v9;
 mod soul_shackled_zombie_v13;
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod stack_size_cap_v1_tests;
 pub(crate) use soul_shackled_zombie_v13::context_for_akroma_v40 as akroma_zombie_context_v40;
 pub mod variable_cast_v1;
 #[cfg(test)]
