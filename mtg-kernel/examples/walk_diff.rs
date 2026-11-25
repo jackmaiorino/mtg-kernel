@@ -1321,11 +1321,11 @@ fn render_flashback_cost(components: &[CostComponent]) -> String {
     match components {
         [CostComponent::SacrificeControlled {
             count: 1,
-            filter: card_def::PermanentFilter::MountainV1,
+            filter: card_def::PermanentFilter::WithSubtypeV1(card_def::Subtype::Mountain),
         }] => "sacrifice a Mountain".to_string(),
         [CostComponent::SacrificeControlled {
             count,
-            filter: card_def::PermanentFilter::MountainV1,
+            filter: card_def::PermanentFilter::WithSubtypeV1(card_def::Subtype::Mountain),
         }] => format!("sacrifice {count} Mountains"),
         [CostComponent::SacrificeLands(1)] => "sacrifice a land".to_string(),
         [CostComponent::SacrificeLands(n)] => format!("sacrifice {n} lands"),
@@ -1716,8 +1716,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             card_def::CostComponent::DiscardSelf => "Discard this card".to_string(),
             card_def::CostComponent::DiscardCards(1) => "Discard a card".to_string(),
             card_def::CostComponent::DiscardCards(n) => format!("Discard {n} cards"),
-            card_def::CostComponent::SacrificeControlled { count: 1, filter: card_def::PermanentFilter::MountainV1 } => "Sacrifice a Mountain".to_string(),
-            card_def::CostComponent::SacrificeControlled { count, filter: card_def::PermanentFilter::MountainV1 } => format!("Sacrifice {count} Mountains"),
+            card_def::CostComponent::SacrificeControlled { count: 1, filter: card_def::PermanentFilter::WithSubtypeV1(card_def::Subtype::Mountain) } => "Sacrifice a Mountain".to_string(),
+            card_def::CostComponent::SacrificeControlled { count, filter: card_def::PermanentFilter::WithSubtypeV1(card_def::Subtype::Mountain) } => format!("Sacrifice {count} Mountains"),
             card_def::CostComponent::SacrificeLands(1) => "Sacrifice a land".to_string(),
             card_def::CostComponent::SacrificeLands(n) => format!("Sacrifice {n} lands"),
             card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(1) => {

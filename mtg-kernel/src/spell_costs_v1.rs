@@ -2507,7 +2507,7 @@ mod tests {
                 component,
                 CostComponent::SacrificeControlled {
                     count: 2,
-                    filter: card_def::PermanentFilter::MountainV1
+                    filter: card_def::PermanentFilter::WithSubtypeV1(card_def::Subtype::Mountain)
                 }
             )));
         let mut state = ready();

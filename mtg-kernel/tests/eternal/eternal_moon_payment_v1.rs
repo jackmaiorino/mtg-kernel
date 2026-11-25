@@ -542,6 +542,16 @@ fn mountain_sacrifices_use_the_current_land_subtype_both_seats() {
                 );
             }
 
+            let (mut plain, _) = plain_volcanic(actor);
+            if spell_name == "Fireblast" {
+                put(&mut plain, actor, "Mountain", Zone::Battlefield);
+            }
+            let spell = put(&mut plain, actor, spell_name, zone);
+            assert!(
+                castable(&mut plain, spell),
+                "{spell_name}: unenchanted Volcanic Island"
+            );
+
             let (mut state, _) = volcanic_under_spreading_seas(actor);
             if spell_name == "Fireblast" {
                 put(&mut state, actor, "Mountain", Zone::Battlefield);

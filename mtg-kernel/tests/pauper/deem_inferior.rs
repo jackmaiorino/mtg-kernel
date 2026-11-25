@@ -748,6 +748,14 @@ fn fireblast_and_lava_dart_require_mountains_controlled_by_the_caster() {
             let spell = put_object(&mut state, caster, name, zone);
             let island = put_object(&mut state, caster, "Island", Zone::Battlefield);
             put_object(&mut state, caster, "Forest", Zone::Battlefield);
+            // Model a land with changeling using the actual subtype set granted
+            // to Masked Vandal. Creature types cannot supply a basic land type.
+            let changeling =
+                mtg_kernel::state::ObjectStateV4::from_card_def(card_id("Masked Vandal"));
+            let land_types = &mut state.objects.get_mut(island).v4.effective_subtype_ids;
+            land_types.extend(changeling.effective_subtype_ids);
+            land_types.sort_unstable();
+            land_types.dedup();
             put_object(&mut state, caster.opponent(), "Mountain", Zone::Battlefield);
             let Decision::CastSpellOrPass {
                 castable_spells, ..
@@ -761,6 +769,7 @@ fn fireblast_and_lava_dart_require_mountains_controlled_by_the_caster() {
             );
             let a = put_object(&mut state, caster, "Mountain", Zone::Battlefield);
             let b = put_object(&mut state, caster, "Mountain", Zone::Battlefield);
+            state.objects.get_mut(a).tapped = true;
             engine::step(&mut state, Action::CastSpell(spell)).unwrap();
             assert!(matches!(
                 engine::advance_until_decision(&mut state),
@@ -771,11 +780,20 @@ fn fireblast_and_lava_dart_require_mountains_controlled_by_the_caster() {
                 Action::ChooseTarget(Target::Player(caster.opponent())),
             )
             .unwrap();
+            let payment = engine::advance_until_decision(&mut state);
+            let actions =
+                legal_action_candidates_v1(&SurfaceDecision::Decision(payment.clone()), &state)
+                    .unwrap();
+            assert_eq!(actions.len(), 2);
+            for action in actions {
+                let record = serde_json::to_value(action.record).unwrap();
+                assert_eq!(record["semantic"]["cost_kind"], "SacrificeLands");
+            }
             let Decision::ChooseCostTargets {
                 cost_kind,
                 candidates,
                 ..
-            } = engine::advance_until_decision(&mut state)
+            } = payment
             else {
                 panic!("expected a Mountain selection for {name}");
             };

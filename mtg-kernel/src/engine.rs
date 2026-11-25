@@ -9364,10 +9364,6 @@ pub(crate) fn permanent_matches_filter(
                 || object_has_type(state, id, CardType::Creature)
         }
         PermanentFilter::Token => state.objects.get(id).v4.is_token,
-        PermanentFilter::MountainV1 => {
-            object_has_type(state, id, CardType::Land)
-                && has_effective_subtype(state, id, card_def::Subtype::Mountain)
-        }
         PermanentFilter::DesertV1 => {
             object_has_type(state, id, CardType::Land)
                 && has_effective_subtype(state, id, card_def::Subtype::Desert)
@@ -10165,6 +10161,11 @@ fn tappable_controlled_permanents(
 
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
     match filter {
+        PermanentFilter::WithSubtypeV1(subtype)
+            if crate::continuous_characteristics_v1::is_land_subtype(subtype.stable_id()) =>
+        {
+            CostKind::SacrificeLands
+        }
         PermanentFilter::Artifact
         | PermanentFilter::AnotherArtifact
         | PermanentFilter::NontokenArtifactV1 => CostKind::SacrificeArtifacts,
@@ -10178,10 +10179,9 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
             CostKind::SacrificePermanents
         }
-        PermanentFilter::Land
-        | PermanentFilter::MountainV1
-        | PermanentFilter::DesertV1
-        | PermanentFilter::ForestOrPlainsV1 => CostKind::SacrificeLands,
+        PermanentFilter::Land | PermanentFilter::DesertV1 | PermanentFilter::ForestOrPlainsV1 => {
+            CostKind::SacrificeLands
+        }
     }
 }
 
@@ -18889,22 +18889,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.spell,
                 cost_kind: match filter {
                     PermanentFilter::Creature => CostKind::SacrificeCreatures,
-                    PermanentFilter::Artifact
-                    | PermanentFilter::AnotherArtifact
-                    | PermanentFilter::NontokenArtifactV1 => CostKind::SacrificeArtifacts,
-                    PermanentFilter::ArtifactOrCreature
-                    | PermanentFilter::Token
-                    | PermanentFilter::AnotherWithSubtype(_)
-                    | PermanentFilter::WithSubtypeV1(_)
-                    | PermanentFilter::GreenCreatureV1
-                    | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
-                    PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
-                        CostKind::SacrificePermanents
-                    }
-                    PermanentFilter::Land
-                    | PermanentFilter::MountainV1
-                    | PermanentFilter::DesertV1
-                    | PermanentFilter::ForestOrPlainsV1 => CostKind::SacrificeLands,
+                    _ => cost_kind_for_permanent_filter(filter),
                 },
                 remaining,
                 candidates,

@@ -177,11 +177,11 @@ fn cost_components(components: &[CostComponent]) -> Result<String, Error> {
             CostComponent::SacrificeLands(n) => format!("sacrifice {n} lands"),
             CostComponent::SacrificeControlled {
                 count: 1,
-                filter: card_def::PermanentFilter::MountainV1,
+                filter: card_def::PermanentFilter::WithSubtypeV1(card_def::Subtype::Mountain),
             } => "sacrifice a Mountain".into(),
             CostComponent::SacrificeControlled {
                 count,
-                filter: card_def::PermanentFilter::MountainV1,
+                filter: card_def::PermanentFilter::WithSubtypeV1(card_def::Subtype::Mountain),
             } => format!("sacrifice {count} Mountains"),
             CostComponent::DiscardCards(n) => format!("discard {n} cards"),
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {

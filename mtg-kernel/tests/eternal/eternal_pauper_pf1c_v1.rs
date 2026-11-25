@@ -1771,7 +1771,7 @@ fn retrace_mine_collapse_sacrifices_a_mountain_only_on_its_controllers_turn() {
             assert!(
                 matches!(next(&mut state),Decision::ChooseCostTargets{candidates,..} if candidates==[mountain])
             );
-            payment_pick(&mut state, CostKind::SacrificePermanents, mountain);
+            payment_pick(&mut state, CostKind::SacrificeLands, mountain);
             settled(&mut state);
             for card in [spell, land, mountain, wall] {
                 assert_eq!(zone(&state, card), Zone::Graveyard);

@@ -2279,8 +2279,6 @@ pub enum PermanentFilter {
     /// A controlled artifact that is not a token (Thopter Foundry's
     /// "Sacrifice a nontoken artifact"). Appended for Vintage Cube wave C3c.
     NontokenArtifactV1,
-    /// A controlled land with the effective Mountain subtype.
-    MountainV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -5104,7 +5102,7 @@ mod tests {
             Some(AltCostDef {
                 components: [CostComponent::SacrificeControlled {
                     count: 2,
-                    filter: PermanentFilter::MountainV1
+                    filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain)
                 }]
                 .as_slice(),
                 condition: AltCostCondition::Always,
@@ -5136,7 +5134,7 @@ mod tests {
             lava_dart_cost,
             [CostComponent::SacrificeControlled {
                 count: 1,
-                filter: PermanentFilter::MountainV1
+                filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain)
             }]
         ));
     }

@@ -5047,7 +5047,7 @@ fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Blasphemous Edict" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 0, x_count: 0 })], condition: AltCostCondition::BattlefieldCreatureCountAtLeast(13) })",
         "Flourishing Bloom-Kin" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips:&[], generic:3, x_count:0 })], condition:AltCostCondition::DisguiseFromHand })",
-        "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeControlled { count: 2, filter: PermanentFilter::MountainV1 }], condition: AltCostCondition::Always })",
+        "Fireblast" => "Some(AltCostDef { components: &[CostComponent::SacrificeControlled { count: 2, filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain) }], condition: AltCostCondition::Always })",
         "Land Grant" => "Some(AltCostDef { components: &[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)], condition: AltCostCondition::Always })",
         "Snuff Out" => "Some(AltCostDef { components: &[CostComponent::PayLife(4)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Swamp) })",
         "Knight-Errant of Eos" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 4, x_count: 0 })], condition: AltCostCondition::Always })",
@@ -5126,7 +5126,7 @@ fn flashback_for(name: &str) -> String {
             )
         }
         "Lava Dart" => {
-            "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::MountainV1 }] })".to_string()
+            "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain) }] })".to_string()
         }
         "Deep Analysis" => {
             let (pips, generic, x_count) = parse_cost("{1}{U}");

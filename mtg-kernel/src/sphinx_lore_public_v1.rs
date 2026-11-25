@@ -167,7 +167,6 @@ pub enum CostV1 {
     ReturnControlled(card_def::PermanentFilterDef),
     ExileGraveyardX { blue_only: bool },
     ExileGraveyardCardTypes(u8),
-    SacrificeMountains(u8),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -293,10 +292,6 @@ pub(crate) fn costs(values: &[CostComponent]) -> Result<Vec<CostV1>, String> {
                 CostComponent::Mana(m) => CostV1::Mana((*m).into()),
                 CostComponent::DiscardCards(n) => CostV1::DiscardCards(*n),
                 CostComponent::SacrificeLands(n) => CostV1::SacrificeLands(*n),
-                CostComponent::SacrificeControlled {
-                    count,
-                    filter: card_def::PermanentFilter::MountainV1,
-                } => CostV1::SacrificeMountains(*count),
                 CostComponent::PayLife(n) => CostV1::PayLife(*n),
                 CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                     CostV1::ExileOtherOwnGraveyardCards(*n)
@@ -641,66 +636,25 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
 #[cfg(test)]
 mod mountain_cost_tests {
     use super::CostV1;
-    use crate::card_def::{self, CostComponent, PermanentFilter, CARD_DEFS};
+    use crate::card_def::{self, PermanentFilter, Subtype, CARD_DEFS};
 
-    /// Fireblast's and Lava Dart's Mountain costs (issue 800) get their own public
-    /// cost kind. The unrestricted land sacrifice and the other filtered
-    /// sacrifices keep their published forms, and no other printed cost in the
-    /// catalog maps to the new kind, so it appears only for these two cards.
     #[test]
-    fn mountain_sacrifice_costs_have_their_own_public_cost_kind() {
-        let lava_dart = &CARD_DEFS[usize::from(card_def::card_id_by_name("Lava Dart").unwrap())];
-        assert_eq!(
-            super::costs(lava_dart.flashback.as_ref().unwrap().cost).unwrap(),
-            [CostV1::SacrificeMountains(1)]
-        );
-        let fireblast = &CARD_DEFS[usize::from(card_def::card_id_by_name("Fireblast").unwrap())];
-        assert_eq!(
-            super::costs(fireblast.alt_cost.as_ref().unwrap().components).unwrap(),
-            [CostV1::SacrificeMountains(2)]
-        );
-        assert_eq!(
-            super::costs(&[CostComponent::SacrificeLands(2)]).unwrap(),
-            [CostV1::SacrificeLands(2)]
-        );
-        assert_eq!(
-            super::costs(&[CostComponent::SacrificeControlled {
-                count: 1,
-                filter: PermanentFilter::Land,
-            }])
-            .unwrap(),
-            [CostV1::SacrificeControlled(1, PermanentFilter::Land)]
-        );
-        assert_eq!(
-            serde_json::to_string(&CostV1::SacrificeMountains(1)).unwrap(),
-            r#"{"SacrificeMountains":1}"#
-        );
-        for definition in CARD_DEFS.iter() {
-            let mut printed: Vec<&[CostComponent]> = Vec::new();
-            if let Some(flashback) = definition.flashback.as_ref() {
-                printed.push(flashback.cost);
-            }
-            if let Some(alternative) = definition.alt_cost.as_ref() {
-                printed.push(alternative.components);
-            }
-            if let Some(escape) = definition.escape.as_ref() {
-                printed.push(escape.cost);
-            }
-            for cost in printed {
-                let Ok(mapped) = super::costs(cost) else {
-                    continue;
-                };
-                if mapped
-                    .iter()
-                    .any(|kind| matches!(kind, CostV1::SacrificeMountains(_)))
-                {
-                    assert!(
-                        matches!(definition.name, "Fireblast" | "Lava Dart"),
-                        "{} maps to the Mountain cost kind",
-                        definition.name
-                    );
-                }
-            }
+    fn mountain_sacrifices_publish_the_same_filtered_cost_kind() {
+        let filter = PermanentFilter::WithSubtypeV1(Subtype::Mountain);
+        let def = |name| &CARD_DEFS[usize::from(card_def::card_id_by_name(name).unwrap())];
+        for (components, count) in [
+            (def("Fireblast").alt_cost.as_ref().unwrap().components, 2),
+            (def("Lava Dart").flashback.as_ref().unwrap().cost, 1),
+            #[cfg(feature = "eternal-fixtures")]
+            (
+                def("Mine Collapse").alt_cost.as_ref().unwrap().components,
+                1,
+            ),
+        ] {
+            assert_eq!(
+                super::costs(components).unwrap(),
+                [CostV1::SacrificeControlled(count, filter)]
+            );
         }
     }
 }

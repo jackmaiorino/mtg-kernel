@@ -812,7 +812,6 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
                 PermanentFilter::AnotherArtifact
                     | PermanentFilter::AnotherWithSubtype(_)
                     | PermanentFilter::WithSubtypeV1(_)
-                    | PermanentFilter::MountainV1
                     | PermanentFilter::AnotherArtifactOrCreatureV1
             ) {
                 out.atoms.push(Atom::Opaque);
