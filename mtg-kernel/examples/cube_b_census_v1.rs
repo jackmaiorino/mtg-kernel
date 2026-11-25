@@ -364,7 +364,7 @@ impl Run {
         &self,
         start: u64,
         end: u64,
-        out: &mut File,
+        out: &mut impl Write,
         progress: &Path,
         current: &WorkerProgress,
     ) -> Fallible<()> {
@@ -468,9 +468,13 @@ fn with_heartbeat(
                 if decisions == 0 || last == Some((game, decisions)) {
                     continue;
                 }
-                std::fs::write(&temp, format!("{game} {decisions}"))
+                if let Err(error) = std::fs::write(&temp, format!("{game} {decisions}"))
                     .and_then(|()| std::fs::rename(&temp, &live))
-                    .map_err(|error| format!("{}: {error}", live.display()))?;
+                {
+                    let _ = std::fs::remove_file(&temp);
+                    let _ = writeln!(std::io::stderr(), "{}: {error}", live.display());
+                    continue;
+                }
                 last = Some((game, decisions));
             }
             Ok(())
@@ -627,7 +631,7 @@ fn check_watchdog(
 }
 
 fn hang_message(k: usize, next: u64, current: &PartProgress, watchdog: Duration) -> String {
-    let game = current.game.parse().unwrap_or(next);
+    let game = current.game.trim().parse().unwrap_or(next).max(next);
     let decision = current
         .live
         .split_once(' ')
@@ -771,6 +775,19 @@ fn supervise(args: &Args) -> Fallible<()> {
             );
             part.next = written + 1;
             if part.next < part.end {
+                let live = part.progress.with_added_extension("live");
+                let temp = live.with_added_extension("tmp");
+                for path in [part.progress.clone(), live, temp] {
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            kill_all(&mut parts);
+                            return Err(format!("{}: {error}", path.display()));
+                        }
+                    }
+                }
+                part.seen = part_progress(part);
                 part.child = Some(spawn(args, part)?);
                 part.seen_at = Instant::now();
             }
@@ -860,6 +877,32 @@ mod tests {
         dir
     }
 
+    struct TestOutput {
+        file: File,
+        first_heartbeat: Option<PathBuf>,
+    }
+
+    impl Write for TestOutput {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.file.write(bytes)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.file.flush()?;
+            // Hold the first game's decision count until the sampler publishes it.
+            if let Some(live) = self.first_heartbeat.take() {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline
+                    && std::fs::read_to_string(&live).ok().as_deref() != Some("0 2")
+                {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                assert_eq!(std::fs::read_to_string(live)?, "0 2");
+            }
+            Ok(())
+        }
+    }
+
     fn assert_same_outputs(dir: &Path, flags: &[&str], games: usize) {
         let args = Args::parse(
             flags
@@ -882,11 +925,14 @@ mod tests {
         assert_eq!(line.driver_decisions, Some(2));
         assert_eq!(current.sample(), (0, 2));
 
-        let play = |heartbeat| {
+        let play = |heartbeat: bool| {
             let run = load_run(&args).unwrap();
             let out = dir.join(format!("{}-{heartbeat}", args.required("--mode").unwrap()));
             let progress = out.with_added_extension("progress");
-            let mut file = File::create(&out).unwrap();
+            let mut file = TestOutput {
+                file: File::create(&out).unwrap(),
+                first_heartbeat: heartbeat.then(|| progress.with_added_extension("live")),
+            };
             let current = WorkerProgress::new(run.start);
             let mut work = || run.play(run.start, run.end, &mut file, &progress, &current);
             if heartbeat {
@@ -969,6 +1015,11 @@ mod tests {
             None
         );
         assert!(hang_message(0, 8, &sample("7 99"), limit).contains("at game 8 (last decision 0)"));
+        let stale = PartProgress {
+            game: "7".into(),
+            ..sample("7 99")
+        };
+        assert!(hang_message(0, 8, &stale, limit).contains("at game 8 (last decision 0)"));
     }
 
     #[test]
@@ -993,7 +1044,7 @@ mod tests {
         with_heartbeat(&progress, &current, poll, || {
             for decision in 1..=3 {
                 std::thread::sleep(Duration::from_secs(1));
-                current.decisions.store(decision, Ordering::Relaxed);
+                game_decision_counter().store(decision, Ordering::Relaxed);
                 let expected = format!("8 {decision}");
                 loop {
                     let seen = part_progress(&part);
@@ -1006,7 +1057,10 @@ mod tests {
                     std::thread::sleep(poll);
                 }
             }
+            let live = progress.with_added_extension("live");
+            let modified = std::fs::metadata(&live).unwrap().modified().unwrap();
             std::thread::sleep(limit + poll);
+            assert_eq!(std::fs::metadata(&live).unwrap().modified().unwrap(), modified);
             let seen = part_progress(&part);
             assert_eq!(check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit), None);
             assert_eq!(hang_message(0, part.next, &seen, limit),
