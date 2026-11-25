@@ -303,7 +303,7 @@ fn provisional_index_and_pool() {
     for id in table_source.row_ids() {
         assert_eq!(table_source.row_name(id), Some(name(id)), "card {id}");
     }
-    // This fixture covers the gap-record pool.
+    // Exercise the gap-record pool without a fence.
     let pool = CubePool::from_json_texts(
         &cube_text(),
         &std::fs::read_to_string(GAP_RECORD).expect("gap record"),
