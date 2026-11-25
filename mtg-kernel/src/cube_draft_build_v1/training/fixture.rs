@@ -23,42 +23,76 @@ impl HaltCase {
     }
 }
 
-fn forward(theta: f32) -> [f32; 2] {
-    let w = [0.75, theta];
-    let layer = LayerV1 {
-        weight: &w,
-        bias: None,
-        in_width: 2,
-        out_width: 1,
-    };
-    [0., 1.].map(|a| {
-        let mut y = [0.];
-        layer.forward(&[1., a], &mut y);
-        y[0]
-    })
-}
-fn outcome(samples: [&SampleV1; 2], returns: [f64; 2], baseline: f32, denom: usize) -> (f64, f64) {
-    let coefficients = returns.map(|r| pick_credit(r, baseline, denom).0);
-    weighted_outcome(samples, coefficients)
+/// Only the pick scorer's final affine row is used. Its two active columns
+/// receive 1 and the action index, so its logits are c and c + theta.
+struct TwoAction {
+    model: ModelV1,
+    rows: ModelCardRowsV1,
 }
 
-fn weighted_outcome(samples: [&SampleV1; 2], coefficients: [f64; 2]) -> (f64, f64) {
-    let mut weight_grad = [0.; 2];
-    let mut loss = 0.;
-    for (s, c) in samples.into_iter().zip(coefficients) {
-        let (term, grad) = policy_term(s, c);
-        loss += term;
-        for (a, d) in grad.into_iter().enumerate() {
-            tape::accumulate(&mut weight_grad, &[1., a as f32], d);
-        }
+impl TwoAction {
+    const WEIGHT: T = T::PickScorer2Weight;
+
+    fn new(theta: f32) -> Self {
+        let mut model = ModelV1::initialise_v1(5, 1, 1, 0).unwrap();
+        model.values[Self::WEIGHT.index()][..2].copy_from_slice(&[0.75, theta]);
+        let rows = ModelCardRowsV1::new_v1(
+            (0..5).collect(),
+            1,
+            vec![0.; 5],
+            1,
+            vec![0.; 5],
+            [0, 1, 2, 3, 4],
+        )
+        .unwrap();
+        Self { model, rows }
     }
-    (loss, f64::from(weight_grad[1]))
-}
-fn menu(theta: f32) -> [SampleV1; 2] {
-    [0, u64::MAX].map(|word| sample_v1(&forward(theta), &[true; 2], word).unwrap())
+    fn scores(tape: &mut Tape<'_>) -> [usize; 2] {
+        [0., 1.].map(|a| {
+            let mut input = vec![0.; H];
+            input[..2].copy_from_slice(&[1., a]);
+            let x = tape.constant(input);
+            tape.linear(x, Self::WEIGHT, None, false)
+        })
+    }
+    fn logits(&self) -> [f32; 2] {
+        let mut tape = Tape::new(&self.model, &self.rows);
+        Self::scores(&mut tape).map(|id| tape.output(id)[0])
+    }
+    fn menu(&self) -> [SampleV1; 2] {
+        let logits = self.logits();
+        [0, u64::MAX].map(|word| sample_v1(&logits, &[true; 2], word).unwrap())
+    }
+    fn outcome(
+        &self,
+        samples: [&SampleV1; 2],
+        returns: [f64; 2],
+        baseline: f32,
+        denom: usize,
+    ) -> (f64, f64) {
+        self.weighted_outcome(samples, returns.map(|r| pick_credit(r, baseline, denom).0))
+    }
+    fn weighted_outcome(&self, samples: [&SampleV1; 2], coefficients: [f64; 2]) -> (f64, f64) {
+        let mut tape = Tape::new(&self.model, &self.rows);
+        let mut loss = 0.;
+        for (s, c) in samples.into_iter().zip(coefficients) {
+            let nodes = Self::scores(&mut tape);
+            let (term, grad) = policy_term(s, c);
+            loss += term;
+            for (id, d) in nodes.into_iter().zip(grad) {
+                tape.seed(id, &[d]);
+            }
+        }
+        // Only this row participates in the toy network.
+        let mut grads = vec![Vec::new(); T::ALL.len()];
+        grads[Self::WEIGHT.index()] = vec![0.; H];
+        tape.backward(&mut grads);
+        (loss, f64::from(grads[Self::WEIGHT.index()][1]))
+    }
 }
 pub fn halt_cases() -> impl Iterator<Item = HaltCase> {
-    let menu = menu(0.);
+    let net = TwoAction::new(0.);
+    let menu = net.menu();
     (0..64).map(move |i| {
         let actions = [i / 32, (i / 16) % 2];
         let [a, b] = actions;
@@ -66,7 +100,7 @@ pub fn halt_cases() -> impl Iterator<Item = HaltCase> {
         HaltCase {
             actions,
             pattern: (i % 16) as u8,
-            derivative: outcome([&menu[a], &menu[b]], [r, -r], 0., 2).1,
+            derivative: net.outcome([&menu[a], &menu[b]], [r, -r], 0., 2).1,
         }
     })
 }
@@ -81,14 +115,15 @@ mod tests {
         n: usize,
         pay: impl Fn(usize, usize) -> [f64; 2],
     ) -> (f64, f64) {
-        let menu = menu(theta);
+        let net = TwoAction::new(theta);
+        let menu = net.menu();
         let mut mean = 0.;
         let mut loss = 0.;
         for a in 0..2 {
             for b in 0..2 {
                 let mass = (menu[0].counts[a] as f64 / GRID_SIZE as f64)
                     * (menu[0].counts[b] as f64 / GRID_SIZE as f64);
-                let (l, g) = outcome([&menu[a], &menu[b]], pay(a, b), base, n);
+                let (l, g) = net.outcome([&menu[a], &menu[b]], pay(a, b), base, n);
                 loss += mass * l;
                 mean += mass * g;
             }
@@ -104,7 +139,7 @@ mod tests {
     }
     #[test]
     fn additive_derivative_and_wrong_losses() {
-        let m = menu(0.);
+        let m = TwoAction::new(0.).menu();
         let p = m4_exp(m[0].log_probabilities[1].clamp(-120., 0.));
         eprintln!("part 1 backward p bits = {:#018x}", p.to_bits());
         for baseline in [0., 0.5] {
@@ -127,7 +162,8 @@ mod tests {
     #[test]
     fn unequal_probabilities_and_declared_joint_draws() {
         let theta = 1.;
-        let m = menu(theta);
+        let net = TwoAction::new(theta);
+        let m = net.menu();
         let p: Vec<_> = m[0]
             .log_probabilities
             .iter()
@@ -144,11 +180,14 @@ mod tests {
         let mut sum_sq = 0.;
         let mut ones = 0;
         let n = 1 << 16;
+        let logits = net.logits();
         for _ in 0..n {
             let [a, b] = streams
                 .each_mut()
-                .map(|s| sample_v1(&forward(theta), &[true; 2], s.next_u64()).unwrap());
-            let g = outcome([&a, &b], payoff(a.selected_index, b.selected_index), 0., 2).1;
+                .map(|s| sample_v1(&logits, &[true; 2], s.next_u64()).unwrap());
+            let g = net
+                .outcome([&a, &b], payoff(a.selected_index, b.selected_index), 0., 2)
+                .1;
             sum += g;
             sum_sq += g * g;
             ones += a.selected_index + b.selected_index;
@@ -170,7 +209,8 @@ mod tests {
     #[test]
     fn interaction_and_sibling_baselines() {
         let theta = 0.625;
-        let m = menu(theta);
+        let net = TwoAction::new(theta);
+        let m = net.menu();
         let q = m[0].counts[1] as f64 / GRID_SIZE as f64;
         // R0 = a - b + ab. The two focal derivatives of ab cancel in the seat mean.
         for baseline in [0., 0.5] {
@@ -201,8 +241,8 @@ mod tests {
                             .iter()
                             .product::<f64>();
                         mean += prob
-                            * (weighted_outcome([&m[a], &m[c]], chair0).1
-                                + weighted_outcome([&m[b], &m[d]], chair1).1);
+                            * (net.weighted_outcome([&m[a], &m[c]], chair0).1
+                                + net.weighted_outcome([&m[b], &m[d]], chair1).1);
                     }
                 }
             }
