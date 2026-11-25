@@ -997,6 +997,7 @@ impl Scan<'_> {
                             ..
                         } => self.fs(expected_remaining_frames),
                         Generic => false,
+                        ChooseTextColorWordV1 { .. } => true,
                         CrystalPreventionV1 { .. } => true,
                         CreatureChoiceV1 {
                             kind,
