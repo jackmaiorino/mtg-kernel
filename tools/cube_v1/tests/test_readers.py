@@ -1015,6 +1015,15 @@ class ExecutionTests(unittest.TestCase):
                     with self.assertRaisesRegex(pod_record.RecordError, "process_death"):
                         read_plans.check_record_against_plan(bad_att, plans[0])
 
+            # Reviewer's 64-natural-games probe: a full prefix of completed games has no next unplayed game,
+            # so attaching a process_death stop to the completed final game MUST be refused.
+            full_stopped = synth.record(plans[0], lambda p, g, pos: "draw", games=64, status="stopped")
+            self.assertEqual(len(full_stopped["games"]), 64)
+            self.assertEqual(full_stopped["stop"]["game"], 63)
+            self.assertEqual(full_stopped["stop"]["attempts"][0]["stop_kind"], "process_death")
+            with self.assertRaisesRegex(pod_record.RecordError, "no next unplayed game"):
+                read_plans.check_record_against_plan(full_stopped, plans[0])
+
             bad_pair = copy.deepcopy(stopped_mid)
             bad_pair["paired_builds"] = bad_pair["paired_builds"][:1]
             with self.assertRaisesRegex(pod_record.RecordError, "paired_builds"):

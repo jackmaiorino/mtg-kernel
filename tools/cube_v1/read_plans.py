@@ -1224,8 +1224,7 @@ def check_record_against_plan(record: dict[str, Any], plan: dict[str, Any]) -> N
         stop_game = stop["game"]
         played_count = len(games)
         on_last_played = played_count > 0 and stop_game == games[-1]["game"]
-        next_idx = played_count if played_count < len(plan_games) else len(plan_games) - 1
-        on_next_unplayed = stop_game == plan_games[next_idx]["game"]
+        on_next_unplayed = played_count < len(plan_games) and stop_game == plan_games[played_count]["game"]
         if not (on_last_played or on_next_unplayed):
             fail(f"stop.game {stop_game} does not match the played prefix length {played_count}")
         pg = plan_games[stop_game]
@@ -1243,7 +1242,10 @@ def check_record_against_plan(record: dict[str, Any], plan: dict[str, Any]) -> N
                 fail("stop.attempts differs from the halted last played game")
         else:
             if not on_next_unplayed:
-                fail("stop on a completed last played game must name the interrupted next game")
+                fail(
+                    "stop on a completed last played game must name the interrupted next game "
+                    "(a full completed prefix has no next unplayed game)"
+                )
             want_interrupted = [
                 {"deal_seed": pg["game_seed"], "stop_kind": "process_death", "last_action_source": None}
             ]
