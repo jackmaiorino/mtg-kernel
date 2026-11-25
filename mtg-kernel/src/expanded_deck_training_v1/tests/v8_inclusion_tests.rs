@@ -87,6 +87,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         postboard: false,
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: None,
