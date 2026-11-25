@@ -734,6 +734,111 @@ fn spell_inline_effect_tamper_halts_before_executing_forged_program() {
 }
 
 #[test]
+fn fireblast_and_lava_dart_require_mountains_controlled_by_the_caster() {
+    for (name, zone) in [("Fireblast", Zone::Hand), ("Lava Dart", Zone::Graveyard)] {
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[],
+                &[],
+                card_name,
+                774,
+                caster,
+            );
+            state.step = Step::Main1;
+            let spell = put_object(&mut state, caster, name, zone);
+            let island = put_object(&mut state, caster, "Island", Zone::Battlefield);
+            put_object(&mut state, caster, "Forest", Zone::Battlefield);
+            // Model a land with changeling using the actual subtype set granted
+            // to Masked Vandal. Creature types cannot supply a basic land type.
+            let changeling =
+                mtg_kernel::state::ObjectStateV4::from_card_def(card_id("Masked Vandal"));
+            let land_types = &mut state.objects.get_mut(island).v4.effective_subtype_ids;
+            land_types.extend(changeling.effective_subtype_ids);
+            land_types.sort_unstable();
+            land_types.dedup();
+            put_object(&mut state, caster.opponent(), "Mountain", Zone::Battlefield);
+            let Decision::CastSpellOrPass {
+                castable_spells, ..
+            } = engine::advance_until_decision(&mut state)
+            else {
+                panic!("expected priority for {name}");
+            };
+            assert!(
+                !castable_spells.contains(&spell),
+                "{name} with no Mountains"
+            );
+            let a = put_object(&mut state, caster, "Mountain", Zone::Battlefield);
+            let b = put_object(&mut state, caster, "Mountain", Zone::Battlefield);
+            state.objects.get_mut(a).tapped = true;
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(Target::Player(caster.opponent())),
+            )
+            .unwrap();
+            let payment = engine::advance_until_decision(&mut state);
+            let actions =
+                legal_action_candidates_v1(&SurfaceDecision::Decision(payment.clone()), &state)
+                    .unwrap();
+            assert_eq!(actions.len(), 2);
+            for action in actions {
+                let record = serde_json::to_value(action.record).unwrap();
+                assert_eq!(record["semantic"]["cost_kind"], "SacrificeLands");
+            }
+            let Decision::ChooseCostTargets {
+                cost_kind,
+                candidates,
+                ..
+            } = payment
+            else {
+                panic!("expected a Mountain selection for {name}");
+            };
+            assert_eq!(cost_kind, CostKind::SacrificeLands);
+            assert_eq!(candidates, [a, b]);
+            let mut forged = state.clone();
+            forged
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .sacrifice_chosen
+                .push(island);
+            let mut forged: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted { mechanic: UnsupportedMechanic::InvalidEffectContinuation, source } if source == spell
+            ));
+            assert_eq!(forged.objects.get(island).zone, Zone::Battlefield);
+
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert!(engine::step(&mut restored, Action::ChooseCostTarget(island)).is_err());
+            engine::step(&mut restored, Action::ChooseCostTarget(a)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut restored),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(restored.objects.get(spell).zone, Zone::Stack);
+            assert_eq!(restored.objects.get(island).zone, Zone::Battlefield);
+            assert_eq!(restored.objects.get(a).zone, Zone::Graveyard);
+            assert_eq!(
+                restored.objects.get(b).zone,
+                if name == "Fireblast" {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+        }
+    }
+}
+
+#[test]
 fn fireblast_target_contract_is_captured_before_its_mountain_sacrifice_cost() {
     let p0 = [card_id("Island")];
     let mut state = GameState::new_from_libraries(&p0, &[], card_name, 0x4649_5245);
