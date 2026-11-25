@@ -14230,6 +14230,103 @@ mod tests {
             assert!(session.state.stack.is_empty());
             assert_eq!(session.state.engine.pending_triggers.len(), 9);
         }
+
+        #[cfg(feature = "eternal-fixtures")]
+        #[test]
+        fn limited_trigger_batch_waits_for_both_original_targets_and_restores() {
+            use crate::engine::{self, Action};
+
+            let island = card_id_by_name("Island").unwrap();
+            let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+                7,
+                123,
+                8192,
+                16384,
+                ["custom-test-p0".into(), "custom-test-p1".into()],
+                [&[island; 40], &[island; 40]],
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                true,
+            )
+            .unwrap();
+            let state = &mut session.state;
+            state.step = Step::Main1;
+            state.active_player = PlayerId::P0;
+            state.priority_player = PlayerId::P0;
+            add_battlefield_object(state, PlayerId::P0, "Nadu, Winged Wisdom");
+            let first = add_battlefield_object(state, PlayerId::P0, "Scythecat Cub");
+            let second = add_battlefield_object(state, PlayerId::P0, "Scythecat Cub");
+            let land = state.players[0].hand[0];
+            propose_and_commit(state, ProposedEvent::zone_change(land, Zone::Battlefield));
+            let triggers = crate::trigger::collect_and_process(state);
+            assert_eq!(triggers.len(), 2);
+            assert_eq!(triggers[0].source, first);
+            assert_eq!(triggers[1].source, second);
+            state.engine.pending_triggers.extend(triggers);
+            session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                SuppressionAuditMode::Off,
+            );
+            session.current = None;
+            session.terminal = None;
+            session.advance_to_decision_or_terminal();
+
+            let answer = |session: &mut RlEpisodeSessionV1,
+                          matches: &dyn Fn(&ActionSemanticV1) -> bool| {
+                let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                    panic!("expected a Limited decision");
+                };
+                let action = decision
+                    .legal_actions
+                    .iter()
+                    .find(|action| matches(&action.semantic))
+                    .unwrap_or_else(|| {
+                        panic!("unexpected Limited menu: {:?}", decision.legal_actions)
+                    });
+                session
+                    .step(
+                        decision.episode_id,
+                        decision.step,
+                        action.selected_index,
+                        &action.stable_id,
+                    )
+                    .unwrap();
+            };
+            let in_order = |action: &ActionSemanticV1| matches!(action, ActionSemanticV1::OrderTriggers { order, .. } if order.as_slice() == [0, 1]);
+            let target =
+                |action: &ActionSemanticV1| matches!(action, ActionSemanticV1::ChooseTarget { .. });
+            answer(&mut session, &in_order);
+            answer(&mut session, &target);
+            assert_eq!(session.state.stack.len(), 1);
+            assert_eq!(session.state.stack[0].source, first);
+
+            let snapshot = session.snapshot_v5();
+            let serialized = serde_json::to_vec(&session.state).unwrap();
+            let before_second_target = session.current_response();
+            let mut forged = session.state.clone();
+            assert!(engine::step(&mut forged, Action::OrderTriggers(vec![0, 1])).is_err());
+            answer(&mut session, &target);
+            assert_eq!(session.state.stack.len(), 2);
+            assert_eq!(session.state.stack[1].source, second);
+            let mut forged = session.state.clone();
+            assert!(engine::step(&mut forged, Action::Pass).is_err());
+            let next_batch = session.current_response();
+            let placed = session.state.clone();
+            session.restore_v5(&snapshot);
+            assert_eq!(session.current_response(), before_second_target);
+            let restored: GameState = serde_json::from_slice(&serialized).unwrap();
+            assert_eq!(restored, session.state);
+            session.state = restored;
+            answer(&mut session, &target);
+            assert_eq!(session.current_response(), next_batch);
+            assert_eq!(session.state, placed);
+
+            answer(&mut session, &in_order);
+            assert_eq!(session.state.stack.len(), 4);
+            let stack = &session.state.stack;
+            assert_eq!(stack[0].targets, [Target::Object(stack[2].source)]);
+            assert_eq!(stack[1].targets, [Target::Object(stack[3].source)]);
+            assert!(session.state.engine.pending_triggers.is_empty());
+        }
     }
 
     fn goad(state: &mut GameState, attacker: crate::ids::ObjectId) {

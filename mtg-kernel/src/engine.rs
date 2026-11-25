@@ -205,6 +205,10 @@ pub struct EngineState {
     /// grouped APNAP (active player's group first); see
     /// `drain_pending_triggers_or_decide`.
     pub pending_triggers: Vec<PendingTrigger>,
+    /// Immediate captures created during placement, due at the next SBA
+    /// and APNAP checkpoint after the entire current batch is placed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    waiting_placement_triggers: Vec<PendingTrigger>,
     /// This turn's combat, reset fresh at every `Step::BeginCombat`.
     pub combat: CombatState,
     /// "Until end of turn" continuous effects, cleared at every
@@ -20556,46 +20560,88 @@ pub(crate) fn validate_pending_activation(
     Ok(())
 }
 
-/// If there are pending triggers, either auto-places a singleton group (no
-/// real choice to make) or returns `Decision::OrderTriggers` for a group of
-/// 2+ sharing a controller.
+enum TriggerPlacementChoice {
+    Order(usize),
+    DistributeCounters,
+    Mode(Vec<(TargetSpec, EffectOp)>),
+    Targets { remaining: u8, can_finish: bool },
+}
+
+fn pending_trigger_placement_choice(state: &GameState) -> Option<TriggerPlacementChoice> {
+    let first = state.engine.pending_triggers.first()?;
+    let group = &state.engine.pending_triggers;
+    let group_len = group
+        .iter()
+        .take_while(|trigger| trigger.controller == first.controller)
+        .count();
+    if group_len >= 2
+        && group[..group_len]
+            .iter()
+            .any(|trigger| !trigger.placement_ordered)
+    {
+        return Some(TriggerPlacementChoice::Order(group_len));
+    }
+    if counter_distribution_v1::waiting(first) {
+        return Some(TriggerPlacementChoice::DistributeCounters);
+    }
+    if let Some(modes) = pending_trigger_modes(state, first) {
+        return Some(TriggerPlacementChoice::Mode(modes));
+    }
+    let need = target_count(first.target_spec);
+    (first.targets.len() < usize::from(need)).then(|| TriggerPlacementChoice::Targets {
+        remaining: need - first.targets.len() as u8,
+        can_finish: first.targets.len() >= usize::from(target_min_count(first.target_spec)),
+    })
+}
+
+fn trigger_placement_waits_for_action(state: &GameState) -> bool {
+    state.engine.pending_land_play.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || state.engine.pending_effect.is_some()
+        || state.engine.pending_discard.is_some()
+        || state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+}
+
+/// Place a checkpoint's triggers in APNAP order, pausing for its choices.
 fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
     loop {
         if state.engine.pending_triggers.is_empty() {
-            // Targeting markers created while putting the just-drained batch
-            // on the stack can create Ward triggers. They form a fresh
-            // trigger-placement checkpoint only after the prior APNAP batch
-            // is fully placed, so collect them here rather than interleaving
-            // them with an older same-controller group.
-            if state.engine.event_log.is_empty() {
+            // CR 603.3b: targets announced during placement can generate
+            // immediate captures and event-matched triggers (such as Ward).
+            // Both belong to the next SBA and APNAP checkpoint.
+            if state.engine.event_log.is_empty()
+                && state.engine.waiting_placement_triggers.is_empty()
+            {
                 return None;
             }
-            collect_and_queue_triggers(state);
+            let waiting = std::mem::take(&mut state.engine.waiting_placement_triggers);
+            if waiting.is_empty() {
+                collect_and_queue_triggers(state);
+            } else {
+                state.engine.pending_triggers =
+                    trigger::collect_and_process_with_waiting(state, waiting);
+                if let Some(decision) = check_game_over(state) {
+                    return Some(decision);
+                }
+                if let Some((mechanic, source)) = state.engine.halted {
+                    return Some(Decision::Halted { mechanic, source });
+                }
+            }
             if state.engine.pending_triggers.is_empty() {
                 return None;
             }
         }
-        let first = state.engine.pending_triggers[0].clone();
-        let controller = first.controller;
-        let group_len = state
-            .engine
-            .pending_triggers
-            .iter()
-            .take_while(|trigger| trigger.controller == controller)
-            .count();
-        let group_is_ordered = state.engine.pending_triggers[..group_len]
-            .iter()
-            .all(|trigger| trigger.placement_ordered);
-
-        if group_len >= 2 && !group_is_ordered {
+        let choice = pending_trigger_placement_choice(state);
+        if let Some(TriggerPlacementChoice::Order(group_len)) = choice {
             return Some(Decision::OrderTriggers {
-                player: controller,
+                player: state.engine.pending_triggers[0].controller,
                 pending: state.engine.pending_triggers[..group_len].to_vec(),
             });
         }
-        if group_len == 1 && !first.placement_ordered {
-            state.engine.pending_triggers[0].placement_ordered = true;
-        }
+        state.engine.pending_triggers[0].placement_ordered = true;
 
         let pending = state.engine.pending_triggers[0].clone();
         if let Err(_error) = validate_pending_trigger(state, &pending) {
@@ -20610,16 +20656,19 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.source,
             });
         }
-        if let Some(decision) = counter_distribution_v1::decision(state, &pending) {
-            return Some(decision);
-        }
-        if let Some(modes) = pending_trigger_modes(state, &pending) {
-            return Some(Decision::ChooseTriggerMode {
-                player: pending.controller,
-                source: pending.source,
-                mode_count: modes.len() as u8,
-                legal_modes: legal_pending_trigger_modes(state, &pending, &modes),
-            });
+        match &choice {
+            Some(TriggerPlacementChoice::DistributeCounters) => {
+                return counter_distribution_v1::decision(state, &pending);
+            }
+            Some(TriggerPlacementChoice::Mode(modes)) => {
+                return Some(Decision::ChooseTriggerMode {
+                    player: pending.controller,
+                    source: pending.source,
+                    mode_count: modes.len() as u8,
+                    legal_modes: legal_pending_trigger_modes(state, &pending, modes),
+                });
+            }
+            _ => {}
         }
         if !pending_trigger_targets_can_complete(&pending, state) {
             // 603.3d at the actual placement checkpoint: legality can change
@@ -20644,47 +20693,15 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             state.engine.pending_triggers.remove(0);
             continue;
         }
-        let need = target_count(pending.target_spec);
-        if pending.targets.len() < usize::from(need) {
-            let trigger_source = pending_trigger_targeting_source(&pending, state);
-            if !target_prefix_can_complete_for_controller_and_source(
-                pending.target_spec,
-                &pending.targets,
-                pending.controller,
-                trigger_source,
-                state,
-            ) {
-                // 603.3c: if all of a triggered ability's targets are
-                // illegal (here: none were ever legal, e.g. every creature
-                // on the battlefield has protection from this monocolored
-                // source), the ability is removed instead of being put on
-                // the stack -- it does nothing. Drop it and keep draining
-                // rather than exposing an impossible `Decision::
-                // ChooseTargets` (empty `legal_targets`, `can_finish:
-                // false`), which `drain_pending_cast_or_decide`'s matching
-                // `targeting_can_complete`/`abort_cast` guard already
-                // avoids for spell casts.
-                if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
-                    || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
-                    || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
-                    || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
-                {
-                    state.engine.halted = Some((
-                        UnsupportedMechanic::InvalidEffectContinuation,
-                        pending.source,
-                    ));
-                    return Some(Decision::Halted {
-                        mechanic: UnsupportedMechanic::InvalidEffectContinuation,
-                        source: pending.source,
-                    });
-                }
-                state.engine.pending_triggers.remove(0);
-                continue;
-            }
+        if let Some(TriggerPlacementChoice::Targets {
+            remaining,
+            can_finish,
+        }) = choice
+        {
             return Some(Decision::ChooseTargets {
                 player: pending.controller,
                 spell: pending.source,
-                remaining: need - pending.targets.len() as u8,
+                remaining,
                 legal_targets: completable_next_targets_for_controller_and_source(
                     pending.target_spec,
                     &pending.targets,
@@ -20692,8 +20709,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                     pending_trigger_targeting_source(&pending, state),
                     state,
                 ),
-                can_finish: pending.targets.len()
-                    >= usize::from(target_min_count(pending.target_spec)),
+                can_finish,
             });
         }
 
@@ -20754,14 +20770,7 @@ pub(crate) fn pending_trigger_choose_mode_active_v1(state: &GameState) -> bool {
         || crate::attack_target_v1::has_pending(state)
         || crate::combat_damage_v1::has_pending_assignment(state)
         || !matches!(muldrotha_v1::decision(state), Ok(None))
-        || state.engine.pending_land_play.is_some()
-        || state.engine.pending_spell_copy.is_some()
-        || state.engine.pending_effect.is_some()
-        || state.engine.pending_discard.is_some()
-        || state.engine.pending_cast.is_some()
-        || state.engine.pending_activation.is_some()
-        || state.engine.pending_optional_cost.is_some()
-        || state.engine.pending_optional_cost_sacrifice.is_some()
+        || trigger_placement_waits_for_action(state)
     {
         return false;
     }
@@ -20772,21 +20781,12 @@ pub(crate) fn pending_trigger_choose_mode_active_v1(state: &GameState) -> bool {
     let Some(first) = state.engine.pending_triggers.first() else {
         return false;
     };
-    let group_len = state
-        .engine
-        .pending_triggers
-        .iter()
-        .take_while(|trigger| trigger.controller == first.controller)
-        .count();
-    if !state.engine.pending_triggers[..group_len]
-        .iter()
-        .all(|trigger| trigger.placement_ordered)
-        || validate_pending_trigger(state, first).is_err()
-        || counter_distribution_v1::waiting(first)
-    {
-        return false;
-    }
-    pending_trigger_modes(state, first).is_some()
+    first.placement_ordered
+        && validate_pending_trigger(state, first).is_ok()
+        && matches!(
+            pending_trigger_placement_choice(state),
+            Some(TriggerPlacementChoice::Mode(_))
+        )
 }
 
 fn legal_pending_trigger_modes(
@@ -21300,6 +21300,7 @@ pub(crate) fn validate_pending_trigger_identity(
 }
 
 fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(), String> {
+    let remaining_batch = state.engine.pending_triggers.len();
     validate_pending_trigger_for_stack(state, &t)?;
     let madness_source_contract = t
         .is_madness_offer
@@ -21555,6 +21556,12 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
     crate::drakuseth_damage_source_v76::publish(state, stack_item_id)?;
     crate::extra_turn_v1::record_trigger_publication(state, &finalized);
+    // Immediate capture hooks append to the queue. Preserve the exact
+    // remaining batch and carry those captures into the next checkpoint.
+    state
+        .engine
+        .waiting_placement_triggers
+        .extend(state.engine.pending_triggers.drain(remaining_batch..));
     // 117.3c/117.5: placing triggers precedes priority; it does not change
     // the player who would have received it (including an off-turn caster).
     // Clear the pass streak without bumping `priority_round`: this is not
@@ -29329,51 +29336,39 @@ pub(crate) fn step_without_linked_aura_v1(
             return Err("only the exact Discard action may answer a pending discard".to_string());
         }
     }
-    if let Some(pending_trigger) = state.engine.pending_triggers.first() {
-        if pending_trigger.placement_ordered && counter_distribution_v1::waiting(pending_trigger) {
-            return counter_distribution_v1::answer(state, &action);
+    if let Some(pending) = state
+        .engine
+        .pending_triggers
+        .first()
+        .filter(|_| !trigger_placement_waits_for_action(state))
+    {
+        let choice = pending_trigger_placement_choice(state);
+        if pending.placement_ordered && !matches!(choice, Some(TriggerPlacementChoice::Order(_))) {
+            validate_pending_trigger(state, pending)?;
         }
-        let group = state
-            .engine
-            .pending_triggers
-            .iter()
-            .take_while(|trigger| trigger.controller == pending_trigger.controller)
-            .collect::<Vec<_>>();
-        if group
-            .iter()
-            .any(|trigger| pending_trigger_modes(state, trigger).is_some())
-            && group.iter().any(|trigger| !trigger.placement_ordered)
-            && !matches!(&action, Action::OrderTriggers(_))
-        {
-            return Err(
-                "modal trigger placement must complete ordering before other actions".into(),
-            );
-        }
-        if pending_trigger.placement_ordered
-            && pending_trigger_modes(state, pending_trigger).is_some()
-        {
-            validate_pending_trigger(state, pending_trigger)?;
-            if !matches!(&action, Action::ChooseTriggerMode(_)) {
+        match choice {
+            Some(TriggerPlacementChoice::Order(_))
+                if !matches!(&action, Action::OrderTriggers(_)) =>
+            {
+                return Err("only OrderTriggers may answer a pending trigger order".into());
+            }
+            Some(TriggerPlacementChoice::DistributeCounters) => {
+                return counter_distribution_v1::answer(state, &action);
+            }
+            Some(TriggerPlacementChoice::Mode(_))
+                if !matches!(&action, Action::ChooseTriggerMode(_)) =>
+            {
                 return Err("only ChooseTriggerMode may answer a pending trigger mode".into());
             }
-        }
-        if pending_trigger.placement_ordered {
-            // Authenticate the restored spec before fixed-cardinality dispatch.
-            validate_pending_trigger(state, pending_trigger)?;
-        }
-        if pending_trigger.placement_ordered
-            && pending_trigger.targets.len()
-                < usize::from(target_count(pending_trigger.target_spec))
-        {
-            let may_finish = pending_trigger.targets.len()
-                >= usize::from(target_min_count(pending_trigger.target_spec));
-            if !(matches!(&action, Action::ChooseTarget(_))
-                || may_finish && matches!(&action, Action::FinishEffectSelection))
+            Some(TriggerPlacementChoice::Targets { can_finish, .. })
+                if !(matches!(&action, Action::ChooseTarget(_))
+                    || can_finish && matches!(&action, Action::FinishEffectSelection)) =>
             {
                 return Err(
-                    "only ChooseTarget may answer a pending triggered ability target".to_string(),
+                    "only ChooseTarget may answer a pending triggered ability target".into(),
                 );
             }
+            _ => {}
         }
     }
     if state
@@ -32314,19 +32309,11 @@ fn apply_declare_blockers(
 }
 
 fn apply_order_triggers(state: &mut GameState, perm: Vec<usize>) -> Result<(), String> {
-    if state.engine.pending_triggers.is_empty() {
-        return Err("no pending triggers to order".to_string());
-    }
-    let controller = state.engine.pending_triggers[0].controller;
-    let group_len = state
-        .engine
-        .pending_triggers
-        .iter()
-        .take_while(|t| t.controller == controller)
-        .count();
-    if group_len < 2 {
-        return Err("fewer than two triggers do not require ordering".to_string());
-    }
+    let Some(TriggerPlacementChoice::Order(group_len)) = pending_trigger_placement_choice(state)
+        .filter(|_| !trigger_placement_waits_for_action(state))
+    else {
+        return Err("no pending trigger group needs ordering".into());
+    };
 
     let mut sorted = perm.clone();
     sorted.sort_unstable();
