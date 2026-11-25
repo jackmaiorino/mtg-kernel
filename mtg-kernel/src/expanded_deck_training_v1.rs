@@ -1699,10 +1699,6 @@ pub struct ExpandedEpisodeV1 {
     pub postboard: bool,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
-    /// Optional cap on the number of items on the stack when a decision is
-    /// exposed. None keeps every prior serialized byte and imposes no cap.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_stack_objects: Option<u32>,
     /// Some fixes a game-level runtime rules profile, applied when the game
     /// is built and before any decision. None keeps every prior serialized
     /// byte and the default rules.
@@ -1745,9 +1741,15 @@ pub struct ExpandedEpisodeV1 {
     /// decks, may then hold at least 40 mainboard cards and an empty or short
     /// sideboard. It changes admission only, never the deal or the game.
     /// None keeps every prior serialized byte and the exact 60/15 checks.
-    /// Kept last: serde also decodes this struct from positional arrays.
+    /// Serde also decodes this struct from positional arrays, so new fields
+    /// go after this one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deck_format: Option<crate::sideboard::DeckFormatV1>,
+    /// Optional cap on the number of items on the stack when a decision is
+    /// exposed. None keeps every prior serialized byte and imposes no cap.
+    /// Last, after `deck_format`, so older positional arrays still decode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_stack_objects: Option<u32>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
