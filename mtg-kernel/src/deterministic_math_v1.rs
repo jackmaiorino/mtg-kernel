@@ -249,7 +249,7 @@
 //! ([`softmax_legal_action_weights_v1`]) that the model-guided search's
 //! evaluator calls directly, exactly mirroring this module's own existing
 //! split for `tanh_f32_v1`/`expm1_f64_v1`: one clean, oracle-verified
-//! `pub(crate)` entry point built from a private, domain-restricted
+//! `pub(crate)` entry point built from a shared, domain-restricted
 //! primitive, all of it libm-free and bit-order-pinned. Masking is not this
 //! module's concern (as with `expm1_f64_v1`, "no session/observation state
 //! is available here"): the caller already hands this function exactly the
@@ -299,7 +299,7 @@
 //! approximation of it.
 //!
 //! **The clamp floor.** By construction, every `x_i <= 0.0` (since
-//! `max_logit` is the true maximum). [`exp_f64_v1`] is a private,
+//! `max_logit` is the true maximum). [`exp_f64_v1`] is a shared,
 //! domain-restricted primitive, valid only for finite `x` in
 //! `[EXP_DOMAIN_FLOOR_V1, 0.0]`, mirroring `expm1_f64_v1`'s own bounded,
 //! not-general-purpose contract; [`softmax_legal_action_weights_v1`] clamps
@@ -527,7 +527,7 @@ unsafe fn tanh_f32_in_place_avx2_v1(values: &mut [f32]) {
 
 // ---------------------------------------------------------------------
 // Panel ruling extension (2026-08-16): softmax_legal_action_weights_v1 and
-// its private exp_f64_v1 primitive. See the module doc's own "Panel ruling
+// its shared exp_f64_v1 primitive. See the module doc's own "Panel ruling
 // extension" section above for the full rationale (why softmax replaces
 // the withdrawn sigmoid, why this function never divides by a sum, the
 // max-subtraction exactness argument, and the clamp-floor argument).
@@ -549,11 +549,10 @@ unsafe fn tanh_f32_in_place_avx2_v1(values: &mut [f32]) {
 /// argue precisely about a tight boundary. `k` (this function's own
 /// range-reduction integer, see [`exp_f64_v1`]'s doc) stays in `-174..=0`
 /// for this floor, still far inside `f64`'s normal exponent range.
-const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
+pub(crate) const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
 
-/// Private, domain-restricted deterministic `exp` (`e^x`). Valid only for
-/// finite `x` in `[EXP_DOMAIN_FLOOR_V1, 0.0]`; its only caller
-/// ([`softmax_legal_action_weights_v1`]) clamps to this domain before
+/// Domain-restricted deterministic `exp` (`e^x`). Valid only for
+/// finite `x` in `[EXP_DOMAIN_FLOOR_V1, 0.0]`. Callers clamp to this domain before
 /// calling, exactly as [`expm1_f64_v1`]'s own contract requires its own
 /// caller (`tanh_f32_v1`) to pre-guard its domain via branch structure
 /// rather than a runtime assertion. Not a general-purpose `exp` (no
@@ -607,17 +606,19 @@ const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
 ///    `2^k` construction `expm1_f64_v1` uses (`f64::from_bits(((k + 1023)
 ///    as u64) << 52)`).
 ///
-/// Accuracy: the Taylor truncation bound (`~3e-9` relative, at `|r| <=
-/// 0.3466`) and the reduction-constant error bound (`~3.9e-14` at this
-/// function's widest `k`) are both independent of how negative `x` is
-/// (range reduction always brings `r` into the same fixed small interval
-/// regardless of `x`'s magnitude), so this function's `f64`-precision
-/// accuracy stays uniform across its whole documented domain; narrowing to
-/// `f32` (the caller's one rounding per weight) is therefore correctly
-/// rounded to within the oracle-verified contract goal below. See
+/// Accuracy: for `|r| <= a = 0.346574`, the degree-7 Taylor truncation
+/// has relative error below `7.4e-9`. For negative r the alternating
+/// remainder is at most `a^8/8!` in magnitude and exp(r) >= exp(-a).
+/// For positive r Taylor's remainder divided by exp(r) is at most
+/// `a^8/8!`. The reduction and Horner roundoff fit in the same envelope:
+/// allow 3.9e-14 for the reduced argument (absolute error), scaled by
+/// exp(a) in the polynomial output, plus 4e-15 for rounded coefficients
+/// and Horner operations (14 operations on a polynomial with absolute
+/// term sum <= exp(a)). These bounds apply across the full input domain.
+/// For the oracle comparison after narrowing to `f32`, see
 /// `exp_f64_v1_oracle_correctly_rounded_comparison_v1` for the committed,
 /// generation-script-provenanced measurement.
-fn exp_f64_v1(x: f64) -> f64 {
+pub(crate) fn exp_f64_v1(x: f64) -> f64 {
     let k_f = (x * EXPM1_INV_LN2_F64_V1).round();
     let k = k_f as i32;
     let k_as_f64 = f64::from(k);
@@ -641,6 +642,17 @@ fn exp_f64_v1(x: f64) -> f64 {
     let scale = f64::from_bits(scale_bits);
     scale * exp_r
 }
+
+/// Identity `m4-ln-atanh23-f64-v1` names exactly
+/// `line_b_teacher_target_v1::ln_v1` in `src/line_b_teacher_target_v1.rs`.
+/// Its domain is finite binary64 `x >= 1`. Split x into `m * 2^e` and, if the
+/// `[1, 2)` mantissa exceeds the pinned sqrt(2), halve m and increment e.
+/// Set `t = (m-1)/(m+1)` and `s = t*t`. Evaluate the odd atanh series through
+/// `t^23/23` by Horner in s, from 1/23 down to 1, with plain multiplies
+/// and adds. Reconstruct as `e*ln2_hi + (e*ln2_lo + 2*(t*series))`.
+/// The existing Line B test grid measures agreement within 3 ulps of the
+/// platform ln. This is a tested accuracy figure.
+pub(crate) use crate::line_b_teacher_target_v1::ln_v1 as ln_f64_v1;
 
 /// Deterministic softmax-numerator conversion over one node's legal-action
 /// logits, in the caller's own ascending index order (`weights[i]`
@@ -913,9 +925,30 @@ pub(crate) fn assert_pinned_mxcsr_state_v1() {
 }
 
 #[cfg(test)]
+#[path = "deterministic_math_v1_ln_golden_inputs.rs"]
+mod ln_golden_inputs;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn ln_f64_v1_golden_bits() {
+        let expected: [&str; ln_golden_inputs::INPUTS.len()] = [
+            "0000000000000000", // x=1.0
+            "3fd62e42fefa39ed", // x=1.414213562373095
+            "3fd62e42fefa39f1", // x=1.4142135623730951
+            "3fd62e42fefa39f3", // x=1.4142135623730954
+            "3fe62e42fefa39ef", // x=2.0
+            "3fd9f323ecbf984c", // x=1.5
+            "400e740b76a3c9a4", // x=45.0
+            "3ccffffffffffffc", // x=1.0000000000000009
+        ];
+        for (x, bits) in ln_golden_inputs::INPUTS.into_iter().zip(expected) {
+            assert_eq!(format!("{:016x}", ln_f64_v1(x).to_bits()), bits, "x={x:?}");
+        }
+    }
 
     /// Inputs for the vectorized `tanh`: a stride through all 2^32 bit
     /// patterns (both signs, subnormals, infinities, NaN payloads), each
@@ -1551,7 +1584,7 @@ mod tests {
     // discipline above (golden battery, dense-sweep hash, independent
     // oracle comparison, property tests), adapted to exp_f64_v1's own
     // `f64 -> f64` signature by comparing the one-rounding-to-f32 result
-    // its only caller (softmax_legal_action_weights_v1) actually produces,
+    // softmax_legal_action_weights_v1 actually produces,
     // exactly as tanh_f32_v1's own tests validate the f32-visible surface
     // rather than expm1_f64_v1's raw f64 internals directly.
     // -------------------------------------------------------------
