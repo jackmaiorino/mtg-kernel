@@ -1,18 +1,18 @@
-//! Unit tests of the D2 model on synthetic card rows. The tests that need
-//! D1's real provisional index and table belong in
-//! `tests/eternal/cube_draft_build_v1.rs`, which D1 creates.
+//! Unit tests of the D2 model. The forward goldens use D1's pinned table.
+//! Focused model tests use synthetic rows.
 
 use std::collections::HashMap;
 
+use super::super::card_index::{CardIndexV1, CubeTableSourceV1};
 use super::*;
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const PROVISIONAL_ROWS: usize = 509;
-const COMMITTED_WIDTH: usize = 947;
-const COMMITTED_DENSE: usize = 56;
+const PROVISIONAL_ROWS: usize = 545;
+const COMMITTED_WIDTH: usize = 978;
+const COMMITTED_DENSE: usize = 58;
 
 /// Small dims for the fast tests. d = 12 is not 56, so every width written
 /// from d is exercised.
@@ -64,11 +64,11 @@ fn small_model(seed: u64) -> ModelV1 {
     ModelV1::initialise_v1(SMALL_ROWS, SMALL_WIDTH, SMALL_DENSE, seed).unwrap()
 }
 
-fn provisional_rows() -> ModelCardRowsV1 {
+fn synthetic_provisional_shape_rows() -> ModelCardRowsV1 {
     synthetic_rows(PROVISIONAL_ROWS, COMMITTED_WIDTH, COMMITTED_DENSE, 13)
 }
 
-fn provisional_model(seed: u64) -> ModelV1 {
+fn synthetic_provisional_shape_model(seed: u64) -> ModelV1 {
     ModelV1::initialise_v1(PROVISIONAL_ROWS, COMMITTED_WIDTH, COMMITTED_DENSE, seed).unwrap()
 }
 
@@ -140,13 +140,16 @@ fn fill_history_columns(model: &mut ModelV1, seed: u64, bound: f32) {
 /// A valid pick state at `step` from consecutive index ids starting at
 /// `offset`: the pool, then the pack, then `history_len` history cards.
 fn pick_state(step: usize, history_len: usize, offset: usize) -> PickStateV1 {
+    pick_state_from_ids(step, history_len, |k| synthetic_id(offset + k))
+}
+
+fn pick_state_from_ids(step: usize, history_len: usize, id: impl Fn(usize) -> u16) -> PickStateV1 {
     let pick = step % PACK_SIZE;
     let round = step / PACK_SIZE;
     let pack_len = PACK_SIZE - pick;
-    let id = |k: usize| synthetic_id(offset + k);
     PickStateV1 {
-        pool: (0..step).map(id).collect(),
-        pack: (step..step + pack_len).map(id).collect(),
+        pool: (0..step).map(&id).collect(),
+        pack: (step..step + pack_len).map(&id).collect(),
         history: (step + pack_len..step + pack_len + history_len)
             .map(id)
             .collect(),
@@ -158,8 +161,12 @@ fn pick_state(step: usize, history_len: usize, offset: usize) -> PickStateV1 {
 /// A 45-card pool from index rows `offset..offset + 45`, listed in a scrambled
 /// order (the input order the forward must not depend on).
 fn build_pool(offset: usize) -> Vec<u16> {
+    build_pool_from_ids(|k| synthetic_id(offset + k))
+}
+
+fn build_pool_from_ids(id: impl Fn(usize) -> u16) -> Vec<u16> {
     let mut pool: Vec<u16> = (0..BUILD_POOL_CARDS_V1)
-        .map(|k| synthetic_id(offset + (k * 17) % BUILD_POOL_CARDS_V1))
+        .map(|k| id((k * 17) % BUILD_POOL_CARDS_V1))
         .collect();
     pool.rotate_left(5);
     pool
@@ -213,6 +220,10 @@ fn layout_count(rows: usize, width: usize, dense: usize) -> usize {
 
 #[test]
 fn parameter_counts_match_the_design() {
+    assert_eq!(
+        layout_count(PROVISIONAL_ROWS, COMMITTED_WIDTH, COMMITTED_DENSE),
+        166_666
+    );
     assert_eq!(layout_count(545, 947, 56), 165_418);
     assert_eq!(layout_count(509, 947, 56), 164_266);
     assert_eq!(layout_count(545, 947, 61), 166_058);
@@ -231,14 +242,16 @@ fn parameter_counts_match_the_design() {
         );
     }
 
-    // card_mlp.0's in-width follows d: 77 on the frozen table.
-    let frozen = parameter_layout_v1(545, 947, 61).unwrap();
-    for name in [
-        "build_trunk.card_mlp.0.weight",
-        "pick_trunk.card_mlp.0.weight",
-    ] {
-        let spec = frozen.iter().find(|spec| spec.name == name).unwrap();
-        assert_eq!(spec.shape, vec![64, 77]);
+    for (width, dense, card_vector_width) in [(COMMITTED_WIDTH, COMMITTED_DENSE, 74), (947, 61, 77)]
+    {
+        let specs = parameter_layout_v1(PROVISIONAL_ROWS, width, dense).unwrap();
+        for name in [
+            "build_trunk.card_mlp.0.weight",
+            "pick_trunk.card_mlp.0.weight",
+        ] {
+            let spec = specs.iter().find(|spec| spec.name == name).unwrap();
+            assert_eq!(spec.shape, vec![64, card_vector_width]);
+        }
     }
 }
 
@@ -454,7 +467,7 @@ fn layout_and_parameter_digest_bytes_are_the_stated_format() {
 
 #[test]
 fn initialiser_zero_rules_and_bounds() {
-    let model = provisional_model(INIT_SEED);
+    let model = synthetic_provisional_shape_model(INIT_SEED);
     let mut zero_tensors = Vec::new();
     for (spec, values) in model.layout().iter().zip(&model.values) {
         match &spec.init {
@@ -540,11 +553,15 @@ fn initialiser_zero_rules_and_bounds() {
     assert_eq!(uniform_bound_v1(EMBEDDING_INIT_FAN_IN_V1), 0.25);
 
     assert_eq!(
-        provisional_model(INIT_SEED).parameter_sha256(),
+        hex(&model.parameter_sha256()),
+        "e1439cde01be55596452f45308db0adae3210f11f9a9bf085684a59d31017a7f"
+    );
+    assert_eq!(
+        synthetic_provisional_shape_model(INIT_SEED).parameter_sha256(),
         model.parameter_sha256()
     );
     assert_ne!(
-        provisional_model(INIT_SEED + 1).parameter_sha256(),
+        synthetic_provisional_shape_model(INIT_SEED + 1).parameter_sha256(),
         model.parameter_sha256()
     );
 }
@@ -576,7 +593,7 @@ fn drawn_spec(name: &str, zero_columns: Option<Range<usize>>) -> TensorSpecV1 {
 }
 
 #[test]
-fn draw_rule_is_exact_and_zero_tensors_draw_nothing() {
+fn draw_rule_is_exact_and_zero_entries_draw_nothing() {
     let seed = 0x1234_5678_9abc_def0;
     let values = initial_values_v1(&[drawn_spec("t", None)], seed);
     let mut stream = SplitMix64::seed(seed);
@@ -585,15 +602,10 @@ fn draw_rule_is_exact_and_zero_tensors_draw_nothing() {
         .collect();
     assert_eq!(bits(&values[0]), bits(&expected));
 
-    // Zeroed columns still draw: the other columns keep their values.
+    // Each eligible column takes the next draw across row boundaries.
     let zeroed = initial_values_v1(&[drawn_spec("t", Some(1..2))], seed);
-    for (index, (got, want)) in zeroed[0].iter().zip(&expected).enumerate() {
-        if index % 3 == 1 {
-            assert_eq!(got.to_bits(), 0);
-        } else {
-            assert_eq!(got.to_bits(), want.to_bits());
-        }
-    }
+    let expected_skipping_columns = [expected[0], 0.0, expected[1], expected[2], 0.0, expected[3]];
+    assert_eq!(bits(&zeroed[0]), bits(&expected_skipping_columns));
 
     // A zero tensor before a drawn one consumes no draw.
     let zero = TensorSpecV1 {
@@ -628,11 +640,14 @@ fn whole_layout_follows_the_draw_rule_in_layout_order() {
         };
         let in_width = spec.shape[1];
         for (index, value) in values.iter().enumerate() {
-            let drawn = expected_draw(stream.next_u64(), *fan_in);
             let zeroed = zero_columns
                 .as_ref()
                 .is_some_and(|columns| columns.contains(&(index % in_width)));
-            let expected = if zeroed { 0.0f32 } else { drawn };
+            let expected = if zeroed {
+                0.0f32
+            } else {
+                expected_draw(stream.next_u64(), *fan_in)
+            };
             assert_eq!(
                 value.to_bits(),
                 expected.to_bits(),
@@ -680,8 +695,8 @@ fn registry_basics_bind_in_type_bit_order() {
 
 #[test]
 fn every_output_is_positive_zero_at_initialisation() {
-    let rows = provisional_rows();
-    let model = provisional_model(INIT_SEED);
+    let rows = synthetic_provisional_shape_rows();
+    let model = synthetic_provisional_shape_model(INIT_SEED);
 
     let pick = model.pick_forward_v1(&rows, 4).unwrap();
     let states = [
@@ -1219,10 +1234,36 @@ const GOLDEN_PATH: &str = concat!(
     "/tests/data/cube_draft_build_v1/model_forward_goldens_v1.txt"
 );
 
-fn golden_model() -> ModelV1 {
-    let mut model = provisional_model(INIT_SEED);
+fn golden_fixture() -> (ModelV1, ModelCardRowsV1) {
+    const CUBE_LIST: &str = include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007.json");
+    const TABLE_PATH: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../data/card_semantics_v1/cube_table_v1.json"
+    );
+    const TABLE_SHA256: &str = "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
+    let source = CubeTableSourceV1::read_v1(std::path::Path::new(TABLE_PATH), TABLE_SHA256)
+        .expect("the pinned provisional table");
+    let (index, left_out) = CardIndexV1::provisional_v1(CUBE_LIST, &source).unwrap();
+    assert!(left_out.is_empty());
+    let table = source.bind_v1(&index).unwrap();
+    let rows = ModelCardRowsV1::with_registry_basics_v1(
+        index.ids().to_vec(),
+        table.vector_width(),
+        table.scaled_rows().to_vec(),
+        table.dense_columns().len(),
+        table.dense_rows().to_vec(),
+    )
+    .unwrap();
+    let mut model = ModelV1::initialise_v1(
+        rows.rows(),
+        table.vector_width(),
+        table.dense_columns().len(),
+        INIT_SEED,
+    )
+    .unwrap();
+    assert_eq!(model.parameter_count(), 166_666);
     fill_zero_initialised(&mut model, FILL_SEED, 0.5);
-    model
+    (model, rows)
 }
 
 fn push_candidates(lines: &mut Vec<String>, prefix: &str, logits: &CandidateLogitsV1) {
@@ -1247,10 +1288,11 @@ fn golden_lines(model: &ModelV1, rows: &ModelCardRowsV1, threads: usize) -> Vec<
                 .collect::<Vec<u8>>()
         ))
     ));
-    for (index, state) in [pick_state(0, 0, 40), pick_state(23, 61, 100)]
-        .iter()
-        .enumerate()
-    {
+    let states = [
+        pick_state_from_ids(0, 0, |k| rows.ids()[240 + k]),
+        pick_state_from_ids(23, 61, |k| rows.ids()[255 + k]),
+    ];
+    for (index, state) in states.iter().enumerate() {
         push_candidates(
             &mut lines,
             &format!("pick state {index}"),
@@ -1272,7 +1314,7 @@ fn golden_lines(model: &ModelV1, rows: &ModelCardRowsV1, threads: usize) -> Vec<
                 .collect::<Vec<u8>>()
         ))
     ));
-    let pool = build_pool(200);
+    let pool = build_pool_from_ids(|k| rows.ids()[340 + k]);
     let context = build.build_context_v1(&pool).unwrap();
     for (b, logit) in context.count_logits_v1().iter().enumerate() {
         lines.push(format!("count B {b} {:08x}", logit.to_bits()));
@@ -1304,8 +1346,7 @@ fn golden_lines(model: &ModelV1, rows: &ModelCardRowsV1, threads: usize) -> Vec<
 
 #[test]
 fn forward_matches_the_recorded_golden_bits() {
-    let rows = provisional_rows();
-    let model = golden_model();
+    let (model, rows) = golden_fixture();
     let computed = golden_lines(&model, &rows, 4).join("\n") + "\n";
     let recorded = match std::fs::read_to_string(GOLDEN_PATH) {
         Ok(text) => text.replace("\r\n", "\n"),
@@ -1338,8 +1379,7 @@ fn forward_matches_the_recorded_golden_bits() {
 
 #[test]
 fn outputs_do_not_depend_on_the_thread_count() {
-    let rows = provisional_rows();
-    let model = golden_model();
+    let (model, rows) = golden_fixture();
     for trunk in [TrunkV1::Build, TrunkV1::Pick] {
         let one = model.card_hidden_table(&rows, trunk, 1).unwrap();
         for threads in [2, 3, 8, PROVISIONAL_ROWS + 5] {
@@ -1433,8 +1473,8 @@ fn assert_state_refused(forward: &PickForwardV1<'_>, state: &PickStateV1, what: 
 
 #[test]
 fn invalid_pick_states_are_refused() {
-    let rows = provisional_rows();
-    let model = provisional_model(INIT_SEED);
+    let rows = synthetic_provisional_shape_rows();
+    let model = synthetic_provisional_shape_model(INIT_SEED);
     let forward = model.pick_forward_v1(&rows, 2).unwrap();
 
     let valid = pick_state(20, 10, 0);

@@ -63,9 +63,7 @@ pub const BASICS_COUNT_OPTIONS_V1: usize = DECK_CARDS_V1 + 1;
 pub const BASIC_TYPE_COUNT_V1: usize = 5;
 /// Non-empty sets of basic land types, by 5-bit mask 1 to 31.
 pub const TYPE_SET_COUNT_V1: usize = (1 << BASIC_TYPE_COUNT_V1) - 1;
-/// Fan-in used for the uniform bound of both card embeddings E (bound
-/// 1/sqrt(16) = 0.25). The design does not state an embedding's fan-in; this
-/// is an open point for D0 to confirm.
+/// D0.5 gives both card embeddings a fan-in of 16 and a uniform bound of 0.25.
 pub const EMBEDDING_INIT_FAN_IN_V1: usize = EMBEDDING_WIDTH_V1;
 
 const H: usize = HIDDEN_WIDTH_V1;
@@ -133,11 +131,11 @@ pub enum TrunkV1 {
 /// How a tensor is initialised.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InitRuleV1 {
-    /// Every value +0.0; draws nothing from the stream.
+    /// Every value starts at +0.0 and takes no stream value.
     Zero,
-    /// One draw per element in row-major order, uniform in plus or minus
-    /// 1/sqrt(`fan_in`). The listed input columns of every row are then set
-    /// to +0.0, after their draws, so the draw count never depends on them.
+    /// In row-major order, draw each weight uniformly in plus or minus
+    /// 1/sqrt(`fan_in`). The listed input columns start at +0.0 and take no
+    /// stream values.
     Uniform {
         fan_in: usize,
         zero_columns: Option<Range<usize>>,
@@ -602,8 +600,8 @@ pub fn uniform_draw_v1(stream_value: u64, bound: f32) -> f32 {
 }
 
 /// Initial values of `specs`, in order, from one `SplitMix64::seed(seed)`
-/// stream. A zero tensor draws nothing; a drawn tensor draws one value per
-/// element in row-major order, including its zeroed columns.
+/// stream. Uniform weights draw in row-major order. Entries that start at
+/// +0.0 take no stream value.
 pub fn initial_values_v1(specs: &[TensorSpecV1], seed: u64) -> Vec<Vec<f32>> {
     let mut stream = SplitMix64::seed(seed);
     specs
@@ -617,16 +615,21 @@ pub fn initial_values_v1(specs: &[TensorSpecV1], seed: u64) -> Vec<Vec<f32>> {
                     zero_columns,
                 } => {
                     let bound = uniform_bound_v1(*fan_in);
-                    let mut values: Vec<f32> = (0..count)
-                        .map(|_| uniform_draw_v1(stream.next_u64(), bound))
-                        .collect();
+                    let mut draw = || uniform_draw_v1(stream.next_u64(), bound);
                     if let Some(columns) = zero_columns {
                         let in_width = spec.shape[spec.shape.len() - 1];
+                        let mut values = vec![0.0f32; count];
                         for row in values.chunks_exact_mut(in_width) {
-                            row[columns.clone()].fill(0.0f32);
+                            let (through_zero_columns, suffix) = row.split_at_mut(columns.end);
+                            let prefix = &mut through_zero_columns[..columns.start];
+                            for value in prefix.iter_mut().chain(suffix) {
+                                *value = draw();
+                            }
                         }
+                        values
+                    } else {
+                        (0..count).map(|_| draw()).collect()
                     }
-                    values
                 }
             }
         })
