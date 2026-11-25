@@ -1416,7 +1416,7 @@ mod tests {
         // Re-baselined again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) value:
         // "4a3d928eb8471a85700680aa2d97e20ace04b8bf8550991af9399450b474e3f5".
         // This value is shared verbatim by
@@ -1426,7 +1426,7 @@ mod tests {
         // read directly from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "d77a82c7a9c4928803be6af2d42c494a37c93091dbafbcdd897d8fc9f2918fae"
+            "238b384b9f00f8e002a320e41bc59f7311cb684821076243d29294d737a22b98"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
@@ -1473,7 +1473,7 @@ mod tests {
         // are this test's own live-computed values, read from a failing run.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "21dca504b34c30768434a74f82b618c5b5ddbc4c5760ed00edbab53a630ec455"
+            "c5ab2e6dfa1628f53725e7df69eee50817ad82c06158787c33e3190d87b80623"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
         assert_eq!(bindings[0].policy_step_count(), 418);
@@ -1502,7 +1502,7 @@ mod tests {
         // Re-pinned again for the Phase 1 card lane merge (2026-09): merging
         // lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into the
         // Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) value:
         // "91020a9d924d1a53eeddc9cc59c72c72d7fff44cc10ddf61d775be00d4186778".
         // deck_hashes/episode_index/environment_seed/learner_seat above, and
@@ -1514,7 +1514,7 @@ mod tests {
         // retain every existing policy and physical decision count.
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "e8f3ae4f0b90a8d3184bb0f1f916461cddc64ef04a9e76d2ee178ae68b64837e"
+            "d77ff2242fd057554efcefa941460723f1872e97f8051587ee0740776c7becad"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE

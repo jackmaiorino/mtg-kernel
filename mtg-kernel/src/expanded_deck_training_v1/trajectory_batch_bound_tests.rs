@@ -98,12 +98,14 @@ fn fixture(tag: &str) -> (TempTestDir, ExpandedModelSourceV1, Vec<PinnedFileV1>)
             postboard: false,
             max_physical_decisions: 100000,
             max_policy_steps: 1000000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         })
         .collect();
     let collection = execute_v1(ExpandedTrainingCommandV1::Collect {

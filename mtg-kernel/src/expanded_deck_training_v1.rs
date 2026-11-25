@@ -1625,11 +1625,17 @@ pub struct ExpandedDeckListV1 {
 }
 
 impl ExpandedDeckListV1 {
-    fn validated(&self) -> Result<RegisteredDeckV1, String> {
-        RegisteredDeckV1::new_executable_v1(
+    /// Executable registration under the episode's deck format (`None`: the
+    /// exact 60/15 registration).
+    fn validated(
+        &self,
+        format: Option<crate::sideboard::DeckFormatV1>,
+    ) -> Result<RegisteredDeckV1, String> {
+        RegisteredDeckV1::new_executable_for_format_v1(
             &self.label,
             self.mainboard.clone(),
             self.sideboard.clone(),
+            format,
         )
         .map_err(err)
     }
@@ -1729,6 +1735,21 @@ pub struct ExpandedEpisodeV1 {
     /// and every behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_keep_offset: Option<london_keep_offset_v1::LondonKeepOffsetV1>,
+    /// Some selects an opt-in deck format (`"limited40-v1"`,
+    /// `sideboard::DeckFormatV1`) for this episode's deck-size admission:
+    /// every registered and selected list, and the session reset's explicit
+    /// decks, may then hold at least 40 mainboard cards and an empty or short
+    /// sideboard. It changes admission only, never the deal or the game.
+    /// None keeps every prior serialized byte and the exact 60/15 checks.
+    /// Serde also decodes this struct from positional arrays, so new fields
+    /// go after this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deck_format: Option<crate::sideboard::DeckFormatV1>,
+    /// Optional cap on the number of items on the stack when a decision is
+    /// exposed. None keeps every prior serialized byte and imposes no cap.
+    /// Last, after `deck_format`, so older positional arrays still decode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_stack_objects: Option<u32>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1915,12 +1936,12 @@ impl ExpandedEpisodeV1 {
         )?;
         let mut configs = Vec::new();
         for seat in 0..2 {
-            let registered = self.registered[seat].validated()?;
-            let selected = self.selected[seat].validated()?;
+            let registered = self.registered[seat].validated(self.deck_format)?;
+            let selected = self.selected[seat].validated(self.deck_format)?;
             let initial = registered.registered_configuration();
             let configuration = selected.registered_configuration();
             ensure(
-                initial.combined_card_counts_v1() == configuration.combined_card_counts_v1(),
+                initial.combined_card_count_map_v1() == configuration.combined_card_count_map_v1(),
                 "postboard configuration changes the registered 75",
             )?;
             ensure(
@@ -1929,9 +1950,34 @@ impl ExpandedEpisodeV1 {
             )?;
             configs.push(configuration.clone());
         }
+        // The D3 search opponent's simulations are verified only on the
+        // exact 60/15 registration, so a deck of another size (which only a
+        // deck format admits) fails closed here, before any game. A 60/15
+        // episode is admitted with or without the marker; without one, every
+        // list was just admitted at exactly 60/15, so this never refuses.
+        ensure(
+            self.opponent_search.is_none() || self.decks_are_registered_60_15_v1(),
+            SEARCH_OPPONENT_DECK_SIZE_REFUSAL_V1,
+        )?;
         Ok([configs.remove(0), configs.remove(0)])
     }
+
+    /// Whether every registered and selected list has the exact registered
+    /// shape: 60 mainboard and 15 sideboard cards. Always true for an episode
+    /// admitted without a deck format; false only for a deck-format episode
+    /// whose decks use the format's other sizes.
+    pub(crate) fn decks_are_registered_60_15_v1(&self) -> bool {
+        self.registered.iter().chain(&self.selected).all(|list| {
+            list.mainboard.len() == crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1
+                && list.sideboard.len() == crate::sideboard::REGISTERED_SIDEBOARD_SIZE_V1
+        })
+    }
 }
+
+/// The admission refusal of a search-opponent episode whose decks are not
+/// the exact 60/15 registration.
+pub(crate) const SEARCH_OPPONENT_DECK_SIZE_REFUSAL_V1: &str =
+    "a search opponent requires exact 60/15 decks; deck_format admitted another size";
 
 /// Raw binary32 bits keep JSON round trips exact, including signed zero.
 /// All fields are actor-visible tensors. No private bindings or GameState.
@@ -3714,7 +3760,7 @@ fn episode_session_v1(
     let mut session = if let Some(modes) = episode.mulligan_modes {
         // `opening` (London v1) with its refusals; never a reset start.
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_pauper_london_windows_v1(
+        FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
             1,
             game_seed,
             episode.max_physical_decisions,
@@ -3724,17 +3770,19 @@ fn episode_session_v1(
             PlayerId(episode.starting_player),
             modes,
             windows,
+            episode.deck_format,
         )
         .map_err(err)?
     } else {
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
         1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player), windows).map_err(err)?
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player), windows, episode.deck_format).map_err(err)?
     };
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
     }
+    session.set_max_stack_objects(episode.max_stack_objects);
     Ok(session)
 }
 
@@ -7870,8 +7918,10 @@ fn execute_update_inner_v1(
             "published checkpoint round trip differs",
         )?;
         // Design section 3: the restored state equals the published one item
-        // for item (Adam step, anchor, every tensor's name, shape and bits),
-        // beyond the state digest. Compared in place, without copies.
+        // for item (Adam step, anchor, every tensor's name, shape and bits,
+        // and the card-semantics section: its identity, P step, P and both
+        // moment arrays bit for bit), beyond the state digest. Tensors are
+        // compared in place, without copies.
         let back = restored_load.state.tensors_v1().map_err(err)?;
         let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
@@ -7879,7 +7929,8 @@ fn execute_update_inner_v1(
                 && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
                 && same(&back.parameters, &checkpoint.parameters)
                 && same(&back.first_moments, &checkpoint.first_moments)
-                && same(&back.second_moments, &checkpoint.second_moments),
+                && same(&back.second_moments, &checkpoint.second_moments)
+                && restored_load.state.loaded_card_semantics == checkpoint.card_semantics,
             "published checkpoint container round trip differs",
         )?;
         drop(checkpoint);
@@ -9557,12 +9608,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         }
     }
 
@@ -10096,12 +10149,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -10208,12 +10263,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -10350,12 +10407,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10493,12 +10552,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10634,12 +10695,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10758,12 +10821,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -10895,12 +10960,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -11044,12 +11111,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -11183,12 +11252,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -11339,12 +11410,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -11497,12 +11570,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -11541,12 +11616,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         }
     }
 
@@ -12665,12 +12742,14 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -12727,12 +12806,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -12772,12 +12853,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -12898,12 +12981,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -12958,12 +13043,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -13004,12 +13091,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -13065,12 +13154,14 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -13141,12 +13232,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -13179,12 +13272,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -13235,12 +13330,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -13274,12 +13371,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -13422,6 +13521,7 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: opening.then_some(PauperOpeningV1::LondonV1),
@@ -13429,6 +13529,7 @@ pub(crate) mod tests {
                     .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -13806,12 +13907,14 @@ pub(crate) mod tests {
                     postboard: false,
                     max_physical_decisions: 100_000,
                     max_policy_steps: 1_000_000,
+                    max_stack_objects: None,
                     runtime_rules: None,
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
                     priority_windows: None,
                     london_keep_offset: None,
+                    deck_format: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -14237,12 +14340,14 @@ pub(crate) mod tests {
                     postboard: false,
                     max_physical_decisions: 100_000,
                     max_policy_steps: 1_000_000,
+                    max_stack_objects: None,
                     runtime_rules: None,
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
                     priority_windows: None,
                     london_keep_offset: None,
+                    deck_format: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -14388,12 +14493,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -14514,12 +14621,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -14925,21 +15034,22 @@ pub(crate) mod tests {
     /// (CR 117.3c/117.5). Paired Native235/236 inputs first differ at the actual
     /// off-turn Ward trigger; initial parameters match. Both-seat paid Ward/
     /// Mystic tests also verify native restore and the following priority pass.
-    // Exact CPU outputs: Native236 (Windows), CI39598628050 (Linux).
+    // Windows CPU outputs for the issue #969 fixture seed.
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "6f8c26c98ed04629736de73f66fda34079e6608c7a42c1e2a4de2dc0fbe0c63e",
-        "81a23cc9045ed28b0630ea34f9b4bc379d49faeef120e606d617b8450ad5dcc7",
+        "bb753f462b55dbe47216e27824e4a322ab347f5052c6a3e33bbc46bdb128267c",
+        "78cdaf606ebf81479a6703cacab1fb017f21e8b19fc9cbc2e532122af9ca3c08",
     ];
+    // Non-Windows CPU outputs from Linux CI for the issue #969 fixture seed.
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "edaa78f4aa822d845aacc5cf829577cc832dc64109bbee1574671662f366b3a5",
-        "2ffea00f50926f435738cf80c5fabc1e4ad01b991e9c3328471b87f6e6e4b7d5",
+        "4b1f08cd5f3128f89caa9882533f93a7cf828d8f3f12e08c4a699eb859571753",
+        "61f9e08ed62428b8cb87a56fa4eddfe392e3d0c1318ab5541bb9e222194caa9b",
     ];
-    // Current GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
+    // GPU1 outputs for the issue #969 fixture seed.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
-        "8c9e77a2bc923c12bd883ef45d9f96eb8efbfe9b3909fdfe8fd8a10d62ad76cd",
-        "0f04932d69bcb05687126f9c01c554039c718aefada39abc0e44b219e3566d88",
+        "1d28b7b17a7cbfd3a9a9b315c443e1315569c1fa362a2ac3e1f9241c373c4c8c",
+        "b4f869ebbe905b5dc386f5996f30a28840a20fed9b799e36ef16e85be58e3a6a",
     ];
 
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
@@ -14983,12 +15093,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -15013,7 +15125,9 @@ pub(crate) mod tests {
         };
         let seeds = || {
             vec![Some(LineBGameSeedsV1 {
-                root_seed: 11,
+                // Issue #969: the catalog hash re-ranked seed 11 onto the
+                // other seat. Seed 40 selects a root in the learner replay group.
+                root_seed: 40,
                 teacher_seed: 21,
             })]
         };
@@ -15047,6 +15161,7 @@ pub(crate) mod tests {
         let initial_frozen = line_b_frozen_sha256_v1(&source).unwrap();
         let mut moved = Vec::new();
         let mut checkpoints = Vec::new();
+        let seed_drift = "issue #969: a catalog change moved the root; pick a new seed";
         for (label, direction) in [
             ("reverse", LineBDivergenceV1::Reverse),
             ("forward", LineBDivergenceV1::Forward),
@@ -15067,6 +15182,7 @@ pub(crate) mod tests {
             );
             assert_eq!(taught["census"], packet["census"]);
             assert_eq!(taught["census"]["selected_roots"], 1);
+            assert_eq!(taught["census"]["complete_roots"], 1, "{seed_drift}");
             // Census by learner list (review change 10) sums to the census.
             let by_list = taught["census_by_list"].as_object().unwrap();
             for key in [
@@ -15108,38 +15224,32 @@ pub(crate) mod tests {
             let permuted = &taught["permuted_control"];
             assert_eq!(permuted["backend"], "cpu");
             let auxiliary = telemetry["auxiliary_head_l2"].as_f64().unwrap();
+            assert!(auxiliary > 0.0, "{seed_drift} ({direction:?})");
             let root = &telemetry["roots"][0];
-            if taught["census"]["complete_roots"] == 1 {
-                // A single root is its width's only member: its own target
-                // rotated by one action, so a different divergence.
-                assert_eq!(permuted["kinds"], json!(["within_root"]));
-                assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
-                assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
-                assert_ne!(
-                    permuted["after_state_sha256"],
-                    receipt["after_state_sha256"]
-                );
-                eprintln!("{label} {direction:?} permuted control {permuted}");
-                let before = root["divergence_before"].as_f64().unwrap();
-                let rescore_before = root["rescore_before"].as_f64().unwrap();
-                let rescore_after = root["rescore_after"].as_f64().unwrap();
-                assert_eq!(
-                    root["signed_difference"].as_f64().unwrap(),
-                    rescore_after - rescore_before
-                );
-                if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
-                    // The CPU tape is the recorded collection forward.
-                    assert_eq!(rescore_before.to_bits(), before.to_bits());
-                } else {
-                    assert!((rescore_before - before).abs() < 1e-6);
-                }
+            // A single root is its width's only member: its own target
+            // rotated by one action, so a different divergence.
+            assert_eq!(permuted["kinds"], json!(["within_root"]));
+            assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
+            assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
+            assert_ne!(
+                permuted["after_state_sha256"],
+                receipt["after_state_sha256"]
+            );
+            eprintln!("{label} {direction:?} permuted control {permuted}");
+            let before = root["divergence_before"].as_f64().unwrap();
+            let rescore_before = root["rescore_before"].as_f64().unwrap();
+            let rescore_after = root["rescore_after"].as_f64().unwrap();
+            assert_eq!(
+                root["signed_difference"].as_f64().unwrap(),
+                rescore_after - rescore_before
+            );
+            if matches!(update_backend, ExpandedUpdateBackendV1::Cpu) {
+                // The CPU tape is the recorded collection forward.
+                assert_eq!(rescore_before.to_bits(), before.to_bits());
             } else {
-                assert!(root["divergence_before"].is_null());
-                assert!(root["rescore_after"].is_null());
-                assert_eq!(auxiliary, 0.0);
-                assert_eq!(permuted["kinds"], json!([null]));
+                assert!((rescore_before - before).abs() < 1e-6);
             }
-            moved.push((auxiliary > 0.0, receipt["after_state_sha256"].clone()));
+            moved.push(receipt["after_state_sha256"].clone());
             checkpoints.push(receipt["checkpoint"].clone());
         }
         // Pinned treatment goldens (FABLE-REVIEW-20260927 change 4).
@@ -15147,10 +15257,7 @@ pub(crate) mod tests {
             ExpandedUpdateBackendV1::Cpu => LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1,
             ExpandedUpdateBackendV1::Cuda { .. } => LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1,
         };
-        let observed: Vec<&str> = moved
-            .iter()
-            .map(|(_, state)| state.as_str().unwrap())
-            .collect();
+        let observed: Vec<&str> = moved.iter().map(|state| state.as_str().unwrap()).collect();
         assert_eq!(
             observed.as_slice(),
             goldens,
@@ -15178,16 +15285,12 @@ pub(crate) mod tests {
         );
         assert!(reference > 0.0);
         assert_eq!(treated["relative_l2"].as_f64().unwrap(), l2 / reference);
-        if moved[0].0 {
-            assert!(l2 > 0.0, "the teacher must move the heads");
-        }
-        if moved.iter().all(|(nonzero, _)| *nonzero) {
-            assert_ne!(
-                moved[0].1, control["after_state_sha256"],
-                "the teacher must change the update"
-            );
-            assert_ne!(moved[0].1, moved[1].1, "the directions must differ");
-        }
+        assert!(l2 > 0.0, "the teacher must move the heads");
+        assert_ne!(
+            moved[0], control["after_state_sha256"],
+            "the teacher must change the update"
+        );
+        assert_ne!(moved[0], moved[1], "the directions must differ");
         for games in [Vec::new(), vec![None, None]] {
             assert!(update("refused", Some(teacher(LineBDivergenceV1::Reverse, games))).is_err());
         }
@@ -15462,12 +15565,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100000,
             max_policy_steps: 1000000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -15613,12 +15718,14 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100000,
             max_policy_steps: 1000000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -15805,6 +15912,53 @@ pub(crate) mod tests {
         assert_eq!(err, "checkpoint state hash differs");
     }
 
+    #[test]
+    fn expanded_episode_max_stack_objects_absent_json_and_round_trip() {
+        let plain = test_episode(0, None);
+        assert_eq!(plain.max_stack_objects, None);
+
+        // Absent field omits the key completely so serialized bytes match prior JSON.
+        let plain_value = serde_json::to_value(&plain).unwrap();
+        assert!(plain_value.get("max_stack_objects").is_none());
+        let plain_bytes = serde_json::to_vec(&plain).unwrap();
+        assert!(!String::from_utf8(plain_bytes.clone())
+            .unwrap()
+            .contains("max_stack_objects"));
+        let reparsed_plain: ExpandedEpisodeV1 = serde_json::from_slice(&plain_bytes).unwrap();
+        assert_eq!(reparsed_plain, plain);
+        assert_eq!(reparsed_plain.max_stack_objects, None);
+        assert_eq!(serde_json::to_vec(&reparsed_plain).unwrap(), plain_bytes);
+
+        // Present field serializes as an integer, round-trips, and stripping it
+        // recovers the exact plain episode bytes.
+        let mut capped = plain.clone();
+        capped.max_stack_objects = Some(16);
+        let capped_value = serde_json::to_value(&capped).unwrap();
+        assert_eq!(capped_value["max_stack_objects"], json!(16));
+        let capped_bytes = serde_json::to_vec(&capped).unwrap();
+        let reparsed_capped: ExpandedEpisodeV1 = serde_json::from_slice(&capped_bytes).unwrap();
+        assert_eq!(reparsed_capped, capped);
+        assert_eq!(reparsed_capped.max_stack_objects, Some(16));
+
+        let mut stripped = capped_value;
+        stripped
+            .as_object_mut()
+            .unwrap()
+            .remove("max_stack_objects")
+            .unwrap();
+        let stripped_episode: ExpandedEpisodeV1 = serde_json::from_value(stripped).unwrap();
+        assert_eq!(stripped_episode, plain);
+        assert_eq!(serde_json::to_vec(&stripped_episode).unwrap(), plain_bytes);
+
+        // Session builder forwards the cap cleanly (None -> uncapped, Some -> capped).
+        let configs = plain.configurations().unwrap();
+        let plain_session = episode_session_v1(&plain, &configs).unwrap();
+        assert_eq!(plain_session.max_stack_objects(), None);
+        let capped_session = episode_session_v1(&capped, &configs).unwrap();
+        assert_eq!(capped_session.max_stack_objects(), Some(16));
+    }
+
+    pub(crate) mod deck_format_tests;
     mod field_coverage_probe_v1;
     mod london_update_golden_tests;
     mod pauper_opening_tests;

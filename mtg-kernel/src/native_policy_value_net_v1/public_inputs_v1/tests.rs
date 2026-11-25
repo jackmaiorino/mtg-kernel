@@ -77,7 +77,9 @@ fn public_native_g115_matches_python_and_preserves_hidden_invariance() {
         source["feature_encoding_digest"],
         crate::native_flat_tensorizer_v4::FEATURE_ENCODING_DIGEST_V4
     );
-    assert_eq!(source["card_db_hash"], "064a7c989255ab3c");
+    // The g115 checkpoint records the catalog it was trained on (v34), not
+    // the live one; split so the live-catalog repin tool leaves it alone.
+    assert_eq!(source["card_db_hash"], concat!("064a7c98", "9255ab3c"));
     let samples = verified_json(
         fixture["samples"].as_str().unwrap(),
         fixture["samples_sha256"].as_str().unwrap(),

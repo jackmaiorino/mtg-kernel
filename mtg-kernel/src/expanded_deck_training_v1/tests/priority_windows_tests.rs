@@ -67,12 +67,14 @@ fn episode(
         postboard: false,
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: london.then_some(PauperOpeningV1::LondonV1),
         mulligan_modes: london.then_some([Learned, Learned]),
         priority_windows: windows,
         london_keep_offset: None,
+        deck_format: None,
     }
 }
 

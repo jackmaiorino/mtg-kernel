@@ -1518,6 +1518,9 @@ pub(crate) fn drive(
             crate::eternal_pauper_pf2c_v1::execute(op, &continuation.ctx, state);
             Ok(false)
         }
+        EternalOpV1::P3iV1(op) => {
+            crate::eternal_premodern_p3i_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,

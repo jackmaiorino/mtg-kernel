@@ -145,7 +145,6 @@ impl EternalRegisteredDeckV1 {
             companion,
             false,
             false,
-            false,
         )
     }
 
@@ -172,7 +171,6 @@ impl EternalRegisteredDeckV1 {
             sideboard,
             companion,
             true,
-            false,
             false,
         )
     }
@@ -202,53 +200,25 @@ impl EternalRegisteredDeckV1 {
             companion,
             false,
             true,
-            false,
         )
     }
 
-    /// Scoped admission of the exact verified frozen Full English Breakfast 75
-    /// under the ordered-graveyard profile while Volrath's Shapeshifter stays
-    /// Partial (step B1; step B2 flips the card to Full).
+    /// Registers the exact verified frozen Full English Breakfast 75 under the
+    /// ordered-graveyard profile.
     #[cfg(feature = "eternal-fixtures")]
     pub fn frozen_feb_75_with_ordered_graveyard_v1() -> Result<Self, EternalBo3ErrorV1> {
         let (mainboard, sideboard) =
             crate::premodern_ordered_public_v1::feb::frozen_feb_75_ids_v1()
                 .map_err(|reason| EternalBo3ErrorV1::OrderedGraveyardSetup { reason })?;
-        Self::register(
+        Self::new_with_ordered_graveyard_v1(
             EternalFormatV1::Premodern,
-            "premodern-full-english-breakfast".into(),
+            "premodern-full-english-breakfast",
             mainboard,
             sideboard,
             None,
-            false,
-            true,
-            true,
         )
     }
 
-    #[cfg(all(test, feature = "eternal-fixtures"))]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn register_test_partial_volrath_v1(
-        format: EternalFormatV1,
-        deck_id: impl Into<String>,
-        mainboard: Vec<u16>,
-        sideboard: Vec<u16>,
-        companion: Option<u16>,
-        ordered_graveyard: bool,
-    ) -> Result<Self, EternalBo3ErrorV1> {
-        Self::register(
-            format,
-            deck_id.into(),
-            mainboard,
-            sideboard,
-            companion,
-            false,
-            ordered_graveyard,
-            true,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
     fn register(
         format: EternalFormatV1,
         deck_id: String,
@@ -257,7 +227,6 @@ impl EternalRegisteredDeckV1 {
         companion: Option<u16>,
         native_opening: bool,
         ordered_graveyard: bool,
-        allow_partial_volrath: bool,
     ) -> Result<Self, EternalBo3ErrorV1> {
         if deck_id.is_empty() {
             return Err(EternalBo3ErrorV1::EmptyDeckId);
@@ -329,8 +298,7 @@ impl EternalRegisteredDeckV1 {
                 && (requires_opening
                     || (card.is_executable() && card.name == "Chancellor of the Annex"));
             let requires_ordered = crate::full_text_v1::owns_definition(card);
-            let partial_volrath = allow_partial_volrath && requires_ordered;
-            if card.is_token || !(card.has_full_support() || opening_card || partial_volrath) {
+            if card.is_token || !(card.has_full_support() || opening_card) {
                 return Err(EternalBo3ErrorV1::UnsupportedCard {
                     name: card.name.to_owned(),
                 });

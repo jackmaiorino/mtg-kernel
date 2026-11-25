@@ -603,12 +603,14 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
@@ -755,12 +757,14 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         // A trajectory names its sources, not its output directory, so
@@ -866,12 +870,14 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
 
@@ -989,12 +995,14 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let context = || {
@@ -1081,12 +1089,14 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         // The separate opponent seat gets its own parameters, so the service
@@ -1204,12 +1214,14 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let run = |label: &str, workers: usize| {
@@ -1329,12 +1341,14 @@ mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {

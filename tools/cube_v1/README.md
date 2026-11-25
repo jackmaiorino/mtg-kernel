@@ -28,9 +28,19 @@ Offline input tools for cube self-play training configs:
      --namespace train --run cube-r1 --update-start 0 --update-end 8 \
      --out schedule.json
    ```
-   All deal constants come from `--constants` (`deck_size`, `colours_per_seat`, `nonland_spells`, `nonbasic_lands`, `basic_split` = `"even_first_colour_extra"`, `pairs_per_update`). Derives episode seeds via `qual.py`'s SHA-256-of-JSON `seed([namespace, run, update, slot])`, deals non-basic cube cards without overlap across seats (basic lands are exempt: both decks may hold copies of the same basic land type), splits basics by seat colour, and emits both seat orders (`[A, B]` and `[B, A]`) in run-config `iterations` shape (or stamps `--base BASE.json`, swapping seat-indexed `mulligan_modes` with the decks).
+   All deal constants come from `--constants` (`deck_size`, `colours_per_seat`, `nonland_spells`, `nonbasic_lands`, `basic_split` = `"even_first_colour_extra"`, `pairs_per_update`, which must be even). Derives episode seeds via `qual.py`'s SHA-256-of-JSON `seed([namespace, run, update, slot])`, deals non-basic cube cards without overlap across seats (basic lands are exempt: both decks may hold copies of the same basic land type), splits basics by seat colour, and emits both seat orders in run-config `iterations` shape (or stamps `--base BASE.json`, swapping seat-indexed `mulligan_modes` with the decks). Deck A of a pair is drawn first. The learner holds deck A in both slots of an even pair and deck B in both slots of an odd pair; seat 0 starts, so each deck is on the play once per pair.
 
-4. **Tests**:
+   **Read (b)** (`--read-b-deck DECK.json --index I` in place of the update range): `DECK.json` is a drafted deck D (a JSON list of card ids, or an object with a `mainboard` list); every id must be a card of the active pool or a basic land. Deals one opponent deck with the same constants from the active pool minus D's nonbasic cards, under the key prefix `["cube_deal_b_v1", namespace, run, index, seed(["cube_deal_b_v1", namespace, run, index])]`, and emits 4 games in one iteration: slots 0 and 2 with D at seat 0 (on the play), slots 1 and 3 with D at seat 1 (on the draw). `learner_seat` is D's seat, and game seeds are `seed(["cube_deal_b_v1", namespace, run, index, slot])`.
+
+4. **Canonical deck hash** (`deal.canonical_decks_sha256`): hashes a list of decks, each given as card names (`deal.card_names_by_id` and `deal.deck_card_names` translate card ids through a pool). Each deck is written as sorted `name count` lines followed by one empty line, LF line endings, UTF-8, and SHA-256 runs over that text, so card order, file formatting, line endings and provenance fields cannot change it.
+
+5. **Deck-signal summary** (`tools/cube_v1/deck_signal_summary.py`): reads the JSONL of one part of the deck-signal experiment (`cube_deck_signal_v1 --part A|B --cube CUBE --gaps GAPS --fence FENCE --out games.jsonl --record run.json [--workers N]`, `eternal-fixtures` example) and computes the design note's section 10 readings under three treatments of halted games:
+   ```bash
+   python tools/cube_v1/deck_signal_summary.py --games games.jsonl --record run.json --out summary.json
+   ```
+   Part A: C's mean pair score with its 95% paired bootstrap interval (10,000 resamples, draw `t` of resample `b` is `seed(["bootstrap", "deck-signal-A", b, t]) mod n`) and the fixed 0.55 reading, or `technical_failure` above 5% halted games, or `incomplete` short of 400 pairs. Part B: the standard deviation of deck strength under the additive model, raw and with game noise removed, with a bootstrap interval over decks (namespace `deck-signal-B`).
+
+6. **Tests**:
    ```bash
    python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'
    ```

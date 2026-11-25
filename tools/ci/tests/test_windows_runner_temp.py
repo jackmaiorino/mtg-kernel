@@ -100,6 +100,8 @@ class WindowsRunnerTempTests(unittest.TestCase):
             ("ci.yml", "rust-test-groups"),
             ("ci.yml", "limited-build"),
             ("ci.yml", "rust-limited-groups"),
+            ("ci.yml", "eternal-integration-build"),
+            ("ci.yml", "rust-eternal-integration-parts"),
             ("ci.yml", "python-env-build"),
             ("ci.yml", "python-tests"),
             ("s-transformer-v1.yml", "receipts"),
