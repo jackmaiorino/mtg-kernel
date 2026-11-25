@@ -131,9 +131,6 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
     by_kind: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     present = collections.Counter()
     present_halted = collections.Counter()
-    excluded_present = collections.Counter()
-    excluded_charged = collections.Counter()
-    excluded_games = 0
     charged = collections.Counter()
     charged_recent = collections.Counter()
     panic_source = collections.Counter()
@@ -155,10 +152,6 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
             order_errors.append(f"index {index}: completed {row.get('completed')!r} but stop kind {kind!r}")
         cards = {card for deck in row["decks"] for card in deck}
         present.update(cards)
-        eligible = row["end"].get("kind") not in {"process_died", "lost", "unrun"}
-        if not eligible:
-            excluded_games += 1
-            excluded_present.update(cards)
         for key in COUNTS:
             if row.get(key) is not None:
                 counts_all[key].append(row[key])
@@ -181,8 +174,6 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
             source = None
         if source is not None:
             charged[source] += 1
-            if not eligible:
-                excluded_charged[source] += 1
         if row["end"].get("kind") != "panic" and row.get("recent_action_source") is not None:
             charged_recent[row["recent_action_source"]] += 1
         for key in ("last_action_source", "recent_action_source"):
@@ -243,7 +234,7 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
         {"card": card, "name": name(card), "charged": charged[card]}
         for card in sorted(set(charged) - set(present), key=lambda c: (-charged[c], c))
     ]
-    summary = {
+    return {
         "games": total,
         "completed": completed,
         "halted": total - completed,
@@ -265,18 +256,6 @@ def summarise(rows: Iterable[dict[str, Any]], names: dict[int, str] | None = Non
             "fires": completed > 0 and over_warning / completed > WARNING_SHARE,
         },
     }
-    if excluded_games:
-        # Older summaries already have the correct denominators when every row is eligible.
-        summary["tripwire"] = {
-            "games": total - excluded_games,
-            "cards": [
-                {"card": card, "games_present": games - excluded_present[card],
-                 "charged": charged[card] - excluded_charged[card]}
-                for card, games in sorted(present.items())
-                if games > excluded_present[card]
-            ],
-        }
-    return summary
 
 
 def markdown(summary: dict[str, Any]) -> str:
