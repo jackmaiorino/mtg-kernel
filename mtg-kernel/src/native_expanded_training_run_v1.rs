@@ -646,10 +646,6 @@ impl NativeExpandedTrainingRunV1 {
                 !is_converted_source_v1(&self.initial_source),
                 "card semantics requires an ordinary input contract",
             )?;
-            check(
-                !self.record_format.is_v2(),
-                "card semantics requires record_format v1",
-            )?;
             projection = Some(config.load_v1()?);
             #[cfg(feature = "gpu-exact-v1")]
             check(
@@ -6551,11 +6547,9 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("must not be null"));
+        // The container carries the section, so an explicit v2 is admitted.
         config.record_format = crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V2;
-        assert!(run_native_expanded_training_v1(&config, Some(1))
-            .unwrap_err()
-            .contains("record_format v1"));
-        assert!(!config.output_directory.exists());
+        config.validate_v1().unwrap();
         config.record_format = crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1;
         config.card_semantics.as_mut().unwrap().table_path = "relative.json".into();
         assert!(run_native_expanded_training_v1(&config, Some(1))

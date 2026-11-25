@@ -7875,8 +7875,10 @@ fn execute_update_inner_v1(
             "published checkpoint round trip differs",
         )?;
         // Design section 3: the restored state equals the published one item
-        // for item (Adam step, anchor, every tensor's name, shape and bits),
-        // beyond the state digest. Compared in place, without copies.
+        // for item (Adam step, anchor, every tensor's name, shape and bits,
+        // and the card-semantics section: its identity, P step, P and both
+        // moment arrays bit for bit), beyond the state digest. Tensors are
+        // compared in place, without copies.
         let back = restored_load.state.tensors_v1().map_err(err)?;
         let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
@@ -7884,7 +7886,8 @@ fn execute_update_inner_v1(
                 && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
                 && same(&back.parameters, &checkpoint.parameters)
                 && same(&back.first_moments, &checkpoint.first_moments)
-                && same(&back.second_moments, &checkpoint.second_moments),
+                && same(&back.second_moments, &checkpoint.second_moments)
+                && restored_load.state.loaded_card_semantics == checkpoint.card_semantics,
             "published checkpoint container round trip differs",
         )?;
         drop(checkpoint);
