@@ -17319,8 +17319,10 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             state.stack.push(item.clone());
             #[cfg(test)]
             eprintln!("native_continuation::resume::driver_rejected");
-            state.engine.halted =
-                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            if state.engine.halted.is_none() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            }
         }
     }
     None
@@ -23561,10 +23563,18 @@ fn execute_resolving_program(
             resolution_cast_v1::restore_parent(state, published);
             ResolutionProgress::Suspended
         }
-        Ok(effect::ResumableProgress::Complete(_)) | Err(_) => {
+        Ok(effect::ResumableProgress::Complete(_)) => {
             state.stack.push(item.clone());
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            ResolutionProgress::Suspended
+        }
+        Err(_) => {
+            state.stack.push(item.clone());
+            if state.engine.halted.is_none() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            }
             ResolutionProgress::Suspended
         }
     }
