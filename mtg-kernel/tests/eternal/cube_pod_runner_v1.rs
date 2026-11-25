@@ -3017,6 +3017,79 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn read_watchdog_preserves_advancing_attempt_and_expires_stalled_attempt() {
+    struct ReadProgressPilot {
+        calls: AtomicU64,
+    }
+
+    impl GamePilot for ReadProgressPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            match self.calls.fetch_add(1, Ordering::Relaxed) {
+                0 => {
+                    let decisions = mtg_kernel::cube_draft_v1::game_decision_counter();
+                    for count in 1..=8 {
+                        decisions.store(count, Ordering::Relaxed);
+                        std::thread::sleep(Duration::from_millis(175));
+                    }
+                }
+                1 => std::thread::sleep(Duration::from_millis(1_400)),
+                _ => {}
+            }
+            ScriptedPilot::natural_only().play(spec, caps)
+        }
+    }
+
+    let dir = TempTestDir::new("read-decision-watchdog");
+    let declaration = b"test declaration\n".to_vec();
+    let declaration_sha = sha256_hex(&declaration);
+    let verification = fixture_verification(declaration, None);
+    let plan = build_test_aa_plan(0, 0, &pod_pins_from_runtime(&verification.pins));
+    write_test_aa_set(
+        dir.path(),
+        &declaration_sha,
+        &[plan],
+        vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+            claim_id: None,
+        }],
+    );
+
+    let receipt = run_plan_set_execution(
+        &pool(),
+        dir.path(),
+        0,
+        &UniformSeatFactory,
+        &ReadProgressPilot {
+            calls: AtomicU64::new(0),
+        },
+        &verification,
+        1,
+        Some(Duration::from_secs(1)),
+    )
+    .unwrap();
+    assert_eq!(receipt.ended, PlanExecutionEnded::Complete);
+    accept_plan_execution(dir.path(), 0).unwrap();
+
+    let record = std::fs::read(dir.path().join("exec-0/records/pod-0.json")).unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&record).unwrap();
+    assert_eq!(record["games"][0]["attempts"][0]["end"]["kind"], "natural");
+    assert!(record["games"][0]["scores"].is_array());
+    assert_eq!(
+        record["games"][1]["attempts"][0]["stop_kind"],
+        WATCHDOG_STOP_KIND
+    );
+    assert!(record["games"][1]["scores"].is_null());
+    let halts = record["halts"].as_array().unwrap();
+    assert_eq!(halts.len(), 1);
+    assert_eq!(halts[0]["game"], 1);
+    assert!(halts[0]["last_action_source"].is_null());
+}
+
+#[test]
 fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     let pool = pool();
     let tmp = TempTestDir::new("wd-sup");
