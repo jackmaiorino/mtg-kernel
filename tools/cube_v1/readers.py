@@ -1248,9 +1248,14 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
     elif read == "aa":
         report["symmetry"] = aa_symmetry(records, units)
         report["pair_by_row"] = _aa_pair_by_row(unit_list, units)
-        zero = all(raw[name]["drop"]["estimate"] == 0 for name in raw)
-        report["verdict"] = "symmetric" if report["symmetry"]["symmetric"] and zero else "failed"
-        report["next"] = "symmetry receipt" if report["verdict"] == "symmetric" else "to the lead (A6.12)"
+        if all_halted:
+            report["verdict"] = "void"
+            report["void"] = "all games halted"
+            report["next"] = "to the lead (A6.12)"
+        else:
+            zero = all(raw[name]["drop"]["estimate"] == 0 for name in raw)
+            report["verdict"] = "symmetric" if report["symmetry"]["symmetric"] and zero else "failed"
+            report["next"] = "symmetry receipt" if report["verdict"] == "symmetric" else "to the lead (A6.12)"
     elif read in SIZED_GATE:
         gate = declaration["reads"][SIZED_GATE[read]]
         primary = next(iter(stats))

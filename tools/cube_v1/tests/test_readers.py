@@ -1586,6 +1586,14 @@ class AATests(unittest.TestCase):
         self.assertIn("stop kind, source or counts", report["symmetry"]["problems"][0])
         self.assertEqual(estimate(report, "candidate_edge"), F(0))
 
+    def test_wholly_halted_aa_is_void_not_failed(self):
+        report = self._read(lambda p, g, pos: ("halt", {"kind": "decision_cap"}, 3, 77), "edge-all-halted")
+        self.assertEqual(report["verdict"], "void")
+        self.assertEqual(report["void"], "all games halted")
+        self.assertEqual(report["next"], "to the lead (A6.12)")
+        self.assertEqual(report["games"], {"played": 256, "completed": 0, "halted": 256})
+        self.assertEqual(len(report["pair_by_row"]), 4)
+
 
 class CompanionTests(unittest.TestCase):
     def test_one_seat_rotation_and_all_learned_count(self):
