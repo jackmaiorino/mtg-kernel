@@ -1069,6 +1069,7 @@ pub struct GameCaps {
     pub max_decisions: u64,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
+    pub max_stack_objects: Option<u32>,
 }
 
 impl Default for GameCaps {
@@ -1077,6 +1078,7 @@ impl Default for GameCaps {
             max_decisions: 8000,
             max_physical_decisions: 65_536,
             max_policy_steps: 131_072,
+            max_stack_objects: None,
         }
     }
 }
@@ -1151,6 +1153,8 @@ pub const RECENT_ACTIONS: u64 = 10;
 pub struct GameTally {
     /// The terminal reply's `policy_step_count`.
     pub policy_steps: Option<u64>,
+    /// Largest stack in an exposed decision, or zero before any observation.
+    pub max_stack: u32,
     /// The terminal reply's `physical_decision_count`.
     pub physical_decisions: Option<u64>,
     /// `step` of the last decision reply.
@@ -1432,6 +1436,19 @@ pub fn game_decision_counter() -> Arc<AtomicU64> {
     GAME_DECISIONS.with(Arc::clone)
 }
 
+fn reset_request(setup: &GameSetup<'_>, caps: &GameCaps) -> String {
+    let mut request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "reset",
+        "request_id": "reset",
+        "decks": [setup.decks[0].to_session_json(), setup.decks[1].to_session_json()],
+        "episode_id": setup.episode, "env_seed": setup.env_seed,
+        "max_physical_decisions": caps.max_physical_decisions,
+        "max_policy_steps": caps.max_policy_steps});
+    if let Some(limit) = caps.max_stack_objects {
+        request["max_stack_objects"] = json!(limit);
+    }
+    request.to_string()
+}
+
 fn drive_game(
     setup: &GameSetup<'_>,
     caps: &GameCaps,
@@ -1442,13 +1459,7 @@ fn drive_game(
     observed.store(0, Ordering::Relaxed);
     let mut rng = SplitMix64::seed(setup.action_seed);
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
-    let mut request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "reset",
-        "request_id": "reset",
-        "decks": [setup.decks[0].to_session_json(), setup.decks[1].to_session_json()],
-        "episode_id": setup.episode, "env_seed": setup.env_seed,
-        "max_physical_decisions": caps.max_physical_decisions,
-        "max_policy_steps": caps.max_policy_steps})
-    .to_string();
+    let mut request = reset_request(setup, caps);
     loop {
         let raw = server.handle_line(&request);
         let reply: Value = match serde_json::from_str(&raw) {
@@ -1476,6 +1487,9 @@ fn drive_game(
             _ => {}
         }
         let decision = &reply["decision"];
+        if let Some(stack) = decision["observation"]["projection"]["stack"].as_array() {
+            tally.max_stack = tally.max_stack.max(stack.len() as u32);
+        }
         if let Some(step) = decision["step"].as_u64() {
             tally.last_step = Some(step);
         }
@@ -1505,5 +1519,36 @@ fn drive_game(
             "selected_index": action["selected_index"],
             "selected_action_id": action["stable_id"]})
         .to_string();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_bytes_with_and_without_a_stack_cap() {
+        let mut deck = Deck::default();
+        deck.push(card_id_by_name("Forest").unwrap(), 40);
+        let setup = GameSetup {
+            decks: [&deck, &deck],
+            seats: [0, 1],
+            episode: 2,
+            env_seed: 42,
+            action_seed: 0,
+        };
+        let legacy = concat!(
+            r#"{"decks":[{"cards":[{"count":40,"name":"Forest"}]},"#,
+            r#"{"cards":[{"count":40,"name":"Forest"}]}],"env_seed":42,"episode_id":2,"#,
+            r#""max_physical_decisions":65536,"max_policy_steps":131072,"#,
+            r#""request_id":"reset","request_type":"reset","schema_version":5}"#,
+        );
+        let mut caps = GameCaps::default();
+        assert_eq!(reset_request(&setup, &caps), legacy);
+        caps.max_stack_objects = Some(7);
+        assert_eq!(
+            reset_request(&setup, &caps),
+            legacy.replace(r#""request_id""#, r#""max_stack_objects":7,"request_id""#)
+        );
     }
 }

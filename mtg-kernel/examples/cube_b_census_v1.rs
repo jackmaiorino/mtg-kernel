@@ -15,6 +15,8 @@
 //! completes. The caps default to the A2.1 caps (driver decisions 16,384,
 //! physical decisions 16,384, policy steps 32,768); other caps are refused
 //! unless `--allow-non-a2-caps true` is given, and the record says which.
+//! The optional `--max-stack-objects N` session cap is recorded separately
+//! from the three values checked for A2.1.
 //!
 //! The games run in `--workers` child processes (default 1) over contiguous
 //! index ranges, each game on a thread with a 256 MiB stack, and the parts
@@ -67,6 +69,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--max-driver-decisions",
     "--max-physical-decisions",
     "--max-policy-steps",
+    "--max-stack-objects",
     "--allow-non-a2-caps",
     // Set by the supervisor for its worker processes only.
     "--worker-start",
@@ -185,13 +188,20 @@ fn caps_from(args: &Args) -> Fallible<(GameCaps, bool)> {
         max_policy_steps: args
             .number("--max-policy-steps")?
             .unwrap_or(A2_CAPS.max_policy_steps),
+        max_stack_objects: args
+            .number("--max-stack-objects")?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| "--max-stack-objects exceeds u32::MAX".to_owned())?,
     };
     let allow = match args.get("--allow-non-a2-caps") {
         None | Some("false") => false,
         Some("true") => true,
         Some(other) => return Err(format!("--allow-non-a2-caps {other:?}: true or false")),
     };
-    let a2 = caps == A2_CAPS;
+    let a2 = caps.max_decisions == A2_CAPS.max_decisions
+        && caps.max_physical_decisions == A2_CAPS.max_physical_decisions
+        && caps.max_policy_steps == A2_CAPS.max_policy_steps;
     if !a2 && !allow {
         return Err(format!(
             "caps {caps:?} are not the A2.1 caps {A2_CAPS:?}; pass --allow-non-a2-caps true for a non-census run"
@@ -207,6 +217,7 @@ fn load_run(args: &Args) -> Fallible<Run> {
         "max_driver_decisions": caps.max_decisions,
         "max_physical_decisions": caps.max_physical_decisions,
         "max_policy_steps": caps.max_policy_steps,
+        "max_stack_objects": caps.max_stack_objects,
         "a2_caps": a2,
     });
     let card_db_hash = format!("{KERNEL_CARDDB_HASH:016x}");
@@ -950,6 +961,45 @@ mod tests {
             (bytes, run.record_text())
         };
         assert_eq!(play(false), play(true));
+    }
+
+    #[test]
+    fn record_includes_optional_stack_cap_without_changing_a2_caps() {
+        let dir = temp_dir("stack-cap");
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/cube_v1");
+        let cube = data.join("mtgo_vintage_cube_20261007.json");
+        let gaps = data.join("mtgo_vintage_cube_20261007_gaps.json");
+        let fence = dir.join("fence.json");
+        std::fs::write(&fence, r#"{"cards":[]}"#).unwrap();
+        for limit in [None, Some(7), Some(0), Some(u32::MAX)] {
+            let mut flags = [
+                "--mode",
+                "drafted",
+                "--namespace",
+                "stack-cap-test",
+                "--draft-start",
+                "0",
+                "--draft-end",
+                "1",
+                "--cube",
+                cube.to_str().unwrap(),
+                "--gaps",
+                gaps.to_str().unwrap(),
+                "--fence",
+                fence.to_str().unwrap(),
+            ]
+            .map(str::to_owned)
+            .to_vec();
+            if let Some(limit) = limit {
+                flags.extend(["--max-stack-objects".to_owned(), limit.to_string()]);
+            }
+            let run = load_run(&Args::parse(flags).unwrap()).unwrap();
+            assert_eq!(run.caps.max_stack_objects, limit);
+            let record: Value = serde_json::from_str(&run.record_text()).unwrap();
+            assert_eq!(record["caps"].get("max_stack_objects"), Some(&json!(limit)));
+            assert_eq!(record["caps"]["a2_caps"], true);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

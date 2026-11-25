@@ -42,6 +42,7 @@ pub const A2_CAPS: GameCaps = GameCaps {
     max_decisions: 16_384,
     max_physical_decisions: 16_384,
     max_policy_steps: 32_768,
+    max_stack_objects: None,
 };
 /// The Windows exit code of a stack overflow (`0xC00000FD`).
 pub const STACK_OVERFLOW_EXIT_CODE: u32 = 0xC000_00FD;
@@ -261,6 +262,8 @@ pub struct GameLine {
     /// The terminal reply's counts.
     pub physical_decisions: Option<u64>,
     pub policy_steps: Option<u64>,
+    /// Largest stack observed at a decision. Zero if no tally is available.
+    pub max_stack: u32,
     /// `step` and `physical_decision_id` of the last decision reply.
     pub last_step: Option<u64>,
     pub last_physical_decision_id: Option<u64>,
@@ -344,6 +347,7 @@ fn played_line(
         driver_decisions: Some(record.decisions),
         physical_decisions: tally.physical_decisions,
         policy_steps: tally.policy_steps,
+        max_stack: tally.max_stack,
         last_step: tally.last_step,
         last_physical_decision_id: tally.last_physical_decision_id,
         last_action_source: tally.last_action_source,
@@ -385,6 +389,7 @@ fn death_line(
         driver_decisions: None,
         physical_decisions: None,
         policy_steps: None,
+        max_stack: 0,
         last_step: None,
         last_physical_decision_id: None,
         last_action_source: None,

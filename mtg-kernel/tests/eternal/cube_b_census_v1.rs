@@ -12,9 +12,11 @@ use mtg_kernel::cube_b_census_v1::{
     stop_kind, DraftedPod, GameLine, ProcessDeath, SeedPart, A2_CAPS, GAMES_PER_DRAFT,
 };
 use mtg_kernel::cube_draft_v1::{
-    game_seed, play_pod_game, pod_game_seats, CubeDraftError, CubePool, GameCaps, GameEnd,
-    DECK_CARDS,
+    derive_seed, game_seed, play_pod_game, pod_game_seats, CubeDraftError, CubePool, GameCaps,
+    GameEnd, SeedStream, DECK_CARDS, SESSION_SCHEMA_VERSION,
 };
+use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
+use mtg_kernel::state::SplitMix64;
 use serde_json::{json, Value};
 
 const CUBE_LIST: &str = concat!(
@@ -31,6 +33,7 @@ const TINY_CAPS: GameCaps = GameCaps {
     max_decisions: 300,
     max_physical_decisions: 16_384,
     max_policy_steps: 32_768,
+    max_stack_objects: None,
 };
 
 fn pool() -> CubePool {
@@ -172,7 +175,78 @@ fn two_runs_of_a_tiny_drafted_range_write_identical_lines() {
                 assert_eq!(deck.as_array().unwrap().len(), DECK_CARDS as usize);
             }
             assert_eq!(line["completed"], json!(line["stop_kind"].is_null()));
+            assert!(line["max_stack"].as_u64().is_some());
         }
+    });
+}
+
+fn replay_stack_peak(pod: &DraftedPod, line: &GameLine, caps: &GameCaps) -> u32 {
+    let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+    let mut request = json!({
+        "request_type": "reset", "schema_version": SESSION_SCHEMA_VERSION,
+        "request_id": "reset", "episode_id": line.game, "env_seed": line.env_seed,
+        "decks": line.seats.map(|seat| pod.decks[seat].to_session_json()),
+        "max_physical_decisions": caps.max_physical_decisions,
+        "max_policy_steps": caps.max_policy_steps,
+    });
+    let mut rng = SplitMix64::seed(derive_seed(line.game_seed, SeedStream::GameActions, 0));
+    let mut lengths = Vec::new();
+    for step in 0..=caps.max_decisions {
+        let raw = server.handle_line(&request.to_string());
+        let reply: Value = serde_json::from_str(&raw).unwrap();
+        if reply["response_type"] == "terminal" || reply["response_type"] == "error" {
+            break;
+        }
+        assert_eq!(reply["response_type"], "decision", "{reply}");
+        let decision = &reply["decision"];
+        let stack = decision
+            .pointer("/observation/projection/stack")
+            .and_then(Value::as_array);
+        lengths.push(stack.map_or(0, Vec::len) as u32);
+        if step == caps.max_decisions {
+            break;
+        }
+        // Replay the uniform policy's rejection sampling from the same seed.
+        let actions = decision["legal_actions"].as_array().unwrap();
+        let n = actions.len() as u64;
+        let threshold = n.wrapping_neg() % n;
+        let mut draw = rng.next_u64();
+        while draw < threshold {
+            draw = rng.next_u64();
+        }
+        let action = &actions[(draw % n) as usize];
+        request = json!({
+            "request_type": "step", "schema_version": SESSION_SCHEMA_VERSION,
+            "request_id": format!("step-{}", step + 1),
+            "episode_id": decision["episode_id"], "expected_step": decision["step"],
+            "selected_index": action["selected_index"], "selected_action_id": action["stable_id"],
+        });
+    }
+    lengths.into_iter().max().unwrap_or(0)
+}
+
+#[test]
+fn drafted_stack_peaks_match_replayed_decision_observations() {
+    on_big_stack(|| {
+        let pool = pool();
+        let pod = DraftedPod::prepare(&pool, NAMESPACE, 0).unwrap();
+        let caps = GameCaps {
+            max_decisions: 100,
+            ..TINY_CAPS
+        };
+        let mut saw_stack = false;
+        play_drafted_range(&pool, NAMESPACE, 0, 2, &caps, |line| {
+            let peak = replay_stack_peak(&pod, line, &caps);
+            assert_eq!(line.max_stack, peak, "game {}", line.game);
+            assert!(line.to_json_line().contains(&format!(
+                r#""policy_steps":{},"max_stack":{peak},"#,
+                json!(line.policy_steps)
+            )));
+            saw_stack |= peak > 0;
+            Ok::<(), CubeDraftError>(())
+        })
+        .unwrap();
+        assert!(saw_stack, "the range must exercise a nonempty stack");
     });
 }
 
@@ -194,6 +268,7 @@ fn a_census_game_is_the_pod_game() {
         assert_eq!(death.seats, record.seats);
         assert_eq!(death.env_seed, record.env_seed);
         assert_eq!(death.decks, line.decks);
+        assert_eq!(death.max_stack, 0);
         assert_eq!(
             death.stop_kind.as_deref(),
             Some("process dies: stack overflow (0xC00000FD)")
