@@ -9,10 +9,10 @@ by the constants), with the same constants, from the active pool minus all 45 ca
 pool P. Basic lands are exempt from the exclusion. C(P) depends on P and the seeds only, never on
 a build of P, so every compared build of P faces one opponent that shares no card with either.
 
-Dealer key (A6.17, signed; run-free by design):
-  ["cube_deal_common_v1", namespace, draft, seat, opponent,
-   seed(["cube_deal_common_v1", namespace, draft, seat, opponent])]
-Game seeds (A6.17 and read plan v1, section 3; they carry the run):
+Dealer key (A6.17 and read plan v3 change 3; run-free by design):
+  ["cube_deal_common_v1", namespace, draft, seat, opponent]
+  The dealer appends ["colors"], ["spells"] or ["nonbasic_lands"] before each A1.4 item key.
+Game seeds (A6.17 and read plan v3, section 3; they carry the run):
   opponent 0 of (c), (b'), dose: seed([namespace, "game", run, draft, seat, 0, j]) for j = 0 to 3;
   D13: seed([namespace, "game", run, draft, seat, o, j, q]) for o, j in 0, 1 and contrast q.
 The focal deck is session player 0 (on the play) at even j and player 1 at odd j.
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -32,6 +32,8 @@ COMMON_KEY = "cube_deal_common_v1"
 COMMON_GAMES = 4
 POOL_CARDS = 45
 SEATS = 8
+U8 = (1 << 8) - 1
+U64 = (1 << 64) - 1
 
 
 def _is_int(value: Any) -> bool:
@@ -41,12 +43,48 @@ def _is_int(value: Any) -> bool:
 def _check_key(namespace: Any, draft: Any, seat: Any, opponent: Any) -> None:
     if not isinstance(namespace, str) or not namespace:
         raise ValueError(f"namespace must be a non-empty string, got {namespace!r}")
-    if not (_is_int(draft) and draft >= 0):
-        raise ValueError(f"draft must be an integer >= 0, got {draft!r}")
+    if not (_is_int(draft) and 0 <= draft <= U64):
+        raise ValueError(f"draft must be a u64 integer, got {draft!r}")
     if not (_is_int(seat) and 0 <= seat < SEATS):
         raise ValueError(f"seat must be an integer in [0, {SEATS - 1}], got {seat!r}")
-    if not (_is_int(opponent) and opponent >= 0):
-        raise ValueError(f"opponent must be an integer >= 0, got {opponent!r}")
+    if not (_is_int(opponent) and 0 <= opponent <= U8):
+        raise ValueError(f"opponent must be a u8 integer, got {opponent!r}")
+
+
+def extract_card_ids(source: Any, label: str = "card source") -> set[int]:
+    """Extract registry card ids from a set/list of ints, a cube table JSON, or a card index JSON."""
+    if isinstance(source, (set, frozenset)):
+        ids = set()
+        for cid in source:
+            if not _is_int(cid):
+                raise ValueError(f"{label}: card id must be an integer, got {cid!r}")
+            ids.add(cid)
+        return ids
+    if isinstance(source, list):
+        ids = set()
+        for item in source:
+            if _is_int(item):
+                ids.add(item)
+            elif isinstance(item, dict) and _is_int(item.get("card_id")):
+                ids.add(item["card_id"])
+            else:
+                raise ValueError(f"{label}: unsupported card entry {item!r}")
+        return ids
+    if isinstance(source, dict):
+        if isinstance(source.get("cards"), list):
+            ids = set()
+            for entry in source["cards"]:
+                if not isinstance(entry, dict):
+                    raise ValueError(f"{label}: cards entry must be an object, got {entry!r}")
+                cid = entry.get("card_id")
+                if cid is not None:
+                    if not _is_int(cid):
+                        raise ValueError(f"{label}: card_id must be an integer, got {cid!r}")
+                    ids.add(cid)
+            return ids
+        if isinstance(source.get("card_ids"), list):
+            return extract_card_ids(source["card_ids"], label)
+    raise ValueError(f"{label}: cannot extract card ids from {type(source).__name__}")
 
 
 def validate_pool_cards(pool_state: dict[str, Any], pool_cards: Any) -> list[int]:
@@ -69,9 +107,9 @@ def validate_pool_cards(pool_state: dict[str, Any], pool_cards: Any) -> list[int
 
 
 def common_key(namespace: str, draft: int, seat: int, opponent: int) -> list[Any]:
-    """The key tuple of C(P), as the pod record's `dealt.key` holds it."""
+    """A6.17's complete key prefix for C(P), as serialized in `dealt.key` and hashed by the dealer."""
     _check_key(namespace, draft, seat, opponent)
-    return [namespace, draft, seat, opponent]
+    return [COMMON_KEY, namespace, draft, seat, opponent]
 
 
 def deal_common_opponent(
@@ -82,18 +120,27 @@ def deal_common_opponent(
     draft: int,
     seat: int,
     opponent: int,
+    *,
+    card_index: Any = None,
+    cube_table: Any = None,
 ) -> dict[str, Any]:
     """Deal C(P) for pool P (the seat's 45 card ids) at (namespace, draft, seat, opponent).
 
     `pool_state` and `constants` are deal.validate_pool's and deal.validate_constants' results.
+    When `card_index` and/or `cube_table` are given, asserts that every dealt nonbasic card has a
+    row in each pinned source as well as in the active pool and outside P (A6.17, D0.4).
     """
     _check_key(namespace, draft, seat, opponent)
     pool_ids = validate_pool_cards(pool_state, pool_cards)
+    active_nonbasics = {card["card_id"] for card in pool_state["spells"]} | {
+        card["card_id"] for card in pool_state["nonbasic_lands"]
+    }
     basic_ids = set(pool_state["basic_id_by_color"].values())
     excluded = {cid for cid in pool_ids if cid not in basic_ids}
+    index_ids = None if card_index is None else extract_card_ids(card_index, "card_index")
+    table_ids = None if cube_table is None else extract_card_ids(cube_table, "cube_table")
 
-    deal_seed = deal.seed([COMMON_KEY, namespace, draft, seat, opponent])
-    key_prefix = [COMMON_KEY, namespace, draft, seat, opponent, deal_seed]
+    key_prefix = common_key(namespace, draft, seat, opponent)
 
     nonland_spells_count = constants["nonland_spells"]
     nonbasic_lands_count = constants["nonbasic_lands"]
@@ -125,8 +172,19 @@ def deal_common_opponent(
         eligible_lands, nonbasic_lands_count, key_prefix + ["nonbasic_lands"], lambda c: c["card_id"]
     )
 
+    dealt_nonbasics = [card["card_id"] for card in spells] + [card["card_id"] for card in lands]
+    for cid in dealt_nonbasics:
+        if cid not in active_nonbasics:
+            raise ValueError(f"common opponent dealt nonbasic {cid} outside active pool")
+        if cid in excluded:
+            raise ValueError(f"common opponent dealt nonbasic {cid} inside seat pool P")
+        if index_ids is not None and cid not in index_ids:
+            raise ValueError(f"common opponent dealt nonbasic {cid} has no row in pinned card_index")
+        if table_ids is not None and cid not in table_ids:
+            raise ValueError(f"common opponent dealt nonbasic {cid} has no row in pinned cube_table")
+
     basics_ids = deal._split_basics(colors, basic_count, constants["basic_split"], pool_state["basic_id_by_color"])
-    mainboard = sorted([card["card_id"] for card in spells] + [card["card_id"] for card in lands] + basics_ids)
+    mainboard = sorted(dealt_nonbasics + basics_ids)
     return {
         "label": f"cube-common-d{draft}-s{seat}-o{opponent}-{''.join(colors)}",
         "mainboard": mainboard,

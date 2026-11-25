@@ -392,7 +392,9 @@ def panel_set_names(namespace: str, set_name: str) -> tuple[str, str]:
 
 
 def verify_panel(root: Path, namespace: str, pinned: str, *, pool_doc: Any, constants_doc: Any,
-                 pool_sha256: str, constants_sha256: str, set_name: str = "") -> dict[str, Any]:
+                 pool_sha256: str, constants_sha256: str, set_name: str = "",
+                 card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None
+                 ) -> dict[str, Any]:
     """Rebuild panel.json from the accepted prep-panel execution, require identical bytes and the
     pinned digest. Returns the panel. The stage-1 prep-panel set itself is never checked against a
     pinned panel (read plan v2 change 2)."""
@@ -416,7 +418,8 @@ def verify_panel(root: Path, namespace: str, pinned: str, *, pool_doc: Any, cons
     rebuilt = read_plans.assemble_panel(family, namespace, prep_man, accepted["execution"], accepted["outputs"],
                                         pins=panel["pins"], builders=builders, pool_doc=pool_doc,
                                         constants_doc=constants_doc, pool_sha256=pool_sha256,
-                                        constants_sha256=constants_sha256)
+                                        constants_sha256=constants_sha256, card_index=card_index,
+                                        cube_table=cube_table)
     if read_plans.serialize(rebuilt).encode("utf-8") != panel_path.read_bytes():
         raise SetError("panel.json differs from its rebuild from the accepted prep-panel execution")
     return panel
@@ -446,7 +449,9 @@ def check_prep_dose_set(set_dir: Path, pinned_panel: str, *, pool: tuple[Any, st
 
 
 def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] | None = None,
-                  constants: tuple[Any, str] | None = None, pinned_panel: str | None = None) -> dict[str, Any]:
+                  constants: tuple[Any, str] | None = None, pinned_panel: str | None = None,
+                  card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None
+                  ) -> dict[str, Any]:
     """Check a plan set and its chosen execution before data: manifest, plans (regenerated), prep
     acceptance, mirrors, panel, then each record against its plan."""
     set_dir = Path(set_dir)
@@ -474,7 +479,8 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         if man["panel_sha256"] is None or man["panel_sha256"] != pinned_panel:
             raise SetError("a dose or d13 set carries the pinned panel digest")
         panel = verify_panel(root, man["namespace"], pinned_panel, pool_doc=pool[0], constants_doc=constants[0],
-                             pool_sha256=pool[1], constants_sha256=constants[1], set_name=man["set"])
+                             pool_sha256=pool[1], constants_sha256=constants[1], set_name=man["set"],
+                             card_index=card_index, cube_table=cube_table)
     elif man["panel_sha256"] is not None:
         raise SetError("only dose and d13 sets carry a panel digest")
     first, end = man["units"]
@@ -485,7 +491,8 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
             raise SetError(f"plan {index}'s prep_sha256 is not an output of the accepted prep execution")
         try:
             read_plans.check_plan(plan, prep, pool[0] if pool else None, constants[0] if constants else None,
-                                  pool[1] if pool else None, constants[1] if constants else None)
+                                  pool[1] if pool else None, constants[1] if constants else None,
+                                  card_index=card_index, cube_table=cube_table)
         except (read_plans.PlanError, pod_record.RecordError) as exc:
             raise SetError(f"plan {index}: {exc}") from exc
         if plan["family"] != family or plan["namespace"] != man["namespace"] or plan["pod_index"] != index:

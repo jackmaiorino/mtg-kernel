@@ -298,7 +298,8 @@ class PlanFamilyTests(unittest.TestCase):
             want = deal.seed(["test", "game", "v1", 1, 0, 0, j])
             self.assertEqual((gx["game_seed"], gy["game_seed"], gx["episode"]), (want, want, j))
             self.assertEqual(gx["decks"].index(0), j % 2)
-        self.assertEqual(c["decks"][2]["dealt"]["key"], ["test", 1, 0, 0])
+        self.assertEqual(c["decks"][2]["dealt"]["key"], ["cube_deal_common_v1", "test", 1, 0, 0])
+        self.assertEqual(c["decks"][2]["builder"]["pin"], c["decks"][2]["dealt"])
         pool = c["pools"][0]
         self.assertFalse(set(c["decks"][2]["cards"]) & set(pool))
         _, _, dres, dsha = synth.prep_for("dose", 1)
@@ -334,6 +335,101 @@ class PlanFamilyTests(unittest.TestCase):
                          deal.seed(["panel-k1", "game", "v1", 3, 5, 1, 0, 2]))
         text = (CUBE_V1_DIR / "deal.py").read_bytes().replace(b"\r\n", b"\n")
         self.assertEqual(hashlib.sha256(text).hexdigest(), DEAL_PY_SHA256)
+
+    def test_common_opponent_independent_key_deck_golden_and_pin_checks(self):
+        pool_state = deal.validate_pool(synth.POOL[0])
+        constants = deal.validate_constants(synth.CONSTANTS)
+        pools = synth.draft_pools(deal.seed(["dose-d8", "draft", "v1", 0]))
+        seat_pool = pools[0]
+        key = deal_common.common_key("dose-d8", 0, 0, 0)
+        self.assertEqual(key, ["cube_deal_common_v1", "dose-d8", 0, 0, 0])
+
+        # Independent recomputation using only the 5-item A6.17 prefix (no extra derived seed).
+        basic_ids = set(pool_state["basic_id_by_color"].values())
+        excluded = {cid for cid in seat_pool if cid not in basic_ids}
+
+        def rank(prefix, item_key):
+            return hashlib.sha256(json.dumps(prefix + [item_key], separators=(",", ":")).encode("utf-8")).digest()
+
+        colors = sorted(list(deal.COLORS), key=lambda c: (rank(key + ["colors"], c), c))[:2]
+        eligible_spells = [
+            c for c in pool_state["spells"]
+            if c["card_id"] not in excluded and set(c["colors"]).issubset(set(colors))
+        ]
+        spells = sorted(eligible_spells, key=lambda c: (rank(key + ["spells"], c["card_id"]), c["card_id"]))[:23]
+        eligible_lands = [c for c in pool_state["nonbasic_lands"] if c["card_id"] not in excluded]
+        lands = sorted(eligible_lands, key=lambda c: (rank(key + ["nonbasic_lands"], c["card_id"]), c["card_id"]))[:3]
+        basics = [pool_state["basic_id_by_color"][colors[0]]] * 7 + [pool_state["basic_id_by_color"][colors[1]]] * 7
+        expected_deck = sorted([c["card_id"] for c in spells] + [c["card_id"] for c in lands] + basics)
+
+        expected_golden = [
+            1, 5, 7, 11, 14, 20, 21, 22, 31, 32, 42, 46, 48, 50, 60, 192, 195, 196, 200, 216,
+            228, 229, 235, 344, 348, 357, 1000, 1000, 1000, 1000, 1000, 1000, 1000,
+            1003, 1003, 1003, 1003, 1003, 1003, 1003,
+        ]
+        self.assertEqual(expected_deck, expected_golden)
+        self.assertEqual(
+            hashlib.sha256(json.dumps(expected_deck, separators=(",", ":")).encode("utf-8")).hexdigest(),
+            "563418680e0b22fb8c14b4aecc4aa5da53e3b33c33f2586799d07dcb1f021dde",
+        )
+
+        all_ids = {c["card_id"] for k in ("spells", "nonbasic_lands", "basics") for c in synth.POOL[0][k]}
+        index_doc = {"cards": [{"card_id": cid} for cid in sorted(all_ids)]}
+        table_doc = {"cards": [{"card_id": cid, "name": f"c{cid}", "vector": [0]} for cid in sorted(all_ids)]}
+        dealt = deal_common.deal_common_opponent(
+            pool_state, constants, seat_pool, "dose-d8", 0, 0, 0,
+            card_index=index_doc, cube_table=table_doc,
+        )
+        self.assertEqual(dealt["mainboard"], expected_golden)
+        dealt_nonbasics = [cid for cid in dealt["mainboard"] if cid not in basic_ids]
+        self.assertEqual(len(dealt_nonbasics), 26)
+        self.assertFalse(set(dealt_nonbasics) & excluded)
+
+        # Removing one dealt nonbasic from the pinned index or table must fail.
+        drop_cid = dealt_nonbasics[0]
+        bad_index = {"cards": [{"card_id": cid} for cid in sorted(all_ids - {drop_cid})]}
+        bad_table = {"cards": [{"card_id": cid} for cid in sorted(all_ids - {drop_cid})]}
+        with self.assertRaisesRegex(ValueError, "card_index"):
+            deal_common.deal_common_opponent(
+                pool_state, constants, seat_pool, "dose-d8", 0, 0, 0,
+                card_index=bad_index, cube_table=table_doc,
+            )
+        with self.assertRaisesRegex(ValueError, "cube_table"):
+            deal_common.deal_common_opponent(
+                pool_state, constants, seat_pool, "dose-d8", 0, 0, 0,
+                card_index=index_doc, cube_table=bad_table,
+            )
+
+        # The old extra-seed prefix produces a different deck.
+        old_prefix = key + [deal.seed(key)]
+        old_colors = sorted(list(deal.COLORS), key=lambda c: (rank(old_prefix + ["colors"], c), c))[:2]
+        old_elig = [c for c in pool_state["spells"]
+                    if c["card_id"] not in excluded and set(c["colors"]).issubset(set(old_colors))]
+        old_spells = sorted(old_elig, key=lambda c: (rank(old_prefix + ["spells"], c["card_id"]), c["card_id"]))[:23]
+        old_lands = sorted(eligible_lands,
+                           key=lambda c: (rank(old_prefix + ["nonbasic_lands"], c["card_id"]), c["card_id"]))[:3]
+        old_basics = ([pool_state["basic_id_by_color"][old_colors[0]]] * 7
+                      + [pool_state["basic_id_by_color"][old_colors[1]]] * 7)
+        old_deck = sorted([c["card_id"] for c in old_spells] + [c["card_id"] for c in old_lands] + old_basics)
+        self.assertNotEqual(old_deck, expected_golden)
+
+        # Plan check enforces pinned card_index / cube_table hashes and nonbasic membership.
+        idx_sha = read_plans.doc_sha256(index_doc)
+        tbl_sha = read_plans.doc_sha256(table_doc)
+        pins = {**synth.PINS, "card_index": idx_sha, "cube_table": tbl_sha}
+        req = read_plans.build_prep_request("b_c", "test", 0, pins, dict(synth.UNIFORM),
+                                            {"candidate": dict(synth.UNIFORM)})
+        req_sha = read_plans.doc_sha256(req)
+        res = synth.prep_result(req, req_sha)
+        res_sha = read_plans.doc_sha256(res)
+        plan = read_plans.build_plan("c", "test", 0, pins=pins, pilot=synth.PILOT, picker=dict(synth.UNIFORM),
+                                     builders={"candidate": dict(synth.UNIFORM)}, prep=(res, res_sha),
+                                     card_index=(index_doc, idx_sha), cube_table=(table_doc, tbl_sha), **synth.DEALER)
+        read_plans.check_plan(plan, (res, res_sha), card_index=(index_doc, idx_sha),
+                              cube_table=(table_doc, tbl_sha), **synth.DEALER)
+        with self.assertRaisesRegex(read_plans.PlanError, "card_index"):
+            read_plans.check_plan(plan, (res, res_sha), card_index=(index_doc, "0" * 64),
+                                  cube_table=(table_doc, tbl_sha), **synth.DEALER)
 
     def test_fixture_set_names(self):
         for ok in ("fx-c-shared-d0", "fx-aa-mirrored-halt-d15", "fx-b-edge-undefined-d0-look-1",
@@ -1059,7 +1155,7 @@ class DeterminismTests(unittest.TestCase):
             self.assertEqual(json.loads(outs[0])["verdict"], "win")
 
 
-REPORT_GOLDEN_SHA256 = "d620a65158abe209a1373ac9f6fc957041d3e5b8cb86166a8fb41017323c2599"
+REPORT_GOLDEN_SHA256 = "766763a7d6bffc000b9ca4bdd7c7c482d2c94a8a5cb48452a9001883910ce06a"
 
 
 class UniformPodRecordTests(unittest.TestCase):

@@ -328,7 +328,8 @@ def pairing_games(family: str, pod_seed: int, rotation: int | None) -> list[dict
 
 def dealt_decks(family: str, namespace: str, unit: int, pools: list[list[int]] | None,
                 built_cards: dict[tuple[int, str], list[int]] | None, pool_state: dict[str, Any] | None,
-                constants: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+                constants: dict[str, Any] | None, *, card_index: Any = None, cube_table: Any = None
+                ) -> dict[int, dict[str, Any]]:
     """The dealt opponent decks of a plan, by deck id."""
     layout = _layout(family)
     out: dict[int, dict[str, Any]] = {}
@@ -344,7 +345,10 @@ def dealt_decks(family: str, namespace: str, unit: int, pools: list[list[int]] |
         else:
             for o in ((0,) if layout == "c" else (0, 1)):
                 deck_id = 3 * s + 2 if layout == "c" else 6 * s + 4 + o
-                opp = deal_common.deal_common_opponent(pool_state, constants, pools[s], namespace, unit, s, o)
+                opp = deal_common.deal_common_opponent(
+                    pool_state, constants, pools[s], namespace, unit, s, o,
+                    card_index=card_index, cube_table=cube_table,
+                )
                 out[deck_id] = _dealt(deck_id, deal_common.COMMON_KEY,
                                       deal_common.common_key(namespace, unit, s, o), opp["mainboard"])
     return out
@@ -509,7 +513,8 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
                builders: dict[str, Any] | None = None, mirror: int | None = None, rotation: int | None = None,
                mark: Any = None, prep: tuple[dict[str, Any], str] | None = None, pool_doc: Any = None,
                constants_doc: Any = None, pool_sha256: str | None = None,
-               constants_sha256: str | None = None) -> dict[str, Any]:
+               constants_sha256: str | None = None, card_index: tuple[Any, str] | None = None,
+               cube_table: tuple[Any, str] | None = None) -> dict[str, Any]:
     """One read plan (sections 2 and 3). `picker` binds the learning chairs; `builders` binds each
     builder row except `stated`. Families with prep take (prep result, its sha256); families with
     dealt decks take the pool and constants documents and their sha256 values."""
@@ -581,7 +586,18 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
     elif pool_doc is not None or constants_doc is not None:
         raise PlanError(f"family {family} deals no deck")
 
-    dealt = dealt_decks(family, namespace, unit, pools, built_cards, pool_state, constants)
+    card_index_doc = cube_table_doc = None
+    if card_index is not None:
+        card_index_doc, card_index_sha = card_index
+        if card_index_sha != pins["card_index"]:
+            raise PlanError("card_index does not hash to pins.card_index")
+    if cube_table is not None:
+        cube_table_doc, cube_table_sha = cube_table
+        if cube_table_sha != pins["cube_table"]:
+            raise PlanError("cube_table does not hash to pins.cube_table")
+
+    dealt = dealt_decks(family, namespace, unit, pools, built_cards, pool_state, constants,
+                        card_index=card_index_doc, cube_table=cube_table_doc)
     if layout in ("a", "one", "all"):
         games, pairs = pairing_games(family, seeds["pod_seed"], rotation), []
     else:
@@ -697,7 +713,8 @@ def plan_bindings(plan: dict[str, Any]) -> dict[str, Any]:
 
 def check_plan(plan: Any, prep: tuple[dict[str, Any], str] | None = None, pool_doc: Any = None,
                constants_doc: Any = None, pool_sha256: str | None = None,
-               constants_sha256: str | None = None) -> dict[str, Any]:
+               constants_sha256: str | None = None, card_index: tuple[Any, str] | None = None,
+               cube_table: tuple[Any, str] | None = None) -> dict[str, Any]:
     """Strict validation: the plan must equal, byte for byte, the plan regenerated from its identity
     fields, bindings, prep result and dealer inputs (whose hashes must equal the plan's)."""
     plan = _shape(plan)
@@ -712,7 +729,8 @@ def check_plan(plan: Any, prep: tuple[dict[str, Any], str] | None = None, pool_d
         expected = build_plan(family, plan["namespace"], plan["unit"], pins=plan["pins"], pilot=plan["pilot"],
                               picker=bindings["picker"], builders=bindings["builders"], mirror=plan["mirror"],
                               rotation=plan["rotation"], mark=plan["mark"], prep=prep, pool_doc=pool_doc,
-                              constants_doc=constants_doc, pool_sha256=pool_sha256, constants_sha256=constants_sha256)
+                              constants_doc=constants_doc, pool_sha256=pool_sha256, constants_sha256=constants_sha256,
+                              card_index=card_index, cube_table=cube_table)
     except (ValueError, KeyError, TypeError) as exc:
         raise PlanError(f"plan cannot be regenerated: {exc}") from exc
     if serialize(expected) != serialize(plan):
@@ -808,12 +826,24 @@ def write_set(root: Path, manifest: dict[str, Any], files: dict[str, Any]) -> Pa
 
 def assemble_panel(family: str, namespace: str, prep_manifest: dict[str, Any], prep_execution: int,
                    outputs: dict[int, tuple[dict[str, Any], str]], *, pins: Any, builders: dict[str, Any] | None,
-                   pool_doc: Any, constants_doc: Any, pool_sha256: str, constants_sha256: str) -> dict[str, Any]:
+                   pool_doc: Any, constants_doc: Any, pool_sha256: str, constants_sha256: str,
+                   card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None
+                   ) -> dict[str, Any]:
     """Stage 2 of a frozen panel (section 5): panel.json from the accepted stage-1 outputs alone.
     For each unit: seeds, pools, the dealt opponents and games of the family's plans, and for d13
     the built decks (`builders` binds their rows)."""
     if family not in ("dose", "d13"):
         raise PlanError("panels exist for dose and d13")
+    pins = _check_pins(pins)
+    card_index_doc = cube_table_doc = None
+    if card_index is not None:
+        card_index_doc, card_index_sha = card_index
+        if card_index_sha != pins["card_index"]:
+            raise PlanError("card_index does not hash to pins.card_index")
+    if cube_table is not None:
+        cube_table_doc, cube_table_sha = cube_table
+        if cube_table_sha != pins["cube_table"]:
+            raise PlanError("cube_table does not hash to pins.cube_table")
     pool_state = deal.validate_pool(pool_doc)
     constants = deal.validate_constants(constants_doc)
     first, end = prep_manifest["units"]
@@ -822,7 +852,8 @@ def assemble_panel(family: str, namespace: str, prep_manifest: dict[str, Any], p
         result, _ = outputs[unit]
         pools = [list(p) for p in result["draft"]["pools"]]
         cards = prep_cards(result) if family == "d13" else None
-        dealt = dealt_decks(family, namespace, unit, pools, cards, pool_state, constants)
+        dealt = dealt_decks(family, namespace, unit, pools, cards, pool_state, constants,
+                            card_index=card_index_doc, cube_table=cube_table_doc)
         games, _ = dealer_games(family, namespace, unit)
         built = None
         if family == "d13":
