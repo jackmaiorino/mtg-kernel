@@ -1,17 +1,20 @@
 #![cfg(feature = "eternal-fixtures")]
 
+use mtg_kernel::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
+use mtg_kernel::cube_draft_build_v1::card_index::{CardIndexV1, CubeTableSourceV1};
 use mtg_kernel::cube_draft_build_v1::model::{
     training::fixture::{CAPPED_MEAN, DETERMINISTIC_HALT_MEAN, DROP_MEAN, UNLIMITED_MEAN},
-    ModelCardRowsV1,
+    ModelCardRowsV1, ModelV1,
 };
 use mtg_kernel::cube_draft_v1::{basic_land_ids, game_seed, CubePool, GameCaps, GameEnd};
 use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed, watchdog_game_end};
+use mtg_kernel::cube_read_plan_v1::sha256_hex;
 use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot};
 use mtg_kernel::cube_training_driver_v1::{
-    check_stop_ledger, prune_checkpoint, run_two_action_part3, tripwire_games_for_test,
-    two_action_dropped_mean, LineageSegment, PilotPin, PilotProvider, PilotSchedule,
-    PilotSelection, PilotSwitch, RunConfig, RunOutcome, Segment, TrainingDriver,
-    TrainingDriverError, TripwireMode, TripwireRule,
+    check_stop_ledger, load_checkpoint_read_only_v1, prune_checkpoint, run_two_action_part3,
+    tripwire_games_for_test, two_action_dropped_mean, CensusBaselinePin, LineageSegment, PilotPin,
+    PilotProvider, PilotSchedule, PilotSelection, PilotSwitch, RunConfig, RunOutcome, Segment,
+    TrainingDriver, TrainingDriverError, TripwireMode, TripwireRule,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -159,12 +162,12 @@ impl GamePilot for RepeatWatchdogPilot {
 }
 
 struct OneHaltPilot {
-    target_action_seed: u64,
+    target_action_seeds: Vec<u64>,
 }
 
 impl GamePilot for OneHaltPilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
-        if spec.action_seed == self.target_action_seed {
+        if self.target_action_seeds.contains(&spec.action_seed) {
             return AlwaysHaltPilot.play(spec, caps);
         }
         NaturalPilot.play(spec, caps)
@@ -439,15 +442,40 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     let temp = TempTestDir::new("resume");
     let cube = pool();
     let pod_seed = pod_play_seed("test", "b1", 0).expect("pod seed");
-    let target_action_seed = attempt_seeds(game_seed(pod_seed, 0), 0).2;
-    let pilot = FixturePilot(Arc::new(OneHaltPilot { target_action_seed }));
-    let rules = TripwireMode::Full {
-        rules: vec![TripwireRule::stop_kind_rate("decision_cap", 0.0)],
+    let target_action_seeds = (0..4)
+        .map(|group| attempt_seeds(game_seed(pod_seed, group), 0).2)
+        .collect();
+    let pilot = FixturePilot(Arc::new(OneHaltPilot {
+        target_action_seeds,
+    }));
+    let summary_path = temp.join("summary.json");
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "games": 2000, "completed": 1999, "halted": 1,
+        "stop_kinds": [{"stop_kind": "driver_decision_cap", "games": 1}],
+        "cards": [], "order_errors": [], "stop_kind_mismatches": []
+    }))
+    .unwrap();
+    fs::write(&summary_path, &bytes).unwrap();
+    let baseline = CensusBaselinePin {
+        run: "census-b".into(),
+        summary_sha256: sha256_hex(&bytes),
+        manifest_sha256: "11".repeat(32),
+        build_sha256: "22".repeat(32),
+        fence_sha256: "33".repeat(32),
+        authorization_sha256: "44".repeat(32),
+    };
+    let bind = |config: &mut RunConfig| {
+        config.pins.binary = Some(baseline.build_sha256.clone());
+        config.pins.fence_record = Some(baseline.fence_sha256.clone());
+        config.tripwire = TripwireMode::Full {
+            baseline: baseline.clone(),
+        };
+        config.tripwire_summary = Some(summary_path.clone());
     };
 
     let uninterrupted_root = temp.join("direct");
     let mut direct_config = config(&uninterrupted_root, "b1", Segment::BuilderOnly, 2);
-    direct_config.tripwire = rules.clone();
+    bind(&mut direct_config);
     let mut direct = TrainingDriver::open(direct_config, model_rows(), 1234).expect("direct");
     assert_eq!(
         direct.run_next_update(&cube, &pilot),
@@ -463,7 +491,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
 
     let resumed_root = temp.join("resumed");
     let mut resumed_config = config(&resumed_root, "b1", Segment::BuilderOnly, 2);
-    resumed_config.tripwire = rules.clone();
+    bind(&mut resumed_config);
     let mut resumed =
         TrainingDriver::open(resumed_config.clone(), model_rows(), 1234).expect("resumed");
     assert_eq!(
@@ -488,7 +516,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
         })
     );
     assert_eq!(
-        tripwire_games_for_test(&resumed_root, &rules).expect("games"),
+        tripwire_games_for_test(&resumed_root).expect("games"),
         2_240
     );
     let stop: serde_json::Value = serde_json::from_slice(
@@ -496,8 +524,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     )
     .expect("window stop JSON");
     assert_eq!(stop["firing"]["denominator"], 2_240);
-    // The reference and its coupled sibling share the first attempt seed.
-    assert_eq!(stop["firing"]["games"], 2);
+    assert!(stop["firing"]["games"].as_u64().unwrap() >= 5);
     assert_eq!(
         directory_bytes(&uninterrupted_root),
         directory_bytes(&resumed_root)
@@ -629,5 +656,183 @@ fn invalid_pending_batch_is_abandoned_not_published() {
     assert!(!root.join("updates/update-0000").exists());
     assert!(!root.join("pending/update-0000").exists());
     let stop = fs::read_to_string(root.join("stops/stop-0000.json")).expect("stop record");
-    assert!(stop.contains("\"kind\": \"process_death\""));
+    let stop: serde_json::Value = serde_json::from_str(&stop).unwrap();
+    assert_eq!(stop["kind"], "process_death");
+    assert_eq!(stop["firing"]["rule"]["target"], "process_death");
+    assert_eq!(stop["firing"]["games"], 1);
+}
+
+#[test]
+fn read_only_loader_checks_checkpoint_and_card_pins() {
+    let temp = TempTestDir::new("read-only");
+    let root = temp.join("b1");
+    let mut ids = basic_land_ids().unwrap().to_vec();
+    ids.sort_unstable();
+    let database = format!("{KERNEL_CARDDB_HASH:016x}");
+    let cards: Vec<_> = ids
+        .iter()
+        .map(|&id| {
+            serde_json::json!({
+                "card_id": id, "name": CARD_DEFS[usize::from(id)].name, "vector": [1]
+            })
+        })
+        .collect();
+    let table_data = serde_json::to_vec(&serde_json::json!({
+        "schema": "card_semantics_table/v1", "kernel_carddb_hash": database,
+        "vector_width": 1, "card_count": cards.len(),
+        "vocabulary": [{"index": 0, "token": "land"}], "cards": cards
+    }))
+    .unwrap();
+    let table_pin = sha256_hex(&table_data);
+    let table = CubeTableSourceV1::from_bytes_v1(&table_data, &table_pin)
+        .unwrap()
+        .bind_v1(&CardIndexV1::from_ids(ids.clone()).unwrap())
+        .unwrap();
+    let rows = Arc::new(
+        ModelCardRowsV1::with_registry_basics_v1(
+            ids.clone(),
+            table.vector_width(),
+            table.scaled_rows().to_vec(),
+            table.dense_columns().len(),
+            table.dense_rows().to_vec(),
+        )
+        .unwrap(),
+    );
+    let initial =
+        ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 1234).unwrap();
+    let mut config = config(&root, "b1", Segment::BuilderOnly, 1);
+    config.pins.card_index = Some(table.index_pin().to_owned());
+    config.pins.cube_table = Some(table_pin);
+    config.metadata.card_database_sha256 = database;
+    let driver = TrainingDriver::open(config, rows.clone(), 1234).unwrap();
+    let path = root.join("initial/checkpoint.json");
+    let before = directory_bytes(&root);
+    let (checkpoint, model, loaded_rows) = load_checkpoint_read_only_v1(&path, &table).unwrap();
+    assert_eq!(
+        checkpoint.state_sha256,
+        driver.checkpoint().unwrap().state_sha256
+    );
+    assert_eq!(model.parameter_sha256(), initial.parameter_sha256());
+    assert_eq!(loaded_rows.ids(), &ids);
+    for row in 0..rows.rows() {
+        assert_eq!(loaded_rows.scaled_row(row), rows.scaled_row(row));
+        assert_eq!(loaded_rows.dense_row(row), rows.dense_row(row));
+    }
+    assert_eq!(directory_bytes(&root), before);
+
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let zero = serde_json::json!("00".repeat(32));
+    for (pointer, replacement, error) in [
+        ("/schema", serde_json::json!("wrong"), "schema or state"),
+        ("/state_sha256", zero.clone(), "schema or state"),
+        (
+            "/model/build/parameters/0",
+            serde_json::json!(123),
+            "schema or state",
+        ),
+        ("/parameter_layout_sha256", zero.clone(), "parameter layout"),
+        ("/card_index_sha256", zero.clone(), "card index pin"),
+        ("/cube_table_sha256", zero, "cube table pin"),
+        (
+            "/card_database_sha256",
+            serde_json::json!("0000000000000000"),
+            "card database pin",
+        ),
+        (
+            "/card_index_sha256",
+            serde_json::Value::Null,
+            "card index pin",
+        ),
+    ] {
+        let mut tampered = original.clone();
+        *tampered.pointer_mut(pointer).unwrap() = replacement;
+        let path = temp.join("tampered.json");
+        let bytes = serde_json::to_vec(&tampered).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let failure = load_checkpoint_read_only_v1(&path, &table).unwrap_err();
+        assert!(failure.to_string().contains(error), "{pointer}: {failure}");
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn same_game_watchdog_repeat_fires_in_q9() {
+    let temp = TempTestDir::new("hang");
+    let root = temp.join("b1");
+    let pilot = FixturePilot(Arc::new(RepeatWatchdogPilot {
+        calls: AtomicUsize::new(0),
+        second_call: 1,
+    }));
+    let mut driver = TrainingDriver::open(
+        config(&root, "b1", Segment::BuilderOnly, 1),
+        model_rows(),
+        1234,
+    )
+    .unwrap();
+    assert_eq!(
+        driver.run_next_update(&pool(), &pilot),
+        Ok(RunOutcome::Stopped {
+            update: 0,
+            kind: "watchdog_stop".into(),
+        })
+    );
+    assert!(!root.join("updates/update-0000").exists());
+    let stop: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("stops/stop-0000.json")).unwrap()).unwrap();
+    assert_eq!(stop["hang"], true);
+    assert_eq!(stop["firing"]["rule"]["target"], "hang");
+    assert_eq!(stop["firing"]["games"], 1);
+}
+
+#[test]
+fn only_a_matching_pinned_census_summary_enables_full_mode() {
+    let temp = TempTestDir::new("baseline");
+    let path = temp.join("summary.json");
+    let bytes = br#"{"games":1,"completed":1,"halted":0,"stop_kinds":[],"cards":[],"order_errors":[],"stop_kind_mismatches":[]}"#;
+    fs::write(&path, bytes).unwrap();
+    let baseline = CensusBaselinePin {
+        run: "census-b-r2".into(),
+        summary_sha256: sha256_hex(bytes),
+        manifest_sha256: "11".repeat(32),
+        build_sha256: "22".repeat(32),
+        fence_sha256: "33".repeat(32),
+        authorization_sha256: "44".repeat(32),
+    };
+    let make_config = |root: &Path| {
+        let mut config = config(root, "b1", Segment::BuilderOnly, 1);
+        config.pins.binary = Some(baseline.build_sha256.clone());
+        config.pins.fence_record = Some(baseline.fence_sha256.clone());
+        config.tripwire = TripwireMode::Full {
+            baseline: baseline.clone(),
+        };
+        config.tripwire_summary = Some(path.clone());
+        config
+    };
+
+    for (name, binary_matches) in [("wrong-build", false), ("wrong-fence", true)] {
+        let root = temp.join(name);
+        let mut config = make_config(&root);
+        if binary_matches {
+            config.pins.fence_record = None;
+        } else {
+            config.pins.binary = None;
+        }
+        TrainingDriver::open(config, model_rows(), 1234).unwrap();
+        let run: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("run.json")).unwrap()).unwrap();
+        assert_eq!(run["tripwire"], serde_json::json!({"mode":"q9"}));
+    }
+    let root = temp.join("full");
+    TrainingDriver::open(make_config(&root), model_rows(), 1234).unwrap();
+    let run: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("run.json")).unwrap()).unwrap();
+    assert_eq!(
+        run["tripwire"]["baseline"]["summary_sha256"],
+        baseline.summary_sha256
+    );
+    fs::write(&path, b"changed bytes").unwrap();
+    let error = TrainingDriver::open(make_config(&root), model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("summary digest"));
 }

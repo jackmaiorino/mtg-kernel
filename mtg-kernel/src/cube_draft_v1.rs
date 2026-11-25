@@ -21,7 +21,7 @@ use crate::effect::{EffectOp, LibraryCardFilter};
 use crate::limited_session_v1::LimitedJsonlServerV1;
 use crate::mana::{ManaColor, Pip};
 use crate::state::{SplitMix64, Zone};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -1086,7 +1086,7 @@ impl Default for GameCaps {
 }
 
 /// How a game ended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GameEnd {
     /// A natural game over; the winning seat, if the game had one.

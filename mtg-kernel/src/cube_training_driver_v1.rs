@@ -1,6 +1,7 @@
 //! Training segments, checkpoints, league snapshots and durable resume for M4.
 
-pub use crate::cube_draft_build_v1::model::training::HeadUpdates;
+pub use crate::cube_draft_build_v1::card_index::CubeTableV1;
+use crate::cube_draft_build_v1::model::training::HeadUpdates;
 use crate::cube_draft_build_v1::model::{
     training::{
         fixture::{halt_cases, HaltCase},
@@ -11,6 +12,10 @@ use crate::cube_draft_build_v1::model::{
 #[path = "cube_training_driver_model_v1.rs"]
 mod model;
 use model::TrainingModel;
+#[path = "cube_training_tripwire_v1.rs"]
+mod tripwire;
+pub use tripwire::CensusBaselinePin;
+use tripwire::{tripwire_window_sizes, CensusRates, TripwireTracker};
 
 use crate::cube_draft_v1::{uniform_index, CubePool, GameEnd, SEATS};
 use crate::cube_learned_seat_v1::{LearnedSeatBuilder, LearnedSeatPicker, SeatForward};
@@ -31,7 +36,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -243,66 +248,23 @@ impl PilotProvider for UniformOnlyPilotProvider {
 pub enum TripwireRule {
     StopKind {
         stop_kind: String,
-        max_games: Option<u64>,
-        max_rate_bits: Option<u64>,
+        min_games: u64,
+        rate_threshold_bits: Option<u64>,
     },
     Card {
         card: u16,
-        max_games: Option<u64>,
-        max_rate_bits: Option<u64>,
+        min_games: u64,
+        rate_threshold_bits: Option<u64>,
     },
-}
-
-impl TripwireRule {
-    pub fn stop_kind_count(stop_kind: impl Into<String>, max_games: u64) -> Self {
-        Self::StopKind {
-            stop_kind: stop_kind.into(),
-            max_games: Some(max_games),
-            max_rate_bits: None,
-        }
-    }
-
-    pub fn stop_kind_rate(stop_kind: impl Into<String>, max_rate: f64) -> Self {
-        Self::StopKind {
-            stop_kind: stop_kind.into(),
-            max_games: None,
-            max_rate_bits: Some(max_rate.to_bits()),
-        }
-    }
-
-    fn validate(&self) -> Result<(), TrainingDriverError> {
-        let (max_games, max_rate) = match self {
-            Self::StopKind {
-                stop_kind,
-                max_games,
-                max_rate_bits,
-            } => {
-                if stop_kind.is_empty() {
-                    return Err(invalid("a tripwire stop kind cannot be empty"));
-                }
-                (max_games, max_rate_bits)
-            }
-            Self::Card {
-                max_games,
-                max_rate_bits,
-                ..
-            } => (max_games, max_rate_bits),
-        };
-        if max_games.is_none() && max_rate.is_none() {
-            return Err(invalid("a tripwire rule needs a count or rate threshold"));
-        }
-        if max_games == &Some(0) || max_rate.is_some_and(|bits| !f64::from_bits(bits).is_finite()) {
-            return Err(invalid("invalid tripwire threshold"));
-        }
-        Ok(())
-    }
+    ProcessDeath,
+    Hang,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TripwireMode {
     Q9,
-    Full { rules: Vec<TripwireRule> },
+    Full { baseline: CensusBaselinePin },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -349,6 +311,9 @@ pub struct RunConfig {
     pub train_sets: TrainSets,
     pub pilot: PilotSchedule,
     pub tripwire: TripwireMode,
+    /// Local path to the admitted census summary. The content pin goes in run.json.
+    #[serde(skip)]
+    pub tripwire_summary: Option<PathBuf>,
     #[serde(default)]
     pub tripwire_window_games: Vec<u64>,
     pub pins: PodPins,
@@ -373,6 +338,7 @@ impl RunConfig {
             train_sets,
             pilot: PilotSchedule::uniform(),
             tripwire: TripwireMode::Q9,
+            tripwire_summary: None,
             tripwire_window_games: Vec::new(),
             pins: PodPins::default(),
             metadata: CheckpointMetadata::default(),
@@ -403,11 +369,6 @@ impl RunConfig {
             return Err(invalid(
                 "a non-shakedown run cannot start from a uniform-pilot lineage",
             ));
-        }
-        if let TripwireMode::Full { rules } = &self.tripwire {
-            for rule in rules {
-                rule.validate()?;
-            }
         }
         Ok(())
     }
@@ -578,6 +539,61 @@ impl Checkpoint {
     }
 }
 
+pub type LoadedCheckpointV1 = (Checkpoint, Arc<ModelV1>, Arc<ModelCardRowsV1>);
+
+/// Loads an owner-view checkpoint against external rows from a verified D1 table.
+pub fn load_checkpoint_read_only_v1(
+    path: &Path,
+    table: &CubeTableV1,
+) -> Result<LoadedCheckpointV1, TrainingDriverError> {
+    let checkpoint: Checkpoint = read_json(path)?;
+    checkpoint.validate()?;
+    if checkpoint.card_index_sha256.as_deref() != Some(table.index_pin()) {
+        return Err(invalid(
+            "checkpoint card index pin differs from the supplied table",
+        ));
+    }
+    if checkpoint.cube_table_sha256.as_deref() != Some(table.file_sha256()) {
+        return Err(invalid(
+            "checkpoint cube table pin differs from the supplied table",
+        ));
+    }
+    // D1 checks the table's database identity against this same compiled registry.
+    if checkpoint.card_database_sha256 != format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH) {
+        return Err(invalid(
+            "checkpoint card database pin differs from the compiled registry",
+        ));
+    }
+    let rows = ModelCardRowsV1::with_registry_basics_v1(
+        table.index().ids().to_vec(),
+        table.vector_width(),
+        table.scaled_rows().to_vec(),
+        table.dense_columns().len(),
+        table.dense_rows().to_vec(),
+    )
+    .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+    let model = ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 0)
+        .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
+    if checkpoint.parameter_layout_sha256 != model_layout_pin(&model) {
+        return Err(invalid(
+            "checkpoint parameter layout differs from the supplied rows",
+        ));
+    }
+    let (model, _) = checkpoint
+        .model
+        .restore(model, checkpoint.head_updates)
+        .map_err(TrainingDriverError::Update)?;
+    Ok((checkpoint, Arc::new(model), Arc::new(rows)))
+}
+
+fn model_layout_pin(model: &ModelV1) -> String {
+    model
+        .parameter_layout_sha256()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateReceipt {
@@ -605,11 +621,23 @@ pub struct CommitManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TripwireFiring {
-    pub window: u64,
+    pub window: Option<u64>,
     pub rule: TripwireRule,
     pub games: u64,
     pub denominator: u64,
     pub observed_rate_bits: Option<u64>,
+}
+
+impl TripwireFiring {
+    fn immediate(rule: TripwireRule) -> Self {
+        Self {
+            window: None,
+            rule,
+            games: 1,
+            denominator: 0,
+            observed_rate_bits: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -639,208 +667,6 @@ pub enum RunOutcome {
     Stopped { update: u64, kind: String },
     Paused { update: u64 },
     Completed,
-}
-
-#[derive(Debug, Clone, Default)]
-struct TripwireWindow {
-    games: u64,
-    stop_games: BTreeMap<String, u64>,
-    card_games: BTreeMap<u16, u64>,
-    card_denominator: BTreeMap<u16, u64>,
-}
-
-#[derive(Debug, Clone)]
-struct TripwireTracker {
-    window_sizes: Vec<u64>,
-    closed_games: u64,
-    closed_windows: usize,
-    open: TripwireWindow,
-    firing: Option<TripwireFiring>,
-}
-
-fn tripwire_window_sizes(games: u64) -> Vec<u64> {
-    let windows = games / TRIPWIRE_WINDOW_GAMES;
-    let tail = games % TRIPWIRE_WINDOW_GAMES;
-    let mut sizes = vec![TRIPWIRE_WINDOW_GAMES; windows as usize];
-    if tail > 0 {
-        match sizes.last_mut() {
-            Some(last) if tail < TRIPWIRE_TAIL_MERGE_GAMES => *last += tail,
-            _ => sizes.push(tail),
-        }
-    }
-    sizes
-}
-
-impl TripwireTracker {
-    fn new(window_sizes: Vec<u64>) -> Self {
-        Self {
-            window_sizes,
-            closed_games: 0,
-            closed_windows: 0,
-            open: TripwireWindow::default(),
-            firing: None,
-        }
-    }
-
-    fn rule_match(
-        rules: &[TripwireRule],
-        window: &TripwireWindow,
-        window_index: u64,
-        count_rules: bool,
-        rate_rules: bool,
-    ) -> Option<TripwireFiring> {
-        for rule in rules {
-            let (games, denominator) = match rule {
-                TripwireRule::StopKind { stop_kind, .. } => (
-                    window.stop_games.get(stop_kind).copied().unwrap_or(0),
-                    window.games,
-                ),
-                TripwireRule::Card { card, .. } => (
-                    window.card_games.get(card).copied().unwrap_or(0),
-                    window.card_denominator.get(card).copied().unwrap_or(0),
-                ),
-            };
-            let (max_games, max_rate_bits) = match rule {
-                TripwireRule::StopKind {
-                    max_games,
-                    max_rate_bits,
-                    ..
-                }
-                | TripwireRule::Card {
-                    max_games,
-                    max_rate_bits,
-                    ..
-                } => (max_games, max_rate_bits),
-            };
-            let count_fired = count_rules && max_games.is_some_and(|limit| games >= limit);
-            let rate = if denominator == 0 {
-                0.0
-            } else {
-                games as f64 / denominator as f64
-            };
-            let rate_fired =
-                rate_rules && max_rate_bits.is_some_and(|bits| rate > f64::from_bits(bits));
-            if count_fired || rate_fired {
-                return Some(TripwireFiring {
-                    window: window_index,
-                    rule: rule.clone(),
-                    games,
-                    denominator,
-                    observed_rate_bits: Some(rate.to_bits()),
-                });
-            }
-        }
-        None
-    }
-
-    fn add_game(
-        &mut self,
-        decks: &[Vec<u16>],
-        halted: &[(String, Option<u16>)],
-        rules: &[TripwireRule],
-    ) {
-        let stop_kinds: BTreeSet<String> = halted.iter().map(|(kind, _)| kind.clone()).collect();
-        let cards: BTreeSet<u16> = halted.iter().filter_map(|(_, card)| *card).collect();
-        let present: BTreeSet<u16> = decks.iter().flatten().copied().collect();
-        self.open.games += 1;
-        for kind in stop_kinds {
-            *self.open.stop_games.entry(kind).or_default() += 1;
-        }
-        for card in cards {
-            *self.open.card_games.entry(card).or_default() += 1;
-        }
-        for card in present {
-            *self.open.card_denominator.entry(card).or_default() += 1;
-        }
-        if self.firing.is_none() {
-            let index = self.closed_windows as u64;
-            self.firing = Self::rule_match(rules, &self.open, index, true, false);
-        }
-        if self.window_sizes.get(self.closed_windows) == Some(&self.open.games) {
-            if self.firing.is_none() {
-                let index = self.closed_windows as u64;
-                self.firing = Self::rule_match(rules, &self.open, index, false, true);
-            }
-            self.closed_windows += 1;
-            self.closed_games += std::mem::take(&mut self.open).games;
-        }
-    }
-
-    fn add_pod(&mut self, pod: &PodRecord, rules: &[TripwireRule]) {
-        for game in &pod.games {
-            let decks: Vec<Vec<u16>> = game
-                .decks
-                .iter()
-                .filter_map(|id| pod.decks.get(*id as usize).map(|deck| deck.cards.clone()))
-                .collect();
-            let halted: Vec<(String, Option<u16>)> = game
-                .attempts
-                .iter()
-                .filter(|attempt| attempt.halted)
-                .map(|attempt| {
-                    (
-                        attempt
-                            .stop_kind
-                            .clone()
-                            .unwrap_or_else(|| "unknown".to_owned()),
-                        attempt.last_action_source,
-                    )
-                })
-                .collect();
-            self.add_game(&decks, &halted, rules);
-        }
-    }
-
-    fn add_pod_json(
-        &mut self,
-        pod: &Value,
-        rules: &[TripwireRule],
-    ) -> Result<(), TrainingDriverError> {
-        let empty = Vec::new();
-        let decks = pod["decks"].as_array().unwrap_or(&empty);
-        let games = pod["games"].as_array().unwrap_or(&empty);
-        for game in games {
-            let mut game_decks = Vec::new();
-            for id in game["decks"].as_array().unwrap_or(&empty) {
-                let index = id.as_u64().ok_or_else(|| invalid("invalid deck id"))? as usize;
-                let cards = decks
-                    .get(index)
-                    .and_then(|deck| deck["cards"].as_array())
-                    .ok_or_else(|| invalid("game names a missing deck"))?
-                    .iter()
-                    .map(|card| {
-                        card.as_u64()
-                            .and_then(|id| u16::try_from(id).ok())
-                            .ok_or_else(|| invalid("invalid card id"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                game_decks.push(cards);
-            }
-            let mut halted = Vec::new();
-            for attempt in game["attempts"].as_array().unwrap_or(&empty) {
-                if attempt["halted"].as_bool() == Some(true) {
-                    halted.push((
-                        attempt["stop_kind"]
-                            .as_str()
-                            .unwrap_or("unknown")
-                            .to_owned(),
-                        attempt["last_action_source"]
-                            .as_u64()
-                            .and_then(|id| u16::try_from(id).ok()),
-                    ));
-                }
-            }
-            self.add_game(&game_decks, &halted, rules);
-        }
-        Ok(())
-    }
-}
-
-fn rules_for(mode: &TripwireMode) -> &[TripwireRule] {
-    match mode {
-        TripwireMode::Q9 => &[],
-        TripwireMode::Full { rules } => rules,
-    }
 }
 
 fn update_name(update: u64) -> String {
@@ -1084,7 +910,7 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
                     first_watchdog_game: None,
                     second_watchdog_pod: None,
                     second_watchdog_game: None,
-                    firing: None,
+                    firing: Some(TripwireFiring::immediate(TripwireRule::ProcessDeath)),
                     batch,
                 },
             )?;
@@ -1152,11 +978,10 @@ fn read_pods(path: &Path) -> Result<Vec<Value>, TrainingDriverError> {
 
 fn rebuild_tripwire(
     root: &Path,
-    mode: &TripwireMode,
+    baseline: Option<&CensusRates>,
     window_sizes: Vec<u64>,
 ) -> Result<TripwireTracker, TrainingDriverError> {
     let mut tracker = TripwireTracker::new(window_sizes);
-    let rules = rules_for(mode);
     for update in published_update_indices(root)? {
         for pod in read_pods(
             &root
@@ -1164,7 +989,7 @@ fn rebuild_tripwire(
                 .join(update_name(update))
                 .join("pods.json"),
         )? {
-            tracker.add_pod_json(&pod, rules)?;
+            tracker.add_pod_json(&pod, baseline)?;
         }
     }
     Ok(tracker)
@@ -1291,6 +1116,7 @@ pub struct TrainingDriver {
     league: Vec<LeagueEntry>,
     current_pin: String,
     tripwire: TripwireTracker,
+    census_rates: Option<CensusRates>,
 }
 
 impl TrainingDriver {
@@ -1327,11 +1153,7 @@ impl TrainingDriver {
         initial_lineage: Vec<LineageSegment>,
         initial_league: Vec<LeagueEntry>,
     ) -> Result<Self, TrainingDriverError> {
-        let layout = initial_model
-            .parameter_layout_sha256()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let layout = model_layout_pin(&initial_model);
         if config.metadata.parameter_layout_sha256.is_empty() {
             config.metadata.parameter_layout_sha256 = layout.clone();
         } else if config.metadata.parameter_layout_sha256 != layout {
@@ -1340,6 +1162,18 @@ impl TrainingDriver {
             ));
         }
         config.validate()?;
+        let census_rates = match &config.tripwire {
+            TripwireMode::Full { baseline } if baseline.matches(&config.pins) => {
+                let path = config.tripwire_summary.as_deref().ok_or_else(|| {
+                    invalid("matching census-b baseline needs its pinned summary")
+                })?;
+                Some(baseline.load(path)?)
+            }
+            _ => {
+                config.tripwire = TripwireMode::Q9;
+                None
+            }
+        };
         let scheduled_games = config.update_range[1]
             .checked_mul(PODS_PER_UPDATE * crate::cube_pod_runner_v1::TRAINING_POD_GAMES as u64)
             .ok_or_else(|| invalid("scheduled game count overflow"))?;
@@ -1442,7 +1276,7 @@ impl TrainingDriver {
         let next_update = indices.last().map_or(0, |update| update + 1);
         let tripwire = rebuild_tripwire(
             &config.root,
-            &config.tripwire,
+            census_rates.as_ref(),
             config.tripwire_window_games.clone(),
         )?;
         if tripwire.firing.is_some() && !indices.is_empty() {
@@ -1472,6 +1306,7 @@ impl TrainingDriver {
             lineage: checkpoint.lineage.clone(),
             league: checkpoint.league.clone(),
             tripwire,
+            census_rates,
             config,
         })
     }
@@ -1789,7 +1624,11 @@ impl TrainingDriver {
                     }
                     let mut stop = stop_from_failure(&self.config.run, update, failure);
                     if let Some((second_pod, second_game)) = watchdog_game {
-                        stop.hang = Some(first_watchdog == Some((second_pod, second_game)));
+                        let hang = first_watchdog == Some((second_pod, second_game));
+                        stop.hang = Some(hang);
+                        if hang {
+                            stop.firing = Some(TripwireFiring::immediate(TripwireRule::Hang));
+                        }
                         stop.first_watchdog_pod = first_watchdog.map(|key| key.0);
                         stop.first_watchdog_game = first_watchdog.map(|key| key.1);
                         stop.second_watchdog_pod = Some(second_pod);
@@ -1807,7 +1646,7 @@ impl TrainingDriver {
 
         let mut tripwire = self.tripwire.clone();
         for pod in &pods {
-            tripwire.add_pod(pod, rules_for(&self.config.tripwire));
+            tripwire.add_pod(pod, self.census_rates.as_ref());
         }
         let firing = tripwire.firing.clone();
         let before_state = self.current_pin.clone();
@@ -2109,11 +1948,7 @@ pub fn two_action_dropped_mean() -> f64 {
     sum / f64::from(count)
 }
 
-pub fn tripwire_games_for_test(
-    root: &Path,
-    mode: &TripwireMode,
-) -> Result<u64, TrainingDriverError> {
+pub fn tripwire_games_for_test(root: &Path) -> Result<u64, TrainingDriverError> {
     let config: RunConfig = read_json(&root.join("run.json"))?;
-    let tracker = rebuild_tripwire(root, mode, config.tripwire_window_games)?;
-    Ok(tracker.closed_games + tracker.open.games)
+    Ok(rebuild_tripwire(root, None, config.tripwire_window_games)?.games())
 }
