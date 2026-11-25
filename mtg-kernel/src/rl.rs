@@ -1123,6 +1123,191 @@ pub struct PublicObservationProjectionV5 {
     /// keeps refusing the Ward states it cannot represent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ward_payments: Option<PublicWardPaymentsV1>,
+    /// The acting player's Escape cast while they stage it, under the public
+    /// shroud contract (Limited schema 5): from its announcement until its
+    /// costs are paid. Absent otherwise; every other observation refuses a
+    /// staged Escape cast. A graveyard route menu whose provisional first
+    /// route is not an escape (Faithless Looting under Underworld Breach:
+    /// printed flashback, then Breach) has no record: such states were never
+    /// refused, so their bytes are kept; the record appears once Breach is
+    /// chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_escape: Option<PublicStagedEscapeV1>,
+}
+
+/// An Escape cast its caster is staging (Limited schema 5). The legacy
+/// `pending_cast.sacrifice_chosen` stays empty for an Escape cast; this
+/// record carries its picks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicStagedEscapeV1 {
+    pub source: CardStableRefV1,
+    pub controller: PlayerSeatV1,
+    pub stage: PublicStagedEscapeStageV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PublicStagedEscapeStageV1 {
+    /// The caster chooses how to cast the card from its graveyard: the
+    /// `choose_effect_option` action with `option_index` i takes `routes[i]`.
+    ChoosingRoute {
+        routes: Vec<PublicGraveyardCastRouteV1>,
+    },
+    /// The escape route is chosen and its object costs are being chosen.
+    Paying {
+        /// Underworld Breach's escape (the card's mana cost and three other
+        /// graveyard cards) rather than the card's printed escape cost.
+        breach_escape: bool,
+        /// False while a choice that can add or change an object cost is
+        /// still open (kicker, spell mode, targets, cast mode, an optional or
+        /// alternative additional cost, an X that sets a cost): `cost_groups`
+        /// then holds only the escape exile, with nothing chosen.
+        costs_chosen: bool,
+        /// False while the caster still orders two cost groups: the
+        /// `choose_effect_option` action with `option_index` 0 pays
+        /// `cost_groups` in the listed order, 1 pays the escape exile first.
+        payment_order_chosen: bool,
+        /// The object costs in payment order.
+        cost_groups: Vec<PublicEscapeCostGroupV1>,
+        /// While X is being chosen: the X announced by the
+        /// `choose_effect_option` action with `option_index` i is
+        /// `x_options[i]`. Absent otherwise, and for the full-range X choice
+        /// (`ChooseFullRangeCastXValueV59`), which this schema 5 action path
+        /// refuses (requiring a v59+ successor whose actions carry their
+        /// value).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x_options: Option<Vec<u16>>,
+    },
+}
+
+/// How a card in its owner's graveyard is cast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublicGraveyardCastRouteV1 {
+    PrintedEscape,
+    /// Underworld Breach's escape.
+    BreachEscape,
+    PrintedFlashback,
+    /// Snapcaster Mage's flashback.
+    SnapcasterFlashback,
+    /// Sphinx of Forgotten Lore's flashback.
+    GrantedFlashback,
+    /// Beam Me Up's alternative cost.
+    BeamMeUp,
+    /// A permission to cast the card from the graveyard, paying its costs.
+    GraveyardPermission,
+    Retrace,
+}
+
+/// One object-cost group of a staged Escape cast.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicEscapeCostGroupV1 {
+    pub kind: CostKind,
+    /// Whether this group is the escape cost's "exile other cards from your
+    /// graveyard". Otherwise it is a printed cost paid with the escape.
+    pub escape: bool,
+    /// Exactly this many objects. Absent for Nethergoyf's escape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u8>,
+    /// Nethergoyf's escape: any number of other graveyard cards with at least
+    /// this many card types among them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_card_types: Option<u8>,
+    /// The objects chosen so far, in order. Each stays where it is until the
+    /// whole cost is paid.
+    pub selected: Vec<CardStableRefV1>,
+    /// Nethergoyf's escape: the caster stopped exiling further cards.
+    #[serde(default, skip_serializing_if = "engine::bool_is_false")]
+    pub finished: bool,
+}
+
+/// The acting caster's staged Escape cast (Limited schema 5).
+fn public_staged_escape_v1(
+    state: &GameState,
+    pending: &engine::PendingCast,
+) -> Result<PublicStagedEscapeV1> {
+    use crate::engine::sphinx_lore_cast_v1::RouteV1;
+    let stage = match engine::staged_escape_v1(state, pending).map_err(RlContractError)? {
+        engine::StagedEscapeV1::ChoosingRoute(routes) => PublicStagedEscapeStageV1::ChoosingRoute {
+            routes: routes
+                .into_iter()
+                .map(|route| match route {
+                    RouteV1::Escape => PublicGraveyardCastRouteV1::PrintedEscape,
+                    RouteV1::Breach => PublicGraveyardCastRouteV1::BreachEscape,
+                    RouteV1::PrintedFlashback => PublicGraveyardCastRouteV1::PrintedFlashback,
+                    RouteV1::Snapcaster => PublicGraveyardCastRouteV1::SnapcasterFlashback,
+                    RouteV1::Granted { .. } => PublicGraveyardCastRouteV1::GrantedFlashback,
+                    RouteV1::BeamMeUp => PublicGraveyardCastRouteV1::BeamMeUp,
+                    RouteV1::Normal => PublicGraveyardCastRouteV1::GraveyardPermission,
+                    RouteV1::Retrace => PublicGraveyardCastRouteV1::Retrace,
+                })
+                .collect(),
+        },
+        engine::StagedEscapeV1::Paying {
+            breach,
+            costs_chosen,
+            order_chosen,
+            groups,
+            x_options,
+        } => PublicStagedEscapeStageV1::Paying {
+            breach_escape: breach,
+            costs_chosen,
+            payment_order_chosen: order_chosen,
+            x_options,
+            cost_groups: groups
+                .into_iter()
+                .map(|group| {
+                    let mut seen = HashSet::new();
+                    let selected = group
+                        .selected
+                        .iter()
+                        .map(|&id| {
+                            let reference = card_ref(state, id)?;
+                            // Escape exiles the caster's own graveyard cards;
+                            // a printed cost takes what the caster controls.
+                            let holder = if group.escape {
+                                reference.owner
+                            } else {
+                                reference.controller
+                            };
+                            if id == pending.spell
+                                || !seen.insert(id)
+                                || holder != pending.controller.into()
+                            {
+                                return Err(RlContractError(
+                                    "invalid staged Escape selection prefix".into(),
+                                ));
+                            }
+                            Ok(reference)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let over = match (group.count, group.min_card_types) {
+                        (Some(count), None) => selected.len() > usize::from(count),
+                        (None, Some(_)) => !group.escape,
+                        _ => true,
+                    };
+                    if over {
+                        return Err(RlContractError(
+                            "staged Escape cost group exceeds its cost".into(),
+                        ));
+                    }
+                    Ok(PublicEscapeCostGroupV1 {
+                        kind: group.kind,
+                        escape: group.escape,
+                        count: group.count,
+                        min_card_types: group.min_card_types,
+                        selected,
+                        finished: group.finished,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+        },
+    };
+    Ok(PublicStagedEscapeV1 {
+        source: card_ref(state, pending.spell)?,
+        controller: pending.controller.into(),
+        stage,
+    })
 }
 
 /// One live Layer-3 color-word replacement on a battlefield permanent or stack
@@ -2587,10 +2772,11 @@ pub fn observe_premodern_ordered_registered_v1(
                 .then(|| public_text_color_changes_v1(state))
                 .transpose()?
                 .filter(|changes| !changes.is_empty()),
-            // This observation keeps refusing a game with extra turns and
-            // the Ward states the legacy check cannot bind.
+            // This observation keeps refusing a game with extra turns, the
+            // Ward states the legacy check cannot bind, and a staged Escape.
             turn_schedule: None,
             ward_payments: None,
+            staged_escape: None,
         };
         Some(NumericRegisteredStableSceneV1 {
             projection,
@@ -3465,17 +3651,29 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
     }
-    if state
+    // Only the public shroud contract (Limited schema 5) represents a staged
+    // Escape cast, and only to its caster; every other observation keeps the
+    // historical refusal.
+    let staged_escape = match state
         .engine
         .pending_cast
         .as_ref()
-        .is_some_and(|pending| pending.source_contract.cast_method == CastMethodV4::Escape)
+        .filter(|pending| pending.source_contract.cast_method == CastMethodV4::Escape)
     {
-        return Err(RlContractError(
-            "policy schema v5 cannot represent a staged Escape graveyard-exile prefix; a versioned object-cost successor is required"
-                .to_string(),
-        ));
-    }
+        Some(pending)
+            if text_mode == ObservationTextModeV2::PublicShroudV5Artifact
+                && pending.controller == acting_player =>
+        {
+            Some(public_staged_escape_v1(state, pending)?)
+        }
+        Some(_) => {
+            return Err(RlContractError(
+                "policy schema v5 cannot represent a staged Escape graveyard-exile prefix; a versioned object-cost successor is required"
+                    .to_string(),
+            ));
+        }
+        None => None,
+    };
     // V5 wraps the complete V2 projection but does not expose V2's standalone
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
@@ -3550,6 +3748,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 .filter(|changes| !changes.is_empty()),
             turn_schedule,
             ward_payments,
+            staged_escape,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -6290,6 +6489,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             text_color_changes: None,
             turn_schedule: None,
             ward_payments: None,
+            staged_escape: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
