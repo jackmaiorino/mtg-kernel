@@ -66,6 +66,7 @@ fn episode(learner_seat: u8, kind: Option<ExpandedOpponentKindV1>) -> ExpandedEp
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     }
 }
 

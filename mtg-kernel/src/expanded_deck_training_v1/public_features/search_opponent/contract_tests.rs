@@ -1,6 +1,7 @@
 //! Engine contract of the search opponent (CODEX #521 C1, C2, C5): an absent
 //! pin changes no serialized byte, every consumer but the public collector
-//! refuses a search episode, and the run receipt binds the frozen identities.
+//! refuses a search episode, the deck-format marker on 60/15 decks changes
+//! nothing there, and the run receipt binds the frozen identities.
 use super::*;
 
 fn deck(id: &str) -> ExpandedDeckListV1 {
@@ -60,6 +61,7 @@ fn episode(search: bool) -> ExpandedEpisodeV1 {
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     }
 }
 
@@ -95,6 +97,33 @@ fn only_the_public_collector_admits_a_search_episode() {
         orphan.configurations_for_public_collector_v1().unwrap_err(),
         "search opponent requires an explicit opponent model"
     );
+}
+
+/// Review finding 2 at the search episode's own admission: the deck-format
+/// marker on these 60/15 decks admits the same configurations as without it;
+/// only a deck of another size, which the marker admits, is refused here.
+#[test]
+fn deck_format_marker_on_60_15_decks_admits_the_search_episode_unchanged() {
+    let plain = episode(true);
+    let mut marked = episode(true);
+    marked.deck_format = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+    let a = plain.configurations_for_public_collector_v1().unwrap();
+    let b = marked.configurations_for_public_collector_v1().unwrap();
+    for seat in 0..2 {
+        assert_eq!(a[seat].mainboard(), b[seat].mainboard());
+        assert_eq!(a[seat].sideboard(), b[seat].sideboard());
+        assert_eq!(a[seat].mainboard_sha256_v1(), b[seat].mainboard_sha256_v1());
+    }
+    let mut forty = marked.clone();
+    for list in forty.registered.iter_mut().chain(forty.selected.iter_mut()) {
+        list.mainboard.truncate(40);
+    }
+    assert_eq!(
+        forty.configurations_for_public_collector_v1().unwrap_err(),
+        crate::expanded_deck_training_v1::SEARCH_OPPONENT_DECK_SIZE_REFUSAL_V1
+    );
+    forty.opponent_search = None;
+    assert!(forty.configurations_for_public_collector_v1().is_ok());
 }
 
 #[test]

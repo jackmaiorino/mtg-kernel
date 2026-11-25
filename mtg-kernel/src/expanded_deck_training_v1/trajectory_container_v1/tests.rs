@@ -172,6 +172,7 @@ fn end_to_end_binary_and_learner_only_trajectories_match_json_state_sha256_bit_f
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         })
         .collect();
 

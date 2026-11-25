@@ -74,6 +74,7 @@ fn episode(
         mulligan_modes: london.then_some([Learned, Learned]),
         priority_windows: windows,
         london_keep_offset: None,
+        deck_format: None,
     }
 }
 

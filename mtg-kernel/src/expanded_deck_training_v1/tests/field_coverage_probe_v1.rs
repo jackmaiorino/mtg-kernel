@@ -88,6 +88,11 @@
 //!   MTG_KERNEL_FIELD_PROBE_SEEDS    seeds per ordered pair and seat (default 2)
 //!   MTG_KERNEL_FIELD_PROBE_THREADS  worker threads (default 1)
 //!   MTG_KERNEL_FIELD_PROBE_SELECT   `policy` (default) or `uniform`
+//!
+//! The cube coverage census (`cube_census_v1`) reuses pass A in uniform mode
+//! on dealt 40-card cube decks; see that module.
+
+mod cube_census_v1;
 
 use super::*;
 use crate::sideboard_play_policy_v1::public_inputs::last_flat_v7_observation_for_test;
@@ -307,6 +312,7 @@ fn episodes(lists: &[ExpandedDeckListV1], seeds: usize) -> Vec<ExpandedEpisodeV1
                         ]),
                         priority_windows: None,
                         london_keep_offset: None,
+                        deck_format: None,
                     });
                 }
             }
@@ -354,7 +360,15 @@ fn hash_json_record(hash: &mut Sha256, record: &impl Serialize) {
 
 /// Pass A: the collector's session, seeds and selection call, driven here
 /// so a stop can be diagnosed on the live decision.
-fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: Select) -> Value {
+/// `census` adds the cube census's inner-error detail to a stopped game's
+/// result (`cube_census_v1::census_stop_detail_v1`); the field coverage probe
+/// passes false, so its rows keep their bytes.
+fn pass_a(
+    policy: &mut FrozenPlayPolicyV1,
+    episode: &ExpandedEpisodeV1,
+    select: Select,
+    census: bool,
+) -> Value {
     let configs = match episode.configurations() {
         Ok(configs) => configs,
         Err(error) => {
@@ -430,7 +444,7 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
                 let implicated = implicated_candidate(&diagnosis);
                 let implicated_semantic = implicated.and_then(|i| texts.get(i).cloned());
                 let (menu, menu_truncated) = capped_menu(&texts);
-                break json!({
+                let mut row = json!({
                     "class": class,
                     "stage": stage,
                     "stop_decision_index": decisions,
@@ -450,6 +464,10 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
                     "menu": menu,
                     "cards": cards,
                 });
+                if census {
+                    cube_census_v1::census_stop_detail_v1(&session, d, stage, &diagnosis, &mut row);
+                }
+                break row;
             }
         };
         // The same V6 getter as build_scoring_owned_v4, on the same decision
@@ -464,9 +482,13 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
         scored += 1;
         *kinds.entry(kind.clone()).or_default() += 1;
         if let Err(error) = session.step(d.episode_id, d.step, selected) {
-            break json!({"class": "step_error", "stop_decision_index": decisions,
+            let mut row = json!({"class": "step_error", "stop_decision_index": decisions,
                 "decisions": decisions, "kinds": kinds, "decision_kind": kind,
                 "error": error.to_string()});
+            if census {
+                row["diagnosis"] = json!(session.diagnose_current_decision_input_v4(d));
+            }
+            break row;
         }
         decisions += 1;
     };
@@ -618,8 +640,9 @@ fn field_coverage_probe_v1() {
                     let mut out = Vec::new();
                     for index in (t..episodes.len()).step_by(threads) {
                         let episode = &episodes[index];
-                        let result_a =
-                            catch_unwind(AssertUnwindSafe(|| pass_a(&mut policy, episode, select)));
+                        let result_a = catch_unwind(AssertUnwindSafe(|| {
+                            pass_a(&mut policy, episode, select, false)
+                        }));
                         let a = match result_a {
                             Ok(a) => a,
                             Err(payload) => {
