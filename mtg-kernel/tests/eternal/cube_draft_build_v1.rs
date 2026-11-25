@@ -3,9 +3,9 @@
 
 use mtg_kernel::card_def::CARD_DEFS;
 use mtg_kernel::cube_draft_build_v1::card_index::{
-    is_land_v1, land_produces_colourless_v1, produced_colour_token_v1, provisional_pool_v1,
-    CardIndexErrorV1, CardIndexV1, CubeTableSourceV1, CubeTableV1, DENSE_EXACT_TOKENS_V1,
-    FETCH_SUBTYPE_PREFIX_V1, PROVISIONAL_TABLE_SHA256_V1,
+    dense_columns_for_tokens_v1, is_land_v1, land_produces_colourless_v1, produced_colour_token_v1,
+    provisional_pool_v1, CardIndexErrorV1, CardIndexV1, CubeTableSourceV1, CubeTableV1,
+    DENSE_EXACT_TOKENS_V1, FETCH_SUBTYPE_PREFIX_V1,
 };
 use mtg_kernel::cube_draft_v1::{
     basic_land_ids, land_fetch_bits, land_mana_bits, CubePool, BASIC_LAND_NAMES, COLOUR_ORDER,
@@ -29,12 +29,13 @@ const TABLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../data/card_semantics_v1/cube_table_v1.json"
 );
+const TABLE_SHA256: &str = "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
 const INDEX_SHA256: &str = "fb2f6fa80f612fb100be983b1c2a4947f8c3add61aa2d81b187d8e49ea526b63";
 const PROVISIONAL_ROWS: usize = 545;
 const DENSE_FIELDS_AND_SCALES: &[u8] =
     include_bytes!("../data/cube_draft_build_v1/dense_fields_and_scales_v1.json");
 const DENSE_FIELDS_AND_SCALES_SHA256: &str =
-    "36a79a1919f4f15f4774409b8b0acbdaea5903187a5d4475d604530592deb5da";
+    "4e583ad37a73714e7c11ef11b4cb1ddcb01d156fbca43cef9d7ba4d3b2b73549";
 
 /// The produced-colour columns: W, U, B, R, G ([`COLOUR_ORDER`]) then C.
 const PRODUCED: [ManaColor; 6] = [
@@ -51,8 +52,7 @@ fn cube_text() -> String {
 }
 
 fn source() -> CubeTableSourceV1 {
-    CubeTableSourceV1::read_v1(Path::new(TABLE), PROVISIONAL_TABLE_SHA256_V1)
-        .expect("pinned cube table")
+    CubeTableSourceV1::read_v1(Path::new(TABLE), TABLE_SHA256).expect("pinned cube table")
 }
 
 fn provisional() -> (CardIndexV1, Vec<u16>) {
@@ -61,8 +61,7 @@ fn provisional() -> (CardIndexV1, Vec<u16>) {
 
 fn provisional_table() -> CubeTableV1 {
     let (index, _) = provisional();
-    CubeTableV1::load_v1(Path::new(TABLE), PROVISIONAL_TABLE_SHA256_V1, &index)
-        .expect("table on the index")
+    CubeTableV1::load_v1(Path::new(TABLE), TABLE_SHA256, &index).expect("table on the index")
 }
 
 fn name(id: u16) -> &'static str {
@@ -101,6 +100,10 @@ fn full_index_refuses_a_synthetic_missing_row() {
 #[test]
 fn dense_columns_and_divisors_match_the_pin() {
     let table = provisional_table();
+    assert_eq!(
+        table.dense_columns(),
+        dense_columns_for_tokens_v1(table.tokens())
+    );
     let columns: Vec<usize> = table.dense_columns().iter().map(|c| c.index).collect();
     let pin: serde_json::Value = serde_json::from_slice(DENSE_FIELDS_AND_SCALES).unwrap();
     assert_eq!(
@@ -108,8 +111,16 @@ fn dense_columns_and_divisors_match_the_pin() {
         DENSE_FIELDS_AND_SCALES_SHA256
     );
     assert_eq!(serde_json::json!(columns), pin["dense_columns"]);
-    let divisors: Vec<u32> = table.divisors().iter().map(|&value| value as u32).collect();
-    assert_eq!(serde_json::json!(divisors), pin["column_divisors"]);
+    let pinned_divisors: Vec<u64> = serde_json::from_value(pin["column_divisors"].clone()).unwrap();
+    assert_eq!(table.divisors().len(), pinned_divisors.len());
+    for (column, (&actual, expected)) in table.divisors().iter().zip(pinned_divisors).enumerate() {
+        assert!(expected.is_power_of_two(), "column {column}");
+        assert_eq!(
+            actual.to_bits(),
+            (expected as f32).to_bits(),
+            "column {column}"
+        );
+    }
     let token_at = |j: usize| table.tokens()[j].as_str();
     for (j, token) in [
         (12, "ability:mana.color=B"),
@@ -123,13 +134,19 @@ fn dense_columns_and_divisors_match_the_pin() {
         (405, "subtype:Mountain"),
         (413, "subtype:Plains"),
         (425, "subtype:Swamp"),
+        (949, "cost:hybrid:GW"),
+        (950, "cost:hybrid:RW"),
     ] {
         assert_eq!(token_at(j), token);
     }
     for c in table.dense_columns() {
         assert_eq!(c.token, token_at(c.index));
     }
-    assert_eq!(table.dense_rows().len(), table.index().len() * 56);
+    assert_eq!(columns.len(), 58);
+    assert_eq!(
+        table.dense_rows().len(),
+        table.index().len() * columns.len()
+    );
     assert!(!table
         .tokens()
         .iter()
@@ -252,7 +269,7 @@ fn index_and_dense_tokens_are_complete() {
         .filter(|token| !tokens.contains(token))
         .collect();
     assert!(absent.is_empty(), "{absent:?}");
-    assert!(CubeTableV1::load_v1(Path::new(TABLE), PROVISIONAL_TABLE_SHA256_V1, &index).is_ok());
+    assert!(CubeTableV1::load_v1(Path::new(TABLE), TABLE_SHA256, &index).is_ok());
 }
 
 // Test 7: the provisional index and pool at the pinned table.
