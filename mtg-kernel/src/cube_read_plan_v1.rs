@@ -356,7 +356,7 @@ impl PlanFamily {
         }
     }
 
-    pub fn expected_seed_namespaces<'a>(self, namespace: &'a str) -> (&'a str, &'a str) {
+    pub fn expected_seed_namespaces(self, namespace: &str) -> (&str, &str) {
         if namespace == "test" {
             return ("test", "test");
         }
@@ -2733,13 +2733,13 @@ pub fn parse_and_validate_prep_request_json(
     }
     let pins = parse_pins_non_null(&top[7].1, "prep_request.pins").map_err(plan_err)?;
     let chairs = parse_plan_chairs(&top[8].1, "prep_request.chairs").map_err(plan_err)?;
-    for c in 0..SEATS {
+    for (c, chair) in chairs.iter().enumerate() {
         let expected_role = if family == PrepFamily::Dose {
             ChairRole::Fixture
         } else {
             ChairRole::Learning
         };
-        if chairs[c].role != expected_role {
+        if chair.role != expected_role {
             return Err(plan_err(format!(
                 "prep_request.chairs[{c}].role: expected {expected_role:?}"
             )));
@@ -3988,7 +3988,7 @@ fn validate_one_prep_execution(
     set_dir: &Path,
     manifest: &SetManifest,
     exec_entry: &ManifestExecutionEntry,
-) -> Result<Option<(PrepExecutionReceipt, BTreeMap<u64, Vec<u8>>)>, PodRunnerError> {
+) -> Result<Option<AcceptedPrepExecution>, PodRunnerError> {
     let exec_dir = set_dir.join(format!("exec-{}", exec_entry.execution));
     let receipt_path = exec_dir.join("execution.json");
     if !receipt_path.exists() {
@@ -4097,7 +4097,11 @@ fn validate_one_prep_execution(
         )));
     }
 
-    Ok(Some((receipt, output_bytes)))
+    Ok(Some(AcceptedPrepExecution {
+        execution: exec_entry.execution,
+        receipt,
+        output_bytes_by_unit: output_bytes,
+    }))
 }
 
 /// Selects the lowest-numbered accepted prep execution of `set_dir` under all
@@ -4117,24 +4121,18 @@ pub fn accept_prep_execution(set_dir: &Path) -> Result<AcceptedPrepExecution, Po
 
     let mut accepted: Option<AcceptedPrepExecution> = None;
     for exec_entry in &manifest.executions {
-        let Some((receipt, output_bytes)) =
-            validate_one_prep_execution(set_dir, &manifest, exec_entry)?
-        else {
+        let Some(candidate) = validate_one_prep_execution(set_dir, &manifest, exec_entry)? else {
             continue;
         };
         if let Some(ref first) = accepted {
-            if output_bytes != first.output_bytes_by_unit {
+            if candidate.output_bytes_by_unit != first.output_bytes_by_unit {
                 return Err(plan_err(format!(
                     "prep determinism failure: exec-{} outputs are not byte-identical to accepted exec-{}",
                     exec_entry.execution, first.execution
                 )));
             }
         } else {
-            accepted = Some(AcceptedPrepExecution {
-                execution: exec_entry.execution,
-                receipt,
-                output_bytes_by_unit: output_bytes,
-            });
+            accepted = Some(candidate);
         }
     }
 

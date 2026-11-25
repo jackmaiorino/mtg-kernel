@@ -2955,7 +2955,7 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
             OrderedJson::Null => {}
             OrderedJson::Array(scores) if scores.len() == 2 => {
                 for (s_idx, s) in scores.iter().enumerate() {
-                    let valid = matches!(s, OrderedJson::U64(0 | 1) | OrderedJson::I64(-1 | 0 | 1));
+                    let valid = matches!(s, OrderedJson::U64(0 | 1) | OrderedJson::I64(-1..=1));
                     if !valid {
                         return Err(format!("{path}.scores[{s_idx}]: expected -1, 0, or 1"));
                     }
