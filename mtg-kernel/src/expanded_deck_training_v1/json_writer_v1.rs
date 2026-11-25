@@ -22,10 +22,11 @@
 //!
 //! The serializer's type changes, so a `Serialize` implementation that
 //! looked at its serializer's type name could tell the two apart. None of
-//! the documents written here does: their implementations are derived or
-//! serde's own, apart from the borrowed checkpoint tensors'
-//! (`checkpoint_container_v1::serialize_bits_v1`), which is `collect_seq`
-//! over the values' bits.
+//! the documents written here does: their implementations are derived,
+//! serde's own, or hand-written ones that only delegate to serializer
+//! methods (for example the policy origin's, and the borrowed checkpoint
+//! tensors' `collect_seq` over the values' bits in
+//! `checkpoint_container_v1::serialize_bits_v1`).
 //!
 //! `json_writer_v1/tests.rs` compares the result with `serde_json::to_vec`
 //! (the previous writer, kept there as the reference): bytes, errors and the
