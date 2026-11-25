@@ -3,6 +3,11 @@ use crate::cube_draft_v1::{deck_seed, derive_seed, CubePool, SeedStream, SEATS};
 use crate::cube_seat_v1::{run_seat_draft, SeatDraft};
 use std::collections::BTreeSet;
 
+use crate::m4_sampler_v1::golden_cases;
+
+const CUBE_LIST: &str = include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007.json");
+const CUBE_GAPS: &str = include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007_gaps.json");
+
 // Test forwards only. Nonzero logits make padding, option order, lost inputs
 // and replay against the wrong weights observable.
 struct Probe(f32);
@@ -68,12 +73,39 @@ impl SeatForward for Probe {
 }
 
 fn cube() -> CubePool {
-    CubePool::from_json_texts(
-        include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007.json"),
-        include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007_gaps.json"),
-        None,
-    )
-    .unwrap()
+    CubePool::from_json_texts(CUBE_LIST, CUBE_GAPS, None).unwrap()
+}
+
+fn cube_from_names(names: impl IntoIterator<Item = impl AsRef<str>>) -> CubePool {
+    let cards: Vec<_> = names
+        .into_iter()
+        .map(|name| serde_json::json!({"name": name.as_ref()}))
+        .collect();
+    CubePool::from_json_texts(&serde_json::json!({"cards": cards}).to_string(), "{}", None).unwrap()
+}
+
+fn model_fixture(nonzero: bool) -> (CubePool, Arc<ModelSeatForward>) {
+    let pool = cube();
+    let mut ids = pool.ids().to_vec();
+    ids.extend(basic_land_ids().unwrap());
+    ids.sort_unstable();
+    ids.dedup();
+    // Exercise the concrete D2 forward independently of D1's provisional
+    // table pin. Vary the inputs so the card scorers can distinguish cards.
+    let features: Vec<_> = ids.iter().map(|&id| f32::from(id % 83) / 83.0).collect();
+    let rows =
+        ModelCardRowsV1::with_registry_basics_v1(ids, 1, features.clone(), 1, features).unwrap();
+    let mut model =
+        ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 13).unwrap();
+    if nonzero {
+        for name in ["pick.scorer.2.weight", "build.count_head.bias"] {
+            for (index, value) in model.tensor_mut_v1(name).unwrap().iter_mut().enumerate() {
+                *value = index as f32 / 64.0;
+            }
+        }
+    }
+    let forward = ModelSeatForward::new(Arc::new(model), Arc::new(rows), 1).unwrap();
+    (pool, Arc::new(forward))
 }
 
 fn sibling(seed: u64, seat: usize, k: u64) -> SplitMix64 {
@@ -85,6 +117,68 @@ fn draft(pool: &CubePool, seed: u64, params: Arc<dyn SeatForward>) -> SeatDraft 
         Box::new(LearnedSeatPicker::new(params.clone())) as Box<dyn SeatPicker>
     });
     run_seat_draft(pool, seed, &mut seats).unwrap()
+}
+
+fn assert_sampler_row(row: &DecisionRow) {
+    let logits: Vec<_> = row
+        .logits_bits
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|&bits| f32::from_bits(bits))
+        .collect();
+    let word = recorded_word(row).unwrap();
+    let sample = sample_v1(&logits, &vec![true; logits.len()], word).unwrap();
+    assert_eq!(row.chosen, row.options[sample.selected_index]);
+    assert_eq!(
+        row.p_chosen_bits,
+        Some((sample.counts[sample.selected_index] as f64 / GRID_SIZE as f64).to_bits())
+    );
+}
+
+#[test]
+fn shared_sampler_goldens_pass_through_decision_rows() {
+    // The D2a fixture tests pin these records. D3 removes masked entries
+    // before drawing, so retain their original option ids for comparison.
+    let golden_draws = [
+        0,
+        GRID_SIZE / 32,
+        GRID_SIZE / 7,
+        GRID_SIZE / 2 - 1,
+        GRID_SIZE / 2,
+        3 * GRID_SIZE / 4,
+        GRID_SIZE - 2,
+        GRID_SIZE - 1,
+    ];
+    for case in golden_cases::cases() {
+        let original_record = case.record();
+        let (options, logits): (Vec<_>, Vec<_>) = case
+            .logits
+            .iter()
+            .zip(&case.mask)
+            .enumerate()
+            .filter(|(_, (_, enabled))| **enabled)
+            .map(|(index, (&logit, _))| (index as u16, logit))
+            .unzip();
+        let draws = golden_draws.map(|k| {
+            let word = k << 11;
+            let sample = sample_v1(&case.logits, &case.mask, word).unwrap();
+            let decision =
+                decide(DecisionKind::Pointer, &options, &logits, None, word, None).unwrap();
+            assert_eq!(
+                decision.row.p_chosen_bits,
+                Some((sample.counts[sample.selected_index] as f64 / GRID_SIZE as f64).to_bits())
+            );
+            assert_eq!(
+                decision.log_prob.to_bits(),
+                sample.selected_log_probability.to_bits()
+            );
+            decision.row.chosen
+        });
+        let (_, record_after_hash) = original_record.split_once(' ').unwrap();
+        let (recorded_draws, _) = record_after_hash.rsplit_once(' ').unwrap();
+        assert_eq!(format!("{draws:?}"), recorded_draws, "{}", case.name);
+    }
 }
 
 #[test]
@@ -126,7 +220,7 @@ fn mapping_and_permuted_sets_preserve_all_bits() {
     assert_eq!(first_row.chosen, 40);
     let context = 28.0 - 1.0 + 54.0 / 512.0;
     let logits = params.scores(&[40, 90], context);
-    let log_p = draw(&logits, &[true, true], 0).1[0];
+    let sample = sample_v1(&logits, &[true, true], 0).unwrap();
     assert_eq!(first_row.kind, DecisionKind::Pick);
     assert_eq!(first_row.sampler, "softmax-cdf-splitmix64-v2");
     assert_eq!(first_row.stream_values, [0]);
@@ -137,7 +231,7 @@ fn mapping_and_permuted_sets_preserve_all_bits() {
     );
     assert_eq!(
         first_row.p_chosen_bits,
-        Some(TrainingMathV1::PortableV1.exp_f64_v1(log_p).to_bits())
+        Some((sample.counts[0] as f64 / GRID_SIZE as f64).to_bits())
     );
     let pool = sorted_cards(&pool);
     let reordered = SeatPickView {
@@ -165,10 +259,57 @@ fn mapping_and_permuted_sets_preserve_all_bits() {
 }
 
 #[test]
+fn concrete_initializer_scores_every_menu_at_zero() {
+    let (cube, params) = model_fixture(false);
+    let view = SeatPickView {
+        round: 0,
+        pick: 0,
+        direction: PassDirection::Left,
+        pack: &cube.ids()[..PACK_SIZE],
+        pool: &[],
+        seen_not_taken: &[],
+    };
+    let pick = pick_with(params.as_ref(), &view, || Ok(0)).unwrap();
+    let built = walk_build(
+        params.as_ref(),
+        &cube.ids()[..POOL_CARDS],
+        |step, options, logits| {
+            let word = match step {
+                Step::Count => 1 << 63,
+                Step::TypeSet => u64::MAX,
+                _ => 0,
+            };
+            decide(step.kind(), options, logits, None, word, None)
+        },
+    )
+    .unwrap();
+    assert_eq!(built.rows.count.chosen, 20);
+    assert_eq!(built.rows.pointer.len(), 20);
+    assert_eq!(built.rows.type_set.as_ref().unwrap().chosen, 31);
+    assert_eq!(built.rows.split.len(), 15);
+    for row in pick
+        .row
+        .iter()
+        .chain(std::iter::once(&built.rows.count))
+        .chain(&built.rows.pointer)
+        .chain(&built.rows.type_set)
+        .chain(&built.rows.split)
+    {
+        assert!(row
+            .logits_bits
+            .as_ref()
+            .unwrap()
+            .iter()
+            .all(|&logit| logit == 0));
+        assert_sampler_row(row);
+    }
+}
+
+#[test]
 fn eight_seats_replay_all_picks_and_siblings() {
-    let params = Arc::new(Probe(0.75));
+    let (cube, params) = model_fixture(true);
     let seed = 731;
-    let draft = draft(&cube(), seed, params.clone());
+    let draft = draft(&cube, seed, params.clone());
     let mut builder = LearnedSeatBuilder::new(params.clone());
     for chair in 0..SEATS {
         assert_eq!(draft.pick_rows[chair].len(), 42);
@@ -192,8 +333,12 @@ fn eight_seats_replay_all_picks_and_siblings() {
                 };
                 let row = rows.next().unwrap();
                 assert_eq!(row.chosen, pick.chosen);
+                assert_sampler_row(row);
                 replay_pick(row, params.as_ref(), &view).unwrap();
                 if pick.pick == 0 {
+                    let mut corrupt = row.clone();
+                    corrupt.p_chosen_bits = row.p_chosen_bits.map(|bits| bits ^ 1);
+                    assert!(replay_pick(&corrupt, params.as_ref(), &view).is_err());
                     let mut corrupt = row.clone();
                     corrupt.logits_bits.as_mut().unwrap()[0] ^= 1;
                     assert!(replay_pick(&corrupt, params.as_ref(), &view).is_err());
@@ -210,6 +355,13 @@ fn eight_seats_replay_all_picks_and_siblings() {
             let outcome = builder.build(&pool, &mut sibling(seed, chair, k)).unwrap();
             outcome.deck.validate(&pool).unwrap();
             let rows = outcome.rows.unwrap();
+            for row in std::iter::once(&rows.count)
+                .chain(&rows.pointer)
+                .chain(&rows.type_set)
+                .chain(&rows.split)
+            {
+                assert_sampler_row(row);
+            }
             replay_build(&rows, params.as_ref(), &pool).unwrap();
             let mut reverse = pool.clone();
             reverse.reverse();
@@ -236,10 +388,10 @@ impl SeatPicker for FirstCard {
     }
 }
 
-fn privacy_draft(cube: &CubePool) -> SeatDraft {
+fn privacy_draft(cube: &CubePool, params: Arc<dyn SeatForward>) -> SeatDraft {
     let mut seats: [Box<dyn SeatPicker>; SEATS] = std::array::from_fn(|chair| {
         if chair == 0 {
-            Box::new(LearnedSeatPicker::new(Arc::new(Probe(1.0)))) as Box<dyn SeatPicker>
+            Box::new(LearnedSeatPicker::new(params.clone())) as Box<dyn SeatPicker>
         } else {
             Box::new(FirstCard) as Box<dyn SeatPicker>
         }
@@ -249,8 +401,8 @@ fn privacy_draft(cube: &CubePool) -> SeatDraft {
 
 #[test]
 fn changing_an_unseen_card_in_another_pool_preserves_seat_rows() {
-    let cube = cube();
-    let first = privacy_draft(&cube);
+    let (cube, params) = model_fixture(true);
+    let first = privacy_draft(&cube, params.clone());
     let seen: BTreeSet<_> = first
         .record
         .picks
@@ -266,14 +418,8 @@ fn changing_an_unseen_card_in_another_pool_preserves_seat_rows() {
         cube.ids().iter().position(|id| id == hidden).unwrap(),
         cube.ids().iter().position(|id| id == unused).unwrap(),
     );
-    let cards: Vec<_> = names
-        .iter()
-        .map(|name| serde_json::json!({"name": name}))
-        .collect();
-    let changed =
-        CubePool::from_json_texts(&serde_json::json!({"cards": cards}).to_string(), "{}", None)
-            .unwrap();
-    let second = privacy_draft(&changed);
+    let changed = cube_from_names(names);
+    let second = privacy_draft(&changed, params);
     assert_ne!(first.record.packs, second.record.packs);
     assert_ne!(first.record.pools[1..], second.record.pools[1..]);
     assert!(first.record.picks.iter().filter(|p| p.seat == 0).eq(second
@@ -333,10 +479,14 @@ fn count_boundaries_single_type_and_no_extras() {
     assert_eq!(no_basics.rows.count.chosen, 0);
     assert_eq!(no_basics.rows.pointer.len(), 40);
     assert!(no_basics.rows.type_set.is_none() && no_basics.rows.split.is_empty());
-    let mut expected_log_p = draw(&[0.0; 41], &[true; 41], 0).1[0];
+    let mut expected_log_p = sample_v1(&[0.0; 41], &[true; 41], 0)
+        .unwrap()
+        .selected_log_probability;
     for (j, row) in no_basics.rows.pointer.iter().enumerate() {
         assert_eq!(row.options.len(), 45 - j);
-        expected_log_p += draw(&vec![0.0; 45 - j], &vec![true; 45 - j], 0).1[0];
+        expected_log_p += sample_v1(&vec![0.0; 45 - j], &vec![true; 45 - j], 0)
+            .unwrap()
+            .selected_log_probability;
         assert!(row.options.iter().all(|id| pool.contains(id)));
         assert!(no_basics.rows.pointer[..j]
             .iter()
@@ -400,15 +550,19 @@ fn likelihood_uses_new_parameters_and_order_symmetric_split_counts() {
         basics: 40,
     };
     let masks = (1..32).collect::<Vec<_>>();
-    let logs = |logits: &[f32]| draw(logits, &vec![true; logits.len()], 0).1;
-    let mut expected = logs(&changed.count(&ordered).unwrap())[40]
+    let logs = |logits: &[f32]| {
+        sample_v1(logits, &vec![true; logits.len()], 0)
+            .unwrap()
+            .log_probabilities
+    };
+    let expected = logs(&changed.count(&ordered).unwrap())[40]
         + logs(&changed.type_set(&input, &masks).unwrap())[30];
     let split = logs(&changed.split(&input, &bits).unwrap());
-    for (n, log_q) in copies.into_iter().zip(split) {
-        if n > 1 {
-            expected += (n - 1) as f64 * log_q;
-        }
-    }
+    let split_term = copies
+        .into_iter()
+        .zip(split)
+        .fold(0.0, |sum, (n, log_q)| sum + (n - 1) as f64 * log_q);
+    let expected = expected + split_term;
     rows.split.reverse();
     // The observed count remains 40 even though this word now draws count 0.
     rows.count.stream_values[0] = 0;
@@ -443,7 +597,7 @@ fn one_thousand_seeded_decks_validate_and_use_one_word_per_row() {
         for row in decisions {
             draws += 1;
             assert_eq!(row.stream_values, [expected.next_u64()]);
-            assert_eq!(row.sampler, SAMPLER_ID);
+            assert_eq!(row.sampler, SAMPLER_ID_V1);
             assert!(row.value_bits.is_none());
         }
         assert!(draws <= 41);

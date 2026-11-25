@@ -296,7 +296,7 @@ pub fn sample_v1(
 }
 
 #[cfg(test)]
-mod golden_cases;
+pub(crate) mod golden_cases;
 
 #[cfg(test)]
 mod tests {

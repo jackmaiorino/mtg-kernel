@@ -23,6 +23,7 @@
 //! are not here (tasks D2a and D3). Logits come out as f32, in the canonical
 //! orders those routines walk, with exactly the real candidates.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
 
@@ -1029,7 +1030,7 @@ impl ModelV1 {
         Ok(PickForwardV1 {
             model: self,
             rows,
-            hidden,
+            hidden: Cow::Owned(hidden),
         })
     }
 
@@ -1043,7 +1044,7 @@ impl ModelV1 {
         Ok(BuildForwardV1 {
             model: self,
             rows,
-            hidden,
+            hidden: Cow::Owned(hidden),
         })
     }
 }
@@ -1289,10 +1290,23 @@ fn resolve_pick_state(
 pub struct PickForwardV1<'m> {
     model: &'m ModelV1,
     rows: &'m ModelCardRowsV1,
-    hidden: CardHiddenTableV1,
+    hidden: Cow<'m, CardHiddenTableV1>,
 }
 
-impl PickForwardV1<'_> {
+impl<'m> PickForwardV1<'m> {
+    // The owner keeps these borrows tied to the model and rows that built H.
+    pub(crate) fn from_cached_hidden(
+        model: &'m ModelV1,
+        rows: &'m ModelCardRowsV1,
+        hidden: &'m CardHiddenTableV1,
+    ) -> Self {
+        Self {
+            model,
+            rows,
+            hidden: Cow::Borrowed(hidden),
+        }
+    }
+
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
         &self.hidden
     }
@@ -1372,10 +1386,23 @@ impl PickForwardV1<'_> {
 pub struct BuildForwardV1<'m> {
     model: &'m ModelV1,
     rows: &'m ModelCardRowsV1,
-    hidden: CardHiddenTableV1,
+    hidden: Cow<'m, CardHiddenTableV1>,
 }
 
-impl BuildForwardV1<'_> {
+impl<'m> BuildForwardV1<'m> {
+    // The owner keeps these borrows tied to the model and rows that built H.
+    pub(crate) fn from_cached_hidden(
+        model: &'m ModelV1,
+        rows: &'m ModelCardRowsV1,
+        hidden: &'m CardHiddenTableV1,
+    ) -> Self {
+        Self {
+            model,
+            rows,
+            hidden: Cow::Borrowed(hidden),
+        }
+    }
+
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
         &self.hidden
     }

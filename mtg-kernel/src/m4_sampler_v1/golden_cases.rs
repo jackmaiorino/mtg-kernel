@@ -2,7 +2,7 @@
 use super::{sample_v1, GRID_SIZE};
 use sha2::{Digest, Sha256};
 
-pub(super) struct Case {
+pub(crate) struct Case {
     pub name: &'static str,
     pub logits: Vec<f32>,
     pub mask: Vec<bool>,
@@ -50,7 +50,7 @@ impl Case {
     }
 }
 
-pub(super) fn cases() -> Vec<Case> {
+pub(crate) fn cases() -> Vec<Case> {
     let mut single = Case::all("one_unmasked_of_45", vec![12.0; 45]);
     single.mask.fill(false);
     single.mask[23] = true;
