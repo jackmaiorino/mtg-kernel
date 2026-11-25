@@ -1749,11 +1749,41 @@ fn linked_exile_views(state: &GameState) -> Result<Vec<Value>, String> {
             .map_err(|error| error.to_string())?;
         let legacy = strip(&legacy);
         assert_eq!(legacy, strip(&public), "viewer {viewer:?}");
-        observe_v2(state, &HarnessSurfaceV2::new(), viewer, 0)
+        let harness = observe_v2(state, &HarnessSurfaceV2::new(), viewer, 0)
             .map_err(|error| error.to_string())?;
+        assert_eq!(
+            harness.projection.object_relations, public.projection.surface.object_relations,
+            "viewer {viewer:?}"
+        );
         projections.push(legacy["projection"].clone());
     }
     Ok(projections)
+}
+
+fn assert_linked_exile_refused(state: &GameState) {
+    use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+    use mtg_kernel::rl::{enable_public_shroud_v1, observe_policy_v5, observe_v2, RlContractError};
+    use mtg_kernel::surface_v2::HarnessSurfaceV2;
+
+    let harness_surface = HarnessSurfaceV2::new();
+    let policy_surface = PolicySurfaceV5::new();
+    let mut public_state = state.clone();
+    enable_public_shroud_v1(&mut public_state);
+    let refusal =
+        RlContractError("linked-exile record no longer matches its physical objects".into());
+    for viewer in [P0, P1] {
+        let harness = observe_v2(state, &harness_surface, viewer, 0).map(|_| ());
+        let legacy = observe_policy_v5(state, &policy_surface, viewer, 0, 0, 0, 1).map(|_| ());
+        let public =
+            observe_policy_v5(&public_state, &policy_surface, viewer, 0, 0, 0, 1).map(|_| ());
+        for (mode, result) in [
+            ("harness", harness),
+            ("legacy", legacy),
+            ("schema 5", public),
+        ] {
+            assert_eq!(result, Err(refusal.clone()), "{mode}, viewer {viewer:?}");
+        }
+    }
 }
 
 /// Each seat's projection names one source for `exiled`: `source` exactly as
@@ -1976,6 +2006,35 @@ fn copied_portable_hole_without_that_definition_in_its_history_is_refused() {
         refusal.contains("linked-exile record no longer matches its physical objects"),
         "{refusal}"
     );
+}
+
+#[test]
+fn copied_portable_hole_in_a_later_incarnation_is_refused() {
+    let (mut state, saheeli, servo, hole, _, _) = hole_holding_ring("Servo Token");
+    saheeli_copies(&mut state, saheeli, hole, servo);
+    // The old copy history and exile link still name the recorded incarnation.
+    // A higher live count passes the lower-bound check and skips the live-link check.
+    state.objects.get_mut(hole).zone_change_count += 1;
+
+    assert_linked_exile_refused(&state);
+}
+
+#[test]
+fn copied_portable_hole_off_the_battlefield_is_refused() {
+    let (mut state, saheeli, servo, hole, ring, _) = hole_holding_ring("Servo Token");
+    saheeli_copies(&mut state, saheeli, hole, servo);
+    state.objects.get_mut(hole).zone = Zone::Graveyard;
+    let owner = &mut state.players[P0.index()];
+    owner.battlefield.retain(|&object| object != hole);
+    owner.graveyard.push(hole);
+
+    // A later Ring incarnation skips the live-link check even though the Hole
+    // still has its recorded count. The historical record remains intact.
+    let ring = state.objects.get_mut(ring);
+    ring.zone_change_count += 1;
+    ring.v4.exiled_by = None;
+
+    assert_linked_exile_refused(&state);
 }
 
 /// P0 controls Saheeli (5 loyalty), a Servo token and a Tidehollow Sculler
