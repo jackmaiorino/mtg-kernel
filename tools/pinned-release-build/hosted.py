@@ -44,6 +44,7 @@ PACK3_SOURCES = (
     "d82ab7bc6aeb74f6148e864c11eb1b825a2e3e48",  # lever 32 bundle: 32a digest memo bypass plus 32b trajectory JSON writer
     "d120ef55a20a4beb473b17c79693d8fe8aa25052",  # lever 32 bundle on release 46f7ecfec (the promo chains' source)
     "af1ea85d349ca67c94eb4dd698893b9650ed3296",  # lever 32 bundle on 46f7ecfec with the 32a review fixes (test and doc only)
+    "a76c83ac1118befcefe00aaa6798156551d360c1",  # lever 34: byte-identical collection writes on the lever 32 bundle af1ea85d3
 )
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
