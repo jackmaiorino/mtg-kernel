@@ -936,14 +936,14 @@ mod tests {
     #[test]
     fn ln_f64_v1_golden_bits() {
         let expected: [&str; ln_golden_inputs::INPUTS.len()] = [
-            "PLACEHOLDER",
-            "PLACEHOLDER",
-            "PLACEHOLDER",
-            "PLACEHOLDER",
-            "PLACEHOLDER",
-            "PLACEHOLDER",
-            "PLACEHOLDER",
-            "PLACEHOLDER",
+            "0000000000000000", // x=1.0
+            "3fd62e42fefa39ed", // x=1.414213562373095
+            "3fd62e42fefa39f1", // x=1.4142135623730951
+            "3fd62e42fefa39f3", // x=1.4142135623730954
+            "3fe62e42fefa39ef", // x=2.0
+            "3fd9f323ecbf984c", // x=1.5
+            "400e740b76a3c9a4", // x=45.0
+            "3ccffffffffffffc", // x=1.0000000000000009
         ];
         for (x, bits) in ln_golden_inputs::INPUTS.into_iter().zip(expected) {
             assert_eq!(format!("{:016x}", ln_f64_v1(x).to_bits()), bits, "x={x:?}");
