@@ -275,7 +275,8 @@ fn a15_frozen_episode_replay_matches_runner() {
         ];
 
         // 1. Direct engine opening deal matches the pinned expanded libraries and opening hands.
-        let state = build_deck_pair_state(env_seed, &p0_ids, &p1_ids).expect("supported cube decks");
+        let state =
+            build_deck_pair_state(env_seed, &p0_ids, &p1_ids).expect("supported cube decks");
         let hand0: Vec<u16> = state.players[0]
             .hand
             .iter()
