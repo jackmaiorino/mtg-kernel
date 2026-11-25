@@ -705,7 +705,7 @@ fn alter_reality_unaudited_target_halts_and_face_down_target_accepted() {
     let changes = opp_obs.projection.text_color_changes.unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].object.arena_id, angel.0);
-    assert_eq!(changes[0].object.card_db_id, id("Face-down card"));
+    assert_eq!(changes[0].object.card_db_id, id("Face-down creature"));
     assert_ne!(changes[0].object.card_db_id, id("Exalted Angel"));
     assert_eq!(
         (changes[0].from, changes[0].to),
