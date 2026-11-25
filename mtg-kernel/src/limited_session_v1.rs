@@ -1659,6 +1659,123 @@ mod tests {
 
     #[cfg(feature = "eternal-fixtures")]
     #[test]
+    fn tear_asunder_with_only_enchantment_land_skips_kicker_in_limited_session() {
+        use crate::ids::PlayerId;
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::rl::ActionSemanticV1;
+        use crate::state::{Target, Zone};
+        use serde_json::json;
+
+        fn submit(server: &mut LimitedJsonlServerV1, select: impl Fn(&ActionSemanticV1) -> bool) {
+            let RlSessionResponseV1::Decision(decision) =
+                server.active.as_ref().unwrap().current_response()
+            else {
+                panic!("expected an active Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| select(&action.semantic))
+                .unwrap_or_else(|| panic!("unexpected menu: {:?}", decision.legal_actions));
+            let step = LimitedRequestV1::Step {
+                schema_version: LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+                request_id: format!("step-{}", decision.step),
+                episode_id: decision.episode_id,
+                expected_step: decision.step,
+                selected_index: action.selected_index,
+                selected_action_id: action.stable_id.clone(),
+            };
+            let reply: LimitedReplyV1 =
+                serde_json::from_str(&server.handle_line(&serde_json::to_string(&step).unwrap()))
+                    .unwrap();
+            assert!(
+                matches!(reply.body, LimitedReplyBodyV1::Decision { .. }),
+                "{:?}",
+                reply.body
+            );
+        }
+
+        let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+        let reset = json!({
+            "request_type": "reset",
+            "schema_version": LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+            "request_id": "reset",
+            "episode_id": 7,
+            "env_seed": 123,
+            "max_physical_decisions": 4096,
+            "max_policy_steps": 4096,
+            "decks": [
+                {"cards": [{"name": "Forest", "count": 40}]},
+                {"cards": [{"name": "Forest", "count": 40}]}
+            ]
+        });
+        let initial: LimitedReplyV1 =
+            serde_json::from_str(&server.handle_line(&reset.to_string())).unwrap();
+        assert!(matches!(initial.body, LimitedReplyBodyV1::Decision { .. }));
+
+        let mut state = ready_state();
+        let spell = put(&mut state, PlayerId::P0, "Tear Asunder", Zone::Hand);
+        let saga = put(&mut state, PlayerId::P1, "Urza's Saga", Zone::Battlefield);
+        state.players[0].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+        state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+        server
+            .active
+            .as_mut()
+            .unwrap()
+            .install_fixture_state_preserving_limits_for_test(
+                state,
+                PriorityModeV1::EngineWindowsV1,
+            );
+
+        submit(&mut server, |action| {
+            matches!(action,
+                ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0
+            )
+        });
+        let session = server.active.as_ref().unwrap();
+        let before = session.current_response();
+        let snapshot = session.snapshot_v5();
+        let pick_target = |action: &ActionSemanticV1| {
+            matches!(action,
+                ActionSemanticV1::ChooseTarget { source, .. } if source.arena_id == spell.0
+            )
+        };
+        submit(&mut server, pick_target);
+        let session = server.active.as_mut().unwrap();
+        let after = session.current_response();
+        let after_hash = session.privileged_environment_hash();
+        let item = session.game_state().stack.last().unwrap();
+        assert!(!item.kicked);
+        assert_eq!(item.targets, vec![Target::Object(saga)]);
+        session.restore_v5(&snapshot);
+        assert_eq!(session.current_response(), before);
+        server.last_exchange = None;
+        submit(&mut server, pick_target);
+        let session = server.active.as_ref().unwrap();
+        assert_eq!(session.current_response(), after);
+        assert_eq!(session.privileged_environment_hash(), after_hash);
+        for _ in 0..2 {
+            submit(&mut server, |action| {
+                matches!(action, ActionSemanticV1::Pass { .. })
+            });
+        }
+        assert_eq!(
+            server
+                .active
+                .as_ref()
+                .unwrap()
+                .game_state()
+                .objects
+                .get(saga)
+                .zone,
+            Zone::Exile
+        );
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
     fn limited_jsonl_server_omitted_max_stack_objects_never_halts_past_600_items() {
         use crate::mana::ManaColor;
         use crate::rl::ActionSemanticV1;
