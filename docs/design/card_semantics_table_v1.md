@@ -78,6 +78,8 @@ Column rule:
 - The cube vocabulary starts with the Pauper table's columns in the exact Pauper table order so column `i` means the same token in both tables. A Pauper column that no cube row carries is kept with 0 carriers (all zero).
 - Cube-only tokens are appended after the Pauper prefix in sorted deterministic order. Regeneration preserves the committed cube column order and only appends new tokens.
 
+The migration in `data/card_semantics_v1/cube_table_v1_column_map_4836b459.json` identifies the source and destination tables by content SHA-256. Entry `i` of `old_to_new` is the zero-based destination index of old column `i`, with `null` reserved for a removed token. The 490-column Pauper prefix moves the two return-from-graveyard tokens from 641 and 642 to 488 and 489. Other Cube-only tokens retain their relative order. Every old token has a destination, including the zero-carrier source-move and source-tap columns at 254 and 344.
+
 Cube report (written in `cube_table_v1.txt` and printed by `--cube --check`; informational only, with no pass or fail thresholds; the Pauper pair checks are not applied to the cube table):
 
 - Row count, vector width, Pauper prefix width, and number of columns new beyond the Pauper vocabulary.
