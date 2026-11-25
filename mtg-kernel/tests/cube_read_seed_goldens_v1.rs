@@ -3,7 +3,7 @@
 //! `GameRetry` is the variant m4-interfaces/v2 adds (D5); until D5 lands, its rows are skipped.
 #![cfg(feature = "eternal-fixtures")]
 
-use mtg_kernel::cube_draft_v1::{derive_seed, game_seed, pod_game_seats, SeedStream};
+use mtg_kernel::cube_draft_v1::{deck_seed, derive_seed, game_seed, pod_game_seats, SeedStream};
 use mtg_kernel::state::SplitMix64;
 
 #[test]
@@ -144,5 +144,38 @@ fn pod_game_seats_match_the_python_port() {
     ];
     for (pod, game, expected) in cases {
         assert_eq!(pod_game_seats(pod, game).expect("game in range"), expected);
+    }
+}
+
+#[test]
+fn build_seeds_match_the_python_port() {
+    let cases: [(u64, usize, u64, u64, u64); 8] = [
+        (0, 0, 0, 11836887688330508145, 16802208799850847246),
+        (0, 0, 1, 11836887688330508145, 17525408142943136994),
+        (0, 7, 0, 18276781107646718199, 11027067207131447367),
+        (0, 7, 1, 18276781107646718199, 4583750976280949105),
+        (1, 0, 0, 6644277660526234832, 7972869706821856550),
+        (1, 7, 1, 2227647796303230843, 7427020321021221432),
+        (
+            81985529216486895,
+            0,
+            0,
+            14699875862816212682,
+            4472699201026765713,
+        ),
+        (
+            81985529216486895,
+            7,
+            1,
+            6571773155595980281,
+            13959654806316832626,
+        ),
+    ];
+    for (draft_seed, chair, build_k, want_deck, want_build) in cases {
+        assert_eq!(deck_seed(draft_seed, chair), want_deck);
+        assert_eq!(
+            derive_seed(deck_seed(draft_seed, chair), SeedStream::DeckBuild, build_k),
+            want_build
+        );
     }
 }

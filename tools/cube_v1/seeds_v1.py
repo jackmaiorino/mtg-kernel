@@ -43,6 +43,14 @@ def derive_seed(parent: int, stream: int, index: int) -> int:
     return SplitMix64(second ^ ((index * 0xD1B5_4A32_D192_ED03) & U64)).next_u64()
 
 
+def deck_seed(draft_seed: int, chair: int) -> int:
+    return derive_seed(draft_seed, DECK_BUILD, chair)
+
+
+def build_seed(draft_seed: int, chair: int, build_k: int) -> int:
+    return derive_seed(deck_seed(draft_seed, chair), DECK_BUILD, build_k)
+
+
 def game_seed(pod_seed: int, game: int) -> int:
     return derive_seed(pod_seed, GAME, game)
 

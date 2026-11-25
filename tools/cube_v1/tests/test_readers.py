@@ -135,6 +135,10 @@ class SeedPortTests(unittest.TestCase):
         self.assertEqual(seeds_v1.attempt_seeds(seeds_v1.game_seed(0, 0)),
                          {"deal_seed": 17342717373898743084, "env_seed": 4016630253392987778,
                           "action_seed": 6801290846407491845})
+        self.assertEqual(seeds_v1.deck_seed(0, 7), 18276781107646718199)
+        self.assertEqual(seeds_v1.build_seed(0, 7, 0), 11027067207131447367)
+        self.assertEqual(seeds_v1.build_seed(0, 7, 1), 4583750976280949105)
+        self.assertEqual(seeds_v1.build_seed(81985529216486895, 7, 1), 13959654806316832626)
 
     def test_rust_golden_file_holds_the_same_constants(self):
         text = RUST_GOLDENS.read_text(encoding="utf-8")
@@ -528,10 +532,12 @@ class RecordTests(unittest.TestCase):
             ],
             "decks": [
                 {"deck": 0, "source": "build", "chair": 0, "build": 0, "builder": dict(synth.UNIFORM),
-                 "build_seed": 7, "cards": cards0, "build_rows": synth.uniform_build_rows(cards0, pools[0]),
+                 "build_seed": seeds_v1.build_seed(train_seeds["draft_seed"], 0, 0),
+                 "cards": cards0, "build_rows": synth.uniform_build_rows(cards0, pools[0]),
                  "dealt": None},
                 {"deck": 1, "source": "build", "chair": 1, "build": 0, "builder": dict(synth.UNIFORM),
-                 "build_seed": 7, "cards": cards1, "build_rows": synth.uniform_build_rows(cards1, pools[1]),
+                 "build_seed": seeds_v1.build_seed(train_seeds["draft_seed"], 1, 0),
+                 "cards": cards1, "build_rows": synth.uniform_build_rows(cards1, pools[1]),
                  "dealt": None},
             ],
             "games": [{
@@ -585,6 +591,77 @@ class RecordTests(unittest.TestCase):
             mutate(bad)
             with self.assertRaisesRegex(pod_record.RecordError, pattern):
                 read_plans.check_record_against_plan(bad, self.plan)
+
+    def test_reversed_scores_and_wrong_winner_seat_are_rejected(self):
+        # Dealer game (chairs = [s, None]): seats are [0, 1]. Reversing scores alone must fail.
+        bad = copy.deepcopy(self.rec)
+        g0 = bad["games"][0]
+        self.assertEqual(g0["scores"], [1, -1])
+        g0["scores"] = [-1, 1]
+        with self.assertRaisesRegex(pod_record.RecordError, "winner_seat"):
+            pod_record.validate_record(bad)
+
+        # Out-of-seat winner_seat on a dealer game must fail.
+        bad_seat = copy.deepcopy(self.rec)
+        bad_seat["games"][0]["attempts"][0]["end"]["winner_seat"] = 2
+        with self.assertRaisesRegex(pod_record.RecordError, "winner_seat"):
+            pod_record.validate_record(bad_seat)
+
+        # Chair-vs-chair game (read (a)): D5 maps winner_seat through chairs [c0, c1].
+        a_plan = synth.plan("a", 0, mirror=0)
+        a_rec = synth.record(a_plan, lambda p, g, pos: "win")
+        pod_record.validate_record(a_rec)
+        read_plans.check_record_against_plan(a_rec, a_plan)
+        # Pick a game with chairs not equal to [0, 1] and reverse its scores.
+        target_idx = next(i for i, g in enumerate(a_rec["games"]) if set(g["chairs"]) != {0, 1})
+        bad_a = copy.deepcopy(a_rec)
+        orig = bad_a["games"][target_idx]["scores"]
+        bad_a["games"][target_idx]["scores"] = [-orig[0], -orig[1]]
+        with self.assertRaisesRegex(pod_record.RecordError, "winner_seat"):
+            pod_record.validate_record(bad_a)
+
+        # A winner_seat matching neither chair of the pairing must fail.
+        bad_a_seat = copy.deepcopy(a_rec)
+        chairs = set(bad_a_seat["games"][target_idx]["chairs"])
+        other = next(c for c in range(8) if c not in chairs)
+        bad_a_seat["games"][target_idx]["attempts"][0]["end"]["winner_seat"] = other
+        with self.assertRaisesRegex(pod_record.RecordError, "winner_seat"):
+            pod_record.validate_record(bad_a_seat)
+
+    def test_wrong_build_seed_is_rejected_in_prep_and_dose_records(self):
+        req, req_sha, res, res_sha = synth.prep_for("dose", 0)
+        read_plans.check_prep_result(res, req, req_sha)
+        draft_seed = req["seeds"]["draft_seed"]
+
+        # Mutate one dose arm's build_seed to another well-typed u64 (build 1 instead of build 0).
+        bad_prep = copy.deepcopy(res)
+        wrong_stream = seeds_v1.build_seed(draft_seed, 0, 1)
+        self.assertNotEqual(wrong_stream, bad_prep["builds"][1]["build_seed"])
+        bad_prep["builds"][1]["build_seed"] = wrong_stream
+        with self.assertRaisesRegex(read_plans.PlanError, "build_seed"):
+            read_plans.check_prep_result(bad_prep, req, req_sha)
+
+        # Same mutation on one dose arm inside a dose pod record.
+        dose_plan = synth.plan("dose", 0, mark={"kind": "dose", "label": "pods-512", "ordinal": 0},
+                               prep=(res, res_sha))
+        dose_rec = synth.record(dose_plan, by_slot({0: "win"}))
+        pod_record.validate_record(dose_rec)
+        read_plans.check_record_against_plan(dose_rec, dose_plan)
+        bad_dose = copy.deepcopy(dose_rec)
+        bad_dose["decks"][1]["build_seed"] = wrong_stream
+        with self.assertRaisesRegex(pod_record.RecordError, "build_seed"):
+            pod_record.validate_record(bad_dose)
+        with self.assertRaisesRegex(pod_record.RecordError, "build_seed"):
+            read_plans.check_record_against_plan(bad_dose, dose_plan)
+
+        # D5's non-null derived build_seed on a stated build is accepted; a wrong u64 is rejected.
+        c_rec = copy.deepcopy(self.rec)
+        c_rec["decks"][1]["build_seed"] = seeds_v1.build_seed(c_rec["seeds"]["draft_seed"], 0, 1)
+        pod_record.validate_record(c_rec)
+        read_plans.check_record_against_plan(c_rec, self.plan)
+        c_rec["decks"][1]["build_seed"] = seeds_v1.build_seed(c_rec["seeds"]["draft_seed"], 0, 0)
+        with self.assertRaisesRegex(pod_record.RecordError, "build_seed"):
+            pod_record.validate_record(c_rec)
 
     def test_read_halt_is_one_attempt_null_score_and_a_ledger_row(self):
         rec = synth.record(self.plan, by_slot({2: "halt"}, arm=0))
@@ -1155,7 +1232,7 @@ class DeterminismTests(unittest.TestCase):
             self.assertEqual(json.loads(outs[0])["verdict"], "win")
 
 
-REPORT_GOLDEN_SHA256 = "766763a7d6bffc000b9ca4bdd7c7c482d2c94a8a5cb48452a9001883910ce06a"
+REPORT_GOLDEN_SHA256 = "843a0513ec8de82c90dbd2511eccb2d509b6929b955d7604a5598d70afd335f3"
 
 
 class UniformPodRecordTests(unittest.TestCase):

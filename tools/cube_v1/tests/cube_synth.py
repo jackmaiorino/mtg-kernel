@@ -89,7 +89,8 @@ def prep_result(request: dict[str, Any], request_sha: str) -> dict[str, Any]:
     draft = draft_record(request["seeds"]["draft_seed"])
     builds = []
     for b in request["builds"]:
-        builds.append({**b, "build_seed": None if b["row"] == "stated" else deal.seed(["build", b["chair"], b["row"]]),
+        b_seed = None if b["row"] == "stated" else seeds_v1.build_seed(draft["draft_seed"], b["chair"], b["build"])
+        builds.append({**b, "build_seed": b_seed,
                        "cards": build_from_pool(draft["pools"][b["chair"]], b["row"])})
     return {"schema": read_plans.PLAN_SCHEMA, "kind": "prep_result", "request_sha256": request_sha,
             "draft": draft, "builds": builds}
@@ -189,24 +190,26 @@ def record(p: dict[str, Any], outcome: Callable[[dict[str, Any], dict[str, Any],
         rows = None
         if d["source"] == "build" and d["builder"]["kind"] != "stated":
             rows = uniform_build_rows(cards, pools[d["chair"]])
+        b_seed = (None if rows is None
+                  else seeds_v1.build_seed(p["seeds"]["draft_seed"], d["chair"], d["build"]))
         rec["decks"].append({"deck": d["deck"], "source": d["source"], "chair": d["chair"], "build": d["build"],
-                             "builder": copy.deepcopy(d["builder"]), "build_seed": None if rows is None else 7,
+                             "builder": copy.deepcopy(d["builder"]), "build_seed": b_seed,
                              "cards": cards, "build_rows": rows, "dealt": copy.deepcopy(d["dealt"])})
     for g in p["games"][: games if games is not None else len(p["games"])]:
         focal = _focal_deck(p, g)
         pos = g["decks"].index(focal)
         res = outcome(p, g, pos)
         seeds = seeds_v1.attempt_seeds(g["game_seed"])
+        seats = pod_record.game_seats(g["chairs"])
         source, decisions = None, 100
         if isinstance(res, tuple):
             _, end, source, decisions = res
         elif res == "halt":
             end = {"kind": "decision_cap"}
         else:
-            winner = None if res == "draw" else (pos if res == "win" else 1 - pos)
+            winner = None if res == "draw" else seats[pos if res == "win" else 1 - pos]
             end = {"kind": "natural", "winner_seat": winner, "reason": "synthetic"}
         halted = end["kind"] != "natural"
-        attempt = {**seeds, "attempt": 0}
         attempt = {"attempt": 0, "deal_seed": seeds["deal_seed"], "env_seed": seeds["env_seed"],
                    "action_seed": seeds["action_seed"], "decisions": decisions, "physical_decisions": None,
                    "policy_steps": None, "end": end, "halted": halted, "stop_kind": pod_record.expected_stop_kind(end),
@@ -214,7 +217,7 @@ def record(p: dict[str, Any], outcome: Callable[[dict[str, Any], dict[str, Any],
         scores = None
         if not halted:
             w = end["winner_seat"]
-            scores = [0, 0] if w is None else ([1, -1] if w == 0 else [-1, 1])
+            scores = [0, 0] if w is None else ([1, -1] if w == seats[0] else [-1, 1])
         rec["games"].append({**{k: copy.deepcopy(g[k]) for k in read_plans.PLAN_GAME_KEYS}, "attempts": [attempt],
                              "scores": scores})
         rec["games"][-1] = {k: rec["games"][-1][k] for k in pod_record.GAME_KEYS}

@@ -490,11 +490,22 @@ def check_prep_result(result: Any, request: dict[str, Any], request_sha: str) ->
     builds = pod_record._list(result["builds"], "prep_result.builds")
     if len(builds) != len(request["builds"]):
         raise PlanError("prep result has one build per requested build")
+    draft_seed = request["seeds"]["draft_seed"]
     for i, (got, want) in enumerate(zip(builds, request["builds"])):
         obj(got, f"prep_result.builds[{i}]", PREP_RESULT_BUILD_KEYS)
         if {k: got[k] for k in PREP_BUILD_KEYS} != want:
             raise PlanError(f"prep result build {i} differs from its request")
-        pod_record._uint_or_null(got["build_seed"], f"prep_result.builds[{i}].build_seed", pod_record.U64)
+        b_seed = pod_record._uint_or_null(got["build_seed"], f"prep_result.builds[{i}].build_seed", pod_record.U64)
+        expected_seed = seeds_v1.build_seed(draft_seed, want["chair"], want["build"])
+        if want["builder"]["kind"] in ("uniform", "learned"):
+            if b_seed != expected_seed:
+                raise PlanError(
+                    f"prep result build {i} build_seed {b_seed!r} differs from derived stream {expected_seed}"
+                )
+        elif b_seed is not None and b_seed != expected_seed:
+            raise PlanError(
+                f"prep result stated build {i} build_seed {b_seed!r} differs from derived stream {expected_seed}"
+            )
         cards = pod_record._uint_list(got["cards"], f"prep_result.builds[{i}].cards", pod_record.U16)
         if len(cards) != pod_record.DECK_CARDS or cards != sorted(cards):
             raise PlanError(f"prep result build {i} holds 40 cards in canonical order")
@@ -917,6 +928,13 @@ def check_record_against_plan(record: dict[str, Any], plan: dict[str, Any]) -> N
                 continue
             if rec_deck[key] != plan_deck[key]:
                 fail(f"deck {plan_deck['deck']} {key} differs from the plan")
+        if plan_deck["source"] == "build":
+            expected_seed = seeds_v1.build_seed(plan["seeds"]["draft_seed"], plan_deck["chair"], plan_deck["build"])
+            if plan_deck["builder"]["kind"] in ("uniform", "learned"):
+                if rec_deck["build_seed"] != expected_seed:
+                    fail(f"deck {plan_deck['deck']} build_seed differs from derived stream")
+            elif rec_deck["build_seed"] is not None and rec_deck["build_seed"] != expected_seed:
+                fail(f"deck {plan_deck['deck']} stated build_seed differs from derived stream")
     games = record["games"]
     if len(games) > len(plan["games"]):
         fail("more games than the plan")

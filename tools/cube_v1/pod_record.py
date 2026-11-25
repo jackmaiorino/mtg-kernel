@@ -19,6 +19,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import deal  # noqa: E402
+import seeds_v1  # noqa: E402
 
 POD_RECORD_SCHEMA = "mtg-kernel-cube-pod-record/v2"
 INTERFACES_VERSION = "m4-interfaces/v2"
@@ -328,6 +329,15 @@ def _validate_attempt(value: Any, path: str, index: int) -> dict[str, Any]:
     return attempt
 
 
+def game_seats(chairs: list[int | None]) -> list[int]:
+    """D5's seat identifiers passed to AttemptSpec::seats: [c0, c1] when both chairs are distinct
+    non-null chair ids, otherwise [0, 1]."""
+    c0, c1 = chairs
+    if c0 is not None and c1 is not None and c0 != c1:
+        return [c0, c1]
+    return [0, 1]
+
+
 def _validate_game(value: Any, path: str, deck_by_id: dict[int, dict[str, Any]], max_replays: int) -> dict[str, Any]:
     game = _object(value, path, GAME_KEYS)
     _uint(game["game"], f"{path}.game", U32)
@@ -374,13 +384,25 @@ def _validate_game(value: Any, path: str, deck_by_id: dict[int, dict[str, Any]],
             _fail(f"{path}.scores", f"must be two integers, got {scores!r}")
         if scores not in ([1, -1], [-1, 1], [0, 0]):
             _fail(f"{path}.scores", f"must be [1, -1], [-1, 1] or [0, 0], got {scores!r}")
-        draw = final["end"]["winner_seat"] is None
-        if draw != (scores == [0, 0]):
-            _fail(f"{path}.scores", "a natural end without a winner scores [0, 0], and only it")
+        winner = final["end"]["winner_seat"]
+        seats = game_seats(chairs)
+        if winner is None:
+            expected_scores = [0, 0]
+        elif winner == seats[0]:
+            expected_scores = [1, -1]
+        elif winner == seats[1]:
+            expected_scores = [-1, 1]
+        else:
+            _fail(f"{path}.attempts[-1].end.winner_seat",
+                  f"winner_seat {winner} is not in game seats {seats}")
+            raise AssertionError
+        if scores != expected_scores:
+            _fail(f"{path}.scores",
+                  f"scores {scores} disagree with winner_seat {winner} for game seats {seats}")
     return game
 
 
-def _validate_deck(value: Any, path: str, index: int) -> dict[str, Any]:
+def _validate_deck(value: Any, path: str, index: int, draft_seed: int | None = None) -> dict[str, Any]:
     deck = _object(value, path, DECK_KEYS)
     if _uint(deck["deck"], f"{path}.deck", U32) != index:
         _fail(f"{path}.deck", f"must be its index {index}")
@@ -410,6 +432,15 @@ def _validate_deck(value: Any, path: str, index: int) -> dict[str, Any]:
             _fail(f"{path}.build_rows", "the stated builder writes no rows")
         if kind in ("uniform", "learned") and build_rows is None:
             _fail(f"{path}.build_rows", f"a {kind} builder writes its build rows")
+        if draft_seed is not None:
+            expected_build_seed = seeds_v1.build_seed(draft_seed, chair, build)
+            if kind in ("uniform", "learned"):
+                if deck["build_seed"] != expected_build_seed:
+                    _fail(f"{path}.build_seed",
+                          f"build_seed {deck['build_seed']!r} differs from derived stream {expected_build_seed}")
+            elif deck["build_seed"] is not None and deck["build_seed"] != expected_build_seed:
+                _fail(f"{path}.build_seed",
+                      f"stated build_seed {deck['build_seed']!r} differs from derived stream {expected_build_seed}")
     else:
         if chair is not None or build is not None:
             _fail(path, "a dealt deck has null chair and build")
@@ -539,7 +570,7 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
     decks = _list(rec["decks"], f"{path}.decks")
     deck_by_id: dict[int, dict[str, Any]] = {}
     for i, deck in enumerate(decks):
-        _validate_deck(deck, f"{path}.decks[{i}]", i)
+        _validate_deck(deck, f"{path}.decks[{i}]", i, seeds["draft_seed"])
         deck_by_id[i] = deck
 
     games = _list(rec["games"], f"{path}.games")
