@@ -2359,9 +2359,12 @@ class D8V3RestartTests(unittest.TestCase):
         return repo
 
     @classmethod
-    def _commit_in_repo(cls, repo: Path, rel_path: str, message: str) -> str:
+    def _commit_in_repo(cls, repo: Path, rel_path: str, message: str, *, author: str | None = None) -> str:
         cls._git(repo, "add", rel_path)
-        cls._git(repo, "commit", "-m", message)
+        cmd = ["commit", "-m", message]
+        if author is not None:
+            cmd.extend(["--author", author])
+        cls._git(repo, *cmd)
         return cls._git(repo, "rev-parse", "HEAD")
 
     @staticmethod
@@ -2398,10 +2401,13 @@ class D8V3RestartTests(unittest.TestCase):
     def _build_manifest(cls, root: Path, entries: list[dict], *, filename: str = "SHAKEDOWN-MANIFEST.md",
                         preamble: str = "# Shakedown Manifest\n\n", suffix: str = "",
                         commit: bool | None = None, repo: Path | None = None,
-                        lead_branch: str = "lead") -> tuple:
-        buf = cls._format_manifest(entries, preamble=preamble, suffix=suffix)
-        sha = hashlib.sha256(buf).hexdigest()
+                        lead_branch: str = "lead", prepend_d0: bool = True) -> tuple:
         should_commit = any(e.get("kind") == "restart" for e in entries) if commit is None else commit
+        full_entries = list(entries)
+        if should_commit and prepend_d0 and (not full_entries or full_entries[0].get("kind") != "d0_signed"):
+            full_entries = [{"kind": "d0_signed", "lead_branch": lead_branch}, *full_entries]
+        buf = cls._format_manifest(full_entries, preamble=preamble, suffix=suffix)
+        sha = hashlib.sha256(buf).hexdigest()
         if not should_commit:
             path = root / filename
             path.write_bytes(buf)
@@ -2411,9 +2417,16 @@ class D8V3RestartTests(unittest.TestCase):
             cls._init_manifest_repo(repo_dir, lead_branch=lead_branch)
         path = repo_dir / filename
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Commit non-restart prefix first so every restart entry is introduced by a single-parent
+        # non-merge commit on lead_branch's first-parent chain.
+        first_restart = next((i for i, e in enumerate(full_entries) if e.get("kind") == "restart"), None)
+        if first_restart is not None and first_restart > 0:
+            prefix_buf = cls._format_manifest(full_entries[:first_restart], preamble=preamble)
+            path.write_bytes(prefix_buf)
+            cls._commit_in_repo(repo_dir, filename, f"Record base entries for {filename}")
         path.write_bytes(buf)
         cls._commit_in_repo(repo_dir, filename, f"Record {filename}")
-        return path, sha, repo_dir, lead_branch
+        return path, sha, repo_dir
 
     @staticmethod
     def _restart_entry(note: tuple[Path, str, str], run: str, cs_sha: str, *,
@@ -2645,11 +2658,9 @@ class D8V3RestartTests(unittest.TestCase):
                 ],
                 filename="SHAKEDOWN-MANIFEST.md",
             )
-            sm_path, sm_sha, sm_repo, sm_branch = sm
+            sm_path, sm_sha, sm_repo = sm
             self.assertEqual(
-                read_sets.load_shakedown_manifest_panels(
-                    sm_path, sm_sha, manifest_repo=sm_repo, lead_branch=sm_branch
-                ),
+                read_sets.load_shakedown_manifest_panels(sm_path, sm_sha, manifest_repo=sm_repo),
                 {"v1": p1_sha, "v2": p2_sha},
             )
 
@@ -3399,7 +3410,7 @@ class D8V3RestartTests(unittest.TestCase):
 
             rep_d0 = [{"namespace": "dose-d8", "set": "dose-0-restart-1",
                        "replaces": "v1/dose-0", "retired": [[2, 32]]}]
-            sm_pre_path, sm_pre_sha, sm_repo, sm_branch = self._build_manifest(
+            sm_pre_path, sm_pre_sha, sm_repo = self._build_manifest(
                 root,
                 [
                     {"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
@@ -3422,25 +3433,29 @@ class D8V3RestartTests(unittest.TestCase):
                 "set": "prep-panel", "declaration_sha256": cs_sha, "units": [32, 64], "reserved": [32, 64],
             }).encode("utf-8"))
 
-            # Missing flags or partial flag pairs fail before publishing.
+            # Missing flags, partial flag pairs, or wrong --lead-branch assertion fail before publishing.
             with self.assertRaisesRegex(read_sets.SetError, "shakedown manifest"):
                 read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir)])
             with self.assertRaisesRegex(read_plans.PlanError, "together"):
                 read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
                                  "--shakedown-manifest", str(sm_pre_path)])
-            with self.assertRaisesRegex(read_plans.PlanError, "together"):
+            with self.assertRaisesRegex(read_plans.PlanError, "requires --manifest-repo"):
                 read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
                                  "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha,
-                                 "--manifest-repo", str(sm_repo)])
-            with self.assertRaisesRegex(read_sets.SetError, "manifest_repo and lead_branch"):
+                                 "--lead-branch", "lead"])
+            with self.assertRaisesRegex(read_sets.SetError, "manifest_repo"):
                 read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
                                  "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha])
+            with self.assertRaisesRegex(read_sets.SetError, "disagrees with manifest entry 1"):
+                read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
+                                 "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha,
+                                 "--manifest-repo", str(sm_repo), "--lead-branch", "other"])
 
-            # Authorized CLI call publishes dose-d8/v2/prep-panel/manifest.json cleanly.
+            # Authorized CLI call works with --manifest-repo alone (lead_branch comes from entry 1).
             rc = read_plans.main([
                 "manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
                 "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha,
-                "--manifest-repo", str(sm_repo), "--lead-branch", sm_branch,
+                "--manifest-repo", str(sm_repo),
             ])
             self.assertEqual(rc, 0)
             pp_man = read_sets.load_manifest(v2_pp_dir)
@@ -3469,7 +3484,7 @@ class D8V3RestartTests(unittest.TestCase):
                 ],
                 filename="SM-CLI-FULL.md",
             )
-            sm_path, sm_sha, sm_repo2, sm_branch2 = sm_full
+            sm_path, sm_sha, sm_repo2 = sm_full
             _, po2 = synth.write_prep_set(root, "dose", "dose", "prep-dose-0", range(32, 64), cs_sha,
                                           reserved=[32, 64], panel_sha256=p2_sha, namespace="dose-d8", run="v2",
                                           shakedown_manifest=sm_full)
@@ -3490,7 +3505,7 @@ class D8V3RestartTests(unittest.TestCase):
             rc2 = read_plans.main([
                 "manifest", "--spec", str(spec_d0), "--set-dir", str(v2_d0_dir),
                 "--shakedown-manifest", str(sm_path), "--shakedown-manifest-sha256", sm_sha,
-                "--manifest-repo", str(sm_repo2), "--lead-branch", sm_branch2,
+                "--manifest-repo", str(sm_repo2), "--lead-branch", "lead",
             ])
             self.assertEqual(rc2, 0)
             d0_man = read_sets.load_manifest(v2_d0_dir)
@@ -3498,8 +3513,11 @@ class D8V3RestartTests(unittest.TestCase):
                              ("dose-0-restart-1", "v1/dose-0", [[2, 32]]))
 
     def test_restart_entry_commit_must_be_on_lead_branch(self):
-        # Addendum: restart entries are written and committed only on the research lead's branch.
-        # Verify with a real temp git repo containing a lead branch and a side branch.
+        # R4 tightened rule (SHAKEDOWN-MANIFEST-FORMAT.md):
+        # 1. Lead branch comes from entry 1 (d0_signed).lead_branch, never caller-chosen.
+        # 2. Restart entry must be introduced by a single-parent non-merge commit on lead's first-parent chain.
+        # 3. No later first-parent commit (merge or not) may change the entry's bytes, and tip must match verbatim.
+        # 4. Refuse in every other case, including missing lead_branch in entry 1 or git unavailable.
         cs_a6, cs_sha = self._countersigned_a6()
         raw_decl = json.loads(DECLARATION.read_text(encoding="utf-8"))
         raw_decl["a6_sha256"] = cs_sha
@@ -3509,6 +3527,58 @@ class D8V3RestartTests(unittest.TestCase):
         raw_decl["reads"]["dose"]["namespace"] = "dose-d8"
         raw_decl["reads"]["dose"]["panel_drafts"] = 32
         raw_decl["reads"]["dose"]["panel_sha256"] = None
+        side_author = "Side agent <side@example.test>"
+
+        # --- Part A: Side-branch commit (both unmerged AND merged into lead) is refused,
+        #             and a caller naming the side branch is refused. ---
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
+            repo = self._init_manifest_repo(root / "records-merge", lead_branch="lead")
+            manifest_path = repo / "SHAKEDOWN-MANIFEST.md"
+            note = self._write_note(repo, "RESTART-NOTE.md")
+            entry1 = {"kind": "d0_signed", "lead_branch": "lead"}
+            entry2 = {"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}
+            manifest_path.write_bytes(self._format_manifest([entry1, entry2]))
+            self._commit_in_repo(repo, "RESTART-NOTE.md", "Add lead restart note")
+            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Entry 1-2: d0_signed and v1 panel")
+
+            rep_aa = [{"namespace": "read-d8-aa", "set": "fixed-restart-1",
+                       "replaces": "v1/fixed", "retired": [[1, 4]]}]
+            entry3 = self._restart_entry(
+                note, "v2", cs_sha, restart_kind="note",
+                panel={"run": "v2", "sha256": "2" * 64}, replacements=rep_aa,
+            )
+            with_restart_bytes = self._format_manifest([entry1, entry2, entry3])
+            with_restart_sha = hashlib.sha256(with_restart_bytes).hexdigest()
+
+            # Side branch adds Entry 3 as a distinct author.
+            self._git(repo, "checkout", "-b", "side")
+            manifest_path.write_bytes(with_restart_bytes)
+            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Side branch adds Entry 3 restart",
+                                 author=side_author)
+
+            # Unmerged side branch: refused without --lead-branch AND refused when caller names 'side'.
+            with self.assertRaisesRegex(read_sets.SetError, "not present at lead branch 'lead' tip"):
+                read_sets.load_shakedown_manifest(manifest_path, with_restart_sha, manifest_repo=repo)
+            with self.assertRaisesRegex(read_sets.SetError, "disagrees with manifest entry 1"):
+                read_sets.load_shakedown_manifest(
+                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="side"
+                )
+
+            # Reviewer probe 1: non-fast-forward merge of side into lead -> STILL REFUSED (merge commit)!
+            self._git(repo, "checkout", "lead")
+            (repo / "LEAD-NOTE.txt").write_bytes(b"lead work\n")
+            self._commit_in_repo(repo, "LEAD-NOTE.txt", "Lead unrelated commit")
+            self._git(repo, "merge", "--no-ff", "side", "-m", "Merge side into lead")
+            with self.assertRaisesRegex(read_sets.SetError, "merge commit"):
+                read_sets.load_shakedown_manifest(manifest_path, with_restart_sha, manifest_repo=repo)
+            with self.assertRaisesRegex(read_sets.SetError, "disagrees with manifest entry 1"):
+                read_sets.load_shakedown_manifest(
+                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="side"
+                )
+
+        # --- Part B: Direct lead commit accepted; later side-branch edit merged into lead is refused;
+        #             local JSON reindent is refused; later non-modifying lead commit stays accepted. ---
         with self._temp_dir() as tmp:
             root = synth.assert_test_temp_root(tmp)
             repo = self._init_manifest_repo(root / "records", lead_branch="lead")
@@ -3518,15 +3588,13 @@ class D8V3RestartTests(unittest.TestCase):
             decl_path = root / "decl.json"
             decl_path.write_bytes(read_plans.serialize(raw_decl).encode("utf-8"))
 
-            # Commit Entry 1 (panel) and the signed restart note on the lead branch.
             note = self._write_note(repo, "RESTART-NOTE.md")
-            entry1 = {"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}
-            base_bytes = self._format_manifest([entry1])
-            manifest_path.write_bytes(base_bytes)
+            entry1 = {"kind": "d0_signed", "lead_branch": "lead"}
+            entry2 = {"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}
+            manifest_path.write_bytes(self._format_manifest([entry1, entry2]))
             self._commit_in_repo(repo, "RESTART-NOTE.md", "Add lead restart note")
-            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Entry 1: v1 panel")
+            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Entry 1-2: d0_signed and v1 panel")
 
-            # Prepare interrupted read-d8-aa v1/fixed and candidate v2/fixed-restart-1 plans on disk.
             p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
             synth.write_plan_set(
                 root, "aa", "fixed", p1, cs_sha,
@@ -3538,114 +3606,143 @@ class D8V3RestartTests(unittest.TestCase):
             recs2 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in p2}
             rep_aa = [{"namespace": "read-d8-aa", "set": "fixed-restart-1",
                        "replaces": "v1/fixed", "retired": [[1, 4]]}]
-            entry2 = self._restart_entry(note, "v2", cs_sha, restart_kind="note", replacements=rep_aa)
-            with_restart_bytes = self._format_manifest([entry1, entry2])
+            entry3 = self._restart_entry(
+                note, "v2", cs_sha, restart_kind="note",
+                panel={"run": "v2", "sha256": "2" * 64}, replacements=rep_aa,
+            )
+            with_restart_bytes = self._format_manifest([entry1, entry2, entry3])
             with_restart_sha = hashlib.sha256(with_restart_bytes).hexdigest()
 
-            # 1) Side branch commits Entry 2 (restart): valid note, signature, and sha pin, yet NOT on lead -> REFUSED.
-            self._git(repo, "checkout", "-b", "side")
+            # Uncommitted Entry 3 on lead -> refused.
             manifest_path.write_bytes(with_restart_bytes)
-            side_commit = self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Side branch adds Entry 2 restart")
-            sm_side = (manifest_path, with_restart_sha, repo, "lead")
-            with self.assertRaisesRegex(read_sets.SetError, "not on lead branch"):
-                read_sets.load_shakedown_manifest(
-                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
-                )
-            with self.assertRaisesRegex(read_sets.SetError, "not on lead branch"):
-                synth.write_plan_set(
-                    root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
-                    units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[[1, 4]],
-                    namespace="read-d8-aa", run="v2", shakedown_manifest=sm_side,
-                )
+            with self.assertRaisesRegex(read_sets.SetError, "not present at lead branch 'lead' tip"):
+                read_sets.load_shakedown_manifest(manifest_path, with_restart_sha, manifest_repo=repo)
 
-            # 2) Back on lead: uncommitted Entry 2 (restart) in working tree -> commit not found -> REFUSED.
-            self._git(repo, "checkout", "lead")
-            manifest_path.write_bytes(with_restart_bytes)
-            with self.assertRaisesRegex(read_sets.SetError, "not found"):
-                read_sets.load_shakedown_manifest(
-                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
-                )
-
-            # 3) Missing manifest_repo / lead_branch on a restart entry -> REFUSED.
-            with self.assertRaisesRegex(read_sets.SetError, "manifest_repo and lead_branch"):
-                read_sets.load_shakedown_manifest(manifest_path, with_restart_sha)
-
-            # 4) Commit Entry 2 (restart) on lead branch -> PASSES across Python API, read_plans CLI, and readers CLI!
-            lead_commit = self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Lead adds Entry 2 restart")
-            self.assertNotEqual(lead_commit, side_commit)
-            loaded = read_sets.load_shakedown_manifest(
+            # Direct single-parent lead commit -> ACCEPTED across API and readers.main (with or without --lead-branch).
+            lead_commit = self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Lead adds Entry 3 restart")
+            loaded = read_sets.load_shakedown_manifest(manifest_path, with_restart_sha, manifest_repo=repo)
+            self.assertEqual(loaded["restarts"][("read-d8-aa", "v2")]["commit"], lead_commit)
+            loaded_assert = read_sets.load_shakedown_manifest(
                 manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
             )
-            self.assertEqual(loaded["restarts"][("read-d8-aa", "v2")]["commit"], lead_commit)
+            self.assertEqual(loaded_assert["restarts"][("read-d8-aa", "v2")]["commit"], lead_commit)
 
-            sm_lead = (manifest_path, with_restart_sha, repo, "lead")
             aa_v2 = synth.write_plan_set(
                 root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
                 units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[[1, 4]],
-                namespace="read-d8-aa", run="v2", shakedown_manifest=sm_lead,
+                namespace="read-d8-aa", run="v2",
+                shakedown_manifest=(manifest_path, with_restart_sha, repo),
             )
             out_report = root / "aa-v2-report.json"
             rc = readers.main([
                 "--declaration", str(decl_path), "--read", "aa", "--look", "1",
                 "--sets", str(aa_v2), "--a6-file", str(a6_path),
                 "--shakedown-manifest", str(manifest_path), "--shakedown-manifest-sha256", with_restart_sha,
-                "--manifest-repo", str(repo), "--lead-branch", "lead",
-                "--out", str(out_report),
+                "--manifest-repo", str(repo), "--out", str(out_report),
             ])
             self.assertEqual(rc, 0)
             self.assertEqual(json.loads(out_report.read_text(encoding="utf-8"))["verdict"], "symmetric")
 
-            # CLI flag validation on readers.main: partial flags and side-branch ref are refused.
-            with self.assertRaisesRegex(readers.ReadError, "together"):
+            # Caller naming a different branch on readers.main is refused.
+            with self.assertRaisesRegex(read_sets.SetError, "disagrees with manifest entry 1"):
                 readers.main([
                     "--declaration", str(decl_path), "--read", "aa", "--look", "1",
                     "--sets", str(aa_v2), "--a6-file", str(a6_path),
                     "--shakedown-manifest", str(manifest_path), "--shakedown-manifest-sha256", with_restart_sha,
-                    "--manifest-repo", str(repo),
+                    "--manifest-repo", str(repo), "--lead-branch", "side",
                 ])
-            with self.assertRaisesRegex(read_sets.SetError, "not found"):
+
+            # Finding 3 probe: local JSON reindent of committed Entry 3 (with recomputed sha pin) is REFUSED.
+            reindented_bytes = with_restart_bytes.replace(b'  "run": "v2"', b'    "run": "v2"')
+            self.assertNotEqual(reindented_bytes, with_restart_bytes)
+            manifest_path.write_bytes(reindented_bytes)
+            with self.assertRaisesRegex(read_sets.SetError, "bytes at lead branch 'lead' tip differ"):
                 read_sets.load_shakedown_manifest(
-                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="no-such-branch"
+                    manifest_path, hashlib.sha256(reindented_bytes).hexdigest(), manifest_repo=repo
+                )
+            manifest_path.write_bytes(with_restart_bytes)
+
+            # Later lead commit appending Entry 4 without changing Entry 3's bytes stays ACCEPTED.
+            entry4 = {"kind": "fixtures", "note": "later fixture log"}
+            with_e4_bytes = self._format_manifest([entry1, entry2, entry3, entry4])
+            with_e4_sha = hashlib.sha256(with_e4_bytes).hexdigest()
+            manifest_path.write_bytes(with_e4_bytes)
+            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Lead appends Entry 4 fixtures")
+            loaded_e4 = read_sets.load_shakedown_manifest(manifest_path, with_e4_sha, manifest_repo=repo)
+            self.assertEqual(loaded_e4["restarts"][("read-d8-aa", "v2")]["commit"], lead_commit)
+
+            # Reviewer probe 2: side-branch edit to panel digest merged into lead after valid lead commit -> REFUSED!
+            self._git(repo, "checkout", "-b", "side-edit", "lead")
+            edited_entry3 = self._restart_entry(
+                note, "v2", cs_sha, restart_kind="note",
+                panel={"run": "v2", "sha256": "3" * 64}, replacements=rep_aa,
+            )
+            edited_bytes = self._format_manifest([entry1, entry2, edited_entry3, entry4])
+            edited_sha = hashlib.sha256(edited_bytes).hexdigest()
+            manifest_path.write_bytes(edited_bytes)
+            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Side branch edits Entry 3 panel digest",
+                                 author=side_author)
+            self._git(repo, "checkout", "lead")
+            (repo / "LEAD-OTHER.txt").write_bytes(b"other lead commit\n")
+            self._commit_in_repo(repo, "LEAD-OTHER.txt", "Lead unrelated commit before merge")
+            self._git(repo, "merge", "--no-ff", "side-edit", "-m", "Merge side edit into lead")
+            with self.assertRaisesRegex(read_sets.SetError, "changed entry bytes"):
+                read_sets.load_shakedown_manifest(manifest_path, edited_sha, manifest_repo=repo)
+            # Old bytes at pre-edit sha also fail because tip no longer equals old bytes.
+            with self.assertRaisesRegex(read_sets.SetError, "changed entry bytes|differ"):
+                read_sets.load_shakedown_manifest(manifest_path, edited_sha, manifest_repo=repo)
+
+        # --- Part C: Missing lead_branch in entry 1, non-d0_signed entry 1, outside repo, and git unavailable. ---
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
+            repo = self._init_manifest_repo(root / "records-neg", lead_branch="lead")
+            note = self._write_note(repo, "RESTART-NOTE.md")
+            self._commit_in_repo(repo, "RESTART-NOTE.md", "Add lead restart note")
+            rep_aa = [{"namespace": "read-d8-aa", "set": "fixed-restart-1",
+                       "replaces": "v1/fixed", "retired": [[1, 4]]}]
+            r_entry = self._restart_entry(note, "v2", cs_sha, restart_kind="note", replacements=rep_aa)
+
+            # Missing lead_branch in entry 1 (d0_signed) -> REFUSED.
+            m_no_lb = repo / "NO-LB.md"
+            m_no_lb.write_bytes(self._format_manifest([{"kind": "d0_signed"}]))
+            self._commit_in_repo(repo, "NO-LB.md", "Base without lead_branch")
+            no_lb_bytes = self._format_manifest([{"kind": "d0_signed"}, r_entry])
+            m_no_lb.write_bytes(no_lb_bytes)
+            self._commit_in_repo(repo, "NO-LB.md", "Restart without lead_branch")
+            with self.assertRaisesRegex(read_sets.SetError, "lead_branch"):
+                read_sets.load_shakedown_manifest(
+                    m_no_lb, hashlib.sha256(no_lb_bytes).hexdigest(), manifest_repo=repo
                 )
 
-            # 5) Manifest file outside --manifest-repo -> REFUSED.
-            outside = root / "OUTSIDE-MANIFEST.md"
-            outside.write_bytes(with_restart_bytes)
+            # Entry 1 is panel (not d0_signed) with a restart entry -> REFUSED.
+            m_no_d0 = repo / "NO-D0.md"
+            m_no_d0.write_bytes(self._format_manifest([{"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}]))
+            self._commit_in_repo(repo, "NO-D0.md", "Base panel only")
+            no_d0_bytes = self._format_manifest([{"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}, r_entry])
+            m_no_d0.write_bytes(no_d0_bytes)
+            self._commit_in_repo(repo, "NO-D0.md", "Restart without d0_signed")
+            with self.assertRaisesRegex(read_sets.SetError, "d0_signed"):
+                read_sets.load_shakedown_manifest(
+                    m_no_d0, hashlib.sha256(no_d0_bytes).hexdigest(), manifest_repo=repo
+                )
+
+            # Valid lead manifest: outside repo and git unavailable both REFUSED.
+            m_ok = repo / "OK.md"
+            m_ok.write_bytes(self._format_manifest([{"kind": "d0_signed", "lead_branch": "lead"}]))
+            self._commit_in_repo(repo, "OK.md", "Base d0_signed")
+            ok_bytes = self._format_manifest([{"kind": "d0_signed", "lead_branch": "lead"}, r_entry])
+            ok_sha = hashlib.sha256(ok_bytes).hexdigest()
+            m_ok.write_bytes(ok_bytes)
+            self._commit_in_repo(repo, "OK.md", "Lead restart")
+            read_sets.load_shakedown_manifest(m_ok, ok_sha, manifest_repo=repo)
+
+            outside = root / "OUTSIDE.md"
+            outside.write_bytes(ok_bytes)
             with self.assertRaisesRegex(read_sets.SetError, "outside"):
-                read_sets.load_shakedown_manifest(
-                    outside, with_restart_sha, manifest_repo=repo, lead_branch="lead"
-                )
-
-            # 6) git unavailable -> REFUSED.
+                read_sets.load_shakedown_manifest(outside, ok_sha, manifest_repo=repo)
             with mock.patch.object(read_sets.subprocess, "run", side_effect=FileNotFoundError("git")):
                 with self.assertRaisesRegex(read_sets.SetError, "git is unavailable"):
-                    read_sets.load_shakedown_manifest(
-                        manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
-                    )
-
-            # 7) Post-commit body tamper on a side branch (heading unchanged from lead's commit!) -> REFUSED.
-            self._git(repo, "checkout", "-b", "tamper", "lead")
-            tampered_entry2 = self._restart_entry(
-                note, "v2", cs_sha, restart_kind="amendment", replacements=rep_aa
-            )
-            tampered_bytes = self._format_manifest([entry1, tampered_entry2])
-            tampered_sha = hashlib.sha256(tampered_bytes).hexdigest()
-            manifest_path.write_bytes(tampered_bytes)
-            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Tamper Entry 2 body on side branch")
-            with self.assertRaisesRegex(read_sets.SetError, "differs from committed entry on lead branch"):
-                read_sets.load_shakedown_manifest(
-                    manifest_path, tampered_sha, manifest_repo=repo, lead_branch="lead"
-                )
-
-            # 8) Switching readers.main onto the side branch commit fails too.
-            self._git(repo, "checkout", "side")
-            with self.assertRaisesRegex(read_sets.SetError, "not on lead branch"):
-                readers.main([
-                    "--declaration", str(decl_path), "--read", "aa", "--look", "1",
-                    "--sets", str(aa_v2), "--a6-file", str(a6_path),
-                    "--shakedown-manifest", str(manifest_path), "--shakedown-manifest-sha256", with_restart_sha,
-                    "--manifest-repo", str(repo), "--lead-branch", "lead",
-                ])
+                    read_sets.load_shakedown_manifest(m_ok, ok_sha, manifest_repo=repo)
 
 
 class UniformPodRecordTests(unittest.TestCase):

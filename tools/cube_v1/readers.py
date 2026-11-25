@@ -1566,7 +1566,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-repo", type=Path,
                         help="git repository containing --shakedown-manifest for restart lead-branch check")
     parser.add_argument("--lead-branch",
-                        help="research lead branch in --manifest-repo required for restart entries")
+                        help="optional assertion that must equal entry 1 (d0_signed) lead_branch")
     parser.add_argument("--pool", type=Path)
     parser.add_argument("--constants", type=Path)
     parser.add_argument("--card-index", type=Path)
@@ -1575,10 +1575,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if (args.shakedown_manifest is None) != (args.shakedown_manifest_sha256 is None):
         raise ReadError("--shakedown-manifest and --shakedown-manifest-sha256 must be given together")
-    if (args.manifest_repo is None) != (args.lead_branch is None):
-        raise ReadError("--manifest-repo and --lead-branch must be given together")
     if args.manifest_repo is not None and args.shakedown_manifest is None:
-        raise ReadError("--manifest-repo and --lead-branch require --shakedown-manifest")
+        raise ReadError("--manifest-repo requires --shakedown-manifest")
+    if args.lead_branch is not None and args.manifest_repo is None:
+        raise ReadError("--lead-branch requires --manifest-repo")
     sm = (
         (args.shakedown_manifest, args.shakedown_manifest_sha256, args.manifest_repo, args.lead_branch)
         if args.shakedown_manifest else None

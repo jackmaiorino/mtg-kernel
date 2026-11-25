@@ -718,7 +718,11 @@ def _is_d8_completed_set(set_dir: Path, man: dict[str, Any]) -> bool:
     return "completed" in reason
 
 
-ShakedownManifestSpec = tuple[Path | bytes, str] | tuple[Path | bytes, str, Path | None, str | None]
+ShakedownManifestSpec = (
+    tuple[Path | bytes, str]
+    | tuple[Path | bytes, str, Path | None]
+    | tuple[Path | bytes, str, Path | None, str | None]
+)
 
 
 def _unpack_shakedown_manifest(
@@ -729,16 +733,21 @@ def _unpack_shakedown_manifest(
     if len(shakedown_manifest) == 2:
         manifest, expected_sha = shakedown_manifest
         repo, branch = manifest_repo, lead_branch
+    elif len(shakedown_manifest) == 3:
+        manifest, expected_sha, sm_repo = shakedown_manifest
+        repo = manifest_repo if manifest_repo is not None else sm_repo
+        branch = lead_branch
     elif len(shakedown_manifest) == 4:
         manifest, expected_sha, sm_repo, sm_branch = shakedown_manifest
         repo = manifest_repo if manifest_repo is not None else sm_repo
         branch = lead_branch if lead_branch is not None else sm_branch
     else:
         raise SetError(
-            "shakedown_manifest must be (manifest, sha256) or (manifest, sha256, manifest_repo, lead_branch)"
+            "shakedown_manifest must be (manifest, sha256), (manifest, sha256, manifest_repo), "
+            "or (manifest, sha256, manifest_repo, lead_branch)"
         )
-    if (repo is None) != (branch is None):
-        raise SetError("manifest_repo and lead_branch must be given together")
+    if branch is not None and repo is None:
+        raise SetError("lead_branch assertion requires manifest_repo")
     return manifest, expected_sha, repo, branch
 
 
@@ -904,11 +913,12 @@ MANIFEST_FENCE_OPEN_RE = re.compile(r"^```([^\r\n]*)\r?$")
 MANIFEST_FENCE_CLOSE_RE = re.compile(r"^```[ \t]*\r?$")
 
 
-def _parse_shakedown_manifest_entries(raw: bytes) -> list[dict[str, Any]]:
-    """Parse structured `## Entry <seq>: <kind>` fenced-json blocks per SHAKEDOWN-MANIFEST-FORMAT.md.
-    Prose, non-Entry headings and proposals are commentary and are never parsed as entries.
-    Validates seq continuity (1..k without gaps/duplicates), heading/block kind agreement,
-    time_et format, files map, and exact prefix_sha256 over raw manifest bytes before each heading."""
+def _parse_shakedown_manifest_entries_with_bytes(raw: bytes) -> list[tuple[dict[str, Any], bytes]]:
+    """Parse structured `## Entry <seq>: <kind>` fenced-json blocks per SHAKEDOWN-MANIFEST-FORMAT.md,
+    returning `(entry_dict, exact_entry_bytes)` pairs. Prose, non-Entry headings and proposals are
+    commentary and are never parsed as entries. Validates seq continuity (1..k without gaps/duplicates),
+    heading/block kind agreement, time_et format, files map, and exact prefix_sha256 over raw manifest
+    bytes before each heading."""
     try:
         raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -938,7 +948,7 @@ def _parse_shakedown_manifest_entries(raw: bytes) -> list[dict[str, Any]]:
     if in_fence:
         raise SetError("shakedown manifest contains an unclosed fenced code block")
 
-    parsed: list[dict[str, Any]] = []
+    parsed: list[tuple[dict[str, Any], bytes]] = []
     for h_pos, (line_idx, byte_off, h_line) in enumerate(headings):
         if not (h_line == "## Entry" or h_line.startswith("## Entry ") or h_line.startswith("## Entry:")):
             # Non-entry heading (commentary, proposal, notes): never parsed as authorization.
@@ -950,6 +960,8 @@ def _parse_shakedown_manifest_entries(raw: bytes) -> list[dict[str, Any]]:
         heading_kind = hm.group(2)
 
         next_line_idx = headings[h_pos + 1][0] if h_pos + 1 < len(headings) else len(raw_lines)
+        next_byte_off = line_offsets[next_line_idx] if next_line_idx < len(raw_lines) else len(raw)
+        entry_bytes = raw[byte_off:next_byte_off].rstrip(b"\r\n")
         body_lines = [raw_lines[i].decode("utf-8") for i in range(line_idx + 1, next_line_idx)]
         json_blocks: list[str] = []
         block_fence_open = False
@@ -1019,17 +1031,37 @@ def _parse_shakedown_manifest_entries(raw: bytes) -> list[dict[str, Any]]:
                 raise SetError(
                     f"shakedown manifest entry {seq} has invalid files entry {fpath!r}: {fsha!r}"
                 )
-        parsed.append(entry)
+        parsed.append((entry, entry_bytes))
 
     if not parsed:
         raise SetError("shakedown manifest contains no structured '## Entry <seq>: <kind>' entries")
     return parsed
 
 
-def _run_git(repo: Path, args: list[str], *, text: bool = True) -> subprocess.CompletedProcess[Any]:
+def _parse_shakedown_manifest_entries(raw: bytes) -> list[dict[str, Any]]:
+    return [entry for entry, _ in _parse_shakedown_manifest_entries_with_bytes(raw)]
+
+
+def _valid_branch_name(name: Any) -> bool:
+    return (
+        isinstance(name, str)
+        and bool(name)
+        and not name.startswith("-")
+        and not any(c.isspace() or ord(c) < 0x20 for c in name)
+    )
+
+
+def _run_git(
+    repo: Path,
+    args: list[str],
+    *,
+    text: bool = True,
+    input_data: str | bytes | None = None,
+) -> subprocess.CompletedProcess[Any]:
     try:
         return subprocess.run(
             ["git", "-C", str(repo), *args],
+            input=input_data,
             capture_output=True,
             text=text,
             encoding="utf-8" if text else None,
@@ -1043,16 +1075,19 @@ def _run_git(repo: Path, args: list[str], *, text: bool = True) -> subprocess.Co
 def _verify_restart_commit_on_lead_branch(
     manifest_path: Path,
     seq: int,
-    entry: dict[str, Any],
+    entry_bytes: bytes,
+    entry1_bytes: bytes,
     manifest_repo: Path,
     lead_branch: str,
 ) -> str:
-    """Verify per SHAKEDOWN-MANIFEST-FORMAT.md that the commit introducing `## Entry <seq>: restart`
-    in `manifest_path` exists in `manifest_repo`, is an ancestor of `lead_branch`, and that the
-    committed entry on `lead_branch` matches `entry` verbatim."""
-    if not isinstance(lead_branch, str) or not lead_branch or lead_branch.startswith("-") or any(
-            c.isspace() for c in lead_branch):
-        raise SetError(f"shakedown manifest restart entry {seq}: invalid lead branch name {lead_branch!r}")
+    """Verify per SHAKEDOWN-MANIFEST-FORMAT.md (r4 rule) that:
+    1. `lead_branch` (from entry 1 `d0_signed`, never caller-chosen) resolves in `manifest_repo`.
+    2. Entry `seq` was introduced by a non-merge commit with exactly one parent on `lead_branch`'s
+       first-parent chain (`git rev-list --first-parent --parents <lead_ref>`).
+    3. No later commit on `lead_branch`'s first-parent chain (merge or non-merge) changed entry
+       `seq`'s exact bytes, and the branch tip's entry `seq` (and entry 1) match the verified bytes."""
+    if not _valid_branch_name(lead_branch):
+        raise SetError(f"shakedown manifest restart entry {seq}: invalid lead_branch {lead_branch!r}")
     repo = Path(manifest_repo)
     if not repo.is_dir():
         raise SetError(f"shakedown manifest restart entry {seq}: manifest_repo {manifest_repo} does not exist")
@@ -1084,40 +1119,121 @@ def _verify_restart_commit_on_lead_branch(
             f"shakedown manifest restart entry {seq}: lead branch {lead_branch!r} not found in {repo_root}"
         )
 
-    heading = f"## Entry {seq}: restart"
-    log_res = _run_git(repo_root, ["log", "--format=%H", f"-S{heading}", "--", rel_path])
-    if log_res.returncode != 0:
-        err = (log_res.stderr or "").strip()
-        raise SetError(f"shakedown manifest restart entry {seq}: git log failed for {rel_path}: {err}")
-    commits = [ln.strip() for ln in log_res.stdout.splitlines() if ln.strip()]
-    if not commits:
-        raise SetError(
-            f"shakedown manifest restart entry {seq}: commit adding {heading!r} not found in git history of {rel_path}"
-        )
-    commit = commits[0]
+    rev_res = _run_git(repo_root, ["rev-list", "--first-parent", "--parents", lead_ref])
+    if rev_res.returncode != 0:
+        err = (rev_res.stderr or "").strip()
+        raise SetError(f"shakedown manifest restart entry {seq}: git rev-list failed: {err}")
+    chain_tip_to_root: list[tuple[str, list[str]]] = []
+    for ln in rev_res.stdout.splitlines():
+        parts = ln.strip().split()
+        if parts:
+            chain_tip_to_root.append((parts[0], parts[1:]))
+    if not chain_tip_to_root:
+        raise SetError(f"shakedown manifest restart entry {seq}: lead branch {lead_branch!r} has no commits")
 
-    anc = _run_git(repo_root, ["merge-base", "--is-ancestor", commit, lead_ref])
-    if anc.returncode == 1:
+    # Resolve the blob OID of rel_path at every commit on the first-parent chain in one git call.
+    batch_in = "".join(f"{c}:{rel_path}\n" for c, _ in chain_tip_to_root)
+    batch_res = _run_git(
+        repo_root, ["cat-file", "--batch-check=%(objecttype) %(objectname)"], input_data=batch_in
+    )
+    if batch_res.returncode != 0:
+        err = (batch_res.stderr or "").strip()
+        raise SetError(f"shakedown manifest restart entry {seq}: git cat-file --batch-check failed: {err}")
+    batch_lines = batch_res.stdout.splitlines()
+    if len(batch_lines) != len(chain_tip_to_root):
         raise SetError(
-            f"shakedown manifest restart entry {seq}: commit {commit} is not on lead branch {lead_branch!r}"
+            f"shakedown manifest restart entry {seq}: unexpected git cat-file --batch-check output length"
         )
-    if anc.returncode != 0:
-        err = (anc.stderr or "").strip()
-        raise SetError(f"shakedown manifest restart entry {seq}: git merge-base failed: {err}")
+    blob_oids_tip_to_root: list[str | None] = []
+    for bln in batch_lines:
+        if bln.startswith("blob "):
+            blob_oids_tip_to_root.append(bln.split()[1])
+        else:
+            blob_oids_tip_to_root.append(None)
 
-    blob = _run_git(repo_root, ["cat-file", "blob", f"{lead_ref}:{rel_path}"], text=False)
-    if blob.returncode != 0:
+    blob_entry_cache: dict[str, dict[int, bytes] | None] = {}
+
+    def entry_bytes_by_seq(blob_oid: str | None) -> dict[int, bytes] | None:
+        if blob_oid is None:
+            return None
+        if blob_oid in blob_entry_cache:
+            return blob_entry_cache[blob_oid]
+        blob = _run_git(repo_root, ["cat-file", "blob", blob_oid], text=False)
+        if blob.returncode != 0:
+            raise SetError(f"shakedown manifest restart entry {seq}: git cat-file blob {blob_oid} failed")
+        try:
+            parsed_blob = _parse_shakedown_manifest_entries_with_bytes(blob.stdout)
+        except SetError:
+            # Older pre-format manifest blob: treat as malformed if it mentions the entry heading.
+            if f"## Entry {seq}: restart".encode("utf-8") in blob.stdout:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq}: malformed manifest blob {blob_oid} on "
+                    f"lead branch {lead_branch!r} mentions entry {seq}"
+                )
+            blob_entry_cache[blob_oid] = None
+            return None
+        by_seq = {e["seq"]: eb for e, eb in parsed_blob}
+        blob_entry_cache[blob_oid] = by_seq
+        return by_seq
+
+    # Check tip first: both entry 1 and entry seq must match the verified bytes verbatim.
+    tip_entries = entry_bytes_by_seq(blob_oids_tip_to_root[0])
+    if tip_entries is None or seq not in tip_entries:
         raise SetError(
-            f"shakedown manifest restart entry {seq}: {rel_path} not found on lead branch {lead_branch!r}"
+            f"shakedown manifest restart entry {seq}: entry not present at lead branch {lead_branch!r} tip"
         )
-    lead_entries = _parse_shakedown_manifest_entries(blob.stdout)
-    lead_entry = next((e for e in lead_entries if e["seq"] == seq), None)
-    if lead_entry is None or lead_entry != entry:
+    if tip_entries[seq] != entry_bytes:
         raise SetError(
-            f"shakedown manifest restart entry {seq}: entry content differs from committed entry on "
-            f"lead branch {lead_branch!r}"
+            f"shakedown manifest restart entry {seq}: entry bytes at lead branch {lead_branch!r} tip "
+            "differ from verified entry"
         )
-    return commit
+    if tip_entries.get(1) != entry1_bytes:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: entry 1 bytes at lead branch {lead_branch!r} tip "
+            "differ from verified entry 1"
+        )
+
+    # Walk chronologically (root -> tip) along lead_branch's first-parent chain.
+    chain_chron = list(reversed(list(zip(chain_tip_to_root, blob_oids_tip_to_root))))
+    intro_commit: str | None = None
+    intro_parents: list[str] | None = None
+    prev_oid: str | None = None
+    for (commit, parents), oid in chain_chron:
+        if intro_commit is None:
+            entries_here = entry_bytes_by_seq(oid)
+            if entries_here is not None and seq in entries_here:
+                intro_commit = commit
+                intro_parents = parents
+                if len(intro_parents) != 1:
+                    kind_desc = "merge commit" if len(intro_parents) >= 2 else "root commit"
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq}: introduced on lead branch {lead_branch!r} "
+                        f"by {kind_desc} {intro_commit} (must be a single-parent non-merge commit on the "
+                        "first-parent chain)"
+                    )
+                if entries_here[seq] != entry_bytes:
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq}: later commit on lead branch {lead_branch!r} "
+                        f"first-parent chain changed entry bytes after introducing commit {intro_commit}"
+                    )
+                prev_oid = oid
+        else:
+            if oid == prev_oid:
+                continue
+            entries_here = entry_bytes_by_seq(oid)
+            if entries_here is None or seq not in entries_here or entries_here[seq] != entry_bytes:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq}: later first-parent commit {commit} on "
+                    f"lead branch {lead_branch!r} changed entry bytes"
+                )
+            prev_oid = oid
+
+    if intro_commit is None:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: commit introducing entry not found on "
+            f"lead branch {lead_branch!r} first-parent chain"
+        )
+    return intro_commit
 
 
 def load_shakedown_manifest(
@@ -1127,14 +1243,17 @@ def load_shakedown_manifest(
     manifest_repo: Path | None = None,
     lead_branch: str | None = None,
 ) -> dict[str, Any]:
-    """Q2.4 & R3: Verify the shakedown manifest (D0.3b, SHAKEDOWN-MANIFEST-FORMAT.md) against its
+    """Q2.4, R3 & R4: Verify the shakedown manifest (D0.3b, SHAKEDOWN-MANIFEST-FORMAT.md) against its
     pinned sha256 BEFORE trusting any panel digest or restart authorization inside it. Only structured
     fenced json blocks under `## Entry <seq>: <kind>` are read; prose never counts as authorization.
-    Every `restart` entry also verifies that the commit adding it is on the research lead's branch."""
+    Every `restart` entry also verifies via `manifest_repo` that it was introduced by a single-parent
+    non-merge commit on the first-parent chain of entry 1 (`d0_signed`)'s `lead_branch`, with no later
+    first-parent commit modifying its bytes. `lead_branch`, if passed by the caller, is checked only as
+    an assertion against entry 1's `lead_branch`."""
     if not read_plans._is_sha(expected_sha256):
         raise SetError("shakedown manifest D0.3b pin must be a 64-char hex sha256")
-    if (manifest_repo is None) != (lead_branch is None):
-        raise SetError("manifest_repo and lead_branch must be given together")
+    if lead_branch is not None and manifest_repo is None:
+        raise SetError("lead_branch assertion requires manifest_repo")
     manifest_path: Path | None
     manifest_dir: Path | None
     if isinstance(manifest, (bytes, bytearray)):
@@ -1151,7 +1270,26 @@ def load_shakedown_manifest(
             f"shakedown manifest sha256 {actual_sha} differs from D0.3b pin {expected_sha256}"
         )
 
-    entries = _parse_shakedown_manifest_entries(raw)
+    entries_with_bytes = _parse_shakedown_manifest_entries_with_bytes(raw)
+    entries = [e for e, _ in entries_with_bytes]
+    entry1, entry1_bytes = entries_with_bytes[0]
+    manifest_lead_branch: str | None = None
+    if entry1["kind"] == "d0_signed":
+        lb = entry1.get("lead_branch")
+        if not _valid_branch_name(lb):
+            raise SetError(
+                "shakedown manifest entry 1 (d0_signed) must carry a valid non-empty 'lead_branch' string"
+            )
+        manifest_lead_branch = lb
+        if lead_branch is not None and lead_branch != manifest_lead_branch:
+            raise SetError(
+                f"caller lead_branch {lead_branch!r} disagrees with manifest entry 1 lead_branch "
+                f"{manifest_lead_branch!r}"
+            )
+    elif lead_branch is not None:
+        raise SetError(
+            "caller passed lead_branch assertion, but shakedown manifest entry 1 is not 'd0_signed'"
+        )
     panels: dict[str, str] = {}
     restarts: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -1166,7 +1304,7 @@ def load_shakedown_manifest(
             raise SetError(f"shakedown manifest records conflicting panel digests for dose-d8 {run}")
         panels[run] = digest
 
-    for entry in entries:
+    for entry, entry_bytes in entries_with_bytes:
         seq = entry["seq"]
         kind = entry["kind"]
         if kind == "panel":
@@ -1288,17 +1426,22 @@ def load_shakedown_manifest(
                     f"shakedown manifest restart entry {seq} must authorize at least one namespace "
                     "via panel, replacements or namespaces"
                 )
-            if manifest_repo is None or lead_branch is None:
+            if manifest_lead_branch is None:
                 raise SetError(
-                    f"shakedown manifest restart entry {seq} requires manifest_repo and lead_branch "
-                    "to verify the commit is on the lead's branch"
+                    f"shakedown manifest restart entry {seq} requires entry 1 (d0_signed) to declare "
+                    "a valid 'lead_branch'"
+                )
+            if manifest_repo is None:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} requires manifest_repo to verify the "
+                    f"commit on lead branch {manifest_lead_branch!r}"
                 )
             if manifest_path is None:
                 raise SetError(
                     f"shakedown manifest restart entry {seq} requires a manifest file path inside manifest_repo"
                 )
             commit_sha = _verify_restart_commit_on_lead_branch(
-                manifest_path, seq, entry, manifest_repo, lead_branch
+                manifest_path, seq, entry_bytes, entry1_bytes, manifest_repo, manifest_lead_branch
             )
             for ns in sorted(auth_namespaces):
                 key = (ns, run)
