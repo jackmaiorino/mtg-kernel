@@ -49,10 +49,13 @@ pub enum Role<'a> {
     /// Seven reference and seven matched sibling outcomes in chair perspective.
     Learning { scores: [[i8; 7]; 2] },
     Older {
-        picker_pin: &'a str,
+        /// None for the uniform picker in the builder-only phase.
+        picker_pin: Option<&'a str>,
         builder_pin: &'a str,
     },
 }
+/// D6 supplies the pre-action pick states in draft order, the final pool
+/// in pick order and the recorded builds (sibling a before sibling b).
 pub struct Chair<'a> {
     pub role: Role<'a>,
     pub picks: &'a [(PickStateV1, Row)],
@@ -182,6 +185,10 @@ fn policy_term(s: &SampleV1, c: f64) -> (f64, Vec<f32>) {
     )
 }
 
+fn build_coefficient(advantage: f64, seats: usize) -> f64 {
+    -advantage / (2 * seats) as f64
+}
+
 fn sibling_advantages(a: f64, b: f64) -> [f64; 2] {
     [a - b, b - a]
 }
@@ -260,7 +267,7 @@ pub fn update(
                 };
                 (
                     if phase == Phase::Joint {
-                        pinned(picker_pin)?
+                        pinned(picker_pin.ok_or("missing older picker pin")?)?
                     } else {
                         &*model
                     },

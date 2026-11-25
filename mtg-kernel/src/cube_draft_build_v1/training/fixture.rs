@@ -38,10 +38,14 @@ fn forward(theta: f32) -> [f32; 2] {
     })
 }
 fn outcome(samples: [&SampleV1; 2], returns: [f64; 2], baseline: f32, denom: usize) -> (f64, f64) {
+    let coefficients = returns.map(|r| pick_credit(r, baseline, denom).0);
+    weighted_outcome(samples, coefficients)
+}
+
+fn weighted_outcome(samples: [&SampleV1; 2], coefficients: [f64; 2]) -> (f64, f64) {
     let mut weight_grad = [0.; 2];
     let mut loss = 0.;
-    for (s, target) in samples.into_iter().zip(returns) {
-        let (c, _, _) = pick_credit(target, baseline, denom);
+    for (s, c) in samples.into_iter().zip(coefficients) {
         let (term, grad) = policy_term(s, c);
         loss += term;
         for (a, d) in grad.into_iter().enumerate() {
@@ -189,15 +193,18 @@ mod tests {
             for b in 0..2 {
                 for c in 0..2 {
                     for d in 0..2 {
-                        let ra = payoff(a, b)[0];
-                        let rb = payoff(c, d)[0];
+                        let reference = payoff(a, b);
+                        let chair0 = sibling_advantages(reference[0], payoff(c, b)[0])
+                            .map(|adv| build_coefficient(adv, 2));
+                        let chair1 = sibling_advantages(reference[1], payoff(a, d)[1])
+                            .map(|adv| build_coefficient(adv, 2));
                         let prob = [a, b, c, d]
                             .map(|k| m[0].counts[k] as f64 / GRID_SIZE as f64)
                             .iter()
                             .product::<f64>();
                         mean += prob
-                            * (outcome([&m[a], &m[b]], sibling_advantages(ra, rb), 0., 4).1
-                                + outcome([&m[c], &m[d]], sibling_advantages(rb, ra), 0., 4).1);
+                            * (weighted_outcome([&m[a], &m[c]], chair0).1
+                                + weighted_outcome([&m[b], &m[d]], chair1).1);
                     }
                 }
             }

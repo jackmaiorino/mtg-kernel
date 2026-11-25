@@ -116,7 +116,7 @@ pub(super) fn builds(
         let basics = sample.selected_index;
         let c = batch
             .as_ref()
-            .map_or(0., |b| -advantage / (2 * b.seats) as f64);
+            .map_or(0., |b| build_coefficient(advantage, b.seats));
         let mut path = sample.selected_log_probability;
         if let Some(b) = batch.as_deref_mut() {
             b.heads.count = 1;

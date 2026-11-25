@@ -277,7 +277,7 @@ fn replay_is_atomic_for_current_and_snapshot_chairs() {
             },
             Chair {
                 role: Role::Older {
-                    picker_pin: "pinned",
+                    picker_pin: Some("pinned"),
                     builder_pin: "pinned",
                 },
                 picks: &old,
@@ -300,7 +300,7 @@ fn replay_is_atomic_for_current_and_snapshot_chairs() {
         },
         Chair {
             role: Role::Older {
-                picker_pin: "pinned",
+                picker_pin: Some("pinned"),
                 builder_pin: "pinned",
             },
             picks: &older,
