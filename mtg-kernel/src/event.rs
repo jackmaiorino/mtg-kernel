@@ -9144,6 +9144,7 @@ fn materialize_zone_change_v1(
         // zone_change_generation` can tell "still sitting where it was granted"
         // apart from "moved since, for any reason" without needing a
         // zone-specific special case.
+        let old_zone_change_count = obj.zone_change_count;
         obj.zone_change_count += 1;
         if let Some(uses) = &mut state.trigger_uses_v1 {
             uses.retain(|entry| entry.source.object != id);
@@ -9151,6 +9152,14 @@ fn materialize_zone_change_v1(
                 state.trigger_uses_v1 = None;
             }
         }
+        crate::text_color_change_v1::on_zone_change_field(
+            &mut state.text_color_changes_v1,
+            id,
+            from_zone,
+            to_zone,
+            old_zone_change_count,
+            obj.zone_change_count,
+        );
         obj.card_def = entry_definition;
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
         // CR 611.2e: this resolving entry effect belongs to the new incarnation

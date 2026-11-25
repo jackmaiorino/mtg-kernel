@@ -44,21 +44,23 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         if !crate::continuous_characteristics_v1::printed_abilities_active(state, host) {
             return 0;
         }
-        return match text.name {
+        let printed = match text.name {
             AKROMA => mana_color_mask(ManaColor::B) | mana_color_mask(ManaColor::R),
             KARMIC_GUIDE => mana_color_mask(ManaColor::B),
-            _ => 0,
+            _ => return 0,
         };
+        return crate::text_color_change_v1::text_color_mask(state, host, printed);
     }
-    match name_of(state, host) {
+    let printed = match name_of(state, host) {
         Some(AKROMA) if active_named(state, host, AKROMA) => {
             mana_color_mask(ManaColor::B) | mana_color_mask(ManaColor::R)
         }
         Some(KARMIC_GUIDE) if active_named(state, host, KARMIC_GUIDE) => {
             mana_color_mask(ManaColor::B)
         }
-        _ => 0,
-    }
+        _ => return 0,
+    };
+    crate::text_color_change_v1::text_color_mask(state, host, printed)
 }
 
 /// "Enters with N +1/+1 counters": Triskelion (three), Phantom Nishoba
