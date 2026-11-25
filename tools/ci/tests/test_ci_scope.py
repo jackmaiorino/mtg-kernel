@@ -108,14 +108,14 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(self.scope("docs/a.md", "README.md"), "docs")
 
     def test_the_files_that_choose_rust_tests_run_the_whole_set_and_the_rust_jobs(self):
-        (line,) = [line for line in WORKFLOW.read_text(encoding="utf-8").splitlines()
-                   if "python/tools/run_rust_integration_tests.py|" in line]
-        relevant = line.strip().rstrip(")").split("|")
+        # Each of these files decides which Rust tests run, so a change to one alone must schedule the Rust jobs:
+        # without its own rule it would fall under python/tools/*, which is not Rust-relevant.
+        self.assertEqual(ci_scope.relevance(["python/tools/some_other_tool.py"]), (True, False))
         for name in ("run_rust_workspace_tests.py", "rust_workspace_lib_plan.py", "rust_workspace_lib_seconds.json",
                      "run_rust_integration_tests.py", "check_rust_integration_parts.py"):
             with self.subTest(file=name):
                 self.assertEqual(ci_scope.scope_of(f"python/tools/{name}"), "pr")
-                self.assertIn(f"python/tools/{name}", relevant)
+                self.assertEqual(ci_scope.relevance([f"python/tools/{name}"]), (True, True))
 
     def test_shared_files_make_a_trainer_change_mixed(self):
         for shared in ("mtg-kernel/src/sideboard_play_policy_v1.rs", "mtg-kernel/src/rl_session.rs",
@@ -531,8 +531,10 @@ class ViewerScopeTests(unittest.TestCase):
         self.assertEqual(new.scheduled("workflow_dispatch", input_scope="viewer"), full)   # not a dispatch scope
         self.assertEqual(new.scheduled("workflow_dispatch", input_scope="python"),
                          {("python-env-build", "full"), ("python-tests", "full")})
+        # The complement: no lint (Linux only) and no workspace library jobs (the pull request set ran all
+        # their rows).
         self.assertEqual({job for job, _ in new.scheduled("workflow_dispatch", pr_paths=["mtg-kernel/src/engine.rs"])},
-                         RUST_SET - {"rust-quality"})
+                         RUST_SET - {"rust-quality"} - LIBRARY_SET)
 
     def test_paths_that_only_start_with_viewer_are_not_the_website(self):
         for path in LOOKALIKES:
@@ -758,7 +760,8 @@ class DispatchCompositionTests(unittest.TestCase):
 # website files runs. The base ran the whole Rust set in every row with a website file only because the website
 # path had no scope; the reductions are intended.
 R = frozenset({"rust-quality", "rust-test-groups", "limited-build", "rust-limited-groups", "rust-tests",
-               "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory"})
+               "eternal-integration-build", "rust-eternal-integration-parts", "eternal-integration-inventory",
+               "workspace-lib-build", "rust-workspace-lib-parts", "workspace-lib-inventory"})
 P = frozenset({"python-env-build", "python-tests"})
 NONE = frozenset()
 WEBSITE_SCHEDULES = [
@@ -879,6 +882,8 @@ FROZEN_RELEVANCE = [
     ("tools/w5/chains.py", True, False, "w5-tools"),
     ("tools/ci/hosted_fallback.py", True, False, "pr"),
     ("python/tools/run_rust_workspace_tests.py", True, True, "pr"),
+    ("python/tools/rust_workspace_lib_plan.py", True, True, "pr"),
+    ("python/tools/rust_workspace_lib_seconds.json", True, True, "pr"),
     ("python/tools/run_rust_lib_filters.py", True, True, "pr"),
     ("python/tools/rust_case_seconds.json", True, True, "pr"),
     ("python/tools/rust_case_timeout_seconds.json", True, True, "pr"),
