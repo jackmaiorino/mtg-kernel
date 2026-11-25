@@ -160,9 +160,14 @@ pub fn set_default_digest_memo_mib_v1(mib: usize) {
     native_flat_tensorizer_v2::set_default_digest_memo_mib_v1(mib);
 }
 
-/// Keeps state messages out of the tensorizer digest memo for this process
-/// (action messages still use it). Must be called before the first fill.
-/// Computed tensor bits are identical either way.
+/// Sets whether state messages use the tensorizer digest memo for this process.
+/// `false` bypasses the memo for state messages, and `true` (the default) lets
+/// them use it. Action messages still use the memo when it is enabled.
+///
+/// Each memoized call reads this switch, so it can be changed after fills.
+/// The switch only changes which messages use the memo. Computed digests and
+/// tensor bits are identical either way. Existing state entries remain in the
+/// memo and count toward its budget until evicted.
 pub fn set_digest_memo_states_v1(on: bool) {
     native_flat_tensorizer_v2::set_digest_memo_states_v1(on);
 }
