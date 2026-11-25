@@ -290,7 +290,7 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
         &loaded.pool,
         &plan,
         &UniformSeatFactory,
-        &SupervisedUniformPilot(Duration::from_secs(plan.caps.watchdog_seconds)),
+        &SupervisedUniformPilot::new(Duration::from_secs(plan.caps.watchdog_seconds)),
         &run_opts,
     )
     .map_err(|e| e.to_string())?;
@@ -480,7 +480,7 @@ fn run_cli(args: &Args) -> Fallible<()> {
             .and_then(|()| file.sync_all())
             .map_err(|error| format!("{}: {error}", run_record_path.display()))?;
     }
-    let pilot = SupervisedUniformPilot(Duration::from_secs(watchdog_seconds));
+    let pilot = SupervisedUniformPilot::new(Duration::from_secs(watchdog_seconds));
     let records = if pod_use == PodUse::Client {
         let mut out = Vec::with_capacity(pods as usize);
         for pod_index in pod_start..pod_end {
