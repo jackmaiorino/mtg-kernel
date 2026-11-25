@@ -272,6 +272,7 @@ fn acceptance_2_attempt_0_is_todays_game() {
             max_decisions: 120,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_GAME_CAPS.max_stack_objects.unwrap(),
             watchdog_seconds: 600,
             max_replays: 3,
         };
@@ -411,6 +412,7 @@ fn acceptance_3_pod_replays_bit_for_bit_on_1_and_12_workers() {
             max_decisions: 40,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_GAME_CAPS.max_stack_objects.unwrap(),
             watchdog_seconds: 600,
             max_replays: 3,
         };
@@ -1168,7 +1170,7 @@ fn acceptance_9_layout_read_plans_and_reports() {
 
         // Group counts: 15 of 3, 12 of 2, 1 of 1; exact role & deck rules.
         let pairings = pod_pairings();
-        let mut group_counts: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        let mut group_counts = BTreeMap::<_, Vec<_>>::new();
         let mut size_histogram = BTreeMap::new();
         for game in &pod.games {
             group_counts.entry(game.group).or_default().push(game);
@@ -1503,6 +1505,78 @@ fn watchdog_expiry_recorded_as_terminal_watchdog() {
     validate_pod_record_json(&record.to_json_line()).expect("watchdog-stopped record valid v2");
 }
 
+#[test]
+fn advancing_training_attempt_outlives_the_watchdog_interval() {
+    struct AdvancingPilot;
+
+    impl GamePilot for AdvancingPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            assert_eq!(caps.max_stack_objects, A2_GAME_CAPS.max_stack_objects);
+            if spec.episode == 0 {
+                let decisions = mtg_kernel::cube_draft_v1::game_decision_counter();
+                for count in 1..=8 {
+                    decisions.store(count, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(160));
+                }
+            }
+            ScriptedPilot::natural_only().play(spec, caps)
+        }
+    }
+
+    let mut cfg = TrainingPodConfig::uniform_a2(PodUse::Test, "test", "advancing", 0, 4);
+    cfg.caps.watchdog_seconds = 1;
+    let mut chairs = uniform_training_chairs(training_roles_with_older([1, 5]).unwrap());
+    let record = run_training_pod(&pool(), &cfg, &mut chairs, &AdvancingPilot).unwrap();
+    assert_eq!(record.status, PodStatus::Complete);
+    assert!(record.halts.is_empty());
+}
+
+#[test]
+fn training_heartbeat_preserves_pod_record_bytes() {
+    use mtg_kernel::cube_worker_liveness_v1::{with_heartbeat, WorkerProgress};
+
+    struct HeartbeatPilot<'a>(&'a Path);
+
+    impl GamePilot for HeartbeatPilot<'_> {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            let progress = WorkerProgress::new(spec.episode);
+            progress.begin(spec.episode);
+            with_heartbeat(self.0, &progress, Duration::from_millis(1), || {
+                progress.decision_counter().store(1, Ordering::Relaxed);
+                // Keep one game active until a heartbeat has actually been written.
+                if spec.episode == 0 {
+                    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                    while !self.0.with_added_extension("live").exists() {
+                        assert!(std::time::Instant::now() < deadline);
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+                ScriptedPilot::natural_only().play(spec, caps)
+            })
+        }
+    }
+
+    let dir = TempTestDir::new("heartbeat-bytes");
+    let cfg = TrainingPodConfig::uniform_a2(PodUse::Test, "test", "heartbeat", 0, 1);
+    let pool = pool();
+    let roles = training_roles_with_older([1, 5]).unwrap();
+    let plain = run_training_pod(
+        &pool,
+        &cfg,
+        &mut uniform_training_chairs(roles),
+        &ScriptedPilot::natural_only(),
+    )
+    .unwrap();
+    let sampled = run_training_pod(
+        &pool,
+        &cfg,
+        &mut uniform_training_chairs(roles),
+        &HeartbeatPilot(&dir.path().join("progress")),
+    )
+    .unwrap();
+    assert_eq!(plain.to_json_line(), sampled.to_json_line());
+}
+
 // ---------------------------------------------------------------------------
 // Round 2 helpers and tests (`m4-interfaces/v2`, `pod-record/v2`, `READ-PLAN-v1`)
 // ---------------------------------------------------------------------------
@@ -1719,6 +1793,81 @@ fn build_test_aa_plan(unit: u64, mirror: u8, pins: &PodPins) -> ReadPlanV1 {
     }
 }
 
+#[test]
+fn v3_aa_restart_uses_fresh_units_seeds_and_reservation() {
+    use mtg_kernel::cube_read_plan_v1::parse_and_validate_manifest_json;
+
+    let pins = pod_pins_from_runtime(&fixture_runtime_pins());
+    let mut plan = build_test_aa_plan(4, 1, &pins);
+    let (namespace, run) = ("read-d8-aa", "v2");
+    plan.pod_use = PodUse::ReadA;
+    plan.namespace = namespace.to_owned();
+    plan.run = run.to_owned();
+    let draft = pod_draft_seed(namespace, run, plan.unit).unwrap();
+    let pod = pod_play_seed(namespace, run, plan.unit).unwrap();
+    plan.seeds = PodSeeds::for_read(draft, pod, None, namespace, namespace);
+    for game in &mut plan.games {
+        let pairing = usize::from(game.pairing.unwrap());
+        let seats = pod_game_seats(pod, pairing).unwrap();
+        let row = game.decks[0] % 2;
+        game.chairs = seats.map(|seat| Some(seat as u8));
+        game.decks = seats.map(|seat| 2 * seat as u32 + row);
+        game.game_seed = game_seed(pod, pairing);
+    }
+    let text = to_canonical_pretty_json(&plan).unwrap();
+    let parsed = parse_and_validate_read_plan_json(&text).unwrap();
+    assert_eq!(parsed.pod_index, 9);
+    assert_eq!(parsed.seeds, plan.seeds);
+    assert_eq!(
+        parsed.caps.max_stack_objects,
+        A2_GAME_CAPS.max_stack_objects.unwrap()
+    );
+    let wrong_stack_cap = text.replace(
+        &format!("\"max_stack_objects\": {}", plan.caps.max_stack_objects),
+        "\"max_stack_objects\": 127",
+    );
+    assert!(parse_and_validate_read_plan_json(&wrong_stack_cap).is_err());
+    let stale_run_seed = text.replace(
+        &format!("\"pod_seed\": {pod}"),
+        &format!(
+            "\"pod_seed\": {}",
+            pod_play_seed(namespace, "v1", plan.unit).unwrap(),
+        ),
+    );
+    assert!(parse_and_validate_read_plan_json(&stale_run_seed).is_err());
+
+    let mut manifest = SetManifest {
+        schema: READ_PLAN_SCHEMA.to_owned(),
+        kind: ManifestKind::Plans,
+        family: "aa".to_owned(),
+        namespace: namespace.to_owned(),
+        run: run.to_owned(),
+        set: "fixed-restart-1".to_owned(),
+        interfaces: M4_INTERFACES_VERSION.to_owned(),
+        declaration_sha256: pin_hex(0x33),
+        look: None,
+        units: [4, 8],
+        reserved: Some([4, 8]),
+        pools_with: None,
+        panel_sha256: None,
+        prep_set: None,
+        replaces: Some("v1/fixed".to_owned()),
+        retired: vec![[2, 4]],
+        plans: Vec::new(),
+        plan_set_sha256: compute_plan_set_sha256(&[]).unwrap(),
+        executions: Vec::new(),
+    };
+    let parse = |manifest: &SetManifest| {
+        parse_and_validate_manifest_json(&to_canonical_pretty_json(manifest).unwrap())
+    };
+    assert!(parse(&manifest).is_ok());
+    manifest.replaces = Some("fixed".to_owned());
+    assert!(parse(&manifest).is_err());
+    manifest.replaces = Some("v1/fixed".to_owned());
+    manifest.reserved = Some([4, 7]);
+    assert!(parse(&manifest).is_err());
+}
+
 fn build_test_d13_plan(
     unit: u64,
     pins: &PodPins,
@@ -1785,7 +1934,7 @@ fn build_test_d13_plan(
         for o in 0..2u64 {
             let dealt = DealtOrigin {
                 function: "cube_deal_common_v1".to_owned(),
-                key: json!([ns, unit, s, o]),
+                key: json!(["cube_deal_common_v1", ns, unit, s, o]),
             };
             decks.push(PlanDeck {
                 deck: (base + 4 + o as usize) as u32,
@@ -1908,12 +2057,9 @@ fn build_test_d13_plan(
     }
 }
 
-fn write_plan_set_dir(
+fn write_test_aa_set(
     set_dir: &Path,
-    (family, namespace, set_name): (&str, &str, &str),
     decl_sha: &str,
-    panel_sha: Option<String>,
-    prep_set: Option<String>,
     plans: &[ReadPlanV1],
     executions: Vec<ManifestExecutionEntry>,
 ) -> SetManifest {
@@ -1937,18 +2083,18 @@ fn write_plan_set_dir(
     let manifest = SetManifest {
         schema: READ_PLAN_SCHEMA.to_owned(),
         kind: ManifestKind::Plans,
-        family: family.to_owned(),
-        namespace: namespace.to_owned(),
+        family: "aa".to_owned(),
+        namespace: "test".to_owned(),
         run: "v1".to_owned(),
-        set: set_name.to_owned(),
+        set: "fixed".to_owned(),
         interfaces: M4_INTERFACES_VERSION.to_owned(),
         declaration_sha256: decl_sha.to_owned(),
         look: None,
         units: [min_u, max_u],
         reserved: None,
         pools_with: None,
-        panel_sha256: panel_sha,
-        prep_set,
+        panel_sha256: None,
+        prep_set: None,
         replaces: None,
         retired: Vec::new(),
         plans: entries,
@@ -2059,7 +2205,7 @@ fn round2_v2_record_client_d13_dealt_and_read_halts() {
 
     let dealt_origin = DealtOrigin {
         function: "cube_deal_common_v1".to_owned(),
-        key: json!(["panel-k1", 0, 0, 0]),
+        key: json!(["cube_deal_common_v1", "panel-k1", 0, 0, 0]),
     };
     let read_plan = ReadPlan {
         pod_use: PodUse::PairedBuild,
@@ -2279,6 +2425,7 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
             expired_games: Vec::new(),
             binary: verification.pins.binary.clone(),
             platform: verification.platform.clone(),
+            claim_id: None,
         }],
     };
     std::fs::write(
@@ -2309,12 +2456,32 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
         expired_games: Vec::new(),
         binary: verification.pins.binary.clone(),
         platform: verification.platform.clone(),
+        claim_id: None,
     });
     std::fs::write(
         bc_dir.join("manifest.json"),
         to_canonical_pretty_json(&manifest).unwrap().as_bytes(),
     )
     .unwrap();
+    assert!(
+        run_prep_set_execution(&pool, &bc_dir, 1, &UniformSeatFactory, &verification, None)
+            .unwrap_err()
+            .to_string()
+            .contains("3,600")
+    );
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3_601);
+    // Simulate a dead process with a durable unit marker and no receipt.
+    let prior = bc_dir.join("exec-0");
+    std::fs::remove_file(prior.join("execution.json")).unwrap();
+    std::fs::write(prior.join("started.json"), b"{}").unwrap();
+    for path in [prior.join("started.json"), prior.join("done/0.json")] {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+    }
     let e1 = run_prep_set_execution(&pool, &bc_dir, 1, &UniformSeatFactory, &verification, None)
         .unwrap();
     assert_eq!(e1.ended, PrepExecutionEnded::Complete);
@@ -2329,6 +2496,24 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
     assert_eq!(accepted.execution, 1);
     assert_eq!(accepted.output_bytes_by_unit.len(), 2);
 
+    // An earlier completed unit remains binding without its receipt.
+    let marker_path = prior.join("done/0.json");
+    let original_marker = std::fs::read_to_string(&marker_path).unwrap();
+    let changed = b"other output";
+    let other_digest = sha256_hex(changed);
+    std::fs::write(prior.join("prep/unit-0.json"), changed).unwrap();
+    std::fs::write(
+        &marker_path,
+        original_marker.replace(&sha256_hex(&e0_u0), &other_digest),
+    )
+    .unwrap();
+    assert!(accept_prep_execution(&bc_dir)
+        .unwrap_err()
+        .to_string()
+        .contains("determinism failure"));
+    std::fs::write(prior.join("prep/unit-0.json"), &e0_u0).unwrap();
+    std::fs::write(&marker_path, original_marker).unwrap();
+
     // Retrying after a complete execution is refused.
     manifest.executions.push(ManifestExecutionEntry {
         execution: 2,
@@ -2336,6 +2521,7 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
         expired_games: Vec::new(),
         binary: verification.pins.binary.clone(),
         platform: verification.platform.clone(),
+        claim_id: None,
     });
     std::fs::write(
         bc_dir.join("manifest.json"),
@@ -2421,6 +2607,7 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
             expired_games: Vec::new(),
             binary: verification.pins.binary.clone(),
             platform: verification.platform.clone(),
+            claim_id: None,
         }],
     };
     std::fs::write(
@@ -2587,6 +2774,7 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
             expired_games: Vec::new(),
             binary: verification.pins.binary.clone(),
             platform: verification.platform.clone(),
+            claim_id: None,
         }],
     };
     std::fs::write(
@@ -2673,12 +2861,9 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
     assert!(parse_and_validate_read_plan_json(&float_val).is_err());
 
     let set_dir = tmp.path().join("test").join("v1").join("fixed");
-    write_plan_set_dir(
+    write_test_aa_set(
         &set_dir,
-        ("aa", "test", "fixed"),
         &decl_sha,
-        None,
-        None,
         &[plan0, plan1],
         vec![ManifestExecutionEntry {
             execution: 0,
@@ -2686,6 +2871,7 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
             expired_games: Vec::new(),
             binary: verification.pins.binary.clone(),
             platform: verification.platform.clone(),
+            claim_id: None,
         }],
     );
 
@@ -2831,6 +3017,79 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn read_watchdog_preserves_advancing_attempt_and_expires_stalled_attempt() {
+    struct ReadProgressPilot {
+        calls: AtomicU64,
+    }
+
+    impl GamePilot for ReadProgressPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            match self.calls.fetch_add(1, Ordering::Relaxed) {
+                0 => {
+                    let decisions = mtg_kernel::cube_draft_v1::game_decision_counter();
+                    for count in 1..=8 {
+                        decisions.store(count, Ordering::Relaxed);
+                        std::thread::sleep(Duration::from_millis(175));
+                    }
+                }
+                1 => std::thread::sleep(Duration::from_millis(1_400)),
+                _ => {}
+            }
+            ScriptedPilot::natural_only().play(spec, caps)
+        }
+    }
+
+    let dir = TempTestDir::new("read-decision-watchdog");
+    let declaration = b"test declaration\n".to_vec();
+    let declaration_sha = sha256_hex(&declaration);
+    let verification = fixture_verification(declaration, None);
+    let plan = build_test_aa_plan(0, 0, &pod_pins_from_runtime(&verification.pins));
+    write_test_aa_set(
+        dir.path(),
+        &declaration_sha,
+        &[plan],
+        vec![ManifestExecutionEntry {
+            execution: 0,
+            reason: ExecutionReason::First,
+            expired_games: Vec::new(),
+            binary: verification.pins.binary.clone(),
+            platform: verification.platform.clone(),
+            claim_id: None,
+        }],
+    );
+
+    let receipt = run_plan_set_execution(
+        &pool(),
+        dir.path(),
+        0,
+        &UniformSeatFactory,
+        &ReadProgressPilot {
+            calls: AtomicU64::new(0),
+        },
+        &verification,
+        1,
+        Some(Duration::from_secs(1)),
+    )
+    .unwrap();
+    assert_eq!(receipt.ended, PlanExecutionEnded::Complete);
+    accept_plan_execution(dir.path(), 0).unwrap();
+
+    let record = std::fs::read(dir.path().join("exec-0/records/pod-0.json")).unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&record).unwrap();
+    assert_eq!(record["games"][0]["attempts"][0]["end"]["kind"], "natural");
+    assert!(record["games"][0]["scores"].is_array());
+    assert_eq!(
+        record["games"][1]["attempts"][0]["stop_kind"],
+        WATCHDOG_STOP_KIND
+    );
+    assert!(record["games"][1]["scores"].is_null());
+    let halts = record["halts"].as_array().unwrap();
+    assert_eq!(halts.len(), 1);
+    assert_eq!(halts[0]["game"], 1);
+    assert!(halts[0]["last_action_source"].is_null());
+}
+
+#[test]
 fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     let pool = pool();
     let tmp = TempTestDir::new("wd-sup");
@@ -2842,7 +3101,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     let plan0 = build_test_aa_plan(0, 0, &pins);
     let plan1 = build_test_aa_plan(0, 1, &pins);
 
-    // Part A: Watchdog expiry on pod 0 game 3 (via real timer with override).
+    // Part A: Watchdog expiry in game 3 of both mirrors.
     let target_seed = plan0.games[3].game_seed;
     let target_env = attempt_seeds(target_seed, 0).1;
     let target_deck0_pair = plan0.games[3].decks;
@@ -2860,7 +3119,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
                 && spec.episode == self.target_episode
                 && spec.decks[0].card_ids() == self.target_p0_cards
             {
-                std::thread::sleep(Duration::from_millis(60));
+                std::thread::sleep(Duration::from_millis(400));
                 return AttemptOutcome {
                     decisions: 1,
                     physical_decisions: Some(1),
@@ -2876,7 +3135,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
         }
     }
 
-    // Compute pod 0's exact deck cards for game 3's p0 so only pod 0 game 3 sleeps.
+    // Match the stated build in game 3. The two A/A mirrors use the same decks and seeds.
     let (hdr0, _) =
         mtg_kernel::cube_read_plan_v1::prepare_read_plan_decks(&pool, &plan0, &UniformSeatFactory)
             .unwrap();
@@ -2888,12 +3147,9 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     };
 
     let wd_dir = tmp.path().join("wd-set");
-    let mut manifest = write_plan_set_dir(
+    let mut manifest = write_test_aa_set(
         &wd_dir,
-        ("aa", "test", "fixed"),
         &decl_sha,
-        None,
-        None,
         &[plan0.clone(), plan1.clone()],
         vec![ManifestExecutionEntry {
             execution: 0,
@@ -2901,6 +3157,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
             expired_games: Vec::new(),
             binary: verification.pins.binary.clone(),
             platform: verification.platform.clone(),
+            claim_id: None,
         }],
     );
 
@@ -2913,7 +3170,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
         &slow_pilot,
         &verification,
         1,
-        Some(Duration::from_millis(20)),
+        Some(Duration::from_millis(150)),
     )
     .unwrap();
     assert_eq!(e0.ended, PlanExecutionEnded::Complete);
@@ -2940,14 +3197,19 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     assert_eq!(e0_pod0["halts"].as_array().unwrap().len(), 1);
     assert_eq!(e0_pod0["halts"][0]["game"], json!(3));
     assert_eq!(e0_pod0["halts"][0]["stop_kind"], json!(WATCHDOG_STOP_KIND));
+    let e0_pod1: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(wd_dir.join("exec-0/records/pod-1.json")).unwrap())
+            .unwrap();
+    assert_eq!(e0_pod1["halts"], e0_pod0["halts"]);
 
     // e = 1 (watchdog_rerun): stops immediately at pod 0 game 3 with `watchdog_stop`.
     manifest.executions.push(ManifestExecutionEntry {
         execution: 1,
         reason: ExecutionReason::WatchdogRerun,
-        expired_games: vec![[0, 3]],
+        expired_games: vec![[0, 3], [1, 3]],
         binary: verification.pins.binary.clone(),
         platform: verification.platform.clone(),
+        claim_id: None,
     });
     std::fs::write(
         wd_dir.join("manifest.json"),
@@ -2962,7 +3224,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
         &slow_pilot,
         &verification,
         1,
-        Some(Duration::from_millis(20)),
+        Some(Duration::from_millis(150)),
     )
     .unwrap();
     assert_eq!(e1.ended, PlanExecutionEnded::WatchdogStop);
@@ -3075,12 +3337,9 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     }
 
     let sup_dir = tmp.path().join("sup-set");
-    write_plan_set_dir(
+    write_test_aa_set(
         &sup_dir,
-        ("aa", "test", "fixed"),
         &decl_sha,
-        None,
-        None,
         &[plan0.clone(), plan1.clone()],
         vec![ManifestExecutionEntry {
             execution: 0,
@@ -3088,6 +3347,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
             expired_games: Vec::new(),
             binary: verification.pins.binary.clone(),
             platform: verification.platform.clone(),
+            claim_id: None,
         }],
     );
 
@@ -3129,12 +3389,9 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
 
     // Part C: Real OS child process death handled by CommandPodWorkerLauncher.
     let os_dir = tmp.path().join("os-death-set");
-    write_plan_set_dir(
+    write_test_aa_set(
         &os_dir,
-        ("aa", "test", "fixed"),
         &decl_sha,
-        None,
-        None,
         &[plan0],
         vec![ManifestExecutionEntry {
             execution: 0,
@@ -3142,6 +3399,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
             expired_games: Vec::new(),
             binary: verification.pins.binary.clone(),
             platform: verification.platform.clone(),
+            claim_id: None,
         }],
     );
     let os_launcher = CommandPodWorkerLauncher::new(|_, _, _, _, _| {

@@ -1,5 +1,5 @@
 //! Cube pod runner CLI (`mtg-kernel-cube-pod-record/v2` and
-//! `mtg-kernel-cube-read-plan/v1`).
+//! `mtg-kernel-cube-read-plan/v3`).
 //!
 //! Modes (`eternal-fixtures` build):
 //! 1. Training / client pods:
@@ -7,7 +7,7 @@
 //!    `[--use training|shakedown|test|client] [--older 6,7]`
 //!    `[--workers W] [--watchdog-seconds 600]`
 //!    `[--cube PATH] [--gaps PATH] [--fence PATH]`
-//!    `[--out PATH] [--report PATH]`
+//!    `[--out PATH] [--report PATH] [--run-record PATH]`
 //! 2. Prep set (`READ-PLAN-v1` section 4-5, drafts and builds without playing):
 //!    `cube_pod_runner_v1 --prep-set DIR --execution E --declaration PATH`
 //!    `--binary-pin SHA --card-index-pin SHA --cube-table-pin SHA`
@@ -32,17 +32,21 @@ use mtg_kernel::cube_pod_runner_v1::{
     UniformBatchConfig, DEFAULT_WATCHDOG_SECONDS,
 };
 use mtg_kernel::cube_read_plan_v1::{
-    execute_read_plan_v1, parse_and_validate_read_plan_json, run_prep_set_execution, sha256_hex,
-    supervise_plan_set_execution, to_canonical_compact_json, to_canonical_pretty_json,
-    CommandPodWorkerLauncher, PodProgressJournal, ReadPlanRunOptions, RuntimePins,
-    RuntimeVerification, UniformSeatFactory,
+    execute_read_plan_v1, parse_and_validate_read_plan_json,
+    run_prep_set_execution_with_ended_claim, sha256_hex, supervise_plan_set_execution,
+    to_canonical_compact_json, to_canonical_pretty_json, CommandPodWorkerLauncher,
+    PodProgressJournal, ReadPlanRunOptions, RuntimePins, RuntimeVerification, UniformSeatFactory,
 };
-use mtg_kernel::cube_seat_v1::UniformPilot;
+#[path = "cube_pod_runner/worker.rs"]
+mod worker;
+use mtg_kernel::cube_worker_liveness_v1::LIVENESS;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
+use worker::SupervisedUniformPilot;
 
 type Fallible<T> = Result<T, String>;
 
@@ -60,7 +64,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--fence",
     "--out",
     "--report",
+    "--run-record",
     "--prep-set",
+    "--ended-prep-claim",
     "--plan-set",
     "--worker-plan",
     "--timing",
@@ -261,7 +267,7 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
         &loaded.pool,
         &plan,
         &UniformSeatFactory,
-        &UniformPilot,
+        &SupervisedUniformPilot(Duration::from_secs(plan.caps.watchdog_seconds)),
         &run_opts,
     )
     .map_err(|e| e.to_string())?;
@@ -300,13 +306,14 @@ fn run_cli(args: &Args) -> Fallible<()> {
             .number("--execution")?
             .ok_or("--execution is required with --prep-set")?;
         let verification = load_verification(args, &loaded)?;
-        let receipt = run_prep_set_execution(
+        let receipt = run_prep_set_execution_with_ended_claim(
             &loaded.pool,
             Path::new(prep_dir),
             execution,
             &UniformSeatFactory,
             &verification,
             None,
+            args.get("--ended-prep-claim"),
         )
         .map_err(|error| error.to_string())?;
         let text = to_canonical_pretty_json(&receipt).map_err(|e| e.to_string())?;
@@ -393,6 +400,15 @@ fn run_cli(args: &Args) -> Fallible<()> {
             path.display()
         ));
     }
+    let run_record_path = args.get("--run-record").map_or_else(
+        || {
+            out_path
+                .as_deref()
+                .unwrap_or_else(|| Path::new("pods.jsonl"))
+                .with_file_name("run.json")
+        },
+        PathBuf::from,
+    );
     let report_path = args.get("--report").map(PathBuf::from);
     if let Some(path) = report_path.as_ref().filter(|path| path.exists()) {
         return Err(format!(
@@ -416,6 +432,32 @@ fn run_cli(args: &Args) -> Fallible<()> {
         .checked_add(pods)
         .ok_or("--pod-start + --pods overflows u64")?;
 
+    if matches!(pod_use, PodUse::Training | PodUse::Shakedown) {
+        #[derive(serde::Serialize)]
+        struct RunRecord<'a> {
+            schema: &'static str,
+            liveness: &'static str,
+            namespace: &'a str,
+            run: &'a str,
+            workers: usize,
+            caps: PodCaps,
+        }
+        let record = RunRecord {
+            schema: "mtg-kernel-cube-pod-run/v1",
+            liveness: LIVENESS,
+            namespace: &namespace,
+            run: &run,
+            workers,
+            caps,
+        };
+        let text = to_canonical_pretty_json(&record).map_err(|error| error.to_string())?;
+        let mut file = File::create_new(&run_record_path)
+            .map_err(|error| format!("{}: {error}", run_record_path.display()))?;
+        file.write_all(text.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("{}: {error}", run_record_path.display()))?;
+    }
+    let pilot = SupervisedUniformPilot(Duration::from_secs(watchdog_seconds));
     let records = if pod_use == PodUse::Client {
         let mut out = Vec::with_capacity(pods as usize);
         for pod_index in pod_start..pod_end {
@@ -430,7 +472,7 @@ fn run_cli(args: &Args) -> Fallible<()> {
                 workers,
             };
             let mut chairs = uniform_training_chairs(roles);
-            let rec = run_training_pod(&loaded.pool, &pod_cfg, &mut chairs, &UniformPilot)
+            let rec = run_training_pod(&loaded.pool, &pod_cfg, &mut chairs, &pilot)
                 .map_err(|error| error.to_string())?;
             out.push(rec);
         }
@@ -447,7 +489,7 @@ fn run_cli(args: &Args) -> Fallible<()> {
             caps,
             workers,
         };
-        run_uniform_training_batch(&loaded.pool, &batch_config, &UniformPilot)
+        run_uniform_training_batch(&loaded.pool, &batch_config, &pilot)
             .map_err(|error| error.to_string())?
     };
 
@@ -492,7 +534,14 @@ fn run_cli(args: &Args) -> Fallible<()> {
 }
 
 fn main() {
-    let result = Args::parse(std::env::args().skip(1).collect()).and_then(|args| run_cli(&args));
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let result = match args.as_slice() {
+        [flag, path, interval] if flag == worker::FLAG => interval
+            .parse::<u64>()
+            .map_err(|error| format!("invalid heartbeat interval: {error}"))
+            .and_then(|ms| worker::run_worker(PathBuf::from(path), Duration::from_millis(ms))),
+        _ => Args::parse(args).and_then(|args| run_cli(&args)),
+    };
     if let Err(error) = result {
         eprintln!("cube_pod_runner_v1: {error}");
         std::process::exit(2);

@@ -1,4 +1,4 @@
-//! Full `mtg-kernel-cube-read-plan/v1` support for D5:
+//! Full `mtg-kernel-cube-read-plan/v3` support for D5:
 //! - Strict order-preserving validation of manifests, read plans, prep
 //!   requests, prep results, frozen two-stage `panel.json` documents, and
 //!   execution receipts (`READ-PLAN-v1` sections 1-6).
@@ -32,8 +32,8 @@ use crate::cube_pod_runner_v1::{
     DeckSource, ExecOptions, GameCompleteHook, GameRole, GameTask, JsonParser, OrderedJson,
     PairedBuildKind, PairedBuildRecord, PilotInfo, PilotKind, PodCaps, PodGameRecord, PodPins,
     PodRecord, PodRunnerError, PodSeeds, PodStatus, PodUse, SeatKind, SeatRef, SeatRule, SeedPart,
-    StopAttemptReport, StopReport, A2_GAME_CAPS, DEFAULT_WATCHDOG_SECONDS, POD_RECORD_SCHEMA,
-    READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
+    StopAttemptReport, StopReport, A2_GAME_CAPS, A2_MAX_STACK_OBJECTS, DEFAULT_WATCHDOG_SECONDS,
+    POD_RECORD_SCHEMA, READ_MAX_REPLAYS, WATCHDOG_STOP_KIND,
 };
 use crate::cube_seat_v1::{
     canonical_deck, run_seat_draft, BuildRows, DecisionKind, DecisionRow, GamePilot, SeatBuilder,
@@ -53,8 +53,8 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// Frozen schema tag of `mtg-kernel-cube-read-plan/v1` files.
-pub const READ_PLAN_SCHEMA: &str = "mtg-kernel-cube-read-plan/v1";
+/// Frozen schema tag of `mtg-kernel-cube-read-plan/v3` files.
+pub const READ_PLAN_SCHEMA: &str = "mtg-kernel-cube-read-plan/v3";
 /// Number of units in a production frozen panel (`[0, 32)`).
 pub const PANEL_UNITS_END: u64 = 32;
 
@@ -525,7 +525,7 @@ pub struct PlanGame {
     pub episode: u64,
 }
 
-/// Complete frozen `mtg-kernel-cube-read-plan/v1` plan document (24 keys in
+/// Complete frozen `mtg-kernel-cube-read-plan/v3` plan document (24 keys in
 /// section 2 order).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -653,6 +653,8 @@ pub struct ManifestExecutionEntry {
     pub expired_games: Vec<[u64; 2]>,
     pub binary: String,
     pub platform: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_id: Option<String>,
 }
 
 /// Set manifest (`manifest.json`, 19 keys in `READ-PLAN-v1` section 5 order).
@@ -814,6 +816,53 @@ fn plan_err(msg: impl Into<String>) -> PodRunnerError {
     PodRunnerError::InvalidPlan(msg.into())
 }
 
+fn d8_namespace(namespace: &str) -> bool {
+    matches!(namespace, "dose-d8" | "read-d8-aa")
+}
+
+fn positive_decimal(text: &str) -> Option<u64> {
+    if text.starts_with('0') || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn d8_run_number(run: &str) -> Option<u64> {
+    positive_decimal(run.strip_prefix('v')?)
+}
+
+fn valid_read_run(namespace: &str, run: &str) -> bool {
+    match namespace {
+        "test" => is_valid_token(run),
+        ns if d8_namespace(ns) => d8_run_number(run).is_some(),
+        _ => run == "v1",
+    }
+}
+
+fn dose_panel_range(run: &str) -> Option<[u64; 2]> {
+    let end = d8_run_number(run)?.checked_mul(PANEL_UNITS_END)?;
+    Some([end - PANEL_UNITS_END, end])
+}
+
+fn validate_dose_unit(namespace: &str, run: &str, unit: u64) -> Result<(), PodRunnerError> {
+    if namespace == "dose-d8"
+        && !dose_panel_range(run).is_some_and(|[first, end]| (first..end).contains(&unit))
+    {
+        return Err(plan_err(format!(
+            "unit {unit} is outside the {run} dose panel"
+        )));
+    }
+    Ok(())
+}
+
+fn common_opponent_key(namespace: &str, unit: u64, chair: usize, slot: u64) -> DealtOrigin {
+    const FUNCTION: &str = "cube_deal_common_v1";
+    DealtOrigin {
+        function: FUNCTION.to_owned(),
+        key: serde_json::json!([FUNCTION, namespace, unit, chair, slot]),
+    }
+}
+
 fn expect_u8(value: &OrderedJson, path: &str) -> Result<u8, String> {
     let n = expect_u64(value, path)?;
     u8::try_from(n).map_err(|_| format!("{path}: integer {n} exceeds u8"))
@@ -903,7 +952,7 @@ fn parse_seeds_v1(value: &OrderedJson, path: &str) -> Result<PodSeeds, String> {
     let league_seed = expect_opt_u64(&entries[2].1, &format!("{path}.league_seed"))?;
     if league_seed.is_some() {
         return Err(format!(
-            "{path}.league_seed: must be null in every mtg-kernel-cube-read-plan/v1 family"
+            "{path}.league_seed: must be null in every mtg-kernel-cube-read-plan/v3 family"
         ));
     }
     let d_ns = expect_str(&entries[3].1, &format!("{path}.draft_seed_namespace"))?;
@@ -988,6 +1037,7 @@ fn parse_caps_a67(value: &OrderedJson, path: &str) -> Result<PodCaps, String> {
             "max_decisions",
             "max_physical_decisions",
             "max_policy_steps",
+            "max_stack_objects",
             "watchdog_seconds",
             "max_replays",
         ],
@@ -996,22 +1046,25 @@ fn parse_caps_a67(value: &OrderedJson, path: &str) -> Result<PodCaps, String> {
     let max_physical_decisions =
         expect_u64(&entries[1].1, &format!("{path}.max_physical_decisions"))?;
     let max_policy_steps = expect_u64(&entries[2].1, &format!("{path}.max_policy_steps"))?;
-    let watchdog_seconds = expect_u64(&entries[3].1, &format!("{path}.watchdog_seconds"))?;
-    let max_replays = expect_u8(&entries[4].1, &format!("{path}.max_replays"))?;
+    let max_stack_objects = expect_u32(&entries[3].1, &format!("{path}.max_stack_objects"))?;
+    let watchdog_seconds = expect_u64(&entries[4].1, &format!("{path}.watchdog_seconds"))?;
+    let max_replays = expect_u8(&entries[5].1, &format!("{path}.max_replays"))?;
     if max_decisions != A2_GAME_CAPS.max_decisions
         || max_physical_decisions != A2_GAME_CAPS.max_physical_decisions
         || max_policy_steps != A2_GAME_CAPS.max_policy_steps
+        || max_stack_objects != A2_MAX_STACK_OBJECTS
         || watchdog_seconds != DEFAULT_WATCHDOG_SECONDS
         || max_replays != READ_MAX_REPLAYS
     {
         return Err(format!(
-            "{path}: read plan requires A6.7 caps (16384/16384/32768/600/0), got ({max_decisions}/{max_physical_decisions}/{max_policy_steps}/{watchdog_seconds}/{max_replays})"
+            "{path}: read plan requires A6.7 caps (16384/16384/32768/{A2_MAX_STACK_OBJECTS}/600/0), got ({max_decisions}/{max_physical_decisions}/{max_policy_steps}/{max_stack_objects}/{watchdog_seconds}/{max_replays})"
         ));
     }
     Ok(PodCaps {
         max_decisions,
         max_physical_decisions,
         max_policy_steps,
+        max_stack_objects,
         watchdog_seconds,
         max_replays,
     })
@@ -1796,7 +1849,7 @@ fn parse_pod_game_record(value: &OrderedJson, path: &str) -> Result<PodGameRecor
 // Strict validators for plans, manifests, prep requests/results, panels, receipts
 // ---------------------------------------------------------------------------
 
-/// Strictly parses and validates a `mtg-kernel-cube-read-plan/v1` plan JSON
+/// Strictly parses and validates a `mtg-kernel-cube-read-plan/v3` plan JSON
 /// against sections 1, 2, 3 and 6 (exact key order, integer ranges, family
 /// layout, seed derivations, seats, pairings, dealt builder pins, `q`).
 pub fn parse_and_validate_read_plan_json(json_text: &str) -> Result<ReadPlanV1, PodRunnerError> {
@@ -1863,10 +1916,11 @@ pub fn parse_and_validate_read_plan_json(json_text: &str) -> Result<ReadPlanV1, 
         )));
     }
     let run = expect_str(&top[5].1, "plan.run").map_err(plan_err)?;
-    if !is_valid_token(run) || (namespace != "test" && run != "v1") {
+    if !valid_read_run(namespace, run) {
         return Err(plan_err(format!("plan.run: invalid run {run:?}")));
     }
     let unit = expect_u64(&top[6].1, "plan.unit").map_err(plan_err)?;
+    validate_dose_unit(namespace, run, unit)?;
     let pod_index = expect_u64(&top[7].1, "plan.pod_index").map_err(plan_err)?;
     let mirror = expect_opt_u8(&top[8].1, "plan.mirror").map_err(plan_err)?;
     let mirror_pods = match &top[9].1 {
@@ -2448,15 +2502,7 @@ fn validate_plan_family_layout(plan: &ReadPlanV1) -> Result<(), PodRunnerError> 
                         3 * s + 1
                     )));
                 }
-                let expected_dealt = DealtOrigin {
-                    function: "cube_deal_common_v1".to_owned(),
-                    key: Value::Array(vec![
-                        Value::String(plan.namespace.clone()),
-                        Value::from(plan.unit),
-                        Value::from(s as u64),
-                        Value::from(0u64),
-                    ]),
-                };
+                let expected_dealt = common_opponent_key(&plan.namespace, plan.unit, s, 0u64);
                 if opp.source != DeckSource::Dealt || opp.dealt.as_ref() != Some(&expected_dealt) {
                     return Err(plan_err(format!(
                         "plan.decks[{}]: invalid C(P) dealt opponent",
@@ -2549,15 +2595,7 @@ fn validate_plan_family_layout(plan: &ReadPlanV1) -> Result<(), PodRunnerError> 
                 }
                 for o in 0..2u64 {
                     let opp = &plan.decks[base + 4 + o as usize];
-                    let expected_dealt = DealtOrigin {
-                        function: "cube_deal_common_v1".to_owned(),
-                        key: Value::Array(vec![
-                            Value::String(plan.namespace.clone()),
-                            Value::from(plan.unit),
-                            Value::from(s as u64),
-                            Value::from(o),
-                        ]),
-                    };
+                    let expected_dealt = common_opponent_key(&plan.namespace, plan.unit, s, o);
                     if opp.source != DeckSource::Dealt
                         || opp.dealt.as_ref() != Some(&expected_dealt)
                     {
@@ -2702,10 +2740,11 @@ pub fn parse_and_validate_prep_request_json(
         )));
     }
     let run = expect_str(&top[4].1, "prep_request.run").map_err(plan_err)?;
-    if !is_valid_token(run) || (namespace != "test" && run != "v1") {
+    if !valid_read_run(namespace, run) {
         return Err(plan_err(format!("prep_request.run: invalid {run:?}")));
     }
     let unit = expect_u64(&top[5].1, "prep_request.unit").map_err(plan_err)?;
+    validate_dose_unit(namespace, run, unit)?;
     let seeds = parse_seeds_v1(&top[6].1, "prep_request.seeds").map_err(plan_err)?;
     if seeds.draft_seed_namespace.as_deref() != Some(namespace)
         || seeds.pod_seed_namespace.as_deref() != Some(namespace)
@@ -2906,6 +2945,83 @@ pub fn parse_and_validate_prep_result_json(json_text: &str) -> Result<PrepResult
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_d8_set(
+    namespace: &str,
+    run: &str,
+    set: &str,
+    kind: ManifestKind,
+    units: [u64; 2],
+    reserved: Option<[u64; 2]>,
+    replaces: Option<&str>,
+    retired: &[[u64; 2]],
+) -> Result<(), PodRunnerError> {
+    if reserved != Some(units) {
+        return Err(plan_err("D8 set must reserve its full units range"));
+    }
+    let run_number = d8_run_number(run).expect("validated D8 run");
+    let (base, restart) = match set.rsplit_once("-restart-") {
+        Some((base, suffix)) => (
+            base,
+            Some(positive_decimal(suffix).ok_or_else(|| plan_err("invalid D8 restart suffix"))?),
+        ),
+        None => (set, None),
+    };
+    if namespace == "dose-d8" {
+        if Some(units) != dose_panel_range(run) {
+            return Err(plan_err(
+                "dose-d8 set must use its run's entire panel range",
+            ));
+        }
+        let prefix = if kind == ManifestKind::Prep {
+            "prep-dose-"
+        } else {
+            "dose-"
+        };
+        let stage_one = kind == ManifestKind::Prep && set == "prep-panel";
+        let is_dose = base
+            .strip_prefix(prefix)
+            .is_some_and(|ordinal| matches!(ordinal, "0" | "1" | "2" | "3"));
+        if !stage_one && !is_dose {
+            return Err(plan_err("invalid dose-d8 set name"));
+        }
+    } else if kind != ManifestKind::Plans
+        || base != "fixed"
+        || restart != run_number.checked_sub(1).filter(|&n| n != 0)
+        || units[1] - units[0] != 4
+        || (run_number == 1 && units[0] != 0)
+    {
+        return Err(plan_err("invalid read-d8-aa set name or range"));
+    }
+
+    match (restart, replaces) {
+        (None, None) if retired.is_empty() => Ok(()),
+        (Some(restart), Some(previous)) if restart < run_number => {
+            let (prior_run, prior_set) = previous
+                .split_once('/')
+                .ok_or_else(|| plan_err("D8 predecessor must be <run>/<set>"))?;
+            let expected = if restart == 1 {
+                base.to_owned()
+            } else {
+                format!("{base}-restart-{}", restart - 1)
+            };
+            if d8_run_number(prior_run).is_none_or(|previous| previous >= run_number)
+                || prior_set != expected
+                || retired.iter().any(|range| range[1] > units[0])
+                || retired
+                    .windows(2)
+                    .any(|ranges| ranges[0][1] >= ranges[1][0])
+            {
+                return Err(plan_err("invalid D8 predecessor or retired ranges"));
+            }
+            Ok(())
+        }
+        _ => Err(plan_err(
+            "D8 replacement metadata disagrees with the set name",
+        )),
+    }
+}
+
 /// Strictly parses and validates a `manifest.json` (`READ-PLAN-v1` section 5).
 pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, PodRunnerError> {
     let root = JsonParser::new(json_text).parse_root().map_err(plan_err)?;
@@ -2961,7 +3077,7 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
     let run = expect_str(&top[4].1, "manifest.run")
         .map_err(plan_err)?
         .to_owned();
-    if !is_valid_token(&run) || (namespace != "test" && run != "v1") {
+    if !valid_read_run(&namespace, &run) {
         return Err(plan_err(format!("manifest.run: invalid {run:?}")));
     }
     let set = expect_str(&top[5].1, "manifest.set")
@@ -3023,6 +3139,19 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
     let mut retired = Vec::with_capacity(retired_arr.len());
     for (idx, r_val) in retired_arr.iter().enumerate() {
         retired.push(parse_range(r_val, &format!("manifest.retired[{idx}]"))?);
+    }
+
+    if d8_namespace(&namespace) {
+        validate_d8_set(
+            &namespace,
+            &run,
+            &set,
+            kind,
+            units,
+            reserved,
+            replaces.as_deref(),
+            &retired,
+        )?;
     }
 
     // Validate family, namespace, panel_sha256, and prep_set consistency.
@@ -3160,14 +3289,36 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
 
     let exec_arr = expect_array(&top[18].1, "manifest.executions").map_err(plan_err)?;
     let mut executions = Vec::with_capacity(exec_arr.len());
+    const EXEC_KEYS: &[&str] = &["execution", "reason", "expired_games", "binary", "platform"];
+    const PREP_KEYS: &[&str] = &[
+        "execution",
+        "reason",
+        "expired_games",
+        "binary",
+        "platform",
+        "claim_id",
+    ];
     for (idx, ex_val) in exec_arr.iter().enumerate() {
         let ep = format!("manifest.executions[{idx}]");
-        let e = expect_object_keys(
-            ex_val,
-            &ep,
-            &["execution", "reason", "expired_games", "binary", "platform"],
-        )
-        .map_err(plan_err)?;
+        let keys = if kind == ManifestKind::Prep
+            && (namespace != "test"
+                || matches!(ex_val, OrderedJson::Object(entries) if entries.len() == PREP_KEYS.len()))
+        {
+            PREP_KEYS
+        } else {
+            EXEC_KEYS
+        };
+        let e = expect_object_keys(ex_val, &ep, keys).map_err(plan_err)?;
+        let claim_id = e
+            .get(5)
+            .map(|(_, value)| {
+                let claim = expect_str(value, &format!("{ep}.claim_id")).map_err(plan_err)?;
+                if claim.trim().is_empty() {
+                    return Err(plan_err(format!("{ep}.claim_id must be nonempty")));
+                }
+                Ok(claim.to_owned())
+            })
+            .transpose()?;
         let execution = expect_u64(&e[0].1, &format!("{ep}.execution")).map_err(plan_err)?;
         if execution != idx as u64 {
             return Err(plan_err(format!(
@@ -3250,6 +3401,7 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
             expired_games,
             binary,
             platform,
+            claim_id,
         });
     }
 
@@ -3315,7 +3467,7 @@ pub fn parse_and_validate_panel_json(json_text: &str) -> Result<PanelDocument, P
     let run = expect_str(&top[3].1, "panel.run")
         .map_err(plan_err)?
         .to_owned();
-    if !is_valid_token(&run) {
+    if !valid_read_run(&namespace, &run) {
         return Err(plan_err("panel.run invalid"));
     }
     let units_arr = expect_array(&top[4].1, "panel.units").map_err(plan_err)?;
@@ -3329,9 +3481,14 @@ pub fn parse_and_validate_panel_json(json_text: &str) -> Result<PanelDocument, P
     if units[0] >= units[1] {
         return Err(plan_err("panel.units: expected first < end"));
     }
-    if namespace != "test" && units != [0, PANEL_UNITS_END] {
+    let expected = if namespace == "dose-d8" {
+        dose_panel_range(&run)
+    } else {
+        Some([0, PANEL_UNITS_END])
+    };
+    if namespace != "test" && Some(units) != expected {
         return Err(plan_err(format!(
-            "panel.units: expected [0, {PANEL_UNITS_END}], got {units:?}"
+            "panel.units: range {units:?} disagrees with {namespace}/{run}"
         )));
     }
     let inputs = parse_plan_inputs(&top[5].1, true, "panel.inputs").map_err(plan_err)?;
@@ -3570,6 +3727,167 @@ pub fn parse_and_validate_prep_execution_receipt_json(
 // Runtime pin, declaration, and two-stage panel verification (`READ-PLAN-v1` s6)
 // ---------------------------------------------------------------------------
 
+fn verify_d8_history(set_dir: &Path, manifest: &SetManifest) -> Result<(), PodRunnerError> {
+    if !d8_namespace(&manifest.namespace) {
+        return Ok(());
+    }
+    let set_dir = fs::canonicalize(set_dir)
+        .map_err(|error| PodRunnerError::Io(format!("{}: {error}", set_dir.display())))?;
+    let run_dir = set_dir
+        .parent()
+        .ok_or_else(|| plan_err("D8 set has no run directory"))?;
+    let namespace_dir = run_dir
+        .parent()
+        .ok_or_else(|| plan_err("D8 set has no namespace directory"))?;
+    for (dir, name) in [
+        (set_dir.as_path(), manifest.set.as_str()),
+        (run_dir, manifest.run.as_str()),
+        (namespace_dir, manifest.namespace.as_str()),
+    ] {
+        if dir.file_name().and_then(|name| name.to_str()) != Some(name) {
+            return Err(plan_err(
+                "D8 set path disagrees with <namespace>/<run>/<set>",
+            ));
+        }
+    }
+
+    let run_number = d8_run_number(&manifest.run).expect("validated D8 run");
+    if run_number == 1 {
+        return Ok(());
+    }
+    let mut end_of_reservations = 0;
+    let mut predecessor = None;
+    let dirs = |path: &Path| {
+        fs::read_dir(path)
+            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", path.display())))
+    };
+    for entry in dirs(namespace_dir)? {
+        let entry = entry.map_err(|error| PodRunnerError::Io(error.to_string()))?;
+        let run = entry.file_name().to_string_lossy().into_owned();
+        if d8_run_number(&run).is_none_or(|n| n >= run_number) || !entry.path().is_dir() {
+            continue;
+        }
+        for set in dirs(&entry.path())? {
+            let path = set
+                .map_err(|error| PodRunnerError::Io(error.to_string()))?
+                .path();
+            let bytes = match fs::read_to_string(path.join("manifest.json")) {
+                Ok(text) => text,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(PodRunnerError::Io(format!("{}: {error}", path.display())))
+                }
+            };
+            let prior = parse_and_validate_manifest_json(&bytes)?;
+            if prior.namespace != manifest.namespace
+                || prior.run != run
+                || path.file_name().and_then(|name| name.to_str()) != Some(prior.set.as_str())
+            {
+                return Err(plan_err("prior D8 manifest disagrees with its directory"));
+            }
+            end_of_reservations = end_of_reservations.max(prior.units[1]);
+            if manifest.replaces.as_deref() == Some(format!("{run}/{}", prior.set).as_str()) {
+                predecessor = Some((path, prior));
+            }
+        }
+    }
+    if manifest.units[0] != end_of_reservations {
+        return Err(plan_err(
+            "D8 restart must start after the earlier namespace reservations",
+        ));
+    }
+    if manifest.replaces.is_some() {
+        let (path, prior) =
+            predecessor.ok_or_else(|| plan_err("D8 predecessor manifest is missing"))?;
+        if prior.kind != manifest.kind {
+            return Err(plan_err("D8 predecessor has a different execution kind"));
+        }
+        let unused = unused_interrupted_units(&path, &prior)?;
+        if manifest.retired != unused {
+            return Err(plan_err(format!(
+                "D8 retired ranges must equal the predecessor's unused units {unused:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn unused_interrupted_units(
+    set_dir: &Path,
+    manifest: &SetManifest,
+) -> Result<Vec<[u64; 2]>, PodRunnerError> {
+    let last = manifest
+        .executions
+        .last()
+        .ok_or_else(|| plan_err("D8 predecessor never started"))?;
+    let path = set_dir
+        .join(format!("exec-{}", last.execution))
+        .join("execution.json");
+    match fs::read_to_string(&path) {
+        Ok(text) => {
+            let complete = match manifest.kind {
+                ManifestKind::Prep => {
+                    parse_and_validate_prep_execution_receipt_json(&text)?.ended
+                        == PrepExecutionEnded::Complete
+                }
+                ManifestKind::Plans => {
+                    parse_and_validate_plan_execution_receipt_json(&text)?.ended
+                        == PlanExecutionEnded::Complete
+                }
+            };
+            if complete {
+                return Err(plan_err("D8 predecessor execution completed"));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(PodRunnerError::Io(format!("{}: {error}", path.display()))),
+    }
+
+    let mut used = BTreeSet::new();
+    for entry in &manifest.executions {
+        let exec = entry.execution;
+        let directory = set_dir.join(format!("exec-{exec}"));
+        for unit in &manifest.plans {
+            match unit {
+                ManifestEntry::Unit(unit) => {
+                    if valid_prep_marker(&directory, unit.unit).is_some() {
+                        used.insert(unit.unit);
+                    }
+                }
+                ManifestEntry::Pod(pod) => {
+                    let record = directory
+                        .join("records")
+                        .join(format!("pod-{}.json", pod.pod_index));
+                    let journal = set_dir
+                        .join(format!(".supervisor-exec-{exec}"))
+                        .join(format!("pod-{}.journal.jsonl", pod.pod_index));
+                    if record.is_file() || journal.is_file() {
+                        let unit = if manifest.namespace == "read-d8-aa" {
+                            pod.pod_index / 2
+                        } else {
+                            pod.pod_index
+                        };
+                        used.insert(unit);
+                    }
+                }
+            }
+        }
+    }
+
+    let [mut first, end] = manifest.units;
+    let mut unused = Vec::new();
+    for unit in used.range(first..end).copied() {
+        if unit > first {
+            unused.push([first, unit]);
+        }
+        first = unit + 1;
+    }
+    if first < end {
+        unused.push([first, end]);
+    }
+    Ok(unused)
+}
+
 fn verify_declaration(
     manifest: &SetManifest,
     verification: &RuntimeVerification,
@@ -3794,6 +4112,126 @@ pub fn run_prep_request(
     })
 }
 
+#[derive(Serialize)]
+struct PrepMarker<'a> {
+    unit: u64,
+    files: [PrepMarkerFile<'a>; 1],
+}
+
+#[derive(Serialize)]
+struct PrepMarkerFile<'a> {
+    file: String,
+    sha256: &'a str,
+}
+
+const PREP_STALL: Duration = Duration::from_secs(3_600);
+
+fn prep_output_name(unit: u64) -> String {
+    format!("prep/unit-{unit}.json")
+}
+
+fn prep_marker_path(exec_dir: &Path, unit: u64) -> PathBuf {
+    exec_dir.join("done").join(format!("{unit}.json"))
+}
+
+fn valid_prep_marker(exec_dir: &Path, unit: u64) -> Option<String> {
+    let text = fs::read_to_string(prep_marker_path(exec_dir, unit)).ok()?;
+    let json = JsonParser::new(&text).parse_root().ok()?;
+    let marker = expect_object_keys(&json, "marker", &["unit", "files"]).ok()?;
+    if expect_u64(&marker[0].1, "marker.unit").ok()? != unit {
+        return None;
+    }
+    let [file] = expect_array(&marker[1].1, "marker.files").ok()? else {
+        return None;
+    };
+    let file = expect_object_keys(file, "marker.file", &["file", "sha256"]).ok()?;
+    let expected = prep_output_name(unit);
+    let digest = expect_sha256(&file[1].1, "marker.file.sha256").ok()?;
+    if expect_str(&file[0].1, "marker.file.file").ok()? != expected {
+        return None;
+    }
+    let bytes = fs::read(exec_dir.join(expected)).ok()?;
+    (sha256_hex(&bytes) == digest).then(|| digest.to_owned())
+}
+
+fn check_prep_identity(
+    set_dir: &Path,
+    execution: u64,
+    unit: u64,
+    digest: &str,
+) -> Result<(), PodRunnerError> {
+    let entries = fs::read_dir(set_dir)
+        .map_err(|error| PodRunnerError::Io(format!("{}: {error}", set_dir.display())))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| PodRunnerError::Io(error.to_string()))?;
+        let name = entry.file_name();
+        let Some(other) = name.to_str().and_then(|name| {
+            let suffix = name.strip_prefix("exec-")?;
+            if suffix == "0" {
+                Some(0)
+            } else {
+                positive_decimal(suffix)
+            }
+        }) else {
+            continue;
+        };
+        if other != execution
+            && valid_prep_marker(&entry.path(), unit).is_some_and(|previous| previous != digest)
+        {
+            return Err(plan_err(format!(
+                "prep determinism failure: unit {unit} differs from exec-{other}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn check_prep_retry(previous: &Path, claim_ended: bool) -> Result<(), PodRunnerError> {
+    let receipt = previous.join("execution.json");
+    match fs::read_to_string(&receipt) {
+        Ok(text) => {
+            if parse_and_validate_prep_execution_receipt_json(&text)?.ended
+                != PrepExecutionEnded::Interrupted
+            {
+                return Err(plan_err(
+                    "prep_retry requires an absent or interrupted prior receipt",
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(PodRunnerError::Io(format!(
+                "{}: {error}",
+                receipt.display()
+            )))
+        }
+    }
+    if claim_ended {
+        return Ok(());
+    }
+    let elapsed =
+        |path: &Path| -> Option<Duration> { path.metadata().ok()?.modified().ok()?.elapsed().ok() };
+    let done = previous.join("done");
+    let mut idle = elapsed(&previous.join("started.json")).or_else(|| elapsed(previous));
+    if done.exists() {
+        for item in fs::read_dir(&done).map_err(|error| PodRunnerError::Io(error.to_string()))? {
+            let path = item
+                .map_err(|error| PodRunnerError::Io(error.to_string()))?
+                .path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                let age = elapsed(&path).unwrap_or_default();
+                idle = Some(idle.map_or(age, |prior| prior.min(age)));
+            }
+        }
+    }
+    if idle.is_none_or(|age| age < PREP_STALL) {
+        return Err(plan_err(
+            "prep_retry requires 3,600 seconds without a prior unit marker change",
+        ));
+    }
+    Ok(())
+}
+
 /// Executes a prep set execution (`exec-<e>/prep/unit-<unit>.json` and
 /// `exec-<e>/execution.json`). Watchdog limits do not apply to prep sets.
 ///
@@ -3808,6 +4246,27 @@ pub fn run_prep_set_execution(
     verification: &RuntimeVerification,
     interrupt_after_units: Option<usize>,
 ) -> Result<PrepExecutionReceipt, PodRunnerError> {
+    run_prep_set_execution_with_ended_claim(
+        pool,
+        set_dir,
+        execution,
+        seats,
+        verification,
+        interrupt_after_units,
+        None,
+    )
+}
+
+/// The launcher can supply a claim id that its claim system reports as ended.
+pub fn run_prep_set_execution_with_ended_claim(
+    pool: &CubePool,
+    set_dir: &Path,
+    execution: u64,
+    seats: &dyn SeatFactory,
+    verification: &RuntimeVerification,
+    interrupt_after_units: Option<usize>,
+    ended_claim: Option<&str>,
+) -> Result<PrepExecutionReceipt, PodRunnerError> {
     let manifest_path = set_dir.join("manifest.json");
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", manifest_path.display())))?;
@@ -3818,6 +4277,7 @@ pub fn run_prep_set_execution(
         ));
     }
     verify_declaration(&manifest, verification)?;
+    verify_d8_history(set_dir, &manifest)?;
 
     // Execution must be the next appended execution entry.
     let expected_exec = manifest
@@ -3839,22 +4299,17 @@ pub fn run_prep_set_execution(
         ));
     }
     if execution >= 1 {
-        let prev_receipt_path = set_dir
-            .join(format!("exec-{}", execution - 1))
-            .join("execution.json");
-        let prev_text = fs::read_to_string(&prev_receipt_path).map_err(|error| {
-            plan_err(format!(
-                "prep_retry requires previous execution receipt {}: {error}",
-                prev_receipt_path.display()
-            ))
-        })?;
-        let prev_receipt = parse_and_validate_prep_execution_receipt_json(&prev_text)?;
-        if prev_receipt.ended != PrepExecutionEnded::Interrupted {
-            return Err(plan_err(format!(
-                "prep_retry allowed only after previous execution ended \"interrupted\", got {:?}",
-                prev_receipt.ended
-            )));
+        let previous = execution - 1;
+        let claim_id = manifest.executions[previous as usize].claim_id.as_deref();
+        if ended_claim.is_some() && ended_claim != claim_id {
+            return Err(plan_err(
+                "ended claim id does not match the preceding prep execution",
+            ));
         }
+        check_prep_retry(
+            &set_dir.join(format!("exec-{previous}")),
+            ended_claim.is_some(),
+        )?;
     }
 
     let panel = load_and_verify_panel(set_dir, &manifest, verification)?;
@@ -3862,11 +4317,21 @@ pub fn run_prep_set_execution(
     let exec_dir = set_dir.join(format!("exec-{execution}"));
     let prep_dir = exec_dir.join("prep");
     let receipt_path = exec_dir.join("execution.json");
+    let done_dir = exec_dir.join("done");
     if receipt_path.exists() {
         return Err(plan_err(format!(
             "{} already exists; refusing to overwrite",
             receipt_path.display()
         )));
+    }
+
+    if manifest.namespace == "dose-d8"
+        && (manifest.plans.len() as u64 != manifest.units[1] - manifest.units[0]
+            || !(manifest.units[0]..manifest.units[1]).zip(&manifest.plans).all(|(expected, entry)| {
+                matches!(entry, ManifestEntry::Unit(entry) if entry.unit == expected)
+            }))
+    {
+        return Err(plan_err("dose-d8 prep requests must cover every reserved unit"));
     }
 
     // Validate all unit requests up front before writing any output.
@@ -3926,6 +4391,20 @@ pub fn run_prep_set_execution(
     fs::create_dir_all(&prep_dir)
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", prep_dir.display())))?;
 
+    fs::create_dir_all(&done_dir)
+        .map_err(|error| PodRunnerError::Io(format!("{}: {error}", done_dir.display())))?;
+
+    #[derive(Serialize)]
+    struct PrepStarted<'a> {
+        pid: u32,
+        claim_id: Option<&'a str>,
+    }
+    let started = to_canonical_pretty_json(&PrepStarted {
+        pid: std::process::id(),
+        claim_id: exec_entry.claim_id.as_deref(),
+    })?;
+    write_new_bytes(&exec_dir.join("started.json"), started.as_bytes())?;
+
     let mut outputs = Vec::with_capacity(validated_units.len());
     let mut interrupted = false;
     for (idx, (unit_entry, req, out_path)) in validated_units.iter().enumerate() {
@@ -3951,7 +4430,20 @@ pub fn run_prep_set_execution(
         }
         let json_text = to_canonical_pretty_json(&result)?;
         let digest = sha256_hex(json_text.as_bytes());
+        check_prep_identity(set_dir, execution, unit_entry.unit, &digest)?;
         write_new_bytes(out_path, json_text.as_bytes())?;
+        let marker_text = to_canonical_pretty_json(&PrepMarker {
+            unit: unit_entry.unit,
+            files: [PrepMarkerFile {
+                file: prep_output_name(unit_entry.unit),
+                sha256: &digest,
+            }],
+        })?;
+        write_new_bytes(
+            &prep_marker_path(&exec_dir, unit_entry.unit),
+            marker_text.as_bytes(),
+        )?;
+        check_prep_identity(set_dir, execution, unit_entry.unit, &digest)?;
         outputs.push(PrepOutputEntry {
             unit: unit_entry.unit,
             sha256: digest,
@@ -4065,6 +4557,12 @@ fn validate_one_prep_execution(
                 exec_entry.execution, out.sha256
             )));
         }
+        if valid_prep_marker(&exec_dir, out.unit).as_deref() != Some(out.sha256.as_str()) {
+            return Err(plan_err(format!(
+                "exec-{}: unit {} lacks a valid marker equal to the receipt",
+                exec_entry.execution, out.unit
+            )));
+        }
         let text = std::str::from_utf8(&bytes)
             .map_err(|error| plan_err(format!("{file_name}: invalid UTF-8: {error}")))?;
         let parsed = parse_and_validate_prep_result_json(text)?;
@@ -4119,24 +4617,35 @@ pub fn accept_prep_execution(set_dir: &Path) -> Result<AcceptedPrepExecution, Po
         ));
     }
 
-    let mut accepted: Option<AcceptedPrepExecution> = None;
-    for exec_entry in &manifest.executions {
-        let Some(candidate) = validate_one_prep_execution(set_dir, &manifest, exec_entry)? else {
-            continue;
-        };
-        if let Some(ref first) = accepted {
-            if candidate.output_bytes_by_unit != first.output_bytes_by_unit {
-                return Err(plan_err(format!(
-                    "prep determinism failure: exec-{} outputs are not byte-identical to accepted exec-{}",
-                    exec_entry.execution, first.execution
-                )));
+    // Check marked units across every attempt, even one without a receipt.
+    for unit in manifest.plans.iter().filter_map(|entry| match entry {
+        ManifestEntry::Unit(entry) => Some(entry.unit),
+        ManifestEntry::Pod(_) => None,
+    }) {
+        let mut prior = None;
+        for entry in &manifest.executions {
+            let exec_dir = set_dir.join(format!("exec-{}", entry.execution));
+            if let Some(digest) = valid_prep_marker(&exec_dir, unit) {
+                if prior.as_ref().is_some_and(|previous| *previous != digest) {
+                    return Err(plan_err(format!(
+                        "prep determinism failure: unit {unit} differs in exec-{}",
+                        entry.execution
+                    )));
+                }
+                prior = Some(digest);
             }
-        } else {
-            accepted = Some(candidate);
         }
     }
 
-    accepted.ok_or_else(|| plan_err("no accepted complete prep execution found in set"))
+    let mut failure = None;
+    for entry in &manifest.executions {
+        match validate_one_prep_execution(set_dir, &manifest, entry) {
+            Ok(Some(accepted)) => return Ok(accepted),
+            Ok(None) => {}
+            Err(error) => failure = Some(error),
+        }
+    }
+    Err(failure.unwrap_or_else(|| plan_err("no accepted complete prep execution found in set")))
 }
 
 // ---------------------------------------------------------------------------
@@ -4764,6 +5273,7 @@ fn preflight_plan_set_execution(
         ));
     }
     verify_declaration(&manifest, verification)?;
+    verify_d8_history(set_dir, &manifest)?;
 
     let expected_exec = manifest
         .executions
@@ -4851,6 +5361,25 @@ fn preflight_plan_set_execution(
         )));
     }
 
+    let unit_range = manifest.units[0]..manifest.units[1];
+    if d8_namespace(&manifest.namespace) {
+        let pods_per_unit = if manifest.namespace == "read-d8-aa" {
+            2
+        } else {
+            1
+        };
+        let range = manifest.units.map(|bound| bound.checked_mul(pods_per_unit));
+        let [Some(first), Some(end)] = range else {
+            return Err(plan_err("D8 manifest pod range overflows"));
+        };
+        if manifest.plans.len() as u64 != end - first
+            || !(first..end).zip(&manifest.plans).all(|(expected, entry)| {
+                matches!(entry, ManifestEntry::Pod(entry) if entry.pod_index == expected)
+            })
+        {
+            return Err(plan_err("D8 manifest plans must cover every reserved unit"));
+        }
+    }
     let mut validated_plans = Vec::with_capacity(manifest.plans.len());
     for entry in &manifest.plans {
         let ManifestEntry::Pod(pod_entry) = entry else {
@@ -4870,6 +5399,7 @@ fn preflight_plan_set_execution(
             .map_err(|error| plan_err(format!("{}: invalid UTF-8: {error}", pod_entry.file)))?;
         let plan = parse_and_validate_read_plan_json(plan_text)?;
         if plan.pod_index != pod_entry.pod_index
+            || (d8_namespace(&manifest.namespace) && !unit_range.contains(&plan.unit))
             || plan.namespace != manifest.namespace
             || plan.run != manifest.run
             || plan.family.as_str() != manifest.family

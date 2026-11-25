@@ -24,6 +24,7 @@ use crate::cube_seat_v1::{
     SeatError, SeatPicker, StatedSeatBuilder, UniformFourStepBuilder, UniformSeatPicker,
     M4_INTERFACES_VERSION, UNIFORM_SAMPLER_ID,
 };
+use crate::cube_worker_liveness_v1::observe_decisions;
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -46,13 +47,11 @@ pub const WATCHDOG_REASON: &str = "watchdog_seconds";
 pub const WATCHDOG_STOP_KIND: &str = "terminal:watchdog";
 /// The A2.1 game caps: 16,384 driver decisions, 16,384 physical decisions,
 /// 32,768 policy steps.
-pub const A2_GAME_CAPS: GameCaps = GameCaps {
-    max_decisions: 16_384,
-    max_physical_decisions: 16_384,
-    max_policy_steps: 32_768,
-    max_stack_objects: None,
-};
-/// Default per-game wall-clock watchdog in seconds.
+pub const A2_GAME_CAPS: GameCaps = crate::cube_b_census_v1::A2_CAPS;
+pub(crate) const A2_MAX_STACK_OBJECTS: u32 = A2_GAME_CAPS
+    .max_stack_objects
+    .expect("A2.1 requires a stack cap");
+/// Default limit in seconds between changes in a worker decision count.
 pub const DEFAULT_WATCHDOG_SECONDS: u64 = 600;
 /// Maximum per-game replays in a training pod (4 total attempts: 0..=3).
 pub const TRAINING_MAX_REPLAYS: u8 = 3;
@@ -543,6 +542,7 @@ pub struct PodCaps {
     pub max_decisions: u64,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
+    pub max_stack_objects: u32,
     pub watchdog_seconds: u64,
     pub max_replays: u8,
 }
@@ -554,6 +554,7 @@ impl PodCaps {
             max_decisions: A2_GAME_CAPS.max_decisions,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_MAX_STACK_OBJECTS,
             watchdog_seconds: DEFAULT_WATCHDOG_SECONDS,
             max_replays: TRAINING_MAX_REPLAYS,
         }
@@ -565,6 +566,7 @@ impl PodCaps {
             max_decisions: A2_GAME_CAPS.max_decisions,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_MAX_STACK_OBJECTS,
             watchdog_seconds: DEFAULT_WATCHDOG_SECONDS,
             max_replays: READ_MAX_REPLAYS,
         }
@@ -576,7 +578,7 @@ impl PodCaps {
             max_decisions: self.max_decisions,
             max_physical_decisions: self.max_physical_decisions,
             max_policy_steps: self.max_policy_steps,
-            max_stack_objects: None,
+            max_stack_objects: Some(self.max_stack_objects),
         }
     }
 }
@@ -957,7 +959,7 @@ pub struct ReadGameSpec {
 }
 
 /// Explicit read plan (`seat_rule: "schedule"`, `max_replays: 0`) for direct
-/// in-memory execution. For full file-backed `mtg-kernel-cube-read-plan/v1`
+/// in-memory execution. For full file-backed `mtg-kernel-cube-read-plan/v3`
 /// plans, manifests, prep sets, panels and execution directories, see
 /// [`crate::cube_read_plan_v1`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1050,7 +1052,8 @@ fn play_game_task(
             action_seed,
         };
         let started = Instant::now();
-        let outcome = ctx.pilot.play(&spec, &ctx.game_caps);
+        let (outcome, stalled) =
+            observe_decisions(ctx.watchdog, || ctx.pilot.play(&spec, &ctx.game_caps));
         let elapsed = started.elapsed();
         let elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
         timings.push(AttemptTiming {
@@ -1061,7 +1064,7 @@ fn play_game_task(
         });
 
         let pilot_watchdog = is_watchdog_end(&outcome.end);
-        let timed_out = pilot_watchdog || elapsed > ctx.watchdog;
+        let timed_out = pilot_watchdog || stalled;
         let (end, halted, sk, last_action_source, physical_decisions, policy_steps) = if timed_out {
             (
                 watchdog_game_end(),
@@ -1168,7 +1171,8 @@ pub(crate) fn execute_game_tasks_with_options(
 
     let worker_count = options.workers.max(1).min(tasks.len());
     let next_index = AtomicUsize::new(0);
-    type GameSlot = Mutex<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>>;
+    type GameResult = Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>;
+    type GameSlot = Mutex<Option<GameResult>>;
     let slots: Vec<GameSlot> = (0..tasks.len()).map(|_| Mutex::new(None)).collect();
 
     std::thread::scope(|scope| -> Result<(), PodRunnerError> {
@@ -1202,7 +1206,7 @@ pub(crate) fn execute_game_tasks_with_options(
         Ok(())
     })?;
 
-    let raw_slots: Vec<_> = slots
+    let raw_slots: Vec<Option<GameResult>> = slots
         .into_iter()
         .map(|slot| slot.into_inner().expect("game result slot lock"))
         .collect();
@@ -1337,6 +1341,11 @@ fn validate_common_config(
         });
     }
     validate_use_and_namespace(pod_use, namespace)?;
+    if caps.max_stack_objects != A2_MAX_STACK_OBJECTS {
+        return Err(PodRunnerError::InvalidCaps(format!(
+            "max_stack_objects must be {A2_MAX_STACK_OBJECTS}"
+        )));
+    }
     if caps.watchdog_seconds == 0 {
         return Err(PodRunnerError::InvalidCaps(
             "watchdog_seconds must be at least 1".to_owned(),
@@ -2735,6 +2744,7 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
             "max_decisions",
             "max_physical_decisions",
             "max_policy_steps",
+            "max_stack_objects",
             "watchdog_seconds",
             "max_replays",
         ],
@@ -2742,7 +2752,13 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
     for (key, val) in caps {
         let _ = expect_u64(val, &format!("caps.{key}"))?;
     }
-    let max_replays = expect_u64(&caps[4].1, "caps.max_replays")?;
+    let max_stack_objects = expect_u64(&caps[3].1, "caps.max_stack_objects")?;
+    if max_stack_objects != u64::from(A2_MAX_STACK_OBJECTS) {
+        return Err(format!(
+            "caps.max_stack_objects: expected {A2_MAX_STACK_OBJECTS}, got {max_stack_objects}"
+        ));
+    }
+    let max_replays = expect_u64(&caps[5].1, "caps.max_replays")?;
     if is_read_record && max_replays != 0 {
         return Err(format!(
             "caps.max_replays: read pod requires 0, got {max_replays}"
