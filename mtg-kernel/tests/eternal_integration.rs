@@ -2,6 +2,8 @@
 
 #[path = "eternal/cube_draft_v1.rs"]
 mod cube_draft_v1;
+#[path = "eternal/cube_foreign_adventure_v1.rs"]
+mod cube_foreign_adventure_v1;
 #[path = "eternal/eternal_bo3_v1.rs"]
 mod eternal_bo3_v1;
 #[path = "eternal/eternal_catalog_v1.rs"]
@@ -134,6 +136,8 @@ mod eternal_premodern_p3g_v1;
 mod eternal_premodern_p3h_v1;
 #[path = "eternal/eternal_premodern_p3i_v1.rs"]
 mod eternal_premodern_p3i_v1;
+#[path = "eternal/eternal_public_extra_turns_v1.rs"]
+mod eternal_public_extra_turns_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]
 mod eternal_public_shroud_v1;
 #[path = "eternal/eternal_sideboard_s1a_v1.rs"]
@@ -172,6 +176,8 @@ mod eternal_vintage_e4b_v1;
 mod eternal_vintage_e5a_v1;
 #[path = "eternal/eternal_vintage_e7b_v1.rs"]
 mod eternal_vintage_e7b_v1;
+#[path = "eternal/eternal_ward_public_v1.rs"]
+mod eternal_ward_public_v1;
 #[path = "eternal/hallow_overlap_v1.rs"]
 mod hallow_overlap_v1;
 #[path = "eternal/premodern_feb_jsonl_v1.rs"]

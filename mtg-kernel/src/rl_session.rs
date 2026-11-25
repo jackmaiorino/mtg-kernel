@@ -7014,7 +7014,9 @@ impl RlEpisodeSessionV1 {
             return;
         }
 
-        if self.state.extra_turn_v1.is_some() {
+        // The schema 5 public contract reports the turn schedule in its
+        // policy observation, so its session follows extra turns.
+        if self.state.extra_turn_v1.is_some() && !self.state.public_shroud_v1 {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
                 self.deck_hashes,

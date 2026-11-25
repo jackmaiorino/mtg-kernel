@@ -3,6 +3,7 @@
  "eternal_integration": {
   "bonder_owned_draws_v1": 1,
   "cube_draft_v1": 7,
+  "cube_foreign_adventure_v1": 1,
   "denial_owned_draws_v1": 1,
   "eternal_bo3_v1": 249,
   "eternal_bo3_v1::playable_75_decks_play_best_of_three_with_random_sideboarding": 620,
@@ -72,6 +73,7 @@
   "eternal_premodern_p3g_v1": 1,
   "eternal_premodern_p3h_v1": 20,
   "eternal_premodern_p3i_v1": 58,
+  "eternal_public_extra_turns_v1": 1,
   "eternal_public_shroud_v1": 1,
   "eternal_sideboard_s1a_v1": 1,
   "eternal_sideboard_s1b_v1": 1,
@@ -91,6 +93,7 @@
   "eternal_vintage_e4b_v1": 1,
   "eternal_vintage_e5a_v1": 1,
   "eternal_vintage_e7b_v1": 1,
+  "eternal_ward_public_v1": 1,
   "hallow_overlap_v1": 1,
   "knowledge_owned_draws_v1": 1,
   "portent_owned_draws_v1": 1,
