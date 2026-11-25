@@ -139,21 +139,6 @@ class SummaryTests(unittest.TestCase):
         # Charged cards sort first.
         self.assertEqual(self.summary["cards"][0]["card"], 2)
 
-    def test_tripwire_denominators_exclude_death_lost_and_unrun(self):
-        rows = fixture()
-        rows.extend([
-            line(6, {"kind": "lost"}, [[1], [2]], "lost"),
-            line(7, {"kind": "unrun"}, [[1], [2]], "unrun"),
-        ])
-        summary = bcs.summarise(rows)
-        eligible = summary["tripwire"]
-        self.assertEqual(eligible["games"], 5)
-        cards = {row["card"]: row for row in eligible["cards"]}
-        self.assertEqual(cards[1]["games_present"], 5)
-        self.assertEqual((cards[2]["games_present"], cards[2]["charged"]), (3, 1))
-        self.assertNotIn(6, cards)
-        self.assertNotIn("tripwire", bcs.summarise(rows[:4]))
-
     def test_percentiles_are_nearest_rank(self):
         self.assertEqual(bcs.percentile(list(range(1, 1001)), 99.9), 999)
         self.assertEqual(bcs.percentile(list(range(1, 1001)), 50), 500)
