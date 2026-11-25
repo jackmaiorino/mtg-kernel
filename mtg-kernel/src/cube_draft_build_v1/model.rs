@@ -26,6 +26,7 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
@@ -770,6 +771,7 @@ impl ModelCardRowsV1 {
 pub struct CardHiddenTableV1 {
     trunk: TrunkV1,
     rows: usize,
+    parameter_digest: [u8; 32],
     values: Vec<f32>,
 }
 
@@ -799,6 +801,7 @@ pub struct ModelV1 {
     dense_width: usize,
     specs: Vec<TensorSpecV1>,
     values: Vec<Vec<f32>>,
+    parameter_digest: OnceLock<[u8; 32]>,
 }
 
 impl ModelV1 {
@@ -819,6 +822,7 @@ impl ModelV1 {
             dense_width,
             specs,
             values,
+            parameter_digest: OnceLock::new(),
         })
     }
 
@@ -858,14 +862,16 @@ impl ModelV1 {
     /// Per tensor in layout order, the layout hash's bytes for it followed by
     /// its values as f32 bits little-endian.
     pub fn parameter_sha256(&self) -> [u8; 32] {
-        let mut digest = Sha256::new();
-        for (spec, values) in self.specs.iter().zip(&self.values) {
-            update_tensor_header_v1(&mut digest, &spec.name, &spec.shape);
-            for value in values {
-                digest.update(value.to_bits().to_le_bytes());
+        *self.parameter_digest.get_or_init(|| {
+            let mut digest = Sha256::new();
+            for (spec, values) in self.specs.iter().zip(&self.values) {
+                update_tensor_header_v1(&mut digest, &spec.name, &spec.shape);
+                for value in values {
+                    digest.update(value.to_bits().to_le_bytes());
+                }
             }
-        }
-        digest.finalize().into()
+            digest.finalize().into()
+        })
     }
 
     /// Calls `visit` on every tensor in layout order.
@@ -886,6 +892,7 @@ impl ModelV1 {
         &mut self,
         mut visit: impl FnMut(&str, ParameterSetV1, &[usize], &mut [f32]),
     ) {
+        self.parameter_digest.take();
         for (spec, values) in self.specs.iter().zip(self.values.iter_mut()) {
             visit(&spec.name, spec.set, &spec.shape, values);
         }
@@ -900,6 +907,7 @@ impl ModelV1 {
     /// The values of the tensor named `name`, mutable.
     pub fn tensor_mut_v1(&mut self, name: &str) -> Option<&mut [f32]> {
         let position = self.specs.iter().position(|spec| spec.name == name)?;
+        self.parameter_digest.take();
         Some(&mut self.values[position])
     }
 
@@ -907,6 +915,7 @@ impl ModelV1 {
     /// `card_mlp.2`, weights and biases) into the pick trunk, bit for bit.
     /// Nothing else changes.
     pub fn copy_build_trunk_to_pick_trunk(&mut self) {
+        self.parameter_digest.take();
         for (from, to) in TensorIdV1::BUILD_TRUNK.iter().zip(TensorIdV1::PICK_TRUNK) {
             let source = self.values[from.index()].clone();
             self.values[to.index()].copy_from_slice(&source);
@@ -941,6 +950,33 @@ impl ModelV1 {
                 self.table_width,
                 self.dense_width
             )));
+        }
+        Ok(())
+    }
+
+    fn check_cached_hidden(
+        &self,
+        rows: &ModelCardRowsV1,
+        hidden: &CardHiddenTableV1,
+        trunk: TrunkV1,
+    ) -> Result<(), ModelErrorV1> {
+        self.check_rows(rows)?;
+        if hidden.trunk != trunk {
+            return Err(shape_error(format!(
+                "cached hidden table has trunk {:?}, expected {trunk:?}",
+                hidden.trunk
+            )));
+        }
+        if hidden.rows != self.index_rows {
+            return Err(shape_error(format!(
+                "cached hidden table has {} rows, expected {}",
+                hidden.rows, self.index_rows
+            )));
+        }
+        if hidden.parameter_digest != self.parameter_sha256() {
+            return Err(shape_error(
+                "cached hidden table was built from different model parameters",
+            ));
         }
         Ok(())
     }
@@ -1012,6 +1048,7 @@ impl ModelV1 {
         Ok(CardHiddenTableV1 {
             trunk,
             rows: row_count,
+            parameter_digest: self.parameter_sha256(),
             values,
         })
     }
@@ -1294,17 +1331,18 @@ pub struct PickForwardV1<'m> {
 }
 
 impl<'m> PickForwardV1<'m> {
-    // The owner keeps these borrows tied to the model and rows that built H.
+    /// Borrows H after checking its trunk, dimensions and parameter digest.
     pub(crate) fn from_cached_hidden(
         model: &'m ModelV1,
         rows: &'m ModelCardRowsV1,
         hidden: &'m CardHiddenTableV1,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ModelErrorV1> {
+        model.check_cached_hidden(rows, hidden, TrunkV1::Pick)?;
+        Ok(Self {
             model,
             rows,
             hidden: Cow::Borrowed(hidden),
-        }
+        })
     }
 
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
@@ -1390,17 +1428,18 @@ pub struct BuildForwardV1<'m> {
 }
 
 impl<'m> BuildForwardV1<'m> {
-    // The owner keeps these borrows tied to the model and rows that built H.
+    /// Borrows H after checking its trunk, dimensions and parameter digest.
     pub(crate) fn from_cached_hidden(
         model: &'m ModelV1,
         rows: &'m ModelCardRowsV1,
         hidden: &'m CardHiddenTableV1,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ModelErrorV1> {
+        model.check_cached_hidden(rows, hidden, TrunkV1::Build)?;
+        Ok(Self {
             model,
             rows,
             hidden: Cow::Borrowed(hidden),
-        }
+        })
     }
 
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
