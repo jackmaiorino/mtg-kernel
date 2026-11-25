@@ -2415,7 +2415,11 @@ class D8V3RestartTests(unittest.TestCase):
         repo_dir = repo if repo is not None else (root / "records-repo")
         if not (repo_dir / ".git").exists():
             cls._init_manifest_repo(repo_dir, lead_branch=lead_branch)
-        path = repo_dir / filename
+        if Path(filename).name == "SHAKEDOWN-MANIFEST.md":
+            rel_name = filename
+        else:
+            rel_name = f"{Path(filename).stem}/SHAKEDOWN-MANIFEST.md"
+        path = repo_dir / rel_name
         path.parent.mkdir(parents=True, exist_ok=True)
         # Commit non-restart prefix first so every restart entry is introduced by a single-parent
         # non-merge commit on lead_branch's first-parent chain.
@@ -2423,9 +2427,9 @@ class D8V3RestartTests(unittest.TestCase):
         if first_restart is not None and first_restart > 0:
             prefix_buf = cls._format_manifest(full_entries[:first_restart], preamble=preamble)
             path.write_bytes(prefix_buf)
-            cls._commit_in_repo(repo_dir, filename, f"Record base entries for {filename}")
+            cls._commit_in_repo(repo_dir, rel_name, f"Record base entries for {rel_name}")
         path.write_bytes(buf)
-        cls._commit_in_repo(repo_dir, filename, f"Record {filename}")
+        cls._commit_in_repo(repo_dir, rel_name, f"Record {rel_name}")
         return path, sha, repo_dir
 
     @staticmethod
@@ -3577,6 +3581,22 @@ class D8V3RestartTests(unittest.TestCase):
                     manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="side"
                 )
 
+            # Reviewer r5 rename probe: renaming the merged manifest to RENAMED.md OR moving it to a
+            # subdirectory SHAKEDOWN-MANIFEST.md MUST STILL BE REFUSED!
+            renamed_path = repo / "RENAMED.md"
+            self._git(repo, "mv", "SHAKEDOWN-MANIFEST.md", "RENAMED.md")
+            self._git(repo, "commit", "-m", "Rename manifest to RENAMED.md")
+            with self.assertRaisesRegex(read_sets.SetError, "SHAKEDOWN-MANIFEST.md"):
+                read_sets.load_shakedown_manifest(renamed_path, with_restart_sha, manifest_repo=repo)
+
+            moved_dir = repo / "moved"
+            moved_dir.mkdir()
+            moved_path = moved_dir / "SHAKEDOWN-MANIFEST.md"
+            self._git(repo, "mv", "RENAMED.md", "moved/SHAKEDOWN-MANIFEST.md")
+            self._git(repo, "commit", "-m", "Rename manifest to moved/SHAKEDOWN-MANIFEST.md")
+            with self.assertRaisesRegex(read_sets.SetError, "rename/copy"):
+                read_sets.load_shakedown_manifest(moved_path, with_restart_sha, manifest_repo=repo)
+
         # --- Part B: Direct lead commit accepted; later side-branch edit merged into lead is refused;
         #             local JSON reindent is refused; later non-modifying lead commit stays accepted. ---
         with self._temp_dir() as tmp:
@@ -3686,10 +3706,7 @@ class D8V3RestartTests(unittest.TestCase):
             (repo / "LEAD-OTHER.txt").write_bytes(b"other lead commit\n")
             self._commit_in_repo(repo, "LEAD-OTHER.txt", "Lead unrelated commit before merge")
             self._git(repo, "merge", "--no-ff", "side-edit", "-m", "Merge side edit into lead")
-            with self.assertRaisesRegex(read_sets.SetError, "changed entry bytes"):
-                read_sets.load_shakedown_manifest(manifest_path, edited_sha, manifest_repo=repo)
-            # Old bytes at pre-edit sha also fail because tip no longer equals old bytes.
-            with self.assertRaisesRegex(read_sets.SetError, "changed entry bytes|differ"):
+            with self.assertRaisesRegex(read_sets.SetError, "rewrote earlier bytes"):
                 read_sets.load_shakedown_manifest(manifest_path, edited_sha, manifest_repo=repo)
 
         # --- Part C: Missing lead_branch in entry 1, non-d0_signed entry 1, outside repo, and git unavailable. ---
@@ -3703,46 +3720,144 @@ class D8V3RestartTests(unittest.TestCase):
             r_entry = self._restart_entry(note, "v2", cs_sha, restart_kind="note", replacements=rep_aa)
 
             # Missing lead_branch in entry 1 (d0_signed) -> REFUSED.
-            m_no_lb = repo / "NO-LB.md"
+            m_no_lb = repo / "no-lb" / "SHAKEDOWN-MANIFEST.md"
+            m_no_lb.parent.mkdir()
             m_no_lb.write_bytes(self._format_manifest([{"kind": "d0_signed"}]))
-            self._commit_in_repo(repo, "NO-LB.md", "Base without lead_branch")
+            self._commit_in_repo(repo, "no-lb/SHAKEDOWN-MANIFEST.md", "Base without lead_branch")
             no_lb_bytes = self._format_manifest([{"kind": "d0_signed"}, r_entry])
             m_no_lb.write_bytes(no_lb_bytes)
-            self._commit_in_repo(repo, "NO-LB.md", "Restart without lead_branch")
+            self._commit_in_repo(repo, "no-lb/SHAKEDOWN-MANIFEST.md", "Restart without lead_branch")
             with self.assertRaisesRegex(read_sets.SetError, "lead_branch"):
                 read_sets.load_shakedown_manifest(
                     m_no_lb, hashlib.sha256(no_lb_bytes).hexdigest(), manifest_repo=repo
                 )
 
             # Entry 1 is panel (not d0_signed) with a restart entry -> REFUSED.
-            m_no_d0 = repo / "NO-D0.md"
+            m_no_d0 = repo / "no-d0" / "SHAKEDOWN-MANIFEST.md"
+            m_no_d0.parent.mkdir()
             m_no_d0.write_bytes(self._format_manifest([{"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}]))
-            self._commit_in_repo(repo, "NO-D0.md", "Base panel only")
+            self._commit_in_repo(repo, "no-d0/SHAKEDOWN-MANIFEST.md", "Base panel only")
             no_d0_bytes = self._format_manifest([{"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}, r_entry])
             m_no_d0.write_bytes(no_d0_bytes)
-            self._commit_in_repo(repo, "NO-D0.md", "Restart without d0_signed")
+            self._commit_in_repo(repo, "no-d0/SHAKEDOWN-MANIFEST.md", "Restart without d0_signed")
             with self.assertRaisesRegex(read_sets.SetError, "d0_signed"):
                 read_sets.load_shakedown_manifest(
                     m_no_d0, hashlib.sha256(no_d0_bytes).hexdigest(), manifest_repo=repo
                 )
 
             # Valid lead manifest: outside repo and git unavailable both REFUSED.
-            m_ok = repo / "OK.md"
+            m_ok = repo / "ok" / "SHAKEDOWN-MANIFEST.md"
+            m_ok.parent.mkdir()
             m_ok.write_bytes(self._format_manifest([{"kind": "d0_signed", "lead_branch": "lead"}]))
-            self._commit_in_repo(repo, "OK.md", "Base d0_signed")
+            self._commit_in_repo(repo, "ok/SHAKEDOWN-MANIFEST.md", "Base d0_signed")
             ok_bytes = self._format_manifest([{"kind": "d0_signed", "lead_branch": "lead"}, r_entry])
             ok_sha = hashlib.sha256(ok_bytes).hexdigest()
             m_ok.write_bytes(ok_bytes)
-            self._commit_in_repo(repo, "OK.md", "Lead restart")
+            self._commit_in_repo(repo, "ok/SHAKEDOWN-MANIFEST.md", "Lead restart")
             read_sets.load_shakedown_manifest(m_ok, ok_sha, manifest_repo=repo)
 
-            outside = root / "OUTSIDE.md"
+            outside = root / "SHAKEDOWN-MANIFEST.md"
             outside.write_bytes(ok_bytes)
             with self.assertRaisesRegex(read_sets.SetError, "outside"):
                 read_sets.load_shakedown_manifest(outside, ok_sha, manifest_repo=repo)
             with mock.patch.object(read_sets.subprocess, "run", side_effect=FileNotFoundError("git")):
                 with self.assertRaisesRegex(read_sets.SetError, "git is unavailable"):
                     read_sets.load_shakedown_manifest(m_ok, ok_sha, manifest_repo=repo)
+
+        # --- Part D (r5 append-only probes): closing-fence CRLF change, truncation,
+        #             rewrite of an earlier entry, delete+recreate, and valid append-only chain. ---
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
+            note = self._write_note(root, "RESTART-NOTE.md")
+            entry1 = {"kind": "d0_signed", "lead_branch": "lead"}
+            entry2 = {"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}
+            rep_aa = [{"namespace": "read-d8-aa", "set": "fixed-restart-1",
+                       "replaces": "v1/fixed", "retired": [[1, 4]]}]
+            entry3 = self._restart_entry(note, "v2", cs_sha, restart_kind="note", replacements=rep_aa)
+            entry4 = {"kind": "fixtures", "note": "post-restart fixture receipt"}
+
+            # D1) Valid append-only history across 4 commits -> ACCEPTED.
+            repo_ok = self._init_manifest_repo(root / "repo-append-ok", lead_branch="lead")
+            mp = repo_ok / "SHAKEDOWN-MANIFEST.md"
+            mp.write_bytes(self._format_manifest([entry1]))
+            self._commit_in_repo(repo_ok, "SHAKEDOWN-MANIFEST.md", "Create manifest with entry 1")
+            mp.write_bytes(self._format_manifest([entry1, entry2]))
+            self._commit_in_repo(repo_ok, "SHAKEDOWN-MANIFEST.md", "Append entry 2 panel")
+            b3 = self._format_manifest([entry1, entry2, entry3])
+            mp.write_bytes(b3)
+            c3 = self._commit_in_repo(repo_ok, "SHAKEDOWN-MANIFEST.md", "Append entry 3 restart")
+            b4 = self._format_manifest([entry1, entry2, entry3, entry4])
+            mp.write_bytes(b4)
+            self._commit_in_repo(repo_ok, "SHAKEDOWN-MANIFEST.md", "Append entry 4 fixtures")
+            loaded = read_sets.load_shakedown_manifest(
+                mp, hashlib.sha256(b4).hexdigest(), manifest_repo=repo_ok
+            )
+            self.assertEqual(loaded["restarts"][("read-d8-aa", "v2")]["commit"], c3)
+
+            # D2) Reviewer r5 closing-fence CRLF probe: changing ONLY entry 3's closing fence LF -> CRLF -> REFUSED.
+            repo_crlf = self._init_manifest_repo(root / "repo-crlf", lead_branch="lead")
+            mp_crlf = repo_crlf / "SHAKEDOWN-MANIFEST.md"
+            mp_crlf.write_bytes(self._format_manifest([entry1, entry2]))
+            self._commit_in_repo(repo_crlf, "SHAKEDOWN-MANIFEST.md", "Base entries 1-2")
+            mp_crlf.write_bytes(b3)
+            self._commit_in_repo(repo_crlf, "SHAKEDOWN-MANIFEST.md", "Append entry 3 restart (LF)")
+            # Replace only the final closing fence line ending "```\n\n" with "```\r\n\n".
+            self.assertTrue(b3.endswith(b"```\n\n"))
+            b3_crlf = b3[:-5] + b"```\r\n\n"
+            mp_crlf.write_bytes(b3_crlf)
+            self._commit_in_repo(repo_crlf, "SHAKEDOWN-MANIFEST.md", "Change closing fence LF to CRLF")
+            with self.assertRaisesRegex(read_sets.SetError, "rewrote earlier bytes"):
+                read_sets.load_shakedown_manifest(
+                    mp_crlf, hashlib.sha256(b3_crlf).hexdigest(), manifest_repo=repo_crlf
+                )
+
+            # D3) Truncation probe: append entry 4, then truncate back to entries 1-3 -> REFUSED.
+            repo_trunc = self._init_manifest_repo(root / "repo-trunc", lead_branch="lead")
+            mp_trunc = repo_trunc / "SHAKEDOWN-MANIFEST.md"
+            mp_trunc.write_bytes(self._format_manifest([entry1, entry2]))
+            self._commit_in_repo(repo_trunc, "SHAKEDOWN-MANIFEST.md", "Base entries 1-2")
+            mp_trunc.write_bytes(b3)
+            self._commit_in_repo(repo_trunc, "SHAKEDOWN-MANIFEST.md", "Append entry 3 restart")
+            mp_trunc.write_bytes(b4)
+            self._commit_in_repo(repo_trunc, "SHAKEDOWN-MANIFEST.md", "Append entry 4")
+            mp_trunc.write_bytes(b3)
+            self._commit_in_repo(repo_trunc, "SHAKEDOWN-MANIFEST.md", "Truncate entry 4")
+            with self.assertRaisesRegex(read_sets.SetError, "truncated"):
+                read_sets.load_shakedown_manifest(
+                    mp_trunc, hashlib.sha256(b3).hexdigest(), manifest_repo=repo_trunc
+                )
+
+            # D4) Rewrite of an earlier entry (entry 2 panel digest rewritten before entry 3) -> REFUSED.
+            repo_rew = self._init_manifest_repo(root / "repo-rewrite", lead_branch="lead")
+            mp_rew = repo_rew / "SHAKEDOWN-MANIFEST.md"
+            mp_rew.write_bytes(self._format_manifest([entry1, entry2]))
+            self._commit_in_repo(repo_rew, "SHAKEDOWN-MANIFEST.md", "Base entries 1-2")
+            entry2_alt = {"kind": "panel", "panel": {"run": "v1", "sha256": "9" * 64}}
+            mp_rew.write_bytes(self._format_manifest([entry1, entry2_alt]))
+            self._commit_in_repo(repo_rew, "SHAKEDOWN-MANIFEST.md", "Rewrite entry 2 panel digest")
+            b3_rew = self._format_manifest([entry1, entry2_alt, entry3])
+            mp_rew.write_bytes(b3_rew)
+            self._commit_in_repo(repo_rew, "SHAKEDOWN-MANIFEST.md", "Append entry 3 restart")
+            with self.assertRaisesRegex(read_sets.SetError, "rewrote earlier bytes"):
+                read_sets.load_shakedown_manifest(
+                    mp_rew, hashlib.sha256(b3_rew).hexdigest(), manifest_repo=repo_rew
+                )
+
+            # D5) Delete and recreate probe -> REFUSED.
+            repo_rec = self._init_manifest_repo(root / "repo-recreate", lead_branch="lead")
+            mp_rec = repo_rec / "SHAKEDOWN-MANIFEST.md"
+            mp_rec.write_bytes(self._format_manifest([entry1, entry2]))
+            self._commit_in_repo(repo_rec, "SHAKEDOWN-MANIFEST.md", "Base entries 1-2")
+            self._git(repo_rec, "rm", "SHAKEDOWN-MANIFEST.md")
+            self._git(repo_rec, "commit", "-m", "Delete manifest")
+            mp_rec.write_bytes(self._format_manifest([entry1, entry2]))
+            self._commit_in_repo(repo_rec, "SHAKEDOWN-MANIFEST.md", "Recreate manifest")
+            mp_rec.write_bytes(b3)
+            self._commit_in_repo(repo_rec, "SHAKEDOWN-MANIFEST.md", "Append entry 3 restart")
+            with self.assertRaisesRegex(read_sets.SetError, "deleted or renamed away"):
+                read_sets.load_shakedown_manifest(
+                    mp_rec, hashlib.sha256(b3).hexdigest(), manifest_repo=repo_rec
+                )
 
 
 class UniformPodRecordTests(unittest.TestCase):

@@ -960,14 +960,14 @@ def _parse_shakedown_manifest_entries_with_bytes(raw: bytes) -> list[tuple[dict[
         heading_kind = hm.group(2)
 
         next_line_idx = headings[h_pos + 1][0] if h_pos + 1 < len(headings) else len(raw_lines)
-        next_byte_off = line_offsets[next_line_idx] if next_line_idx < len(raw_lines) else len(raw)
-        entry_bytes = raw[byte_off:next_byte_off].rstrip(b"\r\n")
         body_lines = [raw_lines[i].decode("utf-8") for i in range(line_idx + 1, next_line_idx)]
         json_blocks: list[str] = []
         block_fence_open = False
         block_tag = ""
         block_buf: list[str] = []
-        for bln in body_lines:
+        fence_close_end_off: int | None = None
+        for rel_i, bln in enumerate(body_lines):
+            abs_line_idx = line_idx + 1 + rel_i
             bln_no_nl = bln.rstrip("\n")
             if not block_fence_open:
                 fm = MANIFEST_FENCE_OPEN_RE.match(bln_no_nl)
@@ -979,6 +979,7 @@ def _parse_shakedown_manifest_entries_with_bytes(raw: bytes) -> list[tuple[dict[
                 if MANIFEST_FENCE_CLOSE_RE.match(bln_no_nl):
                     if block_tag == "json":
                         json_blocks.append("".join(block_buf))
+                        fence_close_end_off = line_offsets[abs_line_idx] + len(raw_lines[abs_line_idx])
                     block_fence_open = False
                     block_tag = ""
                     block_buf = []
@@ -986,11 +987,14 @@ def _parse_shakedown_manifest_entries_with_bytes(raw: bytes) -> list[tuple[dict[
                     block_buf.append(bln)
         if block_fence_open:
             raise SetError(f"shakedown manifest entry {heading_seq} has an unclosed fenced block")
-        if len(json_blocks) != 1:
+        if len(json_blocks) != 1 or fence_close_end_off is None:
             raise SetError(
                 f"shakedown manifest entry {heading_seq} must contain exactly one fenced json block, "
                 f"found {len(json_blocks)}"
             )
+        # Keep the exact raw bytes from the heading start through the closing fence line,
+        # preserving the closing fence's exact line terminator (LF, CRLF, or EOF).
+        entry_bytes = raw[byte_off:fence_close_end_off]
         try:
             entry = json.loads(json_blocks[0])
         except json.JSONDecodeError as exc:
@@ -1072,20 +1076,42 @@ def _run_git(
         raise SetError(f"git is unavailable for shakedown manifest lead-branch check: {exc}") from exc
 
 
+SHAKEDOWN_MANIFEST_FILENAME = "SHAKEDOWN-MANIFEST.md"
+
+
 def _verify_restart_commit_on_lead_branch(
     manifest_path: Path,
+    raw_manifest: bytes,
     seq: int,
     entry_bytes: bytes,
     entry1_bytes: bytes,
     manifest_repo: Path,
     lead_branch: str,
 ) -> str:
-    """Verify per SHAKEDOWN-MANIFEST-FORMAT.md (r4 rule) that:
-    1. `lead_branch` (from entry 1 `d0_signed`, never caller-chosen) resolves in `manifest_repo`.
-    2. Entry `seq` was introduced by a non-merge commit with exactly one parent on `lead_branch`'s
-       first-parent chain (`git rev-list --first-parent --parents <lead_ref>`).
-    3. No later commit on `lead_branch`'s first-parent chain (merge or non-merge) changed entry
-       `seq`'s exact bytes, and the branch tip's entry `seq` (and entry 1) match the verified bytes."""
+    """Verify per SHAKEDOWN-MANIFEST-FORMAT.md (r5 append-only rule) that:
+    1. `manifest_path` has the fixed filename `SHAKEDOWN-MANIFEST.md` inside `manifest_repo`.
+    2. `lead_branch` (from entry 1 `d0_signed`, never caller-chosen) resolves in `manifest_repo`.
+    3. On `lead_branch`'s first-parent chain (`git rev-list --first-parent --parents <lead_ref>`),
+       starting from the commit that creates `rel_path`:
+       - The creation commit is not a merge, rename, or copy, and does not already contain the
+         restart entry.
+       - Every later first-parent commit keeps `rel_path` present and leaves all previous manifest
+         bytes as an exact byte prefix of the new bytes (no rename, deletion/recreation,
+         truncation, or rewrite of any byte, line endings included).
+    4. The restart entry's introducing commit is the single-parent non-merge commit on that
+       first-parent chain whose append adds entry `seq`, and the tip's entry `seq` (and entry 1)
+       match the verified bytes verbatim.
+
+    Scope limit (unsigned git history): this check verifies first-parent commit topology and
+    exact append-only byte history on `lead_branch`; it does not verify cryptographic commit
+    signatures or author identities. A fast-forward merge or rebase of a side-authored commit
+    onto `lead_branch` produces a single-parent commit on the first-parent chain and cannot be
+    distinguished from a direct lead commit without signed commits."""
+    if manifest_path.name != SHAKEDOWN_MANIFEST_FILENAME:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: manifest filename must be "
+            f"{SHAKEDOWN_MANIFEST_FILENAME!r}, got {manifest_path.name!r}"
+        )
     if not _valid_branch_name(lead_branch):
         raise SetError(f"shakedown manifest restart entry {seq}: invalid lead_branch {lead_branch!r}")
     repo = Path(manifest_repo)
@@ -1151,34 +1177,40 @@ def _verify_restart_commit_on_lead_branch(
         else:
             blob_oids_tip_to_root.append(None)
 
-    blob_entry_cache: dict[str, dict[int, bytes] | None] = {}
+    blob_raw_cache: dict[str, bytes] = {}
+    blob_entry_cache: dict[str, dict[int, bytes]] = {}
 
-    def entry_bytes_by_seq(blob_oid: str | None) -> dict[int, bytes] | None:
-        if blob_oid is None:
-            return None
-        if blob_oid in blob_entry_cache:
-            return blob_entry_cache[blob_oid]
-        blob = _run_git(repo_root, ["cat-file", "blob", blob_oid], text=False)
-        if blob.returncode != 0:
-            raise SetError(f"shakedown manifest restart entry {seq}: git cat-file blob {blob_oid} failed")
-        try:
-            parsed_blob = _parse_shakedown_manifest_entries_with_bytes(blob.stdout)
-        except SetError:
-            # Older pre-format manifest blob: treat as malformed if it mentions the entry heading.
-            if f"## Entry {seq}: restart".encode("utf-8") in blob.stdout:
+    def read_blob(blob_oid: str) -> bytes:
+        if blob_oid not in blob_raw_cache:
+            blob = _run_git(repo_root, ["cat-file", "blob", blob_oid], text=False)
+            if blob.returncode != 0:
+                raise SetError(f"shakedown manifest restart entry {seq}: git cat-file blob {blob_oid} failed")
+            blob_raw_cache[blob_oid] = blob.stdout
+        return blob_raw_cache[blob_oid]
+
+    def parse_blob_entries(blob_oid: str, commit: str) -> dict[int, bytes]:
+        if blob_oid not in blob_entry_cache:
+            raw_blob = read_blob(blob_oid)
+            try:
+                parsed_blob = _parse_shakedown_manifest_entries_with_bytes(raw_blob)
+            except SetError as exc:
                 raise SetError(
-                    f"shakedown manifest restart entry {seq}: malformed manifest blob {blob_oid} on "
-                    f"lead branch {lead_branch!r} mentions entry {seq}"
-                )
-            blob_entry_cache[blob_oid] = None
-            return None
-        by_seq = {e["seq"]: eb for e, eb in parsed_blob}
-        blob_entry_cache[blob_oid] = by_seq
-        return by_seq
+                    f"shakedown manifest restart entry {seq}: invalid manifest at commit {commit} "
+                    f"on lead branch {lead_branch!r}: {exc}"
+                ) from exc
+            blob_entry_cache[blob_oid] = {e["seq"]: eb for e, eb in parsed_blob}
+        return blob_entry_cache[blob_oid]
 
-    # Check tip first: both entry 1 and entry seq must match the verified bytes verbatim.
-    tip_entries = entry_bytes_by_seq(blob_oids_tip_to_root[0])
-    if tip_entries is None or seq not in tip_entries:
+    # Check tip first: the verified manifest must be an exact prefix of (or equal to) the tip blob,
+    # and both entry 1 and entry seq at the tip must match the verified bytes verbatim.
+    tip_oid = blob_oids_tip_to_root[0]
+    if tip_oid is None:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: {rel_path!r} not present at lead branch {lead_branch!r} tip"
+        )
+    tip_raw = read_blob(tip_oid)
+    tip_entries = parse_blob_entries(tip_oid, chain_tip_to_root[0][0])
+    if seq not in tip_entries:
         raise SetError(
             f"shakedown manifest restart entry {seq}: entry not present at lead branch {lead_branch!r} tip"
         )
@@ -1192,46 +1224,115 @@ def _verify_restart_commit_on_lead_branch(
             f"shakedown manifest restart entry {seq}: entry 1 bytes at lead branch {lead_branch!r} tip "
             "differ from verified entry 1"
         )
+    if not tip_raw.startswith(raw_manifest) or (
+        len(tip_raw) > len(raw_manifest) and not raw_manifest.endswith(b"\n")
+    ):
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: verified manifest bytes are not an exact byte prefix "
+            f"of {rel_path!r} at lead branch {lead_branch!r} tip"
+        )
 
-    # Walk chronologically (root -> tip) along lead_branch's first-parent chain.
+    # Walk chronologically (root -> tip) along lead_branch's first-parent chain from the commit
+    # that creates rel_path, enforcing strict byte-for-byte append-only history at every step.
     chain_chron = list(reversed(list(zip(chain_tip_to_root, blob_oids_tip_to_root))))
+    create_idx = next((idx for idx, (_, oid) in enumerate(chain_chron) if oid is not None), None)
+    if create_idx is None:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: {rel_path!r} never created on lead branch {lead_branch!r}"
+        )
+    (create_commit, create_parents), create_oid = chain_chron[create_idx]
+    assert create_oid is not None
+    if len(create_parents) >= 2:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: manifest {rel_path!r} was created on lead branch "
+            f"{lead_branch!r} by merge commit {create_commit}"
+        )
+    if len(create_parents) == 1:
+        diff_res = _run_git(
+            repo_root,
+            ["diff-tree", "-r", "-M", "-C", "--find-copies-harder", "--name-status", "--no-commit-id", "-z",
+             create_parents[0], create_commit],
+        )
+        if diff_res.returncode != 0:
+            err = (diff_res.stderr or "").strip()
+            raise SetError(f"shakedown manifest restart entry {seq}: git diff-tree failed: {err}")
+        tokens = diff_res.stdout.split("\0")
+        t_idx = 0
+        while t_idx < len(tokens) and tokens[t_idx]:
+            status = tokens[t_idx]
+            if status.startswith(("R", "C")):
+                if t_idx + 2 >= len(tokens):
+                    break
+                old_p, new_p = tokens[t_idx + 1], tokens[t_idx + 2]
+                if new_p == rel_path:
+                    raise SetError(
+                        f"shakedown manifest restart entry {seq}: manifest {rel_path!r} was created by "
+                        f"rename/copy from {old_p!r} in commit {create_commit}"
+                    )
+                t_idx += 3
+            else:
+                t_idx += 2
+
+    prev_oid = create_oid
+    prev_raw = read_blob(create_oid)
+    create_entries = parse_blob_entries(create_oid, create_commit)
+    if seq in create_entries:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: restart entry cannot be introduced in the commit "
+            f"{create_commit} that creates {rel_path!r} (must be appended in a later non-merge commit)"
+        )
+
     intro_commit: str | None = None
-    intro_parents: list[str] | None = None
-    prev_oid: str | None = None
-    for (commit, parents), oid in chain_chron:
+    intro_entry_bytes: bytes | None = None
+    for (commit, parents), oid in chain_chron[create_idx + 1:]:
+        if oid is None:
+            raise SetError(
+                f"shakedown manifest restart entry {seq}: commit {commit} on lead branch {lead_branch!r} "
+                f"deleted or renamed away {rel_path!r} (append-only violation)"
+            )
+        if oid == prev_oid:
+            continue
+        curr_raw = read_blob(oid)
+        if len(curr_raw) < len(prev_raw):
+            raise SetError(
+                f"shakedown manifest restart entry {seq}: commit {commit} on lead branch {lead_branch!r} "
+                f"truncated {rel_path!r} (append-only violation)"
+            )
+        if not curr_raw.startswith(prev_raw):
+            raise SetError(
+                f"shakedown manifest restart entry {seq}: commit {commit} on lead branch {lead_branch!r} "
+                f"rewrote earlier bytes of {rel_path!r} (append-only violation, line endings included)"
+            )
+        curr_entries = parse_blob_entries(oid, commit)
         if intro_commit is None:
-            entries_here = entry_bytes_by_seq(oid)
-            if entries_here is not None and seq in entries_here:
-                intro_commit = commit
-                intro_parents = parents
-                if len(intro_parents) != 1:
-                    kind_desc = "merge commit" if len(intro_parents) >= 2 else "root commit"
+            if seq in curr_entries:
+                if len(parents) != 1:
+                    kind_desc = "merge commit" if len(parents) >= 2 else "root commit"
                     raise SetError(
                         f"shakedown manifest restart entry {seq}: introduced on lead branch {lead_branch!r} "
-                        f"by {kind_desc} {intro_commit} (must be a single-parent non-merge commit on the "
+                        f"by {kind_desc} {commit} (must be a single-parent non-merge commit on the "
                         "first-parent chain)"
                     )
-                if entries_here[seq] != entry_bytes:
-                    raise SetError(
-                        f"shakedown manifest restart entry {seq}: later commit on lead branch {lead_branch!r} "
-                        f"first-parent chain changed entry bytes after introducing commit {intro_commit}"
-                    )
-                prev_oid = oid
+                intro_commit = commit
+                intro_entry_bytes = curr_entries[seq]
         else:
-            if oid == prev_oid:
-                continue
-            entries_here = entry_bytes_by_seq(oid)
-            if entries_here is None or seq not in entries_here or entries_here[seq] != entry_bytes:
+            if seq not in curr_entries or curr_entries[seq] != intro_entry_bytes:
                 raise SetError(
                     f"shakedown manifest restart entry {seq}: later first-parent commit {commit} on "
                     f"lead branch {lead_branch!r} changed entry bytes"
                 )
-            prev_oid = oid
+        prev_oid = oid
+        prev_raw = curr_raw
 
     if intro_commit is None:
         raise SetError(
             f"shakedown manifest restart entry {seq}: commit introducing entry not found on "
             f"lead branch {lead_branch!r} first-parent chain"
+        )
+    if intro_entry_bytes != entry_bytes:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: entry bytes at introducing commit {intro_commit} "
+            f"differ from verified entry"
         )
     return intro_commit
 
@@ -1441,7 +1542,7 @@ def load_shakedown_manifest(
                     f"shakedown manifest restart entry {seq} requires a manifest file path inside manifest_repo"
                 )
             commit_sha = _verify_restart_commit_on_lead_branch(
-                manifest_path, seq, entry_bytes, entry1_bytes, manifest_repo, manifest_lead_branch
+                manifest_path, raw, seq, entry_bytes, entry1_bytes, manifest_repo, manifest_lead_branch
             )
             for ns in sorted(auth_namespaces):
                 key = (ns, run)
