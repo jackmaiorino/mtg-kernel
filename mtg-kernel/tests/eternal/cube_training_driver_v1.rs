@@ -1088,27 +1088,62 @@ fn resume_refuses_a_commit_on_a_differently_named_branch() {
 }
 
 #[test]
-fn manifest_history_refuses_rewrite_or_removal_even_if_tip_restores_bytes() {
+fn manifest_history_refuses_non_append_commits_even_if_tip_restores_bytes() {
+    #[derive(Debug)]
+    enum Probe {
+        Rewrite,
+        Remove,
+        Rename,
+        CrLf,
+        Truncate,
+    }
+
     let temp = TempTestDir::new("resume-history");
     let root = temp.join("b1");
     exit_after_one_update(&root);
     let before = directory_bytes(&root);
     let config = config(&root, "b1", Segment::BuilderOnly, 2);
 
-    for remove in [false, true] {
+    for probe in [
+        Probe::Rewrite,
+        Probe::Remove,
+        Probe::Rename,
+        Probe::CrLf,
+        Probe::Truncate,
+    ] {
         let proof = manifest_resume(&temp.join("manifest.md"), "b1", 1);
         let repo = &proof.records_repository;
         let original = fs::read_to_string(&proof.manifest).unwrap();
-        if remove {
-            fs::remove_file(&proof.manifest).unwrap();
-        } else {
-            fs::write(
-                &proof.manifest,
-                original.replace("# Shakedown", "# Changed"),
-            )
-            .unwrap();
-        }
-        manifest_git(repo, &["add", "-A", "--", "SHAKEDOWN-MANIFEST.md"]);
+        let expected = match probe {
+            Probe::Rewrite => {
+                fs::write(
+                    &proof.manifest,
+                    original.replace("# Shakedown", "# Changed"),
+                )
+                .unwrap();
+                "rewrote or truncated"
+            }
+            Probe::Remove => {
+                fs::remove_file(&proof.manifest).unwrap();
+                "removed or renamed"
+            }
+            Probe::Rename => {
+                manifest_git(
+                    repo,
+                    &["mv", "--", "SHAKEDOWN-MANIFEST.md", "moved-manifest.md"],
+                );
+                "removed or renamed"
+            }
+            Probe::CrLf => {
+                fs::write(&proof.manifest, original.replace('\n', "\r\n")).unwrap();
+                "rewrote or truncated"
+            }
+            Probe::Truncate => {
+                fs::write(&proof.manifest, original.strip_suffix('\n').unwrap()).unwrap();
+                "rewrote or truncated"
+            }
+        };
+        manifest_git(repo, &["add", "-A", "--", "."]);
         manifest_git(repo, &["commit", "-qm", "Change prior manifest"]);
         fs::write(&proof.manifest, original).unwrap();
         manifest_git(repo, &["add", "--", "SHAKEDOWN-MANIFEST.md"]);
@@ -1118,11 +1153,12 @@ fn manifest_history_refuses_rewrite_or_removal_even_if_tip_restores_bytes() {
         let error = TrainingDriver::open(proposed, model_rows(), 1234)
             .err()
             .unwrap();
+        let message = error.to_string();
         assert!(
-            error.to_string().contains("append-only violation"),
-            "{error}"
+            message.contains("append-only violation") && message.contains(expected),
+            "{probe:?}: {error}"
         );
-        assert_eq!(directory_bytes(&root), before);
+        assert_eq!(directory_bytes(&root), before, "{probe:?}");
     }
 }
 

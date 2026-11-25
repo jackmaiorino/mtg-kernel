@@ -191,6 +191,9 @@ fn valid_time(time: &str) -> bool {
             })
 }
 
+// The first-parent chain proves ancestry and append-only bytes. In unsigned
+// history, another author's commit placed on that chain by a fast-forward or
+// rebase is indistinguishable from a direct lead commit.
 pub(super) fn verify_entry_commit(
     repository: &Path,
     manifest_path: &Path,
