@@ -3,6 +3,9 @@ use super::{
     replace_bytes, sha256_hex, stop_paths, sync_directory, update_directories, RunConfig,
     TrainingDriverError,
 };
+#[path = "cube_training_manifest_v1.rs"]
+mod manifest;
+use manifest::{read_resume_entry, verify_entry_commit};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -10,29 +13,16 @@ use std::path::{Path, PathBuf};
 
 const RUNNER_MARKER: &str = "runner-active.json";
 
-/// A D0.3b resume entry in the pinned shakedown manifest. The pin is supplied
-/// by the launcher from the authorized manifest record, independently of the
-/// file at `manifest`. The one-based line points to a single JSON object in the
-/// Markdown manifest (for example inside a fenced JSON block).
-///
-/// The object has `kind: "resume"`, `run`, `host_loss_evidence`,
-/// `last_published_update` (zero-based batch index, null before the first
-/// update), and `next_untouched_batch`.
+/// D0.3b entry selector and provenance from the authorized launcher record.
 #[derive(Debug, Clone)]
 pub struct ResumeAuthorization {
     pub manifest: PathBuf,
     pub manifest_sha256: String,
-    pub entry_line: usize,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResumeEntry {
-    kind: String,
-    run: String,
-    host_loss_evidence: String,
-    last_published_update: Option<u64>,
-    next_untouched_batch: u64,
+    pub entry_seq: u64,
+    pub entry_commit: String,
+    pub records_repository: PathBuf,
+    /// Trusted full ref from launch configuration, independent of the manifest.
+    pub lead_ref: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -45,7 +35,7 @@ pub(super) struct ResumeReceipt {
 impl ResumeAuthorization {
     fn verify(
         &self,
-        run: &str,
+        run_id: &str,
         next_batch: u64,
         previous: Option<ResumeReceipt>,
     ) -> Result<ResumeReceipt, TrainingDriverError> {
@@ -54,17 +44,9 @@ impl ResumeAuthorization {
         if digest != self.manifest_sha256 {
             return Err(invalid("resume manifest sha256 differs from the D0.3b pin"));
         }
-        let mut lines = manifest.split_inclusive(|&byte| byte == b'\n');
-        let line_index = self
-            .entry_line
-            .checked_sub(1)
-            .ok_or_else(|| invalid("resume entry line must be one-based"))?;
-        let offset: usize = lines.by_ref().take(line_index).map(<[u8]>::len).sum();
-        let line = lines
-            .next()
-            .ok_or_else(|| invalid("resume entry is absent from the pinned manifest"))?;
+        let entry = read_resume_entry(&manifest, self.entry_seq)?;
         if let Some(previous) = previous {
-            if offset < previous.manifest_len
+            if entry.start < previous.manifest_len
                 || sha256_hex(&manifest[..previous.manifest_len]) != previous.manifest_sha256
             {
                 return Err(invalid(
@@ -72,17 +54,24 @@ impl ResumeAuthorization {
                 ));
             }
         }
-        let entry: ResumeEntry = serde_json::from_slice(line)?;
-        if entry.kind != "resume"
-            || entry.run != run
-            || entry.host_loss_evidence.trim().is_empty()
-            || entry.last_published_update != next_batch.checked_sub(1)
-            || entry.next_untouched_batch != next_batch
+        // A resume before any batch uses 0 for both fields.
+        if entry.resume.run_id != run_id
+            || entry.resume.host_loss_evidence.trim().is_empty()
+            || entry.resume.last_published_update != next_batch.saturating_sub(1)
+            || entry.resume.resume_batch != next_batch
         {
             return Err(invalid(
                 "resume entry differs from the run or next untouched batch",
             ));
         }
+        verify_entry_commit(
+            &self.records_repository,
+            &self.manifest,
+            &self.lead_ref,
+            &self.entry_commit,
+            &manifest,
+            &entry,
+        )?;
         Ok(ResumeReceipt {
             manifest_len: manifest.len(),
             manifest_sha256: digest,
@@ -146,7 +135,8 @@ pub(super) fn check_resume(
     } else {
         None
     };
-    proof.verify(&config.run, next, previous).map(Some)
+    let run_id = format!("{}/{}", config.namespace, config.run);
+    proof.verify(&run_id, next, previous).map(Some)
 }
 
 /// The file survives a process exit which cannot run the driver's cleanup.

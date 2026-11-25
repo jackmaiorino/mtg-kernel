@@ -817,20 +817,86 @@ fn repeat_watchdog_on_same_game_number_in_another_pod_is_not_a_hang() {
     assert_eq!(stop["second_watchdog_game"], 0);
 }
 
+fn manifest_git(repo: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "-c",
+            "user.name=Fixture Lead",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.autocrlf=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn append_manifest_entry(
+    manifest: &mut String,
+    seq: u64,
+    kind: &str,
+    mut fields: serde_json::Value,
+) {
+    use std::fmt::Write as _;
+    fields["seq"] = seq.into();
+    fields["kind"] = kind.into();
+    fields["time_et"] = "2026-11-25 12:00 ET".into();
+    fields["prefix_sha256"] = sha256_hex(manifest.as_bytes()).into();
+    fields["files"] = serde_json::json!({});
+    writeln!(
+        manifest,
+        "## Entry {seq}: {kind}\n\n```json\n{}\n```\n",
+        serde_json::to_string_pretty(&fields).unwrap()
+    )
+    .unwrap();
+}
+
+fn append_resume(manifest: &mut String, seq: u64, run: &str, next: u64) {
+    append_manifest_entry(
+        manifest,
+        seq,
+        "resume",
+        serde_json::json!({
+            "run_id": format!("test/{run}"),
+            "host_loss_evidence": "fixture host boot record",
+            "last_published_update": next.saturating_sub(1),
+            "resume_batch": next,
+        }),
+    );
+}
+
 fn manifest_resume(manifest: &Path, run: &str, next: u64) -> ResumeAuthorization {
-    let entry = serde_json::json!({
-        "kind": "resume",
-        "run": run,
-        "host_loss_evidence": "fixture host boot record",
-        "last_published_update": next.checked_sub(1),
-        "next_untouched_batch": next,
-    });
-    let bytes = format!("# Shakedown manifest\n\n```json\n{entry}\n```\n");
-    fs::write(manifest, &bytes).unwrap();
+    let repo = manifest.with_extension(format!(
+        "repo-{}",
+        TEST_DIR_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&repo).unwrap();
+    manifest_git(&repo, &["init", "-q", "-b", "lead"]);
+    let name = manifest.file_name().unwrap().to_str().unwrap();
+    let manifest = repo.join(name);
+    let mut bytes = "# Shakedown manifest\n\n".to_owned();
+    append_manifest_entry(&mut bytes, 1, "d0_signed", serde_json::json!({}));
+    fs::write(&manifest, &bytes).unwrap();
+    manifest_git(&repo, &["add", "--", name]);
+    manifest_git(&repo, &["commit", "-qm", "Pin D0"]);
+    append_resume(&mut bytes, 2, run, next);
+    fs::write(&manifest, &bytes).unwrap();
+    manifest_git(&repo, &["add", "--", name]);
+    manifest_git(&repo, &["commit", "-qm", "Record host loss"]);
     ResumeAuthorization {
-        manifest: manifest.to_owned(),
+        manifest,
         manifest_sha256: sha256_hex(bytes.as_bytes()),
-        entry_line: 4,
+        entry_seq: 2,
+        entry_commit: manifest_git(&repo, &["rev-parse", "HEAD"]),
+        records_repository: repo,
+        lead_ref: "refs/heads/lead".into(),
     }
 }
 
@@ -884,6 +950,87 @@ fn unrecorded_exit_requires_manifest_without_writes() {
 }
 
 #[test]
+fn malformed_manifest_entries_never_authorize_resume() {
+    let temp = TempTestDir::new("malformed-manifest");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    let before = directory_bytes(&root);
+    let proof = manifest_resume(&temp.join("manifest.md"), "b1", 1);
+    let valid = fs::read_to_string(&proof.manifest).unwrap();
+    let resume_start = valid.find("## Entry 2: resume").unwrap();
+    let bad_prefix = valid.replace(
+        &sha256_hex(&valid.as_bytes()[..resume_start]),
+        &"0".repeat(64),
+    );
+    let malformed = [
+        valid.replace("## Entry 2: resume", "Resume is authorized in prose"),
+        valid.replace("## Entry 2: resume", "## Entry 3: resume"),
+        valid.replace("## Entry 2: resume", "## Entry 2: restart"),
+        bad_prefix,
+        valid.clone() + "```json\n{}\n```\n",
+        valid.clone() + "## Entry 3: stop\n\n```json\n{\n```\n",
+    ];
+    for bytes in malformed {
+        let mut proof = proof.clone();
+        proof.manifest_sha256 = sha256_hex(bytes.as_bytes());
+        fs::write(&proof.manifest, &bytes).unwrap();
+        let mut config = config(&root, "b1", Segment::BuilderOnly, 2);
+        config.resume = Some(proof);
+        let error = TrainingDriver::open(config, model_rows(), 1234)
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("manifest") || error.to_string().contains("EOF"),
+            "{error}"
+        );
+        assert_eq!(directory_bytes(&root), before);
+    }
+}
+
+#[test]
+fn resume_commit_must_add_the_entry_on_the_lead_branch() {
+    let temp = TempTestDir::new("resume-branch");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    let before = directory_bytes(&root);
+    let mut proof = manifest_resume(&temp.join("manifest.md"), "b1", 1);
+    let repo = proof.records_repository.clone();
+    let refuse = |proof, message| {
+        let mut config = config(&root, "b1", Segment::BuilderOnly, 2);
+        config.resume = Some(proof);
+        let error = TrainingDriver::open(config, model_rows(), 1234)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(message), "{error}");
+        assert_eq!(directory_bytes(&root), before);
+    };
+
+    manifest_git(
+        &repo,
+        &["commit", "--allow-empty", "-qm", "Later lead commit"],
+    );
+    proof.entry_commit = manifest_git(&repo, &["rev-parse", "HEAD"]);
+    refuse(proof.clone(), "was not appended");
+
+    manifest_git(&repo, &["checkout", "-qb", "other"]);
+    let mut bytes = fs::read_to_string(&proof.manifest).unwrap();
+    append_resume(&mut bytes, 3, "b1", 1);
+    fs::write(&proof.manifest, &bytes).unwrap();
+    manifest_git(&repo, &["add", "--", "."]);
+    manifest_git(&repo, &["commit", "-qm", "Side branch resume"]);
+    proof.entry_seq = 3;
+    proof.manifest_sha256 = sha256_hex(bytes.as_bytes());
+    proof.entry_commit = manifest_git(&repo, &["rev-parse", "HEAD"]);
+    refuse(proof.clone(), "first-parent history");
+
+    manifest_git(&repo, &["checkout", "-q", "lead"]);
+    manifest_git(&repo, &["merge", "--no-ff", "--no-edit", "other"]);
+    refuse(proof.clone(), "first-parent history");
+    proof.entry_commit = manifest_git(&repo, &["rev-parse", "HEAD"]);
+    refuse(proof, "was not appended");
+}
+
+#[test]
 fn host_loss_resume_with_pinned_manifest_is_bit_identical() {
     let pilot = FixturePilot(Arc::new(NaturalPilot));
     let cube = pool();
@@ -913,11 +1060,17 @@ fn host_loss_resume_with_pinned_manifest_is_bit_identical() {
     let resumed_root = temp.join("resumed");
     exit_after_one_update(&resumed_root);
     let mut resumed = config(&resumed_root, "b1", Segment::BuilderOnly, 2);
-    resumed.resume = Some(manifest_resume(
-        &temp.join("SHAKEDOWN-MANIFEST.md"),
-        "b1",
-        1,
-    ));
+    let mut proof = manifest_resume(&temp.join("SHAKEDOWN-MANIFEST.md"), "b1", 1);
+    let mut bytes = fs::read_to_string(&proof.manifest).unwrap();
+    append_manifest_entry(&mut bytes, 3, "read_set", serde_json::json!({}));
+    fs::write(&proof.manifest, &bytes).unwrap();
+    manifest_git(&proof.records_repository, &["add", "--", "."]);
+    manifest_git(
+        &proof.records_repository,
+        &["commit", "-qm", "Record the read set"],
+    );
+    proof.manifest_sha256 = sha256_hex(bytes.as_bytes());
+    resumed.resume = Some(proof);
     let mut resumed = TrainingDriver::open(resumed, model_rows(), 1234).unwrap();
     assert_eq!(resumed.next_update(), 1);
     assert_eq!(
