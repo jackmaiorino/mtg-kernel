@@ -23,13 +23,13 @@ The writer (`--write`, and `--cube --write` for the cube table below) takes an e
 
 ## The first table
 
-171 cards, 488 columns, card database `ba6e35d131506db1`. A card has 6 to 28 nonzero columns (median 14).
+171 cards, 490 columns, card database `ba6e35d131506db1`. A card has 6 to 28 nonzero columns (median 14). Sneaky Snacker adds the two return-from-graveyard columns. The former source-move and source-tap columns retain their positions with zero carriers.
 
 | Census | All tokens | Effect tokens (`leaf:`, `op:`, `cond:`) |
 | --- | ---: | ---: |
 | Distinct tokens | 486 | 241 |
-| Tokens on exactly one card | 285 | 163 |
-| Cards with a token no other pool card has | 120 | 75 |
+| Tokens on exactly one card | 286 | 164 |
+| Cards with a token no other pool card has | 120 | 76 |
 | Cards with no effect token | 34 | 34 |
 
 Pairs (Jaccard index of nonzero (column, value) pairs; every measured value is pinned):
@@ -50,7 +50,7 @@ The floors were written before the first table was generated. Three like pairs f
 
 ## The mapping layer
 
-`leaf_mapping_v1.json` maps a card-named token (an `EffectOp` leaf, trigger condition, condition or cost part) to the shared tokens of the generic definition of the same rules, with a one-line justification each; only the generator reads it. **v1 has no entries.** 72 leaf, trigger, condition and cost kinds are carried by one pool card; most are generic engine leaves that one card happens to use, and each mapping needs that leaf's implementation read, so entries are follow-up work. A mapping change regenerates the table and moves the pinned census.
+`leaf_mapping_v1.json` maps a card-named token (an `EffectOp` leaf, trigger condition, condition or cost part) to the shared tokens of the generic definition of the same rules, with a one-line justification each; only the generator reads it. **v1 has no entries.** 75 top-level leaf, trigger, condition and cost-part tokens have one carrier. Most are generic engine leaves that one card happens to use, and each mapping needs that leaf's implementation read, so entries are follow-up work. A mapping change regenerates the table and moves the pinned census.
 
 ## Limits
 
