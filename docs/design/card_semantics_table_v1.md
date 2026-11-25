@@ -21,7 +21,7 @@ The writer (`--write`, and `--cube --write` for the cube table below) takes an e
 - Integers only, identical on every platform. The table records `KERNEL_CARDDB_HASH`, the pool and mapping hashes and a content hash; a card database change fails `--check` until the table is regenerated.
 - The vocabulary only grows: regeneration keeps the committed column order and appends new tokens.
 
-A choice that names a card contributes one choice with one option and one occurrence of its effect leaf. The generator recognizes a choice tree whose menus all have the same chooser and whose leaves all use the same typed naming operation. This covers flat name lists and lists grouped by first letter. It omits the chosen card's definition ID from amount features. Tamiyo, Collector of Tales is the only current table row that uses this encoding. The same rule covers the engine's name-list programs for Anointed Peacekeeper, Cabal Therapy, Cursed Scroll, Demonic Consultation, and Disruptor Flute. The generator suite checks every count column against an upper bound of 64.
+A choice that names a card contributes one choice with one option and one occurrence of its effect leaf. The generator recognizes a choice tree whose menus all have the same chooser and whose leaves all use the same typed naming operation. This covers flat name lists and lists grouped by first letter. It omits the chosen card's definition ID from amount features. Tamiyo, Collector of Tales is the only current table row that uses this encoding. The same rule covers the engine's name-list programs for Anointed Peacekeeper, Cabal Therapy, Cursed Scroll, Demonic Consultation, and Disruptor Flute. In every build, the generator suite reads both committed tables, checks every count column against an upper bound of 64, and verifies Tamiyo's name-list encoding.
 
 ## The first table
 
@@ -74,6 +74,8 @@ Regenerate and check (requires `--features eternal-fixtures`):
 - Check: `cargo run --release -p mtg-kernel --features eternal-fixtures --bin card_semantics_table_v1 -- --cube --check`
 
 The default build refuses `--cube`. Without `--cube`, the `eternal-fixtures` build refuses to write the Pauper table and notes that the Pauper table is checked in the default build. The cube table records the eternal build's `KERNEL_CARDDB_HASH`, the cube list SHA-256, the mapping SHA-256, the SHA-256 of the Pauper vocabulary it extends (`index\tkind\ttoken\n`), and a content SHA-256. A card database mismatch fails `--cube --check` and names the regeneration command above. Hard validation failures leave previous output files untouched.
+
+The suite also reads the committed Cube JSON in every build and verifies its schema, source and Pauper vocabulary hashes, and content SHA-256 directly from the files.
 
 Column rule:
 

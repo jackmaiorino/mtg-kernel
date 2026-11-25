@@ -1298,57 +1298,84 @@ mod tests {
     }
 
     #[test]
-    fn table_counts_fit_bound_and_name_lists_count_once() {
+    fn both_committed_tables_keep_counts_within_bound() {
         const MAX_COLUMN_COUNT: i64 = 64;
-        let path = if cfg!(feature = "eternal-fixtures") {
-            table::CUBE_TABLE_PATH
-        } else {
-            table::TABLE_PATH
-        };
-        let parsed: serde_json::Value =
-            serde_json::from_str(&read(&repo_root(), path).unwrap()).unwrap();
-        let vocab = parsed["vocabulary"].as_array().unwrap();
-        let rows = parsed["cards"].as_array().unwrap();
-        for row in rows {
-            let vector = row["vector"].as_array().unwrap();
-            assert_eq!(vector.len(), vocab.len());
-            for (column, value) in vocab.iter().zip(vector) {
-                if column["kind"] == "count" {
-                    assert!(
-                        value.as_i64().unwrap() <= MAX_COLUMN_COUNT,
-                        "{} has count {value} for {}",
-                        row["name"],
-                        column["token"],
-                    );
+        let repo = repo_root();
+        for path in [table::TABLE_PATH, table::CUBE_TABLE_PATH] {
+            let parsed: serde_json::Value =
+                serde_json::from_str(&read(&repo, path).unwrap()).unwrap();
+            let vocab = parsed["vocabulary"].as_array().unwrap();
+            for row in parsed["cards"].as_array().unwrap() {
+                let vector = row["vector"].as_array().unwrap();
+                assert_eq!(vector.len(), vocab.len(), "{path}: {}", row["name"]);
+                for (column, value) in vocab.iter().zip(vector) {
+                    if column["kind"] == "count" {
+                        assert!(
+                            value.as_i64().unwrap() <= MAX_COLUMN_COUNT,
+                            "{path}: {} has count {value} for {}",
+                            row["name"],
+                            column["token"],
+                        );
+                    }
                 }
             }
         }
+    }
 
-        #[cfg(feature = "eternal-fixtures")]
-        {
-            let tamiyo = rows
+    #[test]
+    fn committed_cube_table_encodes_tamiyo_name_list_once() {
+        let text = read(&repo_root(), table::CUBE_TABLE_PATH).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let vocab = parsed["vocabulary"].as_array().unwrap();
+        let tamiyo = parsed["cards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == "Tamiyo, Collector of Tales")
+            .unwrap();
+        for (token, expected) in [
+            (
+                "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1=named",
+                1,
+            ),
+            (
+                "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1.named",
+                0,
+            ),
+            ("op:Choice", 1),
+            ("op:Choice.options", 1),
+        ] {
+            let index = vocab
                 .iter()
-                .find(|row| row["name"] == "Tamiyo, Collector of Tales")
+                .position(|column| column["token"] == token)
                 .unwrap();
-            for (token, expected) in [
-                (
-                    "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1=named",
-                    1,
-                ),
-                (
-                    "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1.named",
-                    0,
-                ),
-                ("op:Choice", 1),
-                ("op:Choice.options", 1),
-            ] {
-                let index = vocab
-                    .iter()
-                    .position(|column| column["token"] == token)
-                    .unwrap();
-                assert_eq!(tamiyo["vector"][index], expected, "{token}");
-            }
+            assert_eq!(tamiyo["vector"][index], expected, "{token}");
         }
+    }
+
+    #[test]
+    fn committed_cube_header_and_content_hash_match_inputs() {
+        let repo = repo_root();
+        let text = read(&repo, table::CUBE_TABLE_PATH).unwrap();
+        assert!(table::content_hash_holds(&text), "Cube content SHA-256");
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["schema"], table::TABLE_SCHEMA);
+        for (path_key, hash_key, path) in [
+            ("pool_path", "pool_sha256", table::CUBE_POOL_PATH),
+            ("mapping_path", "mapping_sha256", table::MAPPING_PATH),
+        ] {
+            assert_eq!(parsed[path_key], path, "{path_key}");
+            let bytes = std::fs::read(repo.join(path)).unwrap();
+            assert_eq!(parsed[hash_key], table::sha256_hex(&bytes), "{hash_key}");
+        }
+        let pauper = read(&repo, table::TABLE_PATH).unwrap();
+        let vocabulary = table::try_committed_vocabulary(&pauper).unwrap();
+        assert_eq!(parsed["pauper_table_path"], table::TABLE_PATH);
+        assert_eq!(parsed["pauper_vocabulary_len"], vocabulary.len());
+        assert_eq!(
+            parsed["pauper_vocabulary_sha256"],
+            table::vocabulary_sha256(&vocabulary)
+        );
     }
 
     #[cfg(not(feature = "eternal-fixtures"))]
