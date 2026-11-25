@@ -1,11 +1,13 @@
 {
- "note": "Seconds per plan unit of eternal_integration on a hosted Linux runner, from the eternal-integration job of run 45447901340 (2026-11-24, 91 minutes, the faster of the two hosted runner speeds seen that day; the slower takes about 1.5 times as long). A module's time runs from its 'Running integration module' line to the next one. The two tests under 'isolated' ran inside their modules in that job: their values are estimates (the time the test ran after the rest of its module had ended, plus a quarter of the time before), and their modules carry the time until the last other test ended. Replace them with measured unit times from a run in parts.",
+ "note": "Seconds per plan unit of eternal_integration on a hosted Linux runner, from the eternal-integration job of run 45447901340 (2026-11-24, 91 minutes, the faster of the two hosted runner speeds seen that day; the slower takes about 1.5 times as long). A module's time runs from its 'Running integration module' line to the next one. The two tests under 'isolated' ran inside their modules in that job: their values are estimates (the time the test ran after the rest of its module had ended, plus a quarter of the time before), and their modules carry the time until the last other test ended. Replace them with measured unit times from a run in parts. The cube_draft_build_v1 and cube_pod_runner_v1 entries are initial estimates.",
  "eternal_integration": {
   "bonder_owned_draws_v1": 1,
   "cube_b_census_v1": 60,
   "cube_deck_signal_v1": 60,
+  "cube_draft_build_v1": 1,
   "cube_draft_v1": 7,
   "cube_foreign_adventure_v1": 1,
+  "cube_pod_runner_v1": 60,
   "denial_owned_draws_v1": 1,
   "eternal_bo3_v1": 249,
   "eternal_bo3_v1::playable_75_decks_play_best_of_three_with_random_sideboarding": 620,

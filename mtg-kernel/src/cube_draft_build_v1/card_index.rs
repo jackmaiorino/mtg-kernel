@@ -1328,7 +1328,7 @@ mod tests {
             {"name": "Island"}, {"name": "Plains"}, {"name": "Forest"}
         ]})
         .to_string();
-        let pool = CubePool::from_json_texts(&cube, "{}").unwrap();
+        let pool = CubePool::from_json_texts(&cube, "{}", None).unwrap();
         let [plains, island, ..] = basic_land_ids().unwrap();
         let mut ids = vec![plains, island];
         ids.sort_unstable();

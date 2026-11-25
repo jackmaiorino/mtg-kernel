@@ -50,6 +50,7 @@ pub const A2_GAME_CAPS: GameCaps = GameCaps {
     max_decisions: 16_384,
     max_physical_decisions: 16_384,
     max_policy_steps: 32_768,
+    max_stack_objects: None,
 };
 /// Default per-game wall-clock watchdog in seconds.
 pub const DEFAULT_WATCHDOG_SECONDS: u64 = 600;
@@ -575,6 +576,7 @@ impl PodCaps {
             max_decisions: self.max_decisions,
             max_physical_decisions: self.max_physical_decisions,
             max_policy_steps: self.max_policy_steps,
+            max_stack_objects: None,
         }
     }
 }
@@ -1200,11 +1202,10 @@ pub(crate) fn execute_game_tasks_with_options(
         Ok(())
     })?;
 
-    let mut raw_slots: Vec<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>> =
-        slots
-            .into_iter()
-            .map(|slot| slot.into_inner().expect("game result slot lock"))
-            .collect();
+    let raw_slots: Vec<_> = slots
+        .into_iter()
+        .map(|slot| slot.into_inner().expect("game result slot lock"))
+        .collect();
 
     if options.stop_on_watchdog && watchdog_tripped.load(Ordering::Acquire) {
         let mut first_expired: Option<usize> = None;
