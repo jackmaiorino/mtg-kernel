@@ -3808,7 +3808,10 @@ fn verify_d8_history(set_dir: &Path, manifest: &SetManifest) -> Result<(), PodRu
         if prior.kind != manifest.kind {
             return Err(plan_err("D8 predecessor has a different execution kind"));
         }
-        let unused = unused_interrupted_units(&path, &prior)?;
+        if d8_set_status(&path, &prior)? != D8SetStatus::Interrupted {
+            return Err(plan_err("D8 predecessor is not a restartable interruption"));
+        }
+        let unused = d8_unused_reserved_ranges(&path, &prior)?;
         if manifest.retired != unused {
             return Err(plan_err(format!(
                 "D8 retired ranges must equal the predecessor's unused units {unused:?}"
@@ -3818,69 +3821,120 @@ fn verify_d8_history(set_dir: &Path, manifest: &SetManifest) -> Result<(), PodRu
     Ok(())
 }
 
-fn unused_interrupted_units(
+#[derive(Debug, PartialEq, Eq)]
+enum D8SetStatus {
+    Pending,
+    Interrupted,
+    Complete,
+    InfrastructureFailure,
+}
+
+fn read_dir_if_present(path: &Path) -> Result<Vec<fs::DirEntry>, PodRunnerError> {
+    match fs::read_dir(path) {
+        Ok(entries) => entries
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", path.display()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(PodRunnerError::Io(format!("{}: {error}", path.display()))),
+    }
+}
+
+fn d8_exec_indices(
+    set_dir: &Path,
+    manifest: &SetManifest,
+) -> Result<BTreeSet<u64>, PodRunnerError> {
+    let mut indices: BTreeSet<_> = manifest
+        .executions
+        .iter()
+        .map(|entry| entry.execution)
+        .collect();
+    for entry in read_dir_if_present(set_dir)? {
+        if entry.path().is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let name = name.strip_prefix(".supervisor-").unwrap_or(&name);
+            if let Some(execution) = name.strip_prefix("exec-").and_then(decimal_index) {
+                indices.insert(execution);
+            }
+        }
+    }
+    Ok(indices)
+}
+
+fn decimal_index(text: &str) -> Option<u64> {
+    if !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn d8_started_units(
+    set_dir: &Path,
+    manifest: &SetManifest,
+) -> Result<BTreeSet<u64>, PodRunnerError> {
+    let mut started = BTreeSet::new();
+    let unit_for_pod = |pod| {
+        if manifest.family == "aa" {
+            pod / 2
+        } else {
+            pod
+        }
+    };
+    for execution in d8_exec_indices(set_dir, manifest)? {
+        let directory = set_dir.join(format!("exec-{execution}"));
+        if manifest.kind == ManifestKind::Prep {
+            for unit in manifest.units[0]..manifest.units[1] {
+                if valid_prep_marker(&directory, unit).is_some() {
+                    started.insert(unit);
+                }
+            }
+            continue;
+        }
+        if let Ok(bytes) = fs::read(directory.join("execution.json")) {
+            // A receipt may be partial after host loss. Only its visible integer pod ids count.
+            if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                if let Some(records) = value["records"].as_array() {
+                    started.extend(
+                        records
+                            .iter()
+                            .filter_map(|entry| entry["pod_index"].as_u64())
+                            .map(unit_for_pod),
+                    );
+                }
+            }
+        }
+        for (folder, suffix) in [
+            (directory.join("records"), ".json"),
+            (directory.join("timing"), ".jsonl"),
+            (
+                set_dir.join(format!(".supervisor-exec-{execution}")),
+                ".journal.jsonl",
+            ),
+        ] {
+            for entry in read_dir_if_present(&folder)? {
+                let name = entry.file_name();
+                if let Some(pod) = name
+                    .to_string_lossy()
+                    .strip_prefix("pod-")
+                    .and_then(|tail| tail.strip_suffix(suffix))
+                    .and_then(decimal_index)
+                {
+                    started.insert(unit_for_pod(pod));
+                }
+            }
+        }
+    }
+    Ok(started)
+}
+
+fn d8_unused_reserved_ranges(
     set_dir: &Path,
     manifest: &SetManifest,
 ) -> Result<Vec<[u64; 2]>, PodRunnerError> {
-    let last = manifest
-        .executions
-        .last()
-        .ok_or_else(|| plan_err("D8 predecessor never started"))?;
-    let path = set_dir
-        .join(format!("exec-{}", last.execution))
-        .join("execution.json");
-    match fs::read_to_string(&path) {
-        Ok(text) => {
-            let complete = match manifest.kind {
-                ManifestKind::Prep => {
-                    parse_and_validate_prep_execution_receipt_json(&text)?.ended
-                        == PrepExecutionEnded::Complete
-                }
-                ManifestKind::Plans => {
-                    parse_and_validate_plan_execution_receipt_json(&text)?.ended
-                        == PlanExecutionEnded::Complete
-                }
-            };
-            if complete {
-                return Err(plan_err("D8 predecessor execution completed"));
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(PodRunnerError::Io(format!("{}: {error}", path.display()))),
-    }
-
-    let mut used = BTreeSet::new();
-    for entry in &manifest.executions {
-        let exec = entry.execution;
-        let directory = set_dir.join(format!("exec-{exec}"));
-        for unit in &manifest.plans {
-            match unit {
-                ManifestEntry::Unit(unit) => {
-                    if valid_prep_marker(&directory, unit.unit).is_some() {
-                        used.insert(unit.unit);
-                    }
-                }
-                ManifestEntry::Pod(pod) => {
-                    let record = directory
-                        .join("records")
-                        .join(format!("pod-{}.json", pod.pod_index));
-                    let journal = set_dir
-                        .join(format!(".supervisor-exec-{exec}"))
-                        .join(format!("pod-{}.journal.jsonl", pod.pod_index));
-                    if record.is_file() || journal.is_file() {
-                        let unit = if manifest.namespace == "read-d8-aa" {
-                            pod.pod_index / 2
-                        } else {
-                            pod.pod_index
-                        };
-                        used.insert(unit);
-                    }
-                }
-            }
-        }
-    }
-
-    let [mut first, end] = manifest.units;
+    let used = d8_started_units(set_dir, manifest)?;
+    let [mut first, end] = manifest
+        .reserved
+        .ok_or_else(|| plan_err("missing D8 reservation"))?;
     let mut unused = Vec::new();
     for unit in used.range(first..end).copied() {
         if unit > first {
@@ -3892,6 +3946,142 @@ fn unused_interrupted_units(
         unused.push([first, end]);
     }
     Ok(unused)
+}
+
+fn receipt_watchdogs(
+    set_dir: &Path,
+    receipt: &PlanExecutionReceipt,
+) -> Result<Vec<[u64; 2]>, PodRunnerError> {
+    let mut expired = Vec::new();
+    let mut stopped = 0;
+    for entry in &receipt.records {
+        let path = set_dir.join(format!(
+            "exec-{}/records/pod-{}.json",
+            receipt.execution, entry.pod_index
+        ));
+        let bytes = fs::read(&path)
+            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", path.display())))?;
+        if sha256_hex(&bytes) != entry.sha256 {
+            return Err(plan_err(format!(
+                "{} differs from its receipt",
+                path.display()
+            )));
+        }
+        let record: Value =
+            serde_json::from_slice(&bytes).map_err(|error| plan_err(error.to_string()))?;
+        let games = record["games"]
+            .as_array()
+            .ok_or_else(|| plan_err("pod record lacks games"))?;
+        if receipt.ended == PlanExecutionEnded::WatchdogStop && entry.status == PodStatus::Stopped {
+            stopped += 1;
+            let last = games
+                .last()
+                .and_then(|game| game["attempts"].as_array())
+                .and_then(|attempts| attempts.last());
+            if last.is_none_or(|attempt| attempt["stop_kind"] != WATCHDOG_STOP_KIND) {
+                return Err(plan_err(
+                    "watchdog-stop receipt's stopped pod did not expire",
+                ));
+            }
+        }
+        for game in games {
+            let game_id = game["game"]
+                .as_u64()
+                .ok_or_else(|| plan_err("pod game lacks an id"))?;
+            let attempts = game["attempts"]
+                .as_array()
+                .ok_or_else(|| plan_err("pod game lacks attempts"))?;
+            for attempt in attempts {
+                if attempt["stop_kind"] == WATCHDOG_STOP_KIND {
+                    expired.push([entry.pod_index, game_id]);
+                }
+            }
+        }
+    }
+    if receipt.ended == PlanExecutionEnded::WatchdogStop && stopped != 1 {
+        return Err(plan_err(
+            "watchdog-stop receipt must have exactly one stopped pod",
+        ));
+    }
+    expired.sort_unstable();
+    Ok(expired)
+}
+
+fn d8_set_status(set_dir: &Path, manifest: &SetManifest) -> Result<D8SetStatus, PodRunnerError> {
+    use D8SetStatus::{Complete, InfrastructureFailure, Interrupted, Pending};
+
+    let executions = d8_exec_indices(set_dir, manifest)?;
+    let receipt_path = |e| set_dir.join(format!("exec-{e}/execution.json"));
+    if manifest.kind == ManifestKind::Prep {
+        if accept_prep_execution(set_dir).is_ok() {
+            return Ok(Complete);
+        }
+        if manifest.is_prep_panel() || executions.is_empty() {
+            return Ok(Pending);
+        }
+        for e in executions {
+            let path = receipt_path(e);
+            match fs::read_to_string(&path) {
+                Ok(text) => {
+                    if parse_and_validate_prep_execution_receipt_json(&text)?.ended
+                        == PrepExecutionEnded::Interrupted
+                    {
+                        return Ok(Interrupted);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Interrupted)
+                }
+                Err(error) => {
+                    return Err(PodRunnerError::Io(format!("{}: {error}", path.display())))
+                }
+            }
+        }
+        return Ok(Interrupted);
+    }
+
+    if !executions.contains(&0) {
+        return Ok(Pending);
+    }
+    if !receipt_path(0)
+        .try_exists()
+        .map_err(|error| PodRunnerError::Io(error.to_string()))?
+    {
+        return Ok(Interrupted);
+    }
+    let e0 = accept_plan_execution(set_dir, 0)?;
+    match e0.ended {
+        PlanExecutionEnded::Interrupted => return Ok(Interrupted),
+        PlanExecutionEnded::WatchdogStop => return Ok(Pending),
+        PlanExecutionEnded::Complete => {}
+    }
+    let expired0 = receipt_watchdogs(set_dir, &e0)?;
+    if expired0.is_empty() {
+        return Ok(Complete);
+    }
+    if !executions.contains(&1) {
+        return Ok(Pending);
+    }
+    if !receipt_path(1)
+        .try_exists()
+        .map_err(|error| PodRunnerError::Io(error.to_string()))?
+    {
+        return Ok(Interrupted);
+    }
+    let e1 = accept_plan_execution(set_dir, 1)?;
+    match e1.ended {
+        PlanExecutionEnded::Interrupted => Ok(Interrupted),
+        PlanExecutionEnded::Complete if receipt_watchdogs(set_dir, &e1)?.is_empty() => Ok(Complete),
+        PlanExecutionEnded::WatchdogStop => {
+            let expired1 = receipt_watchdogs(set_dir, &e1)?;
+            Ok(if expired1.iter().any(|game| expired0.contains(game)) {
+                Interrupted
+            } else {
+                InfrastructureFailure
+            })
+        }
+        PlanExecutionEnded::Complete => Ok(Pending),
+    }
 }
 
 fn verify_declaration(
@@ -5301,40 +5491,7 @@ fn preflight_plan_set_execution(
                 "execution 1 must match execution 0's plan_set_sha256, binary, and platform",
             ));
         }
-        let mut e0_watchdogs = Vec::new();
-        for rec_entry in &e0.records {
-            let rec_path = set_dir
-                .join("exec-0")
-                .join("records")
-                .join(format!("pod-{}.json", rec_entry.pod_index));
-            let rec_text = fs::read_to_string(&rec_path)
-                .map_err(|error| PodRunnerError::Io(format!("{}: {error}", rec_path.display())))?;
-            let parsed = JsonParser::new(&rec_text).parse_root().map_err(plan_err)?;
-            let OrderedJson::Object(top) = parsed else {
-                return Err(plan_err("exec-0 record is not an object"));
-            };
-            if let Some((_, OrderedJson::Array(halts))) = top.iter().find(|(k, _)| k == "halts") {
-                for h in halts {
-                    let h_obj = expect_object_keys(
-                        h,
-                        "exec-0.halt",
-                        &[
-                            "game",
-                            "attempt",
-                            "stop_kind",
-                            "last_action_source",
-                            "deal_seed",
-                        ],
-                    )
-                    .map_err(plan_err)?;
-                    let sk = expect_str(&h_obj[2].1, "exec-0.halt.stop_kind").map_err(plan_err)?;
-                    if sk == WATCHDOG_STOP_KIND {
-                        let game = expect_u64(&h_obj[0].1, "exec-0.halt.game").map_err(plan_err)?;
-                        e0_watchdogs.push([rec_entry.pod_index, game]);
-                    }
-                }
-            }
-        }
+        let e0_watchdogs = receipt_watchdogs(set_dir, &e0)?;
         if e0_watchdogs.is_empty() {
             return Err(plan_err(
                 "execution 1 (watchdog_rerun) is allowed only when execution 0 holds a terminal:watchdog halt",
@@ -5808,11 +5965,7 @@ pub fn accept_plan_execution(
     }
 
     let mut actual_files = BTreeSet::new();
-    for entry in fs::read_dir(&records_dir)
-        .map_err(|error| PodRunnerError::Io(format!("{}: {error}", records_dir.display())))?
-    {
-        let entry = entry
-            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", records_dir.display())))?;
+    for entry in read_dir_if_present(&records_dir)? {
         let name = entry
             .file_name()
             .into_string()
