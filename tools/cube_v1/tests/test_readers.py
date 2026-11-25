@@ -3859,6 +3859,90 @@ class D8V3RestartTests(unittest.TestCase):
                     mp_rec, hashlib.sha256(b3).hexdigest(), manifest_repo=repo_rec
                 )
 
+    def test_live_prep_execution_entry_claim_id_rules(self):
+        # Read plan v2 change 1 / D5 alignment: live prep execution entries require non-empty string
+        # `claim_id` as the 6th key after `platform`. Test prep keeps 5-key (and accepts 6-key);
+        # played-set execution entries keep 5-key only.
+        _, cs_sha = self._countersigned_a6()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            live_dir, _ = synth.write_prep_set(
+                root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
+                executions=[{"ended": "complete", "claim_id": "claim-live-0"}],
+                reserved=[0, 32], namespace="dose-d8", run="v1",
+            )
+            man_path = live_dir / "manifest.json"
+            base_man = read_sets.load_manifest(live_dir)
+            self.assertEqual(list(base_man["executions"][0].keys()), list(read_plans.PREP_EXECUTION_ENTRY_KEYS))
+            self.assertEqual(base_man["executions"][0]["claim_id"], "claim-live-0")
+            self.assertEqual(read_sets.accept_prep_set(live_dir)["execution"], 0)
+
+            # Live prep entry without claim_id (5-key form) -> refused.
+            no_claim = copy.deepcopy(base_man)
+            no_claim["executions"][0].pop("claim_id")
+            man_path.write_bytes(read_plans.serialize(no_claim).encode("utf-8"))
+            with self.assertRaisesRegex(read_sets.SetError, "claim_id"):
+                read_sets.load_manifest(live_dir)
+
+            # Live prep entry with wrong key order (claim_id before platform) -> refused.
+            wrong_order = copy.deepcopy(base_man)
+            e0 = wrong_order["executions"][0]
+            wrong_order["executions"][0] = {
+                "execution": e0["execution"], "reason": e0["reason"], "expired_games": e0["expired_games"],
+                "binary": e0["binary"], "claim_id": e0["claim_id"], "platform": e0["platform"],
+            }
+            man_path.write_bytes(read_plans.serialize(wrong_order).encode("utf-8"))
+            with self.assertRaisesRegex(read_sets.SetError, "frozen order"):
+                read_sets.load_manifest(live_dir)
+
+            # Live prep entry with empty, whitespace, or non-string claim_id -> refused.
+            for bad_claim in ("", "   ", None, 42):
+                with self.subTest(bad_claim=bad_claim):
+                    bad = copy.deepcopy(base_man)
+                    bad["executions"][0]["claim_id"] = bad_claim
+                    man_path.write_bytes(read_plans.serialize(bad).encode("utf-8"))
+                    with self.assertRaisesRegex(read_sets.SetError, "non-empty string"):
+                        read_sets.load_manifest(live_dir)
+
+            # Test-namespace prep entry accepts 5-key form and 6-key form, refuses wrong key order.
+            test_dir_5, _ = synth.write_prep_set(
+                root, "dose_panel", "dose", "fx-dose-provisional-d0-prep-panel", range(0, 2), DECL_SHA
+            )
+            test_man_5 = read_sets.load_manifest(test_dir_5)
+            self.assertEqual(list(test_man_5["executions"][0].keys()), list(read_plans.EXECUTION_ENTRY_KEYS))
+
+            test_dir_6, _ = synth.write_prep_set(
+                root, "dose_panel", "dose", "fx-dose-edge-empty-d0-prep-panel", range(0, 2), DECL_SHA,
+                executions=[{"ended": "complete", "claim_id": "claim-test-0"}],
+            )
+            test_man_6 = read_sets.load_manifest(test_dir_6)
+            self.assertEqual(list(test_man_6["executions"][0].keys()), list(read_plans.PREP_EXECUTION_ENTRY_KEYS))
+            bad_test_order = copy.deepcopy(test_man_6)
+            te0 = bad_test_order["executions"][0]
+            bad_test_order["executions"][0] = {
+                "execution": te0["execution"], "reason": te0["reason"], "expired_games": te0["expired_games"],
+                "binary": te0["binary"], "claim_id": te0["claim_id"], "platform": te0["platform"],
+            }
+            (test_dir_6 / "manifest.json").write_bytes(read_plans.serialize(bad_test_order).encode("utf-8"))
+            with self.assertRaisesRegex(read_sets.SetError, "frozen order"):
+                read_sets.load_manifest(test_dir_6)
+
+            # Played-set execution entry (live read-d8-aa) keeps 5-key form and refuses claim_id.
+            aa_plans = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1")
+                        for u in range(0, 4) for m in (0, 1)]
+            aa_recs = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in aa_plans}
+            aa_dir = synth.write_plan_set(
+                root, "aa", "fixed", aa_plans, cs_sha, executions=[{"records": aa_recs}],
+                units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1",
+            )
+            aa_man = read_sets.load_manifest(aa_dir)
+            self.assertEqual(list(aa_man["executions"][0].keys()), list(read_plans.EXECUTION_ENTRY_KEYS))
+            aa_with_claim = copy.deepcopy(aa_man)
+            aa_with_claim["executions"][0]["claim_id"] = "unexpected-claim"
+            (aa_dir / "manifest.json").write_bytes(read_plans.serialize(aa_with_claim).encode("utf-8"))
+            with self.assertRaisesRegex(read_sets.SetError, "claim_id"):
+                read_sets.load_manifest(aa_dir)
+
 
 class UniformPodRecordTests(unittest.TestCase):
     @unittest.skipUnless(D5_UNIFORM_FIXTURE.exists(),

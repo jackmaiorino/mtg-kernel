@@ -106,7 +106,24 @@ def load_manifest(set_dir: Path) -> dict[str, Any]:
     if man["plan_set_sha256"] != read_plans.plan_set_sha256(man["plans"]):
         raise SetError("plan_set_sha256 does not match the manifest's plans")
     for i, entry in enumerate(man["executions"]):
-        pod_record._object(entry, f"manifest.executions[{i}]", read_plans.EXECUTION_ENTRY_KEYS)
+        # Live prep execution entries carry claim_id as the 6th key after platform (read plan v2 change 1,
+        # aligned with D5). Test-namespace prep entries keep the 5-key form and also accept the 6-key form;
+        # played-set execution entries keep the 5-key form.
+        if man["kind"] == "prep" and (
+            man["namespace"] != read_plans.TEST
+            or (isinstance(entry, dict) and len(entry) == len(read_plans.PREP_EXECUTION_ENTRY_KEYS))
+        ):
+            expected_keys = read_plans.PREP_EXECUTION_ENTRY_KEYS
+        else:
+            expected_keys = read_plans.EXECUTION_ENTRY_KEYS
+        try:
+            pod_record._object(entry, f"manifest.executions[{i}]", expected_keys)
+        except pod_record.RecordError as exc:
+            raise SetError(str(exc)) from exc
+        if "claim_id" in entry:
+            claim_id = entry["claim_id"]
+            if not isinstance(claim_id, str) or not claim_id.strip():
+                raise SetError(f"manifest.executions[{i}].claim_id must be a non-empty string")
         if entry["execution"] != i:
             raise SetError("execution entries are numbered from 0 in order")
         allowed = ("first",) if i == 0 else (("prep_retry",) if man["kind"] == "prep" else ("watchdog_rerun",))

@@ -66,6 +66,7 @@ MANIFEST_KEYS = ("schema", "kind", "family", "namespace", "run", "set", "interfa
                  "units", "reserved", "pools_with", "panel_sha256", "prep_set", "replaces", "retired", "plans",
                  "plan_set_sha256", "executions")
 EXECUTION_ENTRY_KEYS = ("execution", "reason", "expired_games", "binary", "platform")
+PREP_EXECUTION_ENTRY_KEYS = EXECUTION_ENTRY_KEYS + ("claim_id",)
 PANEL_KEYS = ("schema", "kind", "namespace", "run", "units", "inputs", "pins", "prep_set_sha256",
               "prep_execution", "prep_outputs", "drafts")
 

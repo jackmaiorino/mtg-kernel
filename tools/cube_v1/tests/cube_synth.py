@@ -334,8 +334,15 @@ def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name:
                                     retired=retired, run=run)
     executions = executions or [{"ended": "complete"}]
     for e, spec in enumerate(executions):
-        man["executions"].append({"execution": e, "reason": "first" if e == 0 else "prep_retry", "expired_games": [],
-                                  "binary": BINARY, "platform": PLATFORM})
+        entry: dict[str, Any] = {
+            "execution": e, "reason": "first" if e == 0 else "prep_retry", "expired_games": [],
+            "binary": BINARY, "platform": PLATFORM,
+        }
+        if namespace != NS:
+            entry["claim_id"] = spec.get("claim_id", f"claim-{namespace}-{run}-{set_name}-e{e}")
+        elif "claim_id" in spec:
+            entry["claim_id"] = spec["claim_id"]
+        man["executions"].append(entry)
     set_dir = read_plans.write_set(root, man, {f"requests/unit-{u}.json": requests[u][0] for u in units},
                                    shakedown_manifest=shakedown_manifest)
     for e, spec in enumerate(executions):
