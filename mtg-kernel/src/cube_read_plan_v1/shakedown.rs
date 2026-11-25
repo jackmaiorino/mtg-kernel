@@ -306,12 +306,12 @@ fn reject_copied_manifest(
     let mut fields = diff.split(|&byte| byte == 0);
     while let Some(status) = fields.next().filter(|status| !status.is_empty()) {
         let _old_path = fields.next();
-        if status.starts_with(b"R") || status.starts_with(b"C") {
-            if fields.next() == Some(path.as_bytes()) {
-                return Err(plan_err(
-                    "shakedown manifest was created by a rename or copy",
-                ));
-            }
+        if (status.starts_with(b"R") || status.starts_with(b"C"))
+            && fields.next() == Some(path.as_bytes())
+        {
+            return Err(plan_err(
+                "shakedown manifest was created by a rename or copy",
+            ));
         }
     }
     Ok(())
