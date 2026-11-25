@@ -215,6 +215,10 @@ name = "cube_owner_view_v1"
 required-features = ["eternal-fixtures"]
 
 [[example]]
+name = "cube_pod_runner_v1"
+required-features = ["eternal-fixtures"]
+
+[[example]]
 name = "flat_action_encoder_diagnostic"
 required-features = ["flat-action-diagnostic"]
 

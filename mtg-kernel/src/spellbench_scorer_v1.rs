@@ -1636,7 +1636,7 @@ mod tests {
         let ready = scorer(SELECTION_SAMPLED_WIDE_V1).ready_record();
         assert_eq!(ready["schema"], SCORER_READY_SCHEMA_V1);
         assert_eq!(ready["feature_contract_digest"], FEATURE_CONTRACT_DIGEST_V4);
-        assert_eq!(ready["card_db_hash"], "1291b789c9aaa269");
+        assert_eq!(ready["card_db_hash"], "0777a48028de38d7");
         assert_eq!(ready["selection"], "sampled-wide-v1");
         assert_eq!(
             ready["sampler_identity"],
@@ -1679,7 +1679,7 @@ mod tests {
                 "schema": "mtg-kernel-spellbench-scorer-ready/v1",
                 "feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b",
                 "feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de",
-                "card_db_hash": "1291b789c9aaa269",
+                "card_db_hash": "0777a48028de38d7",
                 "selection": selection,
                 "sampler_identity": "f32-q8-expq63-hamilton-splitmix64-wide-v1",
                 "float_encoding": "ieee754-binary32-u32-bits",
