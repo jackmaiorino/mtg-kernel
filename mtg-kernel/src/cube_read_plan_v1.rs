@@ -22,8 +22,6 @@
 mod attestation;
 mod shakedown;
 use shakedown::RestartKind;
-#[cfg(test)]
-mod tests;
 
 use crate::card_def::CARD_DEFS;
 use crate::cube_draft_v1::{
@@ -6081,3 +6079,6 @@ pub fn accept_plan_execution(
 
     Ok(receipt)
 }
+
+#[cfg(test)]
+mod tests;
