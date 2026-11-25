@@ -82,6 +82,8 @@ fn on_big_stack(work: impl FnOnce() + Send + 'static) {
         .expect("test thread");
 }
 
+type DeckHalt = (Vec<u16>, BTreeSet<u64>, GameEnd, Option<u16>);
+
 /// Deterministic fast pilot for structural, replay, halt and invariance tests.
 /// Computes a natural outcome purely from `(decks, seats, episode, env_seed,
 /// action_seed)`, with optional scripted halts matched by `(episode,
@@ -91,7 +93,7 @@ struct ScriptedPilot {
     halt_by_episode_env: BTreeMap<(u64, u64), (GameEnd, Option<u16>)>,
     /// Halts triggered for any game whose p0 or p1 deck matches `deck_cards`
     /// on any of the listed `env_seed`s (or all attempts when empty).
-    halt_by_deck: Vec<(Vec<u16>, BTreeSet<u64>, GameEnd, Option<u16>)>,
+    halt_by_deck: Vec<DeckHalt>,
 }
 
 impl ScriptedPilot {
@@ -301,7 +303,7 @@ fn acceptance_2_attempt_0_is_todays_game() {
         // produces canonical 40-row decks.
         let stated_decks: [Deck; SEATS] = std::array::from_fn(|chair| {
             let before = SplitMix64::seed(12_345 + chair as u64);
-            let mut stream = before.clone();
+            let mut stream = before;
             let outcome = StatedSeatBuilder
                 .build(&draft.pools[chair], &mut stream)
                 .unwrap();
@@ -1168,7 +1170,7 @@ fn acceptance_9_layout_read_plans_and_reports() {
 
         // Group counts: 15 of 3, 12 of 2, 1 of 1; exact role & deck rules.
         let pairings = pod_pairings();
-        let mut group_counts = BTreeMap::new();
+        let mut group_counts = BTreeMap::<_, Vec<_>>::new();
         let mut size_histogram = BTreeMap::new();
         for game in &pod.games {
             group_counts.entry(game.group).or_default().push(game);
@@ -2055,14 +2057,9 @@ fn build_test_d13_plan(
     }
 }
 
-fn write_plan_set_dir(
+fn write_test_aa_set(
     set_dir: &Path,
-    family: &str,
-    namespace: &str,
-    set_name: &str,
     decl_sha: &str,
-    panel_sha: Option<String>,
-    prep_set: Option<String>,
     plans: &[ReadPlanV1],
     executions: Vec<ManifestExecutionEntry>,
 ) -> SetManifest {
@@ -2086,18 +2083,18 @@ fn write_plan_set_dir(
     let manifest = SetManifest {
         schema: READ_PLAN_SCHEMA.to_owned(),
         kind: ManifestKind::Plans,
-        family: family.to_owned(),
-        namespace: namespace.to_owned(),
+        family: "aa".to_owned(),
+        namespace: "test".to_owned(),
         run: "v1".to_owned(),
-        set: set_name.to_owned(),
+        set: "fixed".to_owned(),
         interfaces: M4_INTERFACES_VERSION.to_owned(),
         declaration_sha256: decl_sha.to_owned(),
         look: None,
         units: [min_u, max_u],
         reserved: None,
         pools_with: None,
-        panel_sha256: panel_sha,
-        prep_set,
+        panel_sha256: None,
+        prep_set: None,
         replaces: None,
         retired: Vec::new(),
         plans: entries,
@@ -2864,14 +2861,9 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
     assert!(parse_and_validate_read_plan_json(&float_val).is_err());
 
     let set_dir = tmp.path().join("test").join("v1").join("fixed");
-    write_plan_set_dir(
+    write_test_aa_set(
         &set_dir,
-        "aa",
-        "test",
-        "fixed",
         &decl_sha,
-        None,
-        None,
         &[plan0, plan1],
         vec![ManifestExecutionEntry {
             execution: 0,
@@ -3082,14 +3074,9 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     };
 
     let wd_dir = tmp.path().join("wd-set");
-    let mut manifest = write_plan_set_dir(
+    let mut manifest = write_test_aa_set(
         &wd_dir,
-        "aa",
-        "test",
-        "fixed",
         &decl_sha,
-        None,
-        None,
         &[plan0.clone(), plan1.clone()],
         vec![ManifestExecutionEntry {
             execution: 0,
@@ -3273,14 +3260,9 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     }
 
     let sup_dir = tmp.path().join("sup-set");
-    write_plan_set_dir(
+    write_test_aa_set(
         &sup_dir,
-        "aa",
-        "test",
-        "fixed",
         &decl_sha,
-        None,
-        None,
         &[plan0.clone(), plan1.clone()],
         vec![ManifestExecutionEntry {
             execution: 0,
@@ -3330,14 +3312,9 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
 
     // Part C: Real OS child process death handled by CommandPodWorkerLauncher.
     let os_dir = tmp.path().join("os-death-set");
-    write_plan_set_dir(
+    write_test_aa_set(
         &os_dir,
-        "aa",
-        "test",
-        "fixed",
         &decl_sha,
-        None,
-        None,
         &[plan0],
         vec![ManifestExecutionEntry {
             execution: 0,

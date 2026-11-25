@@ -4,25 +4,25 @@
 //! Modes (`eternal-fixtures` build):
 //! 1. Training / client pods:
 //!    `cube_pod_runner_v1 --namespace NS --run RUN --pods N [--pod-start J]`
-//!                        `[--use training|shakedown|test|client] [--older 6,7]`
-//!                        `[--workers W] [--watchdog-seconds 600]`
-//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
-//!                        `[--out PATH] [--report PATH] [--run-record PATH]`
+//!    `[--use training|shakedown|test|client] [--older 6,7]`
+//!    `[--workers W] [--watchdog-seconds 600]`
+//!    `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//!    `[--out PATH] [--report PATH] [--run-record PATH]`
 //! 2. Prep set (`READ-PLAN-v1` section 4-5, drafts and builds without playing):
 //!    `cube_pod_runner_v1 --prep-set DIR --execution E --declaration PATH`
-//!                        `--binary-pin SHA --card-index-pin SHA --cube-table-pin SHA`
-//!                        `[--panel-pin SHA] [--platform ID] [--host HOST]`
-//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//!    `--binary-pin SHA --card-index-pin SHA --cube-table-pin SHA`
+//!    `[--panel-pin SHA] [--platform ID] [--host HOST]`
+//!    `[--cube PATH] [--gaps PATH] [--fence PATH]`
 //! 3. Supervised plan set (`READ-PLAN-v1` section 5-6, writes `exec-<E>/`):
 //!    `cube_pod_runner_v1 --plan-set DIR --execution E --declaration PATH`
-//!                        `--binary-pin SHA --card-index-pin SHA --cube-table-pin SHA`
-//!                        `[--pool-pin SHA] [--constants-pin SHA] [--panel-pin SHA]`
-//!                        `[--platform ID] [--host HOST] [--workers W]`
-//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//!    `--binary-pin SHA --card-index-pin SHA --cube-table-pin SHA`
+//!    `[--pool-pin SHA] [--constants-pin SHA] [--panel-pin SHA]`
+//!    `[--platform ID] [--host HOST] [--workers W]`
+//!    `[--cube PATH] [--gaps PATH] [--fence PATH]`
 //! 4. Single-pod worker (spawned by the supervisor for `--plan-set`):
 //!    `cube_pod_runner_v1 --worker-plan PLAN --out RECORD --timing TIMING`
-//!                        `--journal JOURNAL --execution E [--host HOST] [--workers W]`
-//!                        `[--cube PATH] [--gaps PATH] [--fence PATH]`
+//!    `--journal JOURNAL --execution E [--host HOST] [--workers W]`
+//!    `[--cube PATH] [--gaps PATH] [--fence PATH]`
 mtg_kernel::fast_global_allocator!();
 
 use mtg_kernel::cube_draft_v1::CubePool;
