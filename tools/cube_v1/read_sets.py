@@ -133,21 +133,27 @@ def load_entries(set_dir: Path, man: dict[str, Any]) -> dict[int, tuple[Any, str
 
 def _valid_marker(exec_dir: Path, unit: int) -> str | None:
     """The output hash of a unit completed in this execution, or None if its marker is absent or
-    invalid (missing or extra files, a hash that does not match)."""
+    invalid (missing or extra files, non-u64 unit, or a hash that does not match)."""
     marker_path = exec_dir / "done" / f"{unit}.json"
     if not marker_path.exists():
         return None
     try:
         marker = pod_record._object(_load(marker_path), "marker", MARKER_KEYS)
+        marker_unit = marker["unit"]
+        if type(marker_unit) is not int or not (0 <= marker_unit <= pod_record.U64) or marker_unit != unit:
+            return None
         files = marker["files"]
         expected = [f"prep/unit-{unit}.json"]
-        if marker["unit"] != unit or not isinstance(files, list) or [
+        if not isinstance(files, list) or [
                 pod_record._object(f, "marker.file", MARKER_FILE_KEYS)["file"] for f in files] != expected:
             return None
-        path = exec_dir / expected[0]
-        if not path.exists() or _sha_file(path) != files[0]["sha256"]:
+        sha = files[0]["sha256"]
+        if not read_plans._is_sha(sha):
             return None
-        return files[0]["sha256"]
+        path = exec_dir / expected[0]
+        if not path.exists() or _sha_file(path) != sha:
+            return None
+        return sha
     except (pod_record.RecordError, SetError, KeyError, TypeError):
         return None
 

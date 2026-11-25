@@ -429,6 +429,37 @@ class PrepAcceptanceTests(unittest.TestCase):
         set_dir = self._set([{"ended": "complete", "no_marker": [1]}, {"ended": "complete"}])
         self.assertEqual(read_sets.accept_prep_set(set_dir)["execution"], 1)
 
+    def test_boolean_marker_unit_is_rejected_and_excluded_from_retry_identity(self):
+        # Python treats False == 0 and True == 1, but a marker unit must be an exact u64 integer.
+        set_dir = self._set([{"ended": "complete"}])
+        for unit, bad_unit in ((0, False), (1, True)):
+            marker_path = set_dir / "exec-0" / "done" / f"{unit}.json"
+            original = marker_path.read_bytes()
+            doc = json.loads(original.decode("utf-8"))
+            doc["unit"] = bad_unit
+            marker_path.write_bytes(read_plans.serialize(doc).encode("utf-8"))
+            self.assertIsNone(read_sets._valid_marker(set_dir / "exec-0", unit))
+            with self.assertRaisesRegex(read_sets.SetError, "marker"):
+                read_sets.accept_prep_set(set_dir)
+            marker_path.write_bytes(original)
+
+        # In a died attempt, a tampered output whose marker uses boolean False/True for unit 0/1
+        # is malformed and ignored (discarded as partial), so a clean retry passes instead of
+        # tripping a determinism failure.
+        def tamper(result):
+            result["builds"][0]["build_seed"] = 12345
+
+        retry_dir = self._set([
+            {"ended": "interrupted", "units": [0, 1], "receipt": False, "tamper": {0: tamper, 1: tamper}},
+            {"ended": "complete"},
+        ])
+        for unit, bad_unit in ((0, False), (1, True)):
+            marker_path = retry_dir / "exec-0" / "done" / f"{unit}.json"
+            doc = json.loads(marker_path.read_bytes().decode("utf-8"))
+            doc["unit"] = bad_unit
+            marker_path.write_bytes(read_plans.serialize(doc).encode("utf-8"))
+        self.assertEqual(read_sets.accept_prep_set(retry_dir)["execution"], 1)
+
     def test_byte_identity_across_attempts(self):
         def tamper(result):
             result["builds"][0]["build_seed"] = 12345
