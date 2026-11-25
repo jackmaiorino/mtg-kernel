@@ -2105,7 +2105,9 @@ impl TrainingDriver {
         };
         apply_first_watchdog(&mut stop, first);
         ledger_stop(&self.config.root, &stop)?;
-        if pending.exists() {
+        // A fully staged commit can still be published by recovery if the
+        // rename failed. Preserve it alongside the error ledger.
+        if pending.exists() && matches!(read_commit(pending, update, false), Ok(None)) {
             fs::remove_dir_all(pending)?;
             sync_directory(&self.config.root.join("pending"))?;
         }
