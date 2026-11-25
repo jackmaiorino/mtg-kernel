@@ -34,7 +34,13 @@ Offline input tools for cube self-play training configs:
 
 4. **Canonical deck hash** (`deal.canonical_decks_sha256`): hashes a list of decks, each given as card names (`deal.card_names_by_id` and `deal.deck_card_names` translate card ids through a pool). Each deck is written as sorted `name count` lines followed by one empty line, LF line endings, UTF-8, and SHA-256 runs over that text, so card order, file formatting, line endings and provenance fields cannot change it.
 
-5. **Tests**:
+5. **Deck-signal summary** (`tools/cube_v1/deck_signal_summary.py`): reads the JSONL of one part of the deck-signal experiment (`cube_deck_signal_v1 --part A|B --cube CUBE --gaps GAPS --fence FENCE --out games.jsonl --record run.json [--workers N]`, `eternal-fixtures` example) and computes the design note's section 10 readings under three treatments of halted games:
+   ```bash
+   python tools/cube_v1/deck_signal_summary.py --games games.jsonl --record run.json --out summary.json
+   ```
+   Part A: C's mean pair score with its 95% paired bootstrap interval (10,000 resamples, draw `t` of resample `b` is `seed(["bootstrap", "deck-signal-A", b, t]) mod n`) and the fixed 0.55 reading, or `technical_failure` above 5% halted games, or `incomplete` short of 400 pairs. Part B: the standard deviation of deck strength under the additive model, raw and with game noise removed, with a bootstrap interval over decks (namespace `deck-signal-B`).
+
+6. **Tests**:
    ```bash
    python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'
    ```
