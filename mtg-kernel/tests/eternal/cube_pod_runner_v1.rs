@@ -82,6 +82,8 @@ fn on_big_stack(work: impl FnOnce() + Send + 'static) {
         .expect("test thread");
 }
 
+type DeckHalt = (Vec<u16>, BTreeSet<u64>, GameEnd, Option<u16>);
+
 /// Deterministic fast pilot for structural, replay, halt and invariance tests.
 /// Computes a natural outcome purely from `(decks, seats, episode, env_seed,
 /// action_seed)`, with optional scripted halts matched by `(episode,
@@ -91,7 +93,7 @@ struct ScriptedPilot {
     halt_by_episode_env: BTreeMap<(u64, u64), (GameEnd, Option<u16>)>,
     /// Halts triggered for any game whose p0 or p1 deck matches `deck_cards`
     /// on any of the listed `env_seed`s (or all attempts when empty).
-    halt_by_deck: Vec<(Vec<u16>, BTreeSet<u64>, GameEnd, Option<u16>)>,
+    halt_by_deck: Vec<DeckHalt>,
 }
 
 impl ScriptedPilot {
@@ -300,7 +302,7 @@ fn acceptance_2_attempt_0_is_todays_game() {
         // produces canonical 40-row decks.
         let stated_decks: [Deck; SEATS] = std::array::from_fn(|chair| {
             let before = SplitMix64::seed(12_345 + chair as u64);
-            let mut stream = before.clone();
+            let mut stream = before;
             let outcome = StatedSeatBuilder
                 .build(&draft.pools[chair], &mut stream)
                 .unwrap();
@@ -1908,9 +1910,7 @@ fn build_test_d13_plan(
 
 fn write_plan_set_dir(
     set_dir: &Path,
-    family: &str,
-    namespace: &str,
-    set_name: &str,
+    (family, namespace, set_name): (&str, &str, &str),
     decl_sha: &str,
     panel_sha: Option<String>,
     prep_set: Option<String>,
@@ -2675,9 +2675,7 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
     let set_dir = tmp.path().join("test").join("v1").join("fixed");
     write_plan_set_dir(
         &set_dir,
-        "aa",
-        "test",
-        "fixed",
+        ("aa", "test", "fixed"),
         &decl_sha,
         None,
         None,
@@ -2892,9 +2890,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     let wd_dir = tmp.path().join("wd-set");
     let mut manifest = write_plan_set_dir(
         &wd_dir,
-        "aa",
-        "test",
-        "fixed",
+        ("aa", "test", "fixed"),
         &decl_sha,
         None,
         None,
@@ -3081,9 +3077,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     let sup_dir = tmp.path().join("sup-set");
     write_plan_set_dir(
         &sup_dir,
-        "aa",
-        "test",
-        "fixed",
+        ("aa", "test", "fixed"),
         &decl_sha,
         None,
         None,
@@ -3137,9 +3131,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     let os_dir = tmp.path().join("os-death-set");
     write_plan_set_dir(
         &os_dir,
-        "aa",
-        "test",
-        "fixed",
+        ("aa", "test", "fixed"),
         &decl_sha,
         None,
         None,
