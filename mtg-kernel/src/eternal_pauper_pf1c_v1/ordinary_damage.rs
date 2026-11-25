@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OrdinaryV1 {
     Sphere(ObjectId),
+    Unicorn(ObjectId),
     Ojer {
         object: ObjectId,
         power: i32,
@@ -20,6 +21,7 @@ pub enum OrdinaryV1 {
     // Fog and protection are equivalent for this packet and neither is consumed.
     PreventAll,
     Nishoba(ObjectId),
+    AuroraShield(u64),
     Registered(ActiveReplacement),
     Circle {
         position: usize,
@@ -79,6 +81,8 @@ impl Packet {
         options.extend(
             crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage).map(Sphere),
         );
+        options
+            .extend(crate::eternal_pauper_pf2c_v1::applicable_unicorns(state, damage).map(Unicorn));
         options.extend(
             crate::standard_cards_v1::applicable_ojers(state, damage)
                 .map(|(object, power)| Ojer { object, power }),
@@ -91,9 +95,10 @@ impl Packet {
         let unpreventable =
             crate::eternal_prevention_order_v1::cannot_prevent_damage(state, damage);
         if unpreventable {
-            // Only redirection can admit such a packet. The recipients are
-            // creatures; Nishoba's additional instruction still applies (615.12).
-            options.retain(|effect| matches!(effect, Redirect { .. }));
+            // Non-prevention replacements (Unicorn, Ojer) and redirection still
+            // apply when damage can't be prevented; Nishoba's counter removal
+            // still applies (CR 615.12).
+            options.retain(|effect| matches!(effect, Redirect { .. } | Unicorn(_) | Ojer { .. }));
         }
         let mage = crate::linked_aura_operation_v1::soul_scar_damage_order_v1()
             .then(|| crate::eternal_cube_c7b_v1::noncombat_damage_replacement_source(state, damage))
@@ -107,6 +112,14 @@ impl Packet {
             {
                 options.push(Nishoba(object));
             }
+        }
+        if !unpreventable {
+            options.extend(
+                crate::eternal_pauper_pf2b_v1::applicable_aurora_shields(state, damage)
+                    .into_iter()
+                    .map(|shield| AuroraShield(shield.id))
+                    .filter(|effect| !self.used.contains(effect)),
+            );
         }
         if !unpreventable && !state.engine.active_replacements.is_empty() {
             let proposed = ProposedEvent::Damage(damage.clone());
@@ -143,6 +156,10 @@ impl Packet {
             Sphere(_) => {
                 self.used.push(effect);
                 self.damage.amount = self.damage.amount.saturating_sub(2);
+            }
+            Unicorn(_) => {
+                self.used.push(effect);
+                self.damage.amount = self.damage.amount.saturating_sub(1);
             }
             Ojer { power, .. } => {
                 self.used.push(effect);
@@ -186,6 +203,16 @@ impl Packet {
                     return;
                 }
                 self.used.push(effect);
+            }
+            AuroraShield(id) => {
+                self.used.push(effect);
+                if crate::eternal_pauper_pf2b_v1::apply_aurora_shield_by_id(
+                    state,
+                    id,
+                    &mut self.damage,
+                ) {
+                    return;
+                }
             }
             Registered(replacement) => {
                 self.damage.touched_by.push(replacement.id);

@@ -30,6 +30,7 @@ fn base_episode(seed: u64) -> ExpandedEpisodeV1 {
         postboard: false,
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
+        max_stack_objects: None,
         runtime_rules: Some(EpisodeRuntimeRulesV1::ResolutionBoundaryV1),
         reset: None,
         opening: None,

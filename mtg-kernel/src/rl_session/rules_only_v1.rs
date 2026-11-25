@@ -206,6 +206,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions: limits.0,
             max_policy_steps: limits.1,
+            max_stack_objects: None,
             state,
             surface: PolicySurfaceV5::new_with_priority_mode_v1(
                 crate::surface_v2::PriorityModeV1::EngineWindowsV1,
@@ -244,10 +245,11 @@ impl FastActorSessionV1 {
                 session.physical_decision_count,
             ));
         };
-        let surfaced = match self
-            .surface
-            .next_decision_owned(&mut self.state, self.environment_revision)
-        {
+        let surfaced = match self.surface.next_decision_owned_with_stack_cap(
+            &mut self.state,
+            self.environment_revision,
+            self.max_stack_objects,
+        ) {
             Ok(decision) => decision,
             Err(_) => return halt(self, "fail_closed:policy_surface_environment".into()),
         };

@@ -34,8 +34,10 @@ pub(crate) fn may_need_choice(state: &GameState) -> bool {
     }
     cfg!(feature = "eternal-fixtures")
         && (soul_scar_may_need_choice(state)
+            || has_unicorn_ojer(state)
             || (!cannot_prevent(state)
                 && (circles::has_live_circle_shield(state)
+                    || crate::eternal_pauper_pf2b_v1::has_live_aurora_shield(state)
                     || permanent_v1::may_need_choice(state)
                     || has_sphere_ojer(state))))
 }
@@ -66,6 +68,13 @@ fn has_sphere_ojer(state: &GameState) -> bool {
         crate::eternal_premodern_p3a_v1::statics::has_sphere_of_law(state, player)
             && crate::standard_cards_v1::has_active_ojer(state, player.opponent())
     })
+}
+
+fn has_unicorn_ojer(state: &GameState) -> bool {
+    crate::eternal_pauper_pf2c_v1::has_benevolent_unicorn(state)
+        && [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .any(|player| crate::standard_cards_v1::has_active_ojer(state, player))
 }
 
 fn full_prevention(state: &GameState, damage: &DamageProposed) -> bool {
@@ -117,8 +126,33 @@ pub(crate) fn soul_scar_competes(state: &GameState, damage: &DamageProposed) -> 
         || (!cannot_prevent && circles::circle_shield_position(state, damage).is_some())
 }
 
+pub(crate) fn unicorn_competes(state: &GameState, damage: &DamageProposed) -> bool {
+    crate::eternal_pauper_pf2c_v1::applicable_unicorns(state, damage)
+        .next()
+        .is_some()
+        && residual_order_applies(state, damage)
+}
+
+fn aurora_competes(state: &GameState, damage: &DamageProposed) -> bool {
+    let shields = crate::eternal_pauper_pf2b_v1::applicable_aurora_shields(state, damage);
+    if shields.is_empty() {
+        return false;
+    }
+    if shields
+        .iter()
+        .any(|shield| shield.remaining != shields[0].remaining)
+        || circles::circle_shield_position(state, damage).is_some()
+    {
+        return true;
+    }
+    Packet::new(damage)
+        .options(state)
+        .iter()
+        .any(|effect| !matches!(effect, OrdinaryV1::AuroraShield(_)))
+}
+
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
-    if soul_scar_competes(state, damage) {
+    if soul_scar_competes(state, damage) || unicorn_competes(state, damage) {
         return true;
     }
     if damage.amount <= 0 || cannot_prevent_damage(state, damage) {
@@ -130,7 +164,7 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
             && full_prevention(state, damage);
     }
 
-    if permanent_v1::eligible(state, damage) {
+    if permanent_v1::eligible(state, damage) || aurora_competes(state, damage) {
         return true;
     }
     let mut matching = circles::matching_circle_shields(state, damage);
@@ -156,7 +190,8 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
     }
     let spheres =
         crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage).count();
-    spheres >= (damage.amount as u32).div_ceil(2) as usize
+    let unicorns = crate::eternal_pauper_pf2c_v1::applicable_unicorns(state, damage).count();
+    spheres.saturating_mul(2).saturating_add(unicorns) >= damage.amount as usize
 }
 
 /// Re-evaluate all state-bearing replacements after each chosen effect.
@@ -203,6 +238,26 @@ pub(crate) fn packet_options(
         {
             continue;
         }
+        if matches!(effect, OrdinaryV1::Unicorn(_))
+            && options
+                .iter()
+                .any(|option| matches!(option, OrdinaryV1::Unicorn(_)))
+        {
+            continue;
+        }
+        if let OrdinaryV1::AuroraShield(id) = effect {
+            let remaining = crate::eternal_pauper_pf2b_v1::aurora_shield_remaining(state, id);
+            if options.iter().any(|option| {
+                matches!(
+                    option,
+                    OrdinaryV1::AuroraShield(other)
+                        if crate::eternal_pauper_pf2b_v1::aurora_shield_remaining(state, *other)
+                            == remaining
+                )
+            }) {
+                continue;
+            }
+        }
         if !options.contains(&effect) {
             options.push(effect);
         }
@@ -223,13 +278,19 @@ pub(crate) fn packet_options(
 /// color, controller, printed-ability, face and historical-source restrictions.
 pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed) -> bool {
     let legacy = legacy_damage_order_v1();
-    if (legacy && !legacy_sphere_order_v1()) || damage.is_combat
-        || damage.amount <= 0
-        || cannot_prevent_damage(state, damage)
+    let unpreventable = cannot_prevent_damage(state, damage);
+    let unicorns = crate::eternal_pauper_pf2c_v1::applicable_unicorns(state, damage).count();
+    if (legacy && !legacy_sphere_order_v1()) || damage.is_combat || damage.amount <= 0 {
+        return false;
+    }
+    if unpreventable {
+        if unicorns == 0 {
+            return false;
+        }
+    } else if (!legacy && circles::circle_shield_position(state, damage).is_some())
         // With any matching Circle, only its observable consumption predicate
         // admits the packet. Amount changes before an inevitable identical
         // shield consumption do not introduce a redundant numeric menu.
-        || (!legacy && circles::circle_shield_position(state, damage).is_some())
         || full_prevention(state, damage)
         || crate::eternal_pauper_pf1c_v1::ordinary_damage::prevention_without_cost(state, damage)
     {
@@ -238,10 +299,13 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
     let powers: Vec<_> = crate::standard_cards_v1::matching_ojers(state, damage)
         .map(|(_, power)| power)
         .collect();
-    let spheres =
-        crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage).count();
+    let spheres = if unpreventable {
+        0
+    } else {
+        crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage).count()
+    };
     if !legacy && powers.len() == 1 {
-        return single_ojer_has_distinct_outcomes(damage.amount, spheres, powers[0]);
+        return single_ojer_has_distinct_outcomes(damage.amount, spheres, unicorns, powers[0]);
     }
     // Keep every native Ojer's multiplicity. For multiple increases this gate
     // is conservative about equivalent numeric menus, while the actual
@@ -250,7 +314,7 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
         return false;
     };
     let mut amount = damage.amount;
-    for _ in crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage) {
+    for _ in 0..spheres {
         if amount <= 0 {
             break;
         }
@@ -259,36 +323,63 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
         }
         amount = amount.saturating_sub(2);
     }
+    for _ in 0..unicorns {
+        if amount <= 0 {
+            break;
+        }
+        if amount < power {
+            return true;
+        }
+        amount = amount.saturating_sub(1);
+    }
     false
 }
 
 /// Exact scalar bounds with one Ojer: its earliest and latest legal use
 /// bracket every possible final amount. Zero ends the event before an unused
 /// increase can revive it. All arithmetic is widened before subtraction.
-fn single_ojer_has_distinct_outcomes(amount: i32, spheres: usize, power: i32) -> bool {
+fn single_ojer_has_distinct_outcomes(
+    amount: i32,
+    spheres: usize,
+    unicorns: usize,
+    power: i32,
+) -> bool {
     let amount = i64::from(amount);
     let power = i64::from(power);
     let spheres = i64::try_from(spheres)
-        .unwrap_or(i64::MAX / 4)
-        .min(i64::MAX / 4);
-    if amount <= 0 || spheres == 0 {
+        .unwrap_or(i64::MAX / 8)
+        .min(i64::MAX / 8);
+    let unicorns = i64::try_from(unicorns)
+        .unwrap_or(i64::MAX / 8)
+        .min(i64::MAX / 8);
+    let total_red = 2 * spheres + unicorns;
+    if amount <= 0 || total_red == 0 {
         return false;
     }
-    let earliest = if amount < power {
+    let need = (amount - power + 1).max(0);
+    let r_min = if need == 0 {
         0
+    } else if unicorns > 0 {
+        need
     } else {
-        (amount - power) / 2 + 1
+        need + (need & 1)
     };
-    let latest = spheres.min((amount - 1) / 2);
-    if earliest > latest {
+    let r_max = if amount <= 1 {
+        0
+    } else if unicorns > 0 {
+        (amount - 1).min(total_red)
+    } else {
+        (2 * spheres).min((amount - 1) & !1)
+    };
+    if r_min > r_max || r_min > total_red {
         return false;
     }
-    let minimum = if 2 * spheres >= amount {
+    let minimum = if total_red >= amount {
         0
     } else {
-        (power - 2 * (spheres - earliest)).max(0)
+        (power - (total_red - r_min)).max(0)
     };
-    let maximum = (power - 2 * (spheres - latest)).max(0);
+    let maximum = (power - (total_red - r_max)).max(0);
     minimum != maximum
 }
 

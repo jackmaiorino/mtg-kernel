@@ -869,6 +869,8 @@ pub(crate) mod heartfire_v12;
 pub(crate) mod raid_entry_v21;
 mod raid_v9;
 mod soul_shackled_zombie_v13;
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod stack_size_cap_v1_tests;
 pub(crate) use soul_shackled_zombie_v13::context_for_akroma_v40 as akroma_zombie_context_v40;
 pub mod variable_cast_v1;
 #[cfg(test)]
@@ -1768,7 +1770,8 @@ where
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. }
-        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. } => {
+        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. }
+        | ActionSemanticV1::ChooseTextColorWordV1 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -3606,7 +3609,8 @@ fn flat_validate_semantic_policy_pair_v1(
             | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
             | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
             | ActionSemanticV1::FinishDivineTargetsV44 { .. }
-            | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. },
+            | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. }
+            | ActionSemanticV1::ChooseTextColorWordV1 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -5290,6 +5294,9 @@ fn flat_validate_expected_decision_numeric_domain(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
+    if crate::text_color_change_v1::requires_successor(&session.state) {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
     if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && !session.is_common_v40())
         || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && !session.is_common_v40())
         || (crate::krenko_v1::requires_successor(&session.state)
@@ -5394,6 +5401,7 @@ pub struct RlEpisodeSessionV1 {
     episode_id: u64,
     max_physical_decisions: u64,
     max_policy_steps: u64,
+    max_stack_objects: Option<u32>,
     state: crate::state::GameState,
     surface: PolicySurfaceV5,
     environment_revision: u64,
@@ -5484,6 +5492,7 @@ pub struct FastActorSessionV1 {
     episode_id: u64,
     max_physical_decisions: u64,
     max_policy_steps: u64,
+    max_stack_objects: Option<u32>,
     state: crate::state::GameState,
     surface: PolicySurfaceV5,
     environment_revision: u64,
@@ -5644,6 +5653,7 @@ impl FastActorSessionV1 {
             episode_id: 0,
             max_physical_decisions: template.max_physical_decisions,
             max_policy_steps: template.max_policy_steps,
+            max_stack_objects: template.max_stack_objects,
             state,
             surface,
             environment_revision: 0,
@@ -5722,6 +5732,7 @@ impl RlEpisodeSessionV1 {
             episode_id: fast.episode_id,
             max_physical_decisions: fast.max_physical_decisions,
             max_policy_steps: fast.max_policy_steps,
+            max_stack_objects: fast.max_stack_objects,
             state: fast.state.clone(),
             surface,
             environment_revision: fast.environment_revision,
@@ -5993,7 +6004,7 @@ impl RlEpisodeSessionV1 {
     /// The existing catalog constructors and JSONL V5/V6 remain unchanged.
     /// Callers supply already resolved content identities; the engine still
     /// preflights both arrays before any shuffle or session construction.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_v1(
         episode_id: u64,
         env_seed: u64,
@@ -6017,7 +6028,7 @@ impl RlEpisodeSessionV1 {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_and_london_v1(
         episode_id: u64,
         env_seed: u64,
@@ -6047,7 +6058,7 @@ impl RlEpisodeSessionV1 {
     /// `reset_with_custom_decks_and_london_v1` with each seat's companion,
     /// put face up in exile before the game begins, and each seat's cards
     /// outside the game (`eternal_outside_game_v1`).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_companions_and_london_v1(
         episode_id: u64,
         env_seed: u64,
@@ -6080,7 +6091,7 @@ impl RlEpisodeSessionV1 {
     /// `reset_with_custom_decks_companions_and_london_v1`, optionally under
     /// the public shroud contract (Limited schema 5,
     /// `rl::enable_public_shroud_v1`).
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub(crate) fn reset_with_custom_decks_companions_london_and_shroud_v1(
         episode_id: u64,
         env_seed: u64,
@@ -6095,10 +6106,53 @@ impl RlEpisodeSessionV1 {
         london_mulligans: bool,
         public_shroud: bool,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_custom_decks_companions_london_shroud_and_stack_cap_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            None,
+            deck_ids,
+            card_ids,
+            companions,
+            outside_the_game,
+            priority_mode,
+            foundations_combat,
+            london_mulligans,
+            public_shroud,
+        )
+    }
+
+    /// `reset_with_custom_decks_companions_london_and_shroud_v1` with an
+    /// optional session `max_stack_objects` cap applied from the initial
+    /// advance.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn reset_with_custom_decks_companions_london_shroud_and_stack_cap_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        max_stack_objects: Option<u32>,
+        deck_ids: SessionDeckIdsV1,
+        card_ids: [&[u16]; 2],
+        companions: [Option<u16>; 2],
+        outside_the_game: Option<[Vec<u16>; 2]>,
+        priority_mode: crate::surface_v2::PriorityModeV1,
+        foundations_combat: bool,
+        london_mulligans: bool,
+        public_shroud: bool,
+    ) -> Result<Self, RlSessionError> {
         for cards in card_ids {
             crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
             })?;
+        }
+        if let Some(outside) = &outside_the_game {
+            for cards in outside {
+                crate::card_def::preflight_outside_the_game(cards).map_err(|error| {
+                    session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+                })?;
+            }
         }
         for cards in card_ids {
             crate::rl::require_declared_cards_for_scope(
@@ -6140,6 +6194,7 @@ impl RlEpisodeSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects,
             state,
             surface: PolicySurfaceV5::new_with_priority_mode_v1(
                 priority_mode,
@@ -6383,6 +6438,7 @@ impl RlEpisodeSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface: PolicySurfaceV5::new_for_session(),
             scan_menu: ScanMenuV1::LegalAnswersOnly,
@@ -6423,6 +6479,7 @@ impl RlEpisodeSessionV1 {
                 episode_id,
                 max_physical_decisions,
                 max_policy_steps,
+                max_stack_objects: None,
                 state,
                 surface: if suppression_audit_mode == SuppressionAuditMode::Off {
                     PolicySurfaceV5::new_for_session()
@@ -6486,6 +6543,82 @@ impl RlEpisodeSessionV1 {
 
     pub fn physical_decision_count(&self) -> u64 {
         self.physical_decision_count
+    }
+
+    /// Returns the number of items currently on the stack.
+    pub fn stack_objects(&self) -> u32 {
+        u32::try_from(self.state.stack.len()).expect("stack size fits in u32")
+    }
+
+    /// Returns the optional stack-size cap configured on this session.
+    pub fn max_stack_objects(&self) -> Option<u32> {
+        self.max_stack_objects
+    }
+
+    /// Configures the optional stack-size cap (`max_stack_objects`).
+    /// `None` removes the cap. When `Some(cap)` is given on a live
+    /// nonterminal session whose stack already exceeds `cap`, the pending
+    /// decision is immediately replaced by `StackSizeCapExceeded` naming the
+    /// first item beyond the cap (an existing terminal stands).
+    pub fn set_max_stack_objects(&mut self, max_stack_objects: Option<u32>) {
+        self.max_stack_objects = max_stack_objects;
+        self.enforce_stack_size_cap_on_current();
+    }
+
+    /// Builder-style form of [`Self::set_max_stack_objects`].
+    pub fn with_max_stack_objects(mut self, max_stack_objects: Option<u32>) -> Self {
+        self.set_max_stack_objects(max_stack_objects);
+        self
+    }
+
+    fn enforce_stack_size_cap_on_current(&mut self) {
+        if self.terminal.is_some() {
+            return;
+        }
+        let Some(cap) = self.max_stack_objects else {
+            return;
+        };
+        let Some(item) = self.state.stack.get(cap as usize) else {
+            return;
+        };
+        let source = item.source;
+        let mechanic = crate::engine::UnsupportedMechanic::StackSizeCapExceeded;
+        self.state.engine.halted = Some((mechanic, source));
+        let _ = self.surface.discard_unanswered_scan();
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            self.limited_trigger_order = None;
+        }
+        self.current = None;
+        self.terminal = Some(halted_terminal(
+            &self.deck_ids,
+            self.deck_hashes,
+            self.episode_id,
+            format!("engine_halted:{mechanic:?}:source:{}", source.0),
+            self.policy_step_count,
+            self.physical_decision_count,
+        ));
+    }
+
+    #[cfg(all(test, feature = "eternal-fixtures"))]
+    pub(crate) fn install_fixture_state_preserving_limits_for_test(
+        &mut self,
+        state: crate::state::GameState,
+        priority_mode: crate::surface_v2::PriorityModeV1,
+    ) {
+        self.state = state;
+        self.surface =
+            PolicySurfaceV5::new_with_priority_mode_v1(priority_mode, SuppressionAuditMode::Off);
+        self.environment_revision = 0;
+        self.policy_step_count = 0;
+        self.physical_decision_count = 0;
+        self.current = None;
+        self.terminal = None;
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            self.limited_trigger_order = None;
+        }
+        self.advance_to_decision_or_terminal();
     }
 
     pub fn diagnostic_state_hash(&self) -> u64 {
@@ -7002,7 +7135,9 @@ impl RlEpisodeSessionV1 {
             return;
         }
 
-        if self.state.extra_turn_v1.is_some() {
+        // The schema 5 public contract reports the turn schedule in its
+        // policy observation, so its session follows extra turns.
+        if self.state.extra_turn_v1.is_some() && !self.state.public_shroud_v1 {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
                 self.deck_hashes,
@@ -7014,8 +7149,11 @@ impl RlEpisodeSessionV1 {
             return;
         }
         let surfaced = match measure_optional(&mut profile, RlPhaseV1::Advance, || {
-            self.surface
-                .next_decision_owned(&mut self.state, self.environment_revision)
+            self.surface.next_decision_owned_with_stack_cap(
+                &mut self.state,
+                self.environment_revision,
+                self.max_stack_objects,
+            )
         }) {
             Ok(decision) => decision,
             Err(_) => {
@@ -7629,6 +7767,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface,
             environment_revision: 0,
@@ -7705,6 +7844,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface: PolicySurfaceV5::new_for_session(),
             environment_revision: 0,
@@ -7744,6 +7884,59 @@ impl FastActorSessionV1 {
             legal_action_count: u32::try_from(current.candidates.len())
                 .expect("fast actor candidate count was checked when bound"),
         })
+    }
+
+    /// Returns the number of items currently on the stack.
+    pub fn stack_objects(&self) -> u32 {
+        u32::try_from(self.state.stack.len()).expect("stack size fits in u32")
+    }
+
+    /// Returns the optional stack-size cap configured on this session.
+    pub fn max_stack_objects(&self) -> Option<u32> {
+        self.max_stack_objects
+    }
+
+    /// Configures the optional stack-size cap (`max_stack_objects`).
+    /// `None` removes the cap. When `Some(cap)` is given on a live
+    /// nonterminal session whose stack already exceeds `cap`, the pending
+    /// decision is immediately replaced by `StackSizeCapExceeded` naming the
+    /// first item beyond the cap (an existing terminal stands).
+    pub fn set_max_stack_objects(&mut self, max_stack_objects: Option<u32>) {
+        self.max_stack_objects = max_stack_objects;
+        self.enforce_stack_size_cap_on_current();
+    }
+
+    /// Builder-style form of [`Self::set_max_stack_objects`].
+    pub fn with_max_stack_objects(mut self, max_stack_objects: Option<u32>) -> Self {
+        self.set_max_stack_objects(max_stack_objects);
+        self
+    }
+
+    fn enforce_stack_size_cap_on_current(&mut self) {
+        if self.terminal.is_some() {
+            return;
+        }
+        let Some(cap) = self.max_stack_objects else {
+            return;
+        };
+        let Some(item) = self.state.stack.get(cap as usize) else {
+            return;
+        };
+        let source = item.source;
+        let mechanic = crate::engine::UnsupportedMechanic::StackSizeCapExceeded;
+        self.state.engine.halted = Some((mechanic, source));
+        let _ = self.surface.discard_unanswered_scan();
+        self.flat_action_cache_spare = None;
+        self.flat_action_cache_spare_v2 = None;
+        self.current = None;
+        self.terminal = Some(halted_terminal(
+            &self.deck_ids,
+            self.deck_hashes,
+            self.episode_id,
+            format!("engine_halted:{mechanic:?}:source:{}", source.0),
+            self.policy_step_count,
+            self.physical_decision_count,
+        ));
     }
 
     /// Crate-private immutable provenance needed to seed the native full-
@@ -10226,6 +10419,18 @@ impl FastActorSessionV1 {
             return;
         }
 
+        if crate::text_color_change_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:text_color_change_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (crate::faebloom_trick_v43::requires_successor(&self.state, None)
             && !matches!(
                 self.flat_action_contract_mode,
@@ -10599,8 +10804,11 @@ impl FastActorSessionV1 {
         let surface_result = {
             #[cfg(test)]
             let _timing = test_timing_v1::span(test_timing_v1::Phase::NativeSurfaceAdvance);
-            self.surface
-                .next_decision_owned(&mut self.state, self.environment_revision)
+            self.surface.next_decision_owned_with_stack_cap(
+                &mut self.state,
+                self.environment_revision,
+                self.max_stack_objects,
+            )
         };
         let surfaced = match surface_result {
             Ok(decision) => decision,
@@ -21537,6 +21745,64 @@ mod tests {
                 .any(|&id| card(&sampled, id) != card(&session, id));
         }
         assert!(resampled, "the rest of the library is still resampled");
+    }
+
+    #[test]
+    fn fast_actor_session_refuses_text_color_changes_state() {
+        let mut session = FastActorSessionV1::reset_with_limits(46_001, 46_001, 128, 16_384);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected initial decision");
+        };
+        let island_def = crate::card_def::card_id_by_name("Island").unwrap();
+        let perm = session.state.objects.push(crate::state::GameObject {
+            card_def: island_def,
+            name: crate::card_def::CARD_DEFS[island_def as usize]
+                .object_name
+                .into(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: crate::state::Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: crate::state::ObjectStateV4::from_card_def(island_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        session.state.players[0].battlefield.push(perm);
+        assert!(crate::text_color_change_v1::apply_change(
+            &mut session.state,
+            perm,
+            perm,
+            crate::mana::ManaColor::U,
+            crate::mana::ManaColor::G,
+        ));
+        assert_eq!(
+            session.flat_policy_observation_v1(decision),
+            Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        );
+        assert_eq!(
+            session.flat_policy_observation_v2(decision),
+            Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        );
+        assert!(session
+            .kernel_search_redeterminized_clone_v4(46_002)
+            .is_err());
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        match session.current_response() {
+            FastActorResponseV1::Terminal(terminal) => {
+                assert_eq!(
+                    terminal.terminal_reason,
+                    "fail_closed:text_color_change_successor_required"
+                );
+            }
+            other => panic!("expected fail-closed terminal, got {other:?}"),
+        }
     }
 }
 

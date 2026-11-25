@@ -180,6 +180,7 @@ pub(crate) fn copy_snapshot_legal_targets(
             power_lki: None,
             other_than: None,
             original_source_incarnation_only: false,
+            text_color_origin: None,
         }),
         state,
     ))
@@ -503,6 +504,13 @@ fn materialize_validated_copy_snapshot(
     contracts: Vec<StackTargetContractV4>,
     owner: Option<effect::thousand_year_storm_v1::targets::CopyOwnerV1>,
 ) -> Result<(), String> {
+    if crate::text_color_change_v1::refuse_copied_capture(
+        state,
+        spell.v4.stack_item_id,
+        spell.source,
+    ) {
+        return Err("copying a stack item with a captured color-word change is unsupported".into());
+    }
     let origin = spell.v4.source_contract.ok_or("copy source missing")?;
     let source = state.objects.push(crate::state::GameObject {
         card_def: origin.card_def,

@@ -695,6 +695,19 @@ impl EternalActorSessionV1 {
         self.require_entry_visibility()?;
         Ok(self.inner.current_response())
     }
+    pub fn stack_objects(&self) -> u32 {
+        self.inner.stack_objects()
+    }
+    pub fn max_stack_objects(&self) -> Option<u32> {
+        self.inner.max_stack_objects()
+    }
+    pub fn set_max_stack_objects(&mut self, max_stack_objects: Option<u32>) {
+        self.inner.set_max_stack_objects(max_stack_objects);
+    }
+    pub fn with_max_stack_objects(mut self, max_stack_objects: Option<u32>) -> Self {
+        self.set_max_stack_objects(max_stack_objects);
+        self
+    }
     pub fn snapshot(&self) -> EternalActorSnapshotV1 {
         EternalActorSnapshotV1 {
             inner: self.inner.clone(),

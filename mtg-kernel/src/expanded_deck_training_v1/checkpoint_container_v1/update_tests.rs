@@ -93,6 +93,7 @@ fn fixture(
         postboard: false,
         max_physical_decisions: 100000,
         max_policy_steps: 1000000,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: None,
@@ -198,7 +199,9 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         checkpoint_container_v1::metadata_view_v1(&sealed)
             .unwrap()
             .as_ref(),
-        checkpoint_container_v1::document_v1(&bytes_v2).unwrap()
+        checkpoint_container_v1::document_v1(&bytes_v2)
+            .unwrap()
+            .as_ref()
     );
     // The remembered view is exactly the view a fresh probe takes from the
     // file.
@@ -702,6 +705,85 @@ fn projection_prepared_update_matches_serial_and_flag_off_legacy_path() {
         assert!(p.second_moments.iter().any(|&v| f32::from_bits(v) > 0.0));
         assert_eq!(p.p_step, 1);
     }
+    // The same flag-on update through the container, explicit and by
+    // default: the same digests, and a container (version 2) whose export is
+    // the v1 checkpoint byte for byte.
+    let in_format = |format, label: &str| {
+        let mut cmd = command(1, Some(config.clone()), label);
+        if let ExpandedTrainingCommandV1::UpdatePrepared { record_format, .. } = &mut cmd {
+            *record_format = format;
+        }
+        execute_v1(cmd).unwrap()
+    };
+    let on_v2 = in_format(CheckpointRecordFormatV1::V2, "on-v2");
+    let on_auto = in_format(CheckpointRecordFormatV1::Auto, "on-auto");
+    assert_eq!(
+        on_auto["checkpoint"]["sha256"],
+        on_v2["checkpoint"]["sha256"]
+    );
+    for member in [
+        "before_state_sha256",
+        "after_state_sha256",
+        "adam_step",
+        "loss",
+        "policy_sum",
+        "value_sum",
+        "card_semantics",
+    ] {
+        assert_eq!(on_v2[member], serial[member], "{member}");
+    }
+    let pin_of = |receipt: &Value| -> PinnedFileV1 {
+        serde_json::from_value(receipt["checkpoint"].clone()).unwrap()
+    };
+    let (on_v1_pin, on_v2_pin) = (pin_of(&serial), pin_of(&on_v2));
+    let on_v1_bytes = fs::read(&on_v1_pin.path).unwrap();
+    let on_v2_bytes = fs::read(&on_v2_pin.path).unwrap();
+    assert!(!is_container_v1(&on_v1_bytes) && is_container_v1(&on_v2_bytes));
+    assert_eq!(on_v2_bytes[8..12], 2u32.to_le_bytes());
+    assert_eq!(export_v1(&on_v2_bytes).unwrap(), on_v1_bytes);
+    assert_eq!(convert_v1_bytes(&on_v1_bytes).unwrap(), on_v2_bytes);
+    // The update's metadata probe reads the whole section from the
+    // container, as from the v1 checkpoint.
+    checkpoint_metadata_memo_v1::clear_for_test_v1();
+    let probe_v2: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&on_v2_pin).unwrap();
+    let probe_v1: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&on_v1_pin).unwrap();
+    assert_eq!(probe_v2.card_semantics, probe_v1.card_semantics);
+    assert_eq!(probe_v2.card_semantics, checkpoint(&serial).card_semantics);
+    // The next flag-on update from either checkpoint, on trajectories
+    // collected from that same checkpoint, reaches the same state and P.
+    let next = |pin: PinnedFileV1, label: &str| {
+        let resumed = ExpandedModelSourceV1 {
+            checkpoint: Some(pin),
+            ..source.clone()
+        };
+        let collected = collect(&resumed, &format!("{label}-collect"));
+        let mut cmd = command(1, Some(config.clone()), label);
+        if let ExpandedTrainingCommandV1::UpdatePrepared {
+            source,
+            trajectories,
+            record_format,
+            ..
+        } = &mut cmd
+        {
+            *source = resumed;
+            *trajectories = collected;
+            *record_format = CheckpointRecordFormatV1::Auto;
+        }
+        execute_v1(cmd).unwrap()
+    };
+    let next_from_v1 = next(on_v1_pin, "on-next-from-v1");
+    let next_from_v2 = next(on_v2_pin, "on-next-from-v2");
+    assert_eq!(
+        next_from_v1["after_state_sha256"],
+        next_from_v2["after_state_sha256"]
+    );
+    let (a, b) = (checkpoint(&next_from_v1), checkpoint(&next_from_v2));
+    assert_eq!(a.card_semantics.as_ref().unwrap().p_step, 2);
+    assert_eq!(a.card_semantics, b.card_semantics);
+    assert_eq!(a.state_sha256, b.state_sha256);
+    assert_eq!(a.parameters, b.parameters);
+    assert_eq!(a.first_moments, b.first_moments);
+    assert_eq!(a.second_moments, b.second_moments);
     assert_ne!(serial["after_state_sha256"], off["after_state_sha256"]);
     let on_saved = checkpoint(&serial);
     let off_saved = checkpoint(&off);
