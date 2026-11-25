@@ -8,6 +8,8 @@ mod initiative_throne_v1;
 mod owned_artifact_draws;
 #[path = "eternal_vintage_e4_v1/owned_veil_dragon_draws.rs"]
 mod owned_veil_dragon_draws;
+#[path = "eternal_vintage_e4_v1/public_extra_turns_v1.rs"]
+mod public_extra_turns_v1;
 
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,

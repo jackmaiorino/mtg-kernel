@@ -667,17 +667,24 @@ mod kaito_target_prerequisite_tests {
             let filter = StandardTargetV1::UpToOneControlledCreatureV1;
             assert_eq!(filter.counts(), (1, 0));
             assert_eq!(
-                legal_targets(filter, actor, None, &[], &state),
+                legal_targets(filter, actor, None, None, &[], &state),
                 [Target::Object(controlled)]
             );
-            let old = legal_targets(StandardTargetV1::UpToOneCreature, actor, None, &[], &state);
+            let old = legal_targets(
+                StandardTargetV1::UpToOneCreature,
+                actor,
+                None,
+                None,
+                &[],
+                &state,
+            );
             assert_eq!(old.len(), 2);
             assert!(old.contains(&Target::Object(controlled)));
             assert!(old.contains(&Target::Object(opposing)));
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert_eq!(
-                legal_targets(filter, actor, None, &[], &restored),
+                legal_targets(filter, actor, None, None, &[], &restored),
                 [Target::Object(controlled)]
             );
         }
@@ -984,6 +991,7 @@ pub(crate) fn legal_targets(
     target: StandardTargetV1,
     controller: PlayerId,
     source: Option<(ObjectId, u32)>,
+    text_color_origin: Option<crate::text_color_change_v1::TargetOriginV1>,
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
@@ -1053,9 +1061,12 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
-    if let Some(targets) =
-        crate::eternal_premodern_p3b_v1::targets::legal_targets(target, prefix, state)
-    {
+    if let Some(targets) = crate::eternal_premodern_p3b_v1::targets::legal_targets(
+        target,
+        text_color_origin,
+        prefix,
+        state,
+    ) {
         return targets;
     }
     if let Some(targets) =

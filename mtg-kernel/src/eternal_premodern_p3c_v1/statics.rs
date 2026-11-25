@@ -28,6 +28,20 @@ fn printed_mask(name: &str) -> u8 {
     }
 }
 
+/// Effective protection color mask of `name` on `host`, applying Layer-3
+/// color-word changes to color-word protections only (design §4.2).
+/// Iridescent Angel ("protection from all colors") has no color word and is
+/// never mapped.
+fn effective_mask(state: &GameState, host: ObjectId, name: &str) -> u8 {
+    match name {
+        IHSANS_SHADE => {
+            crate::text_color_change_v1::text_color_mask(state, host, mana_color_mask(ManaColor::W))
+        }
+        IRIDESCENT_ANGEL => ALL_COLORS,
+        _ => 0,
+    }
+}
+
 /// Printed protection from colors, as a color mask. Wave E6b's checks apply
 /// it to targeting, blocking, damage and attachments. A Volrath's
 /// Shapeshifter with one of these cards' full text has it too, as for wave
@@ -37,11 +51,11 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         if !crate::continuous_characteristics_v1::printed_abilities_active(state, host) {
             return 0;
         }
-        return printed_mask(text.name);
+        return effective_mask(state, host, text.name);
     }
     match name_of(state, host) {
         Some(name) if printed_mask(name) != 0 && active_named(state, host, name) => {
-            printed_mask(name)
+            effective_mask(state, host, name)
         }
         _ => 0,
     }
