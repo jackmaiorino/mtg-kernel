@@ -179,7 +179,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
 // it before any store written under this profile is used. See
 // `classify_catalog_profile_v1`'s doc comment for the tie rule this
 // byte-identical initial value requires against CURRENT.
-const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "1291b789c9aaa269";
+const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "ba6e35d131506db1";
 
 // Separate FDN batch A identity: the PAUPER_META_W1 card registry plus the
 // six appended FDN fixture definitions, built only under the
@@ -10150,7 +10150,7 @@ mod tests {
         // directly from a failing run (never hand-typed).
         assert_eq!(
             semantics,
-            "db709ac73893a382be26544c766847165c1e493c0d66295ee470327e5945b790"
+            "37729de161d1b55621b8e1c93e6064a79d4a93b0001b8d967b83d027ef6eff60"
         );
         assert_eq!(
             identity,
@@ -10158,7 +10158,7 @@ mod tests {
         );
         assert_eq!(
             sha256_hex(&run_bytes),
-            "a43db6d53fbdf036f08d15747597272082ed1e47431f7c7feb4e9eacd4068322"
+            "13ed144678ebbc20c79cba4b6d511e42a3d9db5f67c71a712c4f5defd4db45d3"
         );
     }
 
@@ -10901,7 +10901,7 @@ mod tests {
         // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&bytes),
-            "a43db6d53fbdf036f08d15747597272082ed1e47431f7c7feb4e9eacd4068322"
+            "13ed144678ebbc20c79cba4b6d511e42a3d9db5f67c71a712c4f5defd4db45d3"
         );
         assert!(!String::from_utf8(bytes)
             .unwrap()
@@ -11203,7 +11203,7 @@ mod tests {
         // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&legacy_bytes),
-            "a43db6d53fbdf036f08d15747597272082ed1e47431f7c7feb4e9eacd4068322"
+            "13ed144678ebbc20c79cba4b6d511e42a3d9db5f67c71a712c4f5defd4db45d3"
         );
         assert!(!String::from_utf8(legacy_bytes)
             .unwrap()

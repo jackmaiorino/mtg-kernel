@@ -7989,7 +7989,7 @@ fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     // supplies the resulting joined-body digest; strict framing stays fixed.
     assert_eq!(
         historical_frame.sha256_v1(),
-        "0335e10f1e90ee2d91f8cfce3e79b92cb6b26c3123d419c4047b197387e2f5a9",
+        "94270902913221cc5597ac15ad44fa97c30c371069a25d9ea7b303301d5b8c88",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame

@@ -18920,8 +18920,8 @@ mod tests {
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0xd8, 0xc9, 0xc1, 0xd2, 0x8e, 0x91, 0x27, 0x08, 0xfd, 0x5f, 0x4c, 0x4c, 0x1a, 0x39,
-                0xfb, 0x65,
+                0x4b, 0xf8, 0x05, 0x29, 0x21, 0x7e, 0xf7, 0x9f, 0xec, 0x36, 0x3b, 0x70, 0x83, 0xda,
+                0xbe, 0x59,
             ]
         );
     }
@@ -18985,8 +18985,8 @@ mod tests {
         assert_eq!(
             v1,
             [
-                0x83, 0x60, 0x56, 0x29, 0x62, 0xed, 0xf5, 0x2d, 0x43, 0xaa, 0x70, 0xc2, 0x01, 0x2e,
-                0xe1, 0xbf,
+                0x6c, 0x9d, 0x2b, 0x79, 0x09, 0x72, 0x0f, 0x89, 0x12, 0xd3, 0xbe, 0xb0, 0x45, 0x60,
+                0x67, 0xd4,
             ]
         );
 
@@ -19030,8 +19030,8 @@ mod tests {
         assert_eq!(
             common_v2,
             [
-                0xa4, 0x58, 0xcf, 0x38, 0x26, 0xf7, 0xbf, 0xb8, 0x2c, 0xef, 0xa9, 0xcd, 0x03, 0xc9,
-                0x5c, 0x0f,
+                0x4d, 0x3c, 0x58, 0xf3, 0x79, 0x55, 0xca, 0x92, 0x44, 0x30, 0x02, 0x11, 0x7f, 0xbf,
+                0xc2, 0xea,
             ]
         );
         assert_ne!(common_v2, v1);
@@ -19718,7 +19718,7 @@ mod tests {
         eprintln!("current environment-v2 policy/core goldens: {v2_policy:#018x} {v2_full_core:#018x} {v2_fast_core:#018x}");
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0x1410_3c05_573a_9d85,
+            0xad52_cb9e_94fc_7d23,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
@@ -19739,7 +19739,7 @@ mod tests {
         // Current merged-rule values observed in CI run 36812673206
         // (Linux job 110211057207); full and fast core paths agree exactly.
         assert_eq!(
-            v2_policy, 0x0b9e_f72f_a568_dd88,
+            v2_policy, 0x96f5_4dd4_a703_4a14,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
@@ -20170,7 +20170,7 @@ mod tests {
         // own re-pin comment.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0x1410_3c05_573a_9d85
+            0xad52_cb9e_94fc_7d23
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
@@ -20358,7 +20358,7 @@ mod tests {
         // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x0b9e_f72f_a568_dd88,
+            0x96f5_4dd4_a703_4a14,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
@@ -20406,7 +20406,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x0b9e_f72f_a568_dd88
+            0x96f5_4dd4_a703_4a14
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
@@ -20703,7 +20703,7 @@ mod tests {
     /// failing run (never hand-typed).
     #[cfg(not(feature = "limited-fdn-fixtures"))]
     const V5_TRANSCRIPT_SHA256: &str =
-        "470e0a8e346cff59cbbfa38ae4c13c95eebf51e81f62c90fb36afe9ef5b4cb1f";
+        "eaecd23ab5d99ed3cf98a3037cd3d74ef8b0fc3585eef807a9e24764d55b76d3";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

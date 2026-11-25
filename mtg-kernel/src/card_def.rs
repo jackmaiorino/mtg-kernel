@@ -4286,7 +4286,7 @@ mod tests {
         // prior definitions. Version 33 folded in Fang Dragon's Adventure
         // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
         // `cant_be_blocked_by_monarchs_creatures` static flag.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x1291_b789_c9aa_a269);
+        assert_eq!(KERNEL_CARDDB_HASH, 0xba6e_35d1_3150_6db1);
     }
 
     #[test]

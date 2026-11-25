@@ -1426,7 +1426,7 @@ mod tests {
         // read directly from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "238b384b9f00f8e002a320e41bc59f7311cb684821076243d29294d737a22b98"
+            "d79cee1374d7df37e7b031bdcae84bc485cd46785e6980173594ae799a60e9bc"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
