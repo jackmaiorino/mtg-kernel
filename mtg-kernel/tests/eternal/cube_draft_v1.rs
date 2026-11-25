@@ -43,7 +43,7 @@ fn texts() -> (String, String) {
 
 fn pool() -> CubePool {
     let (cube, gaps) = texts();
-    CubePool::from_json_texts(&cube, &gaps).expect("draftable pool")
+    CubePool::from_json_texts(&cube, &gaps, None).expect("draftable pool")
 }
 
 /// Runs `work` on a thread with a large stack, as the engine's binaries do.
@@ -86,12 +86,117 @@ fn pool_is_the_cube_list_minus_the_gap_record() {
         .map(|card| card["name"].as_str().unwrap())
         .filter(|name| !gap_names.contains(name))
         .collect();
-    let pool = CubePool::from_json_texts(&cube, &gaps).unwrap();
+    let pool = CubePool::from_json_texts(&cube, &gaps, None).unwrap();
     let names: Vec<&str> = pool.names().iter().map(String::as_str).collect();
     assert_eq!(names, expected);
     assert_eq!(pool.ids().len(), pool.card_count());
     assert!(pool.card_count() >= DRAFTED_CARDS, "{}", pool.card_count());
-    assert!(CubePool::from_json_texts("{", &gaps).is_err());
+    assert!(CubePool::from_json_texts("{", &gaps, None).is_err());
+}
+
+/// A fence record naming `names`, in the `{"cards": [{name, reason}]}` form.
+fn fence_record(names: &[&str]) -> String {
+    let cards: Vec<Value> = names
+        .iter()
+        .map(|name| serde_json::json!({"name": name, "reason": "fence test"}))
+        .collect();
+    serde_json::json!({ "cards": cards }).to_string()
+}
+
+#[test]
+fn fence_removes_fenced_cards_from_the_pool() {
+    let (cube, gaps) = texts();
+    let unfenced = CubePool::from_json_texts(&cube, &gaps, None).unwrap();
+    let fenced_names = [unfenced.names()[0].clone(), unfenced.names()[7].clone()];
+    let fenced_refs: Vec<&str> = fenced_names.iter().map(String::as_str).collect();
+    let fence = fence_record(&fenced_refs);
+    let fenced = CubePool::from_json_texts(&cube, &gaps, Some(&fence)).unwrap();
+
+    let expected: Vec<&str> = unfenced
+        .names()
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !fenced_refs.contains(name))
+        .collect();
+    let names: Vec<&str> = fenced.names().iter().map(String::as_str).collect();
+    assert_eq!(names, expected);
+    assert_eq!(fenced.card_count(), unfenced.card_count() - 2);
+    for name in &fenced_names {
+        let id = card_id_by_name(name).unwrap();
+        assert!(!fenced.ids().contains(&id), "{name}");
+    }
+
+    // The bare list form of the fence file reads the same.
+    let bare = serde_json::from_str::<Value>(&fence).unwrap()["cards"].to_string();
+    assert_eq!(
+        CubePool::from_json_texts(&cube, &gaps, Some(&bare)).unwrap(),
+        fenced
+    );
+    // An empty fence fences nothing.
+    for empty in [r#"{"cards": []}"#, "[]"] {
+        assert_eq!(
+            CubePool::from_json_texts(&cube, &gaps, Some(empty)).unwrap(),
+            unfenced
+        );
+    }
+}
+
+#[test]
+fn fence_on_a_gap_card_is_accepted_and_changes_nothing() {
+    // The committed gap record may be empty (every cube card Full), so the
+    // test makes its own: one cube card listed as missing.
+    let (cube, gaps) = texts();
+    let gap_name = pool().names()[0].clone();
+    let mut gaps_json: Value = serde_json::from_str(&gaps).unwrap();
+    gaps_json["missing"] = serde_json::json!([gap_name]);
+    let gaps = gaps_json.to_string();
+    let unfenced = CubePool::from_json_texts(&cube, &gaps, None).unwrap();
+    assert!(
+        !unfenced.names().contains(&gap_name),
+        "the gap card is out of the pool"
+    );
+    let fence = fence_record(&[gap_name.as_str()]);
+    assert_eq!(
+        CubePool::from_json_texts(&cube, &gaps, Some(&fence)).unwrap(),
+        unfenced
+    );
+}
+
+#[test]
+fn fence_refuses_a_name_not_on_the_cube_list_and_malformed_records() {
+    let (cube, gaps) = texts();
+    let fence = fence_record(&["Not A Cube Card Of This List"]);
+    assert_eq!(
+        CubePool::from_json_texts(&cube, &gaps, Some(&fence)),
+        Err(CubeDraftError::FencedCardNotInCube(
+            "Not A Cube Card Of This List".to_owned()
+        ))
+    );
+
+    let name = {
+        let pool = CubePool::from_json_texts(&cube, &gaps, None).unwrap();
+        pool.names()[0].clone()
+    };
+    let malformed = [
+        "{".to_owned(),
+        "7".to_owned(),
+        r#"{"fenced": []}"#.to_owned(),
+        serde_json::json!({"cards": [{"name": name}]}).to_string(),
+        serde_json::json!({"cards": [{"name": name, "reason": ""}]}).to_string(),
+        serde_json::json!({"cards": [{"name": "", "reason": "r"}]}).to_string(),
+        serde_json::json!({"cards": [{"name": 3, "reason": "r"}]}).to_string(),
+        serde_json::json!({"cards": [
+            {"name": name, "reason": "r"},
+            {"name": name, "reason": "r"}
+        ]})
+        .to_string(),
+    ];
+    for text in &malformed {
+        match CubePool::from_json_texts(&cube, &gaps, Some(text)) {
+            Err(CubeDraftError::Json(_)) => {}
+            other => panic!("fence {text}: expected a JSON refusal, got {other:?}"),
+        }
+    }
 }
 
 #[test]
