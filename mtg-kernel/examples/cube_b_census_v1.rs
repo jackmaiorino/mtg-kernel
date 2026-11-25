@@ -1044,8 +1044,16 @@ mod tests {
                     }
                 );
                 let record: Value = serde_json::from_str(&run.record_text()).unwrap();
-                assert_eq!(record["caps"].get("max_stack_objects"), Some(&json!(limit)));
-                assert_eq!(record["caps"]["a2_caps"], a2);
+                assert_eq!(
+                    record["caps"],
+                    json!({
+                        "max_driver_decisions": A2_CAPS.max_decisions,
+                        "max_physical_decisions": A2_CAPS.max_physical_decisions,
+                        "max_policy_steps": A2_CAPS.max_policy_steps,
+                        "max_stack_objects": limit,
+                        "a2_caps": a2,
+                    })
+                );
             }
             let error = load(&[
                 "--max-stack-objects",

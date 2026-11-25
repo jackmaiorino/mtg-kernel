@@ -37,7 +37,7 @@ pub const GAME_LINE_SCHEMA: &str = "cube_b_census_game/v1";
 pub const RUN_RECORD_SCHEMA: &str = "cube_b_census_run/v1";
 /// Games per drafted draft: one round-robin pod.
 pub const GAMES_PER_DRAFT: u64 = POD_GAMES as u64;
-/// The A2.1 caps: driver decisions, physical decisions, policy steps.
+/// The A2.1 caps, including the stack limit from amendment 1.
 pub const A2_CAPS: GameCaps = GameCaps {
     max_decisions: 16_384,
     max_physical_decisions: 16_384,
