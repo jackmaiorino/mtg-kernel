@@ -29601,11 +29601,7 @@ pub(crate) fn step_without_linked_aura_v1(
                     .ok_or("cast mode chosen before the spell form completed")?, pending.kicked == Some(true))
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
-                || if active_target_spec == TargetSpec::KickerControlledCreatures {
-                    !pending_cast_targeting_is_complete(&pending, active_target_spec)
-                } else {
-                    pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
-                }
+                || !pending_cast_targeting_is_complete(&pending, active_target_spec)
                 || pending.target_contracts.len() != pending.targets_chosen.len()
             {
                 return Err("cast mode chosen before prior cast stages completed".to_string());
