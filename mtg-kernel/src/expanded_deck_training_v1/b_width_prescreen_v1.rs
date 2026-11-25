@@ -305,7 +305,7 @@ impl PrescreenConfigV1 {
         )?;
         let mut labels = BTreeSet::new();
         for deck in &self.decks {
-            deck.validated()?;
+            deck.validated(None)?;
             ensure(labels.insert(&deck.label), "duplicate deck label")?;
         }
         let c = &self.collection;
@@ -610,6 +610,7 @@ pub(crate) fn episode_v1(
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     }
 }
 

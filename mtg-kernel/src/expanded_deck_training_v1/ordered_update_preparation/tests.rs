@@ -1113,6 +1113,7 @@ fn net8_prepared_gae_update_defers_learner_replay_bit_exact_with_error_fallback_
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     }];
     let collect_receipt = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
         source: source.clone(),

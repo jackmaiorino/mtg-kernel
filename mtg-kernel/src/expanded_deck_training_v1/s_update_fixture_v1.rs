@@ -452,6 +452,7 @@ pub fn episode_v1(
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     })
 }
 

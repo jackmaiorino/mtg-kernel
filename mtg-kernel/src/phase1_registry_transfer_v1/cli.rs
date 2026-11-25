@@ -126,6 +126,7 @@ fn inference_only_episode() -> Result<ExpandedEpisodeV1, String> {
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     })
 }
 

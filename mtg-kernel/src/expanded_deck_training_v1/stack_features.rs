@@ -198,8 +198,8 @@ fn collect(
         opponent.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
         "stack collection requires V4 opponent",
     )?;
-    let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
-        1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player),episode.priority_windows_v1()?).map_err(err)?;
+    let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
+        1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player),episode.priority_windows_v1()?,episode.deck_format).map_err(err)?;
     session.set_max_stack_objects(episode.max_stack_objects);
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_for_game_v1(seeds).map_err(err)?;

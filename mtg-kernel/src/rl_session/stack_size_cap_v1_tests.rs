@@ -38,7 +38,7 @@ fn battlefield(state: &mut GameState, name: &str) -> ObjectId {
 
 /// P0's first main phase with Zirda and Basalt Monolith after `items` untap
 /// activations of the Monolith, each made from an ordinary priority decision.
-fn untap_stack(items: usize) -> (GameState, ObjectId) {
+pub(super) fn untap_stack(items: usize) -> (GameState, ObjectId) {
     let plains = card_id_by_name("Plains").unwrap();
     let mut state = GameState::new_from_libraries(
         &[plains; 20],
@@ -62,10 +62,16 @@ fn untap_stack(items: usize) -> (GameState, ObjectId) {
         }
         crate::engine::step(&mut state, Action::ActivateAbility(monolith, 0)).unwrap();
     }
+    // The last activation is still staged until the engine advances.
+    assert!(matches!(
+        crate::engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert_eq!(state.stack.len(), items);
     (state, monolith)
 }
 
-fn cap_reason(source: ObjectId) -> String {
+pub(super) fn cap_reason(source: ObjectId) -> String {
     format!("engine_halted:StackSizeCapExceeded:source:{}", source.0)
 }
 
@@ -249,6 +255,74 @@ fn episode_session_enforces_max_stack_objects_16_and_128() {
 }
 
 #[test]
+fn fast_actor_set_max_stack_objects_halts_pending_decision_and_preserves_terminal() {
+    let (state, monolith) = untap_stack(17);
+    let mut finished = state.clone();
+    finished.players[1].has_lost = true;
+    let mut session = FastActorSessionV1::from_v2_fixture_state(state);
+    assert_eq!(session.max_stack_objects(), None);
+    assert_eq!(session.stack_objects(), 17);
+    assert!(matches!(
+        session.current_response(),
+        FastActorResponseV1::Decision(_)
+    ));
+
+    session.set_max_stack_objects(Some(16));
+
+    assert!(matches!(
+        session.current_response(),
+        FastActorResponseV1::Terminal(t)
+            if t.terminal_outcome == TerminalOutcomeV1::Halted
+                && t.terminal_reason == cap_reason(monolith)
+    ));
+
+    let mut session = FastActorSessionV1::from_v2_fixture_state(finished);
+    assert_eq!(session.stack_objects(), 17);
+    let terminal = session.current_response();
+    assert!(matches!(
+        &terminal,
+        FastActorResponseV1::Terminal(t) if t.terminal_outcome == TerminalOutcomeV1::P0Win
+    ));
+    session.set_max_stack_objects(Some(16));
+    assert_eq!(session.current_response(), terminal);
+    assert_eq!(session.game_state().engine.halted, None);
+}
+
+#[test]
+fn episode_set_max_stack_objects_halts_pending_decision_and_preserves_terminal() {
+    let (state, monolith) = untap_stack(17);
+    let mut finished = state.clone();
+    finished.players[1].has_lost = true;
+    let mut session = episode_session_with_cap(state, None, PriorityModeV1::EngineWindowsV1);
+    assert_eq!(session.max_stack_objects(), None);
+    assert_eq!(session.stack_objects(), 17);
+    assert!(matches!(
+        session.current_response(),
+        RlSessionResponseV1::Decision(_)
+    ));
+
+    session.set_max_stack_objects(Some(16));
+
+    assert!(matches!(
+        session.current_response(),
+        RlSessionResponseV1::Terminal(t)
+            if t.terminal_outcome == TerminalOutcomeV1::Halted
+                && t.terminal_reason == cap_reason(monolith)
+    ));
+
+    let mut session = episode_session_with_cap(finished, None, PriorityModeV1::EngineWindowsV1);
+    assert_eq!(session.stack_objects(), 17);
+    let terminal = session.current_response();
+    assert!(matches!(
+        &terminal,
+        RlSessionResponseV1::Terminal(t) if t.terminal_outcome == TerminalOutcomeV1::P0Win
+    ));
+    session.set_max_stack_objects(Some(16));
+    assert_eq!(session.current_response(), terminal);
+    assert_eq!(session.game_state().engine.halted, None);
+}
+
+#[test]
 fn stack_size_cap_names_first_item_beyond_cap_and_preserves_prior_terminal() {
     // Two distinct Basalt Monoliths: 16 activations from A, then item 17
     // (index 16) from B, then item 18 (index 17) from A. Cap 16 must name B.
@@ -257,11 +331,11 @@ fn stack_size_cap_names_first_item_beyond_cap_and_preserves_prior_terminal() {
     assert_ne!(monolith_a, monolith_b);
     for source in [monolith_b, monolith_a] {
         state.players[0].mana_pool[ManaColor::C.pool_index()] += 1;
+        crate::engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
         assert!(matches!(
             crate::engine::advance_until_decision(&mut state),
             Decision::CastSpellOrPass { .. }
         ));
-        crate::engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
     }
     assert_eq!(state.stack.len(), 18);
 
@@ -280,7 +354,7 @@ fn stack_size_cap_names_first_item_beyond_cap_and_preserves_prior_terminal() {
 
     // Finished game stands even when the stack exceeds the cap.
     let mut finished = state.clone();
-    finished.players[1].life = 0;
+    finished.players[1].has_lost = true;
     let fast_finished = fast_session_with_mode(finished, Some(16), PriorityModeV1::EngineWindowsV1);
     match fast_finished.current_response() {
         FastActorResponseV1::Terminal(terminal) => {

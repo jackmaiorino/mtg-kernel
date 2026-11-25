@@ -11,6 +11,7 @@ pub(crate) fn build_opening_state_v1(
         mainboards,
         pair_environment_seed,
         Some(starting_player),
+        None,
     )
     .map_err(|error| error.to_string())
 }

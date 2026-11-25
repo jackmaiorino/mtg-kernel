@@ -195,6 +195,7 @@ fn worlds_do_not_read_the_true_opponent_deck() {
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     };
     let original = episode_session_v1(&episode, &episode.configurations().unwrap()).unwrap();
     let FastActorResponseV1::Decision(d) = original.current_response() else {
