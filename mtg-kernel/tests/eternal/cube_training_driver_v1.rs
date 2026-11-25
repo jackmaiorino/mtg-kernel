@@ -972,6 +972,8 @@ fn malformed_manifest_entries_never_authorize_resume() {
         valid.replace("## Entry 2: resume", "## Entry: resume"),
         valid.replace("## Entry 2: resume", "## Entry 2: restart"),
         bad_prefix,
+        valid.replace("\"seq\": 2", "\"seq\": 999, \"seq\": 2"),
+        valid.replace("\"seq\": 2", "\"extra\": NaN, \"seq\": 2"),
         valid.clone() + "```json\n{}\n```\n",
         valid.clone() + "## Entry 3: stop\n\n```json\n{\n```\n",
     ];
