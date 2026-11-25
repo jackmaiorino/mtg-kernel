@@ -12,3 +12,4 @@
 //! rows and the dense fields.
 
 pub mod card_index;
+pub mod model;
