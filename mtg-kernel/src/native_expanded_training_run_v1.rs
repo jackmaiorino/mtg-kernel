@@ -944,28 +944,32 @@ impl NativeExpandedTrainingRunV1 {
                         && (1..=1_000_000).contains(&episode.max_policy_steps),
                     "invalid episode bounds or seat",
                 )?;
+                // The episode's deck format (absent: exactly 60/15) is the
+                // size rule of every list it carries.
                 for seat in 0..2 {
                     let list = &episode.registered[seat];
-                    let registered = RegisteredDeckV1::new_executable_v1(
+                    let registered = RegisteredDeckV1::new_executable_for_format_v1(
                         &list.label,
                         list.mainboard.clone(),
                         list.sideboard.clone(),
+                        episode.deck_format,
                     )
                     .map_err(err)?;
                     let list = &episode.selected[seat];
-                    let selected = RegisteredDeckV1::new_executable_v1(
+                    let selected = RegisteredDeckV1::new_executable_for_format_v1(
                         &list.label,
                         list.mainboard.clone(),
                         list.sideboard.clone(),
+                        episode.deck_format,
                     )
                     .map_err(err)?;
                     check(
                         registered
                             .registered_configuration()
-                            .combined_card_counts_v1()
+                            .combined_card_count_map_v1()
                             == selected
                                 .registered_configuration()
-                                .combined_card_counts_v1(),
+                                .combined_card_count_map_v1(),
                         "selected configuration changes registered 75",
                     )?;
                     check(
@@ -2815,6 +2819,7 @@ mod tests {
                         mulligan_modes: None,
                         priority_windows: None,
                         london_keep_offset: None,
+                        deck_format: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -2846,6 +2851,155 @@ mod tests {
             trajectory_format: Default::default(),
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
         }
+    }
+
+    /// `schedule()` with both seats' registered and selected lists replaced
+    /// and the episode's deck format set.
+    fn deck_format_schedule(
+        lists: [crate::expanded_deck_training_v1::ExpandedDeckListV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+    ) -> NativeExpandedTrainingRunV1 {
+        let mut run = schedule();
+        let episode = &mut run.iterations[0].episodes[0].episode;
+        episode.registered = lists.clone();
+        episode.selected = lists;
+        episode.deck_format = deck_format;
+        run
+    }
+
+    /// The first `main` mainboard and `side` sideboard cards of the
+    /// schedule's two decks.
+    fn deck_format_lists(
+        main: usize,
+        side: usize,
+    ) -> [crate::expanded_deck_training_v1::ExpandedDeckListV1; 2] {
+        schedule().iterations[0].episodes[0]
+            .episode
+            .registered
+            .clone()
+            .map(|mut list| {
+                list.mainboard.truncate(main);
+                list.sideboard.truncate(side);
+                list
+            })
+    }
+
+    #[test]
+    fn run_validation_deck_format_limited40_admits_forty_card_decks_only_with_the_field() {
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        let error = deck_format_schedule(deck_format_lists(40, 0), None)
+            .validate_v1()
+            .unwrap_err();
+        assert!(error.contains("must contain exactly 60 cards"), "{error}");
+        for side in [0, 7, 15] {
+            deck_format_schedule(deck_format_lists(40, side), limited)
+                .validate_v1()
+                .unwrap();
+        }
+        deck_format_schedule(deck_format_lists(60, 15), limited)
+            .validate_v1()
+            .unwrap();
+
+        let error = deck_format_schedule(deck_format_lists(39, 0), limited)
+            .validate_v1()
+            .unwrap_err();
+        assert!(
+            error.contains("limited40-v1") && error.contains("got 39"),
+            "{error}"
+        );
+        let mut one_selected = deck_format_schedule(deck_format_lists(40, 1), limited);
+        let episode = &mut one_selected.iterations[0].episodes[0].episode;
+        episode.postboard = true;
+        episode.selected[1].mainboard.pop();
+        assert!(one_selected.validate_v1().unwrap_err().contains("got 39"));
+        let mut long_side = deck_format_lists(40, 15);
+        for list in &mut long_side {
+            let extra = list.mainboard.pop().unwrap();
+            list.sideboard.push(extra);
+            list.mainboard.push(list.mainboard[0]);
+        }
+        assert!(deck_format_schedule(long_side, limited)
+            .validate_v1()
+            .unwrap_err()
+            .contains("at most 15"));
+    }
+
+    /// Review finding 1 at run validation: the registered and selected
+    /// multisets compare at full width (40 and 296 Forests were equal as
+    /// `u8` counts), and the format's 10,000-card boundary is admitted while
+    /// 10,001 is refused.
+    #[test]
+    fn run_validation_deck_format_limited40_counts_copies_at_full_width() {
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        let forests = |count: usize| crate::expanded_deck_training_v1::ExpandedDeckListV1 {
+            label: "Forests".into(),
+            mainboard: vec![forest; count],
+            sideboard: Vec::new(),
+        };
+        let mut wrapped = deck_format_schedule([forests(40), forests(40)], limited);
+        let episode = &mut wrapped.iterations[0].episodes[0].episode;
+        episode.postboard = true;
+        episode.selected[0] = forests(296);
+        let error = wrapped.validate_v1().unwrap_err();
+        assert!(error.contains("registered 75"), "{error}");
+
+        deck_format_schedule([forests(10_000), forests(10_000)], limited)
+            .validate_v1()
+            .unwrap();
+        let error = deck_format_schedule([forests(10_000), forests(10_001)], limited)
+            .validate_v1()
+            .unwrap_err();
+        assert!(error.contains("got 10001"), "{error}");
+    }
+
+    /// The absent field writes no key and the run config round-trips at
+    /// this head; that the bytes equal the parent's is the node receipt's
+    /// check, not this test's.
+    #[test]
+    fn run_config_deck_format_absent_writes_no_key_and_unknown_is_refused() {
+        let absent = schedule();
+        let text = serde_json::to_string(&absent).unwrap();
+        assert!(!text.contains("deck_format"));
+        let parsed = NativeExpandedTrainingRunV1::from_json_v1(&text).unwrap();
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), text);
+        assert_eq!(parsed.iterations[0].episodes[0].episode.deck_format, None);
+
+        let present = deck_format_schedule(
+            deck_format_lists(40, 0),
+            Some(crate::sideboard::DeckFormatV1::Limited40V1),
+        );
+        let mut value = serde_json::to_value(&present).unwrap();
+        assert_eq!(
+            value["iterations"][0]["episodes"][0]["episode"]["deck_format"],
+            json!("limited40-v1")
+        );
+        let parsed = NativeExpandedTrainingRunV1::from_json_v1(&value.to_string()).unwrap();
+        parsed.validate_v1().unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), value);
+        for bad in [json!("limited40-v2"), json!("limited40"), json!(40)] {
+            value["iterations"][0]["episodes"][0]["episode"]["deck_format"] = bad.clone();
+            assert!(
+                NativeExpandedTrainingRunV1::from_json_v1(&value.to_string()).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    /// Two 40-card decks of Full cube cards: refused today with "must
+    /// contain exactly 60 cards", admitted with the field.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn run_validation_deck_format_limited40_admits_two_forty_card_cube_decks() {
+        let lists =
+            crate::expanded_deck_training_v1::tests::deck_format_tests::cube_forty_card_lists();
+        let error = deck_format_schedule(lists.clone(), None)
+            .validate_v1()
+            .unwrap_err();
+        assert!(error.contains("must contain exactly 60 cards"), "{error}");
+        deck_format_schedule(lists, Some(crate::sideboard::DeckFormatV1::Limited40V1))
+            .validate_v1()
+            .unwrap();
     }
 
     #[test]
@@ -4393,6 +4547,7 @@ mod tests {
                         mulligan_modes: None,
                         priority_windows: None,
                         london_keep_offset: None,
+                        deck_format: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 }],

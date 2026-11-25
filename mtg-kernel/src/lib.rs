@@ -537,6 +537,7 @@ pub mod heartfire_public_v1;
 pub mod ids;
 pub mod infoset_v1;
 pub mod line_b_teacher_target_v1;
+pub mod m4_sampler_v1;
 pub mod ooze_public_v1;
 pub mod phase1_agent_v1;
 pub mod phase1_bo3_collection_v1;

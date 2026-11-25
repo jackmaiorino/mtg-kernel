@@ -44,7 +44,7 @@ fn per(count: u64, seconds: f64, scale: f64) -> f64 {
 fn run(seed: u64, drafts: u64, pods: u64) {
     let cube = std::fs::read_to_string(CUBE_LIST).expect("cube list");
     let gaps = std::fs::read_to_string(GAP_RECORD).expect("gap record");
-    let pool = CubePool::from_json_texts(&cube, &gaps).expect("draftable pool");
+    let pool = CubePool::from_json_texts(&cube, &gaps, None).expect("draftable pool");
 
     // Draft `index` (and pod `index`) uses the draft seed `seed + index`.
     let started = Instant::now();

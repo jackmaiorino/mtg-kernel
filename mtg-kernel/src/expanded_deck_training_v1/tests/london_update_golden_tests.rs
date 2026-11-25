@@ -112,6 +112,7 @@ fn episode(
         mulligan_modes: Some([Learned, Learned]),
         priority_windows,
         london_keep_offset: None,
+        deck_format: None,
     }
 }
 
