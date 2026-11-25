@@ -1,21 +1,21 @@
 #![cfg(feature = "eternal-fixtures")]
 
-use mtg_kernel::cube_draft_v1::{CubePool, GameCaps, GameEnd, game_seed};
+use mtg_kernel::cube_draft_v1::{game_seed, CubePool, GameCaps, GameEnd};
 use mtg_kernel::cube_learned_seat_v1::{BuildInputs, PickInputs, SeatForward};
 use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed, watchdog_game_end};
 use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot, SeatError};
 use mtg_kernel::cube_training_driver_v1::{
-    CheckpointModel, CubeModelState, CubeUpdate, HeadUpdates, LineageSegment, OptimizerOutput,
-    ParameterSetState, PilotPin, PilotProvider, PilotSchedule, PilotSelection, PilotSwitch,
-    RunConfig, RunOutcome, Segment, TrainSets, TrainingDriver, TrainingDriverError, TripwireMode,
-    TripwireRule, TwoActionGradient, UpdateBatch, check_stop_ledger, prune_checkpoint,
-    run_two_action_part3, tripwire_games_for_test, two_action_dropped_mean,
+    check_stop_ledger, prune_checkpoint, run_two_action_part3, tripwire_games_for_test,
+    two_action_dropped_mean, CheckpointModel, CubeModelState, CubeUpdate, HeadUpdates,
+    LineageSegment, OptimizerOutput, ParameterSetState, PilotPin, PilotProvider, PilotSchedule,
+    PilotSelection, PilotSwitch, RunConfig, RunOutcome, Segment, TrainSets, TrainingDriver,
+    TrainingDriverError, TripwireMode, TripwireRule, TwoActionGradient, UpdateBatch,
 };
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 

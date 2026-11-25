@@ -100,7 +100,9 @@ pub fn to_canonical_pretty_json<T: Serialize>(value: &T) -> Result<String, PodRu
 
 /// Serializes `value` as compact UTF-8 JSON matching Python's
 /// `json.dumps(doc, separators=(",", ":"), ensure_ascii=True)` (no trailing LF).
-pub fn to_canonical_compact_json<T: Serialize + ?Sized>(value: &T) -> Result<String, PodRunnerError> {
+pub fn to_canonical_compact_json<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<String, PodRunnerError> {
     let raw = serde_json::to_string(value)
         .map_err(|error| PodRunnerError::InvalidPlan(format!("JSON serialization error: {error}")))?;
     Ok(escape_non_ascii_json(&raw))

@@ -1,22 +1,22 @@
 //! Training segments, checkpoints, league snapshots and durable resume for M4.
 
-use crate::cube_draft_v1::{CubePool, GameEnd, SEATS, uniform_index};
+use crate::cube_draft_v1::{uniform_index, CubePool, GameEnd, SEATS};
 use crate::cube_learned_seat_v1::{LearnedSeatBuilder, LearnedSeatPicker, SeatForward};
 use crate::cube_pod_runner_v1::{
-    CLIENT_NAMESPACE, GameRole, POD_RECORD_SCHEMA, PilotInfo, PilotKind, PodPins, PodRecord,
-    PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef, SeatRule, StopAttemptReport,
-    TrainingChair, TrainingPodConfig, collect_halts_and_stop, is_watchdog_end,
-    play_training_game_for_driver, pod_league_seed, training_roles_with_older,
+    collect_halts_and_stop, is_watchdog_end, play_training_game_for_driver, pod_league_seed,
+    training_roles_with_older, GameRole, PilotInfo, PilotKind, PodPins, PodRecord, PodRunnerError,
+    PodStatus, PodUse, SeatKind, SeatRef, SeatRule, StopAttemptReport, TrainingChair,
+    TrainingPodConfig, CLIENT_NAMESPACE, POD_RECORD_SCHEMA,
 };
 use crate::cube_read_plan_v1::sha256_hex;
 use crate::cube_seat_v1::{
-    AttemptOutcome, AttemptSpec, DecisionKind, GamePilot, LEARNED_SAMPLER_ID,
-    M4_INTERFACES_VERSION, UniformPilot, UniformSeatPicker,
+    AttemptOutcome, AttemptSpec, DecisionKind, GamePilot, UniformPilot, UniformSeatPicker,
+    LEARNED_SAMPLER_ID, M4_INTERFACES_VERSION,
 };
 use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
 use crate::state::SplitMix64;
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,8 +24,8 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 pub const RUN_SCHEMA: &str = "mtg-kernel-cube-draft-build-run/v1";
 pub const CHECKPOINT_SCHEMA: &str = "mtg-kernel-cube-draft-build-checkpoint/v1";
@@ -741,21 +741,11 @@ impl TripwireWindow {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct TripwireTracker {
     closed: Vec<TripwireWindow>,
     open: TripwireWindow,
     firing: Option<TripwireFiring>,
-}
-
-impl Default for TripwireTracker {
-    fn default() -> Self {
-        Self {
-            closed: Vec::new(),
-            open: TripwireWindow::default(),
-            firing: None,
-        }
-    }
 }
 
 impl TripwireTracker {
@@ -1522,14 +1512,14 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             lineage
         };
         config.label = previous.config.label.clone();
-        Ok(Self::open_from_state(
+        Self::open_from_state(
             config,
             state,
             optimizer,
             previous.head_updates,
             lineage,
             previous.league.clone(),
-        )?)
+        )
     }
 
     pub fn checkpoint(&self) -> Result<Checkpoint, TrainingDriverError> {
