@@ -211,11 +211,14 @@ pub mod cube_b_census_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_deck_signal_v1;
 #[cfg(feature = "eternal-fixtures")]
+pub mod cube_draft_build_v1;
+#[cfg(feature = "eternal-fixtures")]
 pub mod cube_draft_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_learned_seat_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_m4_sampler_v1;
+#[cfg(feature = "eternal-fixtures")]
 pub mod cube_pod_runner_v1;
 #[cfg(feature = "eternal-fixtures")]
 pub mod cube_read_plan_v1;
