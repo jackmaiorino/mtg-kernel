@@ -59,7 +59,7 @@ const fn red() -> u8 {
 /// checks apply it to targeting, blocking, damage and attachments.
 pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     if active_named(state, host, CRIMSON_ACOLYTE) {
-        red()
+        crate::text_color_change_v1::text_color_mask(state, host, red())
     } else {
         0
     }
@@ -102,11 +102,21 @@ pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> boo
 /// applies, when that form is red. It joins the spell's other increases, so
 /// it also applies to a spell cast without paying its mana cost.
 pub(crate) fn chill_tax(state: &GameState, definition: &CardDef, method: CastMethodV4) -> u32 {
-    let chills = active_with_id(state, static_ids().chill, CHILL, None).count();
-    if chills == 0 || form_colors(state, definition, method) & red() == 0 {
+    let mut chills = active_with_id(state, static_ids().chill, CHILL, None).peekable();
+    if chills.peek().is_none() {
         return 0;
     }
-    u32::try_from(chills).map_or(u32::MAX, |count| count.saturating_mul(2))
+    let colors = form_colors(state, definition, method);
+    if colors == 0 {
+        return 0;
+    }
+    let matching = chills
+        .filter(|&chill| {
+            let color = crate::text_color_change_v1::text_color(state, chill, ManaColor::R);
+            colors & crate::card_def::mana_color_mask(color) != 0
+        })
+        .count();
+    u32::try_from(matching).map_or(u32::MAX, |count| count.saturating_mul(2))
 }
 
 /// The colors of the spell `definition` becomes when cast as `method`'s form
@@ -182,21 +192,24 @@ pub(crate) fn applicable_spheres<'a>(
     state: &'a GameState,
     damage: &DamageProposed,
 ) -> impl Iterator<Item = ObjectId> + 'a {
-    let player = match damage.target {
-        Target::Player(player)
-            if damage.amount > 0 && crate::event::damage_color_mask(state, damage) & red() != 0 =>
-        {
-            Some(player)
+    let target = match damage.target {
+        Target::Player(player) if damage.amount > 0 => {
+            let colors = crate::event::damage_color_mask(state, damage);
+            (colors != 0).then_some((player, colors))
         }
         _ => None,
     };
-    player.into_iter().flat_map(move |owner| {
+    target.into_iter().flat_map(move |(owner, colors)| {
         active_with_id(
             state,
             static_ids().sphere_of_law,
             SPHERE_OF_LAW,
             Some(owner),
         )
+        .filter(move |&sphere| {
+            let color = crate::text_color_change_v1::text_color(state, sphere, ManaColor::R);
+            colors & crate::card_def::mana_color_mask(color) != 0
+        })
     })
 }
 
