@@ -14940,10 +14940,10 @@ pub(crate) mod tests {
         "edaa78f4aa822d845aacc5cf829577cc832dc64109bbee1574671662f366b3a5",
         "2ffea00f50926f435738cf80c5fabc1e4ad01b991e9c3328471b87f6e6e4b7d5",
     ];
-    // Prior GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
+    // GPU1 outputs for the issue #969 fixture seed.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
-        "8c9e77a2bc923c12bd883ef45d9f96eb8efbfe9b3909fdfe8fd8a10d62ad76cd",
-        "0f04932d69bcb05687126f9c01c554039c718aefada39abc0e44b219e3566d88",
+        "1d28b7b17a7cbfd3a9a9b315c443e1315569c1fa362a2ac3e1f9241c373c4c8c",
+        "b4f869ebbe905b5dc386f5996f30a28840a20fed9b799e36ef16e85be58e3a6a",
     ];
 
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
