@@ -98,9 +98,7 @@ impl RecordEnvelopeV1 {
                 } else {
                     sealed
                 };
-                if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
-                    return Err("record envelope round trip differs".into());
-                }
+                check_round_trip_v1(&sealed, bytes)?;
                 Ok(Cow::Owned(sealed))
             }
         }
@@ -114,6 +112,87 @@ impl RecordEnvelopeV1 {
             Self::Zstd1 => self.seal_v1(&bytes).map(Cow::into_owned),
         }
     }
+}
+
+/// The self-check of a new frame: `open_v1(sealed, bytes.len())` is exactly
+/// `bytes`, with `open_v1`'s error when it fails. A frame that streams to
+/// exactly `bytes` ([`round_trip_streams_v1`]) passes without the record's
+/// second copy; any other frame gets [`reference_round_trip_v1`], the
+/// previous check itself, so every failure keeps its previous error.
+fn check_round_trip_v1(sealed: &[u8], bytes: &[u8]) -> Result<(), String> {
+    if round_trip_streams_v1(sealed, bytes) {
+        return Ok(());
+    }
+    reference_round_trip_v1(sealed, bytes)
+}
+
+/// The previous self-check: the whole frame opened with [`open_v1`] and
+/// compared with `bytes`.
+fn reference_round_trip_v1(sealed: &[u8], bytes: &[u8]) -> Result<(), String> {
+    if open_v1(sealed, bytes.len() as u64)?.as_ref() != bytes {
+        return Err("record envelope round trip differs".into());
+    }
+    Ok(())
+}
+
+/// The decompressed bytes compared at a time by [`round_trip_streams_v1`].
+const ROUND_TRIP_CHUNK_BYTES_V1: usize = 128 << 10;
+
+/// Whether `open_v1(sealed, bytes.len())` certainly returns exactly `bytes`,
+/// decided by decompressing `sealed` in chunks and comparing each with
+/// `bytes` as it comes, so the record is never held twice. `false` means
+/// only "not shown here": the caller then runs the previous check.
+///
+/// `true` requires everything `open_v1` and the comparison require:
+/// - `sealed` starts with the zstd magic and `bytes` does not (so the
+///   content, equal to `bytes`, is not itself sealed);
+/// - the frame declares its content size, at most `bytes.len()`
+///   (`sealed_content_length_v1`, as `open_v1` checks it);
+/// - the decoder reports no error (a bad block, or a content checksum or
+///   declared size that the content does not match) and finishes the frame;
+/// - the frame is all of `sealed` (no trailing or second frame);
+/// - the content is `bytes`, byte for byte and in length.
+///
+/// The decoder verifies the content checksum and the declared content size
+/// against what it wrote, so a finished frame whose content is `bytes` has
+/// declared `bytes.len()`, and `open_v1`'s one-shot decompression of the same
+/// valid frame gives the same content.
+fn round_trip_streams_v1(sealed: &[u8], bytes: &[u8]) -> bool {
+    use zstd::zstd_safe::{DCtx, InBuffer, OutBuffer};
+    if !is_sealed_v1(sealed) || is_sealed_v1(bytes) {
+        return false;
+    }
+    if sealed_content_length_v1(sealed, bytes.len() as u64).is_err() {
+        return false;
+    }
+    let mut context = DCtx::create();
+    let mut chunk = vec![0u8; ROUND_TRIP_CHUNK_BYTES_V1];
+    let mut input = InBuffer::around(sealed);
+    let mut compared = 0usize;
+    loop {
+        let mut output = OutBuffer::around(&mut chunk[..]);
+        let Ok(remaining) = context.decompress_stream(&mut output, &mut input) else {
+            return false;
+        };
+        let written = output.pos();
+        let produced = &chunk[..written];
+        let Some(expected) = bytes.get(compared..compared + produced.len()) else {
+            return false;
+        };
+        if produced != expected {
+            return false;
+        }
+        compared += produced.len();
+        if remaining == 0 {
+            break;
+        }
+        // Unfinished, with room left in the output: the decoder has used all
+        // of the input and needs more, so the frame is incomplete.
+        if produced.len() < ROUND_TRIP_CHUNK_BYTES_V1 {
+            return false;
+        }
+    }
+    input.pos() == sealed.len() && compared == bytes.len()
 }
 
 /// Whether `bytes` start with the zstd frame magic.
@@ -418,6 +497,119 @@ mod tests {
         );
         assert_eq!(batch_bound_error_v1(bound), BATCH_BOUND_ERROR_V1);
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    /// A frame of `bytes` written as `seal_v1` writes it, without its
+    /// self-check; `checksum: false` drops the content checksum.
+    fn frame_v1(bytes: &[u8], checksum: bool) -> Vec<u8> {
+        let mut compressor = zstd::bulk::Compressor::new(ZSTD1_LEVEL_V1).unwrap();
+        compressor
+            .set_parameter(zstd::stream::raw::CParameter::ChecksumFlag(checksum))
+            .unwrap();
+        compressor
+            .set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
+            .unwrap();
+        compressor.compress(bytes).unwrap()
+    }
+
+    /// The self-check against the previous one: the same result and error;
+    /// and the streamed check never accepts what the previous one refuses.
+    fn assert_same_round_trip_v1(sealed: &[u8], bytes: &[u8]) -> Result<(), String> {
+        let reference = reference_round_trip_v1(sealed, bytes);
+        assert_eq!(check_round_trip_v1(sealed, bytes), reference);
+        if reference.is_err() {
+            assert!(
+                !round_trip_streams_v1(sealed, bytes),
+                "streamed acceptance of a refused frame: {reference:?}"
+            );
+        }
+        reference
+    }
+
+    /// `length` bytes of JSON-like text with some repetition.
+    fn text_v1(length: usize) -> Vec<u8> {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        (0..length)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                b"0123456789,[]{}\"a"[(state % 17) as usize]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_streamed_round_trip_check_is_the_previous_check_v1() {
+        let chunk = ROUND_TRIP_CHUNK_BYTES_V1;
+        for length in [0, 1, 100, chunk - 1, chunk, chunk + 1, 3 * chunk + 7] {
+            let bytes = text_v1(length);
+            let sealed = frame_v1(&bytes, true);
+            // A genuine frame is accepted by the streamed check itself.
+            assert!(round_trip_streams_v1(&sealed, &bytes), "length {length}");
+            assert_eq!(assert_same_round_trip_v1(&sealed, &bytes), Ok(()));
+            // Content that differs at its first, middle or last byte, or is
+            // one byte longer or shorter.
+            if let Some(last) = length.checked_sub(1) {
+                for at in [0, length / 2, last] {
+                    let mut other = bytes.clone();
+                    other[at] ^= 1;
+                    assert!(assert_same_round_trip_v1(&sealed, &other).is_err());
+                }
+                assert!(assert_same_round_trip_v1(&sealed, &bytes[..last]).is_err());
+            }
+            let mut longer = bytes.clone();
+            longer.push(b'0');
+            assert!(assert_same_round_trip_v1(&sealed, &longer).is_err());
+        }
+
+        let bytes = record();
+        let sealed = frame_v1(&bytes, true);
+        // Every truncation (including one missing only its checksum) and
+        // every single-bit corruption at two bit positions of every byte.
+        for end in 0..sealed.len() {
+            assert!(assert_same_round_trip_v1(&sealed[..end], &bytes).is_err());
+        }
+        for at in 0..sealed.len() {
+            for mask in [0x01, 0x80] {
+                let mut corrupt = sealed.clone();
+                corrupt[at] ^= mask;
+                let _ = assert_same_round_trip_v1(&corrupt, &bytes);
+            }
+        }
+        // A trailing byte, and a second frame.
+        let mut trailing = sealed.clone();
+        trailing.push(0);
+        assert!(assert_same_round_trip_v1(&trailing, &bytes).is_err());
+        let mut two = sealed.clone();
+        two.extend_from_slice(&sealed);
+        assert!(assert_same_round_trip_v1(&two, &bytes).is_err());
+        // A frame without a checksum opens, as before.
+        let unchecked = frame_v1(&bytes, false);
+        assert_eq!(assert_same_round_trip_v1(&unchecked, &bytes), Ok(()));
+        // A frame without a declared content size is refused.
+        let mut encoder = zstd::stream::Encoder::new(Vec::new(), 1).unwrap();
+        std::io::Write::write_all(&mut encoder, &bytes).unwrap();
+        let streamed = encoder.finish().unwrap();
+        assert!(assert_same_round_trip_v1(&streamed, &bytes)
+            .unwrap_err()
+            .contains("declares its content size"));
+        // A frame whose content is itself sealed is refused.
+        let double = frame_v1(&sealed, true);
+        assert!(assert_same_round_trip_v1(&double, &sealed)
+            .unwrap_err()
+            .contains("unsealed"));
+        // Bytes that are not a frame pass only when they are the record.
+        assert_eq!(assert_same_round_trip_v1(&bytes, &bytes), Ok(()));
+        assert!(assert_same_round_trip_v1(&bytes, &bytes[1..]).is_err());
+        // An empty skippable frame decodes to nothing but is not sealed.
+        let skippable = [0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0];
+        assert!(assert_same_round_trip_v1(&skippable, b"").is_err());
+        // `seal_v1` returns the frame it checked.
+        assert_eq!(
+            RecordEnvelopeV1::Zstd1.seal_v1(&bytes).unwrap().as_ref(),
+            sealed.as_slice()
+        );
     }
 
     #[test]

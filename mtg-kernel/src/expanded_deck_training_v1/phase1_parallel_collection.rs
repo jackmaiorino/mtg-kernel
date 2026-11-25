@@ -30,6 +30,9 @@ pub(super) struct WorkerTimingV1 {
 struct CollectorV1 {
     policy: FrozenPlayPolicyV1,
     opponent_cache: OpponentCacheV1,
+    /// The plaintext of this worker's last sealed record, kept for the next
+    /// one (`serialize_and_seal_trajectory_v1`).
+    plaintext: Vec<u8>,
 }
 
 /// Bounded dynamic scheduling with no shared model lock and no worker left
@@ -242,6 +245,7 @@ pub(super) fn collect_parallel_v1(
                 policy: policy.fork_for_collection_v3()?,
                 opponent_cache: OpponentCacheV1::for_collection(verified_sources.clone())
                     .with_training_math_v1(training_math),
+                plaintext: Vec::new(),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -317,9 +321,12 @@ pub(super) fn collect_parallel_v1(
             // the serialized bytes (`record_envelope_v1`), and the sealed
             // bytes are the published and offered ones.
             let name = format!("episode-{slot:04}.json");
-            let bytes = std::sync::Arc::new(
-                record_envelope.seal_owned_v1(serialize_trajectory_json_v1(&name, &trajectory)?)?,
-            );
+            let bytes = std::sync::Arc::new(serialize_and_seal_trajectory_v1(
+                record_envelope,
+                &name,
+                &trajectory,
+                &mut collector.plaintext,
+            )?);
             let pin = publish_json_shared_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record

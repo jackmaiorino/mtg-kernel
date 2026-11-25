@@ -8,8 +8,9 @@ use super::*;
 use crate::expanded_deck_training_v1::no_state_digest_v1::InputContractRecordV1;
 use crate::expanded_deck_training_v1::tests::{checkpoint_fixture_v1, replay_fixture};
 use crate::expanded_deck_training_v1::{
-    record_envelope_v1, serialize_json_v1, serialize_trajectory_json_v1, ExpandedTrajectoryV1,
-    PinnedFileV1, SearchPlayedRowV1, MAX_FILE_BYTES,
+    record_envelope_v1, serialize_and_seal_trajectory_v1, serialize_json_v1,
+    serialize_trajectory_json_v1, ExpandedTrajectoryV1, PinnedFileV1, RecordEnvelopeV1,
+    SearchPlayedRowV1, MAX_FILE_BYTES,
 };
 use crate::rl_session::pauper_london_v1::{
     PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningSeatRecordV1, PauperOpeningV1,
@@ -937,6 +938,44 @@ fn trajectories_have_the_previous_bytes_v1() {
     let mut empty = trajectory;
     empty.decisions.clear();
     assert_trajectory_bytes_v1("json-writer-test-empty.json", &empty);
+}
+
+/// A worker's records written through one reused plaintext buffer, which
+/// starts out holding stale bytes and passes from longer records to shorter
+/// ones and back: every published record is the previous writer's bytes
+/// sealed as before, and a sealed record's plaintext is left in the buffer.
+#[test]
+fn sealed_trajectories_reuse_the_plaintext_buffer_with_the_previous_bytes_v1() {
+    let mut learner = FrozenPlayPolicyV1::training_fixture_v3();
+    let mut opponent = FrozenPlayPolicyV1::training_fixture_v3();
+    let actors: Vec<u8> = [0, 1, 1, 0, 1, 0, 0, 1].repeat(2);
+    let (paired, _, _) = replay_fixture(&mut learner, Some(&mut opponent), 1, &actors);
+    let (single, _, _) = replay_fixture(&mut learner, None, 0, &actors);
+    let mut short = single.clone();
+    short.decisions.truncate(1);
+    let mut empty = single.clone();
+    empty.decisions.clear();
+    let records = [&paired, &short, &single, &empty, &paired];
+    for envelope in [RecordEnvelopeV1::None, RecordEnvelopeV1::Zstd1] {
+        let stale = b"stale bytes of an earlier record ".repeat(50_000);
+        let mut plaintext = stale.clone();
+        for (index, trajectory) in records.iter().enumerate() {
+            let plain = reference_v1(*trajectory);
+            let expected = envelope.seal_owned_v1(plain.clone()).unwrap();
+            let name = format!("json-writer-test-reused-{index}.json");
+            let got = serialize_and_seal_trajectory_v1(envelope, &name, trajectory, &mut plaintext)
+                .unwrap();
+            assert!(
+                got == expected,
+                "{envelope:?} record {index}: first difference at byte {:?}",
+                first_difference_v1(&got, &expected)
+            );
+            match envelope {
+                RecordEnvelopeV1::None => assert!(plaintext == stale),
+                RecordEnvelopeV1::Zstd1 => assert!(plaintext == plain),
+            }
+        }
+    }
 }
 
 /// The JSON checkpoint (`checkpoint_fixture_v1`: real parameters and Adam

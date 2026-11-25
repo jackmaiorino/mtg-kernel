@@ -6846,27 +6846,71 @@ fn serialize_presized_v1(
     name: &str,
     write: impl FnOnce(&mut Vec<u8>) -> serde_json::Result<()>,
 ) -> Result<Vec<u8>, String> {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock, PoisonError};
-    static LENGTHS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
-    let lengths = LENGTHS.get_or_init(Default::default);
-    let previous = lengths
+    let mut bytes = Vec::with_capacity(presized_capacity_v1(name));
+    write(&mut bytes).map_err(err)?;
+    remember_serialized_length_v1(name, bytes.len());
+    Ok(bytes)
+}
+
+/// The serialized lengths remembered by document name.
+fn serialized_lengths_v1() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
+    static LENGTHS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    > = std::sync::OnceLock::new();
+    LENGTHS.get_or_init(Default::default)
+}
+
+/// The capacity [`serialize_presized_v1`] starts a document of `name` with:
+/// the last remembered length plus a sixteenth, at least 128 bytes.
+fn presized_capacity_v1(name: &str) -> usize {
+    let previous = serialized_lengths_v1()
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(name)
         .copied()
         .unwrap_or(0);
     // A little headroom: float text makes a document's length vary slightly.
-    let capacity = previous
+    previous
         .saturating_add(previous / 16)
-        .clamp(128, MAX_FILE_BYTES as usize);
-    let mut bytes = Vec::with_capacity(capacity);
-    write(&mut bytes).map_err(err)?;
-    let mut lengths = lengths.lock().unwrap_or_else(PoisonError::into_inner);
+        .clamp(128, MAX_FILE_BYTES as usize)
+}
+
+fn remember_serialized_length_v1(name: &str, length: usize) {
+    let mut lengths = serialized_lengths_v1()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if lengths.len() < SERIALIZED_LENGTH_NAMES_V1 || lengths.contains_key(name) {
-        lengths.insert(name.to_owned(), bytes.len());
+        lengths.insert(name.to_owned(), length);
     }
-    Ok(bytes)
+}
+
+/// `envelope.seal_owned_v1(serialize_trajectory_json_v1(name, trajectory)?)`:
+/// the same published bytes and the same first error. A sealed record's
+/// plaintext is written into `plaintext` (emptied first, then given at least
+/// the presized capacity) and stays there for the worker's next record
+/// instead of being freed, so a worker reuses one plaintext allocation. A
+/// plain record is itself the published bytes, which keep their own
+/// allocation and capacity exactly as before, so it never uses `plaintext`.
+fn serialize_and_seal_trajectory_v1(
+    envelope: RecordEnvelopeV1,
+    name: &str,
+    trajectory: &ExpandedTrajectoryV1,
+    plaintext: &mut Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    match envelope {
+        RecordEnvelopeV1::None => {
+            envelope.seal_owned_v1(serialize_trajectory_json_v1(name, trajectory)?)
+        }
+        RecordEnvelopeV1::Zstd1 => {
+            plaintext.clear();
+            plaintext.reserve(presized_capacity_v1(name));
+            json_writer_v1::trajectory_into_v1(plaintext, trajectory).map_err(err)?;
+            remember_serialized_length_v1(name, plaintext.len());
+            envelope
+                .seal_v1(plaintext)
+                .map(std::borrow::Cow::into_owned)
+        }
+    }
 }
 
 /// Converts the v1 JSON checkpoint of `source` (its `checkpoint` pin) into a
