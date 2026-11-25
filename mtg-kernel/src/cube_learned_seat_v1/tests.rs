@@ -126,7 +126,7 @@ fn mapping_and_permuted_sets_preserve_all_bits() {
     assert_eq!(first_row.chosen, 40);
     let context = 28.0 - 1.0 + 54.0 / 512.0;
     let logits = params.scores(&[40, 90], context);
-    let log_p = draw(&logits, &[true, true], 0).1[0];
+    let sample = sample_v1(&logits, &[true, true], 0).unwrap();
     assert_eq!(first_row.kind, DecisionKind::Pick);
     assert_eq!(first_row.sampler, "softmax-cdf-splitmix64-v2");
     assert_eq!(first_row.stream_values, [0]);
@@ -137,7 +137,7 @@ fn mapping_and_permuted_sets_preserve_all_bits() {
     );
     assert_eq!(
         first_row.p_chosen_bits,
-        Some(TrainingMathV1::PortableV1.exp_f64_v1(log_p).to_bits())
+        Some((sample.counts[0] as f64 / GRID_SIZE as f64).to_bits())
     );
     let pool = sorted_cards(&pool);
     let reordered = SeatPickView {
@@ -333,10 +333,14 @@ fn count_boundaries_single_type_and_no_extras() {
     assert_eq!(no_basics.rows.count.chosen, 0);
     assert_eq!(no_basics.rows.pointer.len(), 40);
     assert!(no_basics.rows.type_set.is_none() && no_basics.rows.split.is_empty());
-    let mut expected_log_p = draw(&[0.0; 41], &[true; 41], 0).1[0];
+    let mut expected_log_p = sample_v1(&[0.0; 41], &[true; 41], 0)
+        .unwrap()
+        .log_probabilities[0];
     for (j, row) in no_basics.rows.pointer.iter().enumerate() {
         assert_eq!(row.options.len(), 45 - j);
-        expected_log_p += draw(&vec![0.0; 45 - j], &vec![true; 45 - j], 0).1[0];
+        expected_log_p += sample_v1(&vec![0.0; 45 - j], &vec![true; 45 - j], 0)
+            .unwrap()
+            .log_probabilities[0];
         assert!(row.options.iter().all(|id| pool.contains(id)));
         assert!(no_basics.rows.pointer[..j]
             .iter()
@@ -400,7 +404,11 @@ fn likelihood_uses_new_parameters_and_order_symmetric_split_counts() {
         basics: 40,
     };
     let masks = (1..32).collect::<Vec<_>>();
-    let logs = |logits: &[f32]| draw(logits, &vec![true; logits.len()], 0).1;
+    let logs = |logits: &[f32]| {
+        sample_v1(logits, &vec![true; logits.len()], 0)
+            .unwrap()
+            .log_probabilities
+    };
     let mut expected = logs(&changed.count(&ordered).unwrap())[40]
         + logs(&changed.type_set(&input, &masks).unwrap())[30];
     let split = logs(&changed.split(&input, &bits).unwrap());
@@ -443,7 +451,7 @@ fn one_thousand_seeded_decks_validate_and_use_one_word_per_row() {
         for row in decisions {
             draws += 1;
             assert_eq!(row.stream_values, [expected.next_u64()]);
-            assert_eq!(row.sampler, SAMPLER_ID);
+            assert_eq!(row.sampler, SAMPLER_ID_V1);
             assert!(row.value_bits.is_none());
         }
         assert!(draws <= 41);
