@@ -463,6 +463,7 @@ fn missing_gate_pin_pauses_before_touching_a_batch() {
         driver.run_next_update(&pool(), &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
+    drop(driver);
     let mut resume_only = config.clone();
     resume_only.root = temp.join("resume-only");
     resume_only.pilot.switch.as_mut().unwrap().gate = None;
@@ -1482,6 +1483,7 @@ fn resume_checks_receipt_binding_and_rejects_missing_game_fields() {
         driver.run_next_update(&pool(), &pilot),
         Ok(RunOutcome::Published { update: 0 })
     );
+    drop(driver);
     let update = root.join("updates/update-0000");
     let original_receipt = fs::read(update.join("update.json")).unwrap();
     let mut receipt = read_value(&update.join("update.json"));
