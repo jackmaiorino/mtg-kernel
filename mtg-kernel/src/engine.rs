@@ -43887,6 +43887,7 @@ mod tests {
             crate::eternal_cube_c5c_v1::waterbend_printed(&state, iceberg, &copied).is_none(),
             "a cost equal to a printed one but not that ability"
         );
+    }
 
     /// A hand-cast Chain Lightning has no object payments: a payment record
     /// added to it must still be refused when its copy offer is answered.

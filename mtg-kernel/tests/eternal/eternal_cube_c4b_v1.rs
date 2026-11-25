@@ -1429,6 +1429,7 @@ fn reconfigure_and_copy(state: &mut GameState, host: ObjectId) {
     );
     settled(state);
     assert_eq!(state.objects.get(host).card_def, id("Jackal Pup"));
+}
 
 /// Review round 1, finding 3: Chain Lightning cast with escape through
 /// Underworld Breach offers its copy (the escape payment's exiled cards are
