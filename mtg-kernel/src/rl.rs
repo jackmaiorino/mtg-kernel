@@ -39,8 +39,14 @@ use crate::state::{
 use crate::surface_v2::{SurfaceAction, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
+mod extensions_memo_v1;
 #[path = "rl_legacy_hash_v1.rs"]
 mod legacy_hash_v1;
+#[cfg(test)]
+pub(crate) use extensions_memo_v1::test_controls_v1 as extensions_memo_test_controls_v1;
+pub(crate) use extensions_memo_v1::with_extensions_memo_v1;
+#[cfg(test)]
+mod extensions_memo_v1_tests;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeSet, HashSet};
@@ -5828,8 +5834,54 @@ fn policy_observation_extensions_conqueror_inner_v49(
     )
 }
 
+/// Pure read of `state`. Inside `with_extensions_memo_v1` on the
+/// same state, a repeated call with the same arguments (and no proof) returns
+/// the first call's result (see `rl/extensions_memo_v1.rs`).
 #[allow(clippy::too_many_arguments)]
 fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
+    state: &GameState,
+    acting_player: PlayerId,
+    text_mode: ObservationTextModeV2,
+    accept_life_ward: bool,
+    accept_fishing: bool,
+    accepted_sources: HistoricalSourcesV47,
+    accept_conqueror: bool,
+    accept_fake: bool,
+    conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
+) -> Result<PolicyObservationExtensionsV6> {
+    let compute = || {
+        policy_observation_extensions_conqueror_inner_v49_fake_v50_uncached(
+            state,
+            acting_player,
+            text_mode,
+            accept_life_ward,
+            accept_fishing,
+            accepted_sources,
+            accept_conqueror,
+            accept_fake,
+            conqueror_proof,
+        )
+    };
+    if conqueror_proof.is_some() {
+        return compute();
+    }
+    extensions_memo_v1::memoized_v1(
+        state,
+        extensions_memo_v1::ExtensionsKeyV1 {
+            acting_player,
+            text_mode,
+            accept_life_ward,
+            accept_fishing,
+            accepted_sources,
+            accept_conqueror,
+            accept_fake,
+        },
+        compute,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn policy_observation_extensions_conqueror_inner_v49_fake_v50_uncached(
     state: &GameState,
     acting_player: PlayerId,
     text_mode: ObservationTextModeV2,
