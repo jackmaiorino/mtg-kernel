@@ -10154,7 +10154,7 @@ mod tests {
         );
         assert_eq!(
             identity,
-            "8b79805463cf89dca30566f78fccd4d6bf44121f7c0f3eec7c1f7c6b31078949"
+            "4410bd7bef72f8dc886720fda808df4c3d6922b8bed3f7b1e86f431cd69ed183"
         );
         assert_eq!(
             sha256_hex(&run_bytes),
