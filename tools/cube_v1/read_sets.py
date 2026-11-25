@@ -913,6 +913,21 @@ MANIFEST_FENCE_OPEN_RE = re.compile(r"^```([^\r\n]*)\r?$")
 MANIFEST_FENCE_CLOSE_RE = re.compile(r"^```[ \t]*\r?$")
 
 
+def _manifest_object_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Refuse a manifest JSON object that repeats a key (json.loads would keep the last)."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate key {key!r}")
+        out[key] = value
+    return out
+
+
+def _manifest_reject_constant(token: str) -> Any:
+    """Refuse NaN, Infinity and -Infinity, which strict JSON does not allow."""
+    raise ValueError(f"non-standard JSON constant {token}")
+
+
 def _parse_shakedown_manifest_entries_with_bytes(raw: bytes) -> list[tuple[dict[str, Any], bytes]]:
     """Parse structured `## Entry <seq>: <kind>` fenced-json blocks per SHAKEDOWN-MANIFEST-FORMAT.md,
     returning `(entry_dict, exact_entry_bytes)` pairs. Prose, non-Entry headings and proposals are
@@ -996,8 +1011,12 @@ def _parse_shakedown_manifest_entries_with_bytes(raw: bytes) -> list[tuple[dict[
         # preserving the closing fence's exact line terminator (LF, CRLF, or EOF).
         entry_bytes = raw[byte_off:fence_close_end_off]
         try:
-            entry = json.loads(json_blocks[0])
-        except json.JSONDecodeError as exc:
+            entry = json.loads(
+                json_blocks[0],
+                object_pairs_hook=_manifest_object_no_duplicates,
+                parse_constant=_manifest_reject_constant,
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
             raise SetError(f"shakedown manifest entry {heading_seq} has invalid JSON: {exc}") from exc
         if not isinstance(entry, dict):
             raise SetError(f"shakedown manifest entry {heading_seq} JSON block must be an object")

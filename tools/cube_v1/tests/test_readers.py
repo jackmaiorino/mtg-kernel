@@ -3869,5 +3869,22 @@ class UniformPodRecordTests(unittest.TestCase):
             self.assertEqual(rec["pilot"]["kind"], "uniform")
 
 
+class ManifestStrictJsonTests(unittest.TestCase):
+    def _manifest(self, block: str) -> bytes:
+        return ("## Entry 1: d0_signed\n\n```json\n" + block + "\n```\n").encode("utf-8")
+
+    def test_duplicate_keys_are_refused(self):
+        raw = self._manifest('{"seq": 1, "seq": 1, "kind": "d0_signed"}')
+        with self.assertRaisesRegex(read_sets.SetError, "duplicate key"):
+            read_sets._parse_shakedown_manifest_entries_with_bytes(raw)
+
+    def test_nan_and_infinity_are_refused(self):
+        for token in ("NaN", "Infinity", "-Infinity"):
+            raw = self._manifest('{"seq": 1, "kind": "d0_signed", "x": ' + token + "}")
+            with self.subTest(token=token), self.assertRaisesRegex(read_sets.SetError, "non-standard JSON constant"):
+                read_sets._parse_shakedown_manifest_entries_with_bytes(raw)
+
+
 if __name__ == "__main__":
     unittest.main()
+
