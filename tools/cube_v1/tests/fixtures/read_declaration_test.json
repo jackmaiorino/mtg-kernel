@@ -1,7 +1,7 @@
 {
   "schema": "mtg-kernel-cube-read-declaration/v2",
   "interfaces": "m4-interfaces/v2",
-  "read_plan": "mtg-kernel-cube-read-plan/v2",
+  "read_plan": "mtg-kernel-cube-read-plan/v3",
   "a6_sha256": null,
   "resamples": 10000,
   "reads": {

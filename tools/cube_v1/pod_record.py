@@ -28,6 +28,7 @@ SEATS = 8
 DECK_CARDS = 40
 POOL_CARDS = 45
 MAX_ATTEMPTS = 4
+MAX_STACK_OBJECTS = 128
 
 U8 = (1 << 8) - 1
 U16 = (1 << 16) - 1
@@ -93,7 +94,14 @@ SEEDS_KEYS = ("draft_seed", "pod_seed", "league_seed")
 READ_SEEDS_KEYS = SEEDS_KEYS + ("draft_seed_namespace", "pod_seed_namespace")
 PINS_KEYS = ("binary", "cube_list", "fence_record", "card_index", "cube_table")
 PILOT_KEYS = ("kind", "pin", "decoding")
-CAPS_KEYS = ("max_decisions", "max_physical_decisions", "max_policy_steps", "watchdog_seconds", "max_replays")
+CAPS_KEYS = (
+    "max_decisions",
+    "max_physical_decisions",
+    "max_policy_steps",
+    "max_stack_objects",
+    "watchdog_seconds",
+    "max_replays",
+)
 DRAFT_KEYS = ("schema", "draft_seed", "packs", "picks", "pools")
 CHAIR_KEYS = ("chair", "role", "picker", "pick_rows")
 KIND_PIN_KEYS = ("kind", "pin")
@@ -500,7 +508,13 @@ def validate_record(record: Any, path: str = "record") -> dict[str, Any]:
 
     caps = _object(rec["caps"], f"{path}.caps", CAPS_KEYS)
     for key in CAPS_KEYS:
-        _uint(caps[key], f"{path}.caps.{key}", U64)
+        limit = U32 if key == "max_stack_objects" else U64
+        _uint(caps[key], f"{path}.caps.{key}", limit)
+    if caps["max_stack_objects"] != MAX_STACK_OBJECTS:
+        _fail(
+            f"{path}.caps.max_stack_objects",
+            f"must be the signed stack cap {MAX_STACK_OBJECTS}, got {caps['max_stack_objects']}",
+        )
     max_replays = caps["max_replays"]
     if max_replays > MAX_ATTEMPTS - 1:
         _fail(f"{path}.caps.max_replays", f"at most {MAX_ATTEMPTS - 1}, got {max_replays}")

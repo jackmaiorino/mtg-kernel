@@ -1,6 +1,6 @@
 """Read sets: manifests, executions, prep acceptance, look allocation, restarts and frozen panels.
 
-Implements, for the readers (D7), read plan v2: v1 sections 5 and 7 with the v2 delta.
+Implements, for the readers (D7), read plan v3: v1 sections 5 and 7 with the v2 and v3 deltas.
 
 - A set is one directory <root>/<namespace>/<run>/<set>/ with manifest.json, its plan or request
   files and one exec-<e>/ directory per execution.

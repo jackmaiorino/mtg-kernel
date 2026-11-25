@@ -1,7 +1,8 @@
-"""Read plans, prep requests, manifests and frozen panels: `mtg-kernel-cube-read-plan/v2`.
+"""Read plans, prep requests, manifests and frozen panels: `mtg-kernel-cube-read-plan/v3`.
 
-Implements the signed read plan v2 (READ-PLAN-v1 sections 1 to 5 with the v2 delta) on `m4-interfaces/v2`. A plan tells
-the pod runner (D5) how to play one read pod and tells the readers (D7) what its record must hold.
+Implements the signed read plan v3 (READ-PLAN-v1 sections 1 to 5 with the v2 and v3 deltas) on
+`m4-interfaces/v2`. A plan tells the pod runner (D5) how to play one read pod and tells the
+readers (D7) what its record must hold.
 
 - Section 1: every file is `json.dumps(doc, indent=2, ensure_ascii=True)` plus one LF; integers only.
 - Section 2: the 24 plan keys, in order (PLAN_KEYS).
@@ -31,14 +32,20 @@ import deal_common  # noqa: E402
 import pod_record  # noqa: E402
 import seeds_v1  # noqa: E402
 
-PLAN_SCHEMA = "mtg-kernel-cube-read-plan/v2"
+PLAN_SCHEMA = "mtg-kernel-cube-read-plan/v3"
 INTERFACES = pod_record.INTERFACES_VERSION
 RUN = "v1"
 TEST = "test"
 SEATS = pod_record.SEATS
 POOL_SEED_NAMESPACE = "read-gate-pools"
-CAPS = {"max_decisions": 16384, "max_physical_decisions": 16384, "max_policy_steps": 32768,
-        "watchdog_seconds": 600, "max_replays": 0}
+CAPS = {
+    "max_decisions": 16384,
+    "max_physical_decisions": 16384,
+    "max_policy_steps": 32768,
+    "max_stack_objects": pod_record.MAX_STACK_OBJECTS,
+    "watchdog_seconds": 600,
+    "max_replays": 0,
+}
 UNIFORM = {"kind": "uniform", "pin": None}
 STATED = {"kind": "stated", "pin": None}
 UNIFORM_PILOT = {"kind": "uniform", "pin": None, "decoding": pod_record.UNIFORM_DECODING}
@@ -642,7 +649,12 @@ def _shape(plan: Any) -> dict[str, Any]:
     obj(plan["seeds"], "plan.seeds", pod_record.READ_SEEDS_KEYS)
     obj(plan["pins"], "plan.pins", pod_record.PINS_KEYS)
     obj(plan["pilot"], "plan.pilot", pod_record.PILOT_KEYS)
-    obj(plan["caps"], "plan.caps", pod_record.CAPS_KEYS)
+    caps = obj(plan["caps"], "plan.caps", pod_record.CAPS_KEYS)
+    pod_record._uint(caps["max_stack_objects"], "plan.caps.max_stack_objects", pod_record.U32)
+    if caps["max_stack_objects"] != pod_record.MAX_STACK_OBJECTS:
+        raise PlanError(
+            f"plan.caps.max_stack_objects must be {pod_record.MAX_STACK_OBJECTS}, got {caps['max_stack_objects']}"
+        )
     obj(plan["inputs"], "plan.inputs", INPUT_KEYS)
     if plan["mark"] is not None:
         obj(plan["mark"], "plan.mark", MARK_KEYS)

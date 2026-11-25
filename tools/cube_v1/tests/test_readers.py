@@ -196,12 +196,29 @@ class PlanFamilyTests(unittest.TestCase):
 
     def test_strict_shape(self):
         plan = synth.plan("a", 0, mirror=0)
+        self.assertEqual(plan["schema"], "mtg-kernel-cube-read-plan/v3")
+        self.assertEqual(
+            list(plan["caps"].keys()),
+            ["max_decisions", "max_physical_decisions", "max_policy_steps", "max_stack_objects",
+             "watchdog_seconds", "max_replays"],
+        )
+        self.assertEqual(plan["caps"]["max_stack_objects"], 128)
         for mutate, pattern in ((lambda p: p.pop("rotation"), "missing"),
                                 (lambda p: p.update(extra=1), "extra"),
                                 (lambda p: p.update(schema="mtg-kernel-cube-read-plan/v1"), "schema"),
+                                (lambda p: p.update(schema="mtg-kernel-cube-read-plan/v2"), "schema"),
                                 (lambda p: p.update(family="z"), "family"),
                                 (lambda p: p["decks"][0].update(row="other"), "row"),
-                                (lambda p: p.update(unit=True), "u64")):
+                                (lambda p: p.update(unit=True), "u64"),
+                                (lambda p: p["caps"].pop("max_stack_objects"), "missing"),
+                                (lambda p: p["caps"].update(max_stack_objects=127), "max_stack_objects"),
+                                (lambda p: p["caps"].update(max_stack_objects=1 << 32), "max_stack_objects"),
+                                (lambda p: p["caps"].update(max_stack_objects=True), "max_stack_objects"),
+                                (lambda p: p.__setitem__("caps", {
+                                    "max_decisions": 16384, "max_physical_decisions": 16384,
+                                    "max_policy_steps": 32768, "watchdog_seconds": 600,
+                                    "max_stack_objects": 128, "max_replays": 0,
+                                }), "order")):
             bad = copy.deepcopy(plan)
             mutate(bad)
             with self.assertRaisesRegex((read_plans.PlanError, pod_record.RecordError), pattern):
@@ -358,7 +375,100 @@ class RecordTests(unittest.TestCase):
         self._rejects(lambda r: r["paired_builds"].reverse(), "ordered")
         self._rejects(lambda r: r.update(namespace="client-pods"), "reserved")
         self._rejects(lambda r: r["caps"].update(max_replays=1), "max_replays")
+        self._rejects(lambda r: r["caps"].pop("max_stack_objects"), "missing")
+        self._rejects(lambda r: r["caps"].update(max_stack_objects=64), "max_stack_objects")
+        self._rejects(lambda r: r["caps"].update(max_stack_objects=129), "max_stack_objects")
+        self._rejects(lambda r: r["caps"].update(max_stack_objects=1 << 32), "max_stack_objects")
+        self._rejects(lambda r: r["caps"].update(max_stack_objects=None), "max_stack_objects")
+        self._rejects(lambda r: r.__setitem__("caps", {
+            "max_decisions": 16384, "max_physical_decisions": 16384,
+            "max_policy_steps": 32768, "watchdog_seconds": 600,
+            "max_stack_objects": 128, "max_replays": 0,
+        }), "order")
         self._rejects(lambda r: r["games"][0].update(scores=None), "scores")
+
+    def test_d5_format_v3_read_and_training_fixtures(self):
+        # Positive D5-format read pod fixture (exact frozen key order with max_stack_objects 128).
+        d5_read = copy.deepcopy(self.rec)
+        self.assertEqual(
+            list(d5_read["caps"].keys()),
+            ["max_decisions", "max_physical_decisions", "max_policy_steps", "max_stack_objects",
+             "watchdog_seconds", "max_replays"],
+        )
+        self.assertEqual(d5_read["caps"]["max_stack_objects"], 128)
+        pod_record.validate_record(d5_read)
+        read_plans.check_record_against_plan(d5_read, self.plan)
+
+        # Positive D5-format training pod fixture (no read seed source fields, max_replays 3, max_stack_objects 128).
+        train_seeds = pod_record.pod_seeds("shakedown-pods", "b1", 0)
+        pools = synth.draft_pools(train_seeds["draft_seed"])
+        cards0 = synth.build_from_pool(pools[0], "candidate")
+        cards1 = synth.build_from_pool(pools[1], "candidate")
+        g_seed, seats = seeds_v1.pairing_seats(train_seeds["pod_seed"], 0)
+        aseeds = seeds_v1.attempt_seeds(g_seed)
+        d5_train = {
+            "schema": "mtg-kernel-cube-pod-record/v2",
+            "interfaces": "m4-interfaces/v2",
+            "use": "shakedown",
+            "namespace": "shakedown-pods",
+            "run": "b1",
+            "pod_index": 0,
+            "seeds": train_seeds,
+            "pins": dict(synth.PINS),
+            "pilot": dict(synth.PILOT),
+            "caps": {
+                "max_decisions": 16384,
+                "max_physical_decisions": 16384,
+                "max_policy_steps": 32768,
+                "max_stack_objects": 128,
+                "watchdog_seconds": 600,
+                "max_replays": 3,
+            },
+            "draft": synth.draft_record(train_seeds["draft_seed"], pools),
+            "chairs": [
+                {"chair": c, "role": "older" if c in (1, 6) else "learning", "picker": dict(synth.UNIFORM),
+                 "pick_rows": []}
+                for c in range(8)
+            ],
+            "decks": [
+                {"deck": 0, "source": "build", "chair": 0, "build": 0, "builder": dict(synth.UNIFORM),
+                 "build_seed": 7, "cards": cards0, "build_rows": synth.uniform_build_rows(cards0, pools[0]),
+                 "dealt": None},
+                {"deck": 1, "source": "build", "chair": 1, "build": 0, "builder": dict(synth.UNIFORM),
+                 "build_seed": 7, "cards": cards1, "build_rows": synth.uniform_build_rows(cards1, pools[1]),
+                 "dealt": None},
+            ],
+            "games": [{
+                "game": 0, "group": 0, "role": "reference", "pairing": 0,
+                "decks": [seats[0], seats[1]], "chairs": [seats[0], seats[1]],
+                "seat_rule": "coin", "game_seed": g_seed, "episode": 0,
+                "attempts": [{
+                    "attempt": 0, "deal_seed": aseeds["deal_seed"], "env_seed": aseeds["env_seed"],
+                    "action_seed": aseeds["action_seed"], "decisions": 42, "physical_decisions": 42,
+                    "policy_steps": 84,
+                    "end": {"kind": "natural", "winner_seat": seats[0], "reason": "life_zero"},
+                    "halted": False, "stop_kind": None, "last_action_source": None,
+                }],
+                "scores": [1, -1],
+            }],
+            "paired_builds": [],
+            "halts": [],
+            "status": "complete",
+            "stop": None,
+        }
+        pod_record.validate_record(d5_train)
+
+        # v2 manifest is rejected by read_sets.load_manifest.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            opened = c_sets(root, "shared", by_slot({0: "win"}, arm=0))
+            man_path = opened[0]["set_dir"] / "manifest.json"
+            doc = json.loads(man_path.read_bytes().decode("utf-8"))
+            self.assertEqual(doc["schema"], "mtg-kernel-cube-read-plan/v3")
+            doc["schema"] = "mtg-kernel-cube-read-plan/v2"
+            man_path.write_bytes(read_plans.serialize(doc).encode("utf-8"))
+            with self.assertRaisesRegex(read_sets.SetError, "schema"):
+                read_sets.load_manifest(opened[0]["set_dir"])
 
     def test_sampler_v2(self):
         row = {"kind": "pick", "sampler": "softmax-cdf-splitmix64-v2", "options": [3, 5], "chosen": 5,
@@ -903,6 +1013,7 @@ class DeclarationTests(unittest.TestCase):
         self.assertEqual(DECL["reads"]["a"]["levels"], [F(1, 40)] * 2)
         for mutate in (lambda d: d["reads"]["c"].pop("n"), lambda d: d["reads"]["c"].update(extra=1),
                        lambda d: d.update(read_plan="mtg-kernel-cube-read-plan/v1"),
+                       lambda d: d.update(read_plan="mtg-kernel-cube-read-plan/v2"),
                        lambda d: d["reads"]["c"].update(namespace="read-gate-b"),
                        lambda d: d["reads"]["c"]["sizing"].update(delta=0.02),
                        lambda d: d["reads"]["c"].update(extension_factor=True)):
@@ -948,7 +1059,7 @@ class DeterminismTests(unittest.TestCase):
             self.assertEqual(json.loads(outs[0])["verdict"], "win")
 
 
-REPORT_GOLDEN_SHA256 = "7d8d45591d8b19e6f8c3ae3986a6968b7fbb72eeb69b18f72c62d46c6cbb1707"
+REPORT_GOLDEN_SHA256 = "d620a65158abe209a1373ac9f6fc957041d3e5b8cb86166a8fb41017323c2599"
 
 
 class UniformPodRecordTests(unittest.TestCase):

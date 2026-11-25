@@ -1,5 +1,5 @@
 """Readers of the cube M4 reads (D7 and D7a), built to the signed A6 (part 1), m4-interfaces/v2 and
-read plan v2.
+read plan v3.
 
 Reads: acceptance (a) and early (a) (2 by 2 of picks by builder; the candidate row gives the verdict),
 (b) (A1.5 opponent), (b') (stated builds against C(P), from (c)'s games), (c) (non-inferiority of
