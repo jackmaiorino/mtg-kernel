@@ -1149,7 +1149,7 @@ mod tests {
         with_heartbeat(&progress, &current, poll, || {
             for decision in 1..=3 {
                 std::thread::sleep(Duration::from_secs(1));
-                game_decision_counter().store(decision, Ordering::Relaxed);
+                current.decision_counter().store(decision, Ordering::Relaxed);
                 let expected = format!("8 {decision}");
                 loop {
                     let seen = part_progress(&part);
@@ -1170,8 +1170,7 @@ mod tests {
             assert_eq!(check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit), None);
             assert_eq!(hang_message(0, part.next, &seen, limit),
                 "hang: worker 0 made no progress for 2s at game 8 (last decision 3); the batch is void (A2.1), no output written");
-            Ok(())
-        }).unwrap();
+        });
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
