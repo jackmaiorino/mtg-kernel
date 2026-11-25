@@ -160,6 +160,13 @@ pub fn set_default_digest_memo_mib_v1(mib: usize) {
     native_flat_tensorizer_v2::set_default_digest_memo_mib_v1(mib);
 }
 
+/// Keeps state messages out of the tensorizer digest memo for this process
+/// (action messages still use it). Must be called before the first fill.
+/// Computed tensor bits are identical either way.
+pub fn set_digest_memo_states_v1(on: bool) {
+    native_flat_tensorizer_v2::set_digest_memo_states_v1(on);
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
