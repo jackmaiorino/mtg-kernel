@@ -33,6 +33,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import sys
 from typing import Any, Callable
 
@@ -148,9 +149,83 @@ def _level(value: Any, path: str) -> Fraction:
     return level
 
 
-def verify_countersigned_a6(a6_source: Path | bytes, expected_sha256: str) -> bytes:
+A6_PART2_HEADING_RE = re.compile(r"(?m)^## Signature, part 2(?::[^\n]*)?$")
+A6_PART1_CLOSING_RE = re.compile(r"(?m)^Signed, research lead\.\s*$")
+A6_PART2_CLOSING_RE = re.compile(r"(?m)^(?:Signed|Countersigned), research lead\.\s*$")
+A6_PART2_ATTESTATION_RE = re.compile(
+    r"(?m)^(?:"
+    r"Research lead,\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+(?:ET|UTC)\.\s+Countersigned\b"
+    r"|Countersigned,\s+research lead,\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+(?:ET|UTC)\b"
+    r")"
+)
+A6_PART2_FORBIDDEN_RE = re.compile(
+    r"(?i)(?:to fill at signing|not signed|no countersignature|not countersigned|"
+    r"not yet countersigned|pending countersignature|\bunsigned\b)"
+)
+A6_JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
+A6_PIN_LINE_RE = re.compile(
+    r"(?m)^[ \t]*(?:[-*][ \t]+|\|[ \t]*)`?(binary|cube_list|fence_record|card_index|cube_table|"
+    r"pool_sha256|constants_sha256)`?[ \t]*(?::|\|)[ \t]*`?([0-9a-f]{64})`?[ \t]*\|?[ \t]*$"
+)
+
+
+def _extract_a6_part2_fills(p2_block: str) -> tuple[dict[str, str], dict[str, str] | None, dict[str, Any]]:
+    """Parse structured pin fills (pins, optional dealer inputs, optional policies) from A6 part 2."""
+    found: dict[str, str] = {}
+    policies: dict[str, Any] = {}
+
+    def record(key: str, val: Any) -> None:
+        if not read_plans._is_sha(val):
+            raise ReadError(f"A6 part 2 pin {key!r} must be a lowercase 64-char hex sha256, got {val!r}")
+        if key in found and found[key] != val:
+            raise ReadError(f"A6 part 2 records conflicting values for pin {key!r}")
+        found[key] = val
+
+    for m in A6_JSON_BLOCK_RE.finditer(p2_block):
+        try:
+            doc = json.loads(m.group(1))
+        except json.JSONDecodeError as exc:
+            raise ReadError(f"A6 part 2 contains invalid JSON pin block: {exc}") from exc
+        if not isinstance(doc, dict):
+            raise ReadError("A6 part 2 JSON pin block must be an object")
+        if "pins" in doc:
+            if not isinstance(doc["pins"], dict):
+                raise ReadError("A6 part 2 JSON 'pins' must be an object")
+            for k, v in doc["pins"].items():
+                if k in pod_record.PINS_KEYS:
+                    record(k, v)
+        if "inputs" in doc and doc["inputs"] is not None:
+            if not isinstance(doc["inputs"], dict):
+                raise ReadError("A6 part 2 JSON 'inputs' must be an object or null")
+            for k, v in doc["inputs"].items():
+                if k in read_plans.INPUT_KEYS and v is not None:
+                    record(k, v)
+        if "policies" in doc and doc["policies"] is not None:
+            if not isinstance(doc["policies"], dict):
+                raise ReadError("A6 part 2 JSON 'policies' must be an object")
+            for k, v in doc["policies"].items():
+                if k in policies and policies[k] != v:
+                    raise ReadError(f"A6 part 2 records conflicting policy for {k!r}")
+                policies[k] = v
+
+    for m in A6_PIN_LINE_RE.finditer(p2_block):
+        record(m.group(1), m.group(2))
+
+    missing_pins = [k for k in pod_record.PINS_KEYS if k not in found]
+    if missing_pins:
+        raise ReadError(f"A6 part 2 lacks required pin fills: {missing_pins}")
+    pins = {k: found[k] for k in pod_record.PINS_KEYS}
+    has_pool = "pool_sha256" in found
+    has_const = "constants_sha256" in found
+    if has_pool != has_const:
+        raise ReadError("A6 part 2 must fill both pool_sha256 and constants_sha256 together")
+    inputs = {k: found[k] for k in read_plans.INPUT_KEYS} if has_pool else None
+    return pins, inputs, policies
+
+
+def verify_countersigned_a6(a6_source: Path | bytes, expected_sha256: str) -> dict[str, Any]:
     """Verify the actual countersigned A6 declaration file against its pinned sha256, signed part 1
-    sha256, and part 2 countersignature."""
+    sha256, affirmative part 2 countersignature structure, and filled pins."""
     if not read_plans._is_sha(expected_sha256):
         raise ReadError("expected A6 sha256 must be a lowercase sha256 hex string")
     if isinstance(a6_source, (str, Path)):
@@ -175,17 +250,28 @@ def verify_countersigned_a6(a6_source: Path | bytes, expected_sha256: str) -> by
         raise ReadError(
             f"A6 part 1 text sha256 {part1_sha} differs from signed part 1 {A6_PART1_SHA256}"
         )
-    tail = normalized[idx:].decode("utf-8", errors="replace")
-    part2_marker = "## Signature, part 2"
-    p2_idx = tail.find(part2_marker)
-    if p2_idx < 0:
-        raise ReadError("A6 file has no countersigned part 2 signature section")
-    p2_block = tail[p2_idx:]
-    if "NOT signed yet" in p2_block or "TO FILL AT SIGNING" in p2_block:
-        raise ReadError("A6 part 2 is not countersigned (contains unsigned placeholder text)")
-    if "countersign" not in p2_block.lower():
-        raise ReadError("A6 part 2 section lacks a countersignature statement")
-    return raw
+    try:
+        tail = normalized[idx:].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ReadError(f"A6 file tail is not valid UTF-8: {exc}") from exc
+    p2_matches = list(A6_PART2_HEADING_RE.finditer(tail))
+    if len(p2_matches) != 1:
+        raise ReadError("A6 file must contain exactly one '## Signature, part 2' section")
+    part1_sig_block = tail[:p2_matches[0].start()]
+    if not A6_PART1_CLOSING_RE.search(part1_sig_block):
+        raise ReadError("A6 file lacks the signed part 1 closing line")
+    p2_block = tail[p2_matches[0].start():]
+    bad = A6_PART2_FORBIDDEN_RE.search(p2_block)
+    if bad:
+        raise ReadError(f"A6 part 2 is not countersigned (contains {bad.group(0)!r})")
+    if not A6_PART2_ATTESTATION_RE.search(p2_block):
+        raise ReadError(
+            "A6 part 2 lacks an affirmative timestamped research-lead countersignature statement"
+        )
+    if not A6_PART2_CLOSING_RE.search(p2_block):
+        raise ReadError("A6 part 2 lacks the closing 'Signed, research lead.' or 'Countersigned, research lead.' line")
+    pins, inputs, policies = _extract_a6_part2_fills(p2_block)
+    return {"raw": raw, "sha256": actual_sha, "pins": pins, "inputs": inputs, "policies": policies}
 
 
 def _check_signed_section_rules(name: str, sec: dict[str, Any], resamples: int, fail_fn: Callable[[str], None]) -> None:
@@ -632,29 +718,76 @@ def aa_symmetry(records: dict[int, dict[str, Any]], units: range) -> dict[str, A
 
 
 def _require_signed(declaration: dict[str, Any], sec_name: str, namespace: str,
-                    a6_file: Path | bytes | None) -> None:
+                    a6_file: Path | bytes | None) -> dict[str, Any] | None:
     if namespace == TEST:
-        return
+        return None
     if declaration["a6_sha256"] is None:
         raise ReadError(f"namespace {namespace!r} is read data: the declaration names no countersigned A6")
     if a6_file is None:
         raise ReadError(f"namespace {namespace!r} is read data: the countersigned A6 file must be verified")
-    verify_countersigned_a6(a6_file, declaration["a6_sha256"])
+    a6_info = verify_countersigned_a6(a6_file, declaration["a6_sha256"])
     _check_signed_section_rules(
         sec_name, declaration["reads"][sec_name], declaration["resamples"],
         lambda msg: (_ for _ in ()).throw(ReadError(msg)),
     )
     if declaration.get("pins") is None:
         raise ReadError(f"namespace {namespace!r} is read data: the declaration binds no input pins")
+    if declaration["pins"] != a6_info["pins"]:
+        raise ReadError(f"namespace {namespace!r} declaration pins differ from countersigned A6 part 2 pins")
     family = READ_FAMILY[sec_name]
-    if read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13") and declaration.get("inputs") is None:
-        raise ReadError(f"namespace {namespace!r} is read data: dealer family {family} binds no pool/constants inputs")
+    if read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13"):
+        if a6_info["inputs"] is None:
+            raise ReadError(
+                f"namespace {namespace!r} dealer family {family} requires pool_sha256 and constants_sha256 "
+                "in countersigned A6 part 2"
+            )
+        if declaration.get("inputs") != a6_info["inputs"]:
+            raise ReadError(
+                f"namespace {namespace!r} declaration dealer inputs differ from countersigned A6 part 2 inputs"
+            )
+    return a6_info
 
 
-def _check_declared_pins(declaration: dict[str, Any], family: str, sets: list[dict[str, Any]]) -> None:
-    pins = declaration.get("pins")
-    inputs = declaration.get("inputs")
-    a6_sha = declaration.get("a6_sha256")
+def _a6_expected_policies(sec_name: str, family: str, namespace: str,
+                          a6_info: dict[str, Any] | None) -> tuple[Any, Any, dict[str, Any] | None]:
+    """Derive required (pilot, picker, builders) bindings from signed A6 rules and part 2 policy fills."""
+    if a6_info is None:
+        return None, None, None
+    pilot = picker = builders = None
+    if family == "aa":
+        pilot = dict(read_plans.UNIFORM_PILOT)
+        picker = dict(read_plans.UNIFORM)
+        builders = {"candidate": dict(read_plans.UNIFORM)}
+    elif namespace == "dose-d8":
+        pilot = dict(read_plans.UNIFORM_PILOT)
+    pols = a6_info.get("policies") or {}
+    scoped = pols.get(sec_name) if isinstance(pols.get(sec_name), dict) else (
+        pols.get(family) if isinstance(pols.get(family), dict) else pols
+    )
+    if isinstance(scoped, dict):
+        if "pilot" in scoped and scoped["pilot"] is not None:
+            p = scoped["pilot"]
+            if pilot is not None and p != pilot:
+                raise ReadError(f"A6 part 2 policy pilot for {sec_name} conflicts with A6 fixed rule")
+            pilot = p
+        if "picker" in scoped and scoped["picker"] is not None:
+            pk = scoped["picker"]
+            if picker is not None and pk != picker:
+                raise ReadError(f"A6 part 2 policy picker for {sec_name} conflicts with A6 fixed rule")
+            picker = pk
+        if "builders" in scoped and scoped["builders"] is not None:
+            b = scoped["builders"]
+            if builders is not None and b != builders:
+                raise ReadError(f"A6 part 2 policy builders for {sec_name} conflict with A6 fixed rule")
+            builders = b
+    return pilot, picker, builders
+
+
+def _check_declared_pins(declaration: dict[str, Any], family: str, sets: list[dict[str, Any]],
+                         a6_info: dict[str, Any] | None = None) -> None:
+    pins = a6_info["pins"] if a6_info is not None else declaration.get("pins")
+    inputs = a6_info["inputs"] if a6_info is not None else declaration.get("inputs")
+    a6_sha = a6_info["sha256"] if a6_info is not None else declaration.get("a6_sha256")
     dealer_family = read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13")
     for s in sets:
         man = s["manifest"]
@@ -1063,7 +1196,20 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
     sec_name = "c" if read == "b_prime" else read
     section = declaration["reads"][sec_name]
     namespace = section["namespace"]
-    _require_signed(declaration, sec_name, namespace, a6_file)
+    a6_info = _require_signed(declaration, sec_name, namespace, a6_file)
+    a6_pilot, a6_picker, a6_builders = _a6_expected_policies(sec_name, family, namespace, a6_info)
+    if a6_pilot is not None:
+        if expected_pilot is not None and expected_pilot != a6_pilot:
+            raise ReadError("expected_pilot conflicts with countersigned A6 policy")
+        expected_pilot = a6_pilot
+    if a6_picker is not None:
+        if expected_picker is not None and expected_picker != a6_picker:
+            raise ReadError("expected_picker conflicts with countersigned A6 policy")
+        expected_picker = a6_picker
+    if a6_builders is not None:
+        if expected_builders is not None and expected_builders != a6_builders:
+            raise ReadError("expected_builders conflicts with countersigned A6 policy")
+        expected_builders = a6_builders
     for s in sets:
         man = s["manifest"]
         if man["family"] != family or man["namespace"] != namespace:
@@ -1086,7 +1232,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         read_sets.verify_set_restarts(
             s, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
         )
-    _check_declared_pins(declaration, family, sets)
+    _check_declared_pins(declaration, family, sets, a6_info)
     if peer_sets is not None:
         if read not in ("b", "c", "b_prime"):
             raise ReadError(f"peer_sets is only valid for reads b, c, or b_prime (not {read!r})")
@@ -1100,7 +1246,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
             read_sets.verify_set_restarts(
                 ps, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
             )
-        _check_declared_pins(declaration, peer_family, peer_sets)
+        _check_declared_pins(declaration, peer_family, peer_sets, a6_info)
         if read == "b":
             read_sets.check_shared_bc_prefix(sets, peer_sets)
         else:

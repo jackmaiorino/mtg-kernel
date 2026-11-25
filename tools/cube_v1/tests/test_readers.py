@@ -1846,6 +1846,33 @@ class SizingTests(unittest.TestCase):
                 readers.run_read(DECL, DECL_SHA, "c", 1, [opened])
 
 
+def make_countersigned_a6(pins: dict[str, str], *, inputs: dict[str, str] | None = None,
+                          policies: dict[str, object] | None = None) -> tuple[bytes, str]:
+    """Build a synthetic countersigned A6 document keeping exact signed part 1 bytes verbatim."""
+    raw = A6_PART1_FIXTURE.read_bytes()
+    lines = [
+        "",
+        "",
+        "## Signature, part 2: pins (research lead, 2026-11-25 12:00 ET)",
+        "",
+        "Research lead, 2026-11-25 12:00 ET. Countersigned part 2 pins on the signed part 1 text.",
+        "",
+    ]
+    for k, v in pins.items():
+        lines.append(f"- `{k}`: `{v}`")
+    if inputs is not None:
+        for k, v in inputs.items():
+            lines.append(f"- `{k}`: `{v}`")
+    if policies is not None:
+        lines.append("")
+        lines.append("```json")
+        lines.append(json.dumps({"policies": policies}, indent=2))
+        lines.append("```")
+    lines.extend(["", "Countersigned, research lead.", ""])
+    cs = raw + ("\n".join(lines)).encode("utf-8")
+    return cs, hashlib.sha256(cs).hexdigest()
+
+
 class DeclarationTests(unittest.TestCase):
     def _doc(self):
         from decimal import Decimal
@@ -1889,13 +1916,41 @@ class DeclarationTests(unittest.TestCase):
         with self.assertRaisesRegex(readers.ReadError, "countersigned|part 2"):
             readers.verify_countersigned_a6(raw_a6, raw_a6_sha)
 
-        # Synthetic countersigned copy keeping the exact signed part 1 bytes verbatim.
-        countersigned_a6 = raw_a6 + (
-            b"\n\n## Signature, part 2\n\n"
-            b"Research lead countersigned part 2 pins on 2026-11-25 12:00 ET.\n"
+        # Reviewer's negation probe and malformed part-2 blocks must be refused.
+        for label, suffix, pattern in (
+            ("negation-probe", b"\n\n## Signature, part 2\nNo countersignature has been issued.\n",
+             "No countersignature"),
+            ("missing-closing",
+             b"\n\n## Signature, part 2\nResearch lead, 2026-11-25 12:00 ET. Countersigned.\n",
+             "closing"),
+            ("missing-pins",
+             b"\n\n## Signature, part 2\nResearch lead, 2026-11-25 12:00 ET. Countersigned.\n"
+             b"Countersigned, research lead.\n",
+             "pin fills"),
+            ("missing-timestamp",
+             b"\n\n## Signature, part 2\nCountersigned by research lead.\nCountersigned, research lead.\n",
+             "timestamped"),
+        ):
+            with self.subTest(bad_part2=label):
+                bad_a6 = raw_a6 + suffix
+                bad_sha = hashlib.sha256(bad_a6).hexdigest()
+                with self.assertRaisesRegex(readers.ReadError, pattern):
+                    readers.verify_countersigned_a6(bad_a6, bad_sha)
+
+        # Synthetic countersigned copy keeping the exact signed part 1 bytes verbatim and filling pins.
+        live_inputs = {"pool_sha256": synth.POOL[1], "constants_sha256": synth.CONST[1]}
+        countersigned_a6, cs_sha = make_countersigned_a6(synth.LIVE_PINS, inputs=live_inputs)
+        a6_info = readers.verify_countersigned_a6(countersigned_a6, cs_sha)
+        self.assertEqual(a6_info["pins"], synth.LIVE_PINS)
+        self.assertEqual(a6_info["inputs"], live_inputs)
+
+        # Conflicting duplicate pin fill in part 2 must fail.
+        dup_a6 = countersigned_a6.replace(
+            b"Countersigned, research lead.\n",
+            f"- `binary`: `{'0' * 64}`\nCountersigned, research lead.\n".encode("utf-8"),
         )
-        cs_sha = hashlib.sha256(countersigned_a6).hexdigest()
-        readers.verify_countersigned_a6(countersigned_a6, cs_sha)
+        with self.assertRaisesRegex(readers.ReadError, "conflicting"):
+            readers.verify_countersigned_a6(dup_a6, hashlib.sha256(dup_a6).hexdigest())
 
         # Tampering with part 1 bytes must fail even when a6_sha256 matches the tampered file.
         tampered_a6 = countersigned_a6.replace(b"9,999", b"9,998", 1)
@@ -1907,8 +1962,8 @@ class DeclarationTests(unittest.TestCase):
         from decimal import Decimal
         live_doc = self._doc()
         live_doc["a6_sha256"] = cs_sha
-        live_doc["pins"] = dict(synth.PINS)
-        live_doc["inputs"] = {"pool_sha256": synth.POOL[1], "constants_sha256": synth.CONST[1]}
+        live_doc["pins"] = dict(synth.LIVE_PINS)
+        live_doc["inputs"] = dict(live_inputs)
         live_doc["reads"]["aa"]["namespace"] = "read-d8-aa"
         live_doc["reads"]["b"]["namespace"] = "read-gate-b"
         live_decl = readers.validate_declaration(live_doc)
@@ -1932,7 +1987,7 @@ class DeclarationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = synth.assert_test_temp_root(Path(tmp))
             plans = [
-                read_plans.build_plan("aa", "read-d8-aa", u, pins=synth.PINS, pilot=synth.PILOT,
+                read_plans.build_plan("aa", "read-d8-aa", u, pins=synth.LIVE_PINS, pilot=synth.PILOT,
                                       picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)}, mirror=m)
                 for u in range(4) for m in (0, 1)
             ]
@@ -1975,11 +2030,43 @@ class DeclarationTests(unittest.TestCase):
             with self.assertRaisesRegex(readers.ReadError, "level"):
                 readers.run_read(bad_lvl, cs_sha, "aa", 1, [opened], a6_file=countersigned_a6)
 
-            # Live read whose plan pins differ from declaration pins is refused.
+            # Live declaration whose pins differ from countersigned A6 part 2 fills is refused.
             bad_pins = copy.deepcopy(live_decl)
             bad_pins["pins"]["binary"] = "0" * 64
-            with self.assertRaisesRegex(readers.ReadError, "pins"):
+            with self.assertRaisesRegex(readers.ReadError, "part 2 pins"):
                 readers.run_read(bad_pins, cs_sha, "aa", 1, [opened], a6_file=countersigned_a6)
+
+            # Plan pins differing from countersigned A6 part 2 pins are refused even if declaration pins match A6.
+            bad_plan_opened = copy.deepcopy(opened)
+            for p in bad_plan_opened["plans"].values():
+                p["pins"]["binary"] = "0" * 64
+            with self.assertRaisesRegex(readers.ReadError, "pins"):
+                readers.run_read(live_decl, cs_sha, "aa", 1, [bad_plan_opened], a6_file=countersigned_a6)
+
+            # Live A/A plan with a non-uniform pilot is refused by A6 policy enforcement.
+            bad_pilot_opened = copy.deepcopy(opened)
+            bad_pilot = {"kind": "checkpoint", "pin": "9" * 64, "decoding": "greedy"}
+            for p in bad_pilot_opened["plans"].values():
+                p["pilot"] = dict(bad_pilot)
+            with self.assertRaisesRegex(readers.ReadError, "pilot"):
+                readers.run_read(live_decl, cs_sha, "aa", 1, [bad_pilot_opened], a6_file=countersigned_a6)
+
+            # Dealer family without pool/constants pins in countersigned A6 part 2 is refused.
+            no_inp_a6, no_inp_sha = make_countersigned_a6(synth.LIVE_PINS, inputs=None)
+            no_inp_decl = copy.deepcopy(live_decl)
+            no_inp_decl["a6_sha256"] = no_inp_sha
+            with self.assertRaisesRegex(readers.ReadError, "pool_sha256"):
+                readers.run_read(no_inp_decl, no_inp_sha, "b", 1, [], a6_file=no_inp_a6)
+
+            # Custom policy pin in A6 part 2 is enforced against plan bindings.
+            pol_a6, pol_sha = make_countersigned_a6(
+                synth.LIVE_PINS, inputs=live_inputs,
+                policies={"dose": {"builders": {"current": {"kind": "learned", "pin": "a" * 64},
+                                                "initial": {"kind": "uniform", "pin": None}}}},
+            )
+            pol_info = readers.verify_countersigned_a6(pol_a6, pol_sha)
+            _, _, exp_builders = readers._a6_expected_policies("dose", "dose", "dose-d8", pol_info)
+            self.assertEqual(exp_builders["current"], {"kind": "learned", "pin": "a" * 64})
 
         # In `test`, A/A uses the declared level (not hardcoded), and a_all omits bootstrap fallback.
         with tempfile.TemporaryDirectory() as tmp:
@@ -2035,12 +2122,10 @@ class D8V3RestartTests(unittest.TestCase):
 
     @staticmethod
     def _countersigned_a6() -> tuple[bytes, str]:
-        raw = A6_PART1_FIXTURE.read_bytes()
-        cs = raw + (
-            b"\n\n## Signature, part 2\n\n"
-            b"Research lead countersigned part 2 pins on 2026-11-25 12:00 ET.\n"
+        return make_countersigned_a6(
+            synth.LIVE_PINS,
+            inputs={"pool_sha256": synth.POOL[1], "constants_sha256": synth.CONST[1]},
         )
-        return cs, hashlib.sha256(cs).hexdigest()
 
     @staticmethod
     def _live_decl(cs_sha: str, panel_v1: str | None = None) -> dict:
