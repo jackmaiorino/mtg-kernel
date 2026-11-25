@@ -1,8 +1,8 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C9c
 //! (Elspeth, Storm Slayer; Grist, the Hunger Tide; Nissa, Who Shakes the
 //! World; Tamiyo, Collector of Tales; Through the Breach; and Black Green
-//! Insect Token). Wave C9b's tables fall through to these, and this module is
-//! the tail of the recipe chains: its own defaults are the chains' base values.
+//! Insect Token). Wave C9b's tables fall through to these, and these fall
+//! through to wave Pf2a's (`build_eternal_pf2a_v1.rs`).
 //! Runtime programs live in `src/eternal_cube_c9c_v1.rs`. Every row is keyed
 //! by a name that occurs only in the eternal registry.
 
@@ -151,7 +151,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Grist, the Hunger Tide" => &GRIST_THE_HUNGER_TIDE,
         "Nissa, Who Shakes the World" => &NISSA_WHO_SHAKES_THE_WORLD,
         "Tamiyo, Collector of Tales" => &TAMIYO_COLLECTOR_OF_TALES,
-        _ => &[],
+        _ => super::build_eternal_pf2a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -169,33 +169,33 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_cube_c9c_v1::through_the_breach",
         },
-        _ => return None,
+        _ => return super::build_eternal_pf2a_v1::special_for(name),
     })
 }
 
 /// No C9c card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_pf2a_v1::kicker_cost_for(name)
 }
 
 /// No C9c card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_pf2a_v1::attachment_for(name)
 }
 
 /// No C9c card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_pf2a_v1::flashback_for(name)
 }
 
 /// No C9c card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_pf2a_v1::alt_cost_for(name)
 }
 
 /// No C9c card has a printed evergreen keyword.
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    super::build_eternal_pf2a_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -206,6 +206,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Nissa, Who Shakes the World" => "triggered_mana:tap_controlled_forest_add_g;loyalty:+1_three_counters_untap_animate_0_0_elemental_vigilance_haste;-8_emblem_lands_indestructible_search_any_forests_tapped",
         "Tamiyo, Collector of Tales" => "static:opponent_effects_cant_cause_discard_or_sacrifice;loyalty:+1_name_nonland_reveal_4_matching_to_hand_rest_gy;-3_regrowth_own_gy_card",
         "Through the Breach" => "may_put_hand_creature_onto_battlefield_haste_sacrifice_next_end_step;splice_onto_arcane:2rr",
-        _ => "none",
+        _ => super::build_eternal_pf2a_v1::trigger_recipe_for(name),
     }
 }

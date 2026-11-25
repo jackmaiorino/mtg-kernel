@@ -115,11 +115,11 @@ type TraceRow = ([u8; 32], usize);
 const MIRROR_VIEW_PINS: [(PlayerSeatV1, &str); 2] = [
     (
         PlayerSeatV1::P0,
-        "63af2cc5f22bcdc88eda9272c3223782607fe26e113334e3e3e1d39122b31555",
+        "f788127756631f504a922e01b4b5b6f07777c0b7438df2b7d66342ce1c8736cb",
     ),
     (
         PlayerSeatV1::P1,
-        "15c14b0246695510ca20d63e149d89a2c918fc87f89ccbd666efc71709c0cb13",
+        "67fbc0a1557a4cac35a133800af3c5332dda489b801bacca794b3c95050f0a36",
     ),
 ];
 

@@ -5333,10 +5333,10 @@ mod tests {
         // is cross-target consistent (71_544 on both reviewed targets).
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e";
+            "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115";
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "27c70a9ac9740cf1c107aa29d574865f48f8c44df9721f2010a940d322ef4334";
+            "3a81332db9cb44f98d68f52dfa1ff0af02dbb4102236d45bfd498e2842afb20a";
         const MAIN_GOLDEN_LEN_V1: usize = 71_544;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -5804,8 +5804,8 @@ mod tests {
                 group.canonical_bytes().len(),
             );
             let pinned = (
-                "78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e".to_owned(),
-                "07475dd527d7adc0c7c023394c7def4b3977cb7cd51b74411daeafca001e0a06".to_owned(),
+                "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115".to_owned(),
+                "adba2de9dc1d52c392f912e8557e2037f6a6d37db7a812900eb8d61561d957a0".to_owned(),
                 71_544usize,
             );
             assert_eq!(
@@ -5823,11 +5823,8 @@ mod tests {
         // fixes and the nine-deck catalog landing move; the pre-C2 store-
         // format baseline itself is otherwise undisturbed. Value is this
         // test's own live-computed digest, read directly from a failing
-        // run (never hand-typed). The Linux-gnu-only whole-group byte pin
-        // above (lines gated by #[cfg(target_os = "linux", ...)]) is the
-        // same class of literal but could not be verified or re-baselined
-        // from this Windows host; it needs the identical treatment on a
-        // Linux target before this test is fully current there.
+        // run (never hand-typed). The whole-group bytes above are pinned
+        // separately from x86_64-unknown-linux-gnu CI output.
         //
         // Re-baselined again for PR #111's CR 608.2 / 511.3 rules fixes: the
         // deck-binding and trajectory-digest fields this pin covers embed the
@@ -5848,7 +5845,7 @@ mod tests {
         // Re-baselined again for the Phase 1 card lane merge (2026-09):
         // merging lead/pauper-meta-cards-v1 (wave 1 + wave 2/Urzatron) into
         // the Phase 1 branch moved KERNEL_CARDDB_HASH again (from
-        // 0xde59_c501_e943_f3fd to 0x064a_7c98_9255_ab3c), same root cause.
+        // 0xde59_c501_e943_f3fd to 0x064a_..._ab3c (catalog v34)), same root cause.
         // Old (wave-1) value:
         // "0fd11d97f708f191e89c0039a0d65a48c2b63a38b68cbeaa86c0dc152c16498f".
         // New value is this test's own live-computed digest, read directly
@@ -5856,7 +5853,7 @@ mod tests {
         // discipline as the prior re-baseline note above.
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "48ace9c3c2232847215101849fbcd751f758cb4527690fe39d9fee20aa6ac45f",
+            "dd73008fbc535cdf3f0a14e52e0314b126d86aa4db0ea7542d30b45b39e1437a",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }

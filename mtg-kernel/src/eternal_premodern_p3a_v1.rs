@@ -154,9 +154,10 @@ pub(crate) fn execute(op: &P3aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         P3aOpV1::AnarchyV1 => {
             // Each permanent's current colors: Painter's Servant's and Wild
             // Mongrel's count.
-            let white = crate::card_def::mana_color_mask(ManaColor::W);
+            let color = crate::text_color_change_v1::resolving_color(state, ctx, ManaColor::W);
+            let mask = crate::card_def::mana_color_mask(color);
             let victims = battlefield(state)
-                .filter(|&object| crate::engine::object_color_mask(state, object) & white != 0)
+                .filter(|&object| crate::engine::object_color_mask(state, object) & mask != 0)
                 .collect::<Vec<_>>();
             destroy_batch(state, victims);
         }
@@ -176,7 +177,8 @@ pub(crate) fn execute(op: &P3aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let host = live_link(state, creature);
-            crate::eternal_legacy_e9a_v1::grant_protections(state, &[host], &[ManaColor::R]);
+            let color = crate::text_color_change_v1::resolving_color(state, ctx, ManaColor::R);
+            crate::eternal_legacy_e9a_v1::grant_protections(state, &[host], &[color]);
         }
         P3aOpV1::PillarDamageV1 { player } => {
             // The Pillar deals the damage even if it has left the battlefield.
@@ -258,10 +260,15 @@ fn note_spell_cast(state: &mut GameState, spell: ObjectId, caster: PlayerId) {
             );
         }
     }
-    let red = crate::card_def::mana_color_mask(ManaColor::R);
-    if crate::engine::object_color_mask(state, spell) & red != 0 {
+    let spell_colors = crate::engine::object_color_mask(state, spell);
+    if spell_colors != 0 {
         let opponent = caster.opponent();
-        let warmths = active_permanents(state, WARMTH, Some(opponent)).collect::<Vec<_>>();
+        let warmths = active_permanents(state, WARMTH, Some(opponent))
+            .filter(|&warmth| {
+                let color = crate::text_color_change_v1::text_color(state, warmth, ManaColor::R);
+                spell_colors & crate::card_def::mana_color_mask(color) != 0
+            })
+            .collect::<Vec<_>>();
         for warmth in warmths {
             let source = AbilitySourceContractV4::capture(state, warmth);
             queue_trigger(state, source, opponent, warmth_life(), None);

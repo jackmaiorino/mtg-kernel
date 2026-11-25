@@ -34,7 +34,13 @@ Offline input tools for cube self-play training configs:
 
 4. **Canonical deck hash** (`deal.canonical_decks_sha256`): hashes a list of decks, each given as card names (`deal.card_names_by_id` and `deal.deck_card_names` translate card ids through a pool). Each deck is written as sorted `name count` lines followed by one empty line, LF line endings, UTF-8, and SHA-256 runs over that text, so card order, file formatting, line endings and provenance fields cannot change it.
 
-5. **M4 reads** (m4-interfaces/v2, read plan v2, signed A6 part 1). Standard library only; the read constants come from a declaration file (`mtg-kernel-cube-read-declaration/v2`), never from defaults.
+5. **Deck-signal summary** (`tools/cube_v1/deck_signal_summary.py`): reads the JSONL of one part of the deck-signal experiment (`cube_deck_signal_v1 --part A|B --cube CUBE --gaps GAPS --fence FENCE --out games.jsonl --record run.json [--workers N]`, `eternal-fixtures` example) and computes the design note's section 10 readings under three treatments of halted games:
+   ```bash
+   python tools/cube_v1/deck_signal_summary.py --games games.jsonl --record run.json --out summary.json
+   ```
+   Part A: C's mean pair score with its 95% paired bootstrap interval (10,000 resamples, draw `t` of resample `b` is `seed(["bootstrap", "deck-signal-A", b, t]) mod n`) and the fixed 0.55 reading, or `technical_failure` above 5% halted games, or `incomplete` short of 400 pairs. Part B: the standard deviation of deck strength under the additive model, raw and with game noise removed, with a bootstrap interval over decks (namespace `deck-signal-B`).
+
+6. **M4 reads** (m4-interfaces/v2, read plan v2, signed A6 part 1). Standard library only; the read constants come from a declaration file (`mtg-kernel-cube-read-declaration/v2`), never from defaults.
    - `seeds_v1.py` ports `SplitMix64`, `derive_seed`, `game_seed`, `pod_pairings` and the seat coin from the Rust; `mtg-kernel/tests/cube_read_seed_goldens_v1.rs` pins the same constants on the Rust side.
    - `pod_record.py` validates `mtg-kernel-cube-pod-record/v2`: every field, type and key order, read-pod seeds with their source names, the dealt builder pin, `q`, the halt ledger and score rules.
    - `deal_common.py` deals C(P) (run-free dealer key) and gives its game seeds `seed([ns, "game", run, i, s, o, j(, q)])`. `deal.py` is unchanged.
@@ -42,7 +48,7 @@ Offline input tools for cube self-play training configs:
    - `read_sets.py` opens a set directory: manifest, plans, prep acceptance (per-unit markers, byte identity across executions), the chosen execution (watchdog rerun rules), look allocation, restarts and panel verification.
    - `readers.py --declaration DECL.json --read READ --look L --sets DIR... [--pool P --constants C]` writes one report per read and look, in exact rational arithmetic, with the drop and both signed completions, the A6.5 void rule and the signed disposition (`win`, `loss`, `extend`, `not_won`, `void`; `symmetric` or `failed` for the A/A; none for report-only reads). An unsigned declaration reads only the `test` namespace.
 
-6. **Tests**:
+7. **Tests**:
    ```bash
    python -m unittest discover -v -s tools/cube_v1/tests -p 'test_*.py'
    ```

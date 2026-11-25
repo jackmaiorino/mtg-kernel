@@ -11,6 +11,7 @@ pub(crate) fn build_opening_state_v1(
         mainboards,
         pair_environment_seed,
         Some(starting_player),
+        None,
     )
     .map_err(|error| error.to_string())
 }
@@ -24,6 +25,7 @@ impl FastActorSessionV1 {
             episode_id: parts.episode_id,
             max_physical_decisions: parts.max_physical_decisions,
             max_policy_steps: parts.max_policy_steps,
+            max_stack_objects: None,
             state: parts.state,
             surface: PolicySurfaceV5::new_for_session(),
             environment_revision: 0,

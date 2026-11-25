@@ -1,5 +1,19 @@
 name: CI
 
+# Self-hosted runners and pull requests from forks. Several jobs below can run
+# on the repository's self-hosted runners (15 registered on 2026-11-24). Their
+# runs-on conditions admit only events from this repository by the accounts in
+# MTG_CI_SELF_HOSTED_ACTORS. That is not a boundary by itself: a pull request
+# runs its own copy of this file, so a fork can rewrite those conditions or
+# name a self-hosted label directly. What keeps fork code off those runners is
+# the repository setting that holds every outside contributor's run until a
+# maintainer approves it (Settings, Actions, General: require approval for all
+# external contributors; members of the organization are not held). Approving
+# a run approves the workflow files in that
+# pull request: never approve one without reading its diff under
+# .github/workflows/ and .github/actions/. Repository-level runners cannot be
+# limited to chosen workflows.
+
 'on':
   push:
     branches:
@@ -222,7 +236,7 @@ jobs:
             # markdown are irrelevant. build.rs still hashes every tracked
             # file into its provenance digest; no test pins that value.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/check_rust_integration_parts.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -308,7 +322,7 @@ jobs:
           # self-hosted build exceeds its 15-minute step limits).
           # limited-model-4 and -7 also stay hosted pending arm64 parity.
           # Their compilers were killed in measurement run 44986774810.
-          MAC_ELIGIBLE: '["eternal-integration", "workspace-targets", "native-store", "standard", "limited-store", "limited", "limited-model", "limited-model-1", "limited-model-2", "limited-model-3", "limited-model-5", "limited-model-6", "limited-model-8", "limited-model-9", "limited-v5", "python-shard-0", "python-shard-1"]'
+          MAC_ELIGIBLE: '["workspace-targets", "native-store", "standard", "limited-store", "limited", "limited-model", "limited-model-1", "limited-model-2", "limited-model-3", "limited-model-5", "limited-model-6", "limited-model-8", "limited-model-9", "limited-v5", "python-shard-0", "python-shard-1"]'
           SCOPE: ${{ steps.scope.outputs.scope }}
           CHECKS: ${{ steps.checks.outputs.checks || 'all' }}
           PYTHON_RELEVANT: ${{ steps.classify.outputs.python_relevant }}
@@ -480,7 +494,6 @@ jobs:
           - workspace-targets
           - standard
           - eternal
-          - eternal-integration
           - cuda
           - native-store
           - native-store-1
@@ -495,7 +508,7 @@ jobs:
         # complement dispatch runs exactly the Windows groups excluded here.
         # native-store-1 is a Windows-only part (see its step), so every Linux
         # set excludes it.
-        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"eternal-integration"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"},{"os":"ubuntu-24.04","group":"native-store-1"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"},{"os":"windows-2025","group":"native-store-1"}]' || '[{"os":"ubuntu-24.04","group":"native-store-1"}]') }}
+        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"},{"os":"ubuntu-24.04","group":"native-store-1"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"},{"os":"windows-2025","group":"native-store-1"}]' || '[{"os":"ubuntu-24.04","group":"native-store-1"}]') }}
     # Linux groups use GitHub's hosted runners, which are free for this
     # public repository: the WSL runners can't be pinned to cores, so they
     # pause for any host reservation. Windows groups default to GitHub's
@@ -519,7 +532,7 @@ jobs:
     # job (2026-11-12: at 6 CPUs and BelowNormal, workspace-targets took 54
     # min there, 113 hosted).
     # The Linux groups named in MTG_CI_LINUX_GROUPS (a JSON list, for example
-    # '["eternal-integration"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on
+    # '["workspace-targets"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on
     # labels, for example '["self-hosted", "mtg-ci-linux", "heavy"]') for
     # every event except a pull request from a fork. Both must be set; with
     # either unset or the list empty every Linux group stays hosted. A
@@ -721,12 +734,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # The Eternal catalog runs as two groups. This one builds the library's
-      # test binary (the samples above, the checks and the library filters);
-      # eternal-integration builds the plain library and the integration
-      # suites. The two share only the dependency builds, so running them as
-      # separate jobs repeats almost no compile and each gets a runner's
-      # whole memory.
+      # This group builds the Eternal catalog library's test binary (the
+      # samples above, the checks and the library filters). The integration
+      # suites build the plain library instead, in eternal-integration-build,
+      # and run in the parts of rust-eternal-integration-parts. The two builds
+      # share only the dependency builds, so separate jobs repeat almost no
+      # compile and each gets a runner's whole memory.
       - name: Validate the eternal catalog
         if: matrix.group == 'eternal'
         run: |
@@ -742,22 +755,7 @@ jobs:
           # the test build and the small targets.
           cargo clippy --release --locked -p mtg-kernel --lib --features eternal-fixtures -- -D warnings
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
-          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1:: eternal_actor_ eternal_cost_choice_v1::
-
-      # One job. Until 2026-11-18 two tests that play every playable deck took
-      # 24 and 15 of the suite's 60 test minutes on hosted Linux, one game
-      # after another; they and six shorter deck tests now play their games
-      # on worker threads (in_parallel in tests/eternal/eternal_catalog_v1.rs).
-      # run_rust_integration_tests.py can also run the suite in shards
-      # (--shard-index, --shard-count) if it outgrows one job again.
-      - name: Run the integration suites on the eternal catalog
-        if: matrix.group == 'eternal-integration'
-        run: |
-          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
-            export CARGO_BUILD_JOBS=2
-          fi
-          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
-          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
+          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1:: eternal_actor_ eternal_cost_choice_v1:: two_forty_card_cube_decks
 
       # The library tests and all other targets are disjoint, so the two
       # halves of the workspace suite run as parallel jobs. Until 2026-11-16
@@ -1507,7 +1505,7 @@ jobs:
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
-    needs: [detect-changes, rust-test-groups, limited-build, rust-limited-groups]
+    needs: [detect-changes, rust-test-groups, limited-build, rust-limited-groups, eternal-integration-build, rust-eternal-integration-parts, eternal-integration-inventory]
     if: always() && needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
     timeout-minutes: 10
     strategy:
@@ -1520,11 +1518,383 @@ jobs:
       - name: Require every Rust test group
         run: |
           test "${{ needs.rust-test-groups.result }}" = success
-          # The pr set's Windows part has no Limited groups.
+          # The pr set's Windows part has no Limited groups and no Eternal
+          # integration parts.
           if [ "${{ needs.detect-changes.outputs.scope }}" != windows-pr ]; then
             test "${{ needs.limited-build.result }}" = success
             test "${{ needs.rust-limited-groups.result }}" = success
+            test "${{ needs.eternal-integration-build.result }}" = success
+            test "${{ needs.rust-eternal-integration-parts.result }}" = success
+            # Skipped when a part failed, so it also fails the gate then.
+            test "${{ needs.eternal-integration-inventory.result }}" = success
           fi
+
+  # The integration suites of the Eternal catalog ran as one job until
+  # 2026-11-24: 27 minutes of compiling, then 90 modules one process after
+  # another, 65 to 98 minutes on a hosted Linux runner, 90 to 134 in all. One
+  # job per system now builds the test binary once and the parts below run it
+  # side by side. The Standard suite on this catalog (4 minutes to compile on
+  # top of this build, seconds to run) is a part of its own there: in this
+  # job it would hold every part back, since they start when this job ends.
+  eternal-integration-build:
+    name: Build shared Eternal integration tests (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        # The systems the eternal-integration group ran on: Linux in the pr
+        # and full sets; Windows in every set but a pull request's own (main,
+        # tags, manual dispatches and the Windows complement cover it).
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'full' && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+    # Hosted runners only: every hosted job checks out to the same path, so
+    # the source paths in Cargo's freshness records stay valid in the parts.
+    runs-on: ${{ matrix.os }}
+    steps:
+      # The swap this step adds is compressed memory (zram): see the note at
+      # the first swap step of this workflow (job rust-quality).
+      - name: Add swap space for the heavy builds
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
+          free -m
+
+      # Windows can resolve `bash` to the WSL launcher in System32 first;
+      # put Git Bash ahead of it for every later step.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
+      # Point TEMP and TMP at runner.temp on Windows so the runner wipes any
+      # leftover temporary folders after each job, even if a test crashes.
+      - name: Point Windows TEMP and TMP at runner.temp
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WINDOWS_RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          mkdir -p "$WINDOWS_RUNNER_TEMP"
+          runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        uses: ./.github/actions/memory-guard
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+
+      - name: Set up pinned Python for the integration runner
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-tests-${{ matrix.os }}-
+
+      # Builds the plain library and the suite's test binary with the same
+      # Cargo command the parts use, then writes the names of the binary's
+      # tests and runs none: the inventory job compares the parts with it.
+      - name: Build the Eternal integration suite and list its tests
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
+          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --list-only eternal-integration-tests.json
+
+      # Keep Cargo's fingerprints and dep-info with the outputs, so the parts
+      # reuse them only through Cargo's own freshness checks.
+      - name: Package the shared Eternal integration build
+        run: |
+          tar -cf eternal-integration.tar --exclude=release/incremental -C target release
+          ls -l eternal-integration.tar
+
+      - name: Upload the shared Eternal integration build
+        uses: actions/upload-artifact@v4
+        with:
+          name: eternal-integration-build-${{ matrix.os }}-${{ github.run_attempt }}
+          path: eternal-integration.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+
+      - name: Upload the Eternal integration test list
+        uses: actions/upload-artifact@v4
+        with:
+          name: eternal-integration-list-${{ matrix.os }}-${{ github.run_attempt }}
+          path: eternal-integration-tests.json
+          if-no-files-found: error
+          # Small, and the inventory job of a later rerun needs it.
+          retention-days: 14
+
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
+
+  # The parts of the Eternal integration suite start from the shared build
+  # above. run_rust_integration_tests.py places the suite's modules, and the
+  # tests its timing table isolates, longest first into eight parts; every
+  # part checks against the binary that each test is in exactly one part and
+  # writes the names of the tests it executed. On 2026-11-24 one test took 10
+  # to 16 minutes by itself, so more parts would not shorten the longest one.
+  rust-eternal-integration-parts:
+    name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
+    needs: [detect-changes, eternal-integration-build]
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'full' && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+        # Parts are named <group>, <group>-1, ..., one per shard of the plan.
+        group:
+          - eternal-integration
+          - eternal-integration-1
+          - eternal-integration-2
+          - eternal-integration-3
+          - eternal-integration-4
+          - eternal-integration-5
+          - eternal-integration-6
+          - eternal-integration-7
+          # Not a shard: the Standard suite on the Eternal catalog, which
+          # compiles its own test binary on top of the shared build.
+          - eternal-standard
+    # Hosted runners only, on the system of the shared build: its freshness
+    # records name hosted checkout paths and its binary is for that system.
+    runs-on: ${{ matrix.os }}
+    steps:
+      # A part compiles nothing when it reuses the shared build. If Cargo
+      # finds that build stale the part compiles the suite itself, and then
+      # needs the same swap space as the build job (compressed memory: see
+      # the note at the first swap step of this workflow, job rust-quality).
+      - name: Add swap space in case the suite is compiled again
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
+          free -m
+
+      # Windows can resolve `bash` to the WSL launcher in System32 first;
+      # put Git Bash ahead of it for every later step.
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
+      # Point TEMP and TMP at runner.temp on Windows so the runner wipes any
+      # leftover temporary folders after each job, even if a test crashes.
+      - name: Point Windows TEMP and TMP at runner.temp
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WINDOWS_RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          mkdir -p "$WINDOWS_RUNNER_TEMP"
+          runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        uses: ./.github/actions/memory-guard
+
+      - name: Install pinned Rust in a fresh toolchain directory
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
+          fi
+          printf 'RUSTUP_HOME=%s\n' "$RUSTUP_HOME" >> "$GITHUB_ENV"
+          fdn_rust_channel=$(sed -n 's/^channel = "\([^"]*\)".*$/\1/p' rust-toolchain.toml)
+          test -n "$fdn_rust_channel"
+          rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
+
+      - name: Set up pinned Python for the integration runner
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-tests-${{ matrix.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-registry-tests-${{ matrix.os }}-
+
+      # The build is kept for a day. A part rerun after that finds none and
+      # compiles the suite itself, as it does when Cargo finds the build
+      # stale, so the step may fail without failing the part.
+      - name: Download the shared Eternal integration build
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          # A partial retry keeps the build job's artifact from the prior
+          # attempt. Every match belongs to this run and its immutable head.
+          pattern: eternal-integration-build-${{ matrix.os }}-*
+          merge-multiple: false
+          path: ${{ runner.temp }}/shared-eternal-integration-build
+
+      # Cargo reuses an output only when it is newer than every source file
+      # it recorded. Unpacked files get one time after this checkout, so the
+      # Cargo commands below reuse them; anything whose sources, settings or
+      # toolchain differ is still rebuilt as usual.
+      - name: Unpack the shared Eternal integration build as current output
+        run: |
+          staging="${RUNNER_TEMP:?}/shared-eternal-integration-build"
+          if [ "$RUNNER_OS" = Windows ]; then
+            staging=$(cygpath -u "$staging")
+          fi
+          mkdir -p target
+          # Attempts keep separate directories; take the newest.
+          archive=
+          if [ -d "$staging" ]; then
+            archive=$(find "$staging" -mindepth 2 -maxdepth 2 -type f -path "*/eternal-integration-build-*/eternal-integration.tar" | sort -V | tail -n 1)
+          fi
+          if [ -z "$archive" ]; then
+            echo "::warning::No shared Eternal integration build to unpack: this part compiles the suite itself."
+            exit 0
+          fi
+          tar -xf "$archive" -C target
+          rm -rf -- "$staging"
+          stamp=$(date +%s)
+          find target -exec touch -d "@$stamp" {} +
+
+      # A part that compiles the suite again still tests the same code, only
+      # later: say so in the run instead of failing. Cargo's status lines are
+      # read without color, which would split the words searched for.
+      - name: Check that Cargo reuses the shared build
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
+          CARGO_TERM_COLOR=never python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --no-run 2>&1 | tee eternal-integration-build.log
+          if grep -q 'Compiling mtg-kernel' eternal-integration-build.log; then
+            echo "::warning::The shared Eternal integration build was not reused: this part compiled the suite again."
+          fi
+
+      - name: Run this part of the Eternal integration suite
+        if: matrix.group != 'eternal-standard'
+        run: |
+          part=0
+          if [ '${{ matrix.group }}' != eternal-integration ]; then
+            part='${{ matrix.group }}'
+            part="${part##*-}"
+          fi
+          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --shard-index "$part" --shard-count 8 --executed-list eternal-integration-executed.json
+
+      # Pauper, Legacy and Vintage catalog: the Standard catalog plus
+      # data/eternal_v1. The Standard suite also runs on it, since every
+      # Standard card keeps its id and program in this build.
+      - name: Run the Standard integration suite on the eternal catalog
+        if: matrix.group == 'eternal-standard'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
+          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
+
+      - name: Upload the names of the tests this part executed
+        if: matrix.group != 'eternal-standard'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eternal-integration-executed-${{ matrix.os }}-${{ matrix.group }}-${{ github.run_attempt }}
+          path: eternal-integration-executed.json
+          if-no-files-found: error
+          # Small, and the inventory job of a later rerun needs it.
+          retention-days: 14
+
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
+
+  # Second check on the parts, across jobs: the union of the test names the
+  # parts executed must equal the list the build job wrote from the unsplit
+  # binary, with no test in two parts and a report from every part. Runs only
+  # when every part passed; the Rust gate below requires it.
+  eternal-integration-inventory:
+    name: Eternal integration inventory (${{ matrix.os }})
+    needs: [detect-changes, eternal-integration-build, rust-eternal-integration-parts]
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr' && needs.detect-changes.outputs.scope != 'draft' && needs.detect-changes.outputs.checks == 'all'
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || needs.detect-changes.outputs.scope == 'full' && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
+    # The check reads small JSON files; matrix.os names the system whose
+    # parts it checks, not its own runner.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Download the Eternal integration test list
+        uses: actions/download-artifact@v4
+        with:
+          pattern: eternal-integration-list-${{ matrix.os }}-*
+          merge-multiple: false
+          path: eternal-integration-lists
+
+      - name: Download the names of the tests the parts executed
+        uses: actions/download-artifact@v4
+        with:
+          pattern: eternal-integration-executed-${{ matrix.os }}-*
+          merge-multiple: false
+          path: eternal-integration-parts
+
+      - name: Require every listed test in exactly one part
+        run: python3 python/tools/check_rust_integration_parts.py --listed eternal-integration-lists --parts eternal-integration-parts --count 8
 
   # The Python shards of one system test the same two default-feature
   # binaries. One hosted job per system builds them once (each shard built
@@ -1973,7 +2343,7 @@ jobs:
   # line run that branch's own ci.yml, which carries its own copy.
   post-merge-report:
     name: Report a red post-merge run
-    needs: [detect-changes, rust-quality, rust-test-groups, limited-build, rust-limited-groups, rust-tests, python-env-build, python-tests]
+    needs: [detect-changes, rust-quality, rust-test-groups, limited-build, rust-limited-groups, eternal-integration-build, rust-eternal-integration-parts, eternal-integration-inventory, rust-tests, python-env-build, python-tests]
     if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && needs.detect-changes.outputs.scope != 'draft' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.windows_runner == '' && inputs.scope == '')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
