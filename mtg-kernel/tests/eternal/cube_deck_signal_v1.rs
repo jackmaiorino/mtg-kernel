@@ -43,6 +43,7 @@ const TINY_CAPS: GameCaps = GameCaps {
     max_decisions: 200,
     max_physical_decisions: 16_384,
     max_policy_steps: 32_768,
+    max_stack_objects: None,
 };
 
 fn pool() -> CubePool {

@@ -12,7 +12,8 @@
 //! [`mtg_kernel::cube_deck_signal_v1`] for the deck rules and the seeds. The
 //! pool is the cube list minus the gap record minus the fence. Every game
 //! runs under the A2.1 caps (driver decisions 16,384, physical decisions
-//! 16,384, policy steps 32,768), passed explicitly.
+//! 16,384, policy steps 32,768) and the stack-size cap of 128 objects
+//! (A2 amendment 1), passed explicitly.
 //!
 //! Writes `--out` (one JSONL line per game, in logical order) and `--record`
 //! (the run record: binary commit, card database hash, input hashes
@@ -183,6 +184,7 @@ fn load_run(args: &Args) -> Fallible<Run> {
             "max_driver_decisions": caps.max_decisions,
             "max_physical_decisions": caps.max_physical_decisions,
             "max_policy_steps": caps.max_policy_steps,
+            "max_stack_objects": caps.max_stack_objects,
             "a2_caps": caps == A2_CAPS,
         },
         "seed_namespace": SEED_NAMESPACE,
