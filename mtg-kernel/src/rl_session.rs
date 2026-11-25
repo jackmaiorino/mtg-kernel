@@ -1768,7 +1768,8 @@ where
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. }
-        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. } => {
+        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. }
+        | ActionSemanticV1::ChooseTextColorWordV1 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -3606,7 +3607,8 @@ fn flat_validate_semantic_policy_pair_v1(
             | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
             | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
             | ActionSemanticV1::FinishDivineTargetsV44 { .. }
-            | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. },
+            | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. }
+            | ActionSemanticV1::ChooseTextColorWordV1 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -5290,6 +5292,9 @@ fn flat_validate_expected_decision_numeric_domain(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
+    if crate::text_color_change_v1::requires_successor(&session.state) {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
     if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && !session.is_common_v40())
         || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && !session.is_common_v40())
         || (crate::krenko_v1::requires_successor(&session.state)
@@ -6099,6 +6104,13 @@ impl RlEpisodeSessionV1 {
             crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
             })?;
+        }
+        if let Some(outside) = &outside_the_game {
+            for cards in outside {
+                crate::card_def::preflight_outside_the_game(cards).map_err(|error| {
+                    session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+                })?;
+            }
         }
         for cards in card_ids {
             crate::rl::require_declared_cards_for_scope(
@@ -7002,7 +7014,9 @@ impl RlEpisodeSessionV1 {
             return;
         }
 
-        if self.state.extra_turn_v1.is_some() {
+        // The schema 5 public contract reports the turn schedule in its
+        // policy observation, so its session follows extra turns.
+        if self.state.extra_turn_v1.is_some() && !self.state.public_shroud_v1 {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
                 self.deck_hashes,
@@ -10226,6 +10240,18 @@ impl FastActorSessionV1 {
             return;
         }
 
+        if crate::text_color_change_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:text_color_change_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (crate::faebloom_trick_v43::requires_successor(&self.state, None)
             && !matches!(
                 self.flat_action_contract_mode,
@@ -21537,6 +21563,64 @@ mod tests {
                 .any(|&id| card(&sampled, id) != card(&session, id));
         }
         assert!(resampled, "the rest of the library is still resampled");
+    }
+
+    #[test]
+    fn fast_actor_session_refuses_text_color_changes_state() {
+        let mut session = FastActorSessionV1::reset_with_limits(46_001, 46_001, 128, 16_384);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("expected initial decision");
+        };
+        let island_def = crate::card_def::card_id_by_name("Island").unwrap();
+        let perm = session.state.objects.push(crate::state::GameObject {
+            card_def: island_def,
+            name: crate::card_def::CARD_DEFS[island_def as usize]
+                .object_name
+                .into(),
+            owner: PlayerId::P0,
+            controller: PlayerId::P0,
+            zone: crate::state::Zone::Battlefield,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: crate::state::ObjectStateV4::from_card_def(island_def),
+            spell_copy_origin: None,
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        session.state.players[0].battlefield.push(perm);
+        assert!(crate::text_color_change_v1::apply_change(
+            &mut session.state,
+            perm,
+            perm,
+            crate::mana::ManaColor::U,
+            crate::mana::ManaColor::G,
+        ));
+        assert_eq!(
+            session.flat_policy_observation_v1(decision),
+            Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        );
+        assert_eq!(
+            session.flat_policy_observation_v2(decision),
+            Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
+        );
+        assert!(session
+            .kernel_search_redeterminized_clone_v4(46_002)
+            .is_err());
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        match session.current_response() {
+            FastActorResponseV1::Terminal(terminal) => {
+                assert_eq!(
+                    terminal.terminal_reason,
+                    "fail_closed:text_color_change_successor_required"
+                );
+            }
+            other => panic!("expected fail-closed terminal, got {other:?}"),
+        }
     }
 }
 

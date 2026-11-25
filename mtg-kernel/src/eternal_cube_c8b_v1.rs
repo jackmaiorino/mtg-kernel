@@ -565,6 +565,7 @@ struct CapturedCopyValues {
     mods: C8bCopyModsV1,
     copied_end_step_sacrifices_v1: u32,
     copied_nightmare_v1: bool,
+    prototyped: bool,
 }
 
 /// Reads the CR 707.2 copiable values of a battlefield permanent `object`,
@@ -584,6 +585,7 @@ fn capture_battlefield_copiable_values(
             mods: C8bCopyModsV1::default(),
             copied_end_step_sacrifices_v1: 0,
             copied_nightmare_v1: false,
+            prototyped: false,
         });
     }
     let link = live_link(state, object);
@@ -615,12 +617,14 @@ fn capture_battlefield_copiable_values(
         event::copiable_token_abilities_v1(state, object).unwrap_or(0);
     let copied_nightmare_v1 =
         crate::effect::harvester_v1::copiable_nightmare(state, object).unwrap_or(false);
+    let prototyped = crate::eternal_pauper_pf2c_v1::is_prototyped_permanent(state, object);
     Some(CapturedCopyValues {
         card_def: live.card_def,
         face_index: live.v4.face_index,
         mods,
         copied_end_step_sacrifices_v1,
         copied_nightmare_v1,
+        prototyped,
     })
 }
 
@@ -866,6 +870,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
             mods.illusion_sacrifice = true;
             c8b_state(state).permanent_copies.push(saved);
             apply_copied_characteristics(state, entering, values.card_def, values.face_index, mods);
+            if values.prototyped {
+                crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, entering);
+            }
             crate::standard_cards_v1::note_copied_definitions(
                 state,
                 entering,
@@ -1161,6 +1168,7 @@ pub(crate) fn end_temp_copy_before_departure(state: &mut GameState, object: Obje
                 copy_mods.push((link, prev));
             }
         }
+        crate::eternal_pauper_pf2c_v1::restore_saheeli_prototype(state, object);
     }
 }
 
@@ -1255,6 +1263,7 @@ pub(crate) fn begin_cleanup(state: &mut GameState) {
                 copy_mods.push((saved.host, prev));
             }
         }
+        crate::eternal_pauper_pf2c_v1::restore_saheeli_prototype(state, saved.host.object);
     }
     if read_state(state).is_some_and(|c8b| !c8b.death_lki.is_empty()) {
         let keep: Vec<bool> = read_state(state)
@@ -1427,6 +1436,7 @@ fn create_token_copy(
         mods,
         copied_end_step_sacrifices_v1,
         copied_nightmare_v1,
+        prototyped,
     } = values;
     let mut proposal = ProposedEvent::create_token(card_def, controller);
     if let ProposedEvent::CreateToken(token) = &mut proposal {
@@ -1456,7 +1466,13 @@ fn create_token_copy(
     if !mods.is_empty() {
         c8b_state(state).pending_token_mods = Some(mods);
     }
+    if prototyped {
+        crate::eternal_pauper_pf2c_v1::set_pending_token_prototyped(state, true);
+    }
     event::propose_and_commit_batch(state, vec![proposal]);
+    if prototyped {
+        crate::eternal_pauper_pf2c_v1::set_pending_token_prototyped(state, false);
+    }
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal.c8b.pending_token_mods = None;
     }
@@ -1512,6 +1528,7 @@ fn resolve_saheeli_copy(ctx: &ExecCtx, state: &mut GameState) {
         .is_some_and(|c8b| c8b.saheeli_copies.iter().any(|copy| copy.host == host_link));
     let own_def = state.objects.get(target_artifact).card_def;
     if !already_saved {
+        crate::eternal_pauper_pf2c_v1::save_saheeli_prototype(state, target_artifact);
         let prev_mods = current_copy_mods(state, host_link);
         let live = state.objects.get(target_artifact);
         let saved = C8bTempCopyV1 {
@@ -1534,6 +1551,11 @@ fn resolve_saheeli_copy(ctx: &ExecCtx, state: &mut GameState) {
         values.face_index,
         mods,
     );
+    if values.prototyped {
+        crate::eternal_pauper_pf2c_v1::note_prototyped_entry(state, target_artifact);
+    } else {
+        crate::eternal_pauper_pf2c_v1::clear_prototyped(state, target_artifact);
+    }
     crate::standard_cards_v1::note_copied_definitions(
         state,
         target_artifact,
@@ -1585,6 +1607,7 @@ fn resolve_vaultborn_death_copy(ctx: &ExecCtx, state: &mut GameState) {
             mods,
             copied_end_step_sacrifices_v1: copied_sacrifices,
             copied_nightmare_v1: copied_nightmare,
+            prototyped: false,
         },
     );
 }
