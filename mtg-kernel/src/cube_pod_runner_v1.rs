@@ -1383,6 +1383,30 @@ fn validate_common_config(
     Ok(())
 }
 
+/// Checks training or client pod settings before drafting or writing a run record.
+pub fn validate_training_pod_config(
+    pod_use: PodUse,
+    namespace: &str,
+    run: &str,
+    caps: PodCaps,
+) -> Result<(), PodRunnerError> {
+    validate_common_config(pod_use, namespace, run, caps)?;
+    if pod_use.is_read_use() {
+        return Err(PodRunnerError::InvalidPlan(format!(
+            "read use {:?} must run from a read plan, not run_training_pod",
+            pod_use.as_str()
+        )));
+    }
+    if caps.max_replays > TRAINING_MAX_REPLAYS {
+        return Err(PodRunnerError::InvalidCaps(format!(
+            "training max_replays {} exceeds {TRAINING_MAX_REPLAYS}",
+            caps.max_replays
+        )));
+    }
+
+    Ok(())
+}
+
 pub(crate) fn validate_builder_and_dealt(
     source: DeckSource,
     builder: &BuilderRef,
@@ -1459,19 +1483,7 @@ pub fn run_training_pod(
     chairs: &mut [TrainingChair; SEATS],
     pilot: &(dyn GamePilot + Sync),
 ) -> Result<PodRecord, PodRunnerError> {
-    validate_common_config(config.pod_use, &config.namespace, &config.run, config.caps)?;
-    if config.pod_use.is_read_use() {
-        return Err(PodRunnerError::InvalidPlan(format!(
-            "read use {:?} must run from a read plan, not run_training_pod",
-            config.pod_use.as_str()
-        )));
-    }
-    if config.caps.max_replays > TRAINING_MAX_REPLAYS {
-        return Err(PodRunnerError::InvalidCaps(format!(
-            "training max_replays {} exceeds {TRAINING_MAX_REPLAYS}",
-            config.caps.max_replays
-        )));
-    }
+    validate_training_pod_config(config.pod_use, &config.namespace, &config.run, config.caps)?;
 
     let (mut learning, mut older, mut fixture) = (0usize, 0usize, 0usize);
     for chair in chairs.iter() {

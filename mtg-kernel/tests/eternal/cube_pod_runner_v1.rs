@@ -846,6 +846,103 @@ fn acceptance_6_synthetic_halt() {
     assert_eq!(report.games_by_end_kind.get("natural"), Some(&70));
 }
 
+#[test]
+fn sibling_replay_keeps_the_coin_binding_for_both_focals_and_flips() {
+    struct ReplayTarget {
+        game: usize,
+        seats: [usize; 2],
+        decks: [Vec<u16>; 2],
+        env: [u64; 2],
+    }
+    struct ReplayPilot<'a>(&'a [ReplayTarget]);
+
+    impl GamePilot for ReplayPilot<'_> {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            let decks = spec.decks.map(|deck| deck.card_ids());
+            let mut outcome = ScriptedPilot::natural_only().play(spec, caps);
+            if let Some(target) = self
+                .0
+                .iter()
+                .find(|target| target.decks == decks && target.env.contains(&spec.env_seed))
+            {
+                assert_eq!(spec.seats, target.seats);
+                if spec.env_seed == target.env[0] {
+                    outcome.end = GameEnd::Terminal {
+                        code: "engine_halted".to_owned(),
+                        classification: "engine_halted".to_owned(),
+                        reason: "fixture".to_owned(),
+                    };
+                }
+            }
+            outcome
+        }
+    }
+
+    let pool = pool();
+    let roles = training_roles_with_older([1, 5]).unwrap();
+    let cfg = TrainingPodConfig::uniform_a2(PodUse::Test, "test", "replay-coin", 0, 2);
+    let baseline = run_training_pod(
+        &pool,
+        &cfg,
+        &mut uniform_training_chairs(roles),
+        &ScriptedPilot::natural_only(),
+    )
+    .unwrap();
+    let pod_seed = baseline.seeds.pod_seed.unwrap();
+    let mut seen = [false; 2];
+    let mut targets = Vec::new();
+    for (group, (low, high)) in pod_pairings().into_iter().enumerate() {
+        if roles[low] != ChairRole::Learning || roles[high] != ChairRole::Learning {
+            continue;
+        }
+        let g = game_seed(pod_seed, group);
+        let coin =
+            (SplitMix64::seed(derive_seed(g, SeedStream::GameCoin, 0)).next_u64() & 1) as usize;
+        if std::mem::replace(&mut seen[coin], true) {
+            continue;
+        }
+        let seats = if coin == 0 { [low, high] } else { [high, low] };
+        let mut group_games = baseline
+            .games
+            .iter()
+            .filter(|game| game.group == group as u32);
+        let reference = group_games.next().unwrap();
+        assert_eq!(reference.role, GameRole::Reference);
+        for (game, focal) in group_games.zip([low, high]) {
+            let slot = usize::from(seats[1] == focal);
+            let sibling = &baseline.decks[game.decks[slot] as usize];
+            assert_eq!(sibling.chair, Some(focal as u8));
+            assert_eq!(sibling.build, Some(1));
+            assert_eq!(game.decks[1 - slot], reference.decks[1 - slot]);
+            assert_eq!(game.chairs, seats.map(|seat| Some(seat as u8)));
+            targets.push(ReplayTarget {
+                game: game.game as usize,
+                seats,
+                decks: game
+                    .decks
+                    .map(|id| baseline.decks[id as usize].cards.clone()),
+                env: [attempt_seeds(g, 0).1, attempt_seeds(g, 1).1],
+            });
+        }
+    }
+    assert_eq!(seen, [true, true]);
+    assert_eq!(targets.len(), 4);
+    let replayed = run_training_pod(
+        &pool,
+        &cfg,
+        &mut uniform_training_chairs(roles),
+        &ReplayPilot(&targets),
+    )
+    .unwrap();
+    assert_eq!(replayed.halts.len(), 4);
+    for target in targets {
+        let game = &replayed.games[target.game];
+        assert_eq!(game.attempts.len(), 2);
+        assert_eq!(game.attempts[1].env_seed, target.env[1]);
+        assert!(game.scores.is_some());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Acceptance test 7: Exhausted retries
 // ---------------------------------------------------------------------------
@@ -1542,38 +1639,39 @@ fn training_heartbeat_preserves_pod_record_bytes() {
             let progress = WorkerProgress::new(spec.episode);
             progress.begin(spec.episode);
             with_heartbeat(self.0, &progress, Duration::from_millis(1), || {
-                progress.decision_counter().store(1, Ordering::Relaxed);
-                // Keep one game active until a heartbeat has actually been written.
-                if spec.episode == 0 {
+                let outcome = UniformPilot.play(spec, caps);
+                // Give the sampler time to observe the real driver's final count.
+                if outcome.decisions != 0 && !self.0.with_added_extension("live").exists() {
                     let deadline = std::time::Instant::now() + Duration::from_secs(2);
                     while !self.0.with_added_extension("live").exists() {
                         assert!(std::time::Instant::now() < deadline);
                         std::thread::sleep(Duration::from_millis(1));
                     }
                 }
-                ScriptedPilot::natural_only().play(spec, caps)
+                outcome
             })
         }
     }
 
     let dir = TempTestDir::new("heartbeat-bytes");
-    let cfg = TrainingPodConfig::uniform_a2(PodUse::Test, "test", "heartbeat", 0, 1);
+    let mut cfg = TrainingPodConfig::uniform_a2(PodUse::Test, "test", "heartbeat", 0, 1);
+    cfg.caps.max_decisions = 40;
     let pool = pool();
     let roles = training_roles_with_older([1, 5]).unwrap();
-    let plain = run_training_pod(
+    let plain = unwrap_complete_or_stopped(run_training_pod(
         &pool,
         &cfg,
         &mut uniform_training_chairs(roles),
-        &ScriptedPilot::natural_only(),
-    )
-    .unwrap();
-    let sampled = run_training_pod(
+        &UniformPilot,
+    ));
+    let progress = dir.path().join("progress");
+    let sampled = unwrap_complete_or_stopped(run_training_pod(
         &pool,
         &cfg,
         &mut uniform_training_chairs(roles),
-        &HeartbeatPilot(&dir.path().join("progress")),
-    )
-    .unwrap();
+        &HeartbeatPilot(&progress),
+    ));
+    assert!(progress.with_added_extension("live").is_file());
     assert_eq!(plain.to_json_line(), sampled.to_json_line());
 }
 
