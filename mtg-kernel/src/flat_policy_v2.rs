@@ -5244,20 +5244,6 @@ impl FlatDecisionEncoderV2 {
         expected: FastActorDecisionV1,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<crate::flat_policy_v4::FlatDecisionV4, FlatDecisionErrorV2> {
-        // The action slice, the V6 observation and the V7 extensions each
-        // compute the same policy observation extensions from this borrowed
-        // state; the memo keeps the first result for the other two.
-        crate::rl::with_extensions_memo_v1(session.game_state(), || {
-            self.build_scoring_owned_v4_unmemoized(session, expected, buffers)
-        })
-    }
-
-    fn build_scoring_owned_v4_unmemoized(
-        &mut self,
-        session: &FastActorSessionV1,
-        expected: FastActorDecisionV1,
-        buffers: &mut FlatScoringOwnedBuffersV2<'_>,
-    ) -> Result<crate::flat_policy_v4::FlatDecisionV4, FlatDecisionErrorV2> {
         self.clear_typed_cache();
         let action_count = usize::try_from(expected.legal_action_count)
             .map_err(|_| FlatDecisionErrorV2::CheckedIntegerRange)?;

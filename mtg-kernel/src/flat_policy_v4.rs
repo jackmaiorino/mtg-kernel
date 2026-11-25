@@ -112,9 +112,15 @@ impl FastActorSessionV1 {
         encoder: &mut FlatDecisionEncoderV4,
         buffers: &mut FlatScoringOwnedBuffersV2<'_>,
     ) -> Result<FlatDecisionV4, FlatDecisionErrorV2> {
-        let mut decision = encoder
-            .common
-            .build_scoring_owned_v4(self, expected, buffers)?;
+        // The action slice, the V6 observation and the V7 extensions inside
+        // `build_scoring_owned_v4` each compute the same policy observation
+        // extensions from this borrowed state; the memo keeps the first
+        // result for the other two (`rl/extensions_memo_v1.rs`).
+        let mut decision = crate::rl::with_extensions_memo_v1(self.game_state(), || {
+            encoder
+                .common
+                .build_scoring_owned_v4(self, expected, buffers)
+        })?;
         // FlatV7: the London facts of a pregame decision; None in-game.
         decision.extensions.london_pregame = self
             .flat_london_pregame_v7()
