@@ -5,7 +5,7 @@ use mtg_kernel::card_def::CARD_DEFS;
 use mtg_kernel::cube_draft_build_v1::card_index::{
     is_land_v1, land_produces_colourless_v1, produced_colour_token_v1, provisional_pool_v1,
     CardIndexErrorV1, CardIndexV1, CubeTableSourceV1, CubeTableV1, DENSE_EXACT_TOKENS_V1,
-    FETCH_SUBTYPE_PREFIX_V1,
+    FETCH_SUBTYPE_PREFIX_V1, PROVISIONAL_TABLE_SHA256_V1,
 };
 use mtg_kernel::cube_draft_v1::{
     basic_land_ids, land_fetch_bits, land_mana_bits, CubePool, BASIC_LAND_NAMES, COLOUR_ORDER,
@@ -29,7 +29,6 @@ const TABLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../data/card_semantics_v1/cube_table_v1.json"
 );
-const TABLE_SHA256: &str = "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
 const INDEX_SHA256: &str = "fb2f6fa80f612fb100be983b1c2a4947f8c3add61aa2d81b187d8e49ea526b63";
 const PROVISIONAL_ROWS: usize = 545;
 const DENSE_FIELDS_AND_SCALES: &[u8] =
@@ -52,7 +51,8 @@ fn cube_text() -> String {
 }
 
 fn source() -> CubeTableSourceV1 {
-    CubeTableSourceV1::read_v1(Path::new(TABLE), TABLE_SHA256).expect("pinned cube table")
+    CubeTableSourceV1::read_v1(Path::new(TABLE), PROVISIONAL_TABLE_SHA256_V1)
+        .expect("pinned cube table")
 }
 
 fn provisional() -> (CardIndexV1, Vec<u16>) {
@@ -61,7 +61,8 @@ fn provisional() -> (CardIndexV1, Vec<u16>) {
 
 fn provisional_table() -> CubeTableV1 {
     let (index, _) = provisional();
-    CubeTableV1::load_v1(Path::new(TABLE), TABLE_SHA256, &index).expect("table on the index")
+    CubeTableV1::load_v1(Path::new(TABLE), PROVISIONAL_TABLE_SHA256_V1, &index)
+        .expect("table on the index")
 }
 
 fn name(id: u16) -> &'static str {
@@ -251,7 +252,7 @@ fn index_and_dense_tokens_are_complete() {
         .filter(|token| !tokens.contains(token))
         .collect();
     assert!(absent.is_empty(), "{absent:?}");
-    assert!(CubeTableV1::load_v1(Path::new(TABLE), TABLE_SHA256, &index).is_ok());
+    assert!(CubeTableV1::load_v1(Path::new(TABLE), PROVISIONAL_TABLE_SHA256_V1, &index).is_ok());
 }
 
 // Test 7: the provisional index and pool at the pinned table.

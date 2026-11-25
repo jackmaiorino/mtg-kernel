@@ -35,6 +35,9 @@ pub const TABLE_SCHEMA_V1: &str = "card_semantics_table/v1";
 pub const TABLE_FILE_CAP_V1: u64 = 64 * 1024 * 1024;
 /// The largest `vector_width` the loader accepts.
 pub const MAX_VECTOR_WIDTH_V1: usize = 65_536;
+/// The regenerated provisional table pinned by D0 revision 9.
+pub const PROVISIONAL_TABLE_SHA256_V1: &str =
+    "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
 /// Domain tag of [`CardIndexV1::pin_sha256`].
 pub const INDEX_PIN_DOMAIN_V1: &[u8] = b"m4-card-index-v1";
 /// Domain tag of [`CubeTableV1::binding_sha256`].
@@ -687,7 +690,14 @@ impl CubeTableSourceV1 {
                 scaled.push(value as f32 / divisor);
             }
         }
-        let dense_columns = dense_columns_for_tokens_v1(&self.tokens);
+        let mut dense_columns = dense_columns_for_tokens_v1(&self.tokens);
+        if self.file_sha256 == PROVISIONAL_TABLE_SHA256_V1 {
+            // D0.5 pins the 56 fields carried forward by the column map.
+            // These two hybrid columns were appended outside that map.
+            dense_columns.retain(|column| {
+                !matches!(column.token.as_str(), "cost:hybrid:GW" | "cost:hybrid:RW")
+            });
+        }
         let mut dense = Vec::with_capacity(index.len() * dense_columns.len());
         for row in scaled.chunks_exact(width) {
             for column in &dense_columns {
