@@ -8,8 +8,8 @@ use super::*;
 use crate::expanded_deck_training_v1::no_state_digest_v1::InputContractRecordV1;
 use crate::expanded_deck_training_v1::tests::{checkpoint_fixture_v1, replay_fixture};
 use crate::expanded_deck_training_v1::{
-    record_envelope_v1, serialize_json_v1, ExpandedTrajectoryV1, PinnedFileV1, SearchPlayedRowV1,
-    MAX_FILE_BYTES,
+    record_envelope_v1, serialize_json_v1, serialize_trajectory_json_v1, ExpandedTrajectoryV1,
+    PinnedFileV1, SearchPlayedRowV1, MAX_FILE_BYTES,
 };
 use crate::rl_session::pauper_london_v1::{
     PauperMulliganModeV1, PauperOpeningRecordV1, PauperOpeningSeatRecordV1, PauperOpeningV1,
@@ -546,8 +546,10 @@ fn collected_strings_and_float_keys_have_the_previous_bytes_v1() {
     assert_same_bytes_v1(&MapOfV1(keys));
 }
 
-/// `serialize_json_v1` against the previous writer, on its first call for a
-/// name and on a second one, whose buffer is presized from the first.
+/// `serialize_json_v1` and `serialize_trajectory_json_v1` against the
+/// previous writer, on the first call for a name and on a second one, whose
+/// buffer is presized from the first; and `trajectory_into_v1`'s bytes and
+/// capacity against the previous writer's from many starting buffers.
 fn assert_trajectory_bytes_v1(name: &str, trajectory: &ExpandedTrajectoryV1) {
     let expected = reference_v1(trajectory);
     for _ in 0..2 {
@@ -557,10 +559,219 @@ fn assert_trajectory_bytes_v1(name: &str, trajectory: &ExpandedTrajectoryV1) {
             "{name}: the writers differ first at byte {:?}",
             first_difference_v1(&got, &expected)
         );
+        let got = serialize_trajectory_json_v1(&format!("{name}.trajectory"), trajectory).unwrap();
+        assert!(
+            got == expected,
+            "{name}: the trajectory writer differs first at byte {:?}",
+            first_difference_v1(&got, &expected)
+        );
     }
     assert_same_capacity_v1(trajectory);
+    assert_trajectory_writer_capacity_v1(name, trajectory, &expected);
     let parsed: ExpandedTrajectoryV1 = serde_json::from_slice(&expected).unwrap();
     assert_eq!(&parsed, trajectory);
+}
+
+/// `trajectory_into_v1` from every starting capacity up to 300 bytes (up to
+/// 40 and around 128 for a document over 64 KiB) and around the document's
+/// length (one byte short, exact, and with the presizing headroom), each
+/// also after a 7-byte prefix: the bytes and the final capacity are the
+/// previous writer's from the same buffer.
+fn assert_trajectory_writer_capacity_v1(
+    name: &str,
+    trajectory: &ExpandedTrajectoryV1,
+    expected: &[u8],
+) {
+    let length = expected.len();
+    let mut starts: Vec<usize> = if length <= 1 << 16 {
+        (0..=300).collect()
+    } else {
+        (0..=40).chain(126..=130).collect()
+    };
+    starts.extend([
+        length.saturating_sub(1),
+        length,
+        length + 1,
+        length + length / 16,
+    ]);
+    for prefix in [&b""[..], b"prefix:"] {
+        for &start in &starts {
+            let mut reference = Vec::with_capacity(start);
+            reference.extend_from_slice(prefix);
+            serde_json::to_writer(&mut reference, trajectory).unwrap();
+            let mut got = Vec::with_capacity(start);
+            got.extend_from_slice(prefix);
+            trajectory_into_v1(&mut got, trajectory).unwrap();
+            assert!(
+                got == reference,
+                "{name}: from capacity {start}, the writers differ first at byte {:?}",
+                first_difference_v1(&got, &reference)
+            );
+            assert_eq!(
+                got.capacity(),
+                reference.capacity(),
+                "{name}: capacity from {start} after {} prefix bytes",
+                prefix.len()
+            );
+        }
+    }
+}
+
+/// `integer_array_v1` against serde_json writing the same slice, appended to
+/// a buffer of `prefix` bytes and spare capacity `spare`: the same bytes and
+/// the same final capacity.
+fn assert_integer_array_v1<T>(values: &[T], prefix: usize, spare: usize)
+where
+    T: DecimalV1 + Serialize,
+{
+    let mut reference = Vec::with_capacity(prefix + spare);
+    reference.resize(prefix, b'p');
+    serde_json::to_writer(&mut reference, values).unwrap();
+    let mut got = Vec::with_capacity(prefix + spare);
+    got.resize(prefix, b'p');
+    integer_array_v1(&mut got, values);
+    assert!(
+        got == reference,
+        "{} values after {prefix} bytes with {spare} spare: first difference at byte {:?}",
+        values.len(),
+        first_difference_v1(&got, &reference)
+    );
+    assert_eq!(
+        got.capacity(),
+        reference.capacity(),
+        "{} values after {prefix} bytes with {spare} spare",
+        values.len()
+    );
+}
+
+/// Every spare capacity that decides the array writer's path: none, every
+/// one up to 40 bytes, around the exact text, and around the longest text of
+/// one, two and three segments and of the whole array.
+fn assert_integer_array_paths_v1<T>(values: &[T])
+where
+    T: DecimalV1 + Serialize,
+{
+    let exact = serde_json::to_vec(values).unwrap().len();
+    let widest = T::MAX_TEXT + 1;
+    let mut spares: Vec<usize> = (0..=40).collect();
+    let mut around = vec![exact, values.len() * widest];
+    around.extend((1..=3).map(|segments| segments * ARRAY_SEGMENT_V1 * widest));
+    for centre in around {
+        spares.extend([centre.saturating_sub(1), centre, centre + 1]);
+    }
+    for prefix in [0, 1, 9, 100] {
+        for &spare in &spares {
+            assert_integer_array_v1(values, prefix, spare);
+        }
+    }
+}
+
+/// The integer arrays of a decision: every value of `integer_cases_v1` for
+/// the record's widths (u32 bit patterns, i64 indices, u64 and u8 scalars'
+/// types) in one array and one at a time, empty arrays, single values, and
+/// every spare capacity that changes the path taken.
+#[test]
+fn integer_arrays_have_the_previous_bytes_and_capacity_v1() {
+    let u32_values: Vec<u32> = integer_cases_v1(32, false)
+        .into_iter()
+        .map(|x| u32::try_from(x).unwrap())
+        .collect();
+    let i64_values: Vec<i64> = integer_cases_v1(64, true)
+        .into_iter()
+        .map(|x| i64::try_from(x).unwrap())
+        .collect();
+    let u64_values: Vec<u64> = integer_cases_v1(64, false)
+        .into_iter()
+        .map(|x| u64::try_from(x).unwrap())
+        .collect();
+    let u8_values: Vec<u8> = (0..=u8::MAX).collect();
+    assert!(i64_values.contains(&i64::MIN) && i64_values.contains(&i64::MAX));
+    assert!(u32_values.contains(&u32::MAX) && u64_values.contains(&u64::MAX));
+    for spare in [0, 128, 1 << 24] {
+        assert_integer_array_v1(&u32_values, 3, spare);
+        assert_integer_array_v1(&i64_values, 3, spare);
+        assert_integer_array_v1(&u64_values, 3, spare);
+        assert_integer_array_v1(&u8_values, 3, spare);
+    }
+    // Each value alone, through the exact-length path and the piecewise one.
+    for &value in u32_values.iter().step_by(97) {
+        assert_integer_array_paths_v1(&[value]);
+    }
+    for &value in i64_values.iter().step_by(97) {
+        assert_integer_array_paths_v1(&[value]);
+    }
+    for values in [
+        &[][..],
+        &[0],
+        &[9],
+        &[10],
+        &[u32::MAX],
+        &[0, 0, 0],
+        &[1_065_353_216, 0, 0x8000_0000, 9, 10, u32::MAX],
+    ] {
+        assert_integer_array_paths_v1(values);
+    }
+    for values in [
+        &[][..],
+        &[i64::MIN],
+        &[i64::MAX],
+        &[-1],
+        &[-10, -9, 0, 9, 10],
+        &[i64::MIN, -1, 0, 1, i64::MAX],
+        &[3, 1, 4, 1, 5, 9, 2, 6],
+    ] {
+        assert_integer_array_paths_v1(values);
+    }
+    // The edges of the writer's digit paths (one digit, two, three to eight,
+    // nine or ten within u32, and above u32), alone and as one long array.
+    let edges: [u64; 16] = [
+        0,
+        9,
+        10,
+        99,
+        100,
+        99_999_999,
+        100_000_000,
+        999_999_999,
+        1_000_000_000,
+        1_065_353_216,
+        2_147_483_648,
+        u64::from(u32::MAX) - 1,
+        u64::from(u32::MAX),
+        u64::from(u32::MAX) + 1,
+        9_999_999_999,
+        u64::MAX,
+    ];
+    let u32_edges: Vec<u32> = edges
+        .iter()
+        .filter_map(|&x| u32::try_from(x).ok())
+        .collect();
+    let i64_edges: Vec<i64> = edges
+        .iter()
+        .filter_map(|&x| i64::try_from(x).ok())
+        .flat_map(|x| [x, -x, x.saturating_add(1).saturating_neg()])
+        .chain([i64::MIN, i64::MIN + 1])
+        .collect();
+    assert_integer_array_paths_v1(&edges);
+    assert_integer_array_paths_v1(&u32_edges);
+    assert_integer_array_paths_v1(&i64_edges);
+    let long_edges: Vec<u32> = u32_edges.iter().copied().cycle().take(1_000).collect();
+    assert_integer_array_paths_v1(&long_edges);
+    // A long array of short values, as most decision tensors are.
+    let short: Vec<i64> = (0..10_000).map(|x| x % 37 - 3).collect();
+    assert_integer_array_paths_v1(&short);
+    // Scalars: one write of the value's text, as serde_json makes.
+    for &value in &u64_values {
+        let mut got = Vec::new();
+        integer_v1(&mut got, value);
+        assert_eq!(got, serde_json::to_vec(&value).unwrap());
+    }
+    for &value in &i64_values {
+        let mut text = [0u8; 20];
+        let length = write_decimal_v1(&mut text, value);
+        assert_eq!(&text[..length], value.to_string().as_bytes());
+        assert_eq!(length, decimal_len_v1(value));
+    }
 }
 
 /// Real decision tensors (`replay_fixture`, with and without seat

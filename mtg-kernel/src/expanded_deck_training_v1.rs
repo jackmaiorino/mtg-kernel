@@ -6825,6 +6825,27 @@ const SERIALIZED_LENGTH_NAMES_V1: usize = 4096;
 /// by `json_writer_v1`, which writes one-digit integers and short pieces
 /// with less work.
 fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, String> {
+    serialize_presized_v1(name, |bytes| json_writer_v1::to_vec_into_v1(bytes, value))
+}
+
+/// [`serialize_json_v1`] of a trajectory: the same bytes and error, written
+/// by `json_writer_v1::trajectory_into_v1`, which writes the integer arrays
+/// of its decisions without going through serde for every number.
+fn serialize_trajectory_json_v1(
+    name: &str,
+    trajectory: &ExpandedTrajectoryV1,
+) -> Result<Vec<u8>, String> {
+    serialize_presized_v1(name, |bytes| {
+        json_writer_v1::trajectory_into_v1(bytes, trajectory)
+    })
+}
+
+/// Runs `write` into a buffer presized for `name` (see [`serialize_json_v1`])
+/// and remembers the written length for the next document of that name.
+fn serialize_presized_v1(
+    name: &str,
+    write: impl FnOnce(&mut Vec<u8>) -> serde_json::Result<()>,
+) -> Result<Vec<u8>, String> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock, PoisonError};
     static LENGTHS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
@@ -6840,7 +6861,7 @@ fn serialize_json_v1<T: Serialize>(name: &str, value: &T) -> Result<Vec<u8>, Str
         .saturating_add(previous / 16)
         .clamp(128, MAX_FILE_BYTES as usize);
     let mut bytes = Vec::with_capacity(capacity);
-    json_writer_v1::to_vec_into_v1(&mut bytes, value).map_err(err)?;
+    write(&mut bytes).map_err(err)?;
     let mut lengths = lengths.lock().unwrap_or_else(PoisonError::into_inner);
     if lengths.len() < SERIALIZED_LENGTH_NAMES_V1 || lengths.contains_key(name) {
         lengths.insert(name.to_owned(), bytes.len());

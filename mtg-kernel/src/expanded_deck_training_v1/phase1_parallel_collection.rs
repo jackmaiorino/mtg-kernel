@@ -318,7 +318,7 @@ pub(super) fn collect_parallel_v1(
             // bytes are the published and offered ones.
             let name = format!("episode-{slot:04}.json");
             let bytes = std::sync::Arc::new(
-                record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?,
+                record_envelope.seal_owned_v1(serialize_trajectory_json_v1(&name, &trajectory)?)?,
             );
             let pin = publish_json_shared_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
