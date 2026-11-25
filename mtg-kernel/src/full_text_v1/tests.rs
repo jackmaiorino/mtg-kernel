@@ -968,10 +968,10 @@ fn donor_check_cost_at_a_commit_tail() {
 }
 
 #[test]
-fn full_text_registration_is_partial() {
+fn full_text_registration_is_full() {
     assert_eq!(
         CARD_DEFS[usize::from(id(VOLRATH))].capability,
-        CardCapability::Partial
+        CardCapability::Full
     );
 }
 
@@ -1069,11 +1069,11 @@ fn full_text_retained_activation_requires_mana_but_not_hand_or_supported_donor()
     let host = host(&mut state);
     put(&mut state, PlayerId::P0, VOLRATH, Zone::Graveyard);
     let text = top_creature_text(&state, host).unwrap();
-    assert_eq!(text.definition().capability, CardCapability::Partial);
-    assert_eq!(
-        text.freeze_activated(&state, FullTextAbilityV1::Printed(0))
-            .unwrap_err(),
-        "full-text definition is not fully supported"
+    assert_eq!(text.definition().capability, CardCapability::Full);
+    assert!(!FullTextAbilityV1::Printed(0).owns_payment(text.definition()));
+    assert!(
+        engine::stage_full_text_activation(&mut state, text, FullTextAbilityV1::Printed(0))
+            .is_err()
     );
     let before = state.diagnostic_state_hash();
     assert!(engine::activate_full_text_retained_discard(&mut state, text).is_err());

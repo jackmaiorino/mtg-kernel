@@ -66,6 +66,9 @@ fn conflicts_in_scope(
     if crate::krenko_v1::requires_successor(state) {
         return diagnose_refusal("references.krenko", true);
     }
+    if crate::text_color_change_v1::requires_successor(state) {
+        return diagnose_refusal("references.text_color_change", true);
+    }
     // Frozen V4 search retains its historical refusal after either entry
     // observer journal, including a passive entry with no actual observer.
     // New owning scopes validate those passive records before the reference
@@ -647,6 +650,7 @@ fn redeterminize_filtered_inner(
     // Refuse before even the first hidden-owner permutation, including empty pools.
     if crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::soul_counters_v1::has_history(state)
+        || crate::text_color_change_v1::requires_successor(state)
     {
         return Err(if classified {
             Error::HiddenReferenceConflict

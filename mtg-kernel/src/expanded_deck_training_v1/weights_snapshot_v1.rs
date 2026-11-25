@@ -392,6 +392,7 @@ mod tests {
             mulligan_modes: None,
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),

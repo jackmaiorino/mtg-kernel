@@ -3945,6 +3945,10 @@ pub enum EffectOptionChoicePurpose {
     CrystalPreventionV1 {
         choice: Box<crystal_prevention_v1::ChoiceV1>,
     },
+    ChooseTextColorWordV1 {
+        stage: crate::text_color_change_v1::TextColorWordStageV1,
+        from: Option<ManaColor>,
+    },
 }
 
 /// Private actual exile capture, never a public or Human record.
@@ -5125,6 +5129,12 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                             .frames
                             .push(EffectFrame::Program { op: selected, path });
                     }
+                }
+                EffectOptionChoicePurpose::ChooseTextColorWordV1 { .. } => {
+                    path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
                 }
                 EffectOptionChoicePurpose::StandardManaCombinationV1 {
                     player: mana_player,
@@ -7441,10 +7451,22 @@ fn validate_ward_targeter_provenance(
         .objects
         .try_get(ward_source)
         .ok_or("Ward source object no longer exists")?;
-    if live.card_def != card_def
+    // The live object must be the same physical card with no earlier zone
+    // history than the incarnation that triggered. The Ward ability exists
+    // independently of its source (113.7a), so that incarnation may since
+    // have left the battlefield. It is compared with its historical record,
+    // never with what it is now: a copy (Phyrexian Metamorph) that leaves
+    // stops being a copy, and a phased-out permanent has not left the
+    // battlefield (702.26d) though it is in the command-zone marker.
+    let same_incarnation = live.zone_change_count == zone_change_count;
+    let on_battlefield = live.zone == Zone::Battlefield
+        || crate::eternal_e5a_v1::phasing::phased_out(state, ward_source);
+    let had_definition = live.card_def == card_def
+        || crate::standard_cards_v1::had_card_def(state, ward_source, zone_change_count, card_def);
+    if !had_definition
         || live.owner != owner
         || live.zone_change_count < zone_change_count
-        || (live.zone_change_count == zone_change_count && live.zone != Zone::Battlefield)
+        || (same_incarnation && !on_battlefield)
     {
         return Err("Ward source incarnation metadata is inconsistent".to_string());
     }
@@ -7614,7 +7636,9 @@ pub(crate) fn validated_life_ward_observation_targeter(
 
 /// Legacy observations can infer the binding only when exactly one live item
 /// targets the Ward source. Keep this coverage restriction at their boundary,
-/// rather than halting the rules engine for successor-aware consumers.
+/// rather than halting the rules engine for successor-aware consumers. The
+/// schema 5 public contract reports each binding instead
+/// (`PublicObservationProjectionV5::ward_payments`) and skips this check.
 pub(crate) fn validate_legacy_ward_observation(state: &GameState) -> Result<(), String> {
     crate::engine::validate_legacy_variable_cast_targets(state)?;
     let pending = state
@@ -8240,6 +8264,14 @@ pub(crate) fn jace_draw_replacement_origin(
                     u32::from(branch),
                     Vec::new(),
                 ),
+                (
+                    0,
+                    Some(EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                        crate::eternal_cards_v1::EternalOpV1::Pf2aV1(
+                            crate::eternal_pauper_pf2a_v1::Pf2aOpV1::ThrillingDiscoveryV1,
+                        ),
+                    ))),
+                ) => (PlayerRef::Controller, 3, Vec::new()),
                 _ => return false,
             }
         }
@@ -8311,6 +8343,14 @@ fn leaf_staged_draw(
         }
         // K'un-Lun Warrior stages one draw at the leaf after payment.
         E::Pf1aV1(Pf1aOpV1::KunLunV1) => Some((PlayerRef::Controller, 1, Vec::new())),
+        // Keep Watch stages one draw per attacking creature at resolution.
+        E::Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aOpV1::KeepWatchV1) => {
+            Some((PlayerRef::Controller, u32::MAX, Vec::new()))
+        }
+        // Flush Out stages two draws after its mandatory discard.
+        E::Pf2bV1(crate::eternal_pauper_pf2b_v1::Pf2bOpV1::FlushOutV1) => {
+            Some((PlayerRef::Controller, 2, Vec::new()))
+        }
         // Sylvan Library stages two draws above its choose/put-back frame.
         E::P1aV1(P1aOpV1::SylvanDrawV1) => {
             let below = EffectFrame::Program {
@@ -8550,7 +8590,7 @@ fn validate_sacrifice_chosen_creature_frame(
     if pending.ctx.resolve_player(*original_player, state) != *player || original_filter != filter {
         return Err("creature-sacrifice player or restriction changed".to_string());
     }
-    let expected = creature_sacrifice_bindings(state, *player, *filter)?;
+    let expected = creature_sacrifice_bindings(state, &pending.ctx, *player, *filter)?;
     if &expected != original_candidates || expected.is_empty() {
         return Err("creature-sacrifice candidates changed".to_string());
     }
@@ -12528,7 +12568,12 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
                             "creature-sacrifice prompt has a noncanonical shape".to_string()
                         );
                     }
-                    let expected = creature_sacrifice_bindings(state, *sacrifice_player, *filter)?;
+                    let expected = creature_sacrifice_bindings(
+                        state,
+                        &pending.ctx,
+                        *sacrifice_player,
+                        *filter,
+                    )?;
                     if &expected != original_candidates {
                         return Err("creature-sacrifice candidates changed".to_string());
                     }
@@ -13054,6 +13099,18 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
                 }
             }
             EffectOptionChoicePurpose::Generic => {
+                for option in options {
+                    validate_resumable_program(option)?;
+                }
+            }
+            EffectOptionChoicePurpose::ChooseTextColorWordV1 { stage, from } => {
+                let colors =
+                    crate::text_color_change_v1::choice_colors(*stage, *from).ok_or_else(|| {
+                        "text color-word choice stage and source color are inconsistent".to_string()
+                    })?;
+                if options.len() != colors.len() {
+                    return Err("text color-word choice option count is inconsistent".to_string());
+                }
                 for option in options {
                     validate_resumable_program(option)?;
                 }
@@ -17027,7 +17084,8 @@ fn drive_resumable_in_departure_scope_v1(
                 {
                     continue;
                 }
-                let candidates = creature_sacrifice_bindings(state, player, filter)?;
+                let candidates =
+                    creature_sacrifice_bindings(state, &continuation.ctx, player, filter)?;
                 match candidates.as_slice() {
                     [] => {}
                     [chosen] if !state.engine.spellbench_neutral_v1.choices => {
@@ -19649,6 +19707,7 @@ fn matching_graveyard_bindings(
 
 fn creature_sacrifice_bindings(
     state: &GameState,
+    ctx: &ExecCtx,
     player: PlayerId,
     filter: CreatureSacrificeFilter,
 ) -> Result<Vec<EffectObjectBinding>, String> {
@@ -19666,7 +19725,8 @@ fn creature_sacrifice_bindings(
                 crate::engine::object_has_type(state, object_id, card_type)
             }
             CreatureSacrificeFilter::PermanentColorsV1(mask) => {
-                crate::engine::object_color_mask(state, object_id) & mask != 0
+                let effective = crate::text_color_change_v1::resolving_color_mask(state, ctx, mask);
+                crate::engine::object_color_mask(state, object_id) & effective != 0
             }
             _ => {
                 crate::engine::object_has_type(state, object_id, CardType::Creature)
@@ -23573,16 +23633,29 @@ fn execute_in_departure_scope_v1(
             let Some(source) = state.objects.try_get(ctx.source) else {
                 return;
             };
+            let Some(animation) = crate::card_def::CARD_DEFS[source.card_def as usize].animation
+            else {
+                return;
+            };
             if source.zone != Zone::Battlefield
                 || source.zone_change_count != contract.zone_change_count
-                || crate::card_def::CARD_DEFS[source.card_def as usize]
-                    .animation
-                    .is_none()
             {
                 return;
             }
             let timestamp = crate::engine::next_timestamp(state);
             state.objects.get_mut(ctx.source).v4.animation_timestamp = Some(timestamp);
+            let printed_mask = crate::card_def::mana_colors_mask(animation.colors);
+            let mapped_mask =
+                crate::text_color_change_v1::resolving_color_mask(state, ctx, printed_mask);
+            crate::text_color_change_v1::clear_animation_color(state, ctx.source);
+            if mapped_mask != printed_mask {
+                crate::text_color_change_v1::record_animation_color(
+                    state,
+                    ctx.source,
+                    timestamp,
+                    mapped_mask,
+                );
+            }
         }
         EffectOp::SkipNextUntap { object } => {
             let object = ctx.resolve_object(*object);
@@ -24074,11 +24147,36 @@ fn execute_in_departure_scope_v1(
                 token.capability,
                 token.is_token
             );
+            let printed_mask = crate::card_def::mana_colors_mask(token.colors);
+            let mapped_mask =
+                crate::text_color_change_v1::resolving_color_mask(state, ctx, printed_mask);
+            let start = (mapped_mask != printed_mask).then(|| state.engine.event_history.len());
             let controller = ctx.resolve_player(*controller, state);
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::create_token(*token_def, controller),
             );
+            if let Some(start) = start {
+                let created = state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
+                    .iter()
+                    .filter_map(|event| match event {
+                        event::CommittedEvent::CreateToken { object, .. } => Some(*object),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                for object in created {
+                    if state
+                        .objects
+                        .try_get(object)
+                        .is_some_and(|live| live.zone == Zone::Battlefield)
+                    {
+                        crate::text_color_change_v1::record_token_color(state, object, mapped_mask);
+                    }
+                }
+            }
         }
         EffectOp::AjaniLoyaltyV42 { .. } => {
             state.engine.halted = Some((
@@ -25822,7 +25920,11 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         }
         EffectCond::TargetIsColor(idx, color) => match ctx.targets.get(*idx as usize) {
             Some(Target::Object(id)) => {
-                let wanted = crate::card_def::mana_color_mask(*color);
+                let effective = crate::text_color_change_v1::resolving_color(state, ctx, *color);
+                let wanted = crate::card_def::mana_color_mask(effective);
+                if state.text_color_changes_v1.is_some() {
+                    return crate::engine::object_color_mask(state, *id) & wanted != 0;
+                }
                 // Wave P1a's color override (Wild Mongrel's chosen color, a
                 // split half's own colors on the stack) replaces the printed
                 // colors; an earlier Painter's addition is overwritten (613.7).
@@ -25840,7 +25942,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 // Painter's Servant's added color (eternal wave E9a).
                 crate::card_def::CARD_DEFS[def_idx as usize]
                     .colors
-                    .contains(color)
+                    .contains(&effective)
                     || crate::eternal_legacy_e9a_v1::statics::painter_mask(state) & wanted != 0
             }
             _ => false,

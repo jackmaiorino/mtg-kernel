@@ -150,7 +150,7 @@ fn every_tensor_section_is_aligned_and_in_train_step_order() {
         );
     }
     let document: serde_json::Value =
-        serde_json::from_slice(document_v1(&container).unwrap()).unwrap();
+        serde_json::from_slice(&document_v1(&container).unwrap()).unwrap();
     assert_eq!(document["parameters"], serde_json::json!([]));
     assert_eq!(
         document["state_sha256"],
@@ -917,4 +917,287 @@ fn borrowed_decode_borrows_aligned_sections_and_copies_unaligned_slices() {
         .iter()
         .filter(|tensor| !tensor.values.is_empty())
         .all(|tensor| !tensor.is_borrowed_v1()));
+}
+
+/// The Python fixture with a small card-semantics section. Its arrays hold
+/// bit patterns a decimal or float detour could lose (negative zero, the
+/// smallest subnormal, a NaN payload, long mantissas); the container moves
+/// bits, so none is special to it. 70 values (280 bytes) each, so every
+/// array but the last is followed by padding.
+fn card_semantics_fixture_v1() -> ExpandedCheckpointV1 {
+    let mut saved = python_fixture_v1();
+    let bits = |seed: u32| -> Vec<u32> {
+        (0..70u32)
+            .map(|i| match i % 5 {
+                0 => 0x8000_0000,
+                1 => 1,
+                2 => 0x7fc0_1234 + seed,
+                3 => (seed as f32 + i as f32 / 3.0).to_bits(),
+                _ => 0,
+            })
+            .collect()
+    };
+    saved.card_semantics = Some(CardSemanticsSectionV1 {
+        schema: "card_semantics_e1".into(),
+        binding: "test-binding".into(),
+        p_step: 3,
+        weight: bits(1),
+        first_moments: bits(2),
+        second_moments: bits(3),
+    });
+    saved
+}
+
+/// `saved` with its tensor lists emptied and its card-semantics section
+/// whole: the document the encoder wrote before version 2.
+fn inline_document_v1(saved: &ExpandedCheckpointV1) -> Vec<u8> {
+    let emptied: ExpandedCheckpointV1 =
+        with_tensors_v1(saved, [Vec::new(), Vec::new(), Vec::new()]);
+    json_v1(&emptied)
+}
+
+#[test]
+fn a_card_semantics_checkpoint_round_trips_every_bit_through_version_2() {
+    let saved = card_semantics_fixture_v1();
+    let section = saved.card_semantics.as_ref().unwrap();
+    let v1 = json_v1(&saved);
+    let container = encode_v1(&saved).unwrap();
+    let header = header_v1(&container).unwrap();
+    assert_eq!(header.version, CONTAINER_VERSION_CARD_SEMANTICS_V1);
+    assert_eq!(container[8..12], 2u32.to_le_bytes());
+    // Every reader gives the v1 answer, and the section bit for bit.
+    let decoded = decode_v1(&container).unwrap();
+    assert_eq!(decoded.card_semantics, saved.card_semantics);
+    assert_eq!(json_v1(&decoded), v1);
+    let borrowed = decode_borrowed_v1(&container).unwrap();
+    assert_eq!(borrowed.card_semantics, saved.card_semantics);
+    assert_eq!(json_v1(&borrowed), v1);
+    assert_eq!(export_v1(&container).unwrap(), v1);
+    assert_eq!(convert_v1_bytes(&v1).unwrap(), container);
+    assert_eq!(&*json_document_v1(&container).unwrap(), v1.as_slice());
+    assert_eq!(json_v1(&parse_checkpoint_v1(&container).unwrap()), v1);
+    assert_eq!(json_v1(&parse_record_borrowed_v1(&container).unwrap()), v1);
+    // Owned and borrowed tensors write the same container, and a decoded
+    // container re-encodes to itself.
+    let native = native_sections_v1(&saved);
+    assert_eq!(encode_v1(&borrowed_v1(&saved, &native)).unwrap(), container);
+    assert_eq!(encode_v1(&decoded).unwrap(), container);
+    assert_eq!(encode_v1(&borrowed).unwrap(), container);
+    // The document keeps the section's identity with its arrays empty; the
+    // arrays are three aligned sections after the tensors.
+    let document: serde_json::Value =
+        serde_json::from_slice(&container[header.document.clone()]).unwrap();
+    assert_eq!(
+        document["card_semantics"],
+        serde_json::json!({"schema": section.schema, "binding": section.binding,
+            "p_step": section.p_step, "weight": [], "first_moments": [], "second_moments": []})
+    );
+    let table: SectionTableV1 = serde_json::from_slice(&container[header.table.clone()]).unwrap();
+    let arrays = &table.sections[table.sections.len() - 3..];
+    assert_eq!(
+        arrays
+            .iter()
+            .map(|e| (
+                e.section.as_str(),
+                e.ordinal,
+                e.name.as_str(),
+                e.shape.clone()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("card_semantics_weight", 0, "weight", vec![70]),
+            ("card_semantics_first_moments", 0, "first_moments", vec![70]),
+            (
+                "card_semantics_second_moments",
+                0,
+                "second_moments",
+                vec![70]
+            ),
+        ]
+    );
+    for (entry, array) in arrays.iter().zip(card_semantics_arrays_v1(section)) {
+        assert_eq!(entry.offset % ALIGN_V1 as u64, 0);
+        let start = header.data_start + entry.offset as usize;
+        assert_eq!(
+            decode_u32_le_vec_v1(&container[start..start + array.len() * 4]),
+            array
+        );
+    }
+    // The metadata view, sealed or not, is the document with the arrays
+    // filled in: a probe reads the whole section from either format.
+    let view: serde_json::Value =
+        serde_json::from_slice(&metadata_view_v1(&container).unwrap()).unwrap();
+    let whole: serde_json::Value = serde_json::from_slice(&v1).unwrap();
+    assert_eq!(view["card_semantics"], whole["card_semantics"]);
+    assert_eq!(view["parameters"], serde_json::json!([]));
+    assert_eq!(
+        metadata_view_v1(&container).unwrap(),
+        document_v1(&container).unwrap()
+    );
+    let sealed = crate::expanded_deck_training_v1::RecordEnvelopeV1::Zstd1
+        .seal_v1(&container)
+        .unwrap();
+    assert_eq!(
+        metadata_view_v1(&sealed).unwrap(),
+        document_v1(&container).unwrap()
+    );
+    // Without the section the same checkpoint is version 1, written as the
+    // encoder before version 2 wrote it.
+    let mut plain = saved.clone();
+    plain.card_semantics = None;
+    let plain_container = encode_v1(&plain).unwrap();
+    assert_eq!(
+        header_v1(&plain_container).unwrap().version,
+        CONTAINER_VERSION_V1
+    );
+    assert_eq!(plain_container, encode_with_buffer_v1(&plain).unwrap());
+}
+
+/// Every single-byte change, truncation and trailing tail of a version-2
+/// container gets the same outcome from the structure check as from the
+/// re-encoding reference; a changed array value is data (the state hash
+/// refuses it at restore), everything else is refused.
+#[test]
+fn a_card_semantics_container_is_refused_exactly_as_a_reencoded_copy_refuses_it() {
+    let container = encode_v1(&card_semantics_fixture_v1()).unwrap();
+    let (accepted, refused) = same_refusals_v1(&container);
+    assert!(accepted > 1 && refused > container.len());
+}
+
+#[test]
+fn a_card_semantics_container_is_refused_unless_version_document_and_sections_agree() {
+    let saved = card_semantics_fixture_v1();
+    let container = encode_v1(&saved).unwrap();
+    let (document, table_bytes, data) = parts(&container);
+    let table: SectionTableV1 = serde_json::from_slice(&table_bytes).unwrap();
+    let with_version = |version: u32, document: &[u8], table: &[u8], data: &[u8]| {
+        let mut bytes = with_lengths(document, table, data);
+        bytes[8..12].copy_from_slice(&version.to_le_bytes());
+        bytes
+    };
+    let table_with = |change: &dyn Fn(&mut SectionTableV1)| {
+        let mut changed: SectionTableV1 = serde_json::from_slice(&table_bytes).unwrap();
+        change(&mut changed);
+        serde_json::to_vec(&changed).unwrap()
+    };
+    // The unchanged parts rebuild the container.
+    assert_eq!(with_version(2, &document, &table_bytes, &data), container);
+    let first_array = table.sections.len() - 3;
+    let second = &table.sections[first_array + 1];
+    let without_last = table_with(&|t| {
+        t.sections.pop();
+    });
+    let short_data = &data[..(second.offset + second.byte_length) as usize];
+    let mut plain = saved.clone();
+    plain.card_semantics = None;
+    let (plain_document, plain_table, plain_data) = parts(&encode_v1(&plain).unwrap());
+    let inline = inline_document_v1(&saved);
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        (
+            "version 1 with the array sections",
+            with_version(1, &document, &table_bytes, &data),
+            "section layout differs",
+        ),
+        (
+            "version 2 without the section",
+            with_version(2, &plain_document, &plain_table, &plain_data),
+            "version differs from its sections",
+        ),
+        (
+            "version 2 without the array sections",
+            with_version(2, &document, &plain_table, &plain_data),
+            "version differs from its sections",
+        ),
+        (
+            "version 2 without the last array section",
+            with_version(2, &document, &without_last, short_data),
+            "version differs from its sections",
+        ),
+        (
+            "version 2 with the arrays inline as well",
+            with_version(2, &inline, &table_bytes, &data),
+            "carries tensor values",
+        ),
+        (
+            "an array section with ordinal 1",
+            with_version(
+                2,
+                &document,
+                &table_with(&|t| t.sections[first_array].ordinal = 1),
+                &data,
+            ),
+            "section layout differs",
+        ),
+        (
+            "an array section under another member's name",
+            with_version(
+                2,
+                &document,
+                &table_with(&|t| t.sections[first_array].name = "first_moments".into()),
+                &data,
+            ),
+            "section layout differs",
+        ),
+        (
+            "a two-dimensional array section",
+            with_version(
+                2,
+                &document,
+                &table_with(&|t| t.sections[first_array].shape = vec![7, 10]),
+                &data,
+            ),
+            "section layout differs",
+        ),
+        (
+            "array sections out of order",
+            with_version(
+                2,
+                &document,
+                &table_with(&|t| {
+                    let (a, b) = (first_array, first_array + 1);
+                    let section = t.sections[a].section.clone();
+                    let name = t.sections[a].name.clone();
+                    t.sections[a].section = t.sections[b].section.clone();
+                    t.sections[a].name = t.sections[b].name.clone();
+                    t.sections[b].section = section;
+                    t.sections[b].name = name;
+                }),
+                &data,
+            ),
+            "out of order",
+        ),
+        (
+            "an unknown version",
+            with_version(3, &document, &table_bytes, &data),
+            "checkpoint container version differs",
+        ),
+    ];
+    for (what, bytes, message) in cases {
+        let error = decode_v1(&bytes).unwrap_err();
+        assert!(error.contains(message), "{what}: {error}");
+        assert!(!assert_same_outcome_v1(&bytes, what), "{what}");
+        assert!(metadata_view_v1(&bytes).is_err(), "{what}");
+    }
+}
+
+/// Before version 2 the converter wrote a checkpoint with the section as
+/// version 1, its arrays inline in the document. Such a file still decodes
+/// to its checkpoint and exports its v1 bytes; the encoder writes version 2
+/// for it now.
+#[test]
+fn the_legacy_version_1_form_of_a_card_semantics_checkpoint_still_decodes() {
+    let saved = card_semantics_fixture_v1();
+    let v1 = json_v1(&saved);
+    let mut plain = saved.clone();
+    plain.card_semantics = None;
+    let (_, plain_table, plain_data) = parts(&encode_v1(&plain).unwrap());
+    let inline = inline_document_v1(&saved);
+    let legacy = with_lengths(&inline, &plain_table, &plain_data);
+    assert_eq!(json_v1(&decode_v1(&legacy).unwrap()), v1);
+    assert_eq!(json_v1(&decode_borrowed_v1(&legacy).unwrap()), v1);
+    assert_eq!(export_v1(&legacy).unwrap(), v1);
+    assert_eq!(&*metadata_view_v1(&legacy).unwrap(), inline.as_slice());
+    let reencoded = encode_v1(&decode_v1(&legacy).unwrap()).unwrap();
+    assert_eq!(reencoded, encode_v1(&saved).unwrap());
+    assert_ne!(reencoded, legacy);
 }

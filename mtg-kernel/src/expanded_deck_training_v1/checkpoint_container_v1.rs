@@ -7,7 +7,8 @@
 //!
 //! ```text
 //! offset 0   magic             8 bytes  "MTGCKPT\0"
-//! offset 8   container_version u32      = 1
+//! offset 8   container_version u32      = 1, or 2 when the checkpoint carries
+//!                                       a card-semantics section (below)
 //! offset 12  reserved          u32      = 0
 //! offset 16  document_length   u64      canonical serde_json of the checkpoint
 //!                                       with `parameters`, `first_moments` and
@@ -21,12 +22,37 @@
 //!            padded between tensors; the file ends after the last tensor
 //! ```
 //!
+//! # The card-semantics section (version 2)
+//!
+//! A checkpoint with a `card_semantics` section (the projection P and its two
+//! Adam moment arrays, `card_projection_e1`) is written as version 2. Its
+//! document keeps the section's identity members (`schema`, `binding`, which
+//! binds the table hash, and `p_step`) with `weight`, `first_moments` and
+//! `second_moments` empty; those three arrays follow the tensors as three
+//! more sections, `card_semantics_weight`, `card_semantics_first_moments` and
+//! `card_semantics_second_moments`, each one entry (ordinal 0, named after
+//! its member, shape `[length]`) of the same 256-aligned little-endian bits.
+//! A checkpoint without the section is version 1 exactly as before, byte for
+//! byte. A reader older than version 2 (this crate before it, or
+//! `python/tools/checkpoint_container_v1.py`) refuses a version-2 file at its
+//! header ("checkpoint container version differs"), before it reads the
+//! document or the table, so it never misreads the section. The metadata
+//! view ([`metadata_view_v1`], [`document_v1`]) of a version-2 container is
+//! its document with the three arrays filled in from their sections, so a
+//! probe reads the same section from either format.
+//!
+//! Before version 2 the converter could write a checkpoint with the section
+//! as version 1 with the arrays inline in the document. Such a file still
+//! decodes to the same checkpoint; it is the one encoding [`encode_v1`] does
+//! not write.
+//!
 //! The document keeps every field of [`ExpandedCheckpointV1`] with its name,
 //! type and meaning (`schema`, `state_sha256` included), so probes read it as
 //! they read a v1 checkpoint. A state has exactly one encoding: [`decode_v1`]
 //! refuses any bytes that are not [`encode_v1`]'s encoding of what they
-//! decode to. Its structure check ([`check_structure_v1`]) binds every byte
-//! the encoder writes, so it needs no re-encoding to compare with.
+//! decode to (apart from the legacy version-1 form of a card-semantics
+//! checkpoint above). Its structure check ([`check_structure_v1`]) binds
+//! every byte the encoder writes, so it needs no re-encoding to compare with.
 //! [`export_v1`] reproduces the v1 JSON bytes `publish_json` writes for the
 //! same checkpoint.
 //!
@@ -68,7 +94,7 @@
 //! container by name, and Python tools read one only through
 //! `python/tools/checkpoint_container_v1.py`.
 
-use super::{ExpandedCheckpointV1, ParameterBitsV1};
+use super::{CardSemanticsSectionV1, ExpandedCheckpointV1, ParameterBitsV1};
 use crate::native_policy_value_net_v1::{NativeNamedParameterV1, NativeNamedTensorRefV1};
 use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
@@ -76,11 +102,31 @@ use std::borrow::Cow;
 /// The container's first eight bytes.
 pub(crate) const MAGIC_V1: &[u8; 8] = b"MTGCKPT\0";
 const CONTAINER_VERSION_V1: u32 = 1;
+/// The version of a container whose checkpoint carries a card-semantics
+/// section. A reader of version 1 alone refuses it at the header.
+const CONTAINER_VERSION_CARD_SEMANTICS_V1: u32 = 2;
 const HEADER_BYTES_V1: usize = 32;
 const ALIGN_V1: usize = 256;
 /// The section table's `state_format`.
 pub(crate) const STATE_FORMAT_V1: &str = "mtgts-sections-v1";
 const SECTION_NAMES_V1: [&str; 3] = ["parameters", "first_moments", "second_moments"];
+/// The card-semantics arrays' sections, in order after the tensor sections,
+/// and the member each holds (its table entry's name).
+const CARD_SEMANTICS_SECTION_NAMES_V1: [&str; 3] = [
+    "card_semantics_weight",
+    "card_semantics_first_moments",
+    "card_semantics_second_moments",
+];
+const CARD_SEMANTICS_MEMBERS_V1: [&str; 3] = ["weight", "first_moments", "second_moments"];
+/// Every section in table order.
+const SECTION_ORDER_V1: [&str; 6] = [
+    SECTION_NAMES_V1[0],
+    SECTION_NAMES_V1[1],
+    SECTION_NAMES_V1[2],
+    CARD_SEMANTICS_SECTION_NAMES_V1[0],
+    CARD_SEMANTICS_SECTION_NAMES_V1[1],
+    CARD_SEMANTICS_SECTION_NAMES_V1[2],
+];
 
 /// How an update publishes its checkpoint.
 ///
@@ -137,8 +183,10 @@ impl CheckpointRecordFormatV1 {
 /// that have passed a v2 identity replay. Today that is the ordinary fresh
 /// checkpoint under the V4, FlatV7 or FlatV8 identity, with the terminal or
 /// GAE loss, the platform's math, and none of the optional continuation,
-/// transfer, distillation or input-contract members. Anything else is
-/// refused by name and keeps writing v1 JSON.
+/// transfer, distillation or input-contract members. A card-semantics
+/// section is admitted: the container carries it in its own sections
+/// (version 2), and the update's readback compares it with the published
+/// one. Anything else is refused by name and keeps writing v1 JSON.
 pub(crate) fn admit_writer_v1<T>(saved: &ExpandedCheckpointV1<T>) -> Result<(), String> {
     use crate::native_flat_tensorizer_v4::{
         FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4,
@@ -161,8 +209,7 @@ pub(crate) fn admit_writer_v1<T>(saved: &ExpandedCheckpointV1<T>) -> Result<(), 
     .contains(&digests);
     let loss = saved.loss_identity == "terminal_reinforce_value/v3"
         || saved.loss_identity == super::GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1;
-    let plain = saved.card_semantics.is_none()
-        && saved.e_supported.is_none()
+    let plain = saved.e_supported.is_none()
         && saved.soft_q.is_none()
         && saved.search_targets.is_none()
         && saved.ex1.is_none()
@@ -454,9 +501,119 @@ fn sections_of_v1<T>(saved: &ExpandedCheckpointV1<T>) -> [&[T]; 3] {
     ]
 }
 
-/// `saved` with its three tensor sections empty: the container's document.
+/// `saved` with its three tensor sections empty, and its card-semantics
+/// arrays empty when it has the section: the container's document.
 fn document_of_v1<T>(saved: &ExpandedCheckpointV1<T>) -> ExpandedCheckpointV1 {
-    with_tensors_v1(saved, [Vec::new(), Vec::new(), Vec::new()])
+    let mut document = with_tensors_v1(saved, [Vec::new(), Vec::new(), Vec::new()]);
+    document.card_semantics = saved
+        .card_semantics
+        .as_ref()
+        .map(hollow_semantics_section_v1);
+    document
+}
+
+/// The container version of `saved`: 2 exactly when it carries a
+/// card-semantics section.
+fn container_version_of_v1<T>(saved: &ExpandedCheckpointV1<T>) -> u32 {
+    if saved.card_semantics.is_some() {
+        CONTAINER_VERSION_CARD_SEMANTICS_V1
+    } else {
+        CONTAINER_VERSION_V1
+    }
+}
+
+/// The section's identity members with its three arrays empty. The
+/// destructuring names every member, so a member added to the section fails
+/// to compile here until the container carries it.
+fn hollow_semantics_section_v1(section: &CardSemanticsSectionV1) -> CardSemanticsSectionV1 {
+    let CardSemanticsSectionV1 {
+        schema,
+        binding,
+        p_step,
+        weight: _,
+        first_moments: _,
+        second_moments: _,
+    } = section;
+    CardSemanticsSectionV1 {
+        schema: schema.clone(),
+        binding: binding.clone(),
+        p_step: *p_step,
+        weight: Vec::new(),
+        first_moments: Vec::new(),
+        second_moments: Vec::new(),
+    }
+}
+
+/// The section's three arrays, in [`CARD_SEMANTICS_SECTION_NAMES_V1`] order.
+fn card_semantics_arrays_v1(section: &CardSemanticsSectionV1) -> [&[u32]; 3] {
+    [
+        &section.weight,
+        &section.first_moments,
+        &section.second_moments,
+    ]
+}
+
+/// The array a card-semantics section name holds, if `name` is one and the
+/// checkpoint has the section.
+fn card_semantics_array_mut_v1<'a>(
+    section: &'a mut Option<CardSemanticsSectionV1>,
+    name: &str,
+) -> Option<&'a mut Vec<u32>> {
+    let index = CARD_SEMANTICS_SECTION_NAMES_V1
+        .iter()
+        .position(|candidate| *candidate == name)?;
+    let section = section.as_mut()?;
+    [
+        &mut section.weight,
+        &mut section.first_moments,
+        &mut section.second_moments,
+    ]
+    .into_iter()
+    .nth(index)
+}
+
+/// One section's values as the container writes them: a tensor of the
+/// checkpoint, or one card-semantics array.
+struct SectionItemV1<'a> {
+    section: &'static str,
+    ordinal: usize,
+    name: &'a str,
+    shape: Cow<'a, [usize]>,
+    values: TensorValuesV1<'a>,
+}
+
+/// Every section of `saved`'s container in table order: the tensors of each
+/// tensor section, then the card-semantics arrays when it has the section.
+fn items_of_v1<T: TensorBitsV1>(saved: &ExpandedCheckpointV1<T>) -> Vec<SectionItemV1<'_>> {
+    let mut items = Vec::new();
+    for (section, tensors) in SECTION_NAMES_V1.into_iter().zip(sections_of_v1(saved)) {
+        for (ordinal, tensor) in tensors.iter().enumerate() {
+            items.push(SectionItemV1 {
+                section,
+                ordinal,
+                name: tensor.name_v1(),
+                shape: Cow::Borrowed(tensor.shape_v1()),
+                values: tensor.values_v1(),
+            });
+        }
+    }
+    if let Some(card_semantics) = &saved.card_semantics {
+        let arrays = card_semantics_arrays_v1(card_semantics);
+        for ((section, name), values) in CARD_SEMANTICS_SECTION_NAMES_V1
+            .into_iter()
+            .zip(CARD_SEMANTICS_MEMBERS_V1)
+            .zip(arrays)
+        {
+            items.push(SectionItemV1 {
+                section,
+                ordinal: 0,
+                name,
+                shape: Cow::Owned(vec![values.len()]),
+                values: TensorValuesV1::Bits(values),
+            });
+        }
+    }
+    items
 }
 
 /// `saved`'s members with `tensors` as its parameters, first moments and
@@ -549,6 +706,7 @@ fn put_values_v1(bytes: &mut Vec<u8>, values: TensorValuesV1<'_>) {
 /// Everything of a container's encoding but its tensor values: the document,
 /// the table, where each tensor starts and the total length.
 struct FrameV1 {
+    version: u32,
     document: Vec<u8>,
     table: Vec<u8>,
     data_start: usize,
@@ -557,36 +715,38 @@ struct FrameV1 {
     total: usize,
 }
 
-/// The frame of `saved`'s container. Refuses a tensor whose value count is
-/// not the product of its shape; every refusal of [`encode_v1`] is made here,
-/// before anything is written.
-fn frame_v1<T: TensorBitsV1>(saved: &ExpandedCheckpointV1<T>) -> Result<FrameV1, String> {
+/// The frame of `saved`'s container, whose sections are `items`
+/// ([`items_of_v1`]). Refuses a tensor whose value count is not the product
+/// of its shape; every refusal of [`encode_v1`] is made here, before
+/// anything is written.
+fn frame_v1<T: TensorBitsV1>(
+    saved: &ExpandedCheckpointV1<T>,
+    items: &[SectionItemV1<'_>],
+) -> Result<FrameV1, String> {
     let document = serde_json::to_vec(&document_of_v1(saved)).map_err(|e| e.to_string())?;
     let mut entries = Vec::new();
     let mut offset = 0usize;
-    for (section, tensors) in SECTION_NAMES_V1.iter().zip(sections_of_v1(saved)) {
-        for (ordinal, tensor) in tensors.iter().enumerate() {
-            let count = element_count_v1(tensor.shape_v1())?;
-            if count != tensor.values_v1().len() {
-                return Err("checkpoint container tensor length differs from its shape".into());
-            }
-            let byte_length = count
-                .checked_mul(4)
-                .ok_or("checkpoint container tensor size overflows")?;
-            entries.push(SectionEntryV1 {
-                section: (*section).to_owned(),
-                ordinal,
-                name: tensor.name_v1().to_owned(),
-                shape: tensor.shape_v1().to_vec(),
-                offset: offset as u64,
-                byte_length: byte_length as u64,
-            });
-            offset = align_up_v1(
-                offset
-                    .checked_add(byte_length)
-                    .ok_or("checkpoint container size overflows")?,
-            )?;
+    for item in items {
+        let count = element_count_v1(&item.shape)?;
+        if count != item.values.len() {
+            return Err("checkpoint container tensor length differs from its shape".into());
         }
+        let byte_length = count
+            .checked_mul(4)
+            .ok_or("checkpoint container tensor size overflows")?;
+        entries.push(SectionEntryV1 {
+            section: item.section.to_owned(),
+            ordinal: item.ordinal,
+            name: item.name.to_owned(),
+            shape: item.shape.to_vec(),
+            offset: offset as u64,
+            byte_length: byte_length as u64,
+        });
+        offset = align_up_v1(
+            offset
+                .checked_add(byte_length)
+                .ok_or("checkpoint container size overflows")?,
+        )?;
     }
     let data_length = entries
         .last()
@@ -602,6 +762,7 @@ fn frame_v1<T: TensorBitsV1>(saved: &ExpandedCheckpointV1<T>) -> Result<FrameV1,
         .checked_add(data_length)
         .ok_or("checkpoint container size overflows")?;
     Ok(FrameV1 {
+        version: container_version_of_v1(saved),
         document,
         table,
         data_start,
@@ -610,44 +771,43 @@ fn frame_v1<T: TensorBitsV1>(saved: &ExpandedCheckpointV1<T>) -> Result<FrameV1,
     })
 }
 
-/// Writes `saved`'s container, framed by `frame` (its own [`frame_v1`]),
-/// into `bytes`: the header, the document, the table, zero padding to the
-/// data start, then each tensor at its offset with zero padding between.
-fn write_v1<T: TensorBitsV1>(
-    saved: &ExpandedCheckpointV1<T>,
-    frame: &FrameV1,
-    bytes: &mut Vec<u8>,
-) {
+/// Writes the container of `items`, framed by `frame` (their own
+/// [`frame_v1`]), into `bytes`: the header, the document, the table, zero
+/// padding to the data start, then each section at its offset with zero
+/// padding between.
+fn write_v1(items: &[SectionItemV1<'_>], frame: &FrameV1, bytes: &mut Vec<u8>) {
     bytes.extend_from_slice(MAGIC_V1);
-    bytes.extend_from_slice(&CONTAINER_VERSION_V1.to_le_bytes());
+    bytes.extend_from_slice(&frame.version.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&(frame.document.len() as u64).to_le_bytes());
     bytes.extend_from_slice(&(frame.table.len() as u64).to_le_bytes());
     bytes.extend_from_slice(&frame.document);
     bytes.extend_from_slice(&frame.table);
-    let tensors = sections_of_v1(saved).into_iter().flatten();
-    for (tensor, offset) in tensors.zip(&frame.offsets) {
+    for (item, offset) in items.iter().zip(&frame.offsets) {
         bytes.resize(frame.data_start + offset, 0);
-        put_values_v1(bytes, tensor.values_v1());
+        put_values_v1(bytes, item.values);
     }
     if frame.offsets.is_empty() {
         bytes.resize(frame.data_start, 0);
     }
 }
 
-/// Encodes `saved` as a container. Refuses a tensor whose value count is not
-/// the product of its shape.
+/// Encodes `saved` as a container: version 1, or version 2 with the
+/// card-semantics arrays in their own sections when it has that section.
+/// Refuses a tensor whose value count is not the product of its shape.
 pub(crate) fn encode_v1<T: TensorBitsV1>(
     saved: &ExpandedCheckpointV1<T>,
 ) -> Result<Vec<u8>, String> {
-    let frame = frame_v1(saved)?;
+    let items = items_of_v1(saved);
+    let frame = frame_v1(saved, &items)?;
     let mut bytes = Vec::with_capacity(frame.total);
-    write_v1(saved, &frame, &mut bytes);
+    write_v1(&items, &frame, &mut bytes);
     debug_assert_eq!(bytes.len(), frame.total);
     Ok(bytes)
 }
 
 struct HeaderV1 {
+    version: u32,
     document: std::ops::Range<usize>,
     table: std::ops::Range<usize>,
     data_start: usize,
@@ -665,7 +825,12 @@ fn header_v1(bytes: &[u8]) -> Result<HeaderV1, String> {
     if bytes.len() < HEADER_BYTES_V1 || !is_container_v1(bytes) {
         return Err("not a checkpoint container".into());
     }
-    if read_u32_v1(bytes, 8) != CONTAINER_VERSION_V1 || read_u32_v1(bytes, 12) != 0 {
+    let version = read_u32_v1(bytes, 8);
+    if !matches!(
+        version,
+        CONTAINER_VERSION_V1 | CONTAINER_VERSION_CARD_SEMANTICS_V1
+    ) || read_u32_v1(bytes, 12) != 0
+    {
         return Err("checkpoint container version differs".into());
     }
     let document_length = usize::try_from(read_u64_v1(bytes, 16))
@@ -683,6 +848,7 @@ fn header_v1(bytes: &[u8]) -> Result<HeaderV1, String> {
         return Err("checkpoint container is truncated".into());
     }
     Ok(HeaderV1 {
+        version,
         document: HEADER_BYTES_V1..document_end,
         table: document_end..table_end,
         data_start,
@@ -692,6 +858,7 @@ fn header_v1(bytes: &[u8]) -> Result<HeaderV1, String> {
 /// A container whose structure has been checked: everything except the
 /// tensor values themselves, which are data.
 struct CheckedV1 {
+    version: u32,
     document: std::ops::Range<usize>,
     saved: ExpandedCheckpointV1,
     sections: Vec<(SectionEntryV1, std::ops::Range<usize>)>,
@@ -712,10 +879,15 @@ fn all_zero_v1(bytes: &[u8]) -> bool {
 ///   data start the lengths put at the first multiple of 256 after the table;
 /// - the document: the canonical serialization of the checkpoint it parses
 ///   to, which is the decoded checkpoint with its tensor lists emptied;
+/// - the version: 2 exactly when the document has a card-semantics section,
+///   whose three arrays are then empty there (version 1 with the section
+///   inline is the legacy form, which the encoder no longer writes);
 /// - the table: the canonical serialization of what it parses to, which
 ///   names the state format and gives each tensor, in section order and
 ///   ordinal order within its section, the decoded tensor's name and shape,
-///   the offset the encoder places it at and the byte length of its values;
+///   the offset the encoder places it at and the byte length of its values,
+///   then, in version 2 and only there, one entry for each card-semantics
+///   array, named after its member, of shape `[length]`;
 /// - every byte between the table, the data start and the tensors is zero,
 ///   and the file ends where the last tensor does;
 /// - the values are the decoded values, which the encoder writes back as the
@@ -730,6 +902,19 @@ fn check_structure_v1(bytes: &[u8]) -> Result<CheckedV1, String> {
         && saved.second_moments.is_empty())
     {
         return Err("checkpoint container document carries tensor values".into());
+    }
+    let card_semantics_sections = header.version == CONTAINER_VERSION_CARD_SEMANTICS_V1;
+    if card_semantics_sections {
+        let section = saved
+            .card_semantics
+            .as_ref()
+            .ok_or("checkpoint container version differs from its sections")?;
+        if !card_semantics_arrays_v1(section)
+            .iter()
+            .all(|array| array.is_empty())
+        {
+            return Err("checkpoint container document carries tensor values".into());
+        }
     }
     if serde_json::to_vec(&saved).map_err(|e| e.to_string())? != document {
         return Err("checkpoint container is not in canonical form".into());
@@ -750,14 +935,27 @@ fn check_structure_v1(bytes: &[u8]) -> Result<CheckedV1, String> {
     let mut data_end = 0usize;
     let mut next_section = 0usize;
     let mut next_ordinal = 0usize;
+    let mut card_semantics_entries = 0usize;
     let mut sections = Vec::with_capacity(table.sections.len());
     for entry in table.sections {
-        while SECTION_NAMES_V1.get(next_section) != Some(&entry.section.as_str()) {
+        while SECTION_ORDER_V1.get(next_section) != Some(&entry.section.as_str()) {
             next_section += 1;
             next_ordinal = 0;
-            if next_section >= SECTION_NAMES_V1.len() {
+            if next_section >= SECTION_ORDER_V1.len() {
                 return Err("checkpoint container sections are out of order".into());
             }
+        }
+        if let Some(index) = next_section.checked_sub(SECTION_NAMES_V1.len()) {
+            // A card-semantics array: version 2 only, one entry per array,
+            // named after its member, of shape `[length]`.
+            if !card_semantics_sections
+                || entry.ordinal != 0
+                || entry.name != CARD_SEMANTICS_MEMBERS_V1[index]
+                || entry.shape.len() != 1
+            {
+                return Err("checkpoint container section layout differs".into());
+            }
+            card_semantics_entries += 1;
         }
         let count = element_count_v1(&entry.shape)?;
         let byte_length = count
@@ -783,8 +981,17 @@ fn check_structure_v1(bytes: &[u8]) -> Result<CheckedV1, String> {
     if data_end != data.len() {
         return Err("checkpoint container length differs from its sections".into());
     }
+    let expected_entries = if card_semantics_sections {
+        CARD_SEMANTICS_SECTION_NAMES_V1.len()
+    } else {
+        0
+    };
+    if card_semantics_entries != expected_entries {
+        return Err("checkpoint container version differs from its sections".into());
+    }
     let shift = header.data_start;
     Ok(CheckedV1 {
+        version: header.version,
         document: header.document,
         saved,
         sections: sections
@@ -797,10 +1004,29 @@ fn check_structure_v1(bytes: &[u8]) -> Result<CheckedV1, String> {
 /// The container's JSON document (the checkpoint with its three tensor
 /// lists empty), for probes that read only metadata fields. The whole
 /// structure is checked first, so a malformed or truncated container is
-/// refused here as it is by a full load.
-pub(crate) fn document_v1(bytes: &[u8]) -> Result<&[u8], String> {
-    let checked = check_structure_v1(bytes)?;
-    Ok(&bytes[checked.document])
+/// refused here as it is by a full load. A version-2 container's document is
+/// given with its card-semantics arrays filled in from their sections, so a
+/// probe reads the whole section, as it does from a v1 JSON checkpoint;
+/// version 1 gives its document bytes as they are.
+pub(crate) fn document_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
+    let CheckedV1 {
+        version,
+        document,
+        mut saved,
+        sections,
+    } = check_structure_v1(bytes)?;
+    if version == CONTAINER_VERSION_V1 {
+        return Ok(Cow::Borrowed(&bytes[document]));
+    }
+    for (entry, range) in sections {
+        if let Some(array) = card_semantics_array_mut_v1(&mut saved.card_semantics, &entry.section)
+        {
+            *array = decode_u32_le_vec_v1(&bytes[range]);
+        }
+    }
+    serde_json::to_vec(&saved)
+        .map(Cow::Owned)
+        .map_err(|e| e.to_string())
 }
 
 /// `bytes` themselves for a v1 JSON checkpoint, or the container's JSON
@@ -808,10 +1034,10 @@ pub(crate) fn document_v1(bytes: &[u8]) -> Result<&[u8], String> {
 /// (`record_envelope_v1`) is opened first.
 pub(crate) fn metadata_view_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
     match open_record_v1(bytes)? {
-        Cow::Borrowed(bytes) if is_container_v1(bytes) => document_v1(bytes).map(Cow::Borrowed),
+        Cow::Borrowed(bytes) if is_container_v1(bytes) => document_v1(bytes),
         Cow::Borrowed(bytes) => Ok(Cow::Borrowed(bytes)),
         Cow::Owned(bytes) if is_container_v1(&bytes) => {
-            Ok(Cow::Owned(document_v1(&bytes)?.to_vec()))
+            Ok(Cow::Owned(document_v1(&bytes)?.into_owned()))
         }
         Cow::Owned(bytes) => Ok(Cow::Owned(bytes)),
     }
@@ -864,12 +1090,21 @@ pub(crate) fn decode_borrowed_v1(
     bytes: &[u8],
 ) -> Result<ExpandedCheckpointV1<BorrowedParameterBitsV1<'_>>, String> {
     let CheckedV1 {
-        saved, sections, ..
+        mut saved,
+        sections,
+        ..
     } = check_structure_v1(bytes)?;
     let mut parameters = Vec::new();
     let mut first_moments = Vec::new();
     let mut second_moments = Vec::new();
     for (entry, range) in sections {
+        // The card-semantics arrays are owned by their section, as JSON
+        // gives them.
+        if let Some(array) = card_semantics_array_mut_v1(&mut saved.card_semantics, &entry.section)
+        {
+            *array = decode_u32_le_vec_v1(&bytes[range]);
+            continue;
+        }
         let tensor = BorrowedParameterBitsV1 {
             name: entry.name,
             shape: entry.shape,
@@ -878,7 +1113,8 @@ pub(crate) fn decode_borrowed_v1(
         match entry.section.as_str() {
             "parameters" => parameters.push(tensor),
             "first_moments" => first_moments.push(tensor),
-            _ => second_moments.push(tensor),
+            "second_moments" => second_moments.push(tensor),
+            _ => return Err("checkpoint container sections are out of order".into()),
         }
     }
     Ok(with_tensors_v1(
@@ -901,6 +1137,11 @@ pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
     } = check_structure_v1(bytes)?;
     for (entry, range) in sections {
         let values = decode_u32_le_vec_v1(&bytes[range]);
+        if let Some(array) = card_semantics_array_mut_v1(&mut saved.card_semantics, &entry.section)
+        {
+            *array = values;
+            continue;
+        }
         let tensor = ParameterBitsV1 {
             name: entry.name,
             shape: entry.shape,
@@ -909,7 +1150,8 @@ pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
         match entry.section.as_str() {
             "parameters" => saved.parameters.push(tensor),
             "first_moments" => saved.first_moments.push(tensor),
-            _ => saved.second_moments.push(tensor),
+            "second_moments" => saved.second_moments.push(tensor),
+            _ => return Err("checkpoint container sections are out of order".into()),
         }
     }
     Ok(saved)

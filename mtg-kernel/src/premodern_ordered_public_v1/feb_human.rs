@@ -544,12 +544,12 @@ impl FebSessionV1 {
         let seat = native_seat(viewer);
         let state = &self.inner.game;
         let (view, guide_echo) = self
-            .decision_view(binding, seat)
+            .profile_decision_view(binding, seat)
             .map_err(|_| "FEB ordered Human observation is unsupported")?;
         let (_, action_values) = visible_numeric_input(state, &view)?;
         let ordered =
             observe_human(state, seat).map_err(|_| "FEB ordered Human facts are unsupported")?;
-        let actions = match view.menu {
+        let actions = match view.menu() {
             None => Vec::new(),
             Some(NumericMenuV1::GraveyardOrder) => ordered
                 .order_choice
@@ -575,7 +575,7 @@ impl FebSessionV1 {
                                 state,
                                 row,
                                 viewer,
-                                &view.observation.ordered.graveyards,
+                                &view.ordered().graveyards,
                                 effect_options.as_ref(),
                             )? {
                                 Some(label) => FebHumanActionV1::Supported {
@@ -595,24 +595,47 @@ impl FebSessionV1 {
                     .collect::<Result<Vec<_>, String>>()?
             }
         };
-        let scene = view.observation.stable.map(|stable| FebHumanSceneV1 {
-            turn: stable.projection.turn,
-            phase: stable.projection.phase,
-            life: stable.projection.life_totals,
-            hand_counts: stable.projection.hand_counts,
-            library_counts: stable.projection.library_counts,
-            own_hand: stable
-                .own_hand
-                .into_iter()
-                .map(|card| card.card_name)
-                .collect(),
-            battlefield: stable
-                .projection
-                .battlefield
-                .map(|cards| cards.into_iter().map(|card| card.card_name).collect()),
-        });
+        let scene = match view {
+            ProfileDecisionViewV1::Frozen(view) => {
+                view.observation.stable.map(|stable| FebHumanSceneV1 {
+                    turn: stable.projection.turn,
+                    phase: stable.projection.phase,
+                    life: stable.projection.life_totals,
+                    hand_counts: stable.projection.hand_counts,
+                    library_counts: stable.projection.library_counts,
+                    own_hand: stable
+                        .own_hand
+                        .into_iter()
+                        .map(|card| card.card_name)
+                        .collect(),
+                    battlefield: stable
+                        .projection
+                        .battlefield
+                        .map(|cards| cards.into_iter().map(|card| card.card_name).collect()),
+                })
+            }
+            ProfileDecisionViewV1::Registered(view) => {
+                view.observation.stable.map(|stable| FebHumanSceneV1 {
+                    turn: stable.projection.surface.turn,
+                    phase: stable.projection.surface.phase,
+                    life: stable.projection.surface.life_totals,
+                    hand_counts: stable.projection.surface.hand_counts,
+                    library_counts: stable.projection.surface.library_counts,
+                    own_hand: stable
+                        .own_hand
+                        .into_iter()
+                        .map(|card| card.card_name)
+                        .collect(),
+                    battlefield: stable
+                        .projection
+                        .surface
+                        .battlefield
+                        .map(|cards| cards.into_iter().map(|card| card.card_name).collect()),
+                })
+            }
+        };
         Ok(Some(FebHumanViewV1 {
-            profile: PROFILE_V1,
+            profile: self.profile(),
             step: self.inner.step,
             actor: binding.actor.into(),
             ordered: ordered.into(),

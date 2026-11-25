@@ -439,6 +439,21 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c9c_v1::C9cStateV1::is_empty"
     )]
     pub c9c: crate::eternal_cube_c9c_v1::C9cStateV1,
+    /// Pauper field wave Pf2b's state: Aurora Eidolon finite prevention
+    /// shields (`eternal_pauper_pf2b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_pauper_pf2b_v1::Pf2bStateV1::is_empty"
+    )]
+    pub pf2b: crate::eternal_pauper_pf2b_v1::Pf2bStateV1,
+    /// Pauper field wave Pf2c's state: Boulderbranch Golem prototype
+    /// permanents and LKI power, and Inside Out P/T switches
+    /// (`eternal_pauper_pf2c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_pauper_pf2c_v1::Pf2cStateV1::is_empty"
+    )]
+    pub pf2c: crate::eternal_pauper_pf2c_v1::Pf2cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -530,6 +545,8 @@ pub enum EternalTriggerV1 {
     C8bV1(crate::eternal_cube_c8b_v1::C8bTriggerV1),
     /// Vintage Cube wave C8c's card-to-library trigger condition.
     C8cV1(crate::eternal_cube_c8c_v1::C8cTriggerV1),
+    /// Pauper field wave Pf2a's Spirit Mascot graveyard-departure condition.
+    Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -836,6 +853,15 @@ pub enum EternalOpV1 {
     /// A leaf owned by Vintage Cube wave C9c's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     C9cV1(crate::eternal_cube_c9c_v1::C9cOpV1),
+    /// A leaf owned by Pauper field wave Pf2a's module.
+    Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aOpV1),
+    /// A leaf owned by Pauper field wave Pf2b's module.
+    Pf2bV1(crate::eternal_pauper_pf2b_v1::Pf2bOpV1),
+    /// A leaf owned by Pauper field wave Pf2c's module.
+    Pf2cV1(crate::eternal_pauper_pf2c_v1::Pf2cOpV1),
+    /// A leaf owned by Premodern wave P3i's module (Alter Reality). Appended
+    /// to preserve existing stack and continuation hash discriminants.
+    P3iV1(crate::eternal_premodern_p3i_v1::P3iOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -956,6 +982,10 @@ impl EternalOpV1 {
             EternalOpV1::C9aV1(op) => op.contains_player_choice(),
             EternalOpV1::C9bV1(op) => op.contains_player_choice(),
             EternalOpV1::C9cV1(op) => op.contains_player_choice(),
+            EternalOpV1::Pf2aV1(op) => op.contains_player_choice(),
+            EternalOpV1::Pf2bV1(op) => op.contains_player_choice(),
+            EternalOpV1::Pf2cV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3iV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -1016,7 +1046,7 @@ pub(crate) fn pay_energy(state: &mut GameState, player: PlayerId, amount: u8) ->
 /// cost has no X, so its mana value is unchanged.
 pub fn replicate_cost(name: &str) -> Option<Cost> {
     match name {
-        "Lose Focus" => Some(Cost {
+        "Lose Focus" | "Gigadrowse" => Some(Cost {
             pips: &[Pip::Colored(ManaColor::U)],
             generic: 0,
             x_count: 0,
@@ -1457,6 +1487,16 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_cube_c9c_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Pauper field waves Pf2a, Pf2b and Pf2c printed and queued triggers.
+    if let Some(spec) = crate::eternal_pauper_pf2a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    if let Some(spec) = crate::eternal_pauper_pf2b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    if let Some(spec) = crate::eternal_pauper_pf2c_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern sideboard wave P3a's queued triggers.
     if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1747,6 +1787,10 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::C9aV1(op) => crate::eternal_cube_c9a_v1::execute(op, ctx, state),
         EternalOpV1::C9bV1(op) => crate::eternal_cube_c9b_v1::execute(op, ctx, state),
         EternalOpV1::C9cV1(op) => crate::eternal_cube_c9c_v1::execute(op, ctx, state),
+        EternalOpV1::Pf2aV1(op) => crate::eternal_pauper_pf2a_v1::execute(op, ctx, state),
+        EternalOpV1::Pf2bV1(op) => crate::eternal_pauper_pf2b_v1::execute(op, ctx, state),
+        EternalOpV1::Pf2cV1(op) => crate::eternal_pauper_pf2c_v1::execute(op, ctx, state),
+        EternalOpV1::P3iV1(op) => crate::eternal_premodern_p3i_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -2654,6 +2698,9 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_cube_c9a_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c9b_v1::delayed_triggers(state, events));
     triggers.extend(crate::eternal_cube_c9c_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_pauper_pf2b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers
 }
 
@@ -2745,6 +2792,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_cube_c9a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_cube_c9b_v1::delayed_effect_matches(name, effect)
         || crate::eternal_cube_c9c_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_pauper_pf2a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_pauper_pf2b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_pauper_pf2c_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1e_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1f_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1g_v1::delayed_effect_matches(name, effect)
@@ -2827,6 +2877,8 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_cube_c9a_v1::begin_turn(state, player);
     crate::eternal_cube_c9b_v1::begin_turn(state, player);
     crate::eternal_cube_c9c_v1::begin_turn(state, player);
+    crate::eternal_pauper_pf2b_v1::begin_turn(state, player);
+    crate::eternal_pauper_pf2c_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2998,6 +3050,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::C8cV1(condition) => {
             crate::eternal_cube_c8c_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::Pf2aV1(condition) => {
+            crate::eternal_pauper_pf2a_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {

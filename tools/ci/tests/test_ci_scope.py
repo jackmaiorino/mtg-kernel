@@ -41,7 +41,8 @@ class TableTests(unittest.TestCase):
 
     def test_the_whole_set_jobs_run_for_all_and_never_for_an_unrelated_scope(self):
         jobs = workflow()["jobs"]
-        for job in ("rust-test-groups", "rust-tests"):
+        for job in ("rust-test-groups", "rust-tests", "eternal-integration-build", "rust-eternal-integration-parts",
+                    "eternal-integration-inventory"):
             self.assertIn("needs.detect-changes.outputs.checks == 'all'", jobs[job]["if"])
         for job in ("python-env-build", "python-tests"):
             self.assertIn("""contains(fromJSON('["all", "python"]'), needs.detect-changes.outputs.checks)""", jobs[job]["if"])

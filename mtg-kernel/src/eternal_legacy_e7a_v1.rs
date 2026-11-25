@@ -407,6 +407,8 @@ const DRONE_TOKEN: &str = "Drone Token";
 const DARK_DEPTHS_ICE: u32 = 10;
 /// Gaea's Will: "Suspend 4".
 const SUSPEND_TIME_COUNTERS: u8 = 4;
+/// Rift Sower (Pauper field wave Pf2b): "Suspend 2--{G}".
+const RIFT_SOWER_SUSPEND_TIME_COUNTERS: u8 = 2;
 
 fn e7a(op: E7aOpV1) -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7aV1(op)))
@@ -3189,7 +3191,7 @@ pub(crate) fn is_special_activation(state: &GameState, source: ObjectId, index: 
     };
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => live.zone == Zone::Battlefield,
-        Some(GAEAS_WILL) => live.zone == Zone::Hand,
+        Some(GAEAS_WILL | crate::eternal_pauper_pf2b_v1::RIFT_SOWER) => live.zone == Zone::Hand,
         // Elvish Spirit Guide's (wave E9b) and Simian Spirit Guide's (wave
         // E9a) mana abilities.
         _ => {
@@ -3210,7 +3212,10 @@ pub(crate) fn special_activation(
 ) -> Result<(), String> {
     match definition_name(state, source) {
         Some(ARENA_OF_GLORY) => activate_arena(state, player, source),
-        Some(GAEAS_WILL) => suspend(state, player, source),
+        Some(GAEAS_WILL) => suspend(state, player, source, SUSPEND_TIME_COUNTERS),
+        Some(crate::eternal_pauper_pf2b_v1::RIFT_SOWER) => {
+            suspend(state, player, source, RIFT_SOWER_SUSPEND_TIME_COUNTERS)
+        }
         _ if crate::eternal_e9b_v1::is_special_activation(state, source, 0) => {
             crate::eternal_e9b_v1::special_activation(state, player, source)
         }
@@ -3291,9 +3296,14 @@ pub(crate) fn add_suspended(state: &mut GameState, card: ObjectId, counters: u8)
     }
 }
 
-/// Suspend (702.62a): exiles `source` from `player`'s hand with four time
-/// counters, paying {G}. No stack, no priority pass.
-fn suspend(state: &mut GameState, player: PlayerId, source: ObjectId) -> Result<(), String> {
+/// Suspend (702.62a): exiles `source` from `player`'s hand with `counters`
+/// time counters, paying {G}. No stack, no priority pass.
+fn suspend(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    counters: u8,
+) -> Result<(), String> {
     let live = state.objects.get(source);
     if live.zone != Zone::Hand || live.owner != player {
         return Err("suspend needs the card in its owner's hand".to_string());
@@ -3305,7 +3315,7 @@ fn suspend(state: &mut GameState, player: PlayerId, source: ObjectId) -> Result<
     if state.objects.get(source).zone != Zone::Exile {
         return Ok(());
     }
-    state.objects.get_mut(source).v4.time_counters_v1 = SUSPEND_TIME_COUNTERS;
+    state.objects.get_mut(source).v4.time_counters_v1 = counters;
     let link = live_link(state, source);
     e7a_state(state).suspended.push(link);
     Ok(())

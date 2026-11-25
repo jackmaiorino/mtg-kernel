@@ -343,6 +343,10 @@ pub enum E3ChoiceKindV1 {
     C9aV1(crate::eternal_cube_c9a_v1::C9aChoiceV1),
     /// A Vintage Cube wave C9c choice (`eternal_cube_c9c_v1`).
     C9cV1(crate::eternal_cube_c9c_v1::C9cChoiceV1),
+    /// A Pauper field wave Pf2a choice (`eternal_pauper_pf2a_v1`).
+    Pf2aV1(crate::eternal_pauper_pf2a_v1::Pf2aChoiceV1),
+    /// A Pauper field wave Pf2b choice (`eternal_pauper_pf2b_v1`).
+    Pf2bV1(crate::eternal_pauper_pf2b_v1::Pf2bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -468,6 +472,12 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C9cV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::Pf2aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::Pf2bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -562,6 +572,8 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C8cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C9cV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::Pf2aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::Pf2bV1(kind) => kind.public_purpose(),
         }
     }
 
@@ -1066,6 +1078,20 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
+        E3ChoiceKindV1::Pf2aV1(kind) => crate::eternal_pauper_pf2a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::Pf2bV1(kind) => crate::eternal_pauper_pf2b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
     }
 }
 
@@ -1482,6 +1508,19 @@ pub(crate) fn drive(
         EternalOpV1::C9aV1(op) => crate::eternal_cube_c9a_v1::drive(state, continuation, op, path),
         EternalOpV1::C9bV1(op) => crate::eternal_cube_c9b_v1::drive(state, continuation, op, path),
         EternalOpV1::C9cV1(op) => crate::eternal_cube_c9c_v1::drive(state, continuation, op, path),
+        EternalOpV1::Pf2aV1(op) => {
+            crate::eternal_pauper_pf2a_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::Pf2bV1(op) => {
+            crate::eternal_pauper_pf2b_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::Pf2cV1(op) => {
+            crate::eternal_pauper_pf2c_v1::execute(op, &continuation.ctx, state);
+            Ok(false)
+        }
+        EternalOpV1::P3iV1(op) => {
+            crate::eternal_premodern_p3i_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
