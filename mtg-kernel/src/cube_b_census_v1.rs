@@ -262,7 +262,7 @@ pub struct GameLine {
     /// The terminal reply's counts.
     pub physical_decisions: Option<u64>,
     pub policy_steps: Option<u64>,
-    /// Largest stack observed at a decision. Zero if no tally is available.
+    /// Largest stack observed in a decision or terminal reply. Zero if no tally is available.
     pub max_stack: u32,
     /// `step` and `physical_decision_id` of the last decision reply.
     pub last_step: Option<u64>,

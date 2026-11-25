@@ -1014,8 +1014,25 @@ mod tests {
         let dealt = ["--mode", "dealt", "--schedule", schedule.to_str().unwrap()];
         for flags in [drafted.as_slice(), dealt.as_slice()] {
             let load = |extra: &[&str]| {
-                let raw = flags.iter().chain(extra).map(|flag| (*flag).to_owned());
-                load_run(&Args::parse(raw.collect()).unwrap())
+                let worker_flags = [
+                    "--worker-start",
+                    "0",
+                    "--worker-end",
+                    "1",
+                    "--worker-out",
+                    "worker.jsonl",
+                    "--worker-progress",
+                    "worker.progress",
+                ];
+                let expected: Vec<_> = flags.iter().chain(extra).copied().collect();
+                let raw = expected
+                    .iter()
+                    .copied()
+                    .chain(worker_flags)
+                    .map(str::to_owned);
+                let args = Args::parse(raw.collect()).unwrap();
+                assert_eq!(args.passthrough, expected);
+                load_run(&args)
             };
             for (extra, limit, a2) in [
                 (vec![], Some(128), true),
@@ -1043,7 +1060,13 @@ mod tests {
                         ..A2_CAPS
                     }
                 );
-                let record: Value = serde_json::from_str(&run.record_text()).unwrap();
+                let text = run.record_text();
+                assert!(text.contains(&format!(
+                    "\"max_policy_steps\": {},\n    \"max_stack_objects\": {}",
+                    A2_CAPS.max_policy_steps,
+                    json!(limit)
+                )));
+                let record: Value = serde_json::from_str(&text).unwrap();
                 assert_eq!(
                     record["caps"],
                     json!({
@@ -1067,6 +1090,35 @@ mod tests {
                 error.starts_with(r#"--max-stack-objects "4294967296":"#),
                 "{error}"
             );
+        }
+        for (flag, limit) in [
+            ("--max-driver-decisions", A2_CAPS.max_decisions - 1),
+            (
+                "--max-physical-decisions",
+                A2_CAPS.max_physical_decisions - 1,
+            ),
+            ("--max-policy-steps", A2_CAPS.max_policy_steps - 1),
+        ] {
+            let limit = limit.to_string();
+            let load = |extra: &[&str]| {
+                let raw = drafted.iter().copied().chain([flag, limit.as_str()]);
+                let args = Args::parse(
+                    raw.chain(extra.iter().copied())
+                        .map(str::to_owned)
+                        .collect(),
+                )
+                .unwrap();
+                load_run(&args)
+            };
+            let error = load(&[])
+                .err()
+                .unwrap_or_else(|| panic!("{flag}: non-A2 caps must be refused"));
+            assert!(
+                error.contains("--allow-non-a2-caps true"),
+                "{flag}: {error}"
+            );
+            let run = load(&["--allow-non-a2-caps", "true"]).unwrap();
+            assert_eq!(run.record["caps"]["a2_caps"], false, "{flag}");
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

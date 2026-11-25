@@ -9,7 +9,8 @@
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
 use mtg_kernel::cube_b_census_v1::{
     compact_json_list, draft_seed, parse_dealt_schedule, play_drafted_range, pod_seed, seed,
-    stop_kind, DraftedPod, GameLine, ProcessDeath, SeedPart, A2_CAPS, GAMES_PER_DRAFT,
+    stop_kind, DealtEpisode, DraftedPod, GameLine, ProcessDeath, SeedPart, A2_CAPS,
+    GAMES_PER_DRAFT,
 };
 use mtg_kernel::cube_draft_v1::{
     derive_seed, game_seed, play_pod_game, pod_game_seats, CubeDraftError, CubePool, GameCaps,
@@ -189,6 +190,9 @@ fn replay_stack_peak(pod: &DraftedPod, line: &GameLine, caps: &GameCaps) -> u32 
         "max_physical_decisions": caps.max_physical_decisions,
         "max_policy_steps": caps.max_policy_steps,
     });
+    if let Some(limit) = caps.max_stack_objects {
+        request["max_stack_objects"] = json!(limit);
+    }
     let mut rng = SplitMix64::seed(derive_seed(line.game_seed, SeedStream::GameActions, 0));
     let mut lengths = Vec::new();
     for step in 0..=caps.max_decisions {
@@ -249,6 +253,69 @@ fn drafted_stack_peaks_match_replayed_decision_observations() {
         })
         .unwrap();
         assert!(saw_stack, "the range must exercise a nonempty stack");
+    });
+}
+
+#[test]
+fn stack_cap_halts_drafted_and_dealt_play() {
+    on_big_stack(|| {
+        let pool = pool();
+        let pod = DraftedPod::prepare(&pool, NAMESPACE, 0).unwrap();
+        let uncapped = (0..2)
+            .map(|game| pod.play(game, &TINY_CAPS).unwrap())
+            .find(|line| line.max_stack > 0)
+            .expect("fixture reaches a nonempty stack");
+        let caps = GameCaps {
+            max_stack_objects: Some(0),
+            ..TINY_CAPS
+        };
+
+        let mut drafted = Vec::new();
+        play_drafted_range(
+            &pool,
+            NAMESPACE,
+            uncapped.index,
+            uncapped.index + 1,
+            &caps,
+            |line| {
+                drafted.push(line.clone());
+                Ok::<(), CubeDraftError>(())
+            },
+        )
+        .unwrap();
+        let [drafted]: [GameLine; 1] = drafted.try_into().unwrap();
+
+        // Preserve the seat order and game seed, so dealt play reaches the same first stack object.
+        let episode = DealtEpisode {
+            iteration: 0,
+            slot: 0,
+            id: "stack-cap".to_owned(),
+            seed: uncapped.game_seed,
+            starting_player: Some(0),
+            learner_seat: Some(0),
+            decks: uncapped.seats.map(|seat| pod.decks[seat].clone()),
+        };
+        let dealt = episode.play(uncapped.index, &caps);
+        let halt = "engine_halted:StackSizeCapExceeded:source:";
+        for line in [&drafted, &dealt] {
+            assert_eq!(
+                line.stop_kind.as_deref(),
+                Some("engine_halted:StackSizeCapExceeded:source:*"),
+                "{}",
+                line.mode
+            );
+            assert!(
+                line.end["reason"]
+                    .as_str()
+                    .and_then(|reason| reason.strip_prefix(halt))
+                    .is_some_and(|id| id.parse::<u64>().is_ok()),
+                "{}: {}",
+                line.mode,
+                line.end
+            );
+            assert_eq!(line.max_stack, 0, "{}", line.mode);
+        }
+        assert_eq!(drafted.max_stack, replay_stack_peak(&pod, &drafted, &caps));
     });
 }
 

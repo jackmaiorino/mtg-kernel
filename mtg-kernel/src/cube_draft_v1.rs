@@ -1534,6 +1534,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stack_tally_keeps_the_peak_from_decision_and_terminal_replies() {
+        let mut tally = GameTally::default();
+        tally.record_stack(&json!({"observation": null}));
+        assert_eq!(tally.max_stack, 0);
+
+        tally.record_stack(&json!({
+            "legal_actions": [],
+            "observation": {"projection": {"stack": [{"id": 1}]}}
+        }));
+        assert_eq!(tally.max_stack, 1);
+
+        tally.record_stack(&json!({
+            "terminal_code": "engine_halted",
+            "observation": {"projection": {"stack": [{"id": 1}, {"id": 2}]}}
+        }));
+        assert_eq!(tally.max_stack, 2);
+
+        tally.record_stack(&json!({"terminal_code": "natural_game_over"}));
+        assert_eq!(tally.max_stack, 2);
+    }
+
+    #[test]
     fn reset_bytes_with_and_without_a_stack_cap() {
         let mut deck = Deck::default();
         deck.push(card_id_by_name("Forest").unwrap(), 40);
