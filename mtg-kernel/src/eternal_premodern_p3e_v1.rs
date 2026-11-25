@@ -150,14 +150,17 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
             .objects
             .try_get(host)
             .is_none_or(|live| live.zone != Zone::Battlefield)
-        || active_with_id(state, ids.absolute_law, ABSOLUTE_LAW)
-            .next()
-            .is_none()
-        || !crate::engine::object_has_type(state, host, CardType::Creature)
     {
         return 0;
     }
-    mana_color_mask(ManaColor::R)
+    let mask = active_with_id(state, ids.absolute_law, ABSOLUTE_LAW).fold(0u8, |acc, law| {
+        let color = crate::text_color_change_v1::text_color(state, law, ManaColor::R);
+        acc | mana_color_mask(color)
+    });
+    if mask == 0 || !crate::engine::object_has_type(state, host, CardType::Creature) {
+        return 0;
+    }
+    mask
 }
 
 // ---- Statics: Kor Haven -------------------------------------------------------------
