@@ -1045,7 +1045,7 @@ mod cap_tests {
         let legacy = with_stack.replace(&stack_field, "");
         assert_ne!(with_stack, legacy);
 
-        let parse = |text| parse_caps_a67(&JsonParser::new(text).parse_root().unwrap(), "caps");
+        let parse = |text: &str| parse_caps_a67(&JsonParser::new(text).parse_root().unwrap(), "caps");
         assert_eq!(parse(&with_stack), Ok(caps));
         assert_eq!(parse(&legacy), Ok(caps));
         assert!(parse(&with_stack.replace(&stack_field, ",\"max_stack_objects\":0")).is_err());
