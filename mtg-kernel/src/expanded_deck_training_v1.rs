@@ -15194,7 +15194,10 @@ pub(crate) mod tests {
             assert_eq!(permuted["kinds"], json!(["within_root"]));
             assert_ne!(permuted["divergences_before"][0], root["divergence_before"]);
             assert!(permuted["rescore_after"][0].as_f64().unwrap().is_finite());
-            assert_ne!(permuted["after_state_sha256"], receipt["after_state_sha256"]);
+            assert_ne!(
+                permuted["after_state_sha256"],
+                receipt["after_state_sha256"]
+            );
             eprintln!("{label} {direction:?} permuted control {permuted}");
             let before = root["divergence_before"].as_f64().unwrap();
             let rescore_before = root["rescore_before"].as_f64().unwrap();
@@ -15217,10 +15220,7 @@ pub(crate) mod tests {
             ExpandedUpdateBackendV1::Cpu => LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1,
             ExpandedUpdateBackendV1::Cuda { .. } => LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1,
         };
-        let observed: Vec<&str> = moved
-            .iter()
-            .map(|state| state.as_str().unwrap())
-            .collect();
+        let observed: Vec<&str> = moved.iter().map(|state| state.as_str().unwrap()).collect();
         assert_eq!(
             observed.as_slice(),
             goldens,
