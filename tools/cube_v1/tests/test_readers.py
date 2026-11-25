@@ -290,6 +290,59 @@ class PlanFamilyTests(unittest.TestCase):
             self.assertEqual(opp["dealt"], {"function": "cube_deal_b_v1", "key": ["test", "v1", x]})
             self.assertEqual(opp["builder"], {"kind": "dealt", "pin": opp["dealt"]})
 
+    def test_a15_frozen_golden_replay_and_live_b_gate(self):
+        # Pinned A1.5 golden passes and verifies exclusions, key, seeds, episodes, libraries and opening hands.
+        verified = read_plans.verify_a15_golden()
+        self.assertEqual(verified["sha256"], read_plans.A15_GOLDEN_SHA256)
+        self.assertEqual(verified["games"], 4)
+
+        # Live (b) planning succeeds when the pinned A1.5 golden matches.
+        live_req = read_plans.build_prep_request("b_c", "read-gate-pools", 0, synth.PINS,
+                                                 dict(synth.UNIFORM), {"candidate": dict(synth.UNIFORM)})
+        live_req_sha = read_plans.doc_sha256(live_req)
+        live_res = synth.prep_result(live_req, live_req_sha)
+        live_res_sha = read_plans.doc_sha256(live_res)
+        live_b = read_plans.build_plan("b", "read-gate-b", 0, pins=synth.PINS, pilot=synth.PILOT,
+                                       picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)},
+                                       prep=(live_res, live_res_sha), **synth.DEALER)
+        self.assertEqual(live_b["namespace"], "read-gate-b")
+
+        # Tampering with opening hands, expanded library, game seed or fixture hash refuses live (b) planning.
+        base_doc = json.loads(read_plans.A15_GOLDEN_PATH.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, mutate, pattern in (
+                ("opening-hand", lambda d: d["expected"]["games"][0]["p0_opening_hand"].reverse(), "p0_opening_hand"),
+                ("expanded-lib", lambda d: d["expected"]["games"][1]["p1_expanded_library"].reverse(),
+                 "p1_expanded_library"),
+                ("game-seed", lambda d: d["expected"]["games"][2].update(game_seed=1), "game_seed"),
+                ("episode", lambda d: d["expected"]["games"][3].update(episode=9), "episode"),
+            ):
+                with self.subTest(tamper=label):
+                    bad = copy.deepcopy(base_doc)
+                    mutate(bad)
+                    bad_path = Path(tmp) / f"{label}.json"
+                    bad_path.write_bytes(read_plans.serialize(bad).encode("utf-8"))
+                    with self.assertRaisesRegex(read_plans.PlanError, pattern):
+                        read_plans.verify_a15_golden(bad_path)
+
+            # Live build_plan("b", "read-gate-b", ...) refuses when pinned golden is missing or hash mismatches.
+            orig_path = read_plans.A15_GOLDEN_PATH
+            try:
+                read_plans.A15_GOLDEN_PATH = Path(tmp) / "missing.json"
+                with self.assertRaisesRegex(read_plans.PlanError, "missing"):
+                    read_plans.build_plan("b", "read-gate-b", 0, pins=synth.PINS, pilot=synth.PILOT,
+                                          picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)},
+                                          prep=(live_res, live_res_sha), **synth.DEALER)
+                tampered_path = Path(tmp) / "tampered.json"
+                tampered_path.write_bytes(b"{}")
+                read_plans.A15_GOLDEN_PATH = tampered_path
+                with self.assertRaisesRegex(read_plans.PlanError, "hash"):
+                    read_plans.build_plan("b", "read-gate-b", 0, pins=synth.PINS, pilot=synth.PILOT,
+                                          picker=dict(synth.UNIFORM), builders={"candidate": dict(synth.UNIFORM)},
+                                          prep=(live_res, live_res_sha), **synth.DEALER)
+            finally:
+                read_plans.A15_GOLDEN_PATH = orig_path
+
     def test_c_dose_and_d13_layouts(self):
         _, _, result, sha = synth.prep_for("b_c", 1)
         c = synth.plan("c", 1, prep=(result, sha))

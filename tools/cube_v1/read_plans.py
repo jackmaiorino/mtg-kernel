@@ -354,6 +354,90 @@ def dealt_decks(family: str, namespace: str, unit: int, pools: list[list[int]] |
     return out
 
 
+A15_GOLDEN_PATH = Path(__file__).resolve().parent / "tests" / "fixtures" / "a15_read_b_golden.json"
+A15_GOLDEN_SHA256 = "1930ce67a7fb8403f6612c6f6af74818375b12fb4299c6d7b465da5abfd992e0"
+
+
+def verify_a15_golden(path: Path | None = None, *, expected_sha256: str | None = None) -> dict[str, Any]:
+    """Verify the pinned frozen A1.5 episode set (A6.9, A6.13, A6.20): exclusions, full key,
+    opponent mainboard, game seeds, u64 episode slots, seat order, expanded libraries and opening hands."""
+    target = A15_GOLDEN_PATH if path is None else Path(path)
+    want_sha = A15_GOLDEN_SHA256 if (path is None and expected_sha256 is None) else expected_sha256
+    if not target.exists():
+        raise PlanError(f"frozen A1.5 golden fixture is missing at {target}")
+    raw = target.read_bytes()
+    actual_sha = hashlib.sha256(raw).hexdigest()
+    if want_sha is not None and actual_sha != want_sha:
+        raise PlanError(f"frozen A1.5 golden hash {actual_sha} differs from pinned {want_sha}")
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PlanError(f"frozen A1.5 golden is unreadable JSON: {exc}") from exc
+    if not isinstance(doc, dict) or doc.get("schema") != "mtg-kernel-cube-a15-golden/v1":
+        raise PlanError("frozen A1.5 golden has unexpected schema")
+    ns, run = doc["namespace"], doc["run"]
+    unit, chair, x = doc["unit"], doc["chair"], doc["dealer_index"]
+    if x != SEATS * unit + chair or run != RUN:
+        raise PlanError("frozen A1.5 golden index or run disagrees with A6.13")
+    pool_state = deal.validate_pool(doc["pool"])
+    const_state = deal.validate_constants(doc["constants"])
+    drafted = doc["drafted_deck"]
+    expected = doc["expected"]
+
+    # Check A1.5 deal.build_read_b AND read_plans' own (b) dealer/game schedule against the golden.
+    ref = deal.build_read_b(doc["pool"], doc["constants"], drafted, ns, run, x)
+    episodes = [e["episode"] for e in ref["iterations"][0]["episodes"]]
+    built_cards = {(s, "candidate"): drafted for s in range(SEATS)}
+    dealt = dealt_decks("b", ns, unit, None, built_cards, pool_state, const_state)
+    plan_games, _ = dealer_games("b", ns, unit)
+    opp_deck = dealt[2 * chair + 1]
+    want_dealt = {"function": deal.READ_B_KEY, "key": [ns, run, x]}
+    if opp_deck["dealt"] != want_dealt or expected["dealt"] != want_dealt:
+        raise PlanError("frozen A1.5 golden dealt key mismatch")
+    opp_cards = opp_deck["cards"]
+    if opp_cards != expected["opponent_mainboard"]:
+        raise PlanError("frozen A1.5 golden opponent mainboard mismatch")
+    basic_ids = set(pool_state["basic_id_by_color"].values())
+    drafted_nonbasics = set(drafted) - basic_ids
+    opp_nonbasics = set(opp_cards) - basic_ids
+    if drafted_nonbasics & opp_nonbasics:
+        raise PlanError("frozen A1.5 golden violates nonbasic exclusion between drafted deck and opponent")
+    chair_games = plan_games[4 * chair: 4 * chair + 4]
+    exp_games = expected["games"]
+    if len(episodes) != 4 or len(chair_games) != 4 or len(exp_games) != 4:
+        raise PlanError("frozen A1.5 golden must hold 4 games")
+    play_count = 0
+    for j, (ep, pg, eg) in enumerate(zip(episodes, chair_games, exp_games)):
+        if eg["slot"] != j or pg["episode"] != j or eg["episode"] != j:
+            raise PlanError(f"frozen A1.5 golden game {j} episode mismatch")
+        focal_seat = pg["decks"].index(2 * chair)
+        if focal_seat != ep["learner_seat"] or focal_seat != eg["focal_seat"]:
+            raise PlanError(f"frozen A1.5 golden game {j} focal seat mismatch")
+        if focal_seat == 0:
+            play_count += 1
+        g_seed = pg["game_seed"]
+        if g_seed != ep["seed"] or g_seed != eg["game_seed"]:
+            raise PlanError(f"frozen A1.5 golden game {j} game_seed mismatch")
+        aseeds = seeds_v1.attempt_seeds(g_seed)
+        if aseeds["env_seed"] != eg["env_seed"] or aseeds["action_seed"] != eg["action_seed"]:
+            raise PlanError(f"frozen A1.5 golden game {j} attempt seed mismatch")
+        deck_map = {2 * chair: drafted, 2 * chair + 1: opp_cards}
+        p0_ids = deck_map[pg["decks"][0]]
+        p1_ids = deck_map[pg["decks"][1]]
+        if p0_ids != ep["selected"][0]["mainboard"] or p1_ids != ep["selected"][1]["mainboard"]:
+            raise PlanError(f"frozen A1.5 golden game {j} selected decks disagree with build_read_b")
+        if p0_ids != eg["p0_deck_ids"] or p1_ids != eg["p1_deck_ids"]:
+            raise PlanError(f"frozen A1.5 golden game {j} deck ids disagree with golden")
+        replayed = seeds_v1.opening_deal(aseeds["env_seed"], p0_ids, p1_ids)
+        for field in ("p0_expanded_library", "p1_expanded_library", "p0_opening_hand",
+                      "p1_opening_hand", "p0_remaining_library", "p1_remaining_library"):
+            if replayed[field] != eg[field]:
+                raise PlanError(f"frozen A1.5 golden game {j} {field} mismatch")
+    if play_count != 2:
+        raise PlanError("frozen A1.5 golden must place focal deck 2 on the play and 2 on the draw")
+    return {"sha256": actual_sha, "games": 4, "namespace": ns, "dealer_index": x}
+
+
 def dealer_games(family: str, namespace: str, unit: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Games and paired builds of the dealer layouts (b, c, dose, d13)."""
     layout = _layout(family)
@@ -571,6 +655,8 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
         raise PlanError(f"unknown family {family!r}")
     layout = spec["layout"]
     _check_namespace(family, namespace)
+    if layout == "b" and namespace != TEST:
+        verify_a15_golden()
     _u64(unit, "unit")
     if layout == "a":
         if mirror not in (0, 1) or rotation is not None:

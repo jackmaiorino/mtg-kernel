@@ -78,3 +78,27 @@ def attempt_seeds(g_seed: int) -> dict[str, int]:
         "env_seed": derive_seed(g_seed, GAME_ENV, 0),
         "action_seed": derive_seed(g_seed, GAME_ACTIONS, 0),
     }
+
+
+def shuffled_deck(ids: list[int], rng: SplitMix64) -> list[int]:
+    """Exact port of `mtg_kernel::rl::shuffled` (Fisher-Yates reverse loop with SplitMix64)."""
+    v = list(ids)
+    for i in range(len(v) - 1, 0, -1):
+        j = rng.next_u64() % (i + 1)
+        v[i], v[j] = v[j], v[i]
+    return v
+
+
+def opening_deal(env_seed: int, p0_ids: list[int], p1_ids: list[int]) -> dict[str, list[int]]:
+    """Exact port of `mtg_kernel::rl::deal_validated_deck_pair_v1` (shuffle p0 then p1, draw 7 each)."""
+    rng = SplitMix64(env_seed)
+    lib0 = shuffled_deck(p0_ids, rng)
+    lib1 = shuffled_deck(p1_ids, rng)
+    return {
+        "p0_expanded_library": lib0,
+        "p1_expanded_library": lib1,
+        "p0_opening_hand": lib0[:7],
+        "p1_opening_hand": lib1[:7],
+        "p0_remaining_library": lib0[7:],
+        "p1_remaining_library": lib1[7:],
+    }

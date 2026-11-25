@@ -3,8 +3,15 @@
 //! `GameRetry` is the variant m4-interfaces/v2 adds (D5); until D5 lands, its rows are skipped.
 #![cfg(feature = "eternal-fixtures")]
 
-use mtg_kernel::cube_draft_v1::{deck_seed, derive_seed, game_seed, pod_game_seats, SeedStream};
+use mtg_kernel::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
+use mtg_kernel::cube_draft_v1::{
+    deck_seed, derive_seed, game_seed, pod_game_seats, SeedStream, SESSION_SCHEMA_VERSION,
+};
+use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
+use mtg_kernel::rl::build_deck_pair_state;
 use mtg_kernel::state::SplitMix64;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 #[test]
 fn splitmix64_matches_the_published_vector() {
@@ -177,5 +184,150 @@ fn build_seeds_match_the_python_port() {
             derive_seed(deck_seed(draft_seed, chair), SeedStream::DeckBuild, build_k),
             want_build
         );
+    }
+}
+
+const A15_GOLDEN_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tools/cube_v1/tests/fixtures/a15_read_b_golden.json"
+);
+const A15_GOLDEN_SHA256: &str = "1930ce67a7fb8403f6612c6f6af74818375b12fb4299c6d7b465da5abfd992e0";
+
+fn u16_list(value: &Value) -> Vec<u16> {
+    value
+        .as_array()
+        .expect("id array")
+        .iter()
+        .map(|v| u16::try_from(v.as_u64().expect("u64 id")).expect("u16 id"))
+        .collect()
+}
+
+fn grouped_deck(ids: &[u16]) -> CustomDeckV1 {
+    let mut cards = Vec::new();
+    let mut i = 0;
+    while i < ids.len() {
+        let id = ids[i];
+        let run = ids[i..].iter().take_while(|&&c| c == id).count();
+        cards.push(CustomCardCountV1 {
+            name: CARD_DEFS[usize::from(id)].name.to_owned(),
+            count: u32::try_from(run).expect("u32 run"),
+        });
+        i += run;
+    }
+    CustomDeckV1 {
+        cards,
+        companion: None,
+    }
+}
+
+fn canonical_one_card_rows(ids: &[u16]) -> CustomDeckV1 {
+    CustomDeckV1 {
+        cards: ids
+            .iter()
+            .map(|&id| CustomCardCountV1 {
+                name: CARD_DEFS[usize::from(id)].name.to_owned(),
+                count: 1,
+            })
+            .collect(),
+        companion: None,
+    }
+}
+
+#[test]
+fn a15_frozen_episode_replay_matches_runner() {
+    let raw = std::fs::read(A15_GOLDEN_PATH).expect("pinned A1.5 golden fixture");
+    let digest = format!("{:x}", Sha256::digest(&raw));
+    assert_eq!(digest, A15_GOLDEN_SHA256);
+    let doc: Value = serde_json::from_slice(&raw).expect("valid golden json");
+    assert_eq!(
+        doc["kernel_carddb_hash"].as_str(),
+        Some(format!("{KERNEL_CARDDB_HASH:016x}").as_str())
+    );
+    for section in ["spells", "nonbasic_lands", "basics"] {
+        for card in doc["pool"][section].as_array().expect("pool section") {
+            let cid = usize::try_from(card["card_id"].as_u64().expect("card_id")).unwrap();
+            assert_eq!(
+                CARD_DEFS[cid].name,
+                card["name"].as_str().expect("name"),
+                "pool card id {cid} name must match CARD_DEFS"
+            );
+        }
+    }
+    let games = doc["expected"]["games"].as_array().expect("4 games");
+    assert_eq!(games.len(), 4);
+
+    for game in games {
+        let slot = game["slot"].as_u64().expect("slot");
+        let episode = game["episode"].as_u64().expect("episode");
+        assert_eq!(episode, slot);
+        let g_seed = game["game_seed"].as_u64().expect("game_seed");
+        let env_seed = game["env_seed"].as_u64().expect("env_seed");
+        let action_seed = game["action_seed"].as_u64().expect("action_seed");
+        assert_eq!(derive_seed(g_seed, SeedStream::GameEnv, 0), env_seed);
+        assert_eq!(derive_seed(g_seed, SeedStream::GameActions, 0), action_seed);
+
+        let p0_ids = u16_list(&game["p0_deck_ids"]);
+        let p1_ids = u16_list(&game["p1_deck_ids"]);
+        let a15_decks = [grouped_deck(&p0_ids), grouped_deck(&p1_ids)];
+        let canonical_decks = [
+            canonical_one_card_rows(&p0_ids),
+            canonical_one_card_rows(&p1_ids),
+        ];
+
+        // 1. Direct engine opening deal matches the pinned expanded libraries and opening hands.
+        let state = build_deck_pair_state(env_seed, &p0_ids, &p1_ids).expect("supported cube decks");
+        let hand0: Vec<u16> = state.players[0]
+            .hand
+            .iter()
+            .map(|&oid| state.objects.get(oid).card_def)
+            .collect();
+        let hand1: Vec<u16> = state.players[1]
+            .hand
+            .iter()
+            .map(|&oid| state.objects.get(oid).card_def)
+            .collect();
+        let lib0: Vec<u16> = state.players[0]
+            .library
+            .iter()
+            .map(|&oid| state.objects.get(oid).card_def)
+            .collect();
+        let lib1: Vec<u16> = state.players[1]
+            .library
+            .iter()
+            .map(|&oid| state.objects.get(oid).card_def)
+            .collect();
+        assert_eq!(hand0, u16_list(&game["p0_opening_hand"]));
+        assert_eq!(hand1, u16_list(&game["p1_opening_hand"]));
+        assert_eq!(lib0, u16_list(&game["p0_remaining_library"]));
+        assert_eq!(lib1, u16_list(&game["p1_remaining_library"]));
+        let mut full0 = hand0.clone();
+        full0.extend_from_slice(&lib0);
+        let mut full1 = hand1.clone();
+        full1.extend_from_slice(&lib1);
+        assert_eq!(full0, u16_list(&game["p0_expanded_library"]));
+        assert_eq!(full1, u16_list(&game["p1_expanded_library"]));
+
+        // 2. Full LimitedJsonlServerV1 reset produces byte-identical replies for A1.5 grouped rows
+        // and canonical 40 one-card rows.
+        let reset = |decks: &[CustomDeckV1; 2]| {
+            let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+            let req = json!({
+                "request_type": "reset",
+                "schema_version": SESSION_SCHEMA_VERSION,
+                "request_id": format!("a15-slot-{slot}"),
+                "decks": decks,
+                "episode_id": episode,
+                "env_seed": env_seed,
+                "max_physical_decisions": 16384,
+                "max_policy_steps": 32768,
+                "max_stack_objects": 128,
+            });
+            server.handle_line(&req.to_string())
+        };
+        let reply_a15 = reset(&a15_decks);
+        let reply_canon = reset(&canonical_decks);
+        assert_eq!(reply_a15, reply_canon);
+        let parsed: Value = serde_json::from_str(&reply_a15).expect("valid json reply");
+        assert_eq!(parsed["response_type"].as_str(), Some("decision"));
     }
 }
