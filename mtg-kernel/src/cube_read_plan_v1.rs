@@ -20,6 +20,8 @@
 //!   with `ended = "interrupted"`.
 
 mod attestation;
+#[cfg(test)]
+mod tests;
 
 use crate::card_def::CARD_DEFS;
 use crate::cube_draft_v1::{
@@ -655,6 +657,7 @@ pub struct ManifestExecutionEntry {
     pub expired_games: Vec<[u64; 2]>,
     pub binary: String,
     pub platform: String,
+    /// Read plan v2 adds claim_id as key 6 of live prep execution entries, after platform.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_id: Option<String>,
 }
@@ -3292,6 +3295,7 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
     let exec_arr = expect_array(&top[18].1, "manifest.executions").map_err(plan_err)?;
     let mut executions = Vec::with_capacity(exec_arr.len());
     const EXEC_KEYS: &[&str] = &["execution", "reason", "expired_games", "binary", "platform"];
+    // D7 reads the same ordered prep extension to the five played execution keys.
     const PREP_KEYS: &[&str] = &[
         "execution",
         "reason",
