@@ -320,7 +320,7 @@
   },
   "inventory_sha256": "dc57be5367e623b2972545e057878425fc18ad3df46c753a9599e60f20881648",
   "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
-  "payload_sha256": "bd33dd7e5cf354230ed6c8aa91772da0c3787e64e44672f790572da03e3bddce",
+  "payload_sha256": "08bc9f160a21180c211ba46faf5870a6892d9f023ca723f79f5eee232897e01c",
   "producer_parent_commit": "3de6d2c450d4d32f120f70034324bfc72e1e3339",
   "runtime_fixture_cases": [
     {
@@ -344,7 +344,7 @@
         "Burn"
       ],
       "episode_id": 90001,
-      "model_typed_debug_sha256": "6d9a18fda2d8beacd69721fa1474f1730ca854300e95e623b4f7b5eee1bbf501",
+      "model_typed_debug_sha256": "0cd7bd8642ac42eb8015ae6f1f64b96f1e39472716ef461e416cff10fa4aed96",
       "name": "burn_seed_11_initial",
       "seed": 11
     },
@@ -369,7 +369,7 @@
         "Rally"
       ],
       "episode_id": 90002,
-      "model_typed_debug_sha256": "d5b57c1bbc69b0e1ec6655edfc446c0865828d14407bf9a7dcd328c37c445b51",
+      "model_typed_debug_sha256": "18fe777d6af6873f8d23afeb2838ce1c15cd493369a3af747a8f4b9e3c756e6e",
       "name": "rally_seed_23_initial",
       "seed": 23
     },
@@ -394,7 +394,7 @@
         "Rally"
       ],
       "episode_id": 90003,
-      "model_typed_debug_sha256": "16f02a80ccddba3d692be9f5b9384dfa934df59c64fd9014706742c67db20df7",
+      "model_typed_debug_sha256": "85db8c3535940a508cf0e2427f2889346383fada746adbc84ddfc6946865d09a",
       "name": "burn_rally_seed_37_initial",
       "seed": 37
     },
@@ -418,7 +418,7 @@
         "Burn"
       ],
       "episode_id": 90101,
-      "model_typed_debug_sha256": "d729b3f99e542c697438d3dc32669f7c1c416443d7c42b2335b105fc4a36e0e6",
+      "model_typed_debug_sha256": "3f496fabd5865796f412d2ae7baa2afb71deb6df7549fa1ca5bda60e54ce1e48",
       "name": "burn_seed_81701_first_relation",
       "seed": 81701,
       "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1"
@@ -443,7 +443,7 @@
         "Rally"
       ],
       "episode_id": 90102,
-      "model_typed_debug_sha256": "e019dac02483d46b206a6b007854fa187778209f97f34aec9fb77b9f81370068",
+      "model_typed_debug_sha256": "3b690833ef51039fbcdf97cc4cab6d1a4a4be11a2175561f0944762ba8175470",
       "name": "rally_seed_81702_first_relation",
       "seed": 81702,
       "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1"

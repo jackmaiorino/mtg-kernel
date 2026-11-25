@@ -19,8 +19,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use mtg_kernel::card_def::{
     CardDef, CardType, CostComponent, Keywords, ModeDef, Supertype, TargetSpec, CARD_DEFS,
 };
-use mtg_kernel::effect::{EffectCond, EffectOp};
+use mtg_kernel::effect::{EffectCond, EffectOp, PlayerRef};
+use mtg_kernel::eternal_cards_v1::EternalOpV1;
+use mtg_kernel::eternal_cube_c9c_v1::C9cOpV1;
+use mtg_kernel::eternal_legacy_e7a_v1::E7aOpV1;
+use mtg_kernel::eternal_premodern_p1a_v1::P1aOpV1;
+use mtg_kernel::eternal_sideboard_s1a_v1::S1aOpV1;
+use mtg_kernel::eternal_sideboard_s1b_v1::S1bOpV1;
+use mtg_kernel::eternal_vintage_e7b_v1::E7bOpV1;
+use mtg_kernel::eternal_vintage_v1::VintageOpV1;
 use mtg_kernel::mana::{Cost, ManaColor, Pip};
+use mtg_kernel::standard_cards_v1::StandardOpV1;
 use mtg_kernel::trigger::{triggers_for, TriggeredAbilityDef};
 use serde_json::Value;
 
@@ -57,9 +66,9 @@ pub const KEYWORDS: [(&str, Keywords); 21] = [
     ("INFECT", Keywords::INFECT),
 ];
 
-/// Leaf fields that hold object, player or history identities rather than
+/// Leaf fields that hold card, object, player or history identities rather than
 /// amounts. They add nothing a card's text would say.
-const IDENTITY_FIELDS: [&str; 14] = [
+const IDENTITY_FIELDS: [&str; 15] = [
     "target_index",
     "source_index",
     "index",
@@ -72,6 +81,7 @@ const IDENTITY_FIELDS: [&str; 14] = [
     "observer",
     "observer_index",
     "card_def",
+    "named",
     "other_than",
     "targeting_stack_item",
 ];
@@ -260,6 +270,52 @@ fn keyword_names(keywords: Keywords) -> Vec<String> {
     names
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NameOption {
+    TamiyoPlusOne,
+    Therapy,
+    CursedScroll,
+    Flute,
+    Mage,
+    Consultation,
+    Peacekeeper,
+}
+
+/// A name list may group names by first letter. Every branch must lead to
+/// the same name-taking operation, and every menu must have the same chooser.
+fn name_option(op: &EffectOp, chooser: PlayerRef) -> Option<(&EffectOp, NameOption)> {
+    if let EffectOp::Choice {
+        controller,
+        options,
+    } = op
+    {
+        if *controller != chooser {
+            return None;
+        }
+        let (first, rest) = options.split_first()?;
+        let (leaf, kind) = name_option(first, chooser)?;
+        return rest
+            .iter()
+            .all(|option| name_option(option, chooser).is_some_and(|(_, other)| other == kind))
+            .then_some((leaf, kind));
+    }
+
+    let EffectOp::StandardV1(StandardOpV1::EternalV1(op_kind)) = op else {
+        return None;
+    };
+    let kind = match op_kind {
+        EternalOpV1::C9cV1(C9cOpV1::TamiyoPlusOneNamedV1 { named: _ }) => NameOption::TamiyoPlusOne,
+        EternalOpV1::E7aV1(E7aOpV1::TherapyV1 { named: _ }) => NameOption::Therapy,
+        EternalOpV1::P1aV1(P1aOpV1::CursedScrollV1 { named: _ }) => NameOption::CursedScroll,
+        EternalOpV1::S1aV1(S1aOpV1::FluteNamedV1 { named: _ }) => NameOption::Flute,
+        EternalOpV1::S1bV1(S1bOpV1::MageNamesV1 { named: _ }) => NameOption::Mage,
+        EternalOpV1::E7bV1(E7bOpV1::ConsultationV1 { named: _ }) => NameOption::Consultation,
+        EternalOpV1::VintageV1(VintageOpV1::EnterNamingV1 { named: _ }) => NameOption::Peacekeeper,
+        _ => return None,
+    };
+    Some((op, kind))
+}
+
 impl<'m> Walker<'m> {
     fn mana_cost(&mut self, prefix: &str, cost: &Cost) {
         let mut pips: BTreeMap<String, i64> = BTreeMap::new();
@@ -370,8 +426,16 @@ impl<'m> Walker<'m> {
                 self.effect(then);
                 self.effect(else_);
             }
-            EffectOp::Choice { options, .. } => {
+            EffectOp::Choice {
+                controller,
+                options,
+            } => {
                 self.count("op:Choice".to_string());
+                let options = if let Some((leaf, _)) = name_option(op, *controller) {
+                    std::slice::from_ref(leaf)
+                } else {
+                    options.as_slice()
+                };
                 self.value("op:Choice.options".to_string(), options.len() as i64);
                 for option in options {
                     self.effect(option);
@@ -525,7 +589,9 @@ impl<'m> Walker<'m> {
                     let (tag, inner) = map.iter().next().expect("one entry");
                     self.count(format!("{path}={tag}"));
                     match inner {
-                        Value::Number(number) if tag != "Target" => {
+                        // A single-field struct can also arrive here as a
+                        // tagged object. Keep its marker without its name id.
+                        Value::Number(number) if !matches!(tag.as_str(), "Target" | "named") => {
                             if let Some(n) = number.as_i64() {
                                 self.value(format!("{path}.{tag}"), n);
                             }
