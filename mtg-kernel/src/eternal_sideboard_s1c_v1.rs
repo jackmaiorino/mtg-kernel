@@ -577,13 +577,17 @@ pub(crate) mod statics {
     use super::*;
 
     /// Light of Day: "Black creatures can't attack or block." Whether
-    /// `object` is a black creature while a Light of Day is on the
-    /// battlefield.
+    /// `object` is a creature matching an active Light of Day's color word.
     fn banned_by_light_of_day(state: &GameState, object: ObjectId) -> bool {
-        let black = crate::card_def::mana_color_mask(ManaColor::B);
-        any_active(state, LIGHT_OF_DAY)
+        let banned_colors = battlefield(state)
+            .filter(|&light| active_named(state, light, LIGHT_OF_DAY))
+            .fold(0u8, |acc, light| {
+                let color = crate::text_color_change_v1::text_color(state, light, ManaColor::B);
+                acc | crate::card_def::mana_color_mask(color)
+            });
+        banned_colors != 0
             && is_creature(state, object)
-            && crate::engine::object_color_mask(state, object) & black != 0
+            && crate::engine::object_color_mask(state, object) & banned_colors != 0
     }
 
     /// Whether Light of Day keeps `object` from attacking.

@@ -57,6 +57,7 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     };
     let name = definition_name(state, host).unwrap_or_default();
     if active_named(state, host, name) {
+        let color = crate::text_color_change_v1::text_color(state, host, color);
         crate::card_def::mana_color_mask(color)
     } else {
         0

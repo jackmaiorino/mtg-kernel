@@ -405,6 +405,32 @@ pub(crate) fn animation(
         .max_by_key(|(_, timestamp)| *timestamp)
 }
 
+/// Effective color mask of an active `CardDef::animation` at `timestamp`,
+/// honoring any color-word change captured when the animating ability resolved
+/// (Treetop Village, Ghitu Encampment, CR 611.2c).
+pub(crate) fn animation_color_mask(
+    state: &GameState,
+    id: ObjectId,
+    animation: crate::card_def::AnimationDef,
+    timestamp: u64,
+) -> Option<u8> {
+    if animation.colors.is_empty() {
+        return None;
+    }
+    if state
+        .objects
+        .try_get(id)
+        .and_then(|object| object.v4.animation_timestamp)
+        == Some(timestamp)
+    {
+        if let Some(mask) = crate::text_color_change_v1::animation_color_mask(state, id, timestamp)
+        {
+            return Some(mask);
+        }
+    }
+    Some(crate::card_def::mana_colors_mask(animation.colors))
+}
+
 /// Layer 7b settings use timestamps. Characteristic-defining abilities (7a)
 /// are consulted only when no setting applies.
 pub(crate) fn base_power_toughness(state: &GameState, id: ObjectId) -> Option<(i16, i16)> {
