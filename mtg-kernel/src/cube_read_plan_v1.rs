@@ -3861,15 +3861,19 @@ fn verify_d8_history(
         }
         if restart_kind == RestartKind::Note {
             let dose_name = base.strip_prefix("prep-").unwrap_or(base);
-            for (_, path, prior) in &earlier {
-                if prior.kind == ManifestKind::Plans
-                    && d8_set_name(&prior.set).0 == dose_name
-                    && d8_set_status(path, prior)? == D8SetStatus::Complete
-                {
-                    return Err(plan_err(
-                        "a same-build restart cannot replay a completed dose ordinal",
-                    ));
-                }
+            let latest_plan = earlier
+                .iter()
+                .filter(|(_, _, prior)| {
+                    prior.kind == ManifestKind::Plans && d8_set_name(&prior.set).0 == dose_name
+                })
+                .max_by_key(|(n, _, prior)| (*n, d8_set_name(&prior.set).1));
+            let status = latest_plan
+                .map(|(_, path, prior)| d8_set_status(path, prior))
+                .transpose()?;
+            if status == Some(D8SetStatus::Complete) {
+                return Err(plan_err(
+                    "a same-build restart cannot replay a completed dose ordinal",
+                ));
             }
         }
     }

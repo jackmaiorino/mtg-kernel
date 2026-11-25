@@ -336,6 +336,45 @@ fn interrupted_dose(run: &str, set: &str) -> SetManifest {
 }
 
 #[test]
+fn dose_note_considers_only_the_latest_plan_on_the_new_build() {
+    let root = HistoryDir::new("dose-note-after-amendment");
+    let v1 = interrupted_dose("v1", "dose-0");
+    let path_v1 = root.set(&v1);
+    write_history_receipt(&path_v1, &v1, 0, PlanExecutionEnded::Complete, None);
+
+    let mut v2 = interrupted_dose("v2", "dose-0");
+    v2.executions[0].binary = "e".repeat(64);
+    let mut rerun = execution_entry(1, ExecutionReason::WatchdogRerun);
+    rerun.binary.clone_from(&v2.executions[0].binary);
+    rerun.expired_games = vec![[v2.units[0], 0]];
+    v2.executions.push(rerun);
+    let path_v2 = root.set(&v2);
+    verify_d8_history(&path_v2, &v2, Some(RestartKind::Amendment)).unwrap();
+    write_history_receipt(&path_v2, &v2, 0, PlanExecutionEnded::Complete, Some(0));
+    write_history_receipt(&path_v2, &v2, 1, PlanExecutionEnded::WatchdogStop, Some(1));
+    assert_eq!(
+        d8_set_status(&path_v2, &v2).unwrap(),
+        D8SetStatus::InfrastructureFailure
+    );
+
+    let next_sets = [
+        d8_manifest("dose-d8", "v3", "dose-0", ManifestKind::Plans),
+        d8_manifest("dose-d8", "v3", "prep-dose-0", ManifestKind::Prep),
+    ];
+    for next in &next_sets {
+        verify_d8_history(&root.set(next), next, Some(RestartKind::Note)).unwrap();
+    }
+
+    write_history_receipt(&path_v2, &v2, 1, PlanExecutionEnded::Complete, None);
+    for next in &next_sets {
+        assert!(verify_d8_history(&root.set(next), next, Some(RestartKind::Note))
+            .unwrap_err()
+            .to_string()
+            .contains("cannot replay a completed dose ordinal"));
+    }
+}
+
+#[test]
 fn dose_restart_chains_follow_the_ordinal_across_runs() {
     let root = HistoryDir::new("dose-chain");
     let v1 = interrupted_dose("v1", "dose-0");
