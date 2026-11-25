@@ -11,7 +11,7 @@ use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed, watchdog_game
 use mtg_kernel::cube_read_plan_v1::sha256_hex;
 use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot};
 use mtg_kernel::cube_training_driver_v1::fixtures::{
-    run_two_action_part3, two_action_dropped_mean,
+    assert_snapshot_parameter_digests, run_two_action_part3, two_action_dropped_mean,
 };
 use mtg_kernel::cube_training_driver_v1::{
     check_stop_ledger, load_checkpoint_read_only_v1, prune_checkpoint, tripwire_games_for_test,
@@ -1844,6 +1844,7 @@ fn checkpoint_sixteen_is_pinned_at_creation_and_recovered_after_copy_loss() {
         }
         assert_eq!(result, Ok(RunOutcome::Published { update }));
     }
+    assert_snapshot_parameter_digests(&driver);
     assert_eq!(
         driver
             .league()
@@ -1883,6 +1884,7 @@ fn checkpoint_sixteen_is_pinned_at_creation_and_recovered_after_copy_loss() {
         reopened.run_next_update(&cube, &pilot),
         Ok(RunOutcome::Published { update: 16 })
     );
+    assert_snapshot_parameter_digests(&reopened);
     let update = root.join("updates/update-0016");
     let receipt = read_value(&update.join("update.json"));
     assert!(receipt["league_entries"]
@@ -2070,6 +2072,38 @@ fn committed_tripwire_survives_rename_failure_without_a_second_stop() {
     );
     assert_eq!(fs::read_dir(root.join("stops")).unwrap().count(), 1);
     assert_eq!(fs::read(root.join("stops/stop-0000.json")).unwrap(), bytes);
+}
+
+#[test]
+fn model_seat_error_abandons_the_batch_with_its_own_stop_kind() {
+    let temp = TempTestDir::new("seat-error");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 1);
+    let mut ids = basic_land_ids().unwrap().to_vec();
+    ids.sort_unstable();
+    let rows = Arc::new(
+        ModelCardRowsV1::with_registry_basics_v1(ids, 1, vec![0.0; 5], 1, vec![0.0; 5]).unwrap(),
+    );
+    let mut driver = TrainingDriver::open(config.clone(), rows.clone(), 1234).unwrap();
+    let error = driver
+        .run_next_update(&pool(), &FixturePilot(Arc::new(NaturalPilot)))
+        .unwrap_err();
+    assert!(matches!(
+        &error,
+        TrainingDriverError::Pod(mtg_kernel::cube_pod_runner_v1::PodRunnerError::Seat(_))
+    ));
+    let stop_path = root.join("stops/stop-0000.json");
+    let stop = read_value(&stop_path);
+    assert_eq!(stop["kind"], "seat_error");
+    assert_eq!(stop["error"], error.to_string());
+    assert!(!root.join("updates/update-0000").exists());
+    assert!(!root.join("pending/update-0000").exists());
+    drop(driver);
+    assert_eq!(
+        TrainingDriver::open(config, rows, 1234).err(),
+        Some(TrainingDriverError::StoppedWithoutResolution)
+    );
+    assert_eq!(read_value(&stop_path), stop);
 }
 
 #[test]

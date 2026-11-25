@@ -448,6 +448,7 @@ fn adam(model: &mut ModelV1, opt: &mut Optimizer, phase: Phase, batch: &Batch) -
         }
     }
     next.head_updates.commit(&batch.heads)?;
+    model.parameter_digest.take();
     model.values = weights;
     *opt = next;
     Ok(())

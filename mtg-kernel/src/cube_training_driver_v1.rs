@@ -2134,6 +2134,7 @@ impl TrainingDriver {
     ) -> Result<(), TrainingDriverError> {
         let kind = match error {
             TrainingDriverError::Update(_) => "update_failed",
+            TrainingDriverError::Pod(PodRunnerError::Seat(_)) => "seat_error",
             TrainingDriverError::Io(_) => "io_error",
             TrainingDriverError::Invalid(_) => "invalid",
             _ => "collection_failed",

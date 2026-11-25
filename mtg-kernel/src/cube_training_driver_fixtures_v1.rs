@@ -8,6 +8,16 @@ use crate::cube_pod_runner_v1::{
 };
 use crate::cube_seat_v1::{AttemptOutcome, AttemptSpec};
 
+/// Check the parameters bound to the current and cached league seats.
+#[cfg(feature = "eternal-fixtures")]
+pub fn assert_snapshot_parameter_digests(driver: &TrainingDriver) {
+    for snapshot in std::iter::once(&driver.model).chain(driver.snapshots.values()) {
+        let mut fresh = snapshot.model.as_ref().clone();
+        fresh.visit_tensors_mut_v1(|_, _, _, _| {});
+        assert_eq!(snapshot.model.parameter_sha256(), fresh.parameter_sha256());
+    }
+}
+
 struct TwoActionPilot {
     case: HaltCase,
     deterministic_halt: bool,
