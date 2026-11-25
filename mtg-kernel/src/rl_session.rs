@@ -6388,6 +6388,7 @@ impl RlEpisodeSessionV1 {
             &mainboards,
             pair_environment_seed,
             starting_player,
+            None,
         )?;
         let mut session = RlEpisodeSessionV1 {
             deck_ids,
@@ -7593,6 +7594,7 @@ impl FastActorSessionV1 {
             mainboards,
             Some(starting_player),
             windows,
+            None,
         )
     }
 
@@ -7614,9 +7616,12 @@ impl FastActorSessionV1 {
             mainboards,
             starting_player,
             [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+            None,
         )
     }
 
+    /// `deck_format` is the explicit decks' size rule only
+    /// (`resolve_explicit_decks`); None is the exact 60-card reset.
     #[allow(clippy::too_many_arguments)]
     fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
         episode_id: u64,
@@ -7627,11 +7632,13 @@ impl FastActorSessionV1 {
         mainboards: [Vec<u16>; 2],
         starting_player: Option<PlayerId>,
         windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
     ) -> Result<Self, RlSessionError> {
         let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
             starting_player,
+            deck_format,
         )?;
         let mut surface = PolicySurfaceV5::new_for_session();
         surface
@@ -12849,16 +12856,18 @@ fn supported_runtime_deck_ids() -> String {
         .join(", ")
 }
 
-fn resolve_explicit_decks(mainboards: &[Vec<u16>; 2]) -> Result<[Vec<u16>; 2], RlSessionError> {
+/// `deck_format` is the size rule (`sideboard::mainboard_size_error_v1`):
+/// None is exactly 60 cards; every other check is the same for every format.
+fn resolve_explicit_decks(
+    mainboards: &[Vec<u16>; 2],
+    deck_format: Option<crate::sideboard::DeckFormatV1>,
+) -> Result<[Vec<u16>; 2], RlSessionError> {
     for (seat, mainboard) in mainboards.iter().enumerate() {
-        if mainboard.len() != crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1 {
+        if let Some(rule) = crate::sideboard::mainboard_size_error_v1(deck_format, mainboard.len())
+        {
             return Err(session_error(
                 RlSessionErrorCode::UnsupportedDeck,
-                &format!(
-                    "explicit deck for seat {seat} must contain exactly {} cards, got {}",
-                    crate::sideboard::REGISTERED_MAINBOARD_SIZE_V1,
-                    mainboard.len()
-                ),
+                &format!("explicit deck for seat {seat} {rule}"),
             ));
         }
         crate::card_def::preflight_fully_supported_deck(mainboard).map_err(|error| {
@@ -12902,8 +12911,9 @@ fn build_session_deck_pair_state_from_explicit_decks(
     mainboards: &[Vec<u16>; 2],
     pair_environment_seed: u64,
     starting_player: Option<PlayerId>,
+    deck_format: Option<crate::sideboard::DeckFormatV1>,
 ) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
-    let resolved = resolve_explicit_decks(mainboards)?;
+    let resolved = resolve_explicit_decks(mainboards, deck_format)?;
     let deck_hashes = [
         explicit_deck_hash_v1(&resolved[0]),
         explicit_deck_hash_v1(&resolved[1]),
@@ -19958,7 +19968,8 @@ mod tests {
     fn resolve_explicit_decks_rejects_the_wrong_mainboard_size() {
         let mut mainboards = burn_and_rally_explicit_mainboards();
         mainboards[1].pop();
-        let error = resolve_explicit_decks(&mainboards).expect_err("59 cards must be rejected");
+        let error =
+            resolve_explicit_decks(&mainboards, None).expect_err("59 cards must be rejected");
         assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
         assert!(
             error.message.contains("seat 1") && error.message.contains("59"),
@@ -19967,11 +19978,155 @@ mod tests {
         );
     }
 
+    /// `deck_format` (`sideboard::DeckFormatV1`) changes the explicit decks'
+    /// size rule only: without it 40 cards are refused exactly as before;
+    /// with it 40 or more are admitted and 39 still refused; every other
+    /// check is unchanged.
+    #[test]
+    fn resolve_explicit_decks_deck_format_limited40_admits_forty_cards_only_with_the_format() {
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        let full = burn_and_rally_explicit_mainboards();
+        let forty = full.clone().map(|mut deck| {
+            deck.truncate(40);
+            deck
+        });
+        let error = resolve_explicit_decks(&forty, None).expect_err("40 cards without the format");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(
+            error
+                .message
+                .contains("explicit deck for seat 0 must contain exactly 60 cards, got 40"),
+            "{}",
+            error.message
+        );
+        assert_eq!(resolve_explicit_decks(&forty, limited).unwrap(), forty);
+        assert_eq!(resolve_explicit_decks(&full, limited).unwrap(), full);
+        assert_eq!(resolve_explicit_decks(&full, None).unwrap(), full);
+
+        let mut short = forty.clone();
+        short[1].pop();
+        let error = resolve_explicit_decks(&short, limited).expect_err("39 cards with the format");
+        assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
+        assert!(
+            error.message.contains("seat 1") && error.message.contains("got 39"),
+            "{}",
+            error.message
+        );
+
+        let mut unknown = forty.clone();
+        unknown[0][0] = u16::MAX;
+        let error = resolve_explicit_decks(&unknown, limited).expect_err("unknown id");
+        assert!(
+            error.message.contains("full-support preflight"),
+            "{}",
+            error.message
+        );
+    }
+
+    /// The fast session's two deck-format resets (the trainer's plain and
+    /// London resets): 40-card decks are refused without the format and
+    /// reach a first decision with it; the pre-format entry points reach the
+    /// same session as the absent format. Those entry points now delegate to
+    /// the deck-format resets, so this checks their wiring at this head, not
+    /// the parent's behaviour (the node receipt compares with the parent).
+    #[test]
+    fn fast_session_deck_format_resets_admit_forty_card_decks_only_with_the_format() {
+        use crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2;
+        use crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned;
+        let limited = Some(crate::sideboard::DeckFormatV1::Limited40V1);
+        let ids = || ["ExplicitBurn".to_owned(), "ExplicitRally".to_owned()];
+        // 40 cards spread evenly over each 60, so lands keep their share.
+        let forty = burn_and_rally_explicit_mainboards().map(|deck| {
+            (0..40)
+                .map(|i| deck[i * deck.len() / 40])
+                .collect::<Vec<u16>>()
+        });
+        let plain = |mainboards: [Vec<u16>; 2], format| {
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
+                1, 0x40_40, 10_000, 100_000, ids(), mainboards, PlayerId::P1, [HarnessV2; 2], format,
+            )
+        };
+        let london = |mainboards: [Vec<u16>; 2], format| {
+            FastActorSessionV1::reset_pauper_london_windows_deck_format_v1(
+                1,
+                0x40_40,
+                10_000,
+                100_000,
+                ids(),
+                mainboards,
+                PlayerId::P1,
+                [Learned; 2],
+                [HarnessV2; 2],
+                format,
+            )
+        };
+        for result in [plain(forty.clone(), None), london(forty.clone(), None)] {
+            let error = result.err().expect("40 cards without the format");
+            assert!(
+                error
+                    .message
+                    .contains("must contain exactly 60 cards, got 40"),
+                "{}",
+                error.message
+            );
+        }
+        for session in [
+            plain(forty.clone(), limited).unwrap(),
+            london(forty.clone(), limited).unwrap(),
+        ] {
+            assert!(matches!(
+                session.current_response(),
+                FastActorResponseV1::Decision(_)
+            ));
+            assert_eq!(
+                session.deck_hashes,
+                [
+                    explicit_deck_hash_v1(&forty[0]),
+                    explicit_deck_hash_v1(&forty[1])
+                ]
+            );
+        }
+        let mut short = forty.clone();
+        short[0].pop();
+        assert!(plain(short.clone(), limited).is_err());
+        assert!(london(short, limited).is_err());
+
+        // The pre-format entry point and the absent format: the same session
+        // (both run this head's implementation).
+        let full = burn_and_rally_explicit_mainboards();
+        let before =
+            FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
+                1, 0x40_40, 10_000, 100_000, ids(), full.clone(), PlayerId::P1, [HarnessV2; 2],
+            )
+            .unwrap();
+        let absent = plain(full.clone(), None).unwrap();
+        assert_eq!(absent.current_response(), before.current_response());
+        assert_eq!(absent.game_state(), before.game_state());
+        let before_london = FastActorSessionV1::reset_pauper_london_windows_v1(
+            1,
+            0x40_40,
+            10_000,
+            100_000,
+            ids(),
+            full.clone(),
+            PlayerId::P1,
+            [Learned; 2],
+            [HarnessV2; 2],
+        )
+        .unwrap();
+        let absent_london = london(full, None).unwrap();
+        assert_eq!(
+            absent_london.current_response(),
+            before_london.current_response()
+        );
+        assert_eq!(absent_london.game_state(), before_london.game_state());
+    }
+
     #[test]
     fn resolve_explicit_decks_rejects_an_unsupported_card_id() {
         let mut mainboards = burn_and_rally_explicit_mainboards();
         mainboards[0][0] = u16::MAX;
-        let error = resolve_explicit_decks(&mainboards)
+        let error = resolve_explicit_decks(&mainboards, None)
             .expect_err("out-of-range card id must fail preflight");
         assert_eq!(error.code, RlSessionErrorCode::UnsupportedDeck);
         assert!(error.message.contains("seat 0"), "{}", error.message);

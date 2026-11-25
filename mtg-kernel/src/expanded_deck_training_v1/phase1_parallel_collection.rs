@@ -609,6 +609,7 @@ mod tests {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
@@ -761,6 +762,7 @@ mod tests {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         // A trajectory names its sources, not its output directory, so
@@ -872,6 +874,7 @@ mod tests {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
 
@@ -995,6 +998,7 @@ mod tests {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let context = || {
@@ -1087,6 +1091,7 @@ mod tests {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         // The separate opponent seat gets its own parameters, so the service
@@ -1210,6 +1215,7 @@ mod tests {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let run = |label: &str, workers: usize| {
@@ -1335,6 +1341,7 @@ mod tests {
                 mulligan_modes: None,
                 priority_windows: None,
                 london_keep_offset: None,
+                deck_format: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {

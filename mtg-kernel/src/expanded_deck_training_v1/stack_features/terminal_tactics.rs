@@ -152,10 +152,10 @@ pub fn run(command: Command) -> Result<Value, String> {
         )?;
         let episode = &t.episode;
         let configs = episode.configurations()?;
-        let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
+        let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_windows_and_deck_format_v1(
             1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,
             episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),
-            PlayerId(episode.starting_player),episode.priority_windows_v1()?).map_err(err)?;
+            PlayerId(episode.starting_player),episode.priority_windows_v1()?,episode.deck_format).map_err(err)?;
         policy.reset_sampling_v1(paired_policy_seeds_v1(episode.seed));
         for row in &t.decisions {
             let FastActorResponseV1::Decision(d) = session.current_response() else {
