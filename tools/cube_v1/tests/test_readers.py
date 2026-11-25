@@ -3295,6 +3295,129 @@ class D8V3RestartTests(unittest.TestCase):
             read_sets.open_plan_set(dose_v2, cs_sha, pool=synth.POOL, constants=synth.CONST,
                                     shakedown_manifest=sm_amendment, **synth.LIVE_INDEX_ARGS)
 
+    def test_manifest_cli_publishes_authorized_v2_restart_end_to_end(self):
+        # R3 finding 2: read_plans.main `manifest` subcommand threads --shakedown-manifest and
+        # --shakedown-manifest-sha256 and publishes an authorized v2 dose-d8 restart end to end.
+        _, cs_sha = self._countersigned_a6()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            note = self._write_note(root)
+
+            # Set up v1 with panel P1 and interrupted dose-0 (units 0, 1 started -> retired [[2, 32]]).
+            s1_v1, o_v1 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
+                                               reserved=[0, 32], namespace="dose-d8", run="v1")
+            p1_text = read_plans.serialize(read_plans.assemble_panel(
+                "dose", "dose-d8", read_sets.load_manifest(s1_v1), 0, o_v1,
+                pins=synth.LIVE_PINS, builders=None, **synth.DEALER, **synth.LIVE_INDEX_ARGS,
+            ))
+            (root / "dose-d8" / "v1" / "panel").mkdir(parents=True)
+            (root / "dose-d8" / "v1" / "panel" / "panel.json").write_bytes(p1_text.encode("utf-8"))
+            p1_sha = hashlib.sha256(p1_text.encode("utf-8")).hexdigest()
+
+            _, po1 = synth.write_prep_set(root, "dose", "dose", "prep-dose-0", range(0, 32), cs_sha,
+                                          reserved=[0, 32], panel_sha256=p1_sha, namespace="dose-d8", run="v1")
+            mark0 = {"kind": "dose", "label": "pods-512", "ordinal": 0}
+            pl1 = [synth.plan("dose", u, mark=mark0, prep=po1[u], namespace="dose-d8", run="v1") for u in range(0, 32)]
+            synth.write_plan_set(
+                root, "dose", "dose-0", pl1, cs_sha,
+                executions=[{"records": {
+                    0: synth.record(pl1[0], lambda pl, g, pos: "draw"),
+                    1: synth.record(pl1[1], lambda pl, g, pos: "draw", games=4, status="stopped"),
+                }, "ended": "interrupted"}],
+                units=[0, 32], reserved=[0, 32], panel_sha256=p1_sha,
+                prep_set="dose-d8/v1/prep-dose-0/exec-0", namespace="dose-d8", run="v1",
+            )
+
+            rep_d0 = [{"namespace": "dose-d8", "set": "dose-0-restart-1",
+                       "replaces": "v1/dose-0", "retired": [[2, 32]]}]
+            sm_pre_path, sm_pre_sha = self._build_manifest(
+                root,
+                [
+                    {"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
+                    self._restart_entry(note, "v2", cs_sha, restart_kind="note", replacements=rep_d0),
+                ],
+                filename="SM-CLI-PRE.md",
+            )
+
+            # Prepare dose-d8/v2/prep-panel with all 32 request files and invoke read_plans.main `manifest`.
+            v2_pp_dir = root / "dose-d8" / "v2" / "prep-panel"
+            (v2_pp_dir / "requests").mkdir(parents=True)
+            v2_reqs = {}
+            for u in range(32, 64):
+                req = synth.prep_request("dose_panel", u, namespace="dose-d8", run="v2")
+                v2_reqs[u] = req
+                (v2_pp_dir / "requests" / f"unit-{u}.json").write_bytes(read_plans.serialize(req).encode("utf-8"))
+            spec_pp = root / "spec-v2-prep-panel.json"
+            spec_pp.write_bytes(read_plans.serialize({
+                "kind": "prep", "family": "dose", "namespace": "dose-d8", "run": "v2",
+                "set": "prep-panel", "declaration_sha256": cs_sha, "units": [32, 64], "reserved": [32, 64],
+            }).encode("utf-8"))
+
+            # Missing --shakedown-manifest fails at the root verifier; partial flag pair fails with PlanError.
+            with self.assertRaisesRegex(read_sets.SetError, "shakedown manifest"):
+                read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir)])
+            with self.assertRaisesRegex(read_plans.PlanError, "together"):
+                read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
+                                 "--shakedown-manifest", str(sm_pre_path)])
+
+            # Authorized CLI call publishes dose-d8/v2/prep-panel/manifest.json cleanly.
+            rc = read_plans.main([
+                "manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
+                "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha,
+            ])
+            self.assertEqual(rc, 0)
+            pp_man = read_sets.load_manifest(v2_pp_dir)
+            self.assertEqual((pp_man["run"], pp_man["units"], pp_man["reserved"], len(pp_man["plans"])),
+                             ("v2", [32, 64], [32, 64], 32))
+
+            # Complete v2 panel + prep-dose-0, then publish v2/dose-0-restart-1 via the manifest CLI too.
+            v2_outs = {}
+            for u in range(32, 64):
+                req_sha = read_plans.doc_sha256(v2_reqs[u])
+                res = synth.prep_result(v2_reqs[u], req_sha)
+                v2_outs[u] = (res, read_plans.doc_sha256(res))
+            p2_text = read_plans.serialize(read_plans.assemble_panel(
+                "dose", "dose-d8", pp_man, 0, v2_outs,
+                pins=synth.LIVE_PINS, builders=None, **synth.DEALER, **synth.LIVE_INDEX_ARGS,
+            ))
+            (root / "dose-d8" / "v2" / "panel").mkdir(parents=True)
+            (root / "dose-d8" / "v2" / "panel" / "panel.json").write_bytes(p2_text.encode("utf-8"))
+            p2_sha = hashlib.sha256(p2_text.encode("utf-8")).hexdigest()
+            sm_path, sm_sha = self._build_manifest(
+                root,
+                [
+                    {"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
+                    self._restart_entry(note, "v2", cs_sha, restart_kind="note",
+                                        panel={"run": "v2", "sha256": p2_sha}, replacements=rep_d0),
+                ],
+                filename="SM-CLI-FULL.md",
+            )
+            _, po2 = synth.write_prep_set(root, "dose", "dose", "prep-dose-0", range(32, 64), cs_sha,
+                                          reserved=[32, 64], panel_sha256=p2_sha, namespace="dose-d8", run="v2",
+                                          shakedown_manifest=(sm_path, sm_sha))
+            v2_d0_dir = root / "dose-d8" / "v2" / "dose-0-restart-1"
+            (v2_d0_dir / "plans").mkdir(parents=True)
+            for u in range(32, 64):
+                pl = synth.plan("dose", u, mark=mark0, prep=po2[u], namespace="dose-d8", run="v2")
+                (v2_d0_dir / "plans" / f"pod-{pl['pod_index']}.json").write_bytes(
+                    read_plans.serialize(pl).encode("utf-8")
+                )
+            spec_d0 = root / "spec-v2-dose-0.json"
+            spec_d0.write_bytes(read_plans.serialize({
+                "kind": "plans", "family": "dose", "namespace": "dose-d8", "run": "v2",
+                "set": "dose-0-restart-1", "declaration_sha256": cs_sha,
+                "units": [32, 64], "reserved": [32, 64], "panel_sha256": p2_sha,
+                "prep_set": "dose-d8/v2/prep-dose-0/exec-0", "replaces": "v1/dose-0", "retired": [[2, 32]],
+            }).encode("utf-8"))
+            rc2 = read_plans.main([
+                "manifest", "--spec", str(spec_d0), "--set-dir", str(v2_d0_dir),
+                "--shakedown-manifest", str(sm_path), "--shakedown-manifest-sha256", sm_sha,
+            ])
+            self.assertEqual(rc2, 0)
+            d0_man = read_sets.load_manifest(v2_d0_dir)
+            self.assertEqual((d0_man["set"], d0_man["replaces"], d0_man["retired"]),
+                             ("dose-0-restart-1", "v1/dose-0", [[2, 32]]))
+
 
 class UniformPodRecordTests(unittest.TestCase):
     @unittest.skipUnless(D5_UNIFORM_FIXTURE.exists(),

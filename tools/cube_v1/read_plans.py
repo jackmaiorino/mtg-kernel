@@ -1286,6 +1286,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="JSON: kind, family, namespace, set, declaration_sha256, look, units, reserved, "
                             "pools_with, panel_sha256, prep_set, replaces, retired")
     man_p.add_argument("--set-dir", required=True, type=Path)
+    man_p.add_argument("--shakedown-manifest", type=Path,
+                       help="D0.3b shakedown manifest for D8 restart authorization")
+    man_p.add_argument("--shakedown-manifest-sha256",
+                       help="D0.3b sha256 pin for --shakedown-manifest")
     args = parser.parse_args(argv)
 
     spec, _ = load_json(args.spec)
@@ -1304,6 +1308,9 @@ def main(argv: list[str] | None = None) -> int:
         doc = build_prep_request(spec["prep_family"], spec["namespace"], spec["unit"], spec["pins"],
                                  spec.get("picker"), spec.get("builders", {}), run=spec.get("run", RUN))
     else:
+        if (args.shakedown_manifest is None) != (args.shakedown_manifest_sha256 is None):
+            raise PlanError("--shakedown-manifest and --shakedown-manifest-sha256 must be given together")
+        sm = (args.shakedown_manifest, args.shakedown_manifest_sha256) if args.shakedown_manifest else None
         folder, stem = ("plans", "pod") if spec["kind"] == "plans" else ("requests", "unit")
         paths = sorted((args.set_dir / folder).glob(f"{stem}-*.json"), key=lambda p: int(p.stem.split("-")[1]))
         entries = [(int(p.stem.split("-")[1]), hashlib.sha256(p.read_bytes()).hexdigest()) for p in paths]
@@ -1314,7 +1321,7 @@ def main(argv: list[str] | None = None) -> int:
                              replaces=spec.get("replaces"), retired=spec.get("retired"), run=spec.get("run", RUN))
         if doc["namespace"] in D8_RESTART_NAMESPACES:
             import read_sets
-            read_sets.verify_d8_v3_against_root(args.set_dir.parents[2], doc)
+            read_sets.verify_d8_v3_against_root(args.set_dir.parents[2], doc, shakedown_manifest=sm)
         (args.set_dir / "manifest.json").write_bytes(serialize(doc).encode("utf-8"))
         return 0
     text = serialize(doc)

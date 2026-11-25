@@ -1259,6 +1259,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
                                     f"not {peer_family} in {peer_ns}")
                 read_sets.verify_set_restarts(
                     ps, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
+                    shakedown_manifest=shakedown_manifest,
                 )
             _check_declared_pins(declaration, peer_family, pgroup, a6_info)
             if read == "b":
@@ -1585,7 +1586,8 @@ def main(argv: list[str] | None = None) -> int:
                                     shakedown_manifest=sm) for d in args.sets]
     peer_sets = ([read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
                                           card_index=card_index, cube_table=cube_table,
-                                          expected_pins=declaration.get("pins")) for d in args.peer_sets]
+                                          expected_pins=declaration.get("pins"),
+                                          shakedown_manifest=sm) for d in args.peer_sets]
                  if args.peer_sets else None)
     text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets,
                                      a6_file=args.a6_file, peer_sets=peer_sets,
