@@ -198,19 +198,19 @@ fn central_differences_cover_every_tensor() {
             T::PointerContextWeight => &[(2 * H, 2 * H + 1), (2 * H + 1, 2 * H + 2)],
             _ => &[],
         };
+        // Check every named input column at its strongest output row.
         for &(start, end) in slices {
-            let index = (0..grad.len())
-                .filter(|j| (start..end).contains(&(j % width)))
-                .max_by(|&a, &b| grad[a].abs().total_cmp(&grad[b].abs()))
-                .unwrap();
-            probes.push((index, true));
+            for column in start..end {
+                let index = (column..grad.len())
+                    .step_by(width)
+                    .max_by(|&a, &b| grad[a].abs().total_cmp(&grad[b].abs()))
+                    .unwrap();
+                probes.push((index, true));
+            }
         }
         if id == T::PickEmbedding {
             let start = rows.row_of(HISTORY_ONLY_CARD).unwrap() * width;
-            let index = (start..start + width)
-                .max_by(|&a, &b| grad[a].abs().total_cmp(&grad[b].abs()))
-                .unwrap();
-            probes.push((index, true));
+            probes.extend((start..start + width).map(|j| (j, true)));
         }
         for (j, require_signal) in probes {
             let analytic = grad[j];
