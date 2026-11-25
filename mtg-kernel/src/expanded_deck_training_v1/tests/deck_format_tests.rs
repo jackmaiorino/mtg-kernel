@@ -67,6 +67,7 @@ pub(crate) fn episode(
         priority_windows: None,
         london_keep_offset: None,
         deck_format,
+        max_stack_objects: None,
     }
 }
 
@@ -108,7 +109,7 @@ fn session_from_the_pre_field_entry_points(episode: &ExpandedEpisodeV1) -> FastA
 }
 
 /// The ExpandedEpisodeV1 field order; serde also decodes the struct from a
-/// positional array in this order, so `deck_format` must stay last.
+/// positional array in this order; later fields (the stack cap) come after `deck_format`.
 const FIELD_ORDER: [&str; 19] = [
     "id",
     "seed",

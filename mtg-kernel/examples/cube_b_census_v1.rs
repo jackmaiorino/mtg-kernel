@@ -31,7 +31,7 @@ use mtg_kernel::cube_b_census_v1::{
     play_drafted_range, DealtSchedule, DraftedPod, GameLine, ProcessDeath, A2_CAPS,
     GAMES_PER_DRAFT, RUN_RECORD_SCHEMA,
 };
-use mtg_kernel::cube_draft_v1::{basic_land_ids, CubePool, GameCaps};
+use mtg_kernel::cube_draft_v1::{basic_land_ids, game_decision_counter, CubePool, GameCaps};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,9 +39,12 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const WORKER_STACK_BYTES: usize = 256 << 20;
+const HEARTBEAT_SECONDS: u64 = 5;
 const POLL: Duration = Duration::from_millis(500);
 
 type Fallible<T> = Result<T, String>;
@@ -250,6 +253,7 @@ fn load_run(args: &Args) -> Fallible<Run> {
             let basics = basic_land_ids().map_err(|error| error.to_string())?;
             let record = json!({
                 "schema": RUN_RECORD_SCHEMA,
+                "liveness": "per-decision-v1",
                 "mode": mode,
                 "binary": binary,
                 "card_db_hash": card_db_hash,
@@ -309,6 +313,7 @@ fn load_run(args: &Args) -> Fallible<Run> {
                 .flat_map(|deck| deck.card_ids());
             let record = json!({
                 "schema": RUN_RECORD_SCHEMA,
+                "liveness": "per-decision-v1",
                 "mode": mode,
                 "binary": binary,
                 "card_db_hash": card_db_hash,
@@ -346,15 +351,30 @@ fn load_run(args: &Args) -> Fallible<Run> {
 }
 
 impl Run {
+    fn record_text(&self) -> String {
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&self.record).expect("a run record is plain data")
+        )
+    }
+
     /// Plays `[start, end)` in order, writing each line before the next game
     /// starts and naming the game in play in `progress` first.
-    fn play(&self, start: u64, end: u64, out: &mut File, progress: &Path) -> Fallible<()> {
+    fn play(
+        &self,
+        start: u64,
+        end: u64,
+        out: &mut impl Write,
+        progress: &Path,
+        current: &WorkerProgress,
+    ) -> Fallible<()> {
         let mut emit = |line: &GameLine| -> Fallible<()> {
             let text = format!("{}\n", line.to_json_line());
             out.write_all(text.as_bytes())
                 .and_then(|()| out.flush())
                 .map_err(|error| format!("writing a line: {error}"))?;
             // The next game, so a death names it.
+            current.begin(line.index + 1);
             std::fs::write(progress, (line.index + 1).to_string())
                 .map_err(|error| format!("{}: {error}", progress.display()))
         };
@@ -403,6 +423,68 @@ impl From<mtg_kernel::cube_draft_v1::CubeDraftError> for StringError {
 // Worker
 // ---------------------------------------------------------------------------
 
+struct WorkerProgress {
+    game: Mutex<u64>,
+    decisions: Arc<AtomicU64>,
+}
+
+impl WorkerProgress {
+    fn new(start: u64) -> Self {
+        let decisions = game_decision_counter();
+        decisions.store(0, Ordering::Relaxed);
+        Self {
+            game: Mutex::new(start),
+            decisions,
+        }
+    }
+
+    // A sampler sees the index and count on the same side of a game boundary.
+    fn begin(&self, index: u64) {
+        let mut game = self.game.lock().unwrap();
+        self.decisions.store(0, Ordering::Relaxed);
+        *game = index;
+    }
+
+    fn sample(&self) -> (u64, u64) {
+        let game = self.game.lock().unwrap();
+        (*game, self.decisions.load(Ordering::Relaxed))
+    }
+}
+
+fn with_heartbeat(
+    progress: &Path,
+    current: &WorkerProgress,
+    interval: Duration,
+    play: impl FnOnce() -> Fallible<()>,
+) -> Fallible<()> {
+    let live = progress.with_added_extension("live");
+    let temp = live.with_added_extension("tmp");
+    std::thread::scope(|scope| {
+        let (stop, wait) = mpsc::channel::<()>();
+        let heartbeat = scope.spawn(move || {
+            let mut last = None;
+            while wait.recv_timeout(interval) == Err(mpsc::RecvTimeoutError::Timeout) {
+                let (game, decisions) = current.sample();
+                if decisions == 0 || last == Some((game, decisions)) {
+                    continue;
+                }
+                if let Err(error) = std::fs::write(&temp, format!("{game} {decisions}"))
+                    .and_then(|()| std::fs::rename(&temp, &live))
+                {
+                    let _ = std::fs::remove_file(&temp);
+                    let _ = writeln!(std::io::stderr(), "{}: {error}", live.display());
+                    continue;
+                }
+                last = Some((game, decisions));
+            }
+            Ok(())
+        });
+        let result = play();
+        drop(stop);
+        result.and(heartbeat.join().expect("heartbeat thread panicked"))
+    })
+}
+
 fn worker(args: &Args) -> Fallible<()> {
     let run = load_run(args)?;
     let start = args
@@ -430,7 +512,15 @@ fn worker(args: &Args) -> Fallible<()> {
         std::thread::Builder::new()
             .name("cube-b-census".to_owned())
             .stack_size(WORKER_STACK_BYTES)
-            .spawn_scoped(scope, || run.play(start, end, &mut out, &progress))
+            .spawn_scoped(scope, || {
+                let current = WorkerProgress::new(start);
+                with_heartbeat(
+                    &progress,
+                    &current,
+                    Duration::from_secs(HEARTBEAT_SECONDS),
+                    || run.play(start, end, &mut out, &progress, &current),
+                )
+            })
             .map_err(|error| format!("spawning the game thread: {error}"))?
             .join()
             .map_err(|_| "the game thread panicked outside a game".to_owned())?
@@ -450,7 +540,7 @@ struct Part {
     progress: PathBuf,
     child: Option<Child>,
     /// What last showed progress, and when.
-    seen: (u64, String),
+    seen: PartProgress,
     seen_at: Instant,
 }
 
@@ -507,10 +597,51 @@ fn spawn(args: &Args, part: &Part) -> Fallible<Child> {
         .map_err(|error| format!("spawning a worker: {error}"))
 }
 
-fn part_progress(part: &Part) -> (u64, String) {
-    let size = std::fs::metadata(&part.out).map_or(0, |meta| meta.len());
-    let current = std::fs::read_to_string(&part.progress).unwrap_or_default();
-    (size, current)
+#[derive(Default, PartialEq, Eq)]
+struct PartProgress {
+    size: u64,
+    game: String,
+    live: String,
+}
+
+fn part_progress(part: &Part) -> PartProgress {
+    PartProgress {
+        size: std::fs::metadata(&part.out).map_or(0, |meta| meta.len()),
+        game: std::fs::read_to_string(&part.progress).unwrap_or_default(),
+        live: std::fs::read_to_string(part.progress.with_added_extension("live"))
+            .unwrap_or_default(),
+    }
+}
+
+/// Returns the time of the last change, or None if the worker is stuck.
+fn check_watchdog(
+    previous: &PartProgress,
+    current: &PartProgress,
+    seen_at: Instant,
+    now: Instant,
+    watchdog: Duration,
+) -> Option<Instant> {
+    if current != previous {
+        Some(now)
+    } else if now.duration_since(seen_at) <= watchdog {
+        Some(seen_at)
+    } else {
+        None
+    }
+}
+
+fn hang_message(k: usize, next: u64, current: &PartProgress, watchdog: Duration) -> String {
+    let game = current.game.trim().parse().unwrap_or(next).max(next);
+    let decision = current
+        .live
+        .split_once(' ')
+        .filter(|(index, _)| index.parse::<u64>() == Ok(game))
+        .and_then(|(_, count)| count.parse::<u64>().ok())
+        .unwrap_or(0);
+    format!(
+        "hang: worker {k} made no progress for {}s at game {game} (last decision {decision}); the batch is void (A2.1), no output written",
+        watchdog.as_secs()
+    )
 }
 
 fn kill_all(parts: &mut [Part]) {
@@ -556,13 +687,19 @@ fn supervise(args: &Args) -> Fallible<()> {
                 out: with("part"),
                 progress: with("progress"),
                 child: None,
-                seen: (0, String::new()),
+                seen: PartProgress::default(),
                 seen_at: Instant::now(),
             }
         })
         .collect();
     for part in &parts {
-        for path in [&part.out, &part.progress] {
+        let live = part.progress.with_added_extension("live");
+        for path in [
+            &part.out,
+            &part.progress,
+            &live,
+            &live.with_added_extension("tmp"),
+        ] {
             if path.exists() {
                 return Err(format!("{} exists from an earlier run", path.display()));
             }
@@ -589,17 +726,15 @@ fn supervise(args: &Args) -> Fallible<()> {
             let part = &mut parts[k];
             let Some(status) = status else {
                 let seen = part_progress(part);
-                if seen != part.seen {
-                    part.seen = seen;
-                    part.seen_at = Instant::now();
-                } else if part.seen_at.elapsed() > watchdog {
-                    let game = part.seen.1.clone();
+                let Some(at) =
+                    check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), watchdog)
+                else {
+                    let message = hang_message(k, part.next, &seen, watchdog);
                     kill_all(&mut parts);
-                    return Err(format!(
-                        "hang: worker {k} made no progress for {}s at game {game}; the batch is void (A2.1), no output written",
-                        watchdog.as_secs()
-                    ));
-                }
+                    return Err(message);
+                };
+                part.seen = seen;
+                part.seen_at = at;
                 continue;
             };
             part.child = None;
@@ -640,6 +775,19 @@ fn supervise(args: &Args) -> Fallible<()> {
             );
             part.next = written + 1;
             if part.next < part.end {
+                let live = part.progress.with_added_extension("live");
+                let temp = live.with_added_extension("tmp");
+                for path in [part.progress.clone(), live, temp] {
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            kill_all(&mut parts);
+                            return Err(format!("{}: {error}", path.display()));
+                        }
+                    }
+                }
+                part.seen = part_progress(part);
                 part.child = Some(spawn(args, part)?);
                 part.seen_at = Instant::now();
             }
@@ -675,15 +823,14 @@ fn supervise(args: &Args) -> Fallible<()> {
     output
         .flush()
         .map_err(|error| format!("{}: {error}", out.display()))?;
-    let record_text = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&run.record).expect("a run record is plain data")
-    );
-    std::fs::write(&record, record_text)
+    std::fs::write(&record, run.record_text())
         .map_err(|error| format!("{}: {error}", record.display()))?;
     for part in &parts {
         let _ = std::fs::remove_file(&part.out);
         let _ = std::fs::remove_file(&part.progress);
+        let live = part.progress.with_added_extension("live");
+        let _ = std::fs::remove_file(live.with_added_extension("tmp"));
+        let _ = std::fs::remove_file(live);
     }
     let seconds = started.elapsed().as_secs_f64();
     eprintln!(
@@ -712,5 +859,214 @@ fn main() {
     if let Err(error) = result {
         eprintln!("cube_b_census_v1: {error}");
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("cube-census-{name}-{}-{nonce}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    struct TestOutput {
+        file: File,
+        first_heartbeat: Option<PathBuf>,
+    }
+
+    impl Write for TestOutput {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.file.write(bytes)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.file.flush()?;
+            // Hold the first game's decision count until the sampler publishes it.
+            if let Some(live) = self.first_heartbeat.take() {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline
+                    && std::fs::read_to_string(&live).ok().as_deref() != Some("0 2")
+                {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                assert_eq!(std::fs::read_to_string(live)?, "0 2");
+            }
+            Ok(())
+        }
+    }
+
+    fn assert_same_outputs(dir: &Path, flags: &[&str], games: usize) {
+        let args = Args::parse(
+            flags
+                .iter()
+                .copied()
+                .chain(["--max-driver-decisions", "2", "--allow-non-a2-caps", "true"])
+                .map(str::to_owned)
+                .collect(),
+        )
+        .unwrap();
+        let run = load_run(&args).unwrap();
+        let current = WorkerProgress::new(0);
+        let line = match &run.source {
+            Source::Drafted { pool, namespace } => DraftedPod::prepare(pool, namespace, 0)
+                .unwrap()
+                .play(0, &run.caps)
+                .unwrap(),
+            Source::Dealt { schedule } => schedule.episodes[0].play(0, &run.caps),
+        };
+        assert_eq!(line.driver_decisions, Some(2));
+        assert_eq!(current.sample(), (0, 2));
+
+        let play = |heartbeat: bool| {
+            let run = load_run(&args).unwrap();
+            let out = dir.join(format!("{}-{heartbeat}", args.required("--mode").unwrap()));
+            let progress = out.with_added_extension("progress");
+            let mut file = TestOutput {
+                file: File::create(&out).unwrap(),
+                first_heartbeat: heartbeat.then(|| progress.with_added_extension("live")),
+            };
+            let current = WorkerProgress::new(run.start);
+            let mut work = || run.play(run.start, run.end, &mut file, &progress, &current);
+            if heartbeat {
+                with_heartbeat(&progress, &current, Duration::from_millis(1), work).unwrap();
+            } else {
+                work().unwrap();
+            }
+            assert_eq!(
+                std::fs::read_to_string(progress).unwrap(),
+                run.end.to_string()
+            );
+            let bytes = std::fs::read(out).unwrap();
+            assert_eq!(bytes.iter().filter(|&&b| b == b'\n').count(), games);
+            assert_eq!(run.record["liveness"], "per-decision-v1");
+            (bytes, run.record_text())
+        };
+        assert_eq!(play(false), play(true));
+    }
+
+    #[test]
+    fn heartbeat_preserves_drafted_and_dealt_output_bytes() {
+        std::thread::Builder::new().stack_size(WORKER_STACK_BYTES).spawn(|| {
+            let dir = temp_dir("bytes");
+            let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/cube_v1");
+            let cube = data.join("mtgo_vintage_cube_20261007.json");
+            let gaps = data.join("mtgo_vintage_cube_20261007_gaps.json");
+            let fence = dir.join("fence.json");
+            std::fs::write(&fence, r#"{"cards":[]}"#).unwrap();
+            assert_same_outputs(&dir, &[
+                "--mode", "drafted", "--namespace", "census-b-test", "--draft-start", "0",
+                "--draft-end", "2", "--cube", cube.to_str().unwrap(), "--gaps", gaps.to_str().unwrap(),
+                "--fence", fence.to_str().unwrap(),
+            ], (2 * GAMES_PER_DRAFT) as usize);
+
+            let deck = json!({"mainboard": vec![basic_land_ids().unwrap()[0]; 40]});
+            let episode = |seed: u64| json!({"episode": {
+                "id": format!("game-{seed}"), "seed": seed, "starting_player": 0,
+                "selected": [&deck, &deck], "max_physical_decisions": A2_CAPS.max_physical_decisions,
+                "max_policy_steps": A2_CAPS.max_policy_steps
+            }});
+            let schedule = dir.join("schedule.json");
+            std::fs::write(&schedule, json!({
+                "kernel_carddb_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
+                "iterations": [{"episodes": [episode(11), episode(12)]}]
+            }).to_string()).unwrap();
+            assert_same_outputs(&dir, &["--mode", "dealt", "--schedule", schedule.to_str().unwrap()], 2);
+            std::fs::remove_dir_all(dir).unwrap();
+        }).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn decision_progress_resets_the_watchdog() {
+        let start = Instant::now();
+        let limit = Duration::from_secs(2);
+        let tick = Duration::from_millis(1);
+        let sample = |live: &str| PartProgress {
+            size: 17,
+            game: "8".into(),
+            live: live.into(),
+        };
+        let first = sample("8 40");
+        let second = sample("8 41");
+        // Even if the poll is late, an advancing game is alive.
+        let late = start + limit + tick;
+        assert_eq!(
+            check_watchdog(&first, &second, start, late, limit),
+            Some(late)
+        );
+        assert_eq!(check_watchdog(&first, &first, start, late, limit), None);
+
+        let just_before = start + limit - tick;
+        let reset = check_watchdog(&first, &second, start, just_before, limit).unwrap();
+        assert_eq!(reset, just_before);
+        assert_eq!(
+            check_watchdog(&second, &second, reset, late, limit),
+            Some(reset)
+        );
+        assert_eq!(
+            check_watchdog(&second, &second, reset, reset + limit + tick, limit),
+            None
+        );
+        assert!(hang_message(0, 8, &sample("7 99"), limit).contains("at game 8 (last decision 0)"));
+        let stale = PartProgress {
+            game: "7".into(),
+            ..sample("7 99")
+        };
+        assert!(hang_message(0, 8, &stale, limit).contains("at game 8 (last decision 0)"));
+    }
+
+    #[test]
+    fn heartbeat_file_keeps_a_slow_worker_alive_until_its_decisions_stop() {
+        let dir = temp_dir("slow");
+        let mut part = Part {
+            start: 8,
+            end: 9,
+            next: 8,
+            out: dir.join("part"),
+            progress: dir.join("progress"),
+            child: None,
+            seen: PartProgress::default(),
+            seen_at: Instant::now(),
+        };
+        std::fs::write(&part.progress, "8").unwrap();
+        part.seen = part_progress(&part);
+        let progress = part.progress.clone();
+        let current = WorkerProgress::new(8);
+        let poll = Duration::from_millis(10);
+        let limit = Duration::from_secs(2);
+        with_heartbeat(&progress, &current, poll, || {
+            for decision in 1..=3 {
+                std::thread::sleep(Duration::from_secs(1));
+                game_decision_counter().store(decision, Ordering::Relaxed);
+                let expected = format!("8 {decision}");
+                loop {
+                    let seen = part_progress(&part);
+                    part.seen_at = check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit)
+                        .expect("advancing worker timed out");
+                    part.seen = seen;
+                    if part.seen.live == expected {
+                        break;
+                    }
+                    std::thread::sleep(poll);
+                }
+            }
+            let live = progress.with_added_extension("live");
+            let modified = std::fs::metadata(&live).unwrap().modified().unwrap();
+            std::thread::sleep(limit + poll);
+            assert_eq!(std::fs::metadata(&live).unwrap().modified().unwrap(), modified);
+            let seen = part_progress(&part);
+            assert_eq!(check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit), None);
+            assert_eq!(hang_message(0, part.next, &seen, limit),
+                "hang: worker 0 made no progress for 2s at game 8 (last decision 3); the batch is void (A2.1), no output written");
+            Ok(())
+        }).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -3,6 +3,7 @@
  "eternal_integration": {
   "bonder_owned_draws_v1": 1,
   "cube_b_census_v1": 60,
+  "cube_deck_signal_v1": 60,
   "cube_draft_v1": 7,
   "cube_foreign_adventure_v1": 1,
   "denial_owned_draws_v1": 1,

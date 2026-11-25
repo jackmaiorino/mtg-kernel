@@ -929,6 +929,41 @@ pub enum UnsupportedMechanic {
     /// change was copied (`text_color_change_v1`).
     /// Appended to preserve prior unsupported-state discriminants.
     TextColorChangeOutsideAuditV1,
+    /// Not an unsupported mechanic but a session run-length bound: a decision
+    /// would be exposed with more than the session's `max_stack_objects` items
+    /// on the stack (an optional loop played without end, such as Zirda, the
+    /// Dawnwaker with Basalt Monolith stacking untap activations under random
+    /// play). The source is the source of the first item beyond the cap.
+    /// Appended to preserve prior unsupported-state discriminants.
+    StackSizeCapExceeded,
+}
+
+/// Applies a session's optional `max_stack_objects` cap to a decision leaving
+/// the engine: when `max_stack_objects` is `Some(cap)` and `state.stack` holds
+/// more than `cap` items, records the halt in `state.engine.halted` with the
+/// source of the first item beyond the cap and returns `Decision::Halted`.
+/// Absent (`None`) never halts; a finished game or an earlier halt stands.
+pub(crate) fn apply_stack_size_cap(
+    state: &mut GameState,
+    decision: Decision,
+    max_stack_objects: Option<u32>,
+) -> Decision {
+    if matches!(
+        decision,
+        Decision::GameOver { .. } | Decision::Halted { .. }
+    ) {
+        return decision;
+    }
+    let Some(cap) = max_stack_objects else {
+        return decision;
+    };
+    let Some(item) = state.stack.get(cap as usize) else {
+        return decision;
+    };
+    let source = item.source;
+    let mechanic = UnsupportedMechanic::StackSizeCapExceeded;
+    state.engine.halted = Some((mechanic, source));
+    Decision::Halted { mechanic, source }
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
