@@ -24,6 +24,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 from typing import Any
 
@@ -717,8 +718,32 @@ def _is_d8_completed_set(set_dir: Path, man: dict[str, Any]) -> bool:
     return "completed" in reason
 
 
+ShakedownManifestSpec = tuple[Path | bytes, str] | tuple[Path | bytes, str, Path | None, str | None]
+
+
+def _unpack_shakedown_manifest(
+    shakedown_manifest: ShakedownManifestSpec,
+    manifest_repo: Path | None = None,
+    lead_branch: str | None = None,
+) -> tuple[Path | bytes, str, Path | None, str | None]:
+    if len(shakedown_manifest) == 2:
+        manifest, expected_sha = shakedown_manifest
+        repo, branch = manifest_repo, lead_branch
+    elif len(shakedown_manifest) == 4:
+        manifest, expected_sha, sm_repo, sm_branch = shakedown_manifest
+        repo = manifest_repo if manifest_repo is not None else sm_repo
+        branch = lead_branch if lead_branch is not None else sm_branch
+    else:
+        raise SetError(
+            "shakedown_manifest must be (manifest, sha256) or (manifest, sha256, manifest_repo, lead_branch)"
+        )
+    if (repo is None) != (branch is None):
+        raise SetError("manifest_repo and lead_branch must be given together")
+    return manifest, expected_sha, repo, branch
+
+
 def verify_d8_v3_against_root(root: Path, man: dict[str, Any], *,
-                              shakedown_manifest: tuple[Path | bytes, str] | None = None) -> None:
+                              shakedown_manifest: ShakedownManifestSpec | None = None) -> None:
     """Enforce READ-PLAN-v3 Change 1 (Q2.1, Q2.2, New 1, New 2) against existing sets under
     `root/<namespace>/` and the D0.3b-pinned shakedown manifest."""
     ns = man["namespace"]
@@ -739,7 +764,8 @@ def verify_d8_v3_against_root(root: Path, man: dict[str, Any], *,
                 f"{ns}/{man['run']}/{man['set']}: D8 restart run {man['run']} requires a "
                 "D0.3b-pinned shakedown manifest authorizing the restart"
             )
-        sm = load_shakedown_manifest(shakedown_manifest[0], shakedown_manifest[1])
+        sm_src, sm_sha, sm_repo, sm_branch = _unpack_shakedown_manifest(shakedown_manifest)
+        sm = load_shakedown_manifest(sm_src, sm_sha, manifest_repo=sm_repo, lead_branch=sm_branch)
         restart_auth = sm["restarts"].get((ns, man["run"]))
         if restart_auth is None:
             raise SetError(
@@ -1000,20 +1026,125 @@ def _parse_shakedown_manifest_entries(raw: bytes) -> list[dict[str, Any]]:
     return parsed
 
 
-def load_shakedown_manifest(manifest: Path | bytes, expected_sha256: str) -> dict[str, Any]:
+def _run_git(repo: Path, args: list[str], *, text: bool = True) -> subprocess.CompletedProcess[Any]:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=text,
+            encoding="utf-8" if text else None,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SetError(f"git is unavailable for shakedown manifest lead-branch check: {exc}") from exc
+
+
+def _verify_restart_commit_on_lead_branch(
+    manifest_path: Path,
+    seq: int,
+    entry: dict[str, Any],
+    manifest_repo: Path,
+    lead_branch: str,
+) -> str:
+    """Verify per SHAKEDOWN-MANIFEST-FORMAT.md that the commit introducing `## Entry <seq>: restart`
+    in `manifest_path` exists in `manifest_repo`, is an ancestor of `lead_branch`, and that the
+    committed entry on `lead_branch` matches `entry` verbatim."""
+    if not isinstance(lead_branch, str) or not lead_branch or lead_branch.startswith("-") or any(
+            c.isspace() for c in lead_branch):
+        raise SetError(f"shakedown manifest restart entry {seq}: invalid lead branch name {lead_branch!r}")
+    repo = Path(manifest_repo)
+    if not repo.is_dir():
+        raise SetError(f"shakedown manifest restart entry {seq}: manifest_repo {manifest_repo} does not exist")
+
+    top = _run_git(repo, ["rev-parse", "--show-toplevel"])
+    if top.returncode != 0 or not top.stdout.strip():
+        err = (top.stderr or "").strip()
+        raise SetError(f"shakedown manifest restart entry {seq}: manifest_repo {manifest_repo} is not a git repo: {err}")
+    repo_root = Path(top.stdout.strip()).resolve()
+    try:
+        rel_path = manifest_path.resolve().relative_to(repo_root).as_posix()
+    except ValueError as exc:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: manifest {manifest_path} is outside manifest_repo {repo_root}"
+        ) from exc
+
+    candidates = (
+        [lead_branch] if lead_branch.startswith(("refs/heads/", "refs/remotes/"))
+        else [f"refs/heads/{lead_branch}", f"refs/remotes/{lead_branch}"]
+    )
+    lead_ref: str | None = None
+    for cand in candidates:
+        ref_check = _run_git(repo_root, ["show-ref", "--verify", "--quiet", cand])
+        if ref_check.returncode == 0:
+            lead_ref = cand
+            break
+    if lead_ref is None:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: lead branch {lead_branch!r} not found in {repo_root}"
+        )
+
+    heading = f"## Entry {seq}: restart"
+    log_res = _run_git(repo_root, ["log", "--format=%H", f"-S{heading}", "--", rel_path])
+    if log_res.returncode != 0:
+        err = (log_res.stderr or "").strip()
+        raise SetError(f"shakedown manifest restart entry {seq}: git log failed for {rel_path}: {err}")
+    commits = [ln.strip() for ln in log_res.stdout.splitlines() if ln.strip()]
+    if not commits:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: commit adding {heading!r} not found in git history of {rel_path}"
+        )
+    commit = commits[0]
+
+    anc = _run_git(repo_root, ["merge-base", "--is-ancestor", commit, lead_ref])
+    if anc.returncode == 1:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: commit {commit} is not on lead branch {lead_branch!r}"
+        )
+    if anc.returncode != 0:
+        err = (anc.stderr or "").strip()
+        raise SetError(f"shakedown manifest restart entry {seq}: git merge-base failed: {err}")
+
+    blob = _run_git(repo_root, ["cat-file", "blob", f"{lead_ref}:{rel_path}"], text=False)
+    if blob.returncode != 0:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: {rel_path} not found on lead branch {lead_branch!r}"
+        )
+    lead_entries = _parse_shakedown_manifest_entries(blob.stdout)
+    lead_entry = next((e for e in lead_entries if e["seq"] == seq), None)
+    if lead_entry is None or lead_entry != entry:
+        raise SetError(
+            f"shakedown manifest restart entry {seq}: entry content differs from committed entry on "
+            f"lead branch {lead_branch!r}"
+        )
+    return commit
+
+
+def load_shakedown_manifest(
+    manifest: Path | bytes,
+    expected_sha256: str,
+    *,
+    manifest_repo: Path | None = None,
+    lead_branch: str | None = None,
+) -> dict[str, Any]:
     """Q2.4 & R3: Verify the shakedown manifest (D0.3b, SHAKEDOWN-MANIFEST-FORMAT.md) against its
     pinned sha256 BEFORE trusting any panel digest or restart authorization inside it. Only structured
-    fenced json blocks under `## Entry <seq>: <kind>` are read; prose never counts as authorization."""
+    fenced json blocks under `## Entry <seq>: <kind>` are read; prose never counts as authorization.
+    Every `restart` entry also verifies that the commit adding it is on the research lead's branch."""
     if not read_plans._is_sha(expected_sha256):
         raise SetError("shakedown manifest D0.3b pin must be a 64-char hex sha256")
+    if (manifest_repo is None) != (lead_branch is None):
+        raise SetError("manifest_repo and lead_branch must be given together")
+    manifest_path: Path | None
     manifest_dir: Path | None
     if isinstance(manifest, (bytes, bytearray)):
         raw = bytes(manifest)
+        manifest_path = None
         manifest_dir = None
     else:
-        mpath = Path(manifest)
-        raw = mpath.read_bytes()
-        manifest_dir = mpath.resolve().parent
+        manifest_path = Path(manifest)
+        raw = manifest_path.read_bytes()
+        manifest_dir = manifest_path.resolve().parent
     actual_sha = hashlib.sha256(raw).hexdigest()
     if actual_sha != expected_sha256:
         raise SetError(
@@ -1157,6 +1288,18 @@ def load_shakedown_manifest(manifest: Path | bytes, expected_sha256: str) -> dic
                     f"shakedown manifest restart entry {seq} must authorize at least one namespace "
                     "via panel, replacements or namespaces"
                 )
+            if manifest_repo is None or lead_branch is None:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} requires manifest_repo and lead_branch "
+                    "to verify the commit is on the lead's branch"
+                )
+            if manifest_path is None:
+                raise SetError(
+                    f"shakedown manifest restart entry {seq} requires a manifest file path inside manifest_repo"
+                )
+            commit_sha = _verify_restart_commit_on_lead_branch(
+                manifest_path, seq, entry, manifest_repo, lead_branch
+            )
             for ns in sorted(auth_namespaces):
                 key = (ns, run)
                 slot = restarts.setdefault(key, {
@@ -1165,6 +1308,7 @@ def load_shakedown_manifest(manifest: Path | bytes, expected_sha256: str) -> dic
                     "note_path": note_path,
                     "note_sha256": note_sha,
                     "signature_line": sig_line,
+                    "commit": commit_sha,
                     "replaces": {},
                     "retired": {},
                 })
@@ -1182,21 +1326,30 @@ def load_shakedown_manifest(manifest: Path | bytes, expected_sha256: str) -> dic
     return {"entries": entries, "panels": panels, "restarts": restarts}
 
 
-def load_shakedown_manifest_panels(manifest: Path | bytes, expected_sha256: str) -> dict[str, str]:
+def load_shakedown_manifest_panels(
+    manifest: Path | bytes,
+    expected_sha256: str,
+    *,
+    manifest_repo: Path | None = None,
+    lead_branch: str | None = None,
+) -> dict[str, str]:
     """Q2.4: Verify the shakedown manifest (D0.3b) against its pinned sha256 BEFORE trusting any
     panel digest inside it, then return {run: panel_sha256} for dose-d8."""
-    panels = load_shakedown_manifest(manifest, expected_sha256)["panels"]
+    panels = load_shakedown_manifest(
+        manifest, expected_sha256, manifest_repo=manifest_repo, lead_branch=lead_branch
+    )["panels"]
     if not panels:
         raise SetError("shakedown manifest records no dose-d8 panel digest")
     return panels
 
 
 def resolve_pinned_panel(man: dict[str, Any], pinned_panel: str | None,
-                         shakedown_manifest: tuple[Path | bytes, str] | None) -> str:
+                         shakedown_manifest: ShakedownManifestSpec | None) -> str:
     """Resolve the pinned panel digest for a dose or d13 set (Q2.4)."""
     run = man["run"]
     if shakedown_manifest is not None:
-        panels = load_shakedown_manifest_panels(shakedown_manifest[0], shakedown_manifest[1])
+        sm_src, sm_sha, sm_repo, sm_branch = _unpack_shakedown_manifest(shakedown_manifest)
+        panels = load_shakedown_manifest_panels(sm_src, sm_sha, manifest_repo=sm_repo, lead_branch=sm_branch)
         if run not in panels:
             raise SetError(f"shakedown manifest has no pinned panel digest for {man['namespace']} run {run}")
         resolved = panels[run]
@@ -1213,7 +1366,7 @@ def resolve_pinned_panel(man: dict[str, Any], pinned_panel: str | None,
 
 
 def verify_set_restarts(opened_set: dict[str, Any], *, n_b: int | None = None, n_c: int | None = None,
-                        shakedown_manifest: tuple[Path | bytes, str] | None = None) -> None:
+                        shakedown_manifest: ShakedownManifestSpec | None = None) -> None:
     """Verify restart and shared-prefix restart rules from the reader entry point (A6.7, section 7, v3)."""
     man = opened_set["manifest"]
     set_dir = Path(opened_set["set_dir"])
@@ -1300,7 +1453,7 @@ def panel_set_names(namespace: str, set_name: str) -> tuple[str, str]:
 def verify_panel(root: Path, namespace: str, pinned: str, *, pool_doc: Any, constants_doc: Any,
                  pool_sha256: str, constants_sha256: str, set_name: str = "", run: str = read_plans.RUN,
                  card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None,
-                 shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
+                 shakedown_manifest: ShakedownManifestSpec | None = None) -> dict[str, Any]:
     """Rebuild panel.json from the accepted prep-panel execution, require identical bytes and the
     pinned digest. Returns the panel. The stage-1 prep-panel set itself is never checked against a
     pinned panel (read plan v2 change 2)."""
@@ -1351,7 +1504,7 @@ def check_prep_dose_set(set_dir: Path, pinned_panel: str | None = None, *, pool:
                         constants: tuple[Any, str],
                         card_index: tuple[Any, str] | None = None,
                         cube_table: tuple[Any, str] | None = None,
-                        shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
+                        shakedown_manifest: ShakedownManifestSpec | None = None) -> dict[str, Any]:
     """A downstream prep-dose-<ordinal> set: it carries the pinned panel digest, and each accepted
     result's draft pools equal the panel's. (prep-panel is exempt: read plan v2 change 2.)"""
     set_dir = Path(set_dir)
@@ -1435,7 +1588,7 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
                   card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None,
                   expected_pins: Any = None, expected_pilot: Any = None, expected_picker: Any = None,
                   expected_builders: dict[str, Any] | None = None,
-                  shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
+                  shakedown_manifest: ShakedownManifestSpec | None = None) -> dict[str, Any]:
     """Check a plan set and its chosen execution before data: manifest, plans (regenerated), prep
     acceptance, mirrors, panel, then each record against its plan."""
     set_dir = Path(set_dir)

@@ -317,7 +317,7 @@ def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name:
                    picker: Any = ..., builders: dict[str, Any] | None = None,
                    basics_by_chair: dict[tuple[int, str], int] | None = None,
                    namespace: str = NS, run: str = read_plans.RUN,
-                   shakedown_manifest: tuple[Path | bytes, str] | None = None
+                   shakedown_manifest: read_sets.ShakedownManifestSpec | None = None
                    ) -> tuple[Path, dict[int, tuple[dict[str, Any], str]]]:
     """A prep set with requests and executions. Each execution spec: {"ended", "units" (with markers),
     "receipt" (bool), "tamper" (unit -> callable on the result)}. Default: one complete execution."""
@@ -375,7 +375,7 @@ def write_plan_set(root: Path, family: str, set_name: str, plans: list[dict[str,
                    panel_sha256: str | None = None, replaces: str | None = None,
                    retired: list[list[int]] | None = None, namespace: str = NS,
                    run: str = read_plans.RUN,
-                   shakedown_manifest: tuple[Path | bytes, str] | None = None) -> Path:
+                   shakedown_manifest: read_sets.ShakedownManifestSpec | None = None) -> Path:
     """A plan set. Each execution spec: {"records": {pod_index: record}, "ended": ..., "expired": [...]}."""
     if namespace != NS:
         assert_test_temp_root(root)

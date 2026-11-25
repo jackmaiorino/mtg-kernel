@@ -6,15 +6,21 @@ Every record, plan and set is synthetic, in namespace `test` (tests/cube_synth.p
 
 from __future__ import annotations
 
+import contextlib
 import copy
 from fractions import Fraction
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 TESTS_DIR = Path(__file__).resolve().parent
 CUBE_V1_DIR = TESTS_DIR.parent
@@ -2320,6 +2326,45 @@ class D8V3RestartTests(unittest.TestCase):
             self.assertEqual(synth.assert_test_temp_root(Path(tmp)), Path(tmp).resolve())
 
     @staticmethod
+    @contextlib.contextmanager
+    def _temp_dir():
+        path = Path(tempfile.mkdtemp())
+        try:
+            yield path
+        finally:
+            def _clear_ro(func, target, _exc):
+                os.chmod(target, stat.S_IWRITE)
+                func(target)
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=_clear_ro)
+            else:
+                shutil.rmtree(path, onerror=_clear_ro)
+
+    @staticmethod
+    def _git(repo: Path, *args: str) -> str:
+        res = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, encoding="utf-8", check=True,
+        )
+        return res.stdout.strip()
+
+    @classmethod
+    def _init_manifest_repo(cls, repo: Path, lead_branch: str = "lead") -> Path:
+        repo.mkdir(parents=True, exist_ok=True)
+        cls._git(repo, "init", "-b", lead_branch)
+        cls._git(repo, "config", "core.autocrlf", "false")
+        cls._git(repo, "config", "user.name", "Research lead")
+        cls._git(repo, "config", "user.email", "lead@example.test")
+        cls._git(repo, "config", "commit.gpgsign", "false")
+        return repo
+
+    @classmethod
+    def _commit_in_repo(cls, repo: Path, rel_path: str, message: str) -> str:
+        cls._git(repo, "add", rel_path)
+        cls._git(repo, "commit", "-m", message)
+        return cls._git(repo, "rev-parse", "HEAD")
+
+    @staticmethod
     def _write_note(root: Path, filename: str = "RESTART-NOTE.md",
                     sig_line: str = "Research lead, 2026-11-25 14:00 ET. Signed restart note."
                     ) -> tuple[Path, str, str]:
@@ -2328,9 +2373,9 @@ class D8V3RestartTests(unittest.TestCase):
         path.write_bytes(raw)
         return path, hashlib.sha256(raw).hexdigest(), sig_line
 
-    @staticmethod
-    def _build_manifest(root: Path, entries: list[dict], *, filename: str = "SHAKEDOWN-MANIFEST.md",
-                        preamble: str = "# Shakedown Manifest\n\n", suffix: str = "") -> tuple[Path, str]:
+    @classmethod
+    def _format_manifest(cls, entries: list[dict], *, preamble: str = "# Shakedown Manifest\n\n",
+                         suffix: str = "") -> bytes:
         buf = preamble.encode("utf-8")
         for idx, spec in enumerate(entries, 1):
             kind = spec["kind"]
@@ -2347,9 +2392,28 @@ class D8V3RestartTests(unittest.TestCase):
             buf += block
         if suffix:
             buf += suffix.encode("utf-8")
-        path = root / filename
+        return buf
+
+    @classmethod
+    def _build_manifest(cls, root: Path, entries: list[dict], *, filename: str = "SHAKEDOWN-MANIFEST.md",
+                        preamble: str = "# Shakedown Manifest\n\n", suffix: str = "",
+                        commit: bool | None = None, repo: Path | None = None,
+                        lead_branch: str = "lead") -> tuple:
+        buf = cls._format_manifest(entries, preamble=preamble, suffix=suffix)
+        sha = hashlib.sha256(buf).hexdigest()
+        should_commit = any(e.get("kind") == "restart" for e in entries) if commit is None else commit
+        if not should_commit:
+            path = root / filename
+            path.write_bytes(buf)
+            return path, sha
+        repo_dir = repo if repo is not None else (root / "records-repo")
+        if not (repo_dir / ".git").exists():
+            cls._init_manifest_repo(repo_dir, lead_branch=lead_branch)
+        path = repo_dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(buf)
-        return path, hashlib.sha256(buf).hexdigest()
+        cls._commit_in_repo(repo_dir, filename, f"Record {filename}")
+        return path, sha, repo_dir, lead_branch
 
     @staticmethod
     def _restart_entry(note: tuple[Path, str, str], run: str, cs_sha: str, *,
@@ -2373,8 +2437,8 @@ class D8V3RestartTests(unittest.TestCase):
 
     def test_structured_shakedown_manifest_rejects_prose_denial_malformed_and_bad_notes(self):
         _, cs_sha = self._countersigned_a6()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             p1_sha = "1" * 64
             p2_sha = "2" * 64
             note = self._write_note(root)
@@ -2424,6 +2488,7 @@ class D8V3RestartTests(unittest.TestCase):
                     self._restart_entry(note, "v2", cs_sha, panel={"run": "v2", "sha256": p2_sha}),
                 ],
                 filename="SM-VALID.md",
+                commit=False,
             )
             valid_text = valid_path.read_text(encoding="utf-8")
 
@@ -2479,7 +2544,7 @@ class D8V3RestartTests(unittest.TestCase):
                  "amendment"),
             ):
                 with self.subTest(bad_restart=label):
-                    sm_bad = self._build_manifest(root, [entry], filename=f"SM-BAD-{label}.md")
+                    sm_bad = self._build_manifest(root, [entry], filename=f"SM-BAD-{label}.md", commit=False)
                     with self.assertRaisesRegex(read_sets.SetError, pattern):
                         read_sets.load_shakedown_manifest(*sm_bad)
 
@@ -2496,8 +2561,8 @@ class D8V3RestartTests(unittest.TestCase):
     def test_dose_d8_v2_restart_replaced_and_fresh_ordinals_and_shakedown_manifest_pin(self):
         cs_a6, cs_sha = self._countersigned_a6()
         d0_sha = "d" * 64
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
 
             # --- Run v1: units [0, 32), panel P1, prep-dose-0 complete, dose-0 interrupted after units 0, 1 ---
@@ -2571,7 +2636,7 @@ class D8V3RestartTests(unittest.TestCase):
             p2_sha = hashlib.sha256(p2_text.encode("utf-8")).hexdigest()
 
             # Write structured D0.3b SHAKEDOWN-MANIFEST.md pinning v1 -> p1_sha, v2 -> p2_sha + restart auth.
-            sm_path, sm_sha = self._build_manifest(
+            sm = self._build_manifest(
                 root,
                 [
                     {"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
@@ -2580,9 +2645,13 @@ class D8V3RestartTests(unittest.TestCase):
                 ],
                 filename="SHAKEDOWN-MANIFEST.md",
             )
-            sm = (sm_path, sm_sha)
-            self.assertEqual(read_sets.load_shakedown_manifest_panels(sm_path, sm_sha),
-                             {"v1": p1_sha, "v2": p2_sha})
+            sm_path, sm_sha, sm_repo, sm_branch = sm
+            self.assertEqual(
+                read_sets.load_shakedown_manifest_panels(
+                    sm_path, sm_sha, manifest_repo=sm_repo, lead_branch=sm_branch
+                ),
+                {"v1": p1_sha, "v2": p2_sha},
+            )
 
             # Replaced ordinal 0: prep-dose-0 is fresh (v1/prep-dose-0 completed, v1/dose-0 interrupted),
             # dose-0-restart-1 replaces v1/dose-0.
@@ -2718,8 +2787,8 @@ class D8V3RestartTests(unittest.TestCase):
         live_decl = self._live_decl(cs_sha)
 
         # Scenario 1: simple interruption on pair 0 -> retired [[1, 4]], replaced by v2/fixed-restart-1 at [4, 8).
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             sm_aa_v2 = self._build_manifest(
                 root,
@@ -2776,8 +2845,8 @@ class D8V3RestartTests(unittest.TestCase):
         # Scenario 2 (Q2.1 lead's exact example): exec-0 completed all 4 pairs with watchdog halt on pod 2 game 3,
         # and exec-1 hung (same-game watchdog_stop) after starting only pairs 0 and 1. Union of started units is
         # {0, 1, 2, 3}, so retired MUST be [] (NOT [[2, 4]]).
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             sm_aa_v2 = self._build_manifest(
                 root,
@@ -2837,8 +2906,8 @@ class D8V3RestartTests(unittest.TestCase):
         cs_a6, cs_sha = self._countersigned_a6()
 
         # Case (i): execution left no execution.json -> accepted as interrupted predecessor.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             sm_aa_v2 = self._build_manifest(
                 root,
@@ -2865,8 +2934,8 @@ class D8V3RestartTests(unittest.TestCase):
             read_sets.open_plan_set(aa_v2, cs_sha, shakedown_manifest=sm_aa_v2)
 
         # Case (ii): interrupted prep set prep-dose-0 -> accepted for v2/prep-dose-0-restart-1 with retired [[5, 32]].
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             s1_v1, o_v1 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
                                                reserved=[0, 32], namespace="dose-d8", run="v1")
@@ -2926,8 +2995,8 @@ class D8V3RestartTests(unittest.TestCase):
                                           shakedown_manifest=sm_v2, **synth.LIVE_INDEX_ARGS)
 
         # Case (iii): completed set stands on its build and MUST NOT be replaced.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             sm_aa_v2 = self._build_manifest(
                 root,
@@ -3040,8 +3109,8 @@ class D8V3RestartTests(unittest.TestCase):
         # (1) v3/fixed-restart-1 replacing v1/fixed MUST fail (forked history);
         # (2) v3/fixed-restart-2 replacing v1/fixed (skipping v2/fixed-restart-1) MUST fail;
         # (3) v3/fixed-restart-2 replacing v2/fixed-restart-1 PASSES!
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             sm_v2 = self._build_manifest(
                 root,
@@ -3112,8 +3181,8 @@ class D8V3RestartTests(unittest.TestCase):
 
         # Part A2: Forked restart history on dose-d8 where v2/dose-0-restart-1 and v3/dose-0-restart-1
         # both pass manifest shape yet both try to replace v1/dose-0 -> v3 MUST fail with 'forked'.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             mark0 = {"kind": "dose", "label": "pods-512", "ordinal": 0}
             # v1: panel P1 + interrupted dose-0
@@ -3211,8 +3280,8 @@ class D8V3RestartTests(unittest.TestCase):
 
         # Part B: Completed dose-0 in v1 MUST NOT be replayed under fresh name dose-0 (or prep-dose-0) in v2
         # under a same-build restart note (`restart_kind: "note"`); only allowed under explicit `amendment`.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
             s1_v1, o_v1 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
                                                reserved=[0, 32], namespace="dose-d8", run="v1")
@@ -3296,11 +3365,11 @@ class D8V3RestartTests(unittest.TestCase):
                                     shakedown_manifest=sm_amendment, **synth.LIVE_INDEX_ARGS)
 
     def test_manifest_cli_publishes_authorized_v2_restart_end_to_end(self):
-        # R3 finding 2: read_plans.main `manifest` subcommand threads --shakedown-manifest and
-        # --shakedown-manifest-sha256 and publishes an authorized v2 dose-d8 restart end to end.
+        # R3 finding 2 & addendum: read_plans.main `manifest` subcommand threads --shakedown-manifest,
+        # --shakedown-manifest-sha256, --manifest-repo, and --lead-branch end to end.
         _, cs_sha = self._countersigned_a6()
-        with tempfile.TemporaryDirectory() as tmp:
-            root = synth.assert_test_temp_root(Path(tmp))
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
             note = self._write_note(root)
 
             # Set up v1 with panel P1 and interrupted dose-0 (units 0, 1 started -> retired [[2, 32]]).
@@ -3330,7 +3399,7 @@ class D8V3RestartTests(unittest.TestCase):
 
             rep_d0 = [{"namespace": "dose-d8", "set": "dose-0-restart-1",
                        "replaces": "v1/dose-0", "retired": [[2, 32]]}]
-            sm_pre_path, sm_pre_sha = self._build_manifest(
+            sm_pre_path, sm_pre_sha, sm_repo, sm_branch = self._build_manifest(
                 root,
                 [
                     {"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
@@ -3353,17 +3422,25 @@ class D8V3RestartTests(unittest.TestCase):
                 "set": "prep-panel", "declaration_sha256": cs_sha, "units": [32, 64], "reserved": [32, 64],
             }).encode("utf-8"))
 
-            # Missing --shakedown-manifest fails at the root verifier; partial flag pair fails with PlanError.
+            # Missing flags or partial flag pairs fail before publishing.
             with self.assertRaisesRegex(read_sets.SetError, "shakedown manifest"):
                 read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir)])
             with self.assertRaisesRegex(read_plans.PlanError, "together"):
                 read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
                                  "--shakedown-manifest", str(sm_pre_path)])
+            with self.assertRaisesRegex(read_plans.PlanError, "together"):
+                read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
+                                 "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha,
+                                 "--manifest-repo", str(sm_repo)])
+            with self.assertRaisesRegex(read_sets.SetError, "manifest_repo and lead_branch"):
+                read_plans.main(["manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
+                                 "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha])
 
             # Authorized CLI call publishes dose-d8/v2/prep-panel/manifest.json cleanly.
             rc = read_plans.main([
                 "manifest", "--spec", str(spec_pp), "--set-dir", str(v2_pp_dir),
                 "--shakedown-manifest", str(sm_pre_path), "--shakedown-manifest-sha256", sm_pre_sha,
+                "--manifest-repo", str(sm_repo), "--lead-branch", sm_branch,
             ])
             self.assertEqual(rc, 0)
             pp_man = read_sets.load_manifest(v2_pp_dir)
@@ -3383,7 +3460,7 @@ class D8V3RestartTests(unittest.TestCase):
             (root / "dose-d8" / "v2" / "panel").mkdir(parents=True)
             (root / "dose-d8" / "v2" / "panel" / "panel.json").write_bytes(p2_text.encode("utf-8"))
             p2_sha = hashlib.sha256(p2_text.encode("utf-8")).hexdigest()
-            sm_path, sm_sha = self._build_manifest(
+            sm_full = self._build_manifest(
                 root,
                 [
                     {"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
@@ -3392,9 +3469,10 @@ class D8V3RestartTests(unittest.TestCase):
                 ],
                 filename="SM-CLI-FULL.md",
             )
+            sm_path, sm_sha, sm_repo2, sm_branch2 = sm_full
             _, po2 = synth.write_prep_set(root, "dose", "dose", "prep-dose-0", range(32, 64), cs_sha,
                                           reserved=[32, 64], panel_sha256=p2_sha, namespace="dose-d8", run="v2",
-                                          shakedown_manifest=(sm_path, sm_sha))
+                                          shakedown_manifest=sm_full)
             v2_d0_dir = root / "dose-d8" / "v2" / "dose-0-restart-1"
             (v2_d0_dir / "plans").mkdir(parents=True)
             for u in range(32, 64):
@@ -3412,11 +3490,162 @@ class D8V3RestartTests(unittest.TestCase):
             rc2 = read_plans.main([
                 "manifest", "--spec", str(spec_d0), "--set-dir", str(v2_d0_dir),
                 "--shakedown-manifest", str(sm_path), "--shakedown-manifest-sha256", sm_sha,
+                "--manifest-repo", str(sm_repo2), "--lead-branch", sm_branch2,
             ])
             self.assertEqual(rc2, 0)
             d0_man = read_sets.load_manifest(v2_d0_dir)
             self.assertEqual((d0_man["set"], d0_man["replaces"], d0_man["retired"]),
                              ("dose-0-restart-1", "v1/dose-0", [[2, 32]]))
+
+    def test_restart_entry_commit_must_be_on_lead_branch(self):
+        # Addendum: restart entries are written and committed only on the research lead's branch.
+        # Verify with a real temp git repo containing a lead branch and a side branch.
+        cs_a6, cs_sha = self._countersigned_a6()
+        raw_decl = json.loads(DECLARATION.read_text(encoding="utf-8"))
+        raw_decl["a6_sha256"] = cs_sha
+        raw_decl["pins"] = dict(synth.LIVE_PINS)
+        raw_decl["inputs"] = {"pool_sha256": synth.POOL[1], "constants_sha256": synth.CONST[1]}
+        raw_decl["reads"]["aa"]["namespace"] = "read-d8-aa"
+        raw_decl["reads"]["dose"]["namespace"] = "dose-d8"
+        raw_decl["reads"]["dose"]["panel_drafts"] = 32
+        raw_decl["reads"]["dose"]["panel_sha256"] = None
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
+            repo = self._init_manifest_repo(root / "records", lead_branch="lead")
+            manifest_path = repo / "SHAKEDOWN-MANIFEST.md"
+            a6_path = root / "A6-SIGNED.md"
+            a6_path.write_bytes(cs_a6)
+            decl_path = root / "decl.json"
+            decl_path.write_bytes(read_plans.serialize(raw_decl).encode("utf-8"))
+
+            # Commit Entry 1 (panel) and the signed restart note on the lead branch.
+            note = self._write_note(repo, "RESTART-NOTE.md")
+            entry1 = {"kind": "panel", "panel": {"run": "v1", "sha256": "1" * 64}}
+            base_bytes = self._format_manifest([entry1])
+            manifest_path.write_bytes(base_bytes)
+            self._commit_in_repo(repo, "RESTART-NOTE.md", "Add lead restart note")
+            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Entry 1: v1 panel")
+
+            # Prepare interrupted read-d8-aa v1/fixed and candidate v2/fixed-restart-1 plans on disk.
+            p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
+            synth.write_plan_set(
+                root, "aa", "fixed", p1, cs_sha,
+                executions=[{"records": {0: synth.record(p1[0], lambda pl, g, pos: "draw", games=2, status="stopped")},
+                             "ended": "interrupted"}],
+                units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1",
+            )
+            p2 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v2") for u in range(4, 8) for m in (0, 1)]
+            recs2 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in p2}
+            rep_aa = [{"namespace": "read-d8-aa", "set": "fixed-restart-1",
+                       "replaces": "v1/fixed", "retired": [[1, 4]]}]
+            entry2 = self._restart_entry(note, "v2", cs_sha, restart_kind="note", replacements=rep_aa)
+            with_restart_bytes = self._format_manifest([entry1, entry2])
+            with_restart_sha = hashlib.sha256(with_restart_bytes).hexdigest()
+
+            # 1) Side branch commits Entry 2 (restart): valid note, signature, and sha pin, yet NOT on lead -> REFUSED.
+            self._git(repo, "checkout", "-b", "side")
+            manifest_path.write_bytes(with_restart_bytes)
+            side_commit = self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Side branch adds Entry 2 restart")
+            sm_side = (manifest_path, with_restart_sha, repo, "lead")
+            with self.assertRaisesRegex(read_sets.SetError, "not on lead branch"):
+                read_sets.load_shakedown_manifest(
+                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
+                )
+            with self.assertRaisesRegex(read_sets.SetError, "not on lead branch"):
+                synth.write_plan_set(
+                    root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
+                    units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[[1, 4]],
+                    namespace="read-d8-aa", run="v2", shakedown_manifest=sm_side,
+                )
+
+            # 2) Back on lead: uncommitted Entry 2 (restart) in working tree -> commit not found -> REFUSED.
+            self._git(repo, "checkout", "lead")
+            manifest_path.write_bytes(with_restart_bytes)
+            with self.assertRaisesRegex(read_sets.SetError, "not found"):
+                read_sets.load_shakedown_manifest(
+                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
+                )
+
+            # 3) Missing manifest_repo / lead_branch on a restart entry -> REFUSED.
+            with self.assertRaisesRegex(read_sets.SetError, "manifest_repo and lead_branch"):
+                read_sets.load_shakedown_manifest(manifest_path, with_restart_sha)
+
+            # 4) Commit Entry 2 (restart) on lead branch -> PASSES across Python API, read_plans CLI, and readers CLI!
+            lead_commit = self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Lead adds Entry 2 restart")
+            self.assertNotEqual(lead_commit, side_commit)
+            loaded = read_sets.load_shakedown_manifest(
+                manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
+            )
+            self.assertEqual(loaded["restarts"][("read-d8-aa", "v2")]["commit"], lead_commit)
+
+            sm_lead = (manifest_path, with_restart_sha, repo, "lead")
+            aa_v2 = synth.write_plan_set(
+                root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
+                units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[[1, 4]],
+                namespace="read-d8-aa", run="v2", shakedown_manifest=sm_lead,
+            )
+            out_report = root / "aa-v2-report.json"
+            rc = readers.main([
+                "--declaration", str(decl_path), "--read", "aa", "--look", "1",
+                "--sets", str(aa_v2), "--a6-file", str(a6_path),
+                "--shakedown-manifest", str(manifest_path), "--shakedown-manifest-sha256", with_restart_sha,
+                "--manifest-repo", str(repo), "--lead-branch", "lead",
+                "--out", str(out_report),
+            ])
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out_report.read_text(encoding="utf-8"))["verdict"], "symmetric")
+
+            # CLI flag validation on readers.main: partial flags and side-branch ref are refused.
+            with self.assertRaisesRegex(readers.ReadError, "together"):
+                readers.main([
+                    "--declaration", str(decl_path), "--read", "aa", "--look", "1",
+                    "--sets", str(aa_v2), "--a6-file", str(a6_path),
+                    "--shakedown-manifest", str(manifest_path), "--shakedown-manifest-sha256", with_restart_sha,
+                    "--manifest-repo", str(repo),
+                ])
+            with self.assertRaisesRegex(read_sets.SetError, "not found"):
+                read_sets.load_shakedown_manifest(
+                    manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="no-such-branch"
+                )
+
+            # 5) Manifest file outside --manifest-repo -> REFUSED.
+            outside = root / "OUTSIDE-MANIFEST.md"
+            outside.write_bytes(with_restart_bytes)
+            with self.assertRaisesRegex(read_sets.SetError, "outside"):
+                read_sets.load_shakedown_manifest(
+                    outside, with_restart_sha, manifest_repo=repo, lead_branch="lead"
+                )
+
+            # 6) git unavailable -> REFUSED.
+            with mock.patch.object(read_sets.subprocess, "run", side_effect=FileNotFoundError("git")):
+                with self.assertRaisesRegex(read_sets.SetError, "git is unavailable"):
+                    read_sets.load_shakedown_manifest(
+                        manifest_path, with_restart_sha, manifest_repo=repo, lead_branch="lead"
+                    )
+
+            # 7) Post-commit body tamper on a side branch (heading unchanged from lead's commit!) -> REFUSED.
+            self._git(repo, "checkout", "-b", "tamper", "lead")
+            tampered_entry2 = self._restart_entry(
+                note, "v2", cs_sha, restart_kind="amendment", replacements=rep_aa
+            )
+            tampered_bytes = self._format_manifest([entry1, tampered_entry2])
+            tampered_sha = hashlib.sha256(tampered_bytes).hexdigest()
+            manifest_path.write_bytes(tampered_bytes)
+            self._commit_in_repo(repo, "SHAKEDOWN-MANIFEST.md", "Tamper Entry 2 body on side branch")
+            with self.assertRaisesRegex(read_sets.SetError, "differs from committed entry on lead branch"):
+                read_sets.load_shakedown_manifest(
+                    manifest_path, tampered_sha, manifest_repo=repo, lead_branch="lead"
+                )
+
+            # 8) Switching readers.main onto the side branch commit fails too.
+            self._git(repo, "checkout", "side")
+            with self.assertRaisesRegex(read_sets.SetError, "not on lead branch"):
+                readers.main([
+                    "--declaration", str(decl_path), "--read", "aa", "--look", "1",
+                    "--sets", str(aa_v2), "--a6-file", str(a6_path),
+                    "--shakedown-manifest", str(manifest_path), "--shakedown-manifest-sha256", with_restart_sha,
+                    "--manifest-repo", str(repo), "--lead-branch", "lead",
+                ])
 
 
 class UniformPodRecordTests(unittest.TestCase):

@@ -1154,7 +1154,7 @@ def _dose_first_basics_bands(records: dict[int, dict[str, Any]], plans: dict[int
 
 def _dose_provenance(namespace: str, section: dict[str, Any], sets: list[dict[str, Any]],
                      plans: dict[int, dict[str, Any]], d0_sha256: str | None,
-                     shakedown_manifest: tuple[Path | bytes, str] | None) -> dict[str, Any]:
+                     shakedown_manifest: read_sets.ShakedownManifestSpec | None) -> dict[str, Any]:
     """D0 provenance block for dose reads (A6.17, D0.20, Q2.4), used on both complete and void reports."""
     if d0_sha256 is not None and not read_plans._is_sha(d0_sha256):
         raise ReadError("d0_sha256 must be a sha256 hex digest")
@@ -1186,7 +1186,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
              peer_sets: list[dict[str, Any]] | None = None, expected_pilot: Any = None,
              expected_picker: Any = None, expected_builders: dict[str, Any] | None = None,
              d0_sha256: str | None = None,
-             shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
+             shakedown_manifest: read_sets.ShakedownManifestSpec | None = None) -> dict[str, Any]:
     """One read's report. `sets` are read_sets.open_plan_set results: one set, or for a gate's look 2
     the look-1 and look-2 sets. For dose and D13 the look is the mark ordinal (D13 may take one set
     per pilot)."""
@@ -1563,6 +1563,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--d0-sha256", help="D0 declaration sha256 for dose-d8 provenance")
     parser.add_argument("--shakedown-manifest", type=Path, help="D0.3b shakedown manifest for per-run panel digests")
     parser.add_argument("--shakedown-manifest-sha256", help="D0.3b sha256 pin for --shakedown-manifest")
+    parser.add_argument("--manifest-repo", type=Path,
+                        help="git repository containing --shakedown-manifest for restart lead-branch check")
+    parser.add_argument("--lead-branch",
+                        help="research lead branch in --manifest-repo required for restart entries")
     parser.add_argument("--pool", type=Path)
     parser.add_argument("--constants", type=Path)
     parser.add_argument("--card-index", type=Path)
@@ -1571,7 +1575,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if (args.shakedown_manifest is None) != (args.shakedown_manifest_sha256 is None):
         raise ReadError("--shakedown-manifest and --shakedown-manifest-sha256 must be given together")
-    sm = (args.shakedown_manifest, args.shakedown_manifest_sha256) if args.shakedown_manifest else None
+    if (args.manifest_repo is None) != (args.lead_branch is None):
+        raise ReadError("--manifest-repo and --lead-branch must be given together")
+    if args.manifest_repo is not None and args.shakedown_manifest is None:
+        raise ReadError("--manifest-repo and --lead-branch require --shakedown-manifest")
+    sm = (
+        (args.shakedown_manifest, args.shakedown_manifest_sha256, args.manifest_repo, args.lead_branch)
+        if args.shakedown_manifest else None
+    )
     declaration, decl_sha = load_declaration(args.declaration)
     pool = read_plans.load_json(args.pool) if args.pool else None
     constants = read_plans.load_json(args.constants) if args.constants else None

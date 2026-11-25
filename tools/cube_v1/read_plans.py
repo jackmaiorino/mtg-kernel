@@ -1077,7 +1077,7 @@ def build_manifest(kind: str, family: str, namespace: str, set_name: str, declar
 
 
 def write_set(root: Path, manifest: dict[str, Any], files: dict[str, Any], *,
-              shakedown_manifest: tuple[Path | bytes, str] | None = None) -> Path:
+              shakedown_manifest: tuple[Any, ...] | None = None) -> Path:
     """Write a set directory <root>/<namespace>/<run>/<set>/ with its manifest and files."""
     check_d8_v3_manifest_shape(manifest)
     if manifest["namespace"] in D8_RESTART_NAMESPACES:
@@ -1290,6 +1290,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="D0.3b shakedown manifest for D8 restart authorization")
     man_p.add_argument("--shakedown-manifest-sha256",
                        help="D0.3b sha256 pin for --shakedown-manifest")
+    man_p.add_argument("--manifest-repo", type=Path,
+                       help="git repository containing --shakedown-manifest for restart lead-branch check")
+    man_p.add_argument("--lead-branch",
+                       help="research lead branch in --manifest-repo required for restart entries")
     args = parser.parse_args(argv)
 
     spec, _ = load_json(args.spec)
@@ -1310,7 +1314,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if (args.shakedown_manifest is None) != (args.shakedown_manifest_sha256 is None):
             raise PlanError("--shakedown-manifest and --shakedown-manifest-sha256 must be given together")
-        sm = (args.shakedown_manifest, args.shakedown_manifest_sha256) if args.shakedown_manifest else None
+        if (args.manifest_repo is None) != (args.lead_branch is None):
+            raise PlanError("--manifest-repo and --lead-branch must be given together")
+        if args.manifest_repo is not None and args.shakedown_manifest is None:
+            raise PlanError("--manifest-repo and --lead-branch require --shakedown-manifest")
+        sm = (
+            (args.shakedown_manifest, args.shakedown_manifest_sha256, args.manifest_repo, args.lead_branch)
+            if args.shakedown_manifest else None
+        )
         folder, stem = ("plans", "pod") if spec["kind"] == "plans" else ("requests", "unit")
         paths = sorted((args.set_dir / folder).glob(f"{stem}-*.json"), key=lambda p: int(p.stem.split("-")[1]))
         entries = [(int(p.stem.split("-")[1]), hashlib.sha256(p.read_bytes()).hexdigest()) for p in paths]
