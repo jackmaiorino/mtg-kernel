@@ -1488,7 +1488,9 @@ fn drive_game(
         }
         let decision = &reply["decision"];
         if let Some(stack) = decision["observation"]["projection"]["stack"].as_array() {
-            tally.max_stack = tally.max_stack.max(stack.len() as u32);
+            tally.max_stack = tally
+                .max_stack
+                .max(u32::try_from(stack.len()).unwrap_or(u32::MAX));
         }
         if let Some(step) = decision["step"].as_u64() {
             tally.last_step = Some(step);
