@@ -465,13 +465,50 @@ def build_prep_request(prep_family: str, namespace: str, unit: int, pins: Any, p
     }
 
 
-def check_prep_request(request: Any) -> dict[str, Any]:
+def prep_request_bindings(request: dict[str, Any]) -> dict[str, Any]:
+    """The declared picker and builder bindings carried by a prep request."""
+    learning = [c["picker"] for c in request["chairs"] if c["role"] == "learning"]
+    if request["family"] == "dose":
+        picker = None
+    elif not learning or any(p != learning[0] for p in learning):
+        raise PlanError("every learning chair of a prep request uses one picker")
+    else:
+        picker = learning[0]
+    builders: dict[str, Any] = {}
+    for build in request["builds"]:
+        if build["row"] != "stated":
+            if builders.setdefault(build["row"], build["builder"]) != build["builder"]:
+                raise PlanError(f"prep request row {build['row']} has two builders")
+    return {"pins": request["pins"], "picker": picker, "builders": builders}
+
+
+def check_prep_request(request: Any, *, expected_pins: Any = None, expected_picker: Any = None,
+                       expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
     obj = pod_record._object
     request = obj(request, "prep_request", PREP_REQUEST_KEYS)
     if request["schema"] != PLAN_SCHEMA or request["kind"] != "prep_request":
         raise PlanError("prep request has the read-plan schema and kind 'prep_request'")
+    for i, chair in enumerate(pod_record._list(request["chairs"], "prep_request.chairs")):
+        obj(chair, f"prep_request.chairs[{i}]", PLAN_CHAIR_KEYS)
+        obj(chair["picker"], f"prep_request.chairs[{i}].picker", ("kind", "pin"))
     for i, build in enumerate(pod_record._list(request["builds"], "prep_request.builds")):
         obj(build, f"prep_request.builds[{i}]", PREP_BUILD_KEYS)
+        obj(build["builder"], f"prep_request.builds[{i}].builder", ("kind", "pin"))
+    bindings = prep_request_bindings(request)
+    if expected_pins is not None and request["pins"] != expected_pins:
+        raise PlanError("prep request pins differ from declared pins")
+    if expected_picker is not None and bindings["picker"] != expected_picker:
+        raise PlanError("prep request picker differs from declared picker")
+    if expected_builders is not None and bindings["builders"] != expected_builders:
+        raise PlanError("prep request builders differ from declared builders")
+    prep_family = "dose_panel" if request["family"] == "dose" and not request["builds"] else request["family"]
+    try:
+        expected = build_prep_request(prep_family, request["namespace"], request["unit"], request["pins"],
+                                      bindings["picker"], bindings["builders"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise PlanError(f"prep request cannot be regenerated: {exc}") from exc
+    if serialize(expected) != serialize(request):
+        raise PlanError(f"prep request differs from its regeneration at {first_diff(request, expected, 'prep_request')}")
     return request
 
 
@@ -725,7 +762,9 @@ def plan_bindings(plan: dict[str, Any]) -> dict[str, Any]:
 def check_plan(plan: Any, prep: tuple[dict[str, Any], str] | None = None, pool_doc: Any = None,
                constants_doc: Any = None, pool_sha256: str | None = None,
                constants_sha256: str | None = None, card_index: tuple[Any, str] | None = None,
-               cube_table: tuple[Any, str] | None = None) -> dict[str, Any]:
+               cube_table: tuple[Any, str] | None = None, *, expected_pins: Any = None,
+               expected_pilot: Any = None, expected_picker: Any = None,
+               expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
     """Strict validation: the plan must equal, byte for byte, the plan regenerated from its identity
     fields, bindings, prep result and dealer inputs (whose hashes must equal the plan's)."""
     plan = _shape(plan)
@@ -736,6 +775,14 @@ def check_plan(plan: Any, prep: tuple[dict[str, Any], str] | None = None, pool_d
             plan["inputs"]["pool_sha256"], plan["inputs"]["constants_sha256"]):
         raise PlanError("the dealer inputs do not hash to the plan's inputs")
     bindings = plan_bindings(plan)
+    if expected_pins is not None and plan["pins"] != expected_pins:
+        raise PlanError("plan pins differ from declared pins")
+    if expected_pilot is not None and plan["pilot"] != expected_pilot:
+        raise PlanError("plan pilot differs from declared pilot")
+    if expected_picker is not None and bindings["picker"] != expected_picker:
+        raise PlanError("plan picker differs from declared picker")
+    if expected_builders is not None and bindings["builders"] != expected_builders:
+        raise PlanError("plan builders differ from declared builders")
     try:
         expected = build_plan(family, plan["namespace"], plan["unit"], pins=plan["pins"], pilot=plan["pilot"],
                               picker=bindings["picker"], builders=bindings["builders"], mirror=plan["mirror"],

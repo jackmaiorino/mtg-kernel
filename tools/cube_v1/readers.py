@@ -681,7 +681,9 @@ def _games(records: dict[int, dict[str, Any]]) -> dict[str, int]:
 
 
 def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
-             sets: list[dict[str, Any]], *, a6_file: Path | bytes | None = None) -> dict[str, Any]:
+             sets: list[dict[str, Any]], *, a6_file: Path | bytes | None = None,
+             peer_sets: list[dict[str, Any]] | None = None, expected_pilot: Any = None,
+             expected_picker: Any = None, expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
     """One read's report. `sets` are read_sets.open_plan_set results: one set, or for a gate's look 2
     the look-1 and look-2 sets. For dose and D13 the look is the mark ordinal (D13 may take one set
     per pilot)."""
@@ -697,7 +699,36 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         if man["family"] != family or man["namespace"] != namespace:
             raise ReadError(f"set {man['set']} is family {man['family']} in {man['namespace']}, "
                             f"not {family} in {namespace}")
+        if s.get("plans"):
+            b = read_sets._set_bindings(s["plans"])
+            if expected_pilot is not None and b["pilot"] != expected_pilot:
+                raise ReadError(f"set {man['set']} pilot differs from declared pilot")
+            if expected_picker is not None and b["picker"] != expected_picker:
+                raise ReadError(f"set {man['set']} picker differs from declared picker")
+            if expected_builders is not None and b["builders"] != expected_builders:
+                raise ReadError(f"set {man['set']} builders differ from declared builders")
+        read_sets.verify_set_restarts(
+            s, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
+        )
     _check_declared_pins(declaration, family, sets)
+    if peer_sets is not None:
+        if read not in ("b", "c", "b_prime"):
+            raise ReadError(f"peer_sets is only valid for reads b, c, or b_prime (not {read!r})")
+        peer_family = "c" if read == "b" else "b"
+        peer_ns = declaration["reads"][peer_family]["namespace"]
+        for ps in peer_sets:
+            pman = ps["manifest"]
+            if pman["family"] != peer_family or pman["namespace"] != peer_ns:
+                raise ReadError(f"peer set {pman['set']} is family {pman['family']} in {pman['namespace']}, "
+                                f"not {peer_family} in {peer_ns}")
+            read_sets.verify_set_restarts(
+                ps, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
+            )
+        _check_declared_pins(declaration, peer_family, peer_sets)
+        if read == "b":
+            read_sets.check_shared_bc_prefix(sets, peer_sets)
+        else:
+            read_sets.check_shared_bc_prefix(peer_sets, sets)
     report: dict[str, Any] = {
         "schema": REPORT_SCHEMA, "interfaces": pod_record.INTERFACES_VERSION, "read_plan": read_plans.PLAN_SCHEMA,
         "read": read, "family": family, "look": look, "declaration_sha256": decl_sha,
@@ -728,6 +759,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         read_sets.check_look_allocation(sets[0]["manifest"], 1, section["n"])
         if look == 2:
             read_sets.check_look_allocation(sets[1]["manifest"], 2, section["n"], sets[0]["manifest"])
+            read_sets.check_look_bindings(sets[0], sets[1])
         first = sets[0]["manifest"]["units"][0]
         units = range(first, first + n)
         level = section["levels"][look - 1]
@@ -904,6 +936,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--read", required=True, choices=READS)
     parser.add_argument("--look", required=True, type=int, help="1 or 2 for a gate; the mark ordinal for dose")
     parser.add_argument("--sets", required=True, nargs="+", type=Path, help="set directories, look 1 first")
+    parser.add_argument("--peer-sets", nargs="+", type=Path,
+                        help="peer (b)/(c) set directories for shared-prefix verification")
     parser.add_argument("--a6-file", type=Path, help="countersigned A6 declaration file (required for live reads)")
     parser.add_argument("--pool", type=Path)
     parser.add_argument("--constants", type=Path)
@@ -915,8 +949,13 @@ def main(argv: list[str] | None = None) -> int:
     sec = declaration["reads"]["c" if args.read == "b_prime" else args.read]
     want_decl = declaration["a6_sha256"] or decl_sha
     sets = [read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
-                                    pinned_panel=sec.get("panel_sha256")) for d in args.sets]
-    text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets, a6_file=args.a6_file))
+                                    pinned_panel=sec.get("panel_sha256"),
+                                    expected_pins=declaration.get("pins")) for d in args.sets]
+    peer_sets = ([read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
+                                          expected_pins=declaration.get("pins")) for d in args.peer_sets]
+                 if args.peer_sets else None)
+    text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets,
+                                     a6_file=args.a6_file, peer_sets=peer_sets))
     if args.out is None:
         sys.stdout.write(text)
     else:

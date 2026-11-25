@@ -139,15 +139,18 @@ def plan(family: str, unit: int, *, mirror: int | None = None, rotation: int | N
                                  mirror=mirror, rotation=rotation, mark=mark, prep=prep, **kwargs)
 
 
-def prep_request(prep_family: str, unit: int) -> dict[str, Any]:
+def prep_request(prep_family: str, unit: int, *, pins: dict[str, Any] | None = None,
+                 picker: Any = ..., builders: dict[str, Any] | None = None) -> dict[str, Any]:
     rows = read_plans.PREP_ROWS[prep_family]
-    return read_plans.build_prep_request(prep_family, NS, unit, PINS,
-                                         None if prep_family in ("dose", "dose_panel") else dict(UNIFORM),
-                                         {r: dict(UNIFORM) for r in rows if r != "stated"})
+    use_picker = (None if prep_family in ("dose", "dose_panel") else dict(UNIFORM)) if picker is ... else picker
+    use_builders = {r: dict(UNIFORM) for r in rows if r != "stated"} if builders is None else builders
+    return read_plans.build_prep_request(prep_family, NS, unit, PINS if pins is None else pins,
+                                         use_picker, use_builders)
 
 
-def prep_for(prep_family: str, unit: int) -> tuple[dict[str, Any], str, dict[str, Any], str]:
-    request = prep_request(prep_family, unit)
+def prep_for(prep_family: str, unit: int, *, pins: dict[str, Any] | None = None,
+             picker: Any = ..., builders: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, dict[str, Any], str]:
+    request = prep_request(prep_family, unit, pins=pins, picker=picker, builders=builders)
     req_sha = read_plans.doc_sha256(request)
     result = prep_result(request, req_sha)
     return request, req_sha, result, read_plans.doc_sha256(result)
@@ -257,16 +260,19 @@ def record(p: dict[str, Any], outcome: Callable[[dict[str, Any], dict[str, Any],
 
 def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name: str, units: range, decl_sha: str,
                    *, executions: list[dict[str, Any]] | None = None, reserved: list[int] | None = None,
-                   panel_sha256: str | None = None) -> tuple[Path, dict[int, tuple[dict[str, Any], str]]]:
+                   panel_sha256: str | None = None, replaces: str | None = None,
+                   retired: list[list[int]] | None = None, pins: dict[str, Any] | None = None,
+                   picker: Any = ..., builders: dict[str, Any] | None = None
+                   ) -> tuple[Path, dict[int, tuple[dict[str, Any], str]]]:
     """A prep set with requests and executions. Each execution spec: {"ended", "units" (with markers),
     "receipt" (bool), "tamper" (unit -> callable on the result)}. Default: one complete execution."""
     requests, results = {}, {}
     for u in units:
-        request, req_sha, result, res_sha = prep_for(prep_family, u)
+        request, req_sha, result, res_sha = prep_for(prep_family, u, pins=pins, picker=picker, builders=builders)
         requests[u], results[u] = (request, req_sha), (result, res_sha)
     man = read_plans.build_manifest("prep", manifest_family, NS, set_name, decl_sha,
                                     [(u, requests[u][1]) for u in units], units=[units.start, units.stop],
-                                    reserved=reserved, panel_sha256=panel_sha256)
+                                    reserved=reserved, panel_sha256=panel_sha256, replaces=replaces, retired=retired)
     executions = executions or [{"ended": "complete"}]
     for e, spec in enumerate(executions):
         man["executions"].append({"execution": e, "reason": "first" if e == 0 else "prep_retry", "expired_games": [],

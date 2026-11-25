@@ -158,18 +158,29 @@ def _valid_marker(exec_dir: Path, unit: int) -> str | None:
         return None
 
 
-def accept_prep_set(set_dir: Path, man: dict[str, Any] | None = None) -> dict[str, Any]:
+def accept_prep_set(set_dir: Path, man: dict[str, Any] | None = None, *,
+                    expected_pins: Any = None, expected_picker: Any = None,
+                    expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
     """The accepted execution of a prep set and its outputs {unit: (result, sha256)}."""
     set_dir = Path(set_dir)
     man = man or load_manifest(set_dir)
     if man["kind"] != "prep":
         raise SetError("not a prep set")
     requests = load_entries(set_dir, man)
-    for unit, (request, _) in requests.items():
+    first_bindings = None
+    for unit, (request, _) in sorted(requests.items()):
         try:
-            read_plans.check_prep_request(request)
+            read_plans.check_prep_request(
+                request, expected_pins=expected_pins, expected_picker=expected_picker,
+                expected_builders=expected_builders,
+            )
+            b = read_plans.prep_request_bindings(request)
         except (read_plans.PlanError, pod_record.RecordError) as exc:
             raise SetError(f"request of unit {unit}: {exc}") from exc
+        if first_bindings is None:
+            first_bindings = b
+        elif b != first_bindings:
+            raise SetError(f"prep request unit {unit} bindings differ from unit {min(requests)}")
     units = sorted(requests)
     first, end = man["units"]
     if units != list(range(first, end)):
@@ -386,6 +397,116 @@ def check_shared_prefix_restart(prior_bc: list[dict[str, Any]], new_bc: dict[str
     check_restart(prior_bc[-1], new_bc)
 
 
+def _set_bindings(plans: dict[int, dict[str, Any]]) -> dict[str, Any]:
+    """Extract and enforce uniform pins, pilot, inputs, picker and builders across a plan set."""
+    if not plans:
+        raise SetError("plan set holds no plans")
+    ref = None
+    for pid, plan in sorted(plans.items()):
+        pb = read_plans.plan_bindings(plan)
+        cur = {
+            "pins": plan["pins"],
+            "pilot": plan["pilot"],
+            "inputs": plan["inputs"],
+            "picker": pb["picker"],
+            "builders": pb["builders"],
+        }
+        if ref is None:
+            ref = cur
+        elif cur != ref:
+            raise SetError(f"plan {pid} bindings differ from earlier plans in the same set")
+    return ref
+
+
+def check_look_bindings(look1_set: dict[str, Any], look2_set: dict[str, Any]) -> None:
+    """Enforce identical pins, pilot, inputs, picker, builders and prep_set across look 1 and look 2 (A6.2, A6.6)."""
+    if look1_set["manifest"]["prep_set"] != look2_set["manifest"]["prep_set"]:
+        raise SetError("look 2 prep_set differs from look 1: both looks draw from the same prep set")
+    b1 = _set_bindings(look1_set["plans"])
+    b2 = _set_bindings(look2_set["plans"])
+    for key in ("pins", "pilot", "inputs", "picker", "builders"):
+        if b1[key] != b2[key]:
+            raise SetError(f"look 2 {key} differs from look 1: policies and inputs must stay fixed across looks")
+
+
+def check_shared_bc_prefix(b_sets: list[dict[str, Any]], c_sets: list[dict[str, Any]]) -> None:
+    """READ-PLAN-v1 section 7 & A6.16: for (b) and (c) on the same unit, check equal prep_sha256,
+    prep_set, seeds, pools, and candidate cards/bindings."""
+    b_by_unit: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for s in b_sets:
+        if s["manifest"]["family"] != "b":
+            raise SetError(f"expected family 'b' in shared (b)/(c) prefix check, got {s['manifest']['family']!r}")
+        for plan in s["plans"].values():
+            b_by_unit[plan["unit"]] = (plan, s["manifest"])
+    c_by_unit: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for s in c_sets:
+        if s["manifest"]["family"] != "c":
+            raise SetError(f"expected family 'c' in shared (b)/(c) prefix check, got {s['manifest']['family']!r}")
+        for plan in s["plans"].values():
+            c_by_unit[plan["unit"]] = (plan, s["manifest"])
+    if not b_by_unit or not c_by_unit:
+        raise SetError("shared (b)/(c) prefix check requires non-empty (b) and (c) sets")
+    if min(b_by_unit) != min(c_by_unit):
+        raise SetError(f"shared (b)/(c) prefix: (b) starts at unit {min(b_by_unit)}, (c) at unit {min(c_by_unit)}")
+    for unit in sorted(set(b_by_unit) & set(c_by_unit)):
+        bp, bman = b_by_unit[unit]
+        cp, cman = c_by_unit[unit]
+        if bman["prep_set"] != cman["prep_set"]:
+            raise SetError(f"shared unit {unit}: (b) and (c) cite different prep_set ({bman['prep_set']!r} vs {cman['prep_set']!r})")
+        if bp["prep_sha256"] != cp["prep_sha256"]:
+            raise SetError(f"shared unit {unit}: (b) and (c) cite different prep_sha256")
+        if bp["seeds"] != cp["seeds"]:
+            raise SetError(f"shared unit {unit}: (b) and (c) have different seeds")
+        if bp["pools"] != cp["pools"]:
+            raise SetError(f"shared unit {unit}: (b) and (c) have different pools")
+        for s_idx in range(pod_record.SEATS):
+            if bp["chairs"][s_idx]["picker"] != cp["chairs"][s_idx]["picker"]:
+                raise SetError(f"shared unit {unit} chair {s_idx}: (b) and (c) have different pickers")
+            b_cand = bp["decks"][2 * s_idx]
+            c_cand = cp["decks"][3 * s_idx]
+            if b_cand["builder"] != c_cand["builder"] or b_cand["cards"] != c_cand["cards"]:
+                raise SetError(f"shared unit {unit} chair {s_idx}: (b) and (c) have different candidate cards or builder")
+
+
+def verify_set_restarts(opened_set: dict[str, Any], *, n_b: int | None = None, n_c: int | None = None) -> None:
+    """Verify restart and shared-prefix restart rules from the reader entry point (A6.7, section 7)."""
+    man = opened_set["manifest"]
+    set_dir = Path(opened_set["set_dir"])
+    root = set_dir.parents[2]
+    if man["replaces"] is not None:
+        pred_dir = set_dir.parent / man["replaces"]
+        if not (pred_dir / "manifest.json").exists():
+            raise SetError(f"replaced set {man['replaces']!r} does not exist at {pred_dir}")
+        pred_man = load_manifest(pred_dir)
+        check_restart(pred_man, man)
+    if man["prep_set"] is not None:
+        prep_path, _, _ = man["prep_set"].rpartition("/exec-")
+        prep_dir = root / prep_path
+        prep_man = load_manifest(prep_dir)
+        if prep_man["family"] == "b_c" and prep_man["replaces"] is not None:
+            if n_b is None or n_c is None:
+                raise SetError("shared-prefix restart check requires both n_b and n_c")
+            prior_bc: list[dict[str, Any]] = []
+            cur = prep_man
+            seen = {cur["set"]}
+            while cur["replaces"] is not None:
+                prev_name = cur["replaces"]
+                if prev_name in seen:
+                    raise SetError(f"cycle in b_c prep replaces chain at {prev_name!r}")
+                seen.add(prev_name)
+                prev_dir = prep_dir.parent / prev_name
+                if not (prev_dir / "manifest.json").exists():
+                    raise SetError(f"replaced b_c prep set {prev_name!r} does not exist")
+                cur = load_manifest(prev_dir)
+                prior_bc.append(cur)
+            prior_bc.reverse()
+            check_shared_prefix_restart(prior_bc, prep_man, n_b, n_c)
+            if man["look"] == 1 and man["units"][0] != prep_man["units"][0]:
+                raise SetError(
+                    f"restarted look-1 set starts at unit {man['units'][0]}, expected shared prefix f' = {prep_man['units'][0]}"
+                )
+
+
 # ---------------------------------------------------------------------------------------------
 # Frozen panels (v1 section 5, v2 change 2)
 
@@ -457,8 +578,9 @@ def check_prep_dose_set(set_dir: Path, pinned_panel: str, *, pool: tuple[Any, st
 
 def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] | None = None,
                   constants: tuple[Any, str] | None = None, pinned_panel: str | None = None,
-                  card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None
-                  ) -> dict[str, Any]:
+                  card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None,
+                  expected_pins: Any = None, expected_pilot: Any = None, expected_picker: Any = None,
+                  expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
     """Check a plan set and its chosen execution before data: manifest, plans (regenerated), prep
     acceptance, mirrors, panel, then each record against its plan."""
     set_dir = Path(set_dir)
@@ -475,7 +597,10 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         if man["prep_set"] is None:
             raise SetError("a plan set with prep names its accepted prep execution")
         prep_path, _, exec_name = man["prep_set"].rpartition("/exec-")
-        accepted = accept_prep_set(root / prep_path)
+        accepted = accept_prep_set(
+            root / prep_path, expected_pins=expected_pins, expected_picker=expected_picker,
+            expected_builders=expected_builders if family != "b" else None,
+        )
         if str(accepted["execution"]) != exec_name:
             raise SetError(f"prep_set names exec-{exec_name}, the accepted execution is {accepted['execution']}")
         outputs = {sha: (doc, sha) for doc, sha in accepted["outputs"].values()}
@@ -499,7 +624,9 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         try:
             read_plans.check_plan(plan, prep, pool[0] if pool else None, constants[0] if constants else None,
                                   pool[1] if pool else None, constants[1] if constants else None,
-                                  card_index=card_index, cube_table=cube_table)
+                                  card_index=card_index, cube_table=cube_table,
+                                  expected_pins=expected_pins, expected_pilot=expected_pilot,
+                                  expected_picker=expected_picker, expected_builders=expected_builders)
         except (read_plans.PlanError, pod_record.RecordError) as exc:
             raise SetError(f"plan {index}: {exc}") from exc
         if plan["family"] != family or plan["namespace"] != man["namespace"] or plan["pod_index"] != index:
@@ -509,6 +636,7 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         if panel is not None:
             read_plans.check_plan_against_panel(plan, panel)
         checked[index] = plan
+    _set_bindings(checked)
     layout = read_plans.FAMILIES[family]["layout"]
     per_unit = {"a": 2, "one": 8}.get(layout, 1)
     if len(checked) != per_unit * (end - first):
