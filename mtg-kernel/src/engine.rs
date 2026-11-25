@@ -1076,7 +1076,7 @@ pub struct PendingCast {
     pub origin_zone: Zone,
     /// Objects chosen so far for this cast's one interactive object-cost
     /// component. The privileged serialized compatibility name predates Escape:
-    /// Fireblast/Lava Dart store lands selected for `SacrificeLands`, while
+    /// Fireblast and Lava Dart store selected Mountains here, while
     /// an Escape cast stores cards selected for
     /// `ExileOtherCardsFromOwnGraveyard`. Supported cost shapes make those
     /// two families mutually exclusive. The current public semantic/flat
@@ -9511,14 +9511,8 @@ fn alt_cost_condition_met(
     }
 }
 
-/// How many lands (0 if none) the cast currently staged in `pending`
-/// still needs sacrificed to pay its cost: Fireblast's alt cost, once
-/// `cast_mode` has resolved to `Alternative`; Lava Dart's flashback cost,
-/// unconditionally (a flashback cast has no alternative payment path to
-/// resolve first). A bare `u8` rather than `Option<u8>` -- no card in
-/// this pool has `SacrificeLands(0)`, so "not applicable" and "applicable
-/// but zero" are not a real ambiguity here -- mirrors `target_count`'s own
-/// shape.
+/// The unrestricted land sacrifices on the selected alternative or flashback cost.
+/// Filtered land costs are staged by `controlled_permanent_sacrifice_needed`.
 fn sacrifice_lands_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 {
     if pending.is_flashback && !sphinx_lore_cast_v1::granted(pending) {
         return def
@@ -10631,6 +10625,11 @@ fn tappable_controlled_permanents(
 
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
     match filter {
+        PermanentFilter::WithSubtypeV1(subtype)
+            if crate::continuous_characteristics_v1::is_land_subtype(subtype.stable_id()) =>
+        {
+            CostKind::SacrificeLands
+        }
         PermanentFilter::Artifact
         | PermanentFilter::AnotherArtifact
         | PermanentFilter::NontokenArtifactV1 => CostKind::SacrificeArtifacts,
@@ -10669,8 +10668,7 @@ fn controlled_permanent_sacrifice_needed(
     {
         return Some((1, PermanentFilter::Creature));
     }
-    // An alternative cost that sacrifices permanents (Mine Collapse).
-    #[cfg(feature = "eternal-fixtures")]
+    // Alternative costs can sacrifice filtered permanents, including Mountains.
     if pending.cast_mode == Some(CastMode::Alternative) {
         if let Some(sacrifice) = def
             .alt_cost
@@ -12247,6 +12245,59 @@ fn pending_cast_quote_v1(
         state,
         &reserved_graveyard,
     )
+}
+
+fn validate_kicker_branch(
+    state: &GameState,
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    kicked: bool,
+) -> Result<(), &'static str> {
+    let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    if pending_cast_quote_v1(
+        def,
+        pending,
+        method,
+        kicked,
+        kicker_min_x(def, kicked),
+        state,
+    )
+    .is_none()
+    {
+        return Err("the kicker choice is no longer payable");
+    }
+    if !kicker_targets_complete(state, def, pending, kicked) {
+        return Err("chosen kicker option has no legal target completion");
+    }
+    if def.target_spec == TargetSpec::KickerControlledCreatures
+        && !kicked
+        && legal_targets_for_controller_from_source(
+            def.target_spec,
+            &[],
+            pending.controller,
+            targeting_source_for_pending_cast(state, pending),
+            state,
+        )
+        .is_empty()
+    {
+        return Err("unkicked variable spell requires one legal controlled creature");
+    }
+    Ok(())
+}
+
+fn record_kicker_choice(state: &mut GameState, def: &card_def::CardDef, kicked: bool) {
+    let pending = state.engine.pending_cast.as_mut().unwrap();
+    if def.target_spec == TargetSpec::KickerControlledCreatures {
+        state
+            .objects
+            .get_mut(pending.spell)
+            .v4
+            .variable_targeting_kicked = Some(kicked);
+    }
+    pending.kicked = Some(kicked);
+    if !kicked && kicker_has_x(def) && pending.selected_x_v59().is_none() {
+        pending.set_selected_x_v59(0);
+    }
 }
 
 fn thornscape_white_kicker_payable(
@@ -18886,101 +18937,77 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             }
         }
     }
+    // Kicker precedes targeting. A branch must support both a cast quote
+    // and a complete target assignment before it can enter the menu.
+    if def.kicker_cost.is_some() && pending.kicked.is_none() {
+        let can_decline = validate_kicker_branch(state, def, &pending, false).is_ok();
+        let can_pay = validate_kicker_branch(state, def, &pending, true).is_ok();
+
+        // The variable-target successor uses this decision to bind its
+        // cardinality contract, including when only the paid route exists.
+        if can_pay && def.target_spec == TargetSpec::KickerControlledCreatures {
+            return Some(Decision::ChooseVariableCastKicker {
+                player: pending.controller,
+                spell: pending.spell,
+                can_decline,
+            });
+        }
+
+        let kicked = match (can_decline, can_pay) {
+            (true, true) => {
+                return Some(Decision::ChooseKicker {
+                    player: pending.controller,
+                    spell: pending.spell,
+                });
+            }
+            (true, false) => false,
+            (false, true) => true,
+            (false, false) => {
+                let cast_method = finalized_cast_method(&pending, staged_method, def);
+                let pending = state.engine.pending_cast.take().unwrap();
+                abort_cast(state, pending, cast_method);
+                return None;
+            }
+        };
+        record_kicker_choice(state, def, kicked);
+        return drain_pending_cast_or_decide(state);
+    }
+
     // Ordinary, Flashback, and Plotted casts are pre-filtered before they
     // reach `begin_cast`, but Madness intentionally bypasses that offer-time
     // gate and restored snapshots are untrusted. Re-check the complete
     // mandatory target assignment against the announcing spell's real
     // self-excluding stack state, and revert any impossible announcement
     // instead of exposing an empty targeting decision.
-    let targeting_can_complete = if pending.kicked.is_none() && def.kicked_target_spec.is_some() {
-        kicker_targets_complete(state, def, &pending, false)
-            || (kicker_targets_complete(state, def, &pending, true)
-                && pending_cast_quote_v1(def, &pending, CastMethodV4::Normal, true, 0, state)
-                    .is_some())
-    } else {
-        match pending.mode_chosen {
-            Some(mode) => selected_spell_target_spec(def, mode, pending.kicked == Some(true))
-                .is_some_and(|spec| {
-                    let legal_completion = target_prefix_can_complete_for_controller_and_source(
-                        spec,
-                        &pending.targets_chosen,
-                        pending.controller,
-                        targeting_source_for_object(state, pending.spell),
-                        state,
-                    );
-                    legal_completion
-                        && (!normal_cast_cost_depends_on_targets(def)
-                            || cast_target_prefix_is_payable(
-                                def,
-                                pending.spell,
-                                spec,
-                                pending.controller,
-                                &pending.targets_chosen,
-                                state,
-                                pending_quote_route(&pending, state),
-                            ))
-                }),
-            None => !viable_pending_spell_forms(def, &pending, state).is_empty(),
-        }
+    let targeting_can_complete = match pending.mode_chosen {
+        Some(mode) => selected_spell_target_spec(def, mode, pending.kicked == Some(true))
+            .is_some_and(|spec| {
+                let legal_completion = target_prefix_can_complete_for_controller_and_source(
+                    spec,
+                    &pending.targets_chosen,
+                    pending.controller,
+                    targeting_source_for_object(state, pending.spell),
+                    state,
+                );
+                legal_completion
+                    && (!normal_cast_cost_depends_on_targets(def)
+                        || cast_target_prefix_is_payable(
+                            def,
+                            pending.spell,
+                            spec,
+                            pending.controller,
+                            &pending.targets_chosen,
+                            state,
+                            pending_quote_route(&pending, state),
+                        ))
+            }),
+        None => !viable_pending_spell_forms(def, &pending, state).is_empty(),
     };
     if !targeting_can_complete {
         let cast_method = finalized_cast_method(&pending, staged_method, def);
         let pending = state.engine.pending_cast.take().unwrap();
         abort_cast(state, pending, cast_method);
         return None;
-    }
-
-    // Kicker precedes targets and modes and is offered when the selected
-    // spell form can pay for it together with the base cost.
-    if def.kicker_cost.is_some() && pending.kicked.is_none() {
-        let method = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
-            finalized_cast_method(&pending, staged_method, def)
-        } else {
-            CastMethodV4::Normal
-        };
-        let payable =
-            pending_cast_quote_v1(def, &pending, method, true, kicker_min_x(def, true), state)
-                .is_some();
-        if payable
-            && def.kicked_target_spec.is_some()
-            && !kicker_targets_complete(state, def, &pending, false)
-        {
-            state.engine.pending_cast.as_mut().unwrap().kicked = Some(true);
-            return drain_pending_cast_or_decide(state);
-        }
-        if payable {
-            if def.target_spec == TargetSpec::KickerControlledCreatures {
-                return Some(Decision::ChooseVariableCastKicker {
-                    player: pending.controller,
-                    spell: pending.spell,
-                    can_decline: !legal_targets_for_controller_from_source(
-                        def.target_spec,
-                        &[],
-                        pending.controller,
-                        targeting_source_for_object(state, pending.spell),
-                        state,
-                    )
-                    .is_empty(),
-                });
-            }
-            return Some(Decision::ChooseKicker {
-                player: pending.controller,
-                spell: pending.spell,
-            });
-        }
-        if def.target_spec == TargetSpec::KickerControlledCreatures {
-            state
-                .objects
-                .get_mut(pending.spell)
-                .v4
-                .variable_targeting_kicked = Some(false);
-        }
-        let pending_mut = state.engine.pending_cast.as_mut().unwrap();
-        pending_mut.kicked = Some(false);
-        if kicker_has_x(def) && pending_mut.selected_x_v59().is_none() {
-            pending_mut.set_selected_x_v59(0);
-        }
-        return drain_pending_cast_or_decide(state);
     }
 
     if crate::eternal_premodern_p2b_v1::is_thornscape(def)
@@ -19224,29 +19251,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             return None;
         }
         if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
-            // No real choice for *this single pick* (0 or 1 legal
-            // candidate) -- auto-resolve just this one and let the next
-            // loop pass re-derive whether the *following* pick (if any)
-            // is still real. Deliberately per-pick, not "auto-resolve the
-            // whole remaining batch whenever candidates.len() <=
-            // remaining": empirically, the reference always logs a real
-            // decision for every pick whose own candidate pool has 2+
-            // legal choices, even when the *aggregate* choice is forced
-            // (e.g. exactly 2 Mountains for Fireblast's 2-land cost still
-            // logs one real 2-candidate pick before the final,
-            // now-1-candidate pick goes silent) -- root-caused against the
-            // v4 corpus's own `(candidate_count...)` sequence per Fireblast/
-            // Lava Dart episode (e.g. Fireblast's dominant shape is exactly
-            // 2 post-target records, `(target=N, sac1=2)`, never a 3rd
-            // `sac2=1` record; Lava Dart with exactly 1 controlled Mountain
-            // logs *zero* post-target records at all -- both match "ask
-            // until this pick's own pool is <= 1", not "ask until the
-            // aggregate is forced"). A first version of this auto-resolve
-            // used the aggregate `candidates.len() <= remaining` test and
-            // silently over-suppressed exactly this shape (verified against
-            // `game_20260713_002152_0008.txt` decision 42: kernel skipped
-            // straight past a real 2-candidate Fireblast sacrifice pick the
-            // trace logs).
+            // Stage this pick using the same single-candidate rule as filtered sacrifices.
             state
                 .engine
                 .pending_cast
@@ -19388,6 +19393,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
+            // Exactly two Mountains still produce a choice for the first Fireblast pick.
+            // The reference replay game_20260713_002152_0008.txt, decision 42,
+            // suppresses only the last pick, when it has a single candidate.
             if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
                 if let Some(&object) = candidates.first() {
                     mandatory_cast_cost_v1::bind_creature(state, &pending, object)
@@ -19407,21 +19415,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.spell,
                 cost_kind: match filter {
                     PermanentFilter::Creature => CostKind::SacrificeCreatures,
-                    PermanentFilter::Artifact
-                    | PermanentFilter::AnotherArtifact
-                    | PermanentFilter::NontokenArtifactV1 => CostKind::SacrificeArtifacts,
-                    PermanentFilter::ArtifactOrCreature
-                    | PermanentFilter::Token
-                    | PermanentFilter::AnotherWithSubtype(_)
-                    | PermanentFilter::WithSubtypeV1(_)
-                    | PermanentFilter::GreenCreatureV1
-                    | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
-                    PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
-                        CostKind::SacrificePermanents
-                    }
-                    PermanentFilter::Land
-                    | PermanentFilter::DesertV1
-                    | PermanentFilter::ForestOrPlainsV1 => CostKind::SacrificeLands,
+                    _ => cost_kind_for_permanent_filter(filter),
                 },
                 remaining,
                 candidates,
@@ -29607,11 +29601,7 @@ pub(crate) fn step_without_linked_aura_v1(
                     .ok_or("cast mode chosen before the spell form completed")?, pending.kicked == Some(true))
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
-                || if active_target_spec == TargetSpec::KickerControlledCreatures {
-                    !pending_cast_targeting_is_complete(&pending, active_target_spec)
-                } else {
-                    pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
-                }
+                || !pending_cast_targeting_is_complete(&pending, active_target_spec)
                 || pending.target_contracts.len() != pending.targets_chosen.len()
             {
                 return Err("cast mode chosen before prior cast stages completed".to_string());
@@ -29644,34 +29634,8 @@ pub(crate) fn step_without_linked_aura_v1(
             def
                 .kicker_cost
                 .ok_or("this spell has no kicker choice")?;
-            let method = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
-                finalized_cast_method(&pending, pending.source_contract.cast_method, def)
-            } else {
-                CastMethodV4::Normal
-            };
-            if pending_cast_quote_v1(def, &pending, method, true, kicker_min_x(def, true), state)
-                .is_none()
-            {
-                return Err("the kicker choice is no longer payable".to_string());
-            }
-            if def.kicked_target_spec.is_some() && !kicker_targets_complete(state, def, &pending, kicked) {
-                return Err("chosen kicker option has no legal target completion".into());
-            }
-            if def.target_spec == TargetSpec::KickerControlledCreatures {
-                if !kicked && legal_targets_for_controller_from_source(def.target_spec, &[], pending.controller, targeting_source_for_object(state, pending.spell), state).is_empty() {
-                    return Err("unkicked variable spell requires one legal controlled creature".into());
-                }
-                state.objects.get_mut(pending.spell).v4.variable_targeting_kicked = Some(kicked);
-            }
-            let pending_mut = state
-                .engine
-                .pending_cast
-                .as_mut()
-                .expect("validated cast remains pending");
-            pending_mut.kicked = Some(kicked);
-            if !kicked && kicker_has_x(def) && pending_mut.selected_x_v59().is_none() {
-                pending_mut.set_selected_x_v59(0);
-            }
+            validate_kicker_branch(state, def, &pending, kicked)?;
+            record_kicker_choice(state, def, kicked);
             Ok(())
         }
         Action::ChooseSpellMode(mode) => {

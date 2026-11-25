@@ -102,6 +102,7 @@ pub(crate) fn observe_decisions<T>(limit: Duration, play: impl FnOnce() -> T) ->
     std::thread::scope(|scope| {
         let (finished, wait) = mpsc::channel::<Instant>();
         let started = Instant::now();
+        let observed = Arc::clone(&counter);
         let monitor = scope.spawn(move || {
             let mut last_count = 0;
             let mut last_change = started;
@@ -109,16 +110,16 @@ pub(crate) fn observe_decisions<T>(limit: Duration, play: impl FnOnce() -> T) ->
                 let ended = match wait.recv_timeout(interval) {
                     Ok(ended) => Some(ended),
                     Err(mpsc::RecvTimeoutError::Timeout) => None,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return None,
                 };
                 let now = ended.unwrap_or_else(Instant::now);
-                let count = counter.load(Ordering::Relaxed);
+                let count = observed.load(Ordering::Relaxed);
                 let Some(seen_at) = check_watchdog(&last_count, &count, last_change, now, limit)
                 else {
-                    return true;
+                    return Some(count);
                 };
                 if ended.is_some() {
-                    return false;
+                    return None;
                 }
                 last_change = seen_at;
                 last_count = count;
@@ -126,6 +127,10 @@ pub(crate) fn observe_decisions<T>(limit: Duration, play: impl FnOnce() -> T) ->
         });
         let value = play();
         let _ = finished.send(Instant::now());
-        (value, monitor.join().expect("pilot monitor panicked"))
+        let expired_at_count = monitor.join().expect("pilot monitor panicked");
+        // A supervised pilot may publish its final count in the reply before the
+        // periodic heartbeat reaches this thread. Read that count after play returns.
+        let final_count = counter.load(Ordering::Relaxed);
+        (value, expired_at_count == Some(final_count))
     })
 }

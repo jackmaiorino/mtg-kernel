@@ -16,8 +16,8 @@
 
 use crate::card_def::CARD_DEFS;
 use crate::cube_draft_v1::{
-    deck_seed, derive_seed, game_seed, pod_game_seats, pod_pairings, CubeDraftError, CubePool,
-    Deck, DraftRecord, GameCaps, GameEnd, SeedStream, DECK_CARDS, POD_GAMES, SEATS,
+    deck_seed, derive_seed, game_seed, pod_game_seats, pod_pairings, uniform_index, CubeDraftError,
+    CubePool, Deck, DraftRecord, GameCaps, GameEnd, SeedStream, DECK_CARDS, POD_GAMES, SEATS,
 };
 use crate::cube_seat_v1::{
     canonical_deck, run_seat_draft, AttemptSpec, BuildRows, DecisionRow, GamePilot, SeatBuilder,
@@ -849,6 +849,25 @@ impl TrainingChair {
     }
 }
 
+/// Draws D0.11 older chairs and their league indices, in ascending chair order.
+pub fn draw_league_chairs(
+    league_seed: u64,
+    league_len: usize,
+) -> Result<[(usize, usize); 2], PodRunnerError> {
+    if league_len == 0 {
+        return Err(PodRunnerError::InvalidPlan(
+            "league must contain a snapshot".to_owned(),
+        ));
+    }
+    let mut stream = SplitMix64::seed(league_seed);
+    let first = uniform_index(&mut stream, SEATS);
+    let draw = uniform_index(&mut stream, SEATS - 1);
+    let second = if draw < first { draw } else { draw + 1 };
+    let mut chairs = [first, second];
+    chairs.sort_unstable();
+    Ok(chairs.map(|chair| (chair, uniform_index(&mut stream, league_len))))
+}
+
 /// Constructs an 8-chair training role assignment with the two specified
 /// distinct chairs marked [`ChairRole::Older`] and the remaining six
 /// [`ChairRole::Learning`].
@@ -1354,6 +1373,30 @@ fn validate_common_config(
     Ok(())
 }
 
+/// Checks training or client pod settings before drafting or writing a run record.
+pub fn validate_training_pod_config(
+    pod_use: PodUse,
+    namespace: &str,
+    run: &str,
+    caps: PodCaps,
+) -> Result<(), PodRunnerError> {
+    validate_common_config(pod_use, namespace, run, caps)?;
+    if pod_use.is_read_use() {
+        return Err(PodRunnerError::InvalidPlan(format!(
+            "read use {:?} must run from a read plan, not run_training_pod",
+            pod_use.as_str()
+        )));
+    }
+    if caps.max_replays > TRAINING_MAX_REPLAYS {
+        return Err(PodRunnerError::InvalidCaps(format!(
+            "training max_replays {} exceeds {TRAINING_MAX_REPLAYS}",
+            caps.max_replays
+        )));
+    }
+
+    Ok(())
+}
+
 pub(crate) fn validate_builder_and_dealt(
     source: DeckSource,
     builder: &BuilderRef,
@@ -1430,19 +1473,7 @@ pub fn run_training_pod(
     chairs: &mut [TrainingChair; SEATS],
     pilot: &(dyn GamePilot + Sync),
 ) -> Result<PodRecord, PodRunnerError> {
-    validate_common_config(config.pod_use, &config.namespace, &config.run, config.caps)?;
-    if config.pod_use.is_read_use() {
-        return Err(PodRunnerError::InvalidPlan(format!(
-            "read use {:?} must run from a read plan, not run_training_pod",
-            config.pod_use.as_str()
-        )));
-    }
-    if config.caps.max_replays > TRAINING_MAX_REPLAYS {
-        return Err(PodRunnerError::InvalidCaps(format!(
-            "training max_replays {} exceeds {TRAINING_MAX_REPLAYS}",
-            config.caps.max_replays
-        )));
-    }
+    validate_training_pod_config(config.pod_use, &config.namespace, &config.run, config.caps)?;
 
     let (mut learning, mut older, mut fixture) = (0usize, 0usize, 0usize);
     for chair in chairs.iter() {
@@ -3118,4 +3149,14 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod league_draw_tests {
+    #[test]
+    fn draws_snapshots_in_ascending_chair_order() {
+        assert_eq!(super::draw_league_chairs(0, 9).unwrap(), [(1, 1), (7, 7)]);
+        assert_eq!(super::draw_league_chairs(42, 9).unwrap(), [(5, 0), (6, 0)]);
+        assert!(super::draw_league_chairs(0, 0).is_err());
+    }
 }

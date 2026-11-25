@@ -5333,10 +5333,10 @@ mod tests {
         // is cross-target consistent (71_544 on both reviewed targets).
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115";
+            "db8288bc179f1c80bbd2439620887fbac530a1033e24890089fdc7164a4b1697";
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "3a81332db9cb44f98d68f52dfa1ff0af02dbb4102236d45bfd498e2842afb20a";
+            "7a0e88704f1d95c7b182b8610d163e053196991c0133dbac34f75984d3324c49";
         const MAIN_GOLDEN_LEN_V1: usize = 71_544;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -5804,8 +5804,8 @@ mod tests {
                 group.canonical_bytes().len(),
             );
             let pinned = (
-                "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115".to_owned(),
-                "adba2de9dc1d52c392f912e8557e2037f6a6d37db7a812900eb8d61561d957a0".to_owned(),
+                "db8288bc179f1c80bbd2439620887fbac530a1033e24890089fdc7164a4b1697".to_owned(),
+                "d9191e05ed3f5bd3ce924d1be21a356236d88e7f0b73c4d48246b1aa4be210c5".to_owned(),
                 71_544usize,
             );
             assert_eq!(
@@ -5853,7 +5853,7 @@ mod tests {
         // discipline as the prior re-baseline note above.
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "dd73008fbc535cdf3f0a14e52e0314b126d86aa4db0ea7542d30b45b39e1437a",
+            "6f6aafba625d8c776e341a15133cec82304eafc0e74c7dce64fdc7c7ff179aa8",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }

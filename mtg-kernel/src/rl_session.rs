@@ -14036,6 +14036,121 @@ mod tests {
         session
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn limited_cast_mode_accepts_finished_optional_targets() {
+        use crate::engine::CastMode;
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::mana::ManaColor;
+        use crate::surface_v2::PriorityModeV1;
+
+        fn choose(
+            session: &mut RlEpisodeSessionV1,
+            matches_action: impl Fn(&ActionSemanticV1) -> bool,
+        ) {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected a Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| matches_action(&action.semantic))
+                .expect("expected action in the Limited menu");
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap();
+        }
+
+        let forest = card_id_by_name("Forest").unwrap();
+        let force = card_id_by_name("Force of Vigor").unwrap();
+        let elves = card_id_by_name("Llanowar Elves").unwrap();
+        let mut deck = [forest; 40];
+        deck[..2].copy_from_slice(&[force, elves]);
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            8192,
+            16384,
+            ["custom-test-p0".into(), "custom-test-p1".into()],
+            [&deck, &[forest; 40]],
+            PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        session.state.step = Step::Main1;
+        session.state.active_player = PlayerId::P1;
+        session.state.priority_player = PlayerId::P0;
+        session.state.players[0].mana_pool[ManaColor::G.pool_index()] = 4;
+        let [spell, pitch] = [force, elves].map(|card_def| {
+            let player = &session.state.players[0];
+            let object = player
+                .hand
+                .iter()
+                .chain(&player.library)
+                .copied()
+                .find(|&id| session.state.objects.get(id).card_def == card_def)
+                .unwrap();
+            if session.state.objects.get(object).zone != Zone::Hand {
+                propose_and_commit(
+                    &mut session.state,
+                    ProposedEvent::zone_change(object, Zone::Hand),
+                );
+            }
+            object
+        });
+        let ring = add_battlefield_object(&mut session.state, PlayerId::P1, "Sol Ring");
+        add_battlefield_object(&mut session.state, PlayerId::P1, "Choke");
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        choose(&mut session, |action| {
+            matches!(action, ActionSemanticV1::CastSpell { source, .. }
+                if flat_ref_matches_object_v1(source, spell))
+        });
+
+        let targeting = session.snapshot_v5();
+        for selected_count in [0, 1] {
+            session.restore_v5(&targeting);
+            let mut targets = Vec::new();
+            if selected_count == 1 {
+                targets.push(Target::Object(ring));
+                choose(&mut session, |action| {
+                    matches!(action, ActionSemanticV1::ChooseTarget { target, .. }
+                        if flat_target_matches_v1(target, Target::Object(ring)))
+                });
+            }
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::FinishTargetSelection { selected_count: count, .. }
+                    if *count == selected_count)
+            });
+            let payment = session.snapshot_v5();
+            for mode in [CastMode::Normal, CastMode::Alternative] {
+                session.restore_v5(&payment);
+                choose(&mut session, |action| {
+                    matches!(action, ActionSemanticV1::ChooseCastMode { mode: offered, .. }
+                        if *offered == mode)
+                });
+                if mode == CastMode::Alternative {
+                    assert_eq!(session.state.objects.get(pitch).zone, Zone::Exile);
+                    assert_eq!(
+                        session.state.players[0].mana_pool[ManaColor::G.pool_index()],
+                        4
+                    );
+                } else {
+                    assert_eq!(session.state.players[0].mana_pool, [0; 6]);
+                    assert_eq!(session.state.objects.get(pitch).zone, Zone::Hand);
+                }
+                assert_eq!(session.state.objects.get(spell).zone, Zone::Stack);
+                assert_eq!(session.state.stack.last().unwrap().targets, targets);
+            }
+        }
+    }
+
     #[cfg(feature = "limited-fdn-fixtures")]
     mod limited_trigger_order_tests {
         use super::*;
@@ -19129,8 +19244,8 @@ mod tests {
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0xd8, 0xc9, 0xc1, 0xd2, 0x8e, 0x91, 0x27, 0x08, 0xfd, 0x5f, 0x4c, 0x4c, 0x1a, 0x39,
-                0xfb, 0x65,
+                0xeb, 0xa8, 0xdf, 0xae, 0x9d, 0xa5, 0x50, 0x42, 0xd1, 0xe9, 0xd3, 0x10, 0xb8, 0x56,
+                0x59, 0xbb,
             ]
         );
     }
@@ -19194,8 +19309,8 @@ mod tests {
         assert_eq!(
             v1,
             [
-                0x83, 0x60, 0x56, 0x29, 0x62, 0xed, 0xf5, 0x2d, 0x43, 0xaa, 0x70, 0xc2, 0x01, 0x2e,
-                0xe1, 0xbf,
+                0x70, 0xb7, 0x70, 0x60, 0xf3, 0x7b, 0x13, 0xab, 0xf8, 0x13, 0xa9, 0x46, 0xdd, 0xd4,
+                0x66, 0x5f,
             ]
         );
 
@@ -19239,8 +19354,8 @@ mod tests {
         assert_eq!(
             common_v2,
             [
-                0xa4, 0x58, 0xcf, 0x38, 0x26, 0xf7, 0xbf, 0xb8, 0x2c, 0xef, 0xa9, 0xcd, 0x03, 0xc9,
-                0x5c, 0x0f,
+                0xad, 0x01, 0x7b, 0x22, 0x10, 0x6f, 0x50, 0xc8, 0x58, 0x35, 0xae, 0x50, 0xc6, 0xf6,
+                0xd8, 0x78,
             ]
         );
         assert_ne!(common_v2, v1);
@@ -19257,8 +19372,8 @@ mod tests {
         assert_eq!(
             commitment_v2(65_536),
             [
-                0xb3, 0x35, 0xf5, 0xe2, 0x02, 0x21, 0xe3, 0xfe, 0xaa, 0x6a, 0xf0, 0xfe, 0x78, 0x45,
-                0x11, 0xb0,
+                0x37, 0x02, 0x81, 0xa7, 0xe3, 0xe0, 0x64, 0x2a, 0x89, 0xd0, 0xa4, 0x6b, 0x3d, 0xc6,
+                0x69, 0xbb,
             ]
         );
     }
@@ -19927,7 +20042,7 @@ mod tests {
         eprintln!("current environment-v2 policy/core goldens: {v2_policy:#018x} {v2_full_core:#018x} {v2_fast_core:#018x}");
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0x1410_3c05_573a_9d85,
+            0x2c09_127a_331b_5299,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
@@ -19948,7 +20063,7 @@ mod tests {
         // Current merged-rule values observed in CI run 36812673206
         // (Linux job 110211057207); full and fast core paths agree exactly.
         assert_eq!(
-            v2_policy, 0x0b9e_f72f_a568_dd88,
+            v2_policy, 0x0c88_9c3d_6e6f_0b25,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
@@ -20524,7 +20639,7 @@ mod tests {
         // own re-pin comment.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0x1410_3c05_573a_9d85
+            0x2c09_127a_331b_5299
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
@@ -20712,7 +20827,7 @@ mod tests {
         // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x0b9e_f72f_a568_dd88,
+            0x0c88_9c3d_6e6f_0b25,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
@@ -20760,7 +20875,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x0b9e_f72f_a568_dd88
+            0x0c88_9c3d_6e6f_0b25
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
@@ -21057,7 +21172,7 @@ mod tests {
     /// failing run (never hand-typed).
     #[cfg(not(feature = "limited-fdn-fixtures"))]
     const V5_TRANSCRIPT_SHA256: &str =
-        "470e0a8e346cff59cbbfa38ae4c13c95eebf51e81f62c90fb36afe9ef5b4cb1f";
+        "0fc9037c84941caed781c812749852d74186ae29adfaa6d7181cd701653fa2b2";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

@@ -28,14 +28,15 @@ mtg_kernel::fast_global_allocator!();
 use mtg_kernel::cube_draft_v1::CubePool;
 use mtg_kernel::cube_pod_runner_v1::{
     run_training_pod, run_uniform_training_batch, training_roles_with_older,
-    uniform_training_chairs, BatchReport, PilotInfo, PodCaps, PodPins, PodUse, TrainingPodConfig,
-    UniformBatchConfig, DEFAULT_WATCHDOG_SECONDS,
+    uniform_training_chairs, validate_training_pod_config, BatchReport, PilotInfo, PodCaps,
+    PodPins, PodUse, TrainingPodConfig, UniformBatchConfig, DEFAULT_WATCHDOG_SECONDS,
 };
 use mtg_kernel::cube_read_plan_v1::{
     execute_read_plan_v1, parse_and_validate_read_plan_json,
     run_prep_set_execution_with_ended_claim, sha256_hex, supervise_plan_set_execution,
     to_canonical_compact_json, to_canonical_pretty_json, CommandPodWorkerLauncher,
-    PodProgressJournal, ReadPlanRunOptions, RuntimePins, RuntimeVerification, UniformSeatFactory,
+    PodProgressJournal, ReadPlanRunOptions, RuntimePins, RuntimeVerification, ShakedownManifestPin,
+    UniformSeatFactory,
 };
 #[path = "cube_pod_runner/worker.rs"]
 mod worker;
@@ -79,6 +80,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--pool-pin",
     "--constants-pin",
     "--panel-pin",
+    "--shakedown-manifest",
+    "--shakedown-manifest-pin",
+    "--shakedown-records-repo",
     "--platform",
     "--host",
 ];
@@ -224,6 +228,24 @@ fn load_verification(args: &Args, loaded: &LoadedPool) -> Fallible<RuntimeVerifi
     let declaration_bytes = read_bytes(declaration_path)?;
     let platform = args.get("--platform").unwrap_or("local").to_owned();
     let host = args.get("--host").unwrap_or("local").to_owned();
+    let shakedown_manifest = match (
+        args.get("--shakedown-manifest"),
+        args.get("--shakedown-manifest-pin"),
+        args.get("--shakedown-records-repo"),
+    ) {
+        (None, None, None) => None,
+        (Some(path), Some(sha256), Some(repo)) => Some(ShakedownManifestPin {
+            path: PathBuf::from(path),
+            sha256: sha256.to_owned(),
+            records_repo: PathBuf::from(repo),
+        }),
+        _ => {
+            return Err(
+                "the shakedown manifest, its pin, and records repo must be supplied together"
+                    .to_owned(),
+            )
+        }
+    };
     Ok(RuntimeVerification {
         pins: RuntimePins {
             binary,
@@ -238,6 +260,7 @@ fn load_verification(args: &Args, loaded: &LoadedPool) -> Fallible<RuntimeVerifi
         host,
         declaration_bytes,
         pinned_panel_sha256: args.get("--panel-pin").map(str::to_owned),
+        shakedown_manifest,
     })
 }
 
@@ -267,7 +290,7 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
         &loaded.pool,
         &plan,
         &UniformSeatFactory,
-        &SupervisedUniformPilot(Duration::from_secs(plan.caps.watchdog_seconds)),
+        &SupervisedUniformPilot::new(Duration::from_secs(plan.caps.watchdog_seconds)),
         &run_opts,
     )
     .map_err(|e| e.to_string())?;
@@ -291,6 +314,44 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
     timing_file
         .sync_all()
         .map_err(|e| format!("{}: {e}", timing_path.display()))?;
+    Ok(())
+}
+
+fn write_training_run_record(
+    pod_use: PodUse,
+    namespace: &str,
+    run: &str,
+    workers: usize,
+    caps: PodCaps,
+    run_record_path: &Path,
+) -> Fallible<()> {
+    validate_training_pod_config(pod_use, namespace, run, caps)
+        .map_err(|error| error.to_string())?;
+    if matches!(pod_use, PodUse::Training | PodUse::Shakedown) {
+        #[derive(serde::Serialize)]
+        struct RunRecord<'a> {
+            schema: &'static str,
+            liveness: &'static str,
+            namespace: &'a str,
+            run: &'a str,
+            workers: usize,
+            caps: PodCaps,
+        }
+        let record = RunRecord {
+            schema: "mtg-kernel-cube-pod-run/v1",
+            liveness: LIVENESS,
+            namespace,
+            run,
+            workers,
+            caps,
+        };
+        let text = to_canonical_pretty_json(&record).map_err(|error| error.to_string())?;
+        let mut file = File::create_new(run_record_path)
+            .map_err(|error| format!("{}: {error}", run_record_path.display()))?;
+        file.write_all(text.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("{}: {error}", run_record_path.display()))?;
+    }
     Ok(())
 }
 
@@ -432,32 +493,8 @@ fn run_cli(args: &Args) -> Fallible<()> {
         .checked_add(pods)
         .ok_or("--pod-start + --pods overflows u64")?;
 
-    if matches!(pod_use, PodUse::Training | PodUse::Shakedown) {
-        #[derive(serde::Serialize)]
-        struct RunRecord<'a> {
-            schema: &'static str,
-            liveness: &'static str,
-            namespace: &'a str,
-            run: &'a str,
-            workers: usize,
-            caps: PodCaps,
-        }
-        let record = RunRecord {
-            schema: "mtg-kernel-cube-pod-run/v1",
-            liveness: LIVENESS,
-            namespace: &namespace,
-            run: &run,
-            workers,
-            caps,
-        };
-        let text = to_canonical_pretty_json(&record).map_err(|error| error.to_string())?;
-        let mut file = File::create_new(&run_record_path)
-            .map_err(|error| format!("{}: {error}", run_record_path.display()))?;
-        file.write_all(text.as_bytes())
-            .and_then(|()| file.sync_all())
-            .map_err(|error| format!("{}: {error}", run_record_path.display()))?;
-    }
-    let pilot = SupervisedUniformPilot(Duration::from_secs(watchdog_seconds));
+    write_training_run_record(pod_use, &namespace, &run, workers, caps, &run_record_path)?;
+    let pilot = SupervisedUniformPilot::new(Duration::from_secs(watchdog_seconds));
     let records = if pod_use == PodUse::Client {
         let mut out = Vec::with_capacity(pods as usize);
         for pod_index in pod_start..pod_end {
@@ -545,5 +582,74 @@ fn main() {
     if let Err(error) = result {
         eprintln!("cube_pod_runner_v1: {error}");
         std::process::exit(2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn training_cli_validates_before_publishing_liveness_record() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("d5-cli-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let record_path = dir.join("run.json");
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/cube_v1");
+
+        for (namespace, run, seconds, problem) in [
+            ("bad_namespace", "valid", "600", "namespace"),
+            ("test", "bad_run", "600", "run"),
+            ("test", "valid", "0", "watchdog_seconds"),
+        ] {
+            let args = Args::parse(vec![
+                "--use".to_owned(),
+                "training".to_owned(),
+                "--namespace".to_owned(),
+                namespace.to_owned(),
+                "--run".to_owned(),
+                run.to_owned(),
+                "--pods".to_owned(),
+                "1".to_owned(),
+                "--watchdog-seconds".to_owned(),
+                seconds.to_owned(),
+                "--run-record".to_owned(),
+                record_path.to_string_lossy().into_owned(),
+                "--cube".to_owned(),
+                data.join("mtgo_vintage_cube_20261007.json")
+                    .to_string_lossy()
+                    .into_owned(),
+                "--gaps".to_owned(),
+                data.join("mtgo_vintage_cube_20261007_gaps.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ])
+            .unwrap();
+            assert!(run_cli(&args).unwrap_err().contains(problem));
+            assert!(
+                !record_path.exists(),
+                "invalid CLI settings published run.json"
+            );
+        }
+
+        write_training_run_record(
+            PodUse::Training,
+            "test",
+            "valid",
+            2,
+            PodCaps::training_a2(),
+            &record_path,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&record_path).unwrap();
+        let record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(record["schema"], "mtg-kernel-cube-pod-run/v1");
+        assert_eq!(record["liveness"], LIVENESS);
+        assert_eq!(record["caps"]["max_stack_objects"], 128);
+        assert_eq!(record["workers"], 2);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

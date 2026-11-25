@@ -19,6 +19,10 @@
 //!   report from the last durable game prefix and closing `execution.json`
 //!   with `ended = "interrupted"`.
 
+mod attestation;
+mod shakedown;
+use shakedown::RestartKind;
+
 use crate::card_def::CARD_DEFS;
 use crate::cube_draft_v1::{
     game_seed, pod_game_seats, pod_pairings, CubePool, Deck, DraftRecord, GameEnd, PickRecord,
@@ -653,6 +657,7 @@ pub struct ManifestExecutionEntry {
     pub expired_games: Vec<[u64; 2]>,
     pub binary: String,
     pub platform: String,
+    /// Read plan v2 adds claim_id as key 6 of live prep execution entries, after platform.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_id: Option<String>,
 }
@@ -796,6 +801,14 @@ pub struct RuntimePins {
     pub constants_sha256: Option<String>,
 }
 
+/// Records repository and exact D0.3b shakedown manifest pin for a D8 restart.
+#[derive(Debug, Clone)]
+pub struct ShakedownManifestPin {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub records_repo: PathBuf,
+}
+
 /// Runtime verification context supplied by the launcher/caller.
 #[derive(Debug, Clone)]
 pub struct RuntimeVerification {
@@ -806,6 +819,8 @@ pub struct RuntimeVerification {
     pub declaration_bytes: Vec<u8>,
     /// Pinned panel digest for `dose` and `d13` sets other than `prep-panel`.
     pub pinned_panel_sha256: Option<String>,
+    /// Required for dose-d8 and read-d8-aa runs after v1.
+    pub shakedown_manifest: Option<ShakedownManifestPin>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2945,6 +2960,12 @@ pub fn parse_and_validate_prep_result_json(json_text: &str) -> Result<PrepResult
     })
 }
 
+fn d8_set_name(set: &str) -> (&str, u64) {
+    set.rsplit_once("-restart-")
+        .and_then(|(base, suffix)| positive_decimal(suffix).map(|index| (base, index)))
+        .unwrap_or((set, 0))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_d8_set(
     namespace: &str,
@@ -3000,13 +3021,15 @@ fn validate_d8_set(
             let (prior_run, prior_set) = previous
                 .split_once('/')
                 .ok_or_else(|| plan_err("D8 predecessor must be <run>/<set>"))?;
-            let expected = if restart == 1 {
-                base.to_owned()
+            let (prior_base, prior_index) = d8_set_name(prior_set);
+            let valid_suffix = if namespace == "read-d8-aa" {
+                prior_index.checked_add(1) == Some(restart)
             } else {
-                format!("{base}-restart-{}", restart - 1)
+                prior_index < restart
             };
             if d8_run_number(prior_run).is_none_or(|previous| previous >= run_number)
-                || prior_set != expected
+                || prior_base != base
+                || !valid_suffix
                 || retired.iter().any(|range| range[1] > units[0])
                 || retired
                     .windows(2)
@@ -3290,6 +3313,7 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
     let exec_arr = expect_array(&top[18].1, "manifest.executions").map_err(plan_err)?;
     let mut executions = Vec::with_capacity(exec_arr.len());
     const EXEC_KEYS: &[&str] = &["execution", "reason", "expired_games", "binary", "platform"];
+    // D7 reads the same ordered prep extension to the five played execution keys.
     const PREP_KEYS: &[&str] = &[
         "execution",
         "reason",
@@ -3727,7 +3751,27 @@ pub fn parse_and_validate_prep_execution_receipt_json(
 // Runtime pin, declaration, and two-stage panel verification (`READ-PLAN-v1` s6)
 // ---------------------------------------------------------------------------
 
-fn verify_d8_history(set_dir: &Path, manifest: &SetManifest) -> Result<(), PodRunnerError> {
+fn verify_d8_launch(
+    set_dir: &Path,
+    manifest: &SetManifest,
+    verification: &RuntimeVerification,
+) -> Result<(), PodRunnerError> {
+    let restart = if d8_namespace(&manifest.namespace) && manifest.run != "v1" {
+        let pin = verification.shakedown_manifest.as_ref().ok_or_else(|| {
+            plan_err("D8 restart requires the pinned shakedown manifest and records repository")
+        })?;
+        Some(shakedown::authorize_restart(manifest, pin)?)
+    } else {
+        None
+    };
+    verify_d8_history(set_dir, manifest, restart)
+}
+
+fn verify_d8_history(
+    set_dir: &Path,
+    manifest: &SetManifest,
+    restart_kind: Option<RestartKind>,
+) -> Result<(), PodRunnerError> {
     if !d8_namespace(&manifest.namespace) {
         return Ok(());
     }
@@ -3755,126 +3799,256 @@ fn verify_d8_history(set_dir: &Path, manifest: &SetManifest) -> Result<(), PodRu
     if run_number == 1 {
         return Ok(());
     }
-    let mut end_of_reservations = 0;
-    let mut predecessor = None;
-    let dirs = |path: &Path| {
-        fs::read_dir(path)
-            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", path.display())))
+    let restart_kind = restart_kind.ok_or_else(|| plan_err("D8 restart is not authorized"))?;
+    let earlier = read_d8_history(namespace_dir, manifest, run_number)?;
+    let end_of_reservations = earlier
+        .iter()
+        .map(|(_, _, prior)| prior.units[1])
+        .max()
+        .unwrap_or(0);
+    if manifest.units[0] < end_of_reservations
+        || (manifest.namespace == "read-d8-aa"
+            && (end_of_reservations == 0 || manifest.units[0] != end_of_reservations))
+    {
+        return Err(plan_err(
+            "D8 restart must start after the earlier namespace reservations",
+        ));
+    }
+
+    let (base, restart_index) = d8_set_name(&manifest.set);
+    let matching = |(n, _, prior): &&(u64, PathBuf, SetManifest)| {
+        (*n < run_number) && prior.kind == manifest.kind && d8_set_name(&prior.set).0 == base
     };
-    for entry in dirs(namespace_dir)? {
-        let entry = entry.map_err(|error| PodRunnerError::Io(error.to_string()))?;
-        let run = entry.file_name().to_string_lossy().into_owned();
-        if d8_run_number(&run).is_none_or(|n| n >= run_number) || !entry.path().is_dir() {
-            continue;
+    let latest = earlier
+        .iter()
+        .filter(matching)
+        .max_by_key(|(n, _, prior)| (*n, d8_set_name(&prior.set).1));
+
+    if let Some(predecessor) = &manifest.replaces {
+        let (number, path, prior) =
+            latest.ok_or_else(|| plan_err("D8 predecessor manifest is missing"))?;
+        if format!("v{number}/{}", prior.set) != *predecessor || prior.family != manifest.family {
+            return Err(plan_err(
+                "D8 replacement must name the latest set of its family and kind",
+            ));
         }
-        for set in dirs(&entry.path())? {
-            let path = set
-                .map_err(|error| PodRunnerError::Io(error.to_string()))?
-                .path();
-            let bytes = match fs::read_to_string(path.join("manifest.json")) {
+        if manifest.namespace == "dose-d8" {
+            let expected = 1 + earlier
+                .iter()
+                .filter(matching)
+                .filter(|(_, _, prior)| d8_set_name(&prior.set).1 != 0)
+                .count() as u64;
+            if restart_index != expected {
+                return Err(plan_err(format!(
+                    "dose restart index must be {expected} by namespace history"
+                )));
+            }
+        }
+        if d8_set_status(path, prior)? != D8SetStatus::Interrupted {
+            return Err(plan_err("D8 predecessor is not a restartable interruption"));
+        }
+        let unused = d8_unused_reserved_ranges(path, prior)?;
+        if manifest.retired != unused {
+            return Err(plan_err(format!(
+                "D8 retired ranges must equal the predecessor's unused units {unused:?}"
+            )));
+        }
+    } else if manifest.namespace == "dose-d8" && base != "prep-panel" {
+        if let Some((_, path, prior)) = latest {
+            if d8_set_status(path, prior)? == D8SetStatus::Interrupted {
+                return Err(plan_err("the latest interrupted dose set must be replaced"));
+            }
+        }
+        if restart_kind == RestartKind::Note {
+            let dose_name = base.strip_prefix("prep-").unwrap_or(base);
+            let latest_plan = earlier
+                .iter()
+                .filter(|(_, _, prior)| {
+                    prior.kind == ManifestKind::Plans && d8_set_name(&prior.set).0 == dose_name
+                })
+                .max_by_key(|(n, _, prior)| (*n, d8_set_name(&prior.set).1));
+            let status = latest_plan
+                .map(|(_, path, prior)| d8_set_status(path, prior))
+                .transpose()?;
+            if status == Some(D8SetStatus::Complete) {
+                return Err(plan_err(
+                    "a same-build restart cannot replay a completed dose ordinal",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_d8_history(
+    namespace_dir: &Path,
+    current: &SetManifest,
+    run_number: u64,
+) -> Result<Vec<(u64, PathBuf, SetManifest)>, PodRunnerError> {
+    let mut earlier = Vec::new();
+    let dose_restart = current.namespace == "dose-d8" && current.replaces.is_some();
+    let current_name = d8_set_name(&current.set);
+    for entry in read_dir_if_present(namespace_dir)? {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(n) = d8_run_number(&name).filter(|_| entry.path().is_dir()) else {
+            continue;
+        };
+        for entry in read_dir_if_present(&entry.path())? {
+            let path = entry.path();
+            let text = match fs::read_to_string(path.join("manifest.json")) {
                 Ok(text) => text,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
                     return Err(PodRunnerError::Io(format!("{}: {error}", path.display())))
                 }
             };
-            let prior = parse_and_validate_manifest_json(&bytes)?;
-            if prior.namespace != manifest.namespace
-                || prior.run != run
-                || path.file_name().and_then(|name| name.to_str()) != Some(prior.set.as_str())
+            let manifest = parse_and_validate_manifest_json(&text)?;
+            if manifest.namespace != current.namespace
+                || manifest.run != name
+                || path.file_name().and_then(|name| name.to_str()) != Some(&manifest.set)
             {
-                return Err(plan_err("prior D8 manifest disagrees with its directory"));
+                return Err(plan_err("D8 manifest disagrees with its directory"));
             }
-            end_of_reservations = end_of_reservations.max(prior.units[1]);
-            if manifest.replaces.as_deref() == Some(format!("{run}/{}", prior.set).as_str()) {
-                predecessor = Some((path, prior));
+            if manifest.run == current.run && manifest.set == current.set {
+                continue;
+            }
+            if current.replaces.is_some() && manifest.replaces == current.replaces {
+                return Err(plan_err(
+                    "D8 predecessor is already replaced (forked history)",
+                ));
+            }
+            if dose_restart
+                && manifest.kind == current.kind
+                && d8_set_name(&manifest.set) == current_name
+            {
+                return Err(plan_err(format!(
+                    "duplicate dose restart index {} for {} already used by {}/{}",
+                    current_name.1, current_name.0, manifest.run, manifest.set
+                )));
+            }
+            if n < run_number {
+                earlier.push((n, path, manifest));
             }
         }
     }
-    if manifest.units[0] != end_of_reservations {
-        return Err(plan_err(
-            "D8 restart must start after the earlier namespace reservations",
-        ));
-    }
-    if manifest.replaces.is_some() {
-        let (path, prior) =
-            predecessor.ok_or_else(|| plan_err("D8 predecessor manifest is missing"))?;
-        if prior.kind != manifest.kind {
-            return Err(plan_err("D8 predecessor has a different execution kind"));
-        }
-        let unused = unused_interrupted_units(&path, &prior)?;
-        if manifest.retired != unused {
-            return Err(plan_err(format!(
-                "D8 retired ranges must equal the predecessor's unused units {unused:?}"
-            )));
-        }
-    }
-    Ok(())
+    Ok(earlier)
 }
 
-fn unused_interrupted_units(
+#[derive(Debug, PartialEq, Eq)]
+enum D8SetStatus {
+    Pending,
+    Interrupted,
+    Complete,
+    InfrastructureFailure,
+}
+
+fn read_dir_if_present(path: &Path) -> Result<Vec<fs::DirEntry>, PodRunnerError> {
+    match fs::read_dir(path) {
+        Ok(entries) => entries
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", path.display()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(PodRunnerError::Io(format!("{}: {error}", path.display()))),
+    }
+}
+
+fn d8_exec_indices(
+    set_dir: &Path,
+    manifest: &SetManifest,
+) -> Result<BTreeSet<u64>, PodRunnerError> {
+    let mut indices: BTreeSet<_> = manifest
+        .executions
+        .iter()
+        .map(|entry| entry.execution)
+        .collect();
+    for entry in read_dir_if_present(set_dir)? {
+        if entry.path().is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let name = name.strip_prefix(".supervisor-").unwrap_or(&name);
+            if let Some(execution) = name.strip_prefix("exec-").and_then(decimal_index) {
+                indices.insert(execution);
+            }
+        }
+    }
+    Ok(indices)
+}
+
+fn decimal_index(text: &str) -> Option<u64> {
+    if !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn d8_started_units(
+    set_dir: &Path,
+    manifest: &SetManifest,
+) -> Result<BTreeSet<u64>, PodRunnerError> {
+    let mut started = BTreeSet::new();
+    let unit_for_pod = |pod| {
+        if manifest.family == "aa" {
+            pod / 2
+        } else {
+            pod
+        }
+    };
+    for execution in d8_exec_indices(set_dir, manifest)? {
+        let directory = set_dir.join(format!("exec-{execution}"));
+        if manifest.kind == ManifestKind::Prep {
+            for unit in manifest.units[0]..manifest.units[1] {
+                if valid_prep_marker(&directory, unit).is_some() {
+                    started.insert(unit);
+                }
+            }
+            continue;
+        }
+        if let Ok(bytes) = fs::read(directory.join("execution.json")) {
+            // A receipt may be partial after host loss. Only its visible integer pod ids count.
+            if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                if let Some(records) = value["records"].as_array() {
+                    started.extend(
+                        records
+                            .iter()
+                            .filter_map(|entry| entry["pod_index"].as_u64())
+                            .map(unit_for_pod),
+                    );
+                }
+            }
+        }
+        for (folder, suffix) in [
+            (directory.join("records"), ".json"),
+            (directory.join("timing"), ".jsonl"),
+            (
+                set_dir.join(format!(".supervisor-exec-{execution}")),
+                ".journal.jsonl",
+            ),
+        ] {
+            for entry in read_dir_if_present(&folder)? {
+                let name = entry.file_name();
+                if let Some(pod) = name
+                    .to_string_lossy()
+                    .strip_prefix("pod-")
+                    .and_then(|tail| tail.strip_suffix(suffix))
+                    .and_then(decimal_index)
+                {
+                    started.insert(unit_for_pod(pod));
+                }
+            }
+        }
+    }
+    Ok(started)
+}
+
+fn d8_unused_reserved_ranges(
     set_dir: &Path,
     manifest: &SetManifest,
 ) -> Result<Vec<[u64; 2]>, PodRunnerError> {
-    let last = manifest
-        .executions
-        .last()
-        .ok_or_else(|| plan_err("D8 predecessor never started"))?;
-    let path = set_dir
-        .join(format!("exec-{}", last.execution))
-        .join("execution.json");
-    match fs::read_to_string(&path) {
-        Ok(text) => {
-            let complete = match manifest.kind {
-                ManifestKind::Prep => {
-                    parse_and_validate_prep_execution_receipt_json(&text)?.ended
-                        == PrepExecutionEnded::Complete
-                }
-                ManifestKind::Plans => {
-                    parse_and_validate_plan_execution_receipt_json(&text)?.ended
-                        == PlanExecutionEnded::Complete
-                }
-            };
-            if complete {
-                return Err(plan_err("D8 predecessor execution completed"));
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(PodRunnerError::Io(format!("{}: {error}", path.display()))),
-    }
-
-    let mut used = BTreeSet::new();
-    for entry in &manifest.executions {
-        let exec = entry.execution;
-        let directory = set_dir.join(format!("exec-{exec}"));
-        for unit in &manifest.plans {
-            match unit {
-                ManifestEntry::Unit(unit) => {
-                    if valid_prep_marker(&directory, unit.unit).is_some() {
-                        used.insert(unit.unit);
-                    }
-                }
-                ManifestEntry::Pod(pod) => {
-                    let record = directory
-                        .join("records")
-                        .join(format!("pod-{}.json", pod.pod_index));
-                    let journal = set_dir
-                        .join(format!(".supervisor-exec-{exec}"))
-                        .join(format!("pod-{}.journal.jsonl", pod.pod_index));
-                    if record.is_file() || journal.is_file() {
-                        let unit = if manifest.namespace == "read-d8-aa" {
-                            pod.pod_index / 2
-                        } else {
-                            pod.pod_index
-                        };
-                        used.insert(unit);
-                    }
-                }
-            }
-        }
-    }
-
-    let [mut first, end] = manifest.units;
+    let used = d8_started_units(set_dir, manifest)?;
+    let [mut first, end] = manifest
+        .reserved
+        .ok_or_else(|| plan_err("missing D8 reservation"))?;
     let mut unused = Vec::new();
     for unit in used.range(first..end).copied() {
         if unit > first {
@@ -3886,6 +4060,137 @@ fn unused_interrupted_units(
         unused.push([first, end]);
     }
     Ok(unused)
+}
+
+fn receipt_watchdogs(
+    set_dir: &Path,
+    receipt: &PlanExecutionReceipt,
+) -> Result<Vec<[u64; 2]>, PodRunnerError> {
+    let mut expired = Vec::new();
+    let mut stopped = 0;
+    for entry in &receipt.records {
+        let path = set_dir.join(format!(
+            "exec-{}/records/pod-{}.json",
+            receipt.execution, entry.pod_index
+        ));
+        let bytes = fs::read(&path)
+            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", path.display())))?;
+        if sha256_hex(&bytes) != entry.sha256 {
+            return Err(plan_err(format!(
+                "{} differs from its receipt",
+                path.display()
+            )));
+        }
+        let record: Value =
+            serde_json::from_slice(&bytes).map_err(|error| plan_err(error.to_string()))?;
+        let games = record["games"]
+            .as_array()
+            .ok_or_else(|| plan_err("pod record lacks games"))?;
+        if receipt.ended == PlanExecutionEnded::WatchdogStop && entry.status == PodStatus::Stopped {
+            stopped += 1;
+            let last = games
+                .last()
+                .and_then(|game| game["attempts"].as_array())
+                .and_then(|attempts| attempts.last());
+            if last.is_none_or(|attempt| attempt["stop_kind"] != WATCHDOG_STOP_KIND) {
+                return Err(plan_err(
+                    "watchdog-stop receipt's stopped pod did not expire",
+                ));
+            }
+        }
+        for game in games {
+            let game_id = game["game"]
+                .as_u64()
+                .ok_or_else(|| plan_err("pod game lacks an id"))?;
+            let attempts = game["attempts"]
+                .as_array()
+                .ok_or_else(|| plan_err("pod game lacks attempts"))?;
+            for attempt in attempts {
+                if attempt["stop_kind"] == WATCHDOG_STOP_KIND {
+                    expired.push([entry.pod_index, game_id]);
+                }
+            }
+        }
+    }
+    if receipt.ended == PlanExecutionEnded::WatchdogStop && stopped != 1 {
+        return Err(plan_err(
+            "watchdog-stop receipt must have exactly one stopped pod",
+        ));
+    }
+    expired.sort_unstable();
+    Ok(expired)
+}
+
+fn d8_set_status(set_dir: &Path, manifest: &SetManifest) -> Result<D8SetStatus, PodRunnerError> {
+    use D8SetStatus::{Complete, InfrastructureFailure, Interrupted, Pending};
+
+    let executions = d8_exec_indices(set_dir, manifest)?;
+    let receipt_path = |e| set_dir.join(format!("exec-{e}/execution.json"));
+    if manifest.kind == ManifestKind::Prep {
+        if accept_prep_execution(set_dir).is_ok() {
+            return Ok(Complete);
+        }
+        if manifest.is_prep_panel() || executions.is_empty() {
+            return Ok(Pending);
+        }
+        for e in executions {
+            let path = receipt_path(e);
+            match fs::read_to_string(&path) {
+                Ok(text) => {
+                    parse_and_validate_prep_execution_receipt_json(&text)
+                        .map_err(|error| plan_err(format!("{}: {error}", path.display())))?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(PodRunnerError::Io(format!("{}: {error}", path.display())))
+                }
+            }
+        }
+        return Ok(Interrupted);
+    }
+
+    if !executions.contains(&0) {
+        return Ok(Pending);
+    }
+    if !receipt_path(0)
+        .try_exists()
+        .map_err(|error| PodRunnerError::Io(error.to_string()))?
+    {
+        return Ok(Interrupted);
+    }
+    let e0 = accept_plan_execution(set_dir, 0)?;
+    match e0.ended {
+        PlanExecutionEnded::Interrupted => return Ok(Interrupted),
+        PlanExecutionEnded::WatchdogStop => return Ok(Pending),
+        PlanExecutionEnded::Complete => {}
+    }
+    let expired0 = receipt_watchdogs(set_dir, &e0)?;
+    if expired0.is_empty() {
+        return Ok(Complete);
+    }
+    if !executions.contains(&1) {
+        return Ok(Pending);
+    }
+    if !receipt_path(1)
+        .try_exists()
+        .map_err(|error| PodRunnerError::Io(error.to_string()))?
+    {
+        return Ok(Interrupted);
+    }
+    let e1 = accept_plan_execution(set_dir, 1)?;
+    match e1.ended {
+        PlanExecutionEnded::Interrupted => Ok(Interrupted),
+        PlanExecutionEnded::Complete if receipt_watchdogs(set_dir, &e1)?.is_empty() => Ok(Complete),
+        PlanExecutionEnded::WatchdogStop => {
+            let expired1 = receipt_watchdogs(set_dir, &e1)?;
+            Ok(if expired1.iter().any(|game| expired0.contains(game)) {
+                Interrupted
+            } else {
+                InfrastructureFailure
+            })
+        }
+        PlanExecutionEnded::Complete => Ok(Pending),
+    }
 }
 
 fn verify_declaration(
@@ -3900,17 +4205,8 @@ fn verify_declaration(
         )));
     }
     if manifest.namespace != "test" {
-        let text = std::str::from_utf8(&verification.declaration_bytes)
-            .map_err(|_| plan_err("A6 declaration file is not valid UTF-8"))?;
-        let lower = text.to_ascii_lowercase();
-        let has_part2 =
-            lower.contains("part 2") || lower.contains("part-2") || lower.contains("part_2");
-        let has_sig = lower.contains("countersign") || lower.contains("## signature");
-        if !(has_part2 && has_sig) {
-            return Err(plan_err(
-                "A6 declaration file lacks the required part 2 countersignature",
-            ));
-        }
+        let (pins, inputs) = attestation::verify_countersigned_a6(&verification.declaration_bytes)?;
+        verify_runtime_pins(&pins, inputs.as_ref(), &verification.pins)?;
     }
     Ok(())
 }
@@ -4277,7 +4573,7 @@ pub fn run_prep_set_execution_with_ended_claim(
         ));
     }
     verify_declaration(&manifest, verification)?;
-    verify_d8_history(set_dir, &manifest)?;
+    verify_d8_launch(set_dir, &manifest, verification)?;
 
     // Execution must be the next appended execution entry.
     let expected_exec = manifest
@@ -5273,7 +5569,7 @@ fn preflight_plan_set_execution(
         ));
     }
     verify_declaration(&manifest, verification)?;
-    verify_d8_history(set_dir, &manifest)?;
+    verify_d8_launch(set_dir, &manifest, verification)?;
 
     let expected_exec = manifest
         .executions
@@ -5304,40 +5600,7 @@ fn preflight_plan_set_execution(
                 "execution 1 must match execution 0's plan_set_sha256, binary, and platform",
             ));
         }
-        let mut e0_watchdogs = Vec::new();
-        for rec_entry in &e0.records {
-            let rec_path = set_dir
-                .join("exec-0")
-                .join("records")
-                .join(format!("pod-{}.json", rec_entry.pod_index));
-            let rec_text = fs::read_to_string(&rec_path)
-                .map_err(|error| PodRunnerError::Io(format!("{}: {error}", rec_path.display())))?;
-            let parsed = JsonParser::new(&rec_text).parse_root().map_err(plan_err)?;
-            let OrderedJson::Object(top) = parsed else {
-                return Err(plan_err("exec-0 record is not an object"));
-            };
-            if let Some((_, OrderedJson::Array(halts))) = top.iter().find(|(k, _)| k == "halts") {
-                for h in halts {
-                    let h_obj = expect_object_keys(
-                        h,
-                        "exec-0.halt",
-                        &[
-                            "game",
-                            "attempt",
-                            "stop_kind",
-                            "last_action_source",
-                            "deal_seed",
-                        ],
-                    )
-                    .map_err(plan_err)?;
-                    let sk = expect_str(&h_obj[2].1, "exec-0.halt.stop_kind").map_err(plan_err)?;
-                    if sk == WATCHDOG_STOP_KIND {
-                        let game = expect_u64(&h_obj[0].1, "exec-0.halt.game").map_err(plan_err)?;
-                        e0_watchdogs.push([rec_entry.pod_index, game]);
-                    }
-                }
-            }
-        }
+        let e0_watchdogs = receipt_watchdogs(set_dir, &e0)?;
         if e0_watchdogs.is_empty() {
             return Err(plan_err(
                 "execution 1 (watchdog_rerun) is allowed only when execution 0 holds a terminal:watchdog halt",
@@ -5811,11 +6074,7 @@ pub fn accept_plan_execution(
     }
 
     let mut actual_files = BTreeSet::new();
-    for entry in fs::read_dir(&records_dir)
-        .map_err(|error| PodRunnerError::Io(format!("{}: {error}", records_dir.display())))?
-    {
-        let entry = entry
-            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", records_dir.display())))?;
+    for entry in read_dir_if_present(&records_dir)? {
         let name = entry
             .file_name()
             .into_string()
@@ -5830,3 +6089,6 @@ pub fn accept_plan_execution(
 
     Ok(receipt)
 }
+
+#[cfg(test)]
+mod tests;

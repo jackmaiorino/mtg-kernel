@@ -1426,7 +1426,7 @@ mod tests {
         // read directly from a failing run (never hand-typed).
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "238b384b9f00f8e002a320e41bc59f7311cb684821076243d29294d737a22b98"
+            "4c054ca3564c7699c4eb98b055cad28b265fa295f5d3826be24359617d8edd59"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
@@ -1473,7 +1473,7 @@ mod tests {
         // are this test's own live-computed values, read from a failing run.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "c5ab2e6dfa1628f53725e7df69eee50817ad82c06158787c33e3190d87b80623"
+            "68c218e702a2f8236fdd5566bbdaf7f1025febe1d536da13256734764dedc58d"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
         assert_eq!(bindings[0].policy_step_count(), 418);
@@ -1514,7 +1514,7 @@ mod tests {
         // retain every existing policy and physical decision count.
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "d77ff2242fd057554efcefa941460723f1872e97f8051587ee0740776c7becad"
+            "17b0093dcb7bf9f124431f1d73c256ff2e11433156f29c2e119f1e607f783fa2"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
         // Re-baselined once per the owner ruling on record (collab CLAUDE

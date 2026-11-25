@@ -126,7 +126,7 @@ fn reference_shuffle(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x1291_b789_c9aa_a269);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x0777_a480_28de_38d7);
     let expected_ids = [
         ("Basilisk Gate", 3),
         ("Citadel Gate", 14),
