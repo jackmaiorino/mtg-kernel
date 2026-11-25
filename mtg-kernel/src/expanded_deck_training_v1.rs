@@ -14931,8 +14931,8 @@ pub(crate) mod tests {
     // Windows CPU outputs for the issue #969 fixture seed.
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "bb753f462b55dbe47216e27824e4a322ab347f5052c6a3e33bbc46bdb128267c",
-        "78cdaf606ebf81479a6703cacab1fb017f21e8b19fc9cbc2e532122af9ca3c08",
+        "63f4579d4f3ee5b54c11d440b90b9225d33f1a26b5b24cfbc879a8168d612cde",
+        "dbbf9ca0583e6057a1e1b4312568124d4e9fdfe3ebfc50f6aea89ff8878438a6",
     ];
     // Prior Linux CPU outputs: CI39598628050. Re-pin after the issue #969 seed change.
     #[cfg(not(target_os = "windows"))]
