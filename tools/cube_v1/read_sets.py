@@ -661,6 +661,39 @@ def d8_unused_reserved_ranges(set_dir: Path, man: dict[str, Any]) -> list[list[i
     return _merge_ranges(unused)
 
 
+def _load_prep_receipt(path: Path) -> dict[str, Any]:
+    """Strictly parse and validate a prep-set exec-<e>/execution.json receipt (D5 parity)."""
+    doc = _load(path)
+    try:
+        rec = pod_record._object(doc, "execution", PREP_RECEIPT_KEYS)
+    except pod_record.RecordError as exc:
+        raise SetError(f"{path}: malformed prep receipt: {exc}") from exc
+    if type(rec["execution"]) is not int or not (0 <= rec["execution"] <= pod_record.U64):
+        raise SetError(f"{path}: execution.execution must be a u64")
+    if not read_plans._is_sha(rec["plan_set_sha256"]):
+        raise SetError(f"{path}: execution.plan_set_sha256 must be a sha256 hex digest")
+    if not read_plans._is_sha(rec["binary"]):
+        raise SetError(f"{path}: execution.binary must be a sha256 hex digest")
+    if not isinstance(rec["platform"], str):
+        raise SetError(f"{path}: execution.platform must be a string")
+    if rec["ended"] not in ("complete", "interrupted"):
+        raise SetError(f"{path}: execution.ended invalid {rec['ended']!r}")
+    if not isinstance(rec["outputs"], list):
+        raise SetError(f"{path}: execution.outputs must be a list")
+    for idx, item in enumerate(rec["outputs"]):
+        try:
+            out = pod_record._object(item, f"execution.outputs[{idx}]", RECEIPT_OUTPUT_KEYS)
+        except pod_record.RecordError as exc:
+            raise SetError(f"{path}: malformed prep receipt: {exc}") from exc
+        if type(out["unit"]) is not int or not (0 <= out["unit"] <= pod_record.U64):
+            raise SetError(f"{path}: execution.outputs[{idx}].unit must be a u64")
+        if not read_plans._is_sha(out["sha256"]):
+            raise SetError(f"{path}: execution.outputs[{idx}].sha256 must be a sha256 hex digest")
+        if out["status"] != "complete":
+            raise SetError(f"{path}: execution.outputs[{idx}].status must be 'complete', got {out['status']!r}")
+    return rec
+
+
 def is_d8_interrupted_set(set_dir: Path, man: dict[str, Any] | None = None) -> tuple[bool, str]:
     """Q2.2: predicate for an existing interrupted set in dose-d8 / read-d8-aa.
     Includes: ended 'interrupted', same-game watchdog hang, (i) execution leaving no execution.json,
@@ -679,12 +712,24 @@ def is_d8_interrupted_set(set_dir: Path, man: dict[str, Any] | None = None) -> t
             pass
         if not execs:
             return False, "prep set has no execution"
+        interrupted_reason: str | None = None
         for e, exec_dir in execs:
-            if not (exec_dir / "execution.json").exists():
-                return True, f"prep execution {e} left no execution.json"
-            rec = _load(exec_dir / "execution.json")
-            if isinstance(rec, dict) and rec.get("ended") == "interrupted":
-                return True, f"prep execution {e} ended interrupted"
+            receipt_path = exec_dir / "execution.json"
+            if not receipt_path.exists():
+                if interrupted_reason is None:
+                    interrupted_reason = f"prep execution {e} left no execution.json"
+                continue
+            rec = _load_prep_receipt(receipt_path)
+            if e < len(man["executions"]):
+                entry = man["executions"][e]
+                if (rec["execution"], rec["binary"], rec["platform"]) != (e, entry["binary"], entry["platform"]):
+                    raise SetError(f"{receipt_path}: receipt metadata differs from manifest.executions[{e}]")
+            if rec["plan_set_sha256"] != man["plan_set_sha256"]:
+                raise SetError(f"{receipt_path}: plan_set_sha256 differs from manifest")
+            if rec["ended"] == "interrupted" and interrupted_reason is None:
+                interrupted_reason = f"prep execution {e} ended interrupted"
+        if interrupted_reason is not None:
+            return True, interrupted_reason
         return True, "prep set did not complete"
 
     if not execs:

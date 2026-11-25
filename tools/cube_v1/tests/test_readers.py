@@ -4133,6 +4133,87 @@ class D8V3RestartTests(unittest.TestCase):
                               opened_v4["manifest"]["retired"]),
                              ("dose-0-restart-2", "v3/dose-0", [[65, 96]]))
 
+    def test_malformed_prep_receipt_is_refused_not_treated_as_interrupted(self):
+        # D5 parity: a non-accepted prep-dose-<ord> set whose exec-<e>/execution.json is valid JSON
+        # but fails the strict prep receipt schema (e.g. {} or missing a required field) is corruption
+        # and MUST be refused with an error naming execution.json, never treated as interrupted.
+        _, cs_sha = self._countersigned_a6()
+        with self._temp_dir() as tmp:
+            root = synth.assert_test_temp_root(tmp)
+            note = self._write_note(root)
+            s1, o1 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
+                                          reserved=[0, 32], namespace="dose-d8", run="v1")
+            p1_text = read_plans.serialize(read_plans.assemble_panel(
+                "dose", "dose-d8", read_sets.load_manifest(s1), 0, o1,
+                pins=synth.LIVE_PINS, builders=None, **synth.DEALER, **synth.LIVE_INDEX_ARGS,
+            ))
+            (root / "dose-d8" / "v1" / "panel").mkdir(parents=True)
+            (root / "dose-d8" / "v1" / "panel" / "panel.json").write_bytes(p1_text.encode("utf-8"))
+            p1_sha = hashlib.sha256(p1_text.encode("utf-8")).hexdigest()
+
+            prep_v1, _ = synth.write_prep_set(
+                root, "dose", "dose", "prep-dose-0", range(0, 32), cs_sha,
+                executions=[{"ended": "interrupted", "units": list(range(0, 5)), "accept": False}],
+                reserved=[0, 32], panel_sha256=p1_sha, namespace="dose-d8", run="v1",
+            )
+            receipt_path = prep_v1 / "exec-0" / "execution.json"
+            valid_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            ok, _ = read_sets.is_d8_interrupted_set(prep_v1)
+            self.assertTrue(ok)
+
+            # Set up authorized v2 panel so we also verify end-to-end refusal through verify_d8_v3_against_root.
+            rep_prep = [{"namespace": "dose-d8", "set": "prep-dose-0-restart-1",
+                         "replaces": "v1/prep-dose-0", "retired": [[5, 32]]}]
+            sm_pre = self._build_manifest(
+                root, [{"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
+                       self._restart_entry(note, "v2", cs_sha, replacements=rep_prep)],
+                filename="PRE.md",
+            )
+            s2, o2 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(32, 64), cs_sha,
+                                          reserved=[32, 64], namespace="dose-d8", run="v2", shakedown_manifest=sm_pre)
+            p2_text = read_plans.serialize(read_plans.assemble_panel(
+                "dose", "dose-d8", read_sets.load_manifest(s2), 0, o2,
+                pins=synth.LIVE_PINS, builders=None, **synth.DEALER, **synth.LIVE_INDEX_ARGS,
+            ))
+            (root / "dose-d8" / "v2" / "panel").mkdir(parents=True)
+            (root / "dose-d8" / "v2" / "panel" / "panel.json").write_bytes(p2_text.encode("utf-8"))
+            p2_sha = hashlib.sha256(p2_text.encode("utf-8")).hexdigest()
+            sm_v2 = self._build_manifest(
+                root, [{"kind": "panel", "panel": {"run": "v1", "sha256": p1_sha}},
+                       self._restart_entry(note, "v2", cs_sha, panel={"run": "v2", "sha256": p2_sha},
+                                           replacements=rep_prep)],
+                filename="FULL.md",
+            )
+
+            missing_outputs = dict(valid_receipt)
+            missing_outputs.pop("outputs")
+            missing_platform = dict(valid_receipt)
+            missing_platform.pop("platform")
+            for label, payload in (
+                ("empty-object", b"{}\n"),
+                ("missing-outputs", read_plans.serialize(missing_outputs).encode("utf-8")),
+                ("missing-platform", read_plans.serialize(missing_platform).encode("utf-8")),
+                ("invalid-json", b"{not valid json\n"),
+            ):
+                with self.subTest(bad_receipt=label):
+                    receipt_path.write_bytes(payload)
+                    with self.assertRaisesRegex(read_sets.SetError, "execution\\.json"):
+                        read_sets.is_d8_interrupted_set(prep_v1)
+                    with self.assertRaisesRegex(read_sets.SetError, "execution\\.json"):
+                        synth.write_prep_set(
+                            root, "dose", "dose", "prep-dose-0-restart-1", range(32, 64), cs_sha,
+                            reserved=[32, 64], panel_sha256=p2_sha, replaces="v1/prep-dose-0", retired=[[5, 32]],
+                            namespace="dose-d8", run="v2", shakedown_manifest=sm_v2,
+                        )
+
+            # Restoring the valid interrupted receipt allows the restart to proceed cleanly.
+            receipt_path.write_bytes(read_plans.serialize(valid_receipt).encode("utf-8"))
+            synth.write_prep_set(
+                root, "dose", "dose", "prep-dose-0-restart-1", range(32, 64), cs_sha,
+                reserved=[32, 64], panel_sha256=p2_sha, replaces="v1/prep-dose-0", retired=[[5, 32]],
+                namespace="dose-d8", run="v2", shakedown_manifest=sm_v2,
+            )
+
 
 class UniformPodRecordTests(unittest.TestCase):
     @unittest.skipUnless(D5_UNIFORM_FIXTURE.exists(),
