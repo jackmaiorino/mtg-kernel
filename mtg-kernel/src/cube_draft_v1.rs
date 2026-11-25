@@ -25,6 +25,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Seats at the table.
 pub const SEATS: usize = 8;
@@ -1421,12 +1423,23 @@ fn terminal_end(terminal: &Value, seats: [usize; 2]) -> GameEnd {
     }
 }
 
+thread_local! {
+    static GAME_DECISIONS: Arc<AtomicU64> = Arc::default();
+}
+
+/// The calling game thread's driver decision count, for the census heartbeat.
+pub fn game_decision_counter() -> Arc<AtomicU64> {
+    GAME_DECISIONS.with(Arc::clone)
+}
+
 fn drive_game(
     setup: &GameSetup<'_>,
     caps: &GameCaps,
     decisions: &mut u64,
     tally: &mut GameTally,
 ) -> GameEnd {
+    let observed = game_decision_counter();
+    observed.store(0, Ordering::Relaxed);
     let mut rng = SplitMix64::seed(setup.action_seed);
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
     let mut request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "reset",
@@ -1483,6 +1496,7 @@ fn drive_game(
         }
         let action = &actions[uniform_index(&mut rng, actions.len())];
         *decisions += 1;
+        observed.store(*decisions, Ordering::Relaxed);
         tally.record_action(action);
         let step = *decisions;
         request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "step",
