@@ -842,7 +842,7 @@ fn intuition_lets_the_target_opponent_choose_the_card_to_hand() {
     pool(&mut state, P0, &[ManaColor::U], 2);
     cast(&mut state, intuition, &[Target::Player(P1)]);
     let mut found = 0;
-    settle_with(&mut state, |_, decision| match decision {
+    settle_with(&mut state, |state, decision| match decision {
         Decision::ChooseEffectTargets {
             player,
             legal_targets,
@@ -860,6 +860,17 @@ fn intuition_lets_the_target_opponent_choose_the_card_to_hand() {
         } => {
             assert_eq!(player, P1);
             assert_eq!(legal_targets.len(), 3);
+            for observer in [P0, P1] {
+                let known: Vec<ObjectId> = state
+                    .known_library_cards(observer, P0)
+                    .iter()
+                    .map(|entry| entry.object)
+                    .collect();
+                assert_eq!(known.len(), 3, "observer={observer:?}");
+                for card in [wanted, second, third] {
+                    assert!(known.contains(&card), "observer={observer:?}");
+                }
+            }
             Action::ChooseEffectTarget(Target::Object(second))
         }
         other => first_answer(other),
