@@ -1027,6 +1027,27 @@ fn parse_caps_a67(value: &OrderedJson, path: &str) -> Result<PodCaps, String> {
     })
 }
 
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    #[test]
+    fn read_plan_caps_accept_legacy_and_signed_stack_cap() {
+        let caps = PodCaps::read_a2();
+        let with_stack = serde_json::to_string(&caps).unwrap();
+        let stack = caps.max_stack_objects.unwrap();
+        let stack_field = format!(",\"max_stack_objects\":{stack}");
+        let legacy = with_stack.replace(&stack_field, "");
+        assert_ne!(with_stack, legacy);
+
+        let parse = |text| parse_caps_a67(&JsonParser::new(text).parse_root().unwrap(), "caps");
+        assert_eq!(parse(&with_stack), Ok(caps));
+        assert_eq!(parse(&legacy), Ok(caps));
+        assert!(parse(&with_stack.replace(&stack_field, ",\"max_stack_objects\":0")).is_err());
+        assert!(parse(&with_stack.replace(&stack_field, ",\"max_stack_objects\":null")).is_err());
+    }
+}
+
 fn parse_plan_inputs(
     value: &OrderedJson,
     expect_non_null: bool,
