@@ -1,14 +1,53 @@
 #!/usr/bin/env bash
-# Usage: build.sh SOURCE_COMMIT /work/out
+# Usage: build.sh SOURCE_COMMIT /work/out [name[:feature1,feature2] ...]
 # Use the amd64 image mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93.
 # The launcher owns the image pin, target-volume admission, disk and memory monitoring, and wall limit.
 set -euo pipefail
 umask 022
 
-if [[ $# != 2 || ! $1 =~ ^[0-9a-f]{40}$ || $2 != /work/out ]]; then
-    printf 'Usage: build.sh SOURCE_COMMIT /work/out\n' >&2
+readonly -a bins=(native_expanded_training_run_v1 checkpoint_container_v1)
+validate_examples() {
+    local LC_ALL=C id='[a-zA-Z0-9_][a-zA-Z0-9_-]*' spec name feature
+    local -a features
+    local -A seen_features
+    local -A used=([DONE]=1 [SHA256SUMS]=1)
+    for name in "${bins[@]}"; do used[$name]=1; done
+    for spec in "$@"; do
+        if [[ ! $spec =~ ^$id(:$id(,$id)*)?$ ]]; then
+            printf 'Invalid example or feature name\n' >&2
+            return 2
+        fi
+        name=${spec%%:*}
+        if [[ -v used[$name] ]]; then
+            printf 'Example output name already in use: %s\n' "$name" >&2
+            return 2
+        fi
+        used[$name]=1
+        if [[ $spec == *:* ]]; then
+            IFS=, read -ra features <<< "${spec#*:}"
+            seen_features=()
+            for feature in "${features[@]}"; do
+                if [[ -v seen_features[$feature] ]]; then
+                    printf 'Duplicate feature for example: %s\n' "$name" >&2
+                    return 2
+                fi
+                seen_features[$feature]=1
+            done
+        fi
+    done
+}
+
+if [[ ${1:-} == --check-examples ]]; then
+    shift
+    validate_examples "$@"
+    exit
+fi
+if [[ $# -lt 2 || ! $1 =~ ^[0-9a-f]{40}$ || $2 != /work/out ]]; then
+    printf 'Usage: build.sh SOURCE_COMMIT /work/out [name[:feature1,feature2] ...]\n' >&2
     exit 2
 fi
+example_specs=("${@:3}")
+validate_examples "${example_specs[@]}"
 # PINNED_TARGET_CPU selects rustc target flags (default: none, the portable x86-64 build, unchanged). The flags
 # reach every crate compiled for the target, dependencies included, but not the precompiled standard library; an
 # explicit --target keeps them off build scripts and proc macros, which run on the build host. A variant binary runs
@@ -46,7 +85,6 @@ readonly out=$2
 readonly python=/usr/local/bin/python3.12
 readonly commit=$1
 readonly origin=https://github.com/jackmaiorino/mtg-kernel.git
-readonly -a bins=(native_expanded_training_run_v1 checkpoint_container_v1)
 
 check_stop() {
     if [[ -e /work/STOP || -L /work/STOP ]]; then
@@ -152,9 +190,8 @@ PY
 
 source_epoch=$(git -C "$repo" show -s --format=%ct HEAD)
 mkdir -- "$work/home" "$work/tmp" "$target" "$cargo_home"
-for bin in "${bins[@]}"; do
+build_target() {
     check_stop
-    # Build the binaries sequentially so thin LTO cannot link both at once.
     (
         cd -- "$repo"
         env -i PATH="$PATH" HOME="$work/home" TMPDIR="$work/tmp" LC_ALL="$LC_ALL" TZ="$TZ" \
@@ -162,8 +199,20 @@ for bin in "${bins[@]}"; do
             SOURCE_DATE_EPOCH="$source_epoch" CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
             CARGO_INCREMENTAL=0 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc \
             "${variant_env[@]}" \
-            cargo build --release --locked --jobs 2 -p mtg-kernel --bin "$bin" "${variant_args[@]}"
+            cargo build --release --locked --jobs 2 -p mtg-kernel "$@" "${variant_args[@]}"
     )
+}
+
+for bin in "${bins[@]}"; do
+    build_target --bin "$bin"
+done
+examples=()
+for spec in "${example_specs[@]}"; do
+    name=${spec%%:*}
+    examples+=("$name")
+    features=()
+    [[ $spec != *:* ]] || features=(--features "${spec#*:}")
+    build_target --example "$name" "${features[@]}"
 done
 
 check_stop
@@ -174,8 +223,12 @@ for bin in "${bins[@]}"; do
     install -m 0755 -- "$release_dir/$bin" "$out/$bin"
     cmp -- "$release_dir/$bin" "$out/$bin"
 done
+for name in "${examples[@]}"; do
+    install -m 0755 -- "$release_dir/examples/$name" "$out/$name"
+    cmp -- "$release_dir/examples/$name" "$out/$name"
+done
 
-"$python" -B - "$repo" "$out" "$commit" "$origin" "$source_epoch" "${bins[@]}" <<'PY'
+"$python" -B - "$repo" "$out" "$commit" "$origin" "$source_epoch" "${bins[@]}" -- "${example_specs[@]}" <<'PY'
 import hashlib
 import json
 import os
@@ -185,7 +238,9 @@ import subprocess
 import sys
 
 repo, out = map(Path, sys.argv[1:3])
-commit, origin, epoch, *binaries = sys.argv[3:]
+commit, origin, epoch, *targets = sys.argv[3:]
+separator = targets.index("--")
+binaries, examples = targets[:separator], targets[separator + 1:]
 
 def cmd(*args):
     return subprocess.check_output(args, text=True).strip()
@@ -235,14 +290,20 @@ manifest = {
     "trainer": executable(binaries[0]),
     "checkpoint_container": executable(binaries[1]),
 }
+if examples:
+    manifest["build"]["examples"] = examples
+    manifest["examples"] = []
+    for spec in examples:
+        name, _, features = spec.partition(":")
+        manifest["examples"].append(dict(executable(name), features=features.split(",") if features else []))
 (out / "BUILD-MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 PY
 
 (
     cd -- "$out"
-    sha256sum -- "${bins[@]}" BUILD-MANIFEST.json rust-components.json debian-packages.tsv >SHA256SUMS
+    sha256sum -- "${bins[@]}" "${examples[@]}" BUILD-MANIFEST.json rust-components.json debian-packages.tsv >SHA256SUMS
     sha256sum --check SHA256SUMS
-    sync -- "${bins[@]}" BUILD-MANIFEST.json rust-components.json debian-packages.tsv SHA256SUMS build.log
+    sync -- "${bins[@]}" "${examples[@]}" BUILD-MANIFEST.json rust-components.json debian-packages.tsv SHA256SUMS build.log
 )
 
 check_stop

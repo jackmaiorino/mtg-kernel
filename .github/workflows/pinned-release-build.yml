@@ -12,6 +12,10 @@ on:
         required: true
         default: a30c3769f1ef3a7b569ab52814688141969d877f
         type: string
+      examples:
+        description: 'Optional space-separated Cargo examples, each as name or name:feature1,feature2'
+        required: false
+        type: string
       target_cpu:
         description: Target-flag variant (default is the portable x86-64 build)
         required: false
@@ -91,11 +95,12 @@ jobs:
         env:
           BUILD_ROOT: ${{ steps.capacity.outputs.root }}
           PINNED_TARGET_CPU: ${{ inputs.target_cpu || 'default' }}
+          BUILD_EXAMPLES: ${{ inputs.examples }}
         shell: bash
         run: |
           set -euo pipefail
           sudo PINNED_TARGET_CPU="$PINNED_TARGET_CPU" python3 -B tools/pinned-release-build/hosted.py \
-            --work-root "$BUILD_ROOT" --source-commit "$BUILD_SOURCE"
+            --work-root "$BUILD_ROOT" --source-commit "$BUILD_SOURCE" --examples="$BUILD_EXAMPLES"
       - name: Preserve capacity evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
