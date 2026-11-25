@@ -171,6 +171,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions: limits.0,
             max_policy_steps: limits.1,
+            max_stack_objects: None,
             state,
             surface: PolicySurfaceV5::new_with_priority_mode_v1(
                 crate::surface_v2::PriorityModeV1::EngineWindowsV1,

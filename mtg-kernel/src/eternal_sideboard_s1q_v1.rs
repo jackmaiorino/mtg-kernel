@@ -420,8 +420,9 @@ fn tappable(state: &GameState, player: PlayerId, chosen: &[ObjectId]) -> Vec<Obj
 /// them among the mana sources. Reserving more permanents never helps the
 /// payment, so a plan with only `chosen` reserved must exist; when enough
 /// tappable permanents lie outside that plan's sources the answer is yes, and
-/// otherwise every choice is tried.
-fn completion_exists(
+/// otherwise every choice is tried. Aang's Iceberg's waterbend (wave C5c)
+/// taps the same permanents and reads this too.
+pub(crate) fn completion_exists(
     state: &GameState,
     player: PlayerId,
     source: ObjectId,
@@ -458,6 +459,9 @@ fn completion_among(
     if more == 0 {
         return crate::mana::plan_activation_mana_v1(cost, 0, player, state, source, chosen)
             .is_some();
+    }
+    if among.len() < more {
+        return false;
     }
     among.iter().enumerate().any(|(index, &next)| {
         let mut with = chosen.to_vec();

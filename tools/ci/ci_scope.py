@@ -61,6 +61,7 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
       "python/tools/rust_case_seconds.json", "python/tools/rust_case_timeout_seconds.json",
       "python/tools/rust_limited_only_known_failures.json", "python/tools/run_rust_integration_tests.py",
       "python/tools/rust_integration_module_seconds.json", "python/tools/check_rust_integration_inventory.py",
+      "python/tools/check_rust_integration_parts.py",
       "python/tools/limited_*_session_v*.py"), "pr"),
     (("python/tests/*", "python/tools/*"), "python"),
 ]

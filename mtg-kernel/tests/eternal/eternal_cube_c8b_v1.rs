@@ -1709,3 +1709,421 @@ fn c8b_decks_finish_and_replay_through_public_sessions_both_seats() {
         assert!(casts > 0, "{name} was never cast in a public session");
     }
 }
+
+// ---- Saheeli's -2 on a linked-exile source --------------------------------------
+//
+// Becoming a copy is not a zone change and does not make a new object
+// (707.4, 400.7), so "until this leaves the battlefield" lasts while a
+// Portable Hole is a copy of something else (610.3). The census stop
+// "linked-exile record no longer matches its physical objects" came from
+// this position.
+
+/// Every observation each seat gets of `state`: the policy observation under
+/// the legacy text mode and under the public shroud contract (schema 5),
+/// which agree apart from that contract's own fields, and the harness
+/// observation. Returns each seat's policy projection, or the first refusal.
+fn linked_exile_views(state: &GameState) -> Result<Vec<Value>, String> {
+    use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+    use mtg_kernel::rl::{enable_public_shroud_v1, observe_policy_v5, observe_v2, ObservationV5};
+    use mtg_kernel::surface_v2::HarnessSurfaceV2;
+    let surface = PolicySurfaceV5::new();
+    let mut public_state = state.clone();
+    enable_public_shroud_v1(&mut public_state);
+    let strip = |observation: &ObservationV5| {
+        let mut value = serde_json::to_value(observation).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("visible_projection_hash");
+        value["projection"]
+            .as_object_mut()
+            .unwrap()
+            .remove("public_shroud");
+        value
+    };
+    let mut projections = Vec::new();
+    for viewer in [P0, P1] {
+        let legacy = observe_policy_v5(state, &surface, viewer, 0, 0, 0, 1)
+            .map_err(|error| error.to_string())?;
+        let public = observe_policy_v5(&public_state, &surface, viewer, 0, 0, 0, 1)
+            .map_err(|error| error.to_string())?;
+        let legacy = strip(&legacy);
+        assert_eq!(legacy, strip(&public), "viewer {viewer:?}");
+        let harness = observe_v2(state, &HarnessSurfaceV2::new(), viewer, 0)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            harness.projection.object_relations, public.projection.surface.object_relations,
+            "viewer {viewer:?}"
+        );
+        projections.push(legacy["projection"].clone());
+    }
+    Ok(projections)
+}
+
+fn assert_linked_exile_refused(state: &GameState) {
+    use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+    use mtg_kernel::rl::{enable_public_shroud_v1, observe_policy_v5, observe_v2, RlContractError};
+    use mtg_kernel::surface_v2::HarnessSurfaceV2;
+
+    let harness_surface = HarnessSurfaceV2::new();
+    let policy_surface = PolicySurfaceV5::new();
+    let mut public_state = state.clone();
+    enable_public_shroud_v1(&mut public_state);
+    let refusal =
+        RlContractError("linked-exile record no longer matches its physical objects".into());
+    for viewer in [P0, P1] {
+        let harness = observe_v2(state, &harness_surface, viewer, 0).map(|_| ());
+        let legacy = observe_policy_v5(state, &policy_surface, viewer, 0, 0, 0, 1).map(|_| ());
+        let public =
+            observe_policy_v5(&public_state, &policy_surface, viewer, 0, 0, 0, 1).map(|_| ());
+        for (mode, result) in [
+            ("harness", harness),
+            ("legacy", legacy),
+            ("schema 5", public),
+        ] {
+            assert_eq!(result, Err(refusal.clone()), "{mode}, viewer {viewer:?}");
+        }
+    }
+}
+
+/// Each seat's projection names one source for `exiled`: `source` exactly as
+/// that projection's battlefield row shows it, with definition `card`.
+fn assert_exiled_by_row(views: &[Value], exiled: ObjectId, source: ObjectId, card: &str) {
+    for projection in views {
+        let sources: Vec<&Value> = projection["object_relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|relation| {
+                relation["relation_kind"] == "exiled_by"
+                    && relation["object"]["arena_id"] == exiled.0
+            })
+            .map(|relation| &relation["exiled_by"])
+            .collect();
+        let rows: Vec<&Value> = projection["battlefield"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|seat| seat.as_array().unwrap())
+            .map(|card| &card["stable"])
+            .filter(|stable| stable["arena_id"] == source.0)
+            .collect();
+        assert_eq!(sources, rows, "{projection}");
+        assert_eq!(sources.len(), 1, "{projection}");
+        assert_eq!(sources[0]["card_db_id"], id(card), "{projection}");
+    }
+}
+
+/// P0 controls Saheeli (5 loyalty), `model` and a Portable Hole whose entry
+/// exiled P1's Sol Ring; P1 also controls Llanowar Elves (mana value 1).
+/// Returns (state, saheeli, model, hole, ring, elves).
+fn hole_holding_ring(model: &str) -> (GameState, ObjectId, ObjectId, ObjectId, ObjectId, ObjectId) {
+    let mut state = plains();
+    let saheeli = put(&mut state, P0, "Saheeli, Sublime Artificer", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::R], 1);
+    cast(&mut state, saheeli, &[]);
+    settled(&mut state);
+    let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+    let elves = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let model = if model.ends_with("Token") {
+        token(&mut state, P0, model)
+    } else {
+        put(&mut state, P0, model, Zone::Battlefield)
+    };
+    let hole = put(&mut state, P0, "Portable Hole", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, hole, &[]);
+    settle_choosing(&mut state, ring);
+    assert_eq!(zone(&state, ring), Zone::Exile);
+    let [link] = state.engine.linked_exile_records.as_slice() else {
+        panic!("one Portable Hole link")
+    };
+    assert_eq!(link.source.source, hole);
+    assert_eq!(link.source.card_def, id("Portable Hole"));
+    assert_eq!(link.exiled, ring);
+    let views = linked_exile_views(&state).expect("plain Hole observation");
+    assert_exiled_by_row(&views, ring, hole, "Portable Hole");
+    (state, saheeli, model, hole, ring, elves)
+}
+
+/// Saheeli's -2: `host` becomes a copy of `model` until end of turn.
+fn saheeli_copies(state: &mut GameState, saheeli: ObjectId, host: ObjectId, model: ObjectId) {
+    saheeli_copies_keeping(state, saheeli, host, model, host);
+}
+
+/// Saheeli's -2 as `saheeli_copies`. A legendary model (Umezawa's Jitte, as
+/// in census game 61163) gives the legend rule choice, observed by both
+/// seats before P0 keeps `keep`.
+fn saheeli_copies_keeping(
+    state: &mut GameState,
+    saheeli: ObjectId,
+    host: ObjectId,
+    model: ObjectId,
+    keep: ObjectId,
+) {
+    let generation = state.objects.get(host).zone_change_count;
+    let legendary = CARD_DEFS[state.objects.get(model).card_def as usize]
+        .supertypes
+        .contains(&Supertype::Legendary);
+    activate(
+        state,
+        saheeli,
+        0,
+        &[Target::Object(host), Target::Object(model)],
+    );
+    let mut legend_choices = 0;
+    settle_with(state, |state, decision| match decision {
+        Decision::ChooseLegendPermanent { candidates, .. } => {
+            assert_eq!(candidates.len(), 2);
+            assert!(candidates.contains(&host) && candidates.contains(&model));
+            assert_eq!(
+                state.objects.get(host).card_def,
+                state.objects.get(model).card_def
+            );
+            if let Err(refusal) = linked_exile_views(state) {
+                panic!("legend rule choice observation refused: {refusal}");
+            }
+            legend_choices += 1;
+            Action::ChooseLegendPermanent(keep)
+        }
+        other => panic!("unexpected choice: {other:?}"),
+    });
+    assert_eq!(legend_choices, usize::from(legendary));
+    if keep == host {
+        assert_eq!(zone(state, host), Zone::Battlefield);
+        assert_eq!(
+            state.objects.get(host).card_def,
+            state.objects.get(model).card_def
+        );
+        assert_eq!(state.objects.get(host).zone_change_count, generation);
+    } else {
+        assert_eq!(zone(state, host), Zone::Graveyard);
+    }
+}
+
+/// P0 destroys `target` with Disenchant.
+fn disenchant(state: &mut GameState, target: ObjectId) {
+    let spell = put(state, P0, "Disenchant", Zone::Hand);
+    pool(state, P0, &[ManaColor::W], 1);
+    cast(state, spell, &[Target::Object(target)]);
+    settled(state);
+    assert_eq!(zone(state, target), Zone::Graveyard);
+}
+
+/// The census position, both models: the copied Hole keeps the Sol Ring
+/// exiled, and every observation shows the Hole by its current identity.
+#[test]
+fn saheeli_copied_portable_hole_keeps_its_exile_and_stays_observable() {
+    for model in ["Servo Token", "Umezawa's Jitte"] {
+        let (mut state, saheeli, model_id, hole, ring, _) = hole_holding_ring(model);
+        let link = state.engine.linked_exile_records[0];
+        saheeli_copies(&mut state, saheeli, hole, model_id);
+        assert_eq!(zone(&state, ring), Zone::Exile, "{model}");
+        assert_eq!(state.engine.linked_exile_records, vec![link], "{model}");
+        let views = linked_exile_views(&state)
+            .unwrap_or_else(|refusal| panic!("{model}: observation refused: {refusal}"));
+        assert_exiled_by_row(&views, ring, hole, model);
+    }
+}
+
+/// Destroying the Hole while it is a copy returns the card (610.3), and so
+/// does the legend rule putting the copied Hole into the graveyard.
+#[test]
+fn destroying_a_copied_portable_hole_returns_its_exiled_card() {
+    for (model, keep_copy) in [
+        ("Servo Token", true),
+        ("Umezawa's Jitte", true),
+        ("Umezawa's Jitte", false),
+    ] {
+        let (mut state, saheeli, model_id, hole, ring, _) = hole_holding_ring(model);
+        let keep = if keep_copy { hole } else { model_id };
+        saheeli_copies_keeping(&mut state, saheeli, hole, model_id, keep);
+        if keep_copy {
+            assert_eq!(zone(&state, ring), Zone::Exile, "{model}");
+            disenchant(&mut state, hole);
+        }
+        assert_eq!(zone(&state, hole), Zone::Graveyard, "{model}");
+        assert_eq!(state.objects.get(hole).card_def, id("Portable Hole"));
+        assert_eq!(zone(&state, ring), Zone::Battlefield, "{model}");
+        assert!(state.engine.linked_exile_records.is_empty(), "{model}");
+        linked_exile_views(&state).expect("observation after the return");
+    }
+}
+
+/// The copy ends at cleanup and nothing else changes; destroying the Hole
+/// afterwards returns the card.
+#[test]
+fn portable_hole_copy_ends_at_cleanup_and_its_link_is_unchanged() {
+    let (mut state, saheeli, servo, hole, ring, _) = hole_holding_ring("Servo Token");
+    let link = state.engine.linked_exile_records[0];
+    saheeli_copies(&mut state, saheeli, hole, servo);
+    to_next_main(&mut state, P1);
+    assert_eq!(state.objects.get(hole).card_def, id("Portable Hole"));
+    assert_eq!(state.engine.linked_exile_records, vec![link]);
+    assert_eq!(zone(&state, ring), Zone::Exile);
+    let views = linked_exile_views(&state).expect("observation after the copy ends");
+    assert_exiled_by_row(&views, ring, hole, "Portable Hole");
+    to_next_main(&mut state, P0);
+    disenchant(&mut state, hole);
+    assert_eq!(zone(&state, ring), Zone::Battlefield);
+    assert!(state.engine.linked_exile_records.is_empty());
+}
+
+/// Another artifact becoming a copy of the Hole does not enter, so nothing
+/// new is exiled and the first Hole's link is untouched, also when that
+/// copy leaves.
+#[test]
+fn artifact_copying_a_portable_hole_exiles_nothing_and_keeps_the_first_link() {
+    let (mut state, saheeli, _, hole, ring, elves) = hole_holding_ring("Servo Token");
+    let link = state.engine.linked_exile_records[0];
+    let mox = put(&mut state, P0, "Mox Pearl", Zone::Battlefield);
+    saheeli_copies(&mut state, saheeli, mox, hole);
+    assert_eq!(engine::effective_name(&state, mox), "Portable Hole");
+    assert_eq!(state.engine.linked_exile_records, vec![link]);
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
+    let views = linked_exile_views(&state).expect("observation with two Holes");
+    assert_exiled_by_row(&views, ring, hole, "Portable Hole");
+    disenchant(&mut state, mox);
+    assert_eq!(state.engine.linked_exile_records, vec![link]);
+    assert_eq!(zone(&state, ring), Zone::Exile);
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
+    disenchant(&mut state, hole);
+    assert_eq!(zone(&state, ring), Zone::Battlefield);
+    assert!(state.engine.linked_exile_records.is_empty());
+}
+
+/// The copied Hole is accepted only through its own copy history: a live
+/// Hole that never was the recorded definition in this incarnation still
+/// fails closed.
+#[test]
+fn copied_portable_hole_without_that_definition_in_its_history_is_refused() {
+    let (mut state, saheeli, servo, hole, _, _) = hole_holding_ring("Servo Token");
+    saheeli_copies(&mut state, saheeli, hole, servo);
+    let mut forged = state.clone();
+    forged.engine.linked_exile_records[0].source.card_def = id("Leyline Binding");
+    let refusal = linked_exile_views(&forged).expect_err("forged source definition");
+    assert!(
+        refusal.contains("linked-exile record no longer matches its physical objects"),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn copied_portable_hole_in_a_later_incarnation_is_refused() {
+    let (mut state, saheeli, servo, hole, _, _) = hole_holding_ring("Servo Token");
+    saheeli_copies(&mut state, saheeli, hole, servo);
+    // The old copy history and exile link still name the recorded incarnation.
+    // A higher live count passes the lower-bound check and skips the live-link check.
+    state.objects.get_mut(hole).zone_change_count += 1;
+
+    assert_linked_exile_refused(&state);
+}
+
+#[test]
+fn copied_portable_hole_off_the_battlefield_is_refused() {
+    let (mut state, saheeli, servo, hole, ring, _) = hole_holding_ring("Servo Token");
+    saheeli_copies(&mut state, saheeli, hole, servo);
+    state.objects.get_mut(hole).zone = Zone::Graveyard;
+    let owner = &mut state.players[P0.index()];
+    owner.battlefield.retain(|&object| object != hole);
+    owner.graveyard.push(hole);
+
+    // A later Ring incarnation skips the live-link check even though the Hole
+    // still has its recorded count. The historical record remains intact.
+    let ring = state.objects.get_mut(ring);
+    ring.zone_change_count += 1;
+    ring.v4.exiled_by = None;
+
+    assert_linked_exile_refused(&state);
+}
+
+/// P0 controls Saheeli (5 loyalty), a Servo token and a Tidehollow Sculler
+/// whose entry exiled P1's Lightning Bolt. Returns (state, saheeli, servo,
+/// sculler, bolt).
+fn sculler_holding_bolt() -> (GameState, ObjectId, ObjectId, ObjectId, ObjectId) {
+    let mut state = plains();
+    let saheeli = put(&mut state, P0, "Saheeli, Sublime Artificer", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::R], 1);
+    cast(&mut state, saheeli, &[]);
+    settled(&mut state);
+    let servo = token(&mut state, P0, "Servo Token");
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    let sculler = put(&mut state, P0, "Tidehollow Sculler", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::B], 0);
+    cast(&mut state, sculler, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Player(P1)),
+        Decision::ChooseEffectTargets { .. } => Action::ChooseEffectTarget(Target::Object(bolt)),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+    assert_eq!(state.engine.linked_exile_records.len(), 1);
+    (state, saheeli, servo, sculler, bolt)
+}
+
+/// Tidehollow Sculler is the other artifact linked-exile source in the cube:
+/// Saheeli can make it a copy while it holds a card. The copy is observable;
+/// once the copy ends, the Sculler's own leave trigger returns the card.
+#[test]
+fn saheeli_copied_tidehollow_sculler_keeps_its_exile_and_stays_observable() {
+    let (mut state, saheeli, servo, sculler, bolt) = sculler_holding_bolt();
+    let link = state.engine.linked_exile_records[0];
+    saheeli_copies(&mut state, saheeli, sculler, servo);
+    assert_eq!(state.engine.linked_exile_records, vec![link]);
+    let views = linked_exile_views(&state).expect("copied Sculler observation");
+    assert_exiled_by_row(&views, bolt, sculler, "Servo Token");
+    to_next_main(&mut state, P1);
+    assert_eq!(
+        state.objects.get(sculler).card_def,
+        id("Tidehollow Sculler")
+    );
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+    let views = linked_exile_views(&state).expect("Sculler observation after the copy");
+    assert_exiled_by_row(&views, bolt, sculler, "Tidehollow Sculler");
+    to_next_main(&mut state, P0);
+    let kill = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, kill, &[Target::Object(sculler)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, sculler), Zone::Graveyard);
+    assert!(hand_contains(&state, P1, bolt));
+    assert!(state.engine.linked_exile_records.is_empty());
+}
+
+/// Unlike Portable Hole's duration, the Sculler's return is its own leave
+/// trigger, which looks back in time (603.10a): a Sculler that leaves while
+/// it is a Servo copy has no such ability, so the card stays exiled, and the
+/// observation still shows which (historical) Sculler exiled it.
+#[test]
+fn tidehollow_sculler_leaving_as_a_copy_has_no_return_trigger() {
+    let (mut state, saheeli, servo, sculler, bolt) = sculler_holding_bolt();
+    let link = state.engine.linked_exile_records[0];
+    saheeli_copies(&mut state, saheeli, sculler, servo);
+    disenchant(&mut state, sculler);
+    assert_eq!(
+        state.objects.get(sculler).card_def,
+        id("Tidehollow Sculler")
+    );
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+    assert!(state.stack.is_empty());
+    assert_eq!(state.engine.linked_exile_records, vec![link]);
+    for projection in linked_exile_views(&state).expect("departed copied Sculler observation") {
+        let sources: Vec<&Value> = projection["object_relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|relation| {
+                relation["relation_kind"] == "exiled_by" && relation["object"]["arena_id"] == bolt.0
+            })
+            .map(|relation| &relation["exiled_by"])
+            .collect();
+        assert_eq!(sources.len(), 1, "{projection}");
+        assert_eq!(sources[0]["arena_id"], sculler.0);
+        assert_eq!(sources[0]["card_db_id"], id("Tidehollow Sculler"));
+        assert_eq!(sources[0]["zone"], "Battlefield");
+        assert_eq!(
+            sources[0]["zone_change_count"],
+            link.source.zone_change_count
+        );
+    }
+}

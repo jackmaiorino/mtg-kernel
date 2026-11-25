@@ -1520,12 +1520,14 @@ fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> Expa
         postboard: false,
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: None,
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     }
 }
 

@@ -9,12 +9,15 @@
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
 use mtg_kernel::cube_b_census_v1::{
     compact_json_list, draft_seed, parse_dealt_schedule, play_drafted_range, pod_seed, seed,
-    stop_kind, DraftedPod, GameLine, ProcessDeath, SeedPart, A2_CAPS, GAMES_PER_DRAFT,
+    stop_kind, DealtEpisode, DraftedPod, GameLine, ProcessDeath, SeedPart, A2_CAPS,
+    GAMES_PER_DRAFT,
 };
 use mtg_kernel::cube_draft_v1::{
-    game_seed, play_pod_game, pod_game_seats, CubeDraftError, CubePool, GameCaps, GameEnd,
-    DECK_CARDS,
+    derive_seed, game_seed, play_pod_game, pod_game_seats, CubeDraftError, CubePool, GameCaps,
+    GameEnd, SeedStream, DECK_CARDS, SESSION_SCHEMA_VERSION,
 };
+use mtg_kernel::limited_session_v1::LimitedJsonlServerV1;
+use mtg_kernel::state::SplitMix64;
 use serde_json::{json, Value};
 
 const CUBE_LIST: &str = concat!(
@@ -31,6 +34,7 @@ const TINY_CAPS: GameCaps = GameCaps {
     max_decisions: 300,
     max_physical_decisions: 16_384,
     max_policy_steps: 32_768,
+    max_stack_objects: None,
 };
 
 fn pool() -> CubePool {
@@ -172,7 +176,146 @@ fn two_runs_of_a_tiny_drafted_range_write_identical_lines() {
                 assert_eq!(deck.as_array().unwrap().len(), DECK_CARDS as usize);
             }
             assert_eq!(line["completed"], json!(line["stop_kind"].is_null()));
+            assert!(line["max_stack"].as_u64().is_some());
         }
+    });
+}
+
+fn replay_stack_peak(pod: &DraftedPod, line: &GameLine, caps: &GameCaps) -> u32 {
+    let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
+    let mut request = json!({
+        "request_type": "reset", "schema_version": SESSION_SCHEMA_VERSION,
+        "request_id": "reset", "episode_id": line.game, "env_seed": line.env_seed,
+        "decks": line.seats.map(|seat| pod.decks[seat].to_session_json()),
+        "max_physical_decisions": caps.max_physical_decisions,
+        "max_policy_steps": caps.max_policy_steps,
+    });
+    if let Some(limit) = caps.max_stack_objects {
+        request["max_stack_objects"] = json!(limit);
+    }
+    let mut rng = SplitMix64::seed(derive_seed(line.game_seed, SeedStream::GameActions, 0));
+    let mut lengths = Vec::new();
+    for step in 0..=caps.max_decisions {
+        let raw = server.handle_line(&request.to_string());
+        let reply: Value = serde_json::from_str(&raw).unwrap();
+        let body = match reply["response_type"].as_str() {
+            Some("terminal") => &reply["terminal"],
+            Some("error") => break,
+            Some("decision") => &reply["decision"],
+            _ => panic!("unexpected reply: {reply}"),
+        };
+        let stack = body
+            .pointer("/observation/projection/stack")
+            .and_then(Value::as_array);
+        lengths.push(u32::try_from(stack.map_or(0, Vec::len)).unwrap_or(u32::MAX));
+        if reply["response_type"] == "terminal" || step == caps.max_decisions {
+            break;
+        }
+        let decision = body;
+        // Replay the uniform policy's rejection sampling from the same seed.
+        let actions = decision["legal_actions"].as_array().unwrap();
+        let n = actions.len() as u64;
+        let threshold = n.wrapping_neg() % n;
+        let mut draw = rng.next_u64();
+        while draw < threshold {
+            draw = rng.next_u64();
+        }
+        let action = &actions[(draw % n) as usize];
+        request = json!({
+            "request_type": "step", "schema_version": SESSION_SCHEMA_VERSION,
+            "request_id": format!("step-{}", step + 1),
+            "episode_id": decision["episode_id"], "expected_step": decision["step"],
+            "selected_index": action["selected_index"], "selected_action_id": action["stable_id"],
+        });
+    }
+    lengths.into_iter().max().unwrap_or(0)
+}
+
+#[test]
+fn drafted_stack_peaks_match_replayed_decision_observations() {
+    on_big_stack(|| {
+        let pool = pool();
+        let pod = DraftedPod::prepare(&pool, NAMESPACE, 0).unwrap();
+        let caps = GameCaps {
+            max_decisions: 100,
+            ..TINY_CAPS
+        };
+        let mut saw_stack = false;
+        play_drafted_range(&pool, NAMESPACE, 0, 2, &caps, |line| {
+            let peak = replay_stack_peak(&pod, line, &caps);
+            assert_eq!(line.max_stack, peak, "game {}", line.game);
+            assert!(line.to_json_line().contains(&format!(
+                r#""policy_steps":{},"max_stack":{peak},"#,
+                json!(line.policy_steps)
+            )));
+            saw_stack |= peak > 0;
+            Ok::<(), CubeDraftError>(())
+        })
+        .unwrap();
+        assert!(saw_stack, "the range must exercise a nonempty stack");
+    });
+}
+
+#[test]
+fn stack_cap_halts_drafted_and_dealt_play() {
+    on_big_stack(|| {
+        let pool = pool();
+        let pod = DraftedPod::prepare(&pool, NAMESPACE, 0).unwrap();
+        let uncapped = (0..2)
+            .map(|game| pod.play(game, &TINY_CAPS).unwrap())
+            .find(|line| line.max_stack > 0)
+            .expect("fixture reaches a nonempty stack");
+        let caps = GameCaps {
+            max_stack_objects: Some(0),
+            ..TINY_CAPS
+        };
+
+        let mut drafted = Vec::new();
+        play_drafted_range(
+            &pool,
+            NAMESPACE,
+            uncapped.index,
+            uncapped.index + 1,
+            &caps,
+            |line| {
+                drafted.push(line.clone());
+                Ok::<(), CubeDraftError>(())
+            },
+        )
+        .unwrap();
+        let [drafted]: [GameLine; 1] = drafted.try_into().unwrap();
+
+        // Preserve the seat order and game seed, so dealt play reaches the same first stack object.
+        let episode = DealtEpisode {
+            iteration: 0,
+            slot: 0,
+            id: "stack-cap".to_owned(),
+            seed: uncapped.game_seed,
+            starting_player: Some(0),
+            learner_seat: Some(0),
+            decks: uncapped.seats.map(|seat| pod.decks[seat].clone()),
+        };
+        let dealt = episode.play(uncapped.index, &caps);
+        let halt = "engine_halted:StackSizeCapExceeded:source:";
+        for line in [&drafted, &dealt] {
+            assert_eq!(
+                line.stop_kind.as_deref(),
+                Some("engine_halted:StackSizeCapExceeded:source:*"),
+                "{}",
+                line.mode
+            );
+            assert!(
+                line.end["reason"]
+                    .as_str()
+                    .and_then(|reason| reason.strip_prefix(halt))
+                    .is_some_and(|id| id.parse::<u64>().is_ok()),
+                "{}: {}",
+                line.mode,
+                line.end
+            );
+            assert_eq!(line.max_stack, 0, "{}", line.mode);
+        }
+        assert_eq!(drafted.max_stack, replay_stack_peak(&pod, &drafted, &caps));
     });
 }
 
@@ -194,6 +337,7 @@ fn a_census_game_is_the_pod_game() {
         assert_eq!(death.seats, record.seats);
         assert_eq!(death.env_seed, record.env_seed);
         assert_eq!(death.decks, line.decks);
+        assert_eq!(death.max_stack, 0);
         assert_eq!(
             death.stop_kind.as_deref(),
             Some("process dies: stack overflow (0xC00000FD)")
