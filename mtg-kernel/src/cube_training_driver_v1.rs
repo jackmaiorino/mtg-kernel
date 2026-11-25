@@ -704,7 +704,9 @@ pub struct StopRecord {
     pub decks: Option<[u32; 2]>,
     pub attempts: Vec<StopAttemptReport>,
     pub hang: Option<bool>,
+    pub first_watchdog_pod: Option<u64>,
     pub first_watchdog_game: Option<u32>,
+    pub second_watchdog_pod: Option<u64>,
     pub second_watchdog_game: Option<u32>,
     pub firing: Option<TripwireFiring>,
     pub batch: Vec<Value>,
@@ -1140,7 +1142,9 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
                     decks: None,
                     attempts: Vec::new(),
                     hang: None,
+                    first_watchdog_pod: None,
                     first_watchdog_game: None,
+                    second_watchdog_pod: None,
                     second_watchdog_game: None,
                     firing: None,
                     batch,
@@ -1738,7 +1742,9 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
             decks: stop.as_ref().map(|stop| stop.decks),
             attempts,
             hang: None,
+            first_watchdog_pod: None,
             first_watchdog_game: None,
+            second_watchdog_pod: None,
             second_watchdog_game: None,
             firing: None,
             batch: batch
@@ -1792,7 +1798,7 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
                         game.attempts
                             .iter()
                             .any(|attempt| is_watchdog_end(&attempt.end))
-                            .then_some(game.game)
+                            .then_some((failure.pod.pod_index, game.game))
                     });
                     if first_watchdog.is_none() && watchdog_game.is_some() {
                         first_watchdog = watchdog_game;
@@ -1801,10 +1807,12 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
                         continue;
                     }
                     let mut stop = self.stop_from_failure(update, failure);
-                    if let Some(second) = watchdog_game {
-                        stop.hang = Some(first_watchdog == Some(second));
-                        stop.first_watchdog_game = first_watchdog;
-                        stop.second_watchdog_game = Some(second);
+                    if let Some((second_pod, second_game)) = watchdog_game {
+                        stop.hang = Some(first_watchdog == Some((second_pod, second_game)));
+                        stop.first_watchdog_pod = first_watchdog.map(|key| key.0);
+                        stop.first_watchdog_game = first_watchdog.map(|key| key.1);
+                        stop.second_watchdog_pod = Some(second_pod);
+                        stop.second_watchdog_game = Some(second_game);
                     }
                     ledger_stop(&self.config.root, &stop)?;
                     fs::remove_dir_all(&pending)?;
@@ -1924,7 +1932,9 @@ impl<M: CheckpointModel + 'static, O: CubeUpdate<M>> TrainingDriver<M, O> {
                 decks: None,
                 attempts: Vec::new(),
                 hang: None,
+                first_watchdog_pod: None,
                 first_watchdog_game: None,
+                second_watchdog_pod: None,
                 second_watchdog_game: None,
                 firing: Some(firing.clone()),
                 batch: pods
@@ -2110,7 +2120,9 @@ pub fn run_two_action_part3<G: TwoActionGradient>(
                     decks: Some(stop.decks),
                     attempts: stop.attempts,
                     hang: None,
+                    first_watchdog_pod: None,
                     first_watchdog_game: None,
+                    second_watchdog_pod: None,
                     second_watchdog_game: None,
                     firing: None,
                     batch: vec![serde_json::to_value(&pod)?],

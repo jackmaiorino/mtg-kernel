@@ -14,7 +14,7 @@ use mtg_kernel::cube_training_driver_v1::{
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -187,6 +187,27 @@ struct FirstWatchdogPilot {
 impl GamePilot for FirstWatchdogPilot {
     fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
         if !self.fired.swap(true, Ordering::SeqCst) {
+            return AttemptOutcome {
+                decisions: 0,
+                physical_decisions: Some(0),
+                policy_steps: Some(0),
+                end: watchdog_game_end(),
+                last_action_source: None,
+            };
+        }
+        NaturalPilot.play(spec, caps)
+    }
+}
+
+struct RepeatWatchdogPilot {
+    calls: AtomicUsize,
+    second_call: usize,
+}
+
+impl GamePilot for RepeatWatchdogPilot {
+    fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 || call == self.second_call {
             return AttemptOutcome {
                 decisions: 0,
                 physical_decisions: Some(0),
@@ -616,6 +637,37 @@ fn first_watchdog_expiry_reruns_the_same_batch_once() {
         Ok(RunOutcome::Published { update: 0 })
     );
     assert_eq!(directory_bytes(&rerun_root), directory_bytes(&direct_root));
+}
+
+#[test]
+fn repeat_watchdog_on_same_game_number_in_another_pod_is_not_a_hang() {
+    let temp = TempTestDir::new("watchdog-two-pods");
+    let root = temp.join("b1");
+    let pilot = RepeatWatchdogPilot {
+        calls: AtomicUsize::new(0),
+        second_call: 70,
+    };
+    let mut driver = TrainingDriver::open(
+        config(&root, "b1", Segment::BuilderOnly, 1),
+        TestModel::new(),
+        TestUpdate,
+    )
+    .expect("driver");
+    assert_eq!(
+        driver.run_next_update(&pool(), &pilot),
+        Ok(RunOutcome::Stopped {
+            update: 0,
+            kind: "watchdog_stop".to_owned(),
+        })
+    );
+    let stop: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("stops/stop-0000.json")).expect("stop record"))
+            .expect("stop json");
+    assert_eq!(stop["hang"], false);
+    assert_eq!(stop["first_watchdog_pod"], 0);
+    assert_eq!(stop["second_watchdog_pod"], 1);
+    assert_eq!(stop["first_watchdog_game"], 0);
+    assert_eq!(stop["second_watchdog_game"], 0);
 }
 
 #[test]
