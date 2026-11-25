@@ -4137,15 +4137,10 @@ fn d8_set_status(set_dir: &Path, manifest: &SetManifest) -> Result<D8SetStatus, 
             let path = receipt_path(e);
             match fs::read_to_string(&path) {
                 Ok(text) => {
-                    if parse_and_validate_prep_execution_receipt_json(&text)?.ended
-                        == PrepExecutionEnded::Interrupted
-                    {
-                        return Ok(Interrupted);
-                    }
+                    parse_and_validate_prep_execution_receipt_json(&text)
+                        .map_err(|error| plan_err(format!("{}: {error}", path.display())))?;
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok(Interrupted)
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
                     return Err(PodRunnerError::Io(format!("{}: {error}", path.display())))
                 }

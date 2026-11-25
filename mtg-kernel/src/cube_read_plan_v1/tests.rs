@@ -325,6 +325,33 @@ fn d8_history_uses_valid_markers_for_interrupted_prep() {
     verify_d8_history(&root.set(&next), &next, Some(RestartKind::Note)).unwrap();
 }
 
+#[test]
+fn d8_history_names_and_refuses_a_prep_receipt_with_an_invalid_schema() {
+    let root = HistoryDir::new("invalid-prep-receipt");
+    let mut prior = d8_manifest("dose-d8", "v1", "prep-dose-0", ManifestKind::Prep);
+    let mut first = execution_entry(0, ExecutionReason::First);
+    first.claim_id = Some("first-claim".to_owned());
+    let mut retry = execution_entry(1, ExecutionReason::PrepRetry);
+    retry.claim_id = Some("retry-claim".to_owned());
+    prior.executions.extend([first, retry]);
+    let prior_dir = root.set(&prior);
+    let mut next = d8_manifest("dose-d8", "v2", "prep-dose-0-restart-1", ManifestKind::Prep);
+    next.replaces = Some("v1/prep-dose-0".to_owned());
+    next.retired = vec![prior.units];
+    let next_dir = root.set(&next);
+
+    for execution in [0, 1] {
+        let receipt = prior_dir.join(format!("exec-{execution}/execution.json"));
+        put(&receipt, b"{}");
+        let error = verify_d8_history(&next_dir, &next, Some(RestartKind::Note))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(&receipt.display().to_string()), "{error}");
+        fs::remove_file(receipt).unwrap();
+    }
+    verify_d8_history(&next_dir, &next, Some(RestartKind::Note)).unwrap();
+}
+
 fn interrupted_dose(run: &str, set: &str) -> SetManifest {
     let mut manifest = d8_manifest("dose-d8", run, set, ManifestKind::Plans);
     let first_unit = manifest.units[0];
@@ -367,10 +394,12 @@ fn dose_note_considers_only_the_latest_plan_on_the_new_build() {
 
     write_history_receipt(&path_v2, &v2, 1, PlanExecutionEnded::Complete, None);
     for next in &next_sets {
-        assert!(verify_d8_history(&root.set(next), next, Some(RestartKind::Note))
-            .unwrap_err()
-            .to_string()
-            .contains("cannot replay a completed dose ordinal"));
+        assert!(
+            verify_d8_history(&root.set(next), next, Some(RestartKind::Note))
+                .unwrap_err()
+                .to_string()
+                .contains("cannot replay a completed dose ordinal")
+        );
     }
 }
 
