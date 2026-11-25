@@ -4097,7 +4097,13 @@ fn monstrous_emergence_escape_pays_three_exiles_and_uses_its_chosen_creature() {
             }
         ));
         assert_eq!(
-            state.engine.pending_cast.as_ref().unwrap().sacrifice_chosen.len(),
+            state
+                .engine
+                .pending_cast
+                .as_ref()
+                .unwrap()
+                .sacrifice_chosen
+                .len(),
             3
         );
         // With the three exiles staged and the creature choice still open,
