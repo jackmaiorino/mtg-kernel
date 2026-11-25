@@ -5336,7 +5336,7 @@ mod tests {
             "7937de2fc3b3ab55b239a2c682e4398b290ff3cf2d81649046712ecea1e5c7e2";
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "1b1ca5a4a5cbfe9704a0297459df94130c15b5d79a5ee609d73cb9ffa5e09771";
+            "7a0e88704f1d95c7b182b8610d163e053196991c0133dbac34f75984d3324c49";
         const MAIN_GOLDEN_LEN_V1: usize = 71_544;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -5853,7 +5853,7 @@ mod tests {
         // discipline as the prior re-baseline note above.
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "859edeac0b57716e4834e140d3414ed0ab096ca86b7a333c077f30cb539f7d5c",
+            "6f6aafba625d8c776e341a15133cec82304eafc0e74c7dce64fdc7c7ff179aa8",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }

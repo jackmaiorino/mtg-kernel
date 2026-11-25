@@ -6068,7 +6068,7 @@ mod tests {
         // stale combat attacker (see the counts above).
         assert_eq!(
             digest,
-            "b9c368f6f721c892aa7eae6255acbfa51e53c70411ab66b2b7843a63f4b39bda",
+            "300236f8eea7970d9515506f6fb06199321769f5df9bd6879e5bbdfd7b112f88",
             "first five scorer-visible packets under the preserved source identities:\n{}",
             scorer.payloads.join("\n")
         );

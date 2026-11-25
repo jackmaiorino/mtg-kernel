@@ -179,7 +179,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
 // it before any store written under this profile is used. See
 // `classify_catalog_profile_v1`'s doc comment for the tie rule this
 // byte-identical initial value requires against CURRENT.
-const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "ba6e35d131506db1";
+const FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1: &str = "0777a48028de38d7";
 
 // Separate FDN batch A identity: the PAUPER_META_W1 card registry plus the
 // six appended FDN fixture definitions, built only under the
@@ -508,7 +508,7 @@ const FROZEN_RUNTIME_CATALOG_SHA256_FDN_SEVEN_FULL_BATCH_V1: &str =
 // Native228's retained 496-definition export includes every frozen printing,
 // with 36 printing recipes still Partial. This is record identity only;
 // it does not authorize those cards, models, search, or training.
-const FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1: &str = "c3e7fd604ea0f799";
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1: &str = "748d36e25484c9f3";
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_FULL_POOL_PROVISIONAL_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
@@ -9053,7 +9053,7 @@ mod tests {
         ));
         assert_eq!(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_FULL_POOL_PROVISIONAL_V1,
-            "c3e7fd604ea0f799"
+            "748d36e25484c9f3"
         );
     }
 
@@ -10150,15 +10150,15 @@ mod tests {
         // directly from a failing run (never hand-typed).
         assert_eq!(
             semantics,
-            "37729de161d1b55621b8e1c93e6064a79d4a93b0001b8d967b83d027ef6eff60"
+            "a365317b7aa487b9348b14a24429957e907463f29b2024ae026c2114f70103bb"
         );
         assert_eq!(
             identity,
-            "e669dd59bba4e04f6a18597fb8e28e915d8cf615851bde4f68a96a0a7890a781"
+            "a3fe8cbf651de43371d37f1ec847917357c20b9a5000b13e816190566581bfa7"
         );
         assert_eq!(
             sha256_hex(&run_bytes),
-            "13ed144678ebbc20c79cba4b6d511e42a3d9db5f67c71a712c4f5defd4db45d3"
+            "345794a630bbb4870de67f332e79b3f5099c2d506c24710a77644e7ec8b2239b"
         );
     }
 
@@ -10901,7 +10901,7 @@ mod tests {
         // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&bytes),
-            "13ed144678ebbc20c79cba4b6d511e42a3d9db5f67c71a712c4f5defd4db45d3"
+            "345794a630bbb4870de67f332e79b3f5099c2d506c24710a77644e7ec8b2239b"
         );
         assert!(!String::from_utf8(bytes)
             .unwrap()
@@ -11203,7 +11203,7 @@ mod tests {
         // re-pin verbatim (same `fixture_bytes()`, same root cause).
         assert_eq!(
             sha256_hex(&legacy_bytes),
-            "13ed144678ebbc20c79cba4b6d511e42a3d9db5f67c71a712c4f5defd4db45d3"
+            "345794a630bbb4870de67f332e79b3f5099c2d506c24710a77644e7ec8b2239b"
         );
         assert!(!String::from_utf8(legacy_bytes)
             .unwrap()

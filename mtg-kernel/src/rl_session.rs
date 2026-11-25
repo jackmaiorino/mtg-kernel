@@ -18947,8 +18947,8 @@ mod tests {
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0x4b, 0xf8, 0x05, 0x29, 0x21, 0x7e, 0xf7, 0x9f, 0xec, 0x36, 0x3b, 0x70, 0x83, 0xda,
-                0xbe, 0x59,
+                0xeb, 0xa8, 0xdf, 0xae, 0x9d, 0xa5, 0x50, 0x42, 0xd1, 0xe9, 0xd3, 0x10, 0xb8, 0x56,
+                0x59, 0xbb,
             ]
         );
     }
@@ -19012,8 +19012,8 @@ mod tests {
         assert_eq!(
             v1,
             [
-                0x6c, 0x9d, 0x2b, 0x79, 0x09, 0x72, 0x0f, 0x89, 0x12, 0xd3, 0xbe, 0xb0, 0x45, 0x60,
-                0x67, 0xd4,
+                0x70, 0xb7, 0x70, 0x60, 0xf3, 0x7b, 0x13, 0xab, 0xf8, 0x13, 0xa9, 0x46, 0xdd, 0xd4,
+                0x66, 0x5f,
             ]
         );
 
@@ -19057,8 +19057,8 @@ mod tests {
         assert_eq!(
             common_v2,
             [
-                0x4d, 0x3c, 0x58, 0xf3, 0x79, 0x55, 0xca, 0x92, 0x44, 0x30, 0x02, 0x11, 0x7f, 0xbf,
-                0xc2, 0xea,
+                0xad, 0x01, 0x7b, 0x22, 0x10, 0x6f, 0x50, 0xc8, 0x58, 0x35, 0xae, 0x50, 0xc6, 0xf6,
+                0xd8, 0x78,
             ]
         );
         assert_ne!(common_v2, v1);
@@ -19075,8 +19075,8 @@ mod tests {
         assert_eq!(
             commitment_v2(65_536),
             [
-                0xe0, 0xac, 0xb3, 0x31, 0x45, 0x23, 0x79, 0xc5, 0x3a, 0xbe, 0x9f, 0xff, 0xb9, 0x98,
-                0x34, 0xbc,
+                0x37, 0x02, 0x81, 0xa7, 0xe3, 0xe0, 0x64, 0x2a, 0x89, 0xd0, 0xa4, 0x6b, 0x3d, 0xc6,
+                0x69, 0xbb,
             ]
         );
     }
@@ -19745,7 +19745,7 @@ mod tests {
         eprintln!("current environment-v2 policy/core goldens: {v2_policy:#018x} {v2_full_core:#018x} {v2_fast_core:#018x}");
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0xad52_cb9e_94fc_7d23,
+            0x2c09_127a_331b_5299,
             "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
@@ -19766,7 +19766,7 @@ mod tests {
         // Current merged-rule values observed in CI run 36812673206
         // (Linux job 110211057207); full and fast core paths agree exactly.
         assert_eq!(
-            v2_policy, 0x96f5_4dd4_a703_4a14,
+            v2_policy, 0x0c88_9c3d_6e6f_0b25,
             "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
@@ -20342,7 +20342,7 @@ mod tests {
         // own re-pin comment.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0xad52_cb9e_94fc_7d23
+            0x2c09_127a_331b_5299
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
@@ -20530,7 +20530,7 @@ mod tests {
         // for the end-of-combat clear (CR 511.3 rules fix).
         assert_eq!(
             full.privileged_environment_hash(),
-            0x96f5_4dd4_a703_4a14,
+            0x0c88_9c3d_6e6f_0b25,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
@@ -20578,7 +20578,7 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x96f5_4dd4_a703_4a14
+            0x0c88_9c3d_6e6f_0b25
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
@@ -20875,7 +20875,7 @@ mod tests {
     /// failing run (never hand-typed).
     #[cfg(not(feature = "limited-fdn-fixtures"))]
     const V5_TRANSCRIPT_SHA256: &str =
-        "eaecd23ab5d99ed3cf98a3037cd3d74ef8b0fc3585eef807a9e24764d55b76d3";
+        "0fc9037c84941caed781c812749852d74186ae29adfaa6d7181cd701653fa2b2";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(

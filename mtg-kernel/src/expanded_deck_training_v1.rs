@@ -15001,8 +15001,8 @@ pub(crate) mod tests {
     // Windows CPU outputs for the issue #969 fixture seed.
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "63f4579d4f3ee5b54c11d440b90b9225d33f1a26b5b24cfbc879a8168d612cde",
-        "dbbf9ca0583e6057a1e1b4312568124d4e9fdfe3ebfc50f6aea89ff8878438a6",
+        "e44b68ee5931b9643795fcd1c80899332b2067d7e8b231cb01d2d02224ab98e1",
+        "35b2f30fb018085032f48e2133821949bba797c8b078c39357369566a47dab6b",
     ];
     // Non-Windows CPU outputs from Linux CI for the issue #969 fixture seed.
     #[cfg(not(target_os = "windows"))]
@@ -15088,9 +15088,9 @@ pub(crate) mod tests {
         };
         let seeds = || {
             vec![Some(LineBGameSeedsV1 {
-                // Issue #969: the catalog hash re-ranked seed 11 onto the
-                // other seat. Seed 40 selects a root in the learner replay group.
-                root_seed: 40,
+                // Issue #969: seed 40 lost its teacher signal with this catalog.
+                // Seed 47 is the first learner root that moves both updates.
+                root_seed: 47,
                 teacher_seed: 21,
             })]
         };

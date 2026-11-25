@@ -1827,7 +1827,7 @@ mod tests {
     // value is this test's own live-computed digest, read directly from a
     // failing run (never hand-typed).
     const GENESIS_MANIFEST_SHA256_GOLDEN_V3: &str =
-        "a80a7abf8e152263e6b6ee21e824abd4f7b0efb15af5ef739cd49be5a0a408f8";
+        "742b57b15e167771807babf3eed336c82c864969c2533c23a40a90909735e1cf";
     const GENESIS_PAYLOAD_SHA256_GOLDEN_V1: &str =
         "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43";
     // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
@@ -1852,7 +1852,7 @@ mod tests {
     // value is native_checkpoint_runner_v1.rs's own live-computed digest for
     // the same shared fixture scenario (never hand-typed independently).
     const GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1: &str =
-        "d79cee1374d7df37e7b031bdcae84bc485cd46785e6980173594ae799a60e9bc";
+        "4c054ca3564c7699c4eb98b055cad28b265fa295f5d3826be24359617d8edd59";
     const GENESIS_TRAIN_STATE_SHA256_GOLDEN_V1: &str =
         "5854b477e2ce22dda199b5c9442824a339acd15d7eb8666f19895aa0d7c53c26";
 

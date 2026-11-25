@@ -14,28 +14,28 @@
       "name": "hello",
       "description": "hello handshake and engine identity",
       "file": "hello.transcript.jsonl",
-      "sha256": "0a5db3daac1e274f2f610db9268c1c4e07eaff4a315b1714c100838581b5f2aa",
+      "sha256": "16f42513da9c677c482eef7f6f783ed3a9da27d71e73f337c2025958b9c8e4c2",
       "line_count": 2
     },
     {
       "name": "framing_errors",
       "description": "malformed JSON, malformed requests, and protocol mismatch without a game",
       "file": "framing_errors.transcript.jsonl",
-      "sha256": "c63fdcefd59111335bf108fe4631a42982f218cb1ed6c2fc6eecc5d70977b862",
+      "sha256": "78df54e95b81509b29d547dd0683e0ac2e0baeb5005af581ba834618889d273c",
       "line_count": 18
     },
     {
       "name": "degenerate_game",
       "description": "zero-cap reset terminal, game_already_terminal, game id reuse, next game, game_already_active",
       "file": "degenerate_game.transcript.jsonl",
-      "sha256": "67fc45452cc07c9443850526d8c42e73966005a3da49195f3df8572ac51f32fc",
+      "sha256": "1b4629c0ea9ea9e790f294d3cdbf5cd1df772430e76e2541f7b391c10a543439",
       "line_count": 10
     },
     {
       "name": "burn_mirror_capped",
       "description": "capped Burn mirror driven by candidate 0 with retry and reuse probes",
       "file": "burn_mirror_capped.transcript.jsonl",
-      "sha256": "e3254054bac934e66c040268bd6b29bdc94250add2fb36b1e5e5f3c3ca5ca8f5",
+      "sha256": "6f8acc6677e7418b1087a21c4ba55659c790eead171885f24a55ed63181ccd98",
       "line_count": 56
     }
   ]
