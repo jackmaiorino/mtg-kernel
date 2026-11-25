@@ -1098,6 +1098,25 @@ pub struct PublicObservationProjectionV5 {
     /// empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_color_changes: Option<Vec<PublicTextColorChangeV1>>,
+    /// The public turn schedule once an extra turn has been scheduled (Time
+    /// Walk, Time Vault's ability, Emrakul, the Aeons Torn's cast trigger),
+    /// under the public shroud contract (Limited schema 5). `turn` keeps its
+    /// round numbering, so an extra turn repeats its round and active seat;
+    /// the schedule's occurrence tells such turns apart and names the extra
+    /// turn being taken and those still queued. While it is present every
+    /// published goad has `expires_at_turn` 0: the goad lasts until its
+    /// `player`'s next turn begins, whichever turn that is, and no round
+    /// number names that turn. Fields stamped with the turn key
+    /// (`entered_battlefield_turn`, `plotted_turn`, the turn in
+    /// `creature_upgrade.wurmlet_resolved_turn`, and the `turn` of
+    /// `engine_context.trigger_uses` and
+    /// `engine_context.combat_damage_prevention`) hold the round until the
+    /// schedule exists and its `occurrence` from then on, so they compare
+    /// with `turn_schedule.occurrence`, not with `turn`.
+    /// Absent until the game's first extra turn is scheduled, and in every
+    /// other observation, which keeps refusing such games.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_schedule: Option<crate::extra_turn_public_v1::TurnScheduleV1>,
 }
 
 /// One live Layer-3 color-word replacement on a battlefield permanent or stack
@@ -2414,6 +2433,8 @@ pub fn observe_premodern_ordered_registered_v1(
                 .then(|| public_text_color_changes_v1(state))
                 .transpose()?
                 .filter(|changes| !changes.is_empty()),
+            // This observation keeps refusing a game with extra turns.
+            turn_schedule: None,
         };
         Some(NumericRegisteredStableSceneV1 {
             projection,
@@ -3296,8 +3317,24 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
     // completed V5 observation once; the flat typed path explicitly skips it.
-    let (base, policy_surface_context) =
+    let (mut base, policy_surface_context) =
         build_policy_observation_parts(state, surface, acting_player, step_index, text_mode)?;
+    let turn_schedule = if text_mode == ObservationTextModeV2::PublicShroudV5Artifact {
+        crate::extra_turn_public_v1::schedule(state)?
+    } else {
+        None
+    };
+    if turn_schedule.is_some() {
+        // Once the schedule exists a goad lasts until its player's next turn
+        // begins, whichever turn that is (701.15a): the engine removes it at
+        // that turn's untap step and no longer reads the stored round. No
+        // number names that turn in advance, so none is published.
+        for card in base.projection.battlefield.iter_mut().flatten() {
+            for goad in &mut card.goaded_by {
+                goad.expires_at_turn = 0;
+            }
+        }
+    }
     Ok(ObservationV5 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V5,
         kernel_version: base.kernel_version,
@@ -3343,6 +3380,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 .then(|| public_text_color_changes_v1(state))
                 .transpose()?
                 .filter(|changes| !changes.is_empty()),
+            turn_schedule,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -3529,6 +3567,10 @@ fn build_policy_observation_parts(
     step_index: u64,
     text_mode: ObservationTextModeV2,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    // The schema 5 public contract reports the turn schedule
+    // (`PublicObservationProjectionV5::turn_schedule`), so its observation
+    // accepts a game with extra turns. Every other mode keeps refusing.
+    let accept_extra_turn = text_mode == ObservationTextModeV2::PublicShroudV5Artifact;
     build_policy_observation_parts_common(
         state,
         surface,
@@ -3536,8 +3578,21 @@ fn build_policy_observation_parts(
         step_index,
         text_mode,
         (
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false,
+            false,
+            false,
+            accept_extra_turn,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         ),
     )
 }
@@ -6064,6 +6119,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             public_shroud: None,
             meddling_mage_names: None,
             text_color_changes: None,
+            turn_schedule: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,

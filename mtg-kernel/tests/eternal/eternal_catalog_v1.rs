@@ -516,12 +516,12 @@ fn is_companion_action(action: &Value) -> bool {
 
 /// Whether the public session can follow this action. Policy observation v5
 /// fails closed while an Escape cast stages its graveyard exile (Sleep of the
-/// Dead, and every nonland card under Underworld Breach) and once an extra
-/// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
-/// Time Vault's ability), so these games never begin either; the engine
-/// paths are covered by the rules tests. Every other action is admitted:
-/// schema 5 reports shroud (Sylvan Safekeeper's ability, Argothian
-/// Enchantress, Sterling Grove, Solitary Confinement).
+/// Dead, and every nonland card under Underworld Breach), so these games
+/// never begin either; the engine paths are covered by the rules tests.
+/// Every other action is admitted: schema 5 reports shroud (Sylvan
+/// Safekeeper's ability, Argothian Enchantress, Sterling Grove, Solitary
+/// Confinement) and the turn schedule once an extra turn is scheduled
+/// (Emrakul, the Aeons Torn's cast trigger, Time Walk, Time Vault's ability).
 fn session_can_follow(action: &Value, decision: &Value) -> bool {
     let s = &action["semantic"];
     if !matches!(
@@ -534,12 +534,6 @@ fn session_can_follow(action: &Value, decision: &Value) -> bool {
         return true;
     };
     let id = id as usize;
-    if matches!(
-        CARD_DEFS[id].name,
-        "Emrakul, the Aeons Torn" | "Time Walk" | "Time Vault"
-    ) {
-        return false;
-    }
     s["action_kind"] != "cast_spell"
         || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
         || (CARD_DEFS[id].escape.is_none()

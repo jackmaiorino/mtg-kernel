@@ -376,6 +376,7 @@ fn build(
             public_shroud: None,
             meddling_mage_names: None,
             text_color_changes: None,
+            turn_schedule: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
