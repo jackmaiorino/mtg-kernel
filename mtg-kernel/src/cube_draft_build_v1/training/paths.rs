@@ -69,6 +69,17 @@ pub(super) fn picks(
         if let Some(b) = batch.as_deref_mut() {
             let (c, lv, dv) = pick_credit(target, value, b.seats);
             let (loss, grad) = policy_term(&sampled, c);
+            b.losses
+                .statistics
+                .pick_advantage
+                .observe(target - f64::from(value));
+            b.losses.statistics.value_target.observe(target);
+            b.losses
+                .statistics
+                .value_prediction
+                .observe(f64::from(value));
+            b.value_error.observe(target - f64::from(value));
+            b.observe_entropy("pick", &sampled.log_probabilities, 1);
             b.losses.pick += loss;
             b.losses.value += lv;
             b.heads.pick = 1;
@@ -120,6 +131,7 @@ pub(super) fn builds(
         let mut path = sample.selected_log_probability;
         if let Some(b) = batch.as_deref_mut() {
             b.heads.count = 1;
+            b.observe_entropy("count", &sample.log_probabilities, 1);
             tape.seed(
                 counts,
                 &policy_gradient(&sample.log_probabilities, &[(basics, c)]),
@@ -165,6 +177,7 @@ pub(super) fn builds(
             path += sample.selected_log_probability;
             if let Some(b) = batch.as_deref_mut() {
                 b.heads.pointer = 1;
+                b.observe_entropy("pointer", &sample.log_probabilities, 1);
                 seed_scores(
                     &mut tape,
                     &nodes,
@@ -212,6 +225,7 @@ pub(super) fn builds(
             path += sample.selected_log_probability;
             if let Some(b) = batch.as_deref_mut() {
                 b.heads.type_set = 1;
+                b.observe_entropy("type_set", &sample.log_probabilities, 1);
                 seed_scores(
                     &mut tape,
                     &nodes,
@@ -258,6 +272,7 @@ pub(super) fn builds(
                 path += grouped;
                 if let Some(b) = batch.as_deref_mut() {
                     b.heads.split = 1;
+                    b.observe_entropy("split", &logp, draws);
                     let terms: Vec<_> = multiplicity
                         .iter()
                         .enumerate()
@@ -270,6 +285,7 @@ pub(super) fn builds(
             return Err("split rows for zero basics".into());
         }
         if let Some(b) = batch.as_deref_mut() {
+            b.losses.statistics.build_advantage.observe(advantage);
             b.losses.build += c * path;
             tape.backward(&mut b.grads);
         }

@@ -83,7 +83,7 @@ impl TrainingModel {
             &chairs,
             &pinned,
         )?;
-        let losses = [
+        let loss_values = [
             ("build", losses.build),
             ("pick", losses.pick),
             ("value", losses.value),
@@ -95,8 +95,9 @@ impl TrainingModel {
             Self::new(model, self.rows.clone())?,
             optimizer,
             OptimizerOutput {
-                losses,
-                ..OptimizerOutput::default()
+                losses: loss_values,
+                gradient_norms: losses.gradient_norms,
+                statistics: losses.statistics,
             },
         ))
     }

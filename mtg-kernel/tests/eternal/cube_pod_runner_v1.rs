@@ -278,6 +278,7 @@ fn acceptance_2_attempt_0_is_todays_game() {
             max_decisions: 120,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_GAME_CAPS.max_stack_objects,
             watchdog_seconds: 600,
             max_replays: 3,
         };
@@ -422,6 +423,7 @@ fn acceptance_3_pod_replays_bit_for_bit_on_1_and_12_workers() {
             max_decisions: 40,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_GAME_CAPS.max_stack_objects,
             watchdog_seconds: 600,
             max_replays: 3,
         };

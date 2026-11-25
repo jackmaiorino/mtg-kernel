@@ -46,12 +46,9 @@ pub const WATCHDOG_REASON: &str = "watchdog_seconds";
 pub const WATCHDOG_STOP_KIND: &str = "terminal:watchdog";
 /// The A2.1 game caps: 16,384 driver decisions, 16,384 physical decisions,
 /// 32,768 policy steps.
-pub const A2_GAME_CAPS: GameCaps = GameCaps {
-    max_decisions: 16_384,
-    max_physical_decisions: 16_384,
-    max_policy_steps: 32_768,
-    max_stack_objects: Some(128),
-};
+pub const A2_GAME_CAPS: GameCaps = crate::cube_b_census_v1::A2_CAPS;
+/// Liveness algorithm actually implemented by this D5 revision.
+pub const WATCHDOG_LIVENESS: &str = "wall-clock-v1";
 /// Default per-game wall-clock watchdog in seconds.
 pub const DEFAULT_WATCHDOG_SECONDS: u64 = 600;
 /// Maximum per-game replays in a training pod (4 total attempts: 0..=3).
@@ -543,6 +540,7 @@ pub struct PodCaps {
     pub max_decisions: u64,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
+    pub max_stack_objects: Option<u32>,
     pub watchdog_seconds: u64,
     pub max_replays: u8,
 }
@@ -554,6 +552,7 @@ impl PodCaps {
             max_decisions: A2_GAME_CAPS.max_decisions,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_GAME_CAPS.max_stack_objects,
             watchdog_seconds: DEFAULT_WATCHDOG_SECONDS,
             max_replays: TRAINING_MAX_REPLAYS,
         }
@@ -565,6 +564,7 @@ impl PodCaps {
             max_decisions: A2_GAME_CAPS.max_decisions,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_GAME_CAPS.max_stack_objects,
             watchdog_seconds: DEFAULT_WATCHDOG_SECONDS,
             max_replays: READ_MAX_REPLAYS,
         }
@@ -576,7 +576,7 @@ impl PodCaps {
             max_decisions: self.max_decisions,
             max_physical_decisions: self.max_physical_decisions,
             max_policy_steps: self.max_policy_steps,
-            max_stack_objects: A2_GAME_CAPS.max_stack_objects,
+            max_stack_objects: self.max_stack_objects,
         }
     }
 }
@@ -2758,14 +2758,19 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
             "max_decisions",
             "max_physical_decisions",
             "max_policy_steps",
+            "max_stack_objects",
             "watchdog_seconds",
             "max_replays",
         ],
     )?;
-    for (key, val) in caps {
+    for (key, val) in caps.iter().filter(|(key, _)| key != "max_stack_objects") {
         let _ = expect_u64(val, &format!("caps.{key}"))?;
     }
-    let max_replays = expect_u64(&caps[4].1, "caps.max_replays")?;
+    if !matches!(&caps[3].1, OrderedJson::Null) {
+        u32::try_from(expect_u64(&caps[3].1, "caps.max_stack_objects")?)
+            .map_err(|_| "caps.max_stack_objects exceeds u32".to_owned())?;
+    }
+    let max_replays = expect_u64(&caps[5].1, "caps.max_replays")?;
     if is_read_record && max_replays != 0 {
         return Err(format!("caps.max_replays: read pod requires 0, got {max_replays}"));
     }

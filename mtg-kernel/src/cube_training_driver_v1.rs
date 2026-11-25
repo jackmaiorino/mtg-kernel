@@ -1,14 +1,8 @@
 //! Training segments, checkpoints, league snapshots and durable resume for M4.
 
 pub use crate::cube_draft_build_v1::card_index::CubeTableV1;
-use crate::cube_draft_build_v1::model::training::HeadUpdates;
-use crate::cube_draft_build_v1::model::{
-    training::{
-        fixture::{halt_cases, HaltCase},
-        Optimizer,
-    },
-    ModelCardRowsV1, ModelV1,
-};
+use crate::cube_draft_build_v1::model::training::{HeadUpdates, TrainingStatistics};
+use crate::cube_draft_build_v1::model::{training::Optimizer, ModelCardRowsV1, ModelV1};
 #[path = "cube_training_driver_model_v1.rs"]
 mod model;
 use model::TrainingModel;
@@ -17,18 +11,16 @@ mod tripwire;
 pub use tripwire::CensusBaselinePin;
 use tripwire::{tripwire_window_sizes, CensusRates, TripwireTracker};
 
-use crate::cube_draft_v1::{uniform_index, CubePool, GameEnd, SEATS};
+use crate::cube_draft_v1::{uniform_index, CubePool, SEATS};
 use crate::cube_learned_seat_v1::{LearnedSeatBuilder, LearnedSeatPicker, SeatForward};
 use crate::cube_pod_runner_v1::{
-    collect_halts_and_stop, is_watchdog_end, play_training_game_for_driver, pod_league_seed,
-    training_roles_with_older, GameRole, PilotInfo, PilotKind, PodPins, PodRecord, PodRunnerError,
-    PodStatus, PodUse, SeatKind, SeatRef, SeatRule, StopAttemptReport, TrainingChair,
-    TrainingPodConfig, CLIENT_NAMESPACE, POD_RECORD_SCHEMA,
+    is_watchdog_end, pod_league_seed, training_roles_with_older, PilotInfo, PilotKind, PodPins,
+    PodRecord, PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef, StopAttemptReport,
+    TrainingChair, TrainingPodConfig, CLIENT_NAMESPACE,
 };
 use crate::cube_read_plan_v1::sha256_hex;
 use crate::cube_seat_v1::{
-    AttemptOutcome, AttemptSpec, GamePilot, UniformPilot, UniformSeatPicker, LEARNED_SAMPLER_ID,
-    M4_INTERFACES_VERSION,
+    GamePilot, UniformPilot, UniformSeatPicker, LEARNED_SAMPLER_ID, M4_INTERFACES_VERSION,
 };
 use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
 use crate::state::SplitMix64;
@@ -61,6 +53,7 @@ pub enum TrainingDriverError {
     Update(String),
     StoppedWithoutResolution,
     StoppedRequiresRestart,
+    PinnedCheckpoint,
 }
 
 impl fmt::Display for TrainingDriverError {
@@ -73,6 +66,7 @@ impl fmt::Display for TrainingDriverError {
             Self::StoppedWithoutResolution => {
                 write!(f, "the stop ledger has no resolution record")
             }
+            Self::PinnedCheckpoint => write!(f, "cannot prune a pinned checkpoint"),
             Self::StoppedRequiresRestart => {
                 write!(
                     f,
@@ -217,11 +211,7 @@ impl PilotSchedule {
         {
             return false;
         }
-        match (&self.switch, &resumed.switch) {
-            (None, None) => true,
-            (Some(before), Some(after)) => before.gate == after.gate || before.gate.is_none(),
-            _ => false,
-        }
+        true
     }
 }
 
@@ -295,6 +285,28 @@ impl Default for CheckpointMetadata {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointMarks {
+    pub dose_reads: Vec<u64>,
+    pub owner_views: Vec<u64>,
+    pub read_candidates: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PickBoundary {
+    pub builder_run: String,
+    pub builder_final_state_sha256: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundaryRecord {
+    config: RunConfig,
+    checkpoint: Checkpoint,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunConfig {
@@ -320,6 +332,9 @@ pub struct RunConfig {
     pub metadata: CheckpointMetadata,
     pub caps: crate::cube_pod_runner_v1::PodCaps,
     pub workers: usize,
+    pub liveness: String,
+    pub marks: CheckpointMarks,
+    pub boundary: Option<PickBoundary>,
 }
 
 impl RunConfig {
@@ -344,6 +359,20 @@ impl RunConfig {
             metadata: CheckpointMetadata::default(),
             caps: crate::cube_pod_runner_v1::PodCaps::training_a2(),
             workers: 1,
+            liveness: crate::cube_pod_runner_v1::WATCHDOG_LIVENESS.to_owned(),
+            // A6.17's four b1 dose marks and D0.21's six owner views.
+            marks: match segment {
+                Segment::BuilderOnly => CheckpointMarks {
+                    dose_reads: vec![32, 64, 96, 128],
+                    owner_views: vec![32, 64, 96, 128],
+                    read_candidates: Vec::new(),
+                },
+                Segment::PickPhase => CheckpointMarks {
+                    owner_views: vec![64, 128],
+                    ..CheckpointMarks::default()
+                },
+            },
+            boundary: None,
         }
     }
 
@@ -361,9 +390,24 @@ impl RunConfig {
             || self.update_range[1] == 0
             || self.pods_per_update != PODS_PER_UPDATE
             || self.train_sets != self.segment.train_sets()
+            || self.caps.max_stack_objects != crate::cube_b_census_v1::A2_CAPS.max_stack_objects
             || self.workers == 0
         {
             return Err(invalid("invalid update plan or trained sets"));
+        }
+        if (self.label == "shakedown") != (self.namespace == "shakedown-pods") {
+            return Err(invalid("the shakedown label and namespace must agree"));
+        }
+        if self.liveness != crate::cube_pod_runner_v1::WATCHDOG_LIVENESS
+            || self
+                .pilot
+                .switch
+                .as_ref()
+                .is_some_and(|switch| switch.update != 0)
+        {
+            return Err(invalid(
+                "invalid watchdog liveness or nonboundary pilot switch",
+            ));
         }
         if self.label != "shakedown" && matches!(self.pilot.initial, PilotSelection::Uniform) {
             return Err(invalid(
@@ -394,16 +438,6 @@ impl ParameterSetState {
         self.adam_step = 0;
     }
 
-    fn append_canonical(&self, bytes: &mut Vec<u8>) {
-        for values in [&self.parameters, &self.first_moment, &self.second_moment] {
-            bytes.extend_from_slice(&(values.len() as u64).to_le_bytes());
-            for value in values {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        bytes.extend_from_slice(&self.adam_step.to_le_bytes());
-    }
-
     fn validate(&self) -> Result<(), TrainingDriverError> {
         if self.parameters.len() != self.first_moment.len()
             || self.parameters.len() != self.second_moment.len()
@@ -423,18 +457,6 @@ pub struct CubeModelState {
 }
 
 impl CubeModelState {
-    fn canonical_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.build.append_canonical(&mut bytes);
-        self.pick.append_canonical(&mut bytes);
-        self.value.append_canonical(&mut bytes);
-        bytes
-    }
-
-    fn state_sha256(&self) -> String {
-        sha256_hex(&self.canonical_bytes())
-    }
-
     fn validate(&self) -> Result<(), TrainingDriverError> {
         self.build.validate()?;
         self.pick.validate()?;
@@ -447,6 +469,7 @@ impl CubeModelState {
 pub struct OptimizerOutput {
     pub losses: BTreeMap<String, f64>,
     pub gradient_norms: BTreeMap<String, f64>,
+    pub statistics: TrainingStatistics,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -491,6 +514,7 @@ pub struct Checkpoint {
     pub constants: BTreeMap<String, u64>,
     pub lineage: Vec<LineageSegment>,
     pub pin_reasons: Vec<CheckpointPinReason>,
+    pub boundary: Option<PickBoundary>,
     pub state_sha256: String,
     pub head_updates: HeadUpdates,
 }
@@ -506,8 +530,7 @@ impl Checkpoint {
         head_updates: HeadUpdates,
     ) -> Result<Self, TrainingDriverError> {
         model.validate()?;
-        let state_sha256 = model.state_sha256();
-        Ok(Self {
+        let mut checkpoint = Self {
             schema: CHECKPOINT_SCHEMA.to_owned(),
             model_identity: config.metadata.model_identity.clone(),
             parameter_layout_sha256: config.metadata.parameter_layout_sha256.clone(),
@@ -526,13 +549,31 @@ impl Checkpoint {
             constants: config.metadata.constants.clone(),
             lineage,
             pin_reasons,
-            state_sha256,
+            boundary: config.boundary.clone(),
+            state_sha256: String::new(),
             head_updates,
-        })
+        };
+        checkpoint.refresh_pin()?;
+        Ok(checkpoint)
+    }
+
+    // The canonical compact JSON has the Rust field order, sorted map keys,
+    // and an empty state_sha256 field. All model floats are encoded as integer bits.
+    fn calculate_pin(&self) -> Result<String, TrainingDriverError> {
+        let mut checkpoint = self.clone();
+        checkpoint.state_sha256.clear();
+        let mut bytes = b"mtg-kernel-cube-checkpoint-state/v1\0".to_vec();
+        serde_json::to_writer(&mut bytes, &checkpoint)?;
+        Ok(sha256_hex(&bytes))
+    }
+
+    fn refresh_pin(&mut self) -> Result<(), TrainingDriverError> {
+        self.state_sha256 = self.calculate_pin()?;
+        Ok(())
     }
 
     fn validate(&self) -> Result<(), TrainingDriverError> {
-        if self.schema != CHECKPOINT_SCHEMA || self.state_sha256 != self.model.state_sha256() {
+        if self.schema != CHECKPOINT_SCHEMA || self.state_sha256 != self.calculate_pin()? {
             return Err(invalid("checkpoint schema or state digest differs"));
         }
         self.model.validate()
@@ -600,10 +641,15 @@ pub struct UpdateReceipt {
     pub before_state_sha256: String,
     pub after_state_sha256: String,
     pub segment: Segment,
-    pub update: u64,
+    pub checkpoint_number: u64,
     pub sets_trained: TrainSets,
     pub pilot: PilotInfo,
     pub pods: Vec<u64>,
+    pub execution: u8,
+    pub void_execution_sha256: Option<String>,
+    pub game_statistics: GameStatistics,
+    pub first_watchdog_pod: Option<u64>,
+    pub first_watchdog_game: Option<u32>,
     pub league_entries: Vec<String>,
     pub league_trained_pick_entries: usize,
     pub optimizer: OptimizerOutput,
@@ -611,10 +657,70 @@ pub struct UpdateReceipt {
     pub workers: usize,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GameStatistics {
+    pub halts_by_stop_kind_and_attempt: BTreeMap<String, BTreeMap<u8, u64>>,
+    pub cap_hits_by_stop_kind_and_basics_band: BTreeMap<String, BTreeMap<String, u64>>,
+    pub replays: u64,
+}
+
+impl GameStatistics {
+    fn from_pods(pods: &[PodRecord]) -> Self {
+        let mut statistics = Self::default();
+        for pod in pods {
+            for game in &pod.games {
+                for attempt in &game.attempts {
+                    statistics.replays += u64::from(attempt.attempt > 0);
+                    let Some(kind) = crate::cube_b_census_v1::stop_kind(&attempt.end) else {
+                        continue;
+                    };
+                    *statistics
+                        .halts_by_stop_kind_and_attempt
+                        .entry(kind.clone())
+                        .or_default()
+                        .entry(attempt.attempt)
+                        .or_default() += 1;
+                    if kind == "driver_decision_cap"
+                        || kind.starts_with("physical_decision_cap_reached:")
+                        || kind.starts_with("policy_step_cap_reached:")
+                        || kind.starts_with("engine_halted:StackSizeCapExceeded:")
+                    {
+                        for &deck in &game.decks {
+                            let basics = pod.decks[deck as usize]
+                                .build_rows
+                                .as_ref()
+                                .expect("training decks have learned count rows")
+                                .count
+                                .chosen;
+                            let band = match basics {
+                                0 => "0",
+                                1..=9 => "1-9",
+                                10..=14 => "10-14",
+                                15..=18 => "15-18",
+                                19..=25 => "19-25",
+                                26..=35 => "26-35",
+                                _ => "36-40",
+                            };
+                            *statistics
+                                .cap_hits_by_stop_kind_and_basics_band
+                                .entry(kind.clone())
+                                .or_default()
+                                .entry(band.to_owned())
+                                .or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        statistics
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommitManifest {
-    pub update: u64,
+    pub batch_index: u64,
     pub files: BTreeMap<String, String>,
 }
 
@@ -658,6 +764,8 @@ pub struct StopRecord {
     pub second_watchdog_pod: Option<u64>,
     pub second_watchdog_game: Option<u32>,
     pub firing: Option<TripwireFiring>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub batch: Vec<Value>,
 }
 
@@ -713,6 +821,87 @@ fn publish_bytes(path: &Path, bytes: &[u8]) -> Result<(), TrainingDriverError> {
         TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed)
     );
     publish_new_bytes_v1(&captured, stage, name, bytes).map_err(io_error)?;
+    Ok(())
+}
+
+fn replace_bytes(path: &Path, bytes: &[u8]) -> Result<(), TrainingDriverError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| invalid("replacement has no parent"))?;
+    let stage = parent.join(format!(
+        ".replace-{}-{}",
+        std::process::id(),
+        TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    write_synced(&stage, bytes)?;
+    fs::rename(&stage, path)?;
+    sync_directory(parent)
+}
+
+fn persist_gate(
+    config: &mut RunConfig,
+    root: &Path,
+    pin: &PilotPin,
+) -> Result<(), TrainingDriverError> {
+    let switch = config
+        .pilot
+        .switch
+        .as_mut()
+        .ok_or_else(|| invalid("the run has no pilot switch"))?;
+    if switch.gate.as_ref().is_some_and(|saved| saved != pin) {
+        return Err(invalid("the gate pin is already fixed"));
+    }
+    publish_bytes(&root.join("gate-pin.json"), &json_bytes(pin)?)?;
+    if switch.gate.is_none() {
+        switch.gate = Some(pin.clone());
+        if let Err(error) = replace_bytes(&root.join("run.json"), &json_bytes(config)?) {
+            config.pilot.switch.as_mut().unwrap().gate = None;
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+fn check_published_pilot(
+    schedule: &PilotSchedule,
+    update: u64,
+    recorded: &PilotInfo,
+) -> Result<(), TrainingDriverError> {
+    let expected = match schedule.at(update) {
+        Some(PilotSelection::Uniform) => PilotInfo::uniform(),
+        Some(PilotSelection::Checkpoint { pin }) => PilotInfo {
+            kind: PilotKind::Checkpoint,
+            pin: Some(pin.checkpoint_sha256),
+            decoding: pin.decoding,
+        },
+        None => return Err(invalid("published update has no pinned pilot")),
+    };
+    if expected != *recorded {
+        return Err(invalid("published update pilot differs from the run plan"));
+    }
+    Ok(())
+}
+
+fn check_run_plan(saved: &RunConfig, proposed: &RunConfig) -> Result<(), TrainingDriverError> {
+    if saved.namespace != proposed.namespace
+        || saved.run != proposed.run
+        || saved.segment != proposed.segment
+        || saved.update_range != proposed.update_range
+        || saved.label != proposed.label
+        || saved.train_sets != proposed.train_sets
+        || saved.pods_per_update != proposed.pods_per_update
+        || saved.caps != proposed.caps
+        || saved.pins != proposed.pins
+        || saved.metadata != proposed.metadata
+        || saved.tripwire_window_games != proposed.tripwire_window_games
+        || saved.tripwire != proposed.tripwire
+        || saved.marks != proposed.marks
+        || saved.liveness != proposed.liveness
+        || saved.boundary != proposed.boundary
+        || !saved.pilot.compatible_resume(&proposed.pilot)
+    {
+        return Err(invalid("resume changed a run pin, plan or tripwire mode"));
+    }
     Ok(())
 }
 
@@ -800,7 +989,76 @@ fn ledger_stop(root: &Path, stop: &StopRecord) -> Result<PathBuf, TrainingDriver
     Ok(path)
 }
 
-fn read_commit(path: &Path, update: u64) -> Result<Option<CommitManifest>, TrainingDriverError> {
+fn published_stop(root: &Path, directory: &Path, update: u64) -> Result<(), TrainingDriverError> {
+    let path = directory.join("stop.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    let commit: CommitManifest = read_json(&directory.join("commit.json"))?;
+    let bytes = fs::read(path)?;
+    let digest = sha256_hex(&bytes);
+    let record: StopRecord = serde_json::from_slice(&bytes)?;
+    if commit.batch_index != update
+        || record.update != update
+        || commit.files.get("stop.json") != Some(&digest)
+    {
+        return Err(invalid("published stop differs from commit.json"));
+    }
+    let paths = stop_paths(root)?;
+    let target = if let [path] = paths.as_slice() {
+        if let Ok(existing) = read_json::<StopRecord>(path) {
+            if existing.update != update {
+                return Err(invalid("published stop conflicts with the stop ledger"));
+            }
+        }
+        if fs::read(path)? != bytes {
+            replace_bytes(path, &bytes)?;
+        }
+        path.clone()
+    } else if paths.is_empty() {
+        let path = stop_directory(root).join("stop-0000.json");
+        publish_bytes(&path, &bytes)?;
+        path
+    } else {
+        return Err(invalid("multiple stop ledger entries for a published stop"));
+    };
+    if sha256_hex(&fs::read(target)?) != digest {
+        return Err(invalid("stop ledger copy differs from commit.json"));
+    }
+    Ok(())
+}
+
+fn watchdog_path(root: &Path, update: u64) -> PathBuf {
+    root.join("watchdog")
+        .join(format!("{}.json", update_name(update)))
+}
+
+fn first_watchdog(root: &Path, update: u64) -> Result<Option<(u64, u32)>, TrainingDriverError> {
+    let path = watchdog_path(root, update);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let record: StopRecord = read_json(&path)?;
+    if record.kind != "watchdog_void" || record.update != update {
+        return Err(invalid("invalid void watchdog execution"));
+    }
+    record
+        .first_watchdog_pod
+        .zip(record.first_watchdog_game)
+        .map(Some)
+        .ok_or_else(|| invalid("void execution missing expired game"))
+}
+
+fn apply_first_watchdog(stop: &mut StopRecord, first: Option<(u64, u32)>) {
+    stop.first_watchdog_pod = first.map(|key| key.0);
+    stop.first_watchdog_game = first.map(|key| key.1);
+}
+
+fn read_commit(
+    path: &Path,
+    update: u64,
+    allow_pruned: bool,
+) -> Result<Option<CommitManifest>, TrainingDriverError> {
     let bytes = match fs::read(path.join("commit.json")) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -810,8 +1068,8 @@ fn read_commit(path: &Path, update: u64) -> Result<Option<CommitManifest>, Train
         return Ok(None);
     };
     let required = ["pods.json", "checkpoint.json", "update.json"];
-    let optional = ["stop.json", "league.json"];
-    if commit.update != update
+    let optional = ["stop.json", "league.json", "execution-0.json"];
+    if commit.batch_index != update
         || required
             .iter()
             .any(|name| !commit.files.contains_key(*name))
@@ -827,6 +1085,15 @@ fn read_commit(path: &Path, update: u64) -> Result<Option<CommitManifest>, Train
         }
         let bytes = match fs::read(path.join(name)) {
             Ok(bytes) => bytes,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && allow_pruned
+                    && name == "checkpoint.json"
+                    && fs::read_to_string(path.join("checkpoint.pruned"))
+                        .is_ok_and(|saved| saved == *digest) =>
+            {
+                continue;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
@@ -835,6 +1102,21 @@ fn read_commit(path: &Path, update: u64) -> Result<Option<CommitManifest>, Train
         }
     }
     Ok(Some(commit))
+}
+
+fn read_partial_pods(directory: &Path) -> Result<Vec<Value>, TrainingDriverError> {
+    let mut batch = Vec::new();
+    let partial = directory.join("partial");
+    if partial.exists() {
+        let mut files: Vec<PathBuf> = fs::read_dir(&partial)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<_, _>>()?;
+        files.sort();
+        for path in files {
+            batch.push(serde_json::from_slice(&fs::read(path)?)?);
+        }
+    }
+    Ok(batch)
 }
 
 fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
@@ -859,7 +1141,7 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
             .strip_prefix("update-")
             .and_then(|value| value.parse::<u64>().ok())
             .ok_or_else(|| invalid("invalid pending update name"))?;
-        if read_commit(&directory, update)?.is_some() {
+        if read_commit(&directory, update, false)?.is_some() {
             let destination = updates.join(name);
             if destination.exists() {
                 if fs::read(destination.join("commit.json"))?
@@ -874,46 +1156,35 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
             sync_directory(&pending)?;
             sync_directory(&updates)?;
             restore_update_league_snapshot(root, &destination)?;
-            let stop_path = destination.join("stop.json");
-            if stop_path.exists() {
-                let stop: StopRecord = read_json(&stop_path)?;
-                ledger_stop(root, &stop)?;
-            }
+            published_stop(root, &destination, update)?;
             continue;
         }
-        let mut batch = Vec::new();
-        let partial = directory.join("partial");
-        if partial.exists() {
-            let mut files: Vec<PathBuf> = fs::read_dir(&partial)?
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<Result<_, _>>()?;
-            files.sort();
-            for path in files {
-                batch.push(serde_json::from_slice(&fs::read(path)?)?);
-            }
+        let mut batch = read_partial_pods(&directory)?;
+        if batch.is_empty() && directory.join("pods.json").exists() {
+            batch = read_pods(&directory.join("pods.json")).unwrap_or_default();
         }
         if ledger_path_for_update(root, update)?.is_none() {
-            ledger_stop(
-                root,
-                &StopRecord {
-                    schema: STOP_SCHEMA.to_owned(),
-                    kind: "process_death".to_owned(),
-                    run: run.to_owned(),
-                    update,
-                    pod: None,
-                    pairing: None,
-                    game: None,
-                    decks: None,
-                    attempts: Vec::new(),
-                    hang: None,
-                    first_watchdog_pod: None,
-                    first_watchdog_game: None,
-                    second_watchdog_pod: None,
-                    second_watchdog_game: None,
-                    firing: Some(TripwireFiring::immediate(TripwireRule::ProcessDeath)),
-                    batch,
-                },
-            )?;
+            let mut stop = StopRecord {
+                schema: STOP_SCHEMA.to_owned(),
+                kind: "process_death".to_owned(),
+                run: run.to_owned(),
+                update,
+                pod: None,
+                pairing: None,
+                game: None,
+                decks: None,
+                attempts: Vec::new(),
+                hang: None,
+                first_watchdog_pod: None,
+                first_watchdog_game: None,
+                second_watchdog_pod: None,
+                second_watchdog_game: None,
+                firing: Some(TripwireFiring::immediate(TripwireRule::ProcessDeath)),
+                batch,
+                error: None,
+            };
+            apply_first_watchdog(&mut stop, first_watchdog(root, update)?);
+            ledger_stop(root, &stop)?;
         }
         fs::remove_dir_all(&directory)?;
         sync_directory(&pending)?;
@@ -924,13 +1195,20 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
             continue;
         }
         restore_update_league_snapshot(root, &directory)?;
-        let stop_path = directory.join("stop.json");
-        if stop_path.exists() {
-            let stop: StopRecord = read_json(&stop_path)?;
-            ledger_stop(root, &stop)?;
+        if directory.join("stop.json").exists() {
+            let update = index_from_update_path(&directory)?;
+            published_stop(root, &directory, update)?;
         }
     }
     Ok(())
+}
+
+fn index_from_update_path(path: &Path) -> Result<u64, TrainingDriverError> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("update-"))
+        .and_then(|index| index.parse().ok())
+        .ok_or_else(|| invalid("invalid update name"))
 }
 
 fn published_update_indices(root: &Path) -> Result<Vec<u64>, TrainingDriverError> {
@@ -938,34 +1216,23 @@ fn published_update_indices(root: &Path) -> Result<Vec<u64>, TrainingDriverError
     if !updates.exists() {
         return Ok(Vec::new());
     }
-    let mut indices = Vec::new();
+    let mut entries = Vec::new();
     for entry in fs::read_dir(&updates)? {
         let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
+        if entry.file_type()?.is_dir() {
+            entries.push((index_from_update_path(&entry.path())?, entry.path()));
         }
-        let name = entry.file_name();
-        let name = name
-            .to_str()
-            .ok_or_else(|| invalid("invalid update name"))?;
-        let update = name
-            .strip_prefix("update-")
-            .and_then(|value| value.parse::<u64>().ok())
-            .ok_or_else(|| invalid("invalid update name"))?;
-        if read_commit(&entry.path(), update)?.is_none() {
+    }
+    entries.sort_by_key(|(index, _)| *index);
+    for (position, (index, path)) in entries.iter().enumerate() {
+        if *index != position as u64 {
+            return Err(invalid("published updates are not contiguous from zero"));
+        }
+        if read_commit(path, *index, position + 1 < entries.len())?.is_none() {
             return Err(invalid("published update has an invalid commit"));
         }
-        indices.push(update);
     }
-    indices.sort_unstable();
-    if indices
-        .iter()
-        .enumerate()
-        .any(|(index, update)| index as u64 != *update)
-    {
-        return Err(invalid("published updates are not contiguous from zero"));
-    }
-    Ok(indices)
+    Ok(entries.into_iter().map(|(index, _)| index).collect())
 }
 
 fn read_pods(path: &Path) -> Result<Vec<Value>, TrainingDriverError> {
@@ -983,13 +1250,22 @@ fn rebuild_tripwire(
 ) -> Result<TripwireTracker, TrainingDriverError> {
     let mut tracker = TripwireTracker::new(window_sizes);
     for update in published_update_indices(root)? {
-        for pod in read_pods(
+        let pods = read_pods(
             &root
                 .join("updates")
                 .join(update_name(update))
                 .join("pods.json"),
-        )? {
-            tracker.add_pod_json(&pod, baseline)?;
+        )?;
+        if pods.len() != PODS_PER_UPDATE as usize {
+            return Err(invalid("published update does not contain exactly 16 pods"));
+        }
+        for (offset, pod) in pods.into_iter().enumerate() {
+            if pod["pod_index"].as_u64() != Some(update * PODS_PER_UPDATE + offset as u64) {
+                return Err(invalid(
+                    "published pod index differs from the batch schedule",
+                ));
+            }
+            tracker.add_pod_json(pod, baseline)?;
         }
     }
     Ok(tracker)
@@ -997,15 +1273,25 @@ fn rebuild_tripwire(
 
 fn pin_reasons(config: &RunConfig, checkpoint: u64) -> Vec<CheckpointPinReason> {
     let mut reasons = Vec::new();
-    if checkpoint.is_multiple_of(16) {
+    if checkpoint == 0 {
+        reasons.push(CheckpointPinReason::SegmentStart);
+    }
+    if (checkpoint == 0 && config.segment == Segment::BuilderOnly)
+        || (checkpoint != 0 && checkpoint.is_multiple_of(16))
+    {
         reasons.push(CheckpointPinReason::League);
     }
     if checkpoint == config.total_updates() {
         reasons.push(CheckpointPinReason::SegmentEnd);
     }
-    if config.segment == Segment::BuilderOnly && matches!(checkpoint, 32 | 64 | 96 | 128) {
+    if config.marks.dose_reads.contains(&checkpoint) {
         reasons.push(CheckpointPinReason::DoseRead);
+    }
+    if config.marks.owner_views.contains(&checkpoint) {
         reasons.push(CheckpointPinReason::OwnerView);
+    }
+    if config.marks.read_candidates.contains(&checkpoint) {
+        reasons.push(CheckpointPinReason::ReadCandidate);
     }
     reasons
 }
@@ -1041,18 +1327,58 @@ fn restore_update_league_snapshot(root: &Path, update: &Path) -> Result<(), Trai
     if !snapshot.exists() {
         return Ok(());
     }
-    let checkpoint: Checkpoint = read_json(&update.join("checkpoint.json"))?;
+    let bytes = fs::read(snapshot)?;
+    let commit: CommitManifest = read_json(&update.join("commit.json"))?;
+    if commit.files.get("league.json") != Some(&sha256_hex(&bytes)) {
+        return Err(invalid("staged league snapshot differs from commit.json"));
+    }
+    let checkpoint: Checkpoint = serde_json::from_slice(&bytes)?;
+    checkpoint.validate()?;
+    if !checkpoint
+        .pin_reasons
+        .contains(&CheckpointPinReason::League)
+        || checkpoint.update != commit.batch_index + 1
+    {
+        return Err(invalid(
+            "staged league snapshot has incorrect checkpoint pins",
+        ));
+    }
     let entry = league_entry(root, &checkpoint)?;
-    publish_bytes(&root.join(entry.path), &fs::read(snapshot)?)
+    publish_bytes(&root.join(entry.path), &bytes)
 }
 
 pub fn prune_checkpoint(path: &Path) -> Result<(), TrainingDriverError> {
-    let checkpoint: Checkpoint = read_json(path)?;
+    let bytes = fs::read(path)?;
+    let checkpoint: Checkpoint = serde_json::from_slice(&bytes)?;
+    checkpoint.validate()?;
     if !checkpoint.pin_reasons.is_empty() {
-        return Err(invalid("a pinned checkpoint cannot be pruned"));
+        return Err(TrainingDriverError::PinnedCheckpoint);
     }
+    let directory = path
+        .parent()
+        .ok_or_else(|| invalid("checkpoint has no update directory"))?;
+    let update = index_from_update_path(directory)?;
+    let updates = directory
+        .parent()
+        .ok_or_else(|| invalid("missing updates directory"))?;
+    if path.file_name().and_then(|name| name.to_str()) != Some("checkpoint.json")
+        || updates.file_name().and_then(|name| name.to_str()) != Some("updates")
+        || !updates
+            .join(update_name(update + 1))
+            .join("commit.json")
+            .is_file()
+    {
+        return Err(invalid("can only prune an earlier published checkpoint"));
+    }
+    let commit = read_commit(directory, update, false)?
+        .ok_or_else(|| invalid("checkpoint has no valid commit"))?;
+    let digest = sha256_hex(&bytes);
+    if commit.files.get("checkpoint.json") != Some(&digest) {
+        return Err(invalid("checkpoint digest changed during pruning"));
+    }
+    publish_bytes(&directory.join("checkpoint.pruned"), digest.as_bytes())?;
     fs::remove_file(path)?;
-    Ok(())
+    sync_directory(directory)
 }
 
 struct BatchFailure {
@@ -1099,6 +1425,7 @@ fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecor
         second_watchdog_pod: None,
         second_watchdog_game: None,
         firing: None,
+        error: None,
         batch: batch
             .iter()
             .map(|pod| serde_json::to_value(pod).expect("pod json"))
@@ -1117,6 +1444,7 @@ pub struct TrainingDriver {
     current_pin: String,
     tripwire: TripwireTracker,
     census_rates: Option<CensusRates>,
+    snapshots: BTreeMap<String, Arc<TrainingModel>>,
 }
 
 impl TrainingDriver {
@@ -1142,7 +1470,7 @@ impl TrainingDriver {
         )
         .map_err(|error| TrainingDriverError::Update(error.to_string()))?;
         let optimizer = Optimizer::new(&model);
-        Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new())
+        Self::open_from_state(config, rows, model, optimizer, lineage, Vec::new(), None)
     }
 
     fn open_from_state(
@@ -1152,6 +1480,7 @@ impl TrainingDriver {
         initial_optimizer: Optimizer,
         initial_lineage: Vec<LineageSegment>,
         initial_league: Vec<LeagueEntry>,
+        boundary_source: Option<PickBoundary>,
     ) -> Result<Self, TrainingDriverError> {
         let layout = model_layout_pin(&initial_model);
         if config.metadata.parameter_layout_sha256.is_empty() {
@@ -1197,31 +1526,116 @@ impl TrainingDriver {
         fs::create_dir_all(&config.root)?;
         recover(&config.root, &config.run)?;
         check_stop_ledger(&config.root)?;
+        let indices = published_update_indices(&config.root)?;
         let run_path = config.root.join("run.json");
-        if run_path.exists() {
-            let saved: RunConfig = read_json(&run_path)?;
-            if saved.namespace != config.namespace
-                || saved.run != config.run
-                || saved.segment != config.segment
-                || saved.update_range != config.update_range
-                || saved.label != config.label
-                || saved.train_sets != config.train_sets
-                || saved.pods_per_update != config.pods_per_update
-                || saved.caps != config.caps
-                || saved.pins != config.pins
-                || saved.metadata != config.metadata
-                || saved.tripwire_window_games != config.tripwire_window_games
-                || saved.tripwire != config.tripwire
-                || !saved.pilot.compatible_resume(&config.pilot)
+        let initial_path = config.root.join("initial/checkpoint.json");
+        if config.segment == Segment::PickPhase {
+            let journal = config.root.join("pick-boundary.json");
+            let record = if journal.exists() {
+                read_json::<BoundaryRecord>(&journal)?
+            } else {
+                let source = boundary_source
+                    .clone()
+                    .ok_or_else(|| invalid("pick phase requires a staged builder boundary"))?;
+                config.boundary = Some(source);
+                let checkpoint = Checkpoint::new(
+                    &config,
+                    CubeModelState::from_model(&initial_model, &initial_optimizer),
+                    initial_league.clone(),
+                    0,
+                    initial_lineage.clone(),
+                    pin_reasons(&config, 0),
+                    initial_optimizer.head_updates,
+                )?;
+                let record = BoundaryRecord {
+                    config: config.clone(),
+                    checkpoint,
+                };
+                publish_bytes(&journal, &json_bytes(&record)?)?;
+                record
+            };
+            record.checkpoint.validate()?;
+            if record.config.boundary.is_none()
+                || record.checkpoint.boundary != record.config.boundary
+                || record.checkpoint.segment != Segment::PickPhase
+                || record.checkpoint.run != config.run
+                || record.checkpoint.update != 0
+                || config
+                    .boundary
+                    .as_ref()
+                    .or(boundary_source.as_ref())
+                    .is_some_and(|requested| Some(requested) != record.config.boundary.as_ref())
             {
-                return Err(invalid("resume changed a run pin, plan or tripwire mode"));
+                return Err(invalid(
+                    "pick phase boundary differs from its staged checkpoint",
+                ));
+            }
+            config.boundary = record.config.boundary.clone();
+            check_run_plan(&record.config, &config)?;
+            publish_bytes(&initial_path, &json_bytes(&record.checkpoint)?)?;
+            if !run_path.exists() {
+                publish_bytes(&run_path, &json_bytes(&record.config)?)?;
+            }
+        } else if config.boundary.is_some() {
+            return Err(invalid("builder-only run has a pick phase boundary"));
+        }
+        if run_path.exists() {
+            let mut saved: RunConfig = read_json(&run_path)?;
+            check_run_plan(&saved, &config)?;
+            let gate_path = config.root.join("gate-pin.json");
+            let durable_gate = if gate_path.exists() {
+                Some(read_json::<PilotPin>(&gate_path)?)
+            } else {
+                None
+            };
+            let saved_gate = saved
+                .pilot
+                .switch
+                .as_ref()
+                .and_then(|switch| switch.gate.as_ref());
+            let proposed = config
+                .pilot
+                .switch
+                .as_ref()
+                .and_then(|switch| switch.gate.as_ref());
+            let gate = durable_gate
+                .clone()
+                .or_else(|| saved_gate.cloned())
+                .or_else(|| proposed.cloned());
+            if let Some(gate) = gate {
+                if config.pilot.switch.is_none()
+                    || [saved_gate, proposed]
+                        .into_iter()
+                        .flatten()
+                        .any(|pin| pin != &gate)
+                {
+                    return Err(invalid("resume changed the fixed gate pin"));
+                }
+                config.pilot.switch.as_mut().unwrap().gate = Some(gate.clone());
+                if let Some(&last) = indices.last() {
+                    let receipt: UpdateReceipt = read_json(
+                        &config
+                            .root
+                            .join("updates")
+                            .join(update_name(last))
+                            .join("update.json"),
+                    )?;
+                    check_published_pilot(&config.pilot, last, &receipt.pilot)?;
+                }
+                persist_gate(&mut saved, &config.root, &gate)?;
             }
         } else {
             publish_bytes(&run_path, &json_bytes(&config)?)?;
+            if let Some(gate) = config
+                .pilot
+                .switch
+                .as_ref()
+                .and_then(|switch| switch.gate.as_ref())
+            {
+                publish_bytes(&config.root.join("gate-pin.json"), &json_bytes(gate)?)?;
+            }
         }
 
-        let indices = published_update_indices(&config.root)?;
-        let initial_path = config.root.join("initial").join("checkpoint.json");
         let (mut checkpoint, new_initial) = if let Some(update) = indices.last() {
             (
                 read_json::<Checkpoint>(
@@ -1243,7 +1657,7 @@ impl TrainingDriver {
                     initial_league.clone(),
                     0,
                     initial_lineage,
-                    vec![CheckpointPinReason::SegmentStart],
+                    pin_reasons(&config, 0),
                     initial_optimizer.head_updates,
                 )?,
                 true,
@@ -1253,6 +1667,7 @@ impl TrainingDriver {
         if checkpoint.run != config.run
             || checkpoint.segment != config.segment
             || checkpoint.parameter_layout_sha256 != layout
+            || checkpoint.boundary != config.boundary
         {
             return Err(invalid("checkpoint belongs to another segment"));
         }
@@ -1270,8 +1685,29 @@ impl TrainingDriver {
             if checkpoint.league.is_empty() {
                 let entry = write_league_snapshot(&config.root, &checkpoint)?;
                 checkpoint.league.push(entry);
+                checkpoint.refresh_pin()?;
             }
             publish_bytes(&initial_path, &json_bytes(&checkpoint)?)?;
+        }
+        if let Some(&last) = indices.last() {
+            let receipt: UpdateReceipt = read_json(
+                &config
+                    .root
+                    .join("updates")
+                    .join(update_name(last))
+                    .join("update.json"),
+            )?;
+            if receipt.after_state_sha256 != checkpoint.state_sha256
+                || receipt.checkpoint_number != checkpoint.update
+                || checkpoint.update != last + 1
+                || receipt.segment != checkpoint.segment
+                || receipt.head_updates != checkpoint.head_updates
+            {
+                return Err(invalid(
+                    "checkpoint differs from its published update receipt",
+                ));
+            }
+            check_published_pilot(&config.pilot, last, &receipt.pilot)?;
         }
         let next_update = indices.last().map_or(0, |update| update + 1);
         let tripwire = rebuild_tripwire(
@@ -1307,6 +1743,7 @@ impl TrainingDriver {
             league: checkpoint.league.clone(),
             tripwire,
             census_rates,
+            snapshots: BTreeMap::new(),
             config,
         })
     }
@@ -1364,6 +1801,10 @@ impl TrainingDriver {
             optimizer,
             previous.lineage.clone(),
             previous.league.clone(),
+            Some(PickBoundary {
+                builder_run: previous.config.run.clone(),
+                builder_final_state_sha256: previous.current_pin.clone(),
+            }),
         )
     }
 
@@ -1392,22 +1833,8 @@ impl TrainingDriver {
     }
 
     pub fn set_gate_pin(&mut self, pin: PilotPin) -> Result<(), TrainingDriverError> {
-        let switch = self
-            .config
-            .pilot
-            .switch
-            .as_mut()
-            .ok_or_else(|| invalid("the run has no pilot switch"))?;
-        if let Some(existing) = &switch.gate {
-            if existing != &pin {
-                return Err(invalid("the gate pin is already fixed"));
-            }
-        }
-        switch.gate = Some(pin);
-        write_synced(
-            &self.config.root.join("run.json"),
-            &json_bytes(&self.config)?,
-        )
+        let root = self.config.root.clone();
+        persist_gate(&mut self.config, &root, &pin)
     }
 
     fn current_lineage(&self, selection: &PilotSelection) -> Vec<LineageSegment> {
@@ -1548,6 +1975,52 @@ impl TrainingDriver {
         Ok(completed)
     }
 
+    fn abandon_error(
+        &self,
+        update: u64,
+        pending: &Path,
+        first: Option<(u64, u32)>,
+        error: &TrainingDriverError,
+        pods: Option<&[PodRecord]>,
+    ) -> Result<(), TrainingDriverError> {
+        let kind = match error {
+            TrainingDriverError::Update(_) => "update_failed",
+            TrainingDriverError::Io(_) => "io_error",
+            _ => "collection_failed",
+        };
+        let batch = pods.map_or_else(
+            || read_partial_pods(pending),
+            |pods| {
+                pods.iter()
+                    .map(|pod| serde_json::to_value(pod).map_err(Into::into))
+                    .collect()
+            },
+        )?;
+        let mut stop = StopRecord {
+            schema: STOP_SCHEMA.to_owned(),
+            kind: kind.to_owned(),
+            run: self.config.run.clone(),
+            update,
+            pod: None,
+            pairing: None,
+            game: None,
+            decks: None,
+            attempts: Vec::new(),
+            hang: None,
+            first_watchdog_pod: None,
+            first_watchdog_game: None,
+            second_watchdog_pod: None,
+            second_watchdog_game: None,
+            firing: None,
+            error: Some(error.to_string()),
+            batch,
+        };
+        apply_first_watchdog(&mut stop, first);
+        ledger_stop(&self.config.root, &stop)?;
+        fs::remove_dir_all(pending)?;
+        sync_directory(&self.config.root.join("pending"))
+    }
+
     pub fn run_next_update(
         &mut self,
         pool: &CubePool,
@@ -1574,28 +2047,27 @@ impl TrainingDriver {
             PilotSelection::Uniform => Arc::new(UniformPilot),
             PilotSelection::Checkpoint { pin } => pilots.load_checkpoint(pin)?,
         };
-        let snapshots = self
-            .league
-            .iter()
-            .map(|entry| {
-                let checkpoint: Checkpoint = read_json(&self.config.root.join(&entry.path))?;
-                checkpoint.validate()?;
-                if checkpoint.state_sha256 != entry.pin
-                    || checkpoint.parameter_layout_sha256
-                        != self.config.metadata.parameter_layout_sha256
-                    || checkpoint.head_updates != entry.head_updates
-                {
-                    return Err(invalid("league snapshot differs from its pin"));
-                }
-                let (model, _) = checkpoint
-                    .model
-                    .restore(self.model.parameters().clone(), checkpoint.head_updates)
-                    .map_err(TrainingDriverError::Update)?;
-                let snapshot = TrainingModel::new(model, self.rows.clone())
-                    .map_err(TrainingDriverError::Update)?;
-                Ok((entry.pin.clone(), Arc::new(snapshot)))
-            })
-            .collect::<Result<BTreeMap<_, _>, TrainingDriverError>>()?;
+        for entry in &self.league {
+            if self.snapshots.contains_key(&entry.pin) {
+                continue;
+            }
+            let checkpoint: Checkpoint = read_json(&self.config.root.join(&entry.path))?;
+            checkpoint.validate()?;
+            if checkpoint.state_sha256 != entry.pin
+                || checkpoint.parameter_layout_sha256
+                    != self.config.metadata.parameter_layout_sha256
+                || checkpoint.head_updates != entry.head_updates
+            {
+                return Err(invalid("league snapshot differs from its pin"));
+            }
+            let (model, _) = checkpoint
+                .model
+                .restore(self.model.parameters().clone(), checkpoint.head_updates)
+                .map_err(TrainingDriverError::Update)?;
+            let snapshot = TrainingModel::new(model, self.rows.clone())
+                .map_err(TrainingDriverError::Update)?;
+            self.snapshots.insert(entry.pin.clone(), Arc::new(snapshot));
+        }
         let pending = self.config.root.join("pending").join(update_name(update));
         if pending.exists() {
             return Err(invalid("an unrecovered pending update remains"));
@@ -1605,10 +2077,15 @@ impl TrainingDriver {
         sync_directory(&self.config.root.join("pending"))?;
 
         let mut first_watchdog = None;
+        let mut void_execution = None;
+        let partial = pending.join("partial");
         let pods = loop {
-            match self.collect_batch(pool, update, &selection, pilot.as_ref(), &snapshots) {
+            match self.collect_batch(pool, update, &selection, pilot.as_ref(), &self.snapshots) {
                 Ok(pods) => break pods,
-                Err(CollectFailure::Error(error)) => return Err(error),
+                Err(CollectFailure::Error(error)) => {
+                    self.abandon_error(update, &pending, first_watchdog, &error, None)?;
+                    return Err(error);
+                }
                 Err(CollectFailure::Stop(failure)) => {
                     let watchdog_game = failure.pod.games.iter().find_map(|game| {
                         game.attempts
@@ -1618,19 +2095,26 @@ impl TrainingDriver {
                     });
                     if first_watchdog.is_none() && watchdog_game.is_some() {
                         first_watchdog = watchdog_game;
-                        fs::remove_dir_all(&pending)?;
-                        fs::create_dir_all(&pending)?;
+                        let mut record = stop_from_failure(&self.config.run, update, failure);
+                        record.kind = "watchdog_void".to_owned();
+                        apply_first_watchdog(&mut record, first_watchdog);
+                        let bytes = json_bytes(&record)?;
+                        publish_bytes(&watchdog_path(&self.config.root, update), &bytes)?;
+                        if partial.exists() {
+                            fs::remove_dir_all(&partial)?;
+                            sync_directory(&pending)?;
+                        }
+                        void_execution = Some(bytes);
                         continue;
                     }
                     let mut stop = stop_from_failure(&self.config.run, update, failure);
+                    apply_first_watchdog(&mut stop, first_watchdog);
                     if let Some((second_pod, second_game)) = watchdog_game {
                         let hang = first_watchdog == Some((second_pod, second_game));
                         stop.hang = Some(hang);
                         if hang {
                             stop.firing = Some(TripwireFiring::immediate(TripwireRule::Hang));
                         }
-                        stop.first_watchdog_pod = first_watchdog.map(|key| key.0);
-                        stop.first_watchdog_game = first_watchdog.map(|key| key.1);
                         stop.second_watchdog_pod = Some(second_pod);
                         stop.second_watchdog_game = Some(second_game);
                     }
@@ -1650,19 +2134,23 @@ impl TrainingDriver {
         }
         let firing = tripwire.firing.clone();
         let before_state = self.current_pin.clone();
-        let (model, optimizer, optimizer_output) = self
-            .model
-            .update(
-                self.optimizer.clone(),
-                self.config.segment,
-                &pods,
-                &snapshots,
-            )
-            .map_err(TrainingDriverError::Update)?;
+        let updated = self.model.update(
+            self.optimizer.clone(),
+            self.config.segment,
+            &pods,
+            &self.snapshots,
+        );
+        let (model, optimizer, optimizer_output) = match updated {
+            Ok(result) => result,
+            Err(message) => {
+                let error = TrainingDriverError::Update(message);
+                self.abandon_error(update, &pending, first_watchdog, &error, Some(&pods))?;
+                return Err(error);
+            }
+        };
         let head_updates = optimizer.head_updates;
         let checkpoint_number = update + 1;
         let model_state = CubeModelState::from_model(model.parameters(), &optimizer);
-        let state_pin = model_state.state_sha256();
         let mut league = self.league.clone();
         let reasons = pin_reasons(&self.config, checkpoint_number);
         let mut league_snapshot_bytes = None;
@@ -1688,6 +2176,7 @@ impl TrainingDriver {
             reasons,
             head_updates,
         )?;
+        let state_pin = checkpoint.state_sha256.clone();
         let pilot_info = match &selection {
             PilotSelection::Uniform => PilotInfo::uniform(),
             PilotSelection::Checkpoint { pin } => PilotInfo {
@@ -1700,12 +2189,18 @@ impl TrainingDriver {
             before_state_sha256: before_state,
             after_state_sha256: state_pin.clone(),
             segment: self.config.segment,
-            update: checkpoint_number,
+            checkpoint_number,
             sets_trained: self.config.train_sets,
             pilot: pilot_info,
             pods: pods.iter().map(|pod| pod.pod_index).collect(),
-            league_entries: league.iter().map(|entry| entry.pin.clone()).collect(),
-            league_trained_pick_entries: league
+            execution: u8::from(void_execution.is_some()),
+            void_execution_sha256: void_execution.as_deref().map(sha256_hex),
+            game_statistics: GameStatistics::from_pods(&pods),
+            first_watchdog_pod: first_watchdog.map(|key| key.0),
+            first_watchdog_game: first_watchdog.map(|key| key.1),
+            league_entries: self.league.iter().map(|entry| entry.pin.clone()).collect(),
+            league_trained_pick_entries: self
+                .league
                 .iter()
                 .filter(|entry| entry.head_updates.pick > 0)
                 .count(),
@@ -1719,6 +2214,12 @@ impl TrainingDriver {
         write_synced(&pending.join("pods.json"), &pod_bytes)?;
         write_synced(&pending.join("checkpoint.json"), &json_bytes(&checkpoint)?)?;
         write_synced(&pending.join("update.json"), &json_bytes(&receipt)?)?;
+        if let Some(bytes) = &void_execution {
+            write_synced(&pending.join("execution-0.json"), bytes)?;
+        }
+        if partial.exists() {
+            fs::remove_dir_all(&partial)?;
+        }
         if let Some(bytes) = &league_snapshot_bytes {
             write_synced(&pending.join("league.json"), bytes)?;
         }
@@ -1734,11 +2235,12 @@ impl TrainingDriver {
                 decks: None,
                 attempts: Vec::new(),
                 hang: None,
-                first_watchdog_pod: None,
-                first_watchdog_game: None,
+                first_watchdog_pod: first_watchdog.map(|key| key.0),
+                first_watchdog_game: first_watchdog.map(|key| key.1),
                 second_watchdog_pod: None,
                 second_watchdog_game: None,
                 firing: Some(firing.clone()),
+                error: None,
                 batch: pods
                     .iter()
                     .map(|pod| serde_json::to_value(pod).expect("pod json"))
@@ -1749,7 +2251,8 @@ impl TrainingDriver {
         let names = ["pods.json", "checkpoint.json", "update.json"]
             .into_iter()
             .chain(firing.is_some().then_some("stop.json"))
-            .chain(league_snapshot_bytes.is_some().then_some("league.json"));
+            .chain(league_snapshot_bytes.is_some().then_some("league.json"))
+            .chain(void_execution.is_some().then_some("execution-0.json"));
         let files = names
             .map(|name| {
                 let bytes = fs::read(pending.join(name))?;
@@ -1758,7 +2261,10 @@ impl TrainingDriver {
             .collect::<Result<BTreeMap<_, _>, TrainingDriverError>>()?;
         write_synced(
             &pending.join("commit.json"),
-            &json_bytes(&CommitManifest { update, files })?,
+            &json_bytes(&CommitManifest {
+                batch_index: update,
+                files,
+            })?,
         )?;
         sync_directory(&pending)?;
         sync_directory(&self.config.root.join("pending"))?;
@@ -1767,10 +2273,7 @@ impl TrainingDriver {
         sync_directory(&self.config.root.join("pending"))?;
         sync_directory(&self.config.root.join("updates"))?;
         restore_update_league_snapshot(&self.config.root, &published)?;
-        if published.join("stop.json").exists() {
-            let stop: StopRecord = read_json(&published.join("stop.json"))?;
-            ledger_stop(&self.config.root, &stop)?;
-        }
+        published_stop(&self.config.root, &published, update)?;
         self.next_update += 1;
         self.model = Arc::new(model);
         self.optimizer = optimizer;
@@ -1789,164 +2292,8 @@ impl TrainingDriver {
     }
 }
 
-struct TwoActionPilot {
-    case: HaltCase,
-    deterministic_halt: bool,
-    game_seed: u64,
-}
-
-impl GamePilot for TwoActionPilot {
-    fn play(
-        &self,
-        spec: &AttemptSpec<'_>,
-        _caps: &crate::cube_draft_v1::GameCaps,
-    ) -> AttemptOutcome {
-        let attempt = (0..=3u8)
-            .find(|attempt| {
-                crate::cube_pod_runner_v1::attempt_seeds(self.game_seed, *attempt).2
-                    == spec.action_seed
-            })
-            .expect("two-action attempt seed");
-        let halt = if self.deterministic_halt {
-            self.case.deterministic_halt()
-        } else {
-            self.case.halts(usize::from(attempt))
-        };
-        if halt {
-            return AttemptOutcome {
-                decisions: 1,
-                physical_decisions: Some(1),
-                policy_steps: Some(1),
-                end: GameEnd::DecisionCap,
-                last_action_source: None,
-            };
-        }
-        let result = self.case.actions[0] as i8 - self.case.actions[1] as i8;
-        AttemptOutcome {
-            decisions: 1,
-            physical_decisions: Some(1),
-            policy_steps: Some(1),
-            end: GameEnd::Natural {
-                winner_seat: match result {
-                    1 => Some(spec.seats[0]),
-                    -1 => Some(spec.seats[1]),
-                    _ => None,
-                },
-                reason: "fixture".to_owned(),
-            },
-            last_action_source: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TwoActionPart3Report {
-    pub published_mean: f64,
-    pub published_batches: usize,
-    pub stopped_batches: usize,
-}
-
-pub fn run_two_action_part3(
-    root: &Path,
-    deterministic_halt: bool,
-) -> Result<TwoActionPart3Report, TrainingDriverError> {
-    fs::create_dir_all(root)?;
-    let decks = [
-        crate::cube_draft_v1::Deck::default(),
-        crate::cube_draft_v1::Deck::default(),
-    ];
-    let mut derivative_sum = 0.0;
-    let mut published = 0usize;
-    let mut stopped = 0usize;
-    for (index, case) in halt_cases().enumerate() {
-        if deterministic_halt && case.pattern != 15 {
-            continue;
-        }
-        let game_seed = index as u64;
-        let pilot = TwoActionPilot {
-            case,
-            deterministic_halt,
-            game_seed,
-        };
-        let task = crate::cube_pod_runner_v1::GameTask {
-            game: 0,
-            group: 0,
-            role: GameRole::Reference,
-            pairing: Some(0),
-            decks: [0, 1],
-            chairs: [Some(0), Some(1)],
-            seats: [0, 1],
-            seat_rule: SeatRule::Schedule,
-            game_seed,
-            episode: 0,
-        };
-        let caps = crate::cube_pod_runner_v1::PodCaps::training_a2();
-        let game = play_training_game_for_driver(&task, &decks, &pilot, &caps)?;
-        let (halts, status, stop) = collect_halts_and_stop(std::slice::from_ref(&game), true);
-        let pod = PodRecord {
-            schema: POD_RECORD_SCHEMA,
-            interfaces: M4_INTERFACES_VERSION,
-            pod_use: PodUse::Test,
-            namespace: "test".to_owned(),
-            run: "v1".to_owned(),
-            pod_index: 0,
-            seeds: Default::default(),
-            pins: PodPins::default(),
-            pilot: PilotInfo::uniform(),
-            caps,
-            draft: None,
-            chairs: Vec::new(),
-            decks: Vec::new(),
-            games: vec![game],
-            paired_builds: Vec::new(),
-            halts,
-            status,
-            stop,
-        };
-        if pod.status == PodStatus::Stopped {
-            stopped += 1;
-            let record = stop_from_failure(
-                "v1",
-                index as u64,
-                BatchFailure {
-                    pod: Box::new(pod),
-                    completed: Vec::new(),
-                },
-            );
-            ledger_stop(root, &record)?;
-            if check_stop_ledger(root) != Err(TrainingDriverError::StoppedWithoutResolution) {
-                return Err(invalid("a stop without resolution did not refuse resume"));
-            }
-        } else {
-            published += 1;
-            let expected = case.actions[0] as i8 - case.actions[1] as i8;
-            if pod.games[0].scores != Some([expected, -expected]) {
-                return Err(invalid("two-action replay changed the completed score"));
-            }
-            derivative_sum += case.derivative;
-        }
-    }
-    let total = if deterministic_halt { 4.0 } else { 64.0 };
-    let published_mass = published as f64 / total;
-    Ok(TwoActionPart3Report {
-        published_mean: if published == 0 {
-            f64::NAN
-        } else {
-            derivative_sum / total / published_mass
-        },
-        published_batches: published,
-        stopped_batches: stopped,
-    })
-}
-
-pub fn two_action_dropped_mean() -> f64 {
-    let (sum, count) = halt_cases()
-        .filter(|case| !case.halts(0))
-        .fold((0.0, 0), |(sum, count), case| {
-            (sum + case.derivative, count + 1)
-        });
-    sum / f64::from(count)
-}
+#[path = "cube_training_driver_fixtures_v1.rs"]
+pub mod fixtures;
 
 pub fn tripwire_games_for_test(root: &Path) -> Result<u64, TrainingDriverError> {
     let config: RunConfig = read_json(&root.join("run.json"))?;

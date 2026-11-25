@@ -233,6 +233,7 @@ pub(super) fn tripwire_window_sizes(games: u64) -> Vec<u64> {
 struct ReplayAttempt {
     end: GameEnd,
     halted: bool,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     last_action_source: Option<u16>,
 }
 
@@ -359,38 +360,50 @@ impl TripwireTracker {
 
     pub(super) fn add_pod_json(
         &mut self,
-        pod: &Value,
+        pod: Value,
         baseline: Option<&CensusRates>,
     ) -> Result<(), TrainingDriverError> {
-        let games = pod["games"]
-            .as_array()
-            .ok_or_else(|| invalid("pod missing games"))?;
-        for game in games {
-            if baseline.is_none() {
-                self.add_game([], [], None);
-                continue;
-            }
-            let mut cards = Vec::new();
-            for id in game["decks"]
-                .as_array()
-                .ok_or_else(|| invalid("game missing decks"))?
+        #[derive(Deserialize)]
+        struct Deck {
+            cards: Vec<u16>,
+        }
+        #[derive(Deserialize)]
+        struct Game {
+            decks: [usize; 2],
+            attempts: Vec<ReplayAttempt>,
+        }
+        #[derive(Deserialize)]
+        struct ReplayPod {
+            schema: String,
+            decks: Vec<Deck>,
+            games: Vec<Game>,
+        }
+
+        let pod: ReplayPod = serde_json::from_value(pod)?;
+        if pod.schema != crate::cube_pod_runner_v1::POD_RECORD_SCHEMA
+            || pod.games.len() != crate::cube_pod_runner_v1::TRAINING_POD_GAMES
+        {
+            return Err(invalid(
+                "published pod schema or training game count differs",
+            ));
+        }
+        for game in pod.games {
+            let [a, b] = game.decks;
+            let decks = [pod.decks.get(a), pod.decks.get(b)];
+            let [Some(a), Some(b)] = decks else {
+                return Err(invalid("game names a missing deck"));
+            };
+            if game.attempts.is_empty()
+                || game
+                    .attempts
+                    .iter()
+                    .any(|attempt| attempt.halted == matches!(attempt.end, GameEnd::Natural { .. }))
             {
-                let id = id.as_u64().ok_or_else(|| invalid("invalid deck id"))? as usize;
-                let deck = pod["decks"][id]["cards"]
-                    .as_array()
-                    .ok_or_else(|| invalid("game names a missing deck"))?;
-                for card in deck {
-                    cards.push(
-                        card.as_u64()
-                            .and_then(|id| u16::try_from(id).ok())
-                            .ok_or_else(|| invalid("invalid card id"))?,
-                    );
-                }
+                return Err(invalid("game has missing or inconsistent attempt records"));
             }
-            let attempts: Vec<ReplayAttempt> = serde_json::from_value(game["attempts"].clone())?;
             self.add_game(
-                cards,
-                attempts
+                a.cards.iter().chain(&b.cards).copied(),
+                game.attempts
                     .iter()
                     .filter(|attempt| attempt.halted)
                     .map(|attempt| (&attempt.end, attempt.last_action_source)),
@@ -677,5 +690,28 @@ mod tests {
         assert_eq!(rates.cards[&1].total, 55);
         summary["tripwire"]["games"] = json!(105);
         assert!(parse(summary).is_err());
+    }
+    #[test]
+    fn rebuild_refuses_pods_without_game_data_even_in_q9() {
+        let mut tracker = TripwireTracker::new(vec![2000]);
+        let schema = crate::cube_pod_runner_v1::POD_RECORD_SCHEMA;
+        assert!(tracker
+            .add_pod_json(json!({"schema":schema,"decks":[]}), None)
+            .is_err());
+        let game =
+            json!({"decks":[0,1],"attempts":[{"end":{"kind":"decision_cap"},"halted":true}]});
+        let mut pod = json!({
+            "schema":schema, "decks":[{"cards":[1]},{"cards":[2]}],
+            "games": vec![game; crate::cube_pod_runner_v1::TRAINING_POD_GAMES]
+        });
+        assert!(tracker.add_pod_json(pod.clone(), None).is_err());
+        for game in pod["games"].as_array_mut().unwrap() {
+            game["attempts"][0]["last_action_source"] = Value::Null;
+        }
+        tracker.add_pod_json(pod, None).unwrap();
+        assert_eq!(
+            tracker.games(),
+            crate::cube_pod_runner_v1::TRAINING_POD_GAMES as u64
+        );
     }
 }

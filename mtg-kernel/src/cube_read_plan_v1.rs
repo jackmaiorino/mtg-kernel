@@ -1005,6 +1005,7 @@ fn parse_caps_a67(value: &OrderedJson, path: &str) -> Result<PodCaps, String> {
         max_decisions,
         max_physical_decisions,
         max_policy_steps,
+        max_stack_objects: A2_GAME_CAPS.max_stack_objects,
         watchdog_seconds,
         max_replays,
     })

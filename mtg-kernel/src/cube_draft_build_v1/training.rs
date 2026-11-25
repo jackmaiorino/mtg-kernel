@@ -123,7 +123,43 @@ pub struct Losses {
     pub build: f64,
     pub pick: f64,
     pub value: f64,
+    pub gradient_norms: BTreeMap<String, f64>,
+    pub statistics: TrainingStatistics,
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Moments {
+    pub count: u64,
+    pub sum: f64,
+    pub sum_squares: f64,
+}
+
+impl Moments {
+    fn observe(&mut self, value: f64) {
+        self.count += 1;
+        self.sum += value;
+        self.sum_squares += value * value;
+    }
+
+    fn variance(&self) -> f64 {
+        if self.count == 0 {
+            return 0.0;
+        }
+        let count = self.count as f64;
+        (self.sum_squares / count - (self.sum / count).powi(2)).max(0.0)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TrainingStatistics {
+    pub build_advantage: Moments,
+    pub pick_advantage: Moments,
+    pub value_target: Moments,
+    pub value_prediction: Moments,
+    pub value_explained_variance: Option<f64>,
+    pub entropy: BTreeMap<String, Moments>,
+}
+
 type Result<T> = std::result::Result<T, String>;
 
 fn replay(
@@ -216,6 +252,7 @@ struct Batch {
     losses: Losses,
     heads: HeadUpdates,
     grads: Vec<Vec<f32>>,
+    value_error: Moments,
     seats: usize,
 }
 impl Batch {
@@ -224,8 +261,58 @@ impl Batch {
             losses: Losses::default(),
             heads: HeadUpdates::default(),
             grads: zeros(model),
+            value_error: Moments::default(),
             seats,
         }
+    }
+    fn observe_entropy(&mut self, head: &str, log_probabilities: &[f64], draws: usize) {
+        let entropy: f64 = log_probabilities
+            .iter()
+            .copied()
+            .filter(|logp| logp.is_finite())
+            .map(|logp| -m4_exp(logp.clamp(-120., 0.)) * logp)
+            .sum();
+        let moments = self
+            .losses
+            .statistics
+            .entropy
+            .entry(head.to_owned())
+            .or_default();
+        for _ in 0..draws {
+            moments.observe(entropy);
+        }
+    }
+
+    fn finish_statistics(&mut self, model: &ModelV1, phase: Phase) -> Result<()> {
+        let mut norm_squared = [0.0; 3];
+        for (spec, gradient) in model.specs.iter().zip(&self.grads) {
+            let index = match spec.set {
+                ParameterSetV1::Build => 0,
+                ParameterSetV1::Pick => 1,
+                ParameterSetV1::Value => 2,
+            };
+            for &g in gradient {
+                let g = f64::from(g);
+                norm_squared[index] += g * g;
+            }
+        }
+        let count = if phase == Phase::Builder { 1 } else { 3 };
+        for (name, squared) in ["build", "pick", "value"]
+            .into_iter()
+            .zip(norm_squared)
+            .take(count)
+        {
+            if !squared.is_finite() {
+                return Err("nonfinite gradient norm".into());
+            }
+            self.losses
+                .gradient_norms
+                .insert(name.to_owned(), squared.sqrt());
+        }
+        let target_variance = self.losses.statistics.value_target.variance();
+        self.losses.statistics.value_explained_variance =
+            (target_variance > 0.0).then(|| 1.0 - self.value_error.variance() / target_variance);
+        Ok(())
     }
 }
 
@@ -304,6 +391,7 @@ pub fn update(
             )?;
         }
     }
+    batch.finish_statistics(model, phase)?;
     adam(model, optimizer, phase, &batch)?;
     Ok(batch.losses)
 }

@@ -10,11 +10,13 @@ use mtg_kernel::cube_draft_v1::{basic_land_ids, game_seed, CubePool, GameCaps, G
 use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed, watchdog_game_end};
 use mtg_kernel::cube_read_plan_v1::sha256_hex;
 use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot};
+use mtg_kernel::cube_training_driver_v1::fixtures::{
+    run_two_action_part3, two_action_dropped_mean,
+};
 use mtg_kernel::cube_training_driver_v1::{
-    check_stop_ledger, load_checkpoint_read_only_v1, prune_checkpoint, run_two_action_part3,
-    tripwire_games_for_test, two_action_dropped_mean, CensusBaselinePin, LineageSegment, PilotPin,
-    PilotProvider, PilotSchedule, PilotSelection, PilotSwitch, RunConfig, RunOutcome, Segment,
-    TrainingDriver, TrainingDriverError, TripwireMode,
+    check_stop_ledger, load_checkpoint_read_only_v1, prune_checkpoint, tripwire_games_for_test,
+    CensusBaselinePin, LineageSegment, PilotPin, PilotProvider, PilotSchedule, PilotSelection,
+    PilotSwitch, RunConfig, RunOutcome, Segment, TrainingDriver, TrainingDriverError, TripwireMode,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -285,10 +287,40 @@ fn head_updates_and_optimizer_state_cross_the_segment_boundary() {
         initial.model.value.parameters,
         builder_state.model.value.parameters
     );
-    assert_ne!(
-        initial.model.pick.parameters,
-        builder_state.model.pick.parameters
-    );
+    use mtg_kernel::cube_draft_build_v1::model::ParameterSetV1;
+    let rows = model_rows();
+    let layout =
+        ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 1234).unwrap();
+    let ranges = |set| {
+        let mut offset = 0;
+        layout
+            .layout()
+            .iter()
+            .filter(|spec| spec.set == set)
+            .map(|spec| {
+                let start = offset;
+                offset += spec.element_count();
+                (spec.name.as_str(), start..offset)
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let build_ranges = ranges(ParameterSetV1::Build);
+    let pick_ranges = ranges(ParameterSetV1::Pick);
+    for (name, range) in pick_ranges {
+        let pick_bits = &initial.model.pick.parameters[range.clone()];
+        if let Some(trunk_suffix) = name.strip_prefix("pick_trunk.") {
+            let source_range = build_ranges[format!("build_trunk.{trunk_suffix}").as_str()].clone();
+            assert_eq!(
+                pick_bits, &builder_state.model.build.parameters[source_range],
+                "{name}"
+            );
+        } else {
+            assert_eq!(
+                pick_bits, &builder_state.model.pick.parameters[range],
+                "{name}"
+            );
+        }
+    }
     assert_eq!(initial.model.pick.adam_step, 0);
     assert!(builder_state
         .model
@@ -323,6 +355,13 @@ fn head_updates_and_optimizer_state_cross_the_segment_boundary() {
         (heads.count, heads.pointer, heads.type_set, heads.split),
         (2, 2, 2, 2)
     );
+    let receipt = read_value(&temp.join("k1/updates/update-0000/update.json"));
+    let statistics = &receipt["optimizer"]["statistics"];
+    assert_eq!(statistics["value_target"]["count"], 4032);
+    assert_eq!(statistics["value_prediction"]["count"], 4032);
+    assert_eq!(statistics["pick_advantage"]["count"], 4032);
+    assert_eq!(statistics["entropy"]["pick"]["count"], 4032);
+    assert!(receipt["optimizer"]["gradient_norms"]["value"].is_number());
     let final_state = picks.checkpoint().expect("final checkpoint");
     assert_eq!(final_state.model.build.adam_step, 2);
     assert_eq!(final_state.model.pick.adam_step, 1);
@@ -348,7 +387,10 @@ fn pinned_league_snapshot_cannot_be_pruned() {
     )
     .expect("open");
     let snapshot = temp.join("b1").join(&driver.league()[0].path);
-    assert!(prune_checkpoint(&snapshot).is_err());
+    assert_eq!(
+        prune_checkpoint(&snapshot),
+        Err(TrainingDriverError::PinnedCheckpoint)
+    );
     assert!(snapshot.exists());
 }
 
@@ -376,7 +418,7 @@ fn uniform_pilot_lineage_is_refused_outside_shakedown() {
 #[test]
 fn missing_gate_pin_pauses_before_touching_a_batch() {
     let temp = TempTestDir::new("gate");
-    let mut config = config(&temp.join("k2"), "k2", Segment::PickPhase, 1);
+    let mut config = config(&temp.join("k2"), "k2", Segment::BuilderOnly, 1);
     config.label = "training".to_owned();
     config.namespace = "m5-train".to_owned();
     config.pilot = PilotSchedule {
@@ -386,7 +428,7 @@ fn missing_gate_pin_pauses_before_touching_a_batch() {
             gate: None,
         }),
     };
-    let mut driver = TrainingDriver::open(config, model_rows(), 1234).expect("open");
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).expect("open");
     assert_eq!(
         driver.run_next_update(&pool(), &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Paused { update: 0 })
@@ -395,11 +437,44 @@ fn missing_gate_pin_pauses_before_touching_a_batch() {
     assert!(temp.join("k2/updates").exists());
     assert_eq!(driver.next_update(), 0);
 
+    let run_path = temp.join("k2/run.json");
+    let old = fs::read(&run_path).unwrap();
+    let old_link = temp.join("k2/old-run.json");
+    fs::hard_link(&run_path, &old_link).unwrap();
     driver.set_gate_pin(pilot_pin()).expect("pin gate");
+    assert_eq!(fs::read(&old_link).unwrap(), old);
+    assert_ne!(fs::read(&run_path).unwrap(), old);
+    // Kill after the immutable pin was published but before replacing run.json.
+    drop(driver);
+    fs::write(&run_path, &old).unwrap();
+    config.pilot.switch.as_mut().unwrap().gate = Some(pilot_pin());
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    assert_eq!(
+        read_value(&run_path)["pilot"]["switch"]["gate"]["checkpoint_sha256"],
+        pilot_pin().checkpoint_sha256
+    );
     assert_eq!(
         driver.run_next_update(&pool(), &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
+    let mut resume_only = config.clone();
+    resume_only.root = temp.join("resume-only");
+    resume_only.pilot.switch.as_mut().unwrap().gate = None;
+    TrainingDriver::open(resume_only.clone(), model_rows(), 1234).unwrap();
+    resume_only.pilot.switch.as_mut().unwrap().gate = Some(pilot_pin());
+    TrainingDriver::open(resume_only.clone(), model_rows(), 1234).unwrap();
+    assert_eq!(
+        read_value(&resume_only.root.join("run.json"))["pilot"]["switch"]["gate"]
+            ["checkpoint_sha256"],
+        pilot_pin().checkpoint_sha256
+    );
+    let mut wrong = pilot_pin();
+    wrong.checkpoint_sha256 = "99".repeat(32);
+    config.pilot.switch.as_mut().unwrap().gate = Some(wrong);
+    let error = TrainingDriver::open(config, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("fixed gate pin"));
 }
 
 #[test]
@@ -524,14 +599,47 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     )
     .expect("window stop JSON");
     assert_eq!(stop["firing"]["denominator"], 2_240);
+    let receipt = read_value(&resumed_root.join("updates/update-0000/update.json"));
+    assert!(
+        receipt["optimizer"]["gradient_norms"]["build"]
+            .as_f64()
+            .unwrap()
+            > 0.0
+    );
+    assert_eq!(
+        receipt["optimizer"]["statistics"]["build_advantage"]["count"],
+        192
+    );
+    assert_eq!(
+        receipt["optimizer"]["statistics"]["entropy"]["count"]["count"],
+        192
+    );
+    assert!(
+        receipt["game_statistics"]["halts_by_stop_kind_and_attempt"]["driver_decision_cap"]["0"]
+            .as_u64()
+            .unwrap()
+            >= 5
+    );
+    assert!(receipt["game_statistics"]["replays"].as_u64().unwrap() >= 5);
+    assert_eq!(receipt["checkpoint_number"], 1);
+    assert_eq!(
+        read_value(&resumed_root.join("updates/update-0000/commit.json"))["batch_index"],
+        0
+    );
     assert!(stop["firing"]["games"].as_u64().unwrap() >= 5);
     assert_eq!(
         directory_bytes(&uninterrupted_root),
         directory_bytes(&resumed_root)
     );
 
-    fs::remove_file(resumed_root.join("stops/stop-0000.json")).expect("remove ledger copy");
-    let before = directory_bytes(&uninterrupted_root);
+    let update_dir = resumed_root.join("updates/update-0001");
+    let mut exact_stop = fs::read(update_dir.join("stop.json")).unwrap();
+    let ledger = resumed_root.join("stops/stop-0000.json");
+    assert_eq!(fs::read(&ledger).unwrap(), exact_stop);
+    // Valid JSON with different whitespace must be copied byte for byte.
+    exact_stop.extend_from_slice(b"  \n");
+    rewrite_committed_file(&update_dir, "stop.json", &exact_stop);
+    fs::write(&ledger, b"{").expect("simulate a torn ledger copy");
     let error = TrainingDriver::open(
         config(&resumed_root, "b1", Segment::BuilderOnly, 2),
         model_rows(),
@@ -540,7 +648,7 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     .err()
     .expect("recovery restores the stop then refuses");
     assert_eq!(error, TrainingDriverError::StoppedWithoutResolution);
-    assert_eq!(before, directory_bytes(&resumed_root));
+    assert_eq!(fs::read(ledger).unwrap(), exact_stop);
 }
 
 #[test]
@@ -605,7 +713,44 @@ fn first_watchdog_expiry_reruns_the_same_batch_once() {
         direct.run_next_update(&cube, &FixturePilot(Arc::new(NaturalPilot))),
         Ok(RunOutcome::Published { update: 0 })
     );
-    assert_eq!(directory_bytes(&rerun_root), directory_bytes(&direct_root));
+    let update = "updates/update-0000";
+    for name in ["pods.json", "checkpoint.json"] {
+        assert_eq!(
+            fs::read(rerun_root.join(update).join(name)).unwrap(),
+            fs::read(direct_root.join(update).join(name)).unwrap()
+        );
+    }
+    let void = fs::read(rerun_root.join("watchdog/update-0000.json")).unwrap();
+    let copied = fs::read(rerun_root.join(update).join("execution-0.json")).unwrap();
+    assert_eq!(copied, void);
+    let record: serde_json::Value = serde_json::from_slice(&void).unwrap();
+    assert_eq!(record["kind"], "watchdog_void");
+    assert_eq!(record["attempts"][0]["stop_kind"], "terminal:watchdog");
+    let receipt = read_value(&rerun_root.join(update).join("update.json"));
+    assert_eq!(receipt["execution"], 1);
+    assert_eq!(receipt["void_execution_sha256"], sha256_hex(&void));
+    let commit = read_value(&rerun_root.join(update).join("commit.json"));
+    assert_eq!(commit["files"]["execution-0.json"], sha256_hex(&void));
+    assert!(!rerun_root.join(update).join("partial").exists());
+
+    let interrupted = temp.join("interrupted");
+    fs::create_dir_all(interrupted.join("watchdog")).unwrap();
+    fs::create_dir_all(interrupted.join("pending/update-0000")).unwrap();
+    fs::write(interrupted.join("watchdog/update-0000.json"), &void).unwrap();
+    let config = config(&interrupted, "b1", Segment::BuilderOnly, 1);
+    for _ in 0..2 {
+        let error = TrainingDriver::open(config.clone(), model_rows(), 1234)
+            .err()
+            .unwrap();
+        assert_eq!(error, TrainingDriverError::StoppedWithoutResolution);
+    }
+    let stop = read_value(&interrupted.join("stops/stop-0000.json"));
+    assert_eq!(stop["kind"], "process_death");
+    assert_eq!(stop["first_watchdog_game"], 0);
+    assert_eq!(
+        fs::read(interrupted.join("watchdog/update-0000.json")).unwrap(),
+        void
+    );
 }
 
 #[test]
@@ -700,11 +845,11 @@ fn read_only_loader_checks_checkpoint_and_card_pins() {
     );
     let initial =
         ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 1234).unwrap();
-    let mut config = config(&root, "b1", Segment::BuilderOnly, 1);
-    config.pins.card_index = Some(table.index_pin().to_owned());
-    config.pins.cube_table = Some(table_pin);
-    config.metadata.card_database_sha256 = database;
-    let driver = TrainingDriver::open(config, rows.clone(), 1234).unwrap();
+    let mut loaded_config = config(&root, "b1", Segment::BuilderOnly, 1);
+    loaded_config.pins.card_index = Some(table.index_pin().to_owned());
+    loaded_config.pins.cube_table = Some(table_pin);
+    loaded_config.metadata.card_database_sha256 = database;
+    let driver = TrainingDriver::open(loaded_config, rows.clone(), 1234).unwrap();
     let path = root.join("initial/checkpoint.json");
     let before = directory_bytes(&root);
     let (checkpoint, model, loaded_rows) = load_checkpoint_read_only_v1(&path, &table).unwrap();
@@ -720,6 +865,21 @@ fn read_only_loader_checks_checkpoint_and_card_pins() {
     }
     assert_eq!(directory_bytes(&root), before);
 
+    for field in ["card index pin", "cube table pin", "card database pin"] {
+        let mut mismatch = config(&temp.join(field), "b1", Segment::BuilderOnly, 1);
+        mismatch.pins.card_index = Some(table.index_pin().to_owned());
+        mismatch.pins.cube_table = Some(table.file_sha256().to_owned());
+        mismatch.metadata.card_database_sha256 = format!("{KERNEL_CARDDB_HASH:016x}");
+        match field {
+            "card index pin" => mismatch.pins.card_index = Some("00".repeat(32)),
+            "cube table pin" => mismatch.pins.cube_table = Some("00".repeat(32)),
+            _ => mismatch.metadata.card_database_sha256 = "0".repeat(16),
+        }
+        let checkpoint_path = mismatch.root.join("initial/checkpoint.json");
+        TrainingDriver::open(mismatch, rows.clone(), 1234).unwrap();
+        let error = load_checkpoint_read_only_v1(&checkpoint_path, &table).unwrap_err();
+        assert!(error.to_string().contains(field), "{field}: {error}");
+    }
     let original: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let zero = serde_json::json!("00".repeat(32));
     for (pointer, replacement, error) in [
@@ -730,18 +890,18 @@ fn read_only_loader_checks_checkpoint_and_card_pins() {
             serde_json::json!(123),
             "schema or state",
         ),
-        ("/parameter_layout_sha256", zero.clone(), "parameter layout"),
-        ("/card_index_sha256", zero.clone(), "card index pin"),
-        ("/cube_table_sha256", zero, "cube table pin"),
+        ("/parameter_layout_sha256", zero.clone(), "schema or state"),
+        ("/card_index_sha256", zero.clone(), "schema or state"),
+        ("/cube_table_sha256", zero, "schema or state"),
         (
             "/card_database_sha256",
             serde_json::json!("0000000000000000"),
-            "card database pin",
+            "schema or state",
         ),
         (
             "/card_index_sha256",
             serde_json::Value::Null,
-            "card index pin",
+            "schema or state",
         ),
     ] {
         let mut tampered = original.clone();
@@ -847,4 +1007,375 @@ fn only_a_matching_pinned_census_summary_enables_full_mode() {
         .err()
         .unwrap();
     assert!(error.to_string().contains("summary digest"));
+}
+
+fn read_value(path: &Path) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn pick_phase_requires_a_boundary_and_recovers_interrupted_start() {
+    let temp = TempTestDir::new("boundary-recovery");
+    let root = temp.join("k1");
+    let picks = config(&root, "k1", Segment::PickPhase, 1);
+    let before = TrainingDriver::open(picks.clone(), model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(before
+        .to_string()
+        .contains("requires a staged builder boundary"));
+    assert!(!root.join("run.json").exists());
+
+    let mut builder = TrainingDriver::open(
+        config(&temp.join("b1"), "b1", Segment::BuilderOnly, 1),
+        model_rows(),
+        1234,
+    )
+    .unwrap();
+    let pilot = FixturePilot(Arc::new(NaturalPilot));
+    assert_eq!(
+        builder.run_next_update(&pool(), &pilot),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    let expected_builder = builder.checkpoint().unwrap();
+    let ready = TrainingDriver::start_pick_phase(&builder, picks.clone()).unwrap();
+    let expected = directory_bytes(&root);
+    let first = ready.checkpoint().unwrap();
+    let source = first.boundary.unwrap();
+    assert_eq!(source.builder_run, "b1");
+    assert_eq!(
+        source.builder_final_state_sha256,
+        expected_builder.state_sha256
+    );
+    drop(ready);
+
+    // The journal was published, but neither destination had been installed.
+    fs::remove_file(root.join("initial/checkpoint.json")).unwrap();
+    fs::remove_file(root.join("run.json")).unwrap();
+    let restored = TrainingDriver::open(picks, model_rows(), 9999).unwrap();
+    assert_eq!(
+        restored.checkpoint().unwrap().state_sha256,
+        first.state_sha256
+    );
+    assert_eq!(directory_bytes(&root), expected);
+}
+
+#[test]
+fn checkpoint_hash_covers_heads_lineage_league_and_pin_reasons() {
+    let temp = TempTestDir::new("header-tamper");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 1);
+    TrainingDriver::open_with_lineage(
+        config.clone(),
+        model_rows(),
+        1234,
+        vec![LineageSegment {
+            segment: Segment::BuilderOnly,
+            run: "parent".into(),
+            pilots: vec![mtg_kernel::cube_pod_runner_v1::PilotKind::Checkpoint],
+        }],
+    )
+    .unwrap();
+    let path = root.join("initial/checkpoint.json");
+    let original = read_value(&path);
+    for (field, replacement) in [
+        ("/head_updates/pick", serde_json::json!(42)),
+        ("/lineage", serde_json::json!([])),
+        ("/league", serde_json::json!([])),
+        ("/pin_reasons", serde_json::json!([])),
+    ] {
+        let mut modified = original.clone();
+        *modified.pointer_mut(field).unwrap() = replacement;
+        fs::write(&path, serde_json::to_vec(&modified).unwrap()).unwrap();
+        let error = TrainingDriver::open(config.clone(), model_rows(), 1234)
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("schema or state digest"),
+            "{field}: {error}"
+        );
+        let error = prune_checkpoint(&path).unwrap_err();
+        assert!(
+            error.to_string().contains("schema or state digest"),
+            "{field}: {error}"
+        );
+    }
+}
+
+#[test]
+fn stack_cap_and_liveness_are_in_the_run_record_and_stack_cap_reaches_pods() {
+    use mtg_kernel::cube_b_census_v1::A2_CAPS;
+    let temp = TempTestDir::new("stack-cap");
+    let root = temp.join("b1");
+    let mut driver = TrainingDriver::open(
+        config(&root, "b1", Segment::BuilderOnly, 1),
+        model_rows(),
+        1234,
+    )
+    .unwrap();
+    let run = read_value(&root.join("run.json"));
+    assert_eq!(
+        run["caps"]["max_stack_objects"],
+        serde_json::json!(A2_CAPS.max_stack_objects)
+    );
+    assert_eq!(
+        run["liveness"],
+        mtg_kernel::cube_pod_runner_v1::WATCHDOG_LIVENESS
+    );
+    let expected = A2_CAPS.max_stack_objects;
+    struct CapPilot(Option<u32>);
+    impl GamePilot for CapPilot {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            assert_eq!(caps.max_stack_objects, self.0);
+            AlwaysHaltPilot.play(spec, caps)
+        }
+    }
+    let result = driver
+        .run_next_update(&pool(), &FixturePilot(Arc::new(CapPilot(expected))))
+        .unwrap();
+    assert_eq!(
+        result,
+        RunOutcome::Stopped {
+            update: 0,
+            kind: "retry_exhausted".into()
+        }
+    );
+    let stop = read_value(&root.join("stops/stop-0000.json"));
+    assert_eq!(
+        stop["batch"][0]["caps"]["max_stack_objects"],
+        serde_json::json!(expected)
+    );
+}
+
+#[test]
+fn checkpoint_sixteen_is_pinned_at_creation_and_recovered_after_copy_loss() {
+    let temp = TempTestDir::new("league-sixteen");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 17);
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    let pilot = FixturePilot(Arc::new(NaturalPilot));
+    let cube = pool();
+    let initial_snapshot = root.join(&driver.league()[0].path);
+    let moved = initial_snapshot.with_extension("test-cache");
+    for update in 0..16 {
+        // After the first validated load, a second update must use the cached model.
+        if update == 1 {
+            fs::rename(&initial_snapshot, &moved).unwrap();
+        }
+        let result = driver.run_next_update(&cube, &pilot);
+        if update == 1 {
+            fs::rename(&moved, &initial_snapshot).unwrap();
+        }
+        assert_eq!(result, Ok(RunOutcome::Published { update }));
+    }
+    assert_eq!(
+        driver
+            .league()
+            .iter()
+            .map(|entry| entry.update)
+            .collect::<Vec<_>>(),
+        [0, 16]
+    );
+    let snapshot_pin = driver.league()[1].pin.clone();
+    let snapshot = root.join(&driver.league()[1].path);
+    let snapshot_bytes = fs::read(&snapshot).unwrap();
+    let staged = root.join("updates/update-0015/league.json");
+    assert_eq!(fs::read(staged).unwrap(), snapshot_bytes);
+    assert_eq!(
+        read_value(&snapshot)["pin_reasons"],
+        serde_json::json!(["league"])
+    );
+    assert_eq!(
+        prune_checkpoint(&snapshot),
+        Err(TrainingDriverError::PinnedCheckpoint)
+    );
+    let commit = read_value(&root.join("updates/update-0015/commit.json"));
+    assert_eq!(commit["files"]["league.json"], sha256_hex(&snapshot_bytes));
+
+    // Restore the content-addressed copy and resume after pruning a historical checkpoint.
+    drop(driver);
+    fs::remove_file(&snapshot).unwrap();
+    let old = root.join("updates/update-0000/checkpoint.json");
+    prune_checkpoint(&old).unwrap();
+    assert!(!old.exists());
+    assert!(old.with_file_name("checkpoint.pruned").exists());
+
+    let mut reopened = TrainingDriver::open(config, model_rows(), 1234).unwrap();
+    assert_eq!(fs::read(&snapshot).unwrap(), snapshot_bytes);
+    assert_eq!(reopened.next_update(), 16);
+    assert_eq!(
+        reopened.run_next_update(&cube, &pilot),
+        Ok(RunOutcome::Published { update: 16 })
+    );
+    let update = root.join("updates/update-0016");
+    let receipt = read_value(&update.join("update.json"));
+    assert!(receipt["league_entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|pin| pin == &snapshot_pin));
+    let pods: Vec<serde_json::Value> = serde_json::from_reader(flate2::read::GzDecoder::new(
+        fs::File::open(update.join("pods.json")).unwrap(),
+    ))
+    .unwrap();
+    assert!(pods
+        .iter()
+        .flat_map(|pod| pod["decks"].as_array().unwrap())
+        .any(|deck| deck["builder"]["pin"] == snapshot_pin));
+}
+
+#[test]
+fn optimizer_failure_keeps_its_true_stop_kind() {
+    use mtg_kernel::cube_training_driver_v1::Checkpoint;
+    let temp = TempTestDir::new("failed-update");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 1);
+    TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    let path = root.join("initial/checkpoint.json");
+    let mut checkpoint: Checkpoint = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    checkpoint.model.build.adam_step = u64::MAX;
+    checkpoint.state_sha256.clear();
+    let mut canonical = b"mtg-kernel-cube-checkpoint-state/v1\0".to_vec();
+    serde_json::to_writer(&mut canonical, &checkpoint).unwrap();
+    checkpoint.state_sha256 = sha256_hex(&canonical);
+    fs::write(&path, serde_json::to_vec(&checkpoint).unwrap()).unwrap();
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    assert!(matches!(
+        driver.run_next_update(&pool(), &FixturePilot(Arc::new(NaturalPilot))),
+        Err(TrainingDriverError::Update(_))
+    ));
+    let stop_path = root.join("stops/stop-0000.json");
+    let stop = read_value(&stop_path);
+    assert_eq!(stop["kind"], "update_failed");
+    assert!(stop["error"]
+        .as_str()
+        .unwrap()
+        .contains("Adam counter overflow"));
+    assert!(!root.join("pending/update-0000").exists());
+    assert_eq!(
+        TrainingDriver::open(config, model_rows(), 1234)
+            .err()
+            .unwrap(),
+        TrainingDriverError::StoppedWithoutResolution
+    );
+    assert_eq!(read_value(&stop_path), stop);
+}
+
+#[test]
+fn shakedown_label_and_switch_are_validated() {
+    let temp = TempTestDir::new("plan-label");
+    let mut invalid_label = config(&temp.join("label"), "b1", Segment::BuilderOnly, 1);
+    invalid_label.label = "shakedown".into();
+    let error = TrainingDriver::open(invalid_label, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("shakedown label and namespace"));
+    let mut invalid_switch = config(&temp.join("switch"), "b1", Segment::BuilderOnly, 2);
+    invalid_switch.pilot.switch = Some(PilotSwitch {
+        update: 1,
+        gate: Some(pilot_pin()),
+    });
+    let error = TrainingDriver::open(invalid_switch, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("nonboundary pilot switch"));
+}
+
+#[test]
+fn retry_exhaustion_after_a_watchdog_keeps_the_first_expiry() {
+    struct WatchdogThenCap(AtomicBool);
+    impl GamePilot for WatchdogThenCap {
+        fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+            let mut outcome = AlwaysHaltPilot.play(spec, caps);
+            if !self.0.swap(true, Ordering::SeqCst) {
+                outcome.end = watchdog_game_end();
+            }
+            outcome
+        }
+    }
+    let temp = TempTestDir::new("watchdog-then-cap");
+    let root = temp.join("b1");
+    let mut driver = TrainingDriver::open(
+        config(&root, "b1", Segment::BuilderOnly, 1),
+        model_rows(),
+        1234,
+    )
+    .unwrap();
+    let pilot = FixturePilot(Arc::new(WatchdogThenCap(AtomicBool::new(false))));
+    assert_eq!(
+        driver.run_next_update(&pool(), &pilot),
+        Ok(RunOutcome::Stopped {
+            update: 0,
+            kind: "retry_exhausted".into(),
+        })
+    );
+    let stop = read_value(&root.join("stops/stop-0000.json"));
+    assert_eq!(stop["first_watchdog_pod"], 0);
+    assert_eq!(stop["first_watchdog_game"], 0);
+    let original = read_value(&root.join("watchdog/update-0000.json"));
+    assert_eq!(original["attempts"][0]["stop_kind"], "terminal:watchdog");
+    assert!(!root.join("updates/update-0000").exists());
+}
+
+fn rewrite_committed_file(update: &Path, name: &str, bytes: &[u8]) {
+    let commit_path = update.join("commit.json");
+    let mut commit = read_value(&commit_path);
+    commit["files"][name] = serde_json::json!(sha256_hex(bytes));
+    fs::write(update.join(name), bytes).unwrap();
+    fs::write(commit_path, serde_json::to_vec(&commit).unwrap()).unwrap();
+}
+
+#[test]
+fn resume_checks_receipt_binding_and_rejects_missing_game_fields() {
+    use std::io::Write;
+    let temp = TempTestDir::new("invalid-published");
+    let root = temp.join("b1");
+    let config = config(&root, "b1", Segment::BuilderOnly, 2);
+    let mut driver = TrainingDriver::open(config.clone(), model_rows(), 1234).unwrap();
+    let pilot = FixturePilot(Arc::new(NaturalPilot));
+    assert_eq!(
+        driver.run_next_update(&pool(), &pilot),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    let update = root.join("updates/update-0000");
+    let original_receipt = fs::read(update.join("update.json")).unwrap();
+    let mut receipt = read_value(&update.join("update.json"));
+    receipt["after_state_sha256"] = serde_json::json!("00".repeat(32));
+    rewrite_committed_file(
+        &update,
+        "update.json",
+        &serde_json::to_vec(&receipt).unwrap(),
+    );
+    let error = TrainingDriver::open(config.clone(), model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error
+        .to_string()
+        .contains("differs from its published update receipt"));
+    rewrite_committed_file(&update, "update.json", &original_receipt);
+
+    let mut pods: Vec<serde_json::Value> = serde_json::from_reader(flate2::read::GzDecoder::new(
+        fs::File::open(update.join("pods.json")).unwrap(),
+    ))
+    .unwrap();
+    pods[0].as_object_mut().unwrap().remove("games");
+    let mut bytes = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    bytes
+        .write_all(&serde_json::to_vec(&pods).unwrap())
+        .unwrap();
+    rewrite_committed_file(&update, "pods.json", &bytes.finish().unwrap());
+    let error = TrainingDriver::open(config, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("missing field") && error.to_string().contains("games"));
+}
+
+#[test]
+fn signed_shakedown_checkpoint_marks_match_a6_and_d0() {
+    let b1 = RunConfig::shakedown(PathBuf::new(), "b1", Segment::BuilderOnly);
+    let k1 = RunConfig::shakedown(PathBuf::new(), "k1", Segment::PickPhase);
+    assert_eq!(b1.marks.dose_reads, [32, 64, 96, 128]);
+    assert_eq!(b1.marks.owner_views, b1.marks.dose_reads);
+    assert!(k1.marks.dose_reads.is_empty());
+    assert_eq!(k1.marks.owner_views, [64, 128]);
 }

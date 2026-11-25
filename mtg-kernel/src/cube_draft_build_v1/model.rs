@@ -1051,7 +1051,7 @@ impl ModelV1 {
         rows: &'m ModelCardRowsV1,
         hidden: &'m CardHiddenTableV1,
     ) -> PickForwardV1<'m> {
-        debug_assert_eq!(hidden.trunk(), TrunkV1::Pick);
+        assert_eq!(hidden.trunk(), TrunkV1::Pick);
         PickForwardV1 {
             model: self,
             rows,
@@ -1080,7 +1080,7 @@ impl ModelV1 {
         rows: &'m ModelCardRowsV1,
         hidden: &'m CardHiddenTableV1,
     ) -> BuildForwardV1<'m> {
-        debug_assert_eq!(hidden.trunk(), TrunkV1::Build);
+        assert_eq!(hidden.trunk(), TrunkV1::Build);
         BuildForwardV1 {
             model: self,
             rows,
