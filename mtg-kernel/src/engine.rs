@@ -929,29 +929,41 @@ pub enum UnsupportedMechanic {
     /// change was copied (`text_color_change_v1`).
     /// Appended to preserve prior unsupported-state discriminants.
     TextColorChangeOutsideAuditV1,
-    /// Not an unsupported mechanic but a run-length bound: a decision would
-    /// be exposed with more than [`STACK_SIZE_CAP_V1`] items on the stack (an
-    /// optional loop played without end, such as Zirda, the Dawnwaker with
-    /// Basalt Monolith stacking untap activations under random play). The
-    /// source is the source of the first item beyond the cap.
+    /// Not an unsupported mechanic but a session run-length bound: a decision
+    /// would be exposed with more than the session's `max_stack_objects` items
+    /// on the stack (an optional loop played without end, such as Zirda, the
+    /// Dawnwaker with Basalt Monolith stacking untap activations under random
+    /// play). The source is the source of the first item beyond the cap.
     /// Appended to preserve prior unsupported-state discriminants.
     StackSizeCapExceeded,
 }
 
-/// The most items the stack may hold when a decision is exposed. A decision
-/// with more halts the game with [`UnsupportedMechanic::StackSizeCapExceeded`]
-/// ([`advance_until_decision`]). A constant, so the bound is the same on every
-/// host and in every consumer of the engine.
-pub const STACK_SIZE_CAP_V1: usize = 512;
-
-/// Halts the game when the stack holds more than [`STACK_SIZE_CAP_V1`] items:
-/// records the halt in `state.engine.halted`, as every engine halt does, with
-/// the source of the first item beyond the cap, and returns the halt decision.
-fn stack_size_cap_halt(state: &mut GameState) -> Option<Decision> {
-    let source = state.stack.get(STACK_SIZE_CAP_V1)?.source;
+/// Applies a session's optional `max_stack_objects` cap to a decision leaving
+/// the engine: when `max_stack_objects` is `Some(cap)` and `state.stack` holds
+/// more than `cap` items, records the halt in `state.engine.halted` with the
+/// source of the first item beyond the cap and returns `Decision::Halted`.
+/// Absent (`None`) never halts; a finished game or an earlier halt stands.
+pub(crate) fn apply_stack_size_cap(
+    state: &mut GameState,
+    decision: Decision,
+    max_stack_objects: Option<u32>,
+) -> Decision {
+    if matches!(
+        decision,
+        Decision::GameOver { .. } | Decision::Halted { .. }
+    ) {
+        return decision;
+    }
+    let Some(cap) = max_stack_objects else {
+        return decision;
+    };
+    let Some(item) = state.stack.get(cap as usize) else {
+        return decision;
+    };
+    let source = item.source;
     let mechanic = UnsupportedMechanic::StackSizeCapExceeded;
     state.engine.halted = Some((mechanic, source));
-    Some(Decision::Halted { mechanic, source })
+    Decision::Halted { mechanic, source }
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
@@ -15133,18 +15145,10 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     // Automatic work (state-based deaths, upkeep, draws) can change a top
     // without passing an event site: no decision or terminal leaves the engine
     // while an unsupported donor is in place.
-    if let Some((mechanic, source)) = donor_refusal_at(state, DonorCheckSiteV1::AdvanceDecision) {
-        return Decision::Halted { mechanic, source };
+    match donor_refusal_at(state, DonorCheckSiteV1::AdvanceDecision) {
+        Some((mechanic, source)) => Decision::Halted { mechanic, source },
+        None => decision,
     }
-    // A finished game or an earlier halt stands; otherwise no decision leaves
-    // the engine with the stack over its cap.
-    if matches!(
-        decision,
-        Decision::GameOver { .. } | Decision::Halted { .. }
-    ) {
-        return decision;
-    }
-    stack_size_cap_halt(state).unwrap_or(decision)
 }
 
 fn advance_until_decision_unaudited(state: &mut GameState) -> Decision {

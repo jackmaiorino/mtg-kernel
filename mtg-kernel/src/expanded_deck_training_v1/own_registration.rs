@@ -406,6 +406,7 @@ mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,

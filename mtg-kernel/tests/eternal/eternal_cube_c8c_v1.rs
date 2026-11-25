@@ -1999,38 +1999,25 @@ fn zirda_companion_public_session_both_seats() {
     );
 }
 
-/// The census loop that never ends under random play (cube fence, census
-/// byte-check-1 index 160, fence-trial-1 index 19,789, census-b index
-/// 58,872): with Zirda, the Dawnwaker, Basalt Monolith's untap ability costs
-/// {1}, and stacking untap activations grows the stack without bound. The
-/// engine exposes every decision up to the stack-size cap, then halts the
-/// game with `StackSizeCapExceeded` naming the item beyond the cap.
+/// Without a session stack-size cap, the engine itself imposes no stack cap:
+/// with Zirda, the Dawnwaker and Basalt Monolith, stacking untap activations
+/// grows the stack well past 600 items without halting.
 #[test]
-fn zirda_monolith_untap_activations_halt_at_the_stack_size_cap() {
-    let cap = engine::STACK_SIZE_CAP_V1;
+fn zirda_monolith_untap_activations_do_not_halt_without_a_session_stack_cap() {
+    let items = 640usize;
     let mut state = plains();
     put(&mut state, P0, "Zirda, the Dawnwaker", Zone::Battlefield);
     let monolith = put(&mut state, P0, "Basalt Monolith", Zone::Battlefield);
-    for _ in 0..cap {
+    for _ in 0..items {
         pool(&mut state, P0, &[], 1);
         activate(&mut state, monolith, 0, &[]);
     }
-    // A decision with exactly `cap` items is still exposed.
     pool(&mut state, P0, &[], 1);
     assert!(activatable(&mut state, monolith, 0));
-    assert_eq!(state.stack.len(), cap);
-    act(&mut state, Action::ActivateAbility(monolith, 0));
-    let halt = Decision::Halted {
-        mechanic: engine::UnsupportedMechanic::StackSizeCapExceeded,
-        source: monolith,
-    };
-    assert_eq!(engine::advance_until_decision(&mut state), halt);
-    assert_eq!(state.stack.len(), cap + 1);
-    assert_eq!(
-        state.engine.halted,
-        Some((engine::UnsupportedMechanic::StackSizeCapExceeded, monolith))
-    );
-    // The halt is terminal: advancing again does no work and halts again.
-    assert_eq!(state.stack.len(), cap + 1);
-    assert_eq!(engine::advance_until_decision(&mut state), halt);
+    assert_eq!(state.stack.len(), items);
+    assert_eq!(state.engine.halted, None);
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
 }

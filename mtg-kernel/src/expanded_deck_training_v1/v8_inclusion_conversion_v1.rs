@@ -285,6 +285,7 @@ fn preservation_check_v1(
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: game.london.then_some(PauperOpeningV1::LondonV1),

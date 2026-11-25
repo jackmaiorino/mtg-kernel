@@ -1693,6 +1693,10 @@ pub struct ExpandedEpisodeV1 {
     pub postboard: bool,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
+    /// Optional cap on the number of items on the stack when a decision is
+    /// exposed. None keeps every prior serialized byte and imposes no cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_stack_objects: Option<u32>,
     /// Some fixes a game-level runtime rules profile, applied when the game
     /// is built and before any decision. None keeps every prior serialized
     /// byte and the default rules.
@@ -3735,6 +3739,7 @@ fn episode_session_v1(
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
     }
+    session.set_max_stack_objects(episode.max_stack_objects);
     Ok(session)
 }
 
@@ -9557,6 +9562,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -10096,6 +10102,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100,
             max_policy_steps: 1000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -10208,6 +10215,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -10350,6 +10358,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -10493,6 +10502,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -10634,6 +10644,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -10758,6 +10769,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -10895,6 +10907,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -11044,6 +11057,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -11183,6 +11197,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -11339,6 +11354,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -11497,6 +11513,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 200_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -11541,6 +11558,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -12665,6 +12683,7 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
@@ -12727,6 +12746,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -12772,6 +12792,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -12898,6 +12919,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -12958,6 +12980,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -13004,6 +13027,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -13065,6 +13089,7 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: None,
@@ -13141,6 +13166,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -13179,6 +13205,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -13235,6 +13262,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -13274,6 +13302,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -13422,6 +13451,7 @@ pub(crate) mod tests {
                 postboard: false,
                 max_physical_decisions: 100_000,
                 max_policy_steps: 1_000_000,
+                max_stack_objects: None,
                 runtime_rules: None,
                 reset: None,
                 opening: opening.then_some(PauperOpeningV1::LondonV1),
@@ -13806,6 +13836,7 @@ pub(crate) mod tests {
                     postboard: false,
                     max_physical_decisions: 100_000,
                     max_policy_steps: 1_000_000,
+                    max_stack_objects: None,
                     runtime_rules: None,
                     reset: None,
                     opening: None,
@@ -14237,6 +14268,7 @@ pub(crate) mod tests {
                     postboard: false,
                     max_physical_decisions: 100_000,
                     max_policy_steps: 1_000_000,
+                    max_stack_objects: None,
                     runtime_rules: None,
                     reset: None,
                     opening: None,
@@ -14388,6 +14420,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -14514,6 +14547,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -14983,6 +15017,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100_000,
             max_policy_steps: 1_000_000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -15462,6 +15497,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100000,
             max_policy_steps: 1000000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -15613,6 +15649,7 @@ pub(crate) mod tests {
             postboard: false,
             max_physical_decisions: 100000,
             max_policy_steps: 1000000,
+            max_stack_objects: None,
             runtime_rules: None,
             reset: None,
             opening: None,
@@ -15803,6 +15840,52 @@ pub(crate) mod tests {
             restore_checkpoint_fields_v1(&tampered_borrowed, &mut rejected_policy, imported_model)
                 .expect_err("tampered state_sha256 must be refused");
         assert_eq!(err, "checkpoint state hash differs");
+    }
+
+    #[test]
+    fn expanded_episode_max_stack_objects_absent_json_and_round_trip() {
+        let plain = test_episode(0, None);
+        assert_eq!(plain.max_stack_objects, None);
+
+        // Absent field omits the key completely so serialized bytes match prior JSON.
+        let plain_value = serde_json::to_value(&plain).unwrap();
+        assert!(plain_value.get("max_stack_objects").is_none());
+        let plain_bytes = serde_json::to_vec(&plain).unwrap();
+        assert!(!String::from_utf8(plain_bytes.clone())
+            .unwrap()
+            .contains("max_stack_objects"));
+        let reparsed_plain: ExpandedEpisodeV1 = serde_json::from_slice(&plain_bytes).unwrap();
+        assert_eq!(reparsed_plain, plain);
+        assert_eq!(reparsed_plain.max_stack_objects, None);
+        assert_eq!(serde_json::to_vec(&reparsed_plain).unwrap(), plain_bytes);
+
+        // Present field serializes as an integer, round-trips, and stripping it
+        // recovers the exact plain episode bytes.
+        let mut capped = plain.clone();
+        capped.max_stack_objects = Some(16);
+        let capped_value = serde_json::to_value(&capped).unwrap();
+        assert_eq!(capped_value["max_stack_objects"], json!(16));
+        let capped_bytes = serde_json::to_vec(&capped).unwrap();
+        let reparsed_capped: ExpandedEpisodeV1 = serde_json::from_slice(&capped_bytes).unwrap();
+        assert_eq!(reparsed_capped, capped);
+        assert_eq!(reparsed_capped.max_stack_objects, Some(16));
+
+        let mut stripped = capped_value;
+        stripped
+            .as_object_mut()
+            .unwrap()
+            .remove("max_stack_objects")
+            .unwrap();
+        let stripped_episode: ExpandedEpisodeV1 = serde_json::from_value(stripped).unwrap();
+        assert_eq!(stripped_episode, plain);
+        assert_eq!(serde_json::to_vec(&stripped_episode).unwrap(), plain_bytes);
+
+        // Session builder forwards the cap cleanly (None -> uncapped, Some -> capped).
+        let configs = plain.configurations().unwrap();
+        let plain_session = episode_session_v1(&plain, &configs).unwrap();
+        assert_eq!(plain_session.max_stack_objects(), None);
+        let capped_session = episode_session_v1(&capped, &configs).unwrap();
+        assert_eq!(capped_session.max_stack_objects(), Some(16));
     }
 
     mod field_coverage_probe_v1;

@@ -156,6 +156,7 @@ pub fn run(command: Command) -> Result<Value, String> {
             1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,
             episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),
             PlayerId(episode.starting_player),episode.priority_windows_v1()?).map_err(err)?;
+        session.set_max_stack_objects(episode.max_stack_objects);
         policy.reset_sampling_v1(paired_policy_seeds_v1(episode.seed));
         for row in &t.decisions {
             let FastActorResponseV1::Decision(d) = session.current_response() else {

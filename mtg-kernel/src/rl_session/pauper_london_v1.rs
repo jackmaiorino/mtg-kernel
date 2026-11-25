@@ -223,6 +223,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface,
             environment_revision: 0,

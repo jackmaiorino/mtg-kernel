@@ -1125,7 +1125,15 @@ impl HarnessSurfaceV2 {
     /// be exactly the kind of easy-to-miss-one-spot instrumentation this
     /// investigation doesn't want.
     pub fn next_decision(&mut self, state: &mut GameState) -> SurfaceDecision {
-        let sd = self.next_decision_inner(state);
+        self.next_decision_with_stack_cap(state, None)
+    }
+
+    pub(crate) fn next_decision_with_stack_cap(
+        &mut self,
+        state: &mut GameState,
+        max_stack_objects: Option<u32>,
+    ) -> SurfaceDecision {
+        let sd = self.next_decision_inner(state, max_stack_objects);
         if self.debug_surface_walk {
             eprintln!(
                 "SURFACE_WALK SURFACED {sd:?} {}",
@@ -1135,7 +1143,11 @@ impl HarnessSurfaceV2 {
         sd
     }
 
-    fn next_decision_inner(&mut self, state: &mut GameState) -> SurfaceDecision {
+    fn next_decision_inner(
+        &mut self,
+        state: &mut GameState,
+        max_stack_objects: Option<u32>,
+    ) -> SurfaceDecision {
         self.engine_window = None;
         'decisions: loop {
             if let Some(sd) = self.next_blockers_subdecision(state) {
@@ -1150,6 +1162,7 @@ impl HarnessSurfaceV2 {
 
             let before = self.suppression_state_hash(state);
             let decision = engine::advance_until_decision(state);
+            let decision = engine::apply_stack_size_cap(state, decision, max_stack_objects);
             if self.debug_surface_walk {
                 eprintln!(
                     "SURFACE_WALK RAW_DECISION {} {}",
