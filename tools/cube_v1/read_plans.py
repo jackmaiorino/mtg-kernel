@@ -811,6 +811,11 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
         raise PlanError(f"family {family} deals no deck")
 
     card_index_doc = cube_table_doc = None
+    if layout in ("c", "d13") and namespace != TEST:
+        if card_index is None or cube_table is None:
+            raise PlanError(
+                f"live common-opponent family {family} in {namespace} requires pinned card_index and cube_table"
+            )
     if card_index is not None:
         card_index_doc, card_index_sha = card_index
         if card_index_sha != pins["card_index"]:
@@ -1077,6 +1082,10 @@ def assemble_panel(family: str, namespace: str, prep_manifest: dict[str, Any], p
         raise PlanError("panels exist for dose and d13")
     run = check_run(namespace, prep_manifest["run"])
     pins = _check_pins(pins)
+    if namespace != TEST and (card_index is None or cube_table is None):
+        raise PlanError(
+            f"live panel assembly for {family} in {namespace} requires pinned card_index and cube_table"
+        )
     card_index_doc = cube_table_doc = None
     if card_index is not None:
         card_index_doc, card_index_sha = card_index
@@ -1241,6 +1250,8 @@ def main(argv: list[str] | None = None) -> int:
     plan_p.add_argument("--prep", type=Path, help="the prep result (families with prep)")
     plan_p.add_argument("--pool", type=Path)
     plan_p.add_argument("--constants", type=Path)
+    plan_p.add_argument("--card-index", type=Path)
+    plan_p.add_argument("--cube-table", type=Path)
     plan_p.add_argument("--out", type=Path)
     req_p = sub.add_parser("prep-request", help="one prep request, from a JSON spec")
     req_p.add_argument("--spec", required=True, type=Path,
@@ -1258,11 +1269,13 @@ def main(argv: list[str] | None = None) -> int:
         prep = load_json(args.prep) if args.prep else None
         pool = load_json(args.pool) if args.pool else (None, None)
         constants = load_json(args.constants) if args.constants else (None, None)
+        card_index = load_json(args.card_index) if args.card_index else None
+        cube_table = load_json(args.cube_table) if args.cube_table else None
         doc = build_plan(spec["family"], spec["namespace"], spec["unit"], pins=spec["pins"], pilot=spec["pilot"],
                          picker=spec.get("picker"), builders=spec.get("builders"), mirror=spec.get("mirror"),
                          rotation=spec.get("rotation"), mark=spec.get("mark"), prep=prep, pool_doc=pool[0],
                          constants_doc=constants[0], pool_sha256=pool[1], constants_sha256=constants[1],
-                         run=spec.get("run", RUN))
+                         card_index=card_index, cube_table=cube_table, run=spec.get("run", RUN))
     elif args.command == "prep-request":
         doc = build_prep_request(spec["prep_family"], spec["namespace"], spec["unit"], spec["pins"],
                                  spec.get("picker"), spec.get("builders", {}), run=spec.get("run", RUN))

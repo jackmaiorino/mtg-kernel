@@ -65,6 +65,21 @@ CONST = (dict(CONSTANTS), hashlib.sha256(read_plans.serialize(CONSTANTS).encode(
 DEALER = {"pool_doc": POOL[0], "constants_doc": CONST[0], "pool_sha256": POOL[1], "constants_sha256": CONST[1]}
 
 
+def _index_and_table(pool: dict[str, Any]) -> tuple[tuple[dict[str, Any], str], tuple[dict[str, Any], str]]:
+    all_ids = sorted({c["card_id"] for k in ("spells", "nonbasic_lands", "basics") for c in pool[k]})
+    idx_doc = {"cards": [{"card_id": cid} for cid in all_ids]}
+    tbl_doc = {"cards": [{"card_id": cid, "name": f"c{cid}", "vector": [0]} for cid in all_ids]}
+    return (
+        (idx_doc, hashlib.sha256(read_plans.serialize(idx_doc).encode()).hexdigest()),
+        (tbl_doc, hashlib.sha256(read_plans.serialize(tbl_doc).encode()).hexdigest()),
+    )
+
+
+LIVE_CARD_INDEX, LIVE_CUBE_TABLE = _index_and_table(POOL[0])
+LIVE_PINS = {**PINS, "card_index": LIVE_CARD_INDEX[1], "cube_table": LIVE_CUBE_TABLE[1]}
+LIVE_INDEX_ARGS = {"card_index": LIVE_CARD_INDEX, "cube_table": LIVE_CUBE_TABLE}
+
+
 def draft_pools(draft_seed: int) -> list[list[int]]:
     ids = [c["card_id"] for c in POOL[0]["spells"]] + [c["card_id"] for c in POOL[0]["nonbasic_lands"]]
     picked = random.Random(draft_seed).sample(ids, 8 * 45)
@@ -151,15 +166,24 @@ def assert_test_temp_root(root: Path) -> Path:
 
 def plan(family: str, unit: int, *, mirror: int | None = None, rotation: int | None = None,
          mark: dict[str, Any] | None = None, prep: tuple[dict[str, Any], str] | None = None,
-         namespace: str = NS, run: str = read_plans.RUN) -> dict[str, Any]:
+         namespace: str = NS, run: str = read_plans.RUN, pins: dict[str, Any] | None = None,
+         card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None) -> dict[str, Any]:
     rows = read_plans._rows(family)
     builders = {r: dict(UNIFORM) for r in rows if r != "stated"}
+    layout = read_plans.FAMILIES[family]["layout"]
     kwargs: dict[str, Any] = {}
-    if read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13"):
+    if layout in ("b", "c", "d13"):
         kwargs = dict(DEALER)
-    return read_plans.build_plan(family, namespace, unit, pins=PINS, pilot=PILOT,
+    use_pins = (LIVE_PINS if namespace != NS else PINS) if pins is None else pins
+    if layout in ("c", "d13") and namespace != NS:
+        if card_index is None:
+            card_index = LIVE_CARD_INDEX
+        if cube_table is None:
+            cube_table = LIVE_CUBE_TABLE
+    return read_plans.build_plan(family, namespace, unit, pins=use_pins, pilot=PILOT,
                                  picker=None if family == "dose" else dict(UNIFORM), builders=builders,
-                                 mirror=mirror, rotation=rotation, mark=mark, prep=prep, run=run, **kwargs)
+                                 mirror=mirror, rotation=rotation, mark=mark, prep=prep, run=run,
+                                 card_index=card_index, cube_table=cube_table, **kwargs)
 
 
 def prep_request(prep_family: str, unit: int, *, pins: dict[str, Any] | None = None,
@@ -168,7 +192,8 @@ def prep_request(prep_family: str, unit: int, *, pins: dict[str, Any] | None = N
     rows = read_plans.PREP_ROWS[prep_family]
     use_picker = (None if prep_family in ("dose", "dose_panel") else dict(UNIFORM)) if picker is ... else picker
     use_builders = {r: dict(UNIFORM) for r in rows if r != "stated"} if builders is None else builders
-    return read_plans.build_prep_request(prep_family, namespace, unit, PINS if pins is None else pins,
+    use_pins = (LIVE_PINS if namespace != NS else PINS) if pins is None else pins
+    return read_plans.build_prep_request(prep_family, namespace, unit, use_pins,
                                          use_picker, use_builders, run=run)
 
 

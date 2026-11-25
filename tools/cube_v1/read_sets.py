@@ -853,6 +853,8 @@ def verify_panel(root: Path, namespace: str, pinned: str, *, pool_doc: Any, cons
         read_plans.check_run(namespace, run)
     except read_plans.PlanError as exc:
         raise SetError(str(exc)) from exc
+    if namespace != read_plans.TEST and (card_index is None or cube_table is None):
+        raise SetError(f"live panel verification in {namespace} requires pinned card_index and cube_table")
     prep_name, panel_name = panel_set_names(namespace, set_name)
     panel_path = Path(root) / namespace / run / panel_name / "panel.json"
     if not panel_path.exists():
@@ -892,6 +894,8 @@ def verify_panel(root: Path, namespace: str, pinned: str, *, pool_doc: Any, cons
 
 def check_prep_dose_set(set_dir: Path, pinned_panel: str | None = None, *, pool: tuple[Any, str],
                         constants: tuple[Any, str],
+                        card_index: tuple[Any, str] | None = None,
+                        cube_table: tuple[Any, str] | None = None,
                         shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
     """A downstream prep-dose-<ordinal> set: it carries the pinned panel digest, and each accepted
     result's draft pools equal the panel's. (prep-panel is exempt: read plan v2 change 2.)"""
@@ -905,7 +909,8 @@ def check_prep_dose_set(set_dir: Path, pinned_panel: str | None = None, *, pool:
         raise SetError("a prep-dose set carries the pinned panel digest")
     panel = verify_panel(root, man["namespace"], resolved_panel, pool_doc=pool[0],
                          constants_doc=constants[0], pool_sha256=pool[1], constants_sha256=constants[1],
-                         set_name=man["set"], run=man["run"])
+                         set_name=man["set"], run=man["run"],
+                         card_index=card_index, cube_table=cube_table)
     accepted = accept_prep_set(set_dir, man)
     by_unit = {d["unit"]: d for d in panel["drafts"]}
     for unit, (result, _) in accepted["outputs"].items():
@@ -985,6 +990,12 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         raise SetError("the manifest's declaration_sha256 is not the declaration read")
     root = set_dir.parents[2]
     family = man["family"]
+    if read_plans.FAMILIES[family]["layout"] in ("c", "d13") and man["namespace"] != read_plans.TEST:
+        if card_index is None or cube_table is None:
+            raise SetError(
+                f"live common-opponent set {man['namespace']}/{man['run']}/{man['set']} requires "
+                "pinned card_index and cube_table"
+            )
     if man["namespace"] in read_plans.D8_RESTART_NAMESPACES:
         verify_d8_v3_against_root(root, man)
     plans = load_entries(set_dir, man)
@@ -1067,4 +1078,5 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
     )
     return {"manifest": man, "plans": checked, "execution": chosen["execution"], "records": chosen["records"],
             "expired": chosen["expired"], "void": chosen["void"], "set_dir": set_dir,
-            "timing": timing, "basic_ids": basic_ids}
+            "timing": timing, "basic_ids": basic_ids,
+            "checked_card_index": card_index is not None, "checked_cube_table": cube_table is not None}

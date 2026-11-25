@@ -489,6 +489,99 @@ class PlanFamilyTests(unittest.TestCase):
             read_plans.check_plan(plan, (res, res_sha), card_index=(index_doc, "0" * 64),
                                   cube_table=(table_doc, tbl_sha), **synth.DEALER)
 
+    def test_live_common_opponent_requires_card_index_and_cube_table_and_cli_wires_them(self):
+        # Live common-opponent planning and panel assembly refuse missing card_index / cube_table.
+        _, _, dres, dsha = synth.prep_for("dose", 0, namespace="dose-d8")
+        mark0 = {"kind": "dose", "label": "pods-512", "ordinal": 0}
+        with self.assertRaisesRegex(read_plans.PlanError, "card_index"):
+            read_plans.build_plan("dose", "dose-d8", 0, pins=synth.LIVE_PINS, pilot=synth.PILOT,
+                                  picker=None, builders={"current": dict(synth.UNIFORM),
+                                                         "initial": dict(synth.UNIFORM)},
+                                  mark=mark0, prep=(dres, dsha), **synth.DEALER)
+        with self.assertRaisesRegex(read_plans.PlanError, "card_index"):
+            read_plans.build_plan("dose", "dose-d8", 0, pins=synth.LIVE_PINS, pilot=synth.PILOT,
+                                  picker=None, builders={"current": dict(synth.UNIFORM),
+                                                         "initial": dict(synth.UNIFORM)},
+                                  mark=mark0, prep=(dres, dsha), card_index=synth.LIVE_CARD_INDEX, **synth.DEALER)
+
+        # CLI read_plans.main wires --card-index and --cube-table and rejects missing nonbasic or omitted flags.
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            spec_path = tdir / "spec.json"
+            prep_path = tdir / "prep.json"
+            pool_path = tdir / "pool.json"
+            const_path = tdir / "constants.json"
+            idx_path = tdir / "card_index.json"
+            tbl_path = tdir / "cube_table.json"
+            out_path = tdir / "plan.json"
+            spec_path.write_bytes(read_plans.serialize({
+                "family": "dose", "namespace": "dose-d8", "unit": 0, "pins": synth.LIVE_PINS,
+                "pilot": synth.PILOT, "picker": None,
+                "builders": {"current": dict(synth.UNIFORM), "initial": dict(synth.UNIFORM)},
+                "mark": mark0,
+            }).encode("utf-8"))
+            prep_path.write_bytes(read_plans.serialize(dres).encode("utf-8"))
+            pool_path.write_bytes(read_plans.serialize(synth.POOL[0]).encode("utf-8"))
+            const_path.write_bytes(read_plans.serialize(synth.CONST[0]).encode("utf-8"))
+            idx_path.write_bytes(read_plans.serialize(synth.LIVE_CARD_INDEX[0]).encode("utf-8"))
+            tbl_path.write_bytes(read_plans.serialize(synth.LIVE_CUBE_TABLE[0]).encode("utf-8"))
+
+            with self.assertRaisesRegex(read_plans.PlanError, "card_index"):
+                read_plans.main(["plan", "--spec", str(spec_path), "--prep", str(prep_path),
+                                 "--pool", str(pool_path), "--constants", str(const_path), "--out", str(out_path)])
+            rc = read_plans.main(["plan", "--spec", str(spec_path), "--prep", str(prep_path),
+                                  "--pool", str(pool_path), "--constants", str(const_path),
+                                  "--card-index", str(idx_path), "--cube-table", str(tbl_path),
+                                  "--out", str(out_path)])
+            self.assertEqual(rc, 0)
+            built_plan = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(built_plan["namespace"], "dose-d8")
+
+            # Dropping a dealt nonbasic from card_index fails in read_plans.main even when pins match the reduced file.
+            basic_ids = {c["card_id"] for c in synth.POOL[0]["basics"]}
+            drop_cid = next(cid for cid in built_plan["decks"][2]["cards"] if cid not in basic_ids)
+            bad_idx = {"cards": [c for c in synth.LIVE_CARD_INDEX[0]["cards"] if c["card_id"] != drop_cid]}
+            bad_idx_bytes = read_plans.serialize(bad_idx).encode("utf-8")
+            bad_idx_path = tdir / "bad_index.json"
+            bad_idx_path.write_bytes(bad_idx_bytes)
+            bad_pins = {**synth.LIVE_PINS, "card_index": hashlib.sha256(bad_idx_bytes).hexdigest()}
+            bad_spec_path = tdir / "bad_spec.json"
+            bad_spec_path.write_bytes(read_plans.serialize({
+                "family": "dose", "namespace": "dose-d8", "unit": 0, "pins": bad_pins,
+                "pilot": synth.PILOT, "picker": None,
+                "builders": {"current": dict(synth.UNIFORM), "initial": dict(synth.UNIFORM)},
+                "mark": mark0,
+            }).encode("utf-8"))
+            with self.assertRaisesRegex(ValueError, "card_index"):
+                read_plans.main(["plan", "--spec", str(bad_spec_path), "--prep", str(prep_path),
+                                 "--pool", str(pool_path), "--constants", str(const_path),
+                                 "--card-index", str(bad_idx_path), "--cube-table", str(tbl_path),
+                                 "--out", str(out_path)])
+
+            # CLI readers.main wires --card-index and --cube-table through open_plan_set.
+            _, outs = synth.write_prep_set(tdir, "b_c", "b_c", "fx-b_c-shared-d0-prep-0-6", range(0, 6), DECL_SHA,
+                                           reserved=[0, 6], pins=synth.LIVE_PINS)
+            c_plans = [synth.plan("c", u, prep=outs[u], pins=synth.LIVE_PINS, **synth.LIVE_INDEX_ARGS)
+                       for u in range(2)]
+            c_dir = synth.write_plan_set(
+                tdir, "c", "fx-c-shared-d0-look-1", c_plans, DECL_SHA,
+                executions=[{"records": {p["pod_index"]: synth.record(p, lambda pl, gm, ps: "draw")
+                                         for p in c_plans}}],
+                look=1, units=[0, 2], reserved=[0, 6], prep_set="test/v1/fx-b_c-shared-d0-prep-0-6/exec-0",
+            )
+            rep_out = tdir / "rep.json"
+            self.assertEqual(readers.main([
+                "--declaration", str(DECLARATION), "--read", "c", "--look", "1",
+                "--sets", str(c_dir), "--pool", str(pool_path), "--constants", str(const_path),
+                "--card-index", str(idx_path), "--cube-table", str(tbl_path), "--out", str(rep_out),
+            ]), 0)
+            with self.assertRaisesRegex(read_sets.SetError, "card_index"):
+                readers.main([
+                    "--declaration", str(DECLARATION), "--read", "c", "--look", "1",
+                    "--sets", str(c_dir), "--pool", str(pool_path), "--constants", str(const_path),
+                    "--card-index", str(bad_idx_path), "--cube-table", str(tbl_path), "--out", str(rep_out),
+                ])
+
     def test_fixture_set_names(self):
         for ok in ("fx-c-shared-d0", "fx-aa-mirrored-halt-d15", "fx-b-edge-undefined-d0-look-1",
                    "fx-dose-provisional-d0-prep-panel"):
@@ -1954,7 +2047,7 @@ class D8V3RestartTests(unittest.TestCase):
         from decimal import Decimal
         doc = json.loads(DECLARATION.read_text(encoding="utf-8"), parse_float=Decimal)
         doc["a6_sha256"] = cs_sha
-        doc["pins"] = dict(synth.PINS)
+        doc["pins"] = dict(synth.LIVE_PINS)
         doc["inputs"] = {"pool_sha256": synth.POOL[1], "constants_sha256": synth.CONST[1]}
         doc["reads"]["aa"]["namespace"] = "read-d8-aa"
         doc["reads"]["dose"]["namespace"] = "dose-d8"
@@ -2006,7 +2099,7 @@ class D8V3RestartTests(unittest.TestCase):
             )
             panel_v1 = read_plans.assemble_panel(
                 "dose", "dose-d8", read_sets.load_manifest(stage1_v1), 0, outs_v1,
-                pins=synth.PINS, builders=None, **synth.DEALER,
+                pins=synth.LIVE_PINS, builders=None, **synth.DEALER, **synth.LIVE_INDEX_ARGS,
             )
             p1_dir = root / "dose-d8" / "v1" / "panel"
             p1_dir.mkdir(parents=True)
@@ -2040,7 +2133,7 @@ class D8V3RestartTests(unittest.TestCase):
             )
             panel_v2 = read_plans.assemble_panel(
                 "dose", "dose-d8", read_sets.load_manifest(stage1_v2), 0, outs_v2,
-                pins=synth.PINS, builders=None, **synth.DEALER,
+                pins=synth.LIVE_PINS, builders=None, **synth.DEALER, **synth.LIVE_INDEX_ARGS,
             )
             self.assertEqual(panel_v2["run"], "v2")
             self.assertEqual(panel_v2["units"], [32, 64])
@@ -2079,7 +2172,7 @@ class D8V3RestartTests(unittest.TestCase):
                 reserved=[32, 64], panel_sha256=p2_sha, namespace="dose-d8", run="v2",
             )
             read_sets.check_prep_dose_set(prep_v2_0, pool=synth.POOL, constants=synth.CONST,
-                                          shakedown_manifest=(sm_json_path, sm_json_sha))
+                                          shakedown_manifest=(sm_json_path, sm_json_sha), **synth.LIVE_INDEX_ARGS)
             plans_v2_0 = [synth.plan("dose", u, mark=mark0, prep=pouts_v2_0[u], namespace="dose-d8", run="v2")
                           for u in range(32, 64)]
             recs_v2_0 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "win" if g["game"] % 2 == 0 else "draw")
@@ -2127,24 +2220,33 @@ class D8V3RestartTests(unittest.TestCase):
             )
 
             # Shakedown manifest D0.3b pin refusals (Q2.4):
+            # 0) Missing card_index/cube_table on live dose-d8 is refused.
+            with self.assertRaisesRegex(read_sets.SetError, "card_index"):
+                read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
+                                        shakedown_manifest=(sm_json_path, sm_json_sha))
             # 1) Missing shakedown manifest on v2 is refused.
             with self.assertRaisesRegex(read_sets.SetError, "shakedown manifest"):
                 read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
-                                        pinned_panel=p2_sha)
+                                        pinned_panel=p2_sha, **synth.LIVE_INDEX_ARGS)
             # 2) Mismatched D0.3b pin refused BEFORE trusting any digest inside.
             with self.assertRaisesRegex(read_sets.SetError, "D0.3b pin"):
                 read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
-                                        shakedown_manifest=(sm_json_path, "0" * 64))
+                                        shakedown_manifest=(sm_json_path, "0" * 64), **synth.LIVE_INDEX_ARGS)
             tampered_sm = root / "SHAKEDOWN-MANIFEST-tampered.json"
             tampered_sm.write_bytes(sm_json_bytes + b" ")
             with self.assertRaisesRegex(read_sets.SetError, "D0.3b pin"):
                 read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
-                                        shakedown_manifest=(tampered_sm, sm_json_sha))
+                                        shakedown_manifest=(tampered_sm, sm_json_sha), **synth.LIVE_INDEX_ARGS)
 
             # Valid reads of both replaced ordinal 0 and fresh ordinal 1 on v2's panel:
             live_decl = self._live_decl(cs_sha, panel_v1=p1_sha)
             opened_0 = read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
-                                               shakedown_manifest=(sm_json_path, sm_json_sha))
+                                               shakedown_manifest=(sm_json_path, sm_json_sha), **synth.LIVE_INDEX_ARGS)
+            # run_read refuses a live dose-d8 set that was not checked against card_index and cube_table.
+            unchecked_0 = {**opened_0, "checked_card_index": False}
+            with self.assertRaisesRegex(readers.ReadError, "card_index"):
+                readers.run_read(live_decl, cs_sha, "dose", 0, [unchecked_0], a6_file=cs_a6,
+                                 d0_sha256=d0_sha, shakedown_manifest=(sm_json_path, sm_json_sha))
             rep_0 = readers.run_read(live_decl, cs_sha, "dose", 0, [opened_0], a6_file=cs_a6,
                                      d0_sha256=d0_sha, shakedown_manifest=(sm_json_path, sm_json_sha))
             self.assertIsNone(rep_0["verdict"])
@@ -2156,7 +2258,7 @@ class D8V3RestartTests(unittest.TestCase):
             self.assertIn("first_dose_basics_bands", rep_0)
 
             opened_1 = read_sets.open_plan_set(dose_v2_1, cs_sha, pool=synth.POOL, constants=synth.CONST,
-                                               shakedown_manifest=(sm_md_path, sm_md_sha))
+                                               shakedown_manifest=(sm_md_path, sm_md_sha), **synth.LIVE_INDEX_ARGS)
             rep_1 = readers.run_read(live_decl, cs_sha, "dose", 1, [opened_1], a6_file=cs_a6,
                                      d0_sha256=d0_sha, shakedown_manifest=(sm_md_path, sm_md_sha))
             self.assertIsNone(rep_1["verdict"])
@@ -2287,7 +2389,8 @@ class D8V3RestartTests(unittest.TestCase):
             s1_v1, o_v1 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
                                                reserved=[0, 32], namespace="dose-d8", run="v1")
             p1 = read_plans.assemble_panel("dose", "dose-d8", read_sets.load_manifest(s1_v1), 0, o_v1,
-                                           pins=synth.PINS, builders=None, **synth.DEALER)
+                                           pins=synth.LIVE_PINS, builders=None, **synth.DEALER,
+                                           **synth.LIVE_INDEX_ARGS)
             (root / "dose-d8" / "v1" / "panel").mkdir(parents=True)
             p1_text = read_plans.serialize(p1)
             (root / "dose-d8" / "v1" / "panel" / "panel.json").write_bytes(p1_text.encode("utf-8"))
@@ -2306,7 +2409,8 @@ class D8V3RestartTests(unittest.TestCase):
             s1_v2, o_v2 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(32, 64), cs_sha,
                                                reserved=[32, 64], namespace="dose-d8", run="v2")
             p2 = read_plans.assemble_panel("dose", "dose-d8", read_sets.load_manifest(s1_v2), 0, o_v2,
-                                           pins=synth.PINS, builders=None, **synth.DEALER)
+                                           pins=synth.LIVE_PINS, builders=None, **synth.DEALER,
+                                           **synth.LIVE_INDEX_ARGS)
             (root / "dose-d8" / "v2" / "panel").mkdir(parents=True)
             p2_text = read_plans.serialize(p2)
             (root / "dose-d8" / "v2" / "panel" / "panel.json").write_bytes(p2_text.encode("utf-8"))
@@ -2320,7 +2424,7 @@ class D8V3RestartTests(unittest.TestCase):
                 namespace="dose-d8", run="v2",
             )
             read_sets.check_prep_dose_set(prep_v2_0, pool=synth.POOL, constants=synth.CONST,
-                                          shakedown_manifest=(sm_bytes, sm_sha))
+                                          shakedown_manifest=(sm_bytes, sm_sha), **synth.LIVE_INDEX_ARGS)
 
         # Case (iii): completed set stands on its build and MUST NOT be replaced.
         with tempfile.TemporaryDirectory() as tmp:

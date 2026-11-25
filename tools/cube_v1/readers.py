@@ -1077,6 +1077,12 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
                 raise ReadError(f"set {man['set']} picker differs from declared picker")
             if expected_builders is not None and b["builders"] != expected_builders:
                 raise ReadError(f"set {man['set']} builders differ from declared builders")
+        if read_plans.FAMILIES[family]["layout"] in ("c", "d13") and namespace != TEST:
+            if not (s.get("checked_card_index") and s.get("checked_cube_table")):
+                raise ReadError(
+                    f"live common-opponent set {man['set']} in {namespace} must be opened with "
+                    "pinned card_index and cube_table"
+                )
         read_sets.verify_set_restarts(
             s, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
         )
@@ -1398,6 +1404,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--shakedown-manifest-sha256", help="D0.3b sha256 pin for --shakedown-manifest")
     parser.add_argument("--pool", type=Path)
     parser.add_argument("--constants", type=Path)
+    parser.add_argument("--card-index", type=Path)
+    parser.add_argument("--cube-table", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     if (args.shakedown_manifest is None) != (args.shakedown_manifest_sha256 is None):
@@ -1406,13 +1414,17 @@ def main(argv: list[str] | None = None) -> int:
     declaration, decl_sha = load_declaration(args.declaration)
     pool = read_plans.load_json(args.pool) if args.pool else None
     constants = read_plans.load_json(args.constants) if args.constants else None
+    card_index = read_plans.load_json(args.card_index) if args.card_index else None
+    cube_table = read_plans.load_json(args.cube_table) if args.cube_table else None
     sec = declaration["reads"]["c" if args.read == "b_prime" else args.read]
     want_decl = declaration["a6_sha256"] or decl_sha
     sets = [read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
+                                    card_index=card_index, cube_table=cube_table,
                                     pinned_panel=sec.get("panel_sha256"),
                                     expected_pins=declaration.get("pins"),
                                     shakedown_manifest=sm) for d in args.sets]
     peer_sets = ([read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
+                                          card_index=card_index, cube_table=cube_table,
                                           expected_pins=declaration.get("pins")) for d in args.peer_sets]
                  if args.peer_sets else None)
     text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets,
