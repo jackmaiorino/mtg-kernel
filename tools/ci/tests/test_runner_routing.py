@@ -830,6 +830,7 @@ class MatrixTests(unittest.TestCase):
                                              re.MULTILINE).group(1).split(", "))
         # A change to the tools the parts use must itself run them: the classify step asks ci_scope.py, whose
         # rule list is the only copy of the Rust-relevant tool paths.
+        sys.path.insert(0, str(WORKFLOW.parents[2] / "tools" / "ci"))
         import ci_scope
         detect = job_block("detect-changes", "rust-quality")
         self.assertIn('python3 tools/ci/ci_scope.py relevance < "$RUNNER_TEMP/ci-changed-paths"', detect)
