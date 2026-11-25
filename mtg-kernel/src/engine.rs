@@ -97,6 +97,7 @@ pub(crate) use standard_spell_copy::{
 pub(crate) mod niv_mizzet_resolution_v1;
 pub mod ordinary_cleanup_v1;
 pub mod time_stop_v1;
+mod waiting_placement_v1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
@@ -207,8 +208,9 @@ pub struct EngineState {
     pub pending_triggers: Vec<PendingTrigger>,
     /// Immediate captures created during placement, due at the next SBA
     /// and APNAP checkpoint after the entire current batch is placed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    waiting_placement_triggers: Vec<PendingTrigger>,
+    /// Empty contributes no `Hash` input and no serialized field.
+    #[serde(default, skip_serializing_if = "waiting_placement_v1::QueueV1::is_empty")]
+    waiting_placement_triggers: waiting_placement_v1::QueueV1,
     /// This turn's combat, reset fresh at every `Step::BeginCombat`.
     pub combat: CombatState,
     /// "Until end of turn" continuous effects, cleared at every
@@ -20646,7 +20648,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             {
                 return None;
             }
-            let waiting = std::mem::take(&mut state.engine.waiting_placement_triggers);
+            let waiting = state.engine.waiting_placement_triggers.take();
             if waiting.is_empty() {
                 collect_and_queue_triggers(state);
             } else {
