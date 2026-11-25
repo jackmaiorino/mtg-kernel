@@ -14934,11 +14934,11 @@ pub(crate) mod tests {
         "63f4579d4f3ee5b54c11d440b90b9225d33f1a26b5b24cfbc879a8168d612cde",
         "dbbf9ca0583e6057a1e1b4312568124d4e9fdfe3ebfc50f6aea89ff8878438a6",
     ];
-    // Prior Linux CPU outputs: CI39598628050. Re-pin after the issue #969 seed change.
+    // Non-Windows CPU outputs from Linux CI for the issue #969 fixture seed.
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "edaa78f4aa822d845aacc5cf829577cc832dc64109bbee1574671662f366b3a5",
-        "2ffea00f50926f435738cf80c5fabc1e4ad01b991e9c3328471b87f6e6e4b7d5",
+        "4b1f08cd5f3128f89caa9882533f93a7cf828d8f3f12e08c4a699eb859571753",
+        "61f9e08ed62428b8cb87a56fa4eddfe392e3d0c1318ab5541bb9e222194caa9b",
     ];
     // GPU1 outputs for the issue #969 fixture seed.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [

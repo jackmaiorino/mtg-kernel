@@ -5333,7 +5333,7 @@ mod tests {
         // is cross-target consistent (71_544 on both reviewed targets).
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e";
+            "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115";
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
             "1b1ca5a4a5cbfe9704a0297459df94130c15b5d79a5ee609d73cb9ffa5e09771";
@@ -5804,8 +5804,8 @@ mod tests {
                 group.canonical_bytes().len(),
             );
             let pinned = (
-                "78651fc37457a78923e294b6e99de95d4bd3351364ceb88d4e53f3311fe8425e".to_owned(),
-                "07475dd527d7adc0c7c023394c7def4b3977cb7cd51b74411daeafca001e0a06".to_owned(),
+                "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115".to_owned(),
+                "adba2de9dc1d52c392f912e8557e2037f6a6d37db7a812900eb8d61561d957a0".to_owned(),
                 71_544usize,
             );
             assert_eq!(
@@ -5823,11 +5823,8 @@ mod tests {
         // fixes and the nine-deck catalog landing move; the pre-C2 store-
         // format baseline itself is otherwise undisturbed. Value is this
         // test's own live-computed digest, read directly from a failing
-        // run (never hand-typed). The Linux-gnu-only whole-group byte pin
-        // above (lines gated by #[cfg(target_os = "linux", ...)]) is the
-        // same class of literal but could not be verified or re-baselined
-        // from this Windows host; it needs the identical treatment on a
-        // Linux target before this test is fully current there.
+        // run (never hand-typed). The whole-group bytes above are pinned
+        // separately from x86_64-unknown-linux-gnu CI output.
         //
         // Re-baselined again for PR #111's CR 608.2 / 511.3 rules fixes: the
         // deck-binding and trajectory-digest fields this pin covers embed the
