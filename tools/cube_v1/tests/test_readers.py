@@ -910,6 +910,18 @@ class ExecutionTests(unittest.TestCase):
             with self.assertRaisesRegex(pod_record.RecordError, "stop.game"):
                 read_plans.check_record_against_plan(bad_stop, plans[0])
 
+            for label, mutate_att in (
+                ("wrong-stop-kind", lambda s: s["attempts"][0].update(stop_kind="decision_cap")),
+                ("non-null-source", lambda s: s["attempts"][0].update(last_action_source=42)),
+                ("extra-attempt", lambda s: s["attempts"].append(dict(s["attempts"][0]))),
+                ("wrong-deal-seed", lambda s: s["attempts"][0].update(deal_seed=1)),
+            ):
+                with self.subTest(bad_interrupted_stop=label):
+                    bad_att = copy.deepcopy(stopped_mid)
+                    mutate_att(bad_att["stop"])
+                    with self.assertRaisesRegex(pod_record.RecordError, "process_death"):
+                        read_plans.check_record_against_plan(bad_att, plans[0])
+
             bad_pair = copy.deepcopy(stopped_mid)
             bad_pair["paired_builds"] = bad_pair["paired_builds"][:1]
             with self.assertRaisesRegex(pod_record.RecordError, "paired_builds"):

@@ -1213,8 +1213,14 @@ def check_record_against_plan(record: dict[str, Any], plan: dict[str, Any]) -> N
         else:
             if not on_next_unplayed:
                 fail("stop on a completed last played game must name the interrupted next game")
-            if stop["attempts"][0]["deal_seed"] != pg["game_seed"] or not stop["attempts"][0]["stop_kind"]:
-                fail("interrupted stop report attempt does not match the planned game seed and stop kind")
+            want_interrupted = [
+                {"deal_seed": pg["game_seed"], "stop_kind": "process_death", "last_action_source": None}
+            ]
+            if stop["attempts"] != want_interrupted:
+                fail(
+                    "interrupted stop report attempts must be the single process_death entry "
+                    "matching the planned game seed with null last_action_source"
+                )
 
 
 # ---------------------------------------------------------------------------------------------
