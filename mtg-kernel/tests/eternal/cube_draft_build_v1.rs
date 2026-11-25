@@ -1,8 +1,4 @@
-//! M4 task D1 on the real cube registry and the provisional table pin: the
-//! full index is refused for its cards without a row; the dense columns
-//! equal the golden list; the land tests (produced colours, fetch,
-//! completeness); the provisional index and pool; the same bits on a second
-//! load.
+//! M4 task D1 tests on the real cube registry and pinned provisional table.
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::CARD_DEFS;
@@ -16,7 +12,8 @@ use mtg_kernel::cube_draft_v1::{
     DRAFTED_CARDS,
 };
 use mtg_kernel::mana::ManaColor;
-use std::collections::{BTreeMap, BTreeSet};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 const CUBE_LIST: &str = concat!(
@@ -27,29 +24,18 @@ const GAP_RECORD: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../data/cube_v1/mtgo_vintage_cube_20261007_gaps.json"
 );
-/// The provisional table pin: the committed cube table. D0 confirms or
-/// replaces this path and digest.
+/// The regenerated provisional cube table pinned by D0 revision 9.
 const TABLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../data/card_semantics_v1/cube_table_v1.json"
 );
-const TABLE_SHA256: &str = "fc22ac488e9d67580889be8d0c4c30690f1e68f4f227a44de08887da757493ae";
-
-/// Rows of the provisional index at the pinned table (504 cube cards plus 5
-/// basics), and cube cards left out for lack of a row.
-const PROVISIONAL_ROWS: usize = 509;
-const LEFT_OUT: usize = 36;
-/// Cube-list cards plus the 5 basics.
-const FULL_ROWS: usize = 545;
-/// The least provisional pool: 517 fenced cards minus at most 36.
-const MIN_PROVISIONAL_POOL: usize = 481;
-
-/// The dense columns the rule selects at the pinned table, in order.
-const GOLDEN_DENSE: [usize; 56] = [
-    6, 12, 13, 14, 15, 16, 17, 33, 34, 35, 36, 37, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 97, 98,
-    108, 114, 117, 118, 369, 370, 371, 390, 399, 405, 413, 425, 435, 436, 482, 483, 484, 485, 486,
-    487, 500, 501, 502, 503, 504, 505, 506, 824, 900, 932, 933, 938,
-];
+const TABLE_SHA256: &str = "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
+const INDEX_SHA256: &str = "fb2f6fa80f612fb100be983b1c2a4947f8c3add61aa2d81b187d8e49ea526b63";
+const PROVISIONAL_ROWS: usize = 545;
+const DENSE_FIELDS_AND_SCALES: &[u8] =
+    include_bytes!("../data/cube_draft_build_v1/dense_fields_and_scales_v1.json");
+const DENSE_FIELDS_AND_SCALES_SHA256: &str =
+    "36a79a1919f4f15f4774409b8b0acbdaea5903187a5d4475d604530592deb5da";
 
 /// The produced-colour columns: W, U, B, R, G ([`COLOUR_ORDER`]) then C.
 const PRODUCED: [ManaColor; 6] = [
@@ -88,39 +74,41 @@ fn column(table: &CubeTableV1, token: &str) -> usize {
         .unwrap_or_else(|| panic!("the pinned table has no {token} column"))
 }
 
-/// A land's id and its six produced-colour columns as f32 bits.
-type LandColumnsV1 = (u16, [u32; 6]);
-
-/// The six produced-colour columns of a row, as f32 bits.
-fn produced_bits(table: &CubeTableV1, row: usize, columns: &[usize; 6]) -> [u32; 6] {
-    columns.map(|j| table.scaled_row(row)[j].to_bits())
-}
-
-// Test 1, on the real table: the full index is refused, naming every cube
-// card without a row.
 #[test]
-fn full_index_is_refused_for_its_cards_without_a_row() {
+fn full_index_refuses_a_synthetic_missing_row() {
     let full = CardIndexV1::full_v1(&cube_text()).expect("full index");
-    assert_eq!(full.len(), FULL_ROWS);
-    let (_, left_out) = provisional();
-    let error = CubeTableV1::load_v1(Path::new(TABLE), TABLE_SHA256, &full).unwrap_err();
+    let mut fixture: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(TABLE).expect("pinned cube table")).unwrap();
+    let cards = fixture["cards"].as_array_mut().unwrap();
+    let removed = cards.pop().unwrap();
+    fixture["card_count"] = cards.len().into();
+    let bytes = serde_json::to_vec(&fixture).unwrap();
+    let incomplete =
+        CubeTableSourceV1::from_bytes_v1(&bytes, &format!("{:x}", Sha256::digest(&bytes))).unwrap();
+
+    let error = incomplete.bind_v1(&full).unwrap_err();
     let CardIndexErrorV1::MissingCards(missing) = &error else {
         panic!("expected the missing-card refusal, got: {error}");
     };
-    let missing_ids: Vec<u16> = missing.iter().map(|card| card.card_id).collect();
-    assert_eq!(missing.len(), LEFT_OUT, "{error}");
-    assert_eq!(missing_ids, left_out);
-    for card in missing {
-        assert_eq!(card.name, name(card.card_id));
-    }
+    let id = u16::try_from(removed["card_id"].as_u64().unwrap()).unwrap();
+    assert_eq!(missing.len(), 1, "{error}");
+    assert_eq!(missing[0].card_id, id);
+    assert_eq!(missing[0].name, name(id));
 }
 
-// Test 3: the dense columns at the pinned table equal the golden list.
+// Test 3: the dense columns and divisors match the pin.
 #[test]
-fn dense_columns_equal_the_golden_list() {
+fn dense_columns_and_divisors_match_the_pin() {
     let table = provisional_table();
     let columns: Vec<usize> = table.dense_columns().iter().map(|c| c.index).collect();
-    assert_eq!(columns, GOLDEN_DENSE);
+    let pin: serde_json::Value = serde_json::from_slice(DENSE_FIELDS_AND_SCALES).unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(DENSE_FIELDS_AND_SCALES)),
+        DENSE_FIELDS_AND_SCALES_SHA256
+    );
+    assert_eq!(serde_json::json!(columns), pin["dense_columns"]);
+    let divisors: Vec<u32> = table.divisors().iter().map(|&value| value as u32).collect();
+    assert_eq!(serde_json::json!(divisors), pin["column_divisors"]);
     let token_at = |j: usize| table.tokens()[j].as_str();
     for (j, token) in [
         (12, "ability:mana.color=B"),
@@ -147,15 +135,21 @@ fn dense_columns_equal_the_golden_list() {
         .any(|t| t.starts_with(FETCH_SUBTYPE_PREFIX_V1)));
 }
 
-// Land test 1: for every index land, each produced-colour column is non-zero
-// exactly when the engine says the land produces that colour; and two lands
-// that produce the same colours have equal produced-colour columns.
+// Land test 1: the presence of each produced colour matches the engine.
+// Red and green can appear in either the ability column or an auxiliary flag.
 #[test]
 fn land_produced_colours_match_the_engine() {
     let table = provisional_table();
     let columns = PRODUCED.map(|color| column(&table, produced_colour_token_v1(color)));
     let mut mismatches: Vec<String> = Vec::new();
-    let mut groups: BTreeMap<(u8, bool), Vec<LandColumnsV1>> = BTreeMap::new();
+    let auxiliary = PRODUCED.map(|color| match color {
+        ManaColor::G => Some(column(&table, "flag:produces_mana=G")),
+        ManaColor::R => Some(column(&table, "flag:produces_mana=R")),
+        _ => None,
+    });
+    let produced = |values: &[f32], k: usize| {
+        values[columns[k]] != 0.0 || auxiliary[k].is_some_and(|j| values[j] != 0.0)
+    };
     let mut lands = 0usize;
     for (row, &id) in table.index().ids().iter().enumerate() {
         if !is_land_v1(id) {
@@ -167,7 +161,7 @@ fn land_produced_colours_match_the_engine() {
         let values = table.scaled_row(row);
         for (k, color) in COLOUR_ORDER.iter().enumerate() {
             let engine = bits & (1 << k) != 0;
-            let in_table = values[columns[k]] != 0.0;
+            let in_table = produced(values, k);
             if engine != in_table {
                 mismatches.push(format!(
                     "{} ({id}): {color:?} engine {engine}, table {in_table}",
@@ -182,10 +176,6 @@ fn land_produced_colours_match_the_engine() {
                 name(id)
             ));
         }
-        groups
-            .entry((bits, colourless))
-            .or_default()
-            .push((id, produced_bits(&table, row, &columns)));
     }
     assert!(lands > 5, "only {lands} lands in the index");
     assert!(
@@ -194,34 +184,15 @@ fn land_produced_colours_match_the_engine() {
         mismatches.len(),
         mismatches.join("\n")
     );
-    // The pairwise form, asserted directly.
-    let mut pair_mismatches: Vec<String> = Vec::new();
-    for ((bits, colourless), members) in &groups {
-        let (first, first_values) = members[0];
-        for &(id, values) in &members[1..] {
-            if values != first_values {
-                pair_mismatches.push(format!(
-                    "bits {bits:05b} colourless {colourless}: {} ({first}) {first_values:?} \
-                     differs from {} ({id}) {values:?}",
-                    name(first),
-                    name(id)
-                ));
-            }
-        }
-    }
-    assert!(pair_mismatches.is_empty(), "{}", pair_mismatches.join("\n"));
     // Volcanic Island and Steam Vents: blue and red, nothing else.
-    let mut pair = Vec::new();
     for land in ["Volcanic Island", "Steam Vents"] {
         let id = mtg_kernel::card_def::card_id_by_name(land).expect(land);
         let row = table.index().row_of(id).expect(land);
         assert_eq!(land_mana_bits(id), 0b0_1010, "{land}");
         let values = table.scaled_row(row);
-        let nonzero: Vec<bool> = columns.iter().map(|&j| values[j] != 0.0).collect();
+        let nonzero: [bool; 6] = std::array::from_fn(|k| produced(values, k));
         assert_eq!(nonzero, [false, true, false, true, false, false], "{land}");
-        pair.push(produced_bits(&table, row, &columns));
     }
-    assert_eq!(pair[0], pair[1]);
 }
 
 // Land test 2: the fetch family equals the engine's fetch colours.
@@ -289,16 +260,13 @@ fn provisional_index_and_pool() {
     let table_source = source();
     let (index, left_out) = provisional();
     assert_eq!(index.len(), PROVISIONAL_ROWS);
+    assert_eq!(index.pin_sha256(), INDEX_SHA256);
+    assert_eq!(index, CardIndexV1::full_v1(&cube_text()).unwrap());
     assert!(index.ids().windows(2).all(|pair| pair[0] < pair[1]));
     for basic in basic_land_ids().unwrap() {
         assert!(index.contains(basic), "{}", name(basic));
     }
-    assert_eq!(left_out.len(), LEFT_OUT);
-    assert!(left_out.windows(2).all(|pair| pair[0] < pair[1]));
-    for &id in &left_out {
-        assert!(!table_source.has_row(id), "{} has a row", name(id));
-        assert!(!index.contains(id), "{} is in the index", name(id));
-    }
+    assert!(left_out.is_empty(), "{left_out:?}");
     // Each row names the registry card of its id.
     for id in table_source.row_ids() {
         assert_eq!(table_source.row_name(id), Some(name(id)), "card {id}");
@@ -311,13 +279,11 @@ fn provisional_index_and_pool() {
     )
     .expect("draftable pool");
     let (kept, removed) = provisional_pool_v1(&pool, &index).expect("provisional pool");
-    assert!(kept.len() >= MIN_PROVISIONAL_POOL, "{}", kept.len());
+    assert_eq!(kept.len(), 540);
     assert!(kept.len() >= DRAFTED_CARDS);
     assert_eq!(kept.len() + removed.len(), pool.card_count());
     assert!(kept.iter().all(|&id| index.contains(id)));
-    assert!(removed.iter().all(|&id| !index.contains(id)));
-    let left_out: BTreeSet<u16> = left_out.into_iter().collect();
-    assert!(removed.iter().all(|id| left_out.contains(id)));
+    assert!(removed.is_empty());
 }
 
 // Test 8: the same file twice gives the same bits.

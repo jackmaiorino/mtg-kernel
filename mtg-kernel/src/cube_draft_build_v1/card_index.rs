@@ -6,11 +6,11 @@
 //!   ascending id carries no ranking.
 //! * [`CubeTableSourceV1`]: the engine feature table
 //!   (`card_semantics_table/v1`) read and checked (checks 1 to 7 of
-//!   [`CubeTableV1::load_v1`]), with the per-column divisors taken over all
-//!   of its rows.
+//!   [`CubeTableV1::load_v1`]).
 //! * [`CubeTableV1`]: the source bound to an index (check 8: every index card
 //!   has a row; a card without a row is refused, never given a zero row), the
-//!   scaled table S, the dense fields D and the binding digest.
+//!   scaled table S with divisors computed over the indexed rows, the dense
+//!   fields D and the binding digest.
 //!
 //! Arithmetic: the table holds integers only. Each scaled value is one f32
 //! division by a power of two, so it is exact and platform independent. Every
@@ -463,14 +463,12 @@ struct SourceRowV1 {
     vector: Vec<i32>,
 }
 
-/// The engine feature table, read and checked (checks 1 to 7), with its
-/// column divisors. It is not yet bound to an index.
+/// The engine feature table, read and checked (checks 1 to 7).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CubeTableSourceV1 {
     file_sha256: String,
     tokens: Vec<String>,
     rows: BTreeMap<u16, SourceRowV1>,
-    divisors: Vec<f32>,
 }
 
 impl CubeTableSourceV1 {
@@ -503,8 +501,7 @@ impl CubeTableSourceV1 {
         Self::from_bytes_v1(&bytes, expected_sha256)
     }
 
-    /// Checks 2 to 7 on the exact file bytes, then the per-column divisors
-    /// over all rows.
+    /// Checks 2 to 7 on the exact file bytes.
     pub fn from_bytes_v1(bytes: &[u8], expected_sha256: &str) -> Result<Self, CardIndexErrorV1> {
         // Check 2.
         let file_sha256 = lowercase_hex(&Sha256::digest(bytes));
@@ -609,23 +606,10 @@ impl CubeTableSourceV1 {
                 }
             }
         }
-        // Divisors: per column, the next power of two of the largest
-        // absolute value over all rows, with a minimum of 1.
-        let mut maxima = vec![1u32; width];
-        for row in rows.values() {
-            for (maximum, &value) in maxima.iter_mut().zip(&row.vector) {
-                *maximum = (*maximum).max(value.unsigned_abs());
-            }
-        }
-        let divisors = maxima
-            .into_iter()
-            .map(|maximum| u64::from(maximum).next_power_of_two() as f32)
-            .collect();
         Ok(Self {
             file_sha256,
             tokens,
             rows,
-            divisors,
         })
     }
 
@@ -647,11 +631,6 @@ impl CubeTableSourceV1 {
     /// The column of a token, if the vocabulary has it.
     pub fn column_of(&self, token: &str) -> Option<usize> {
         self.tokens.iter().position(|candidate| candidate == token)
-    }
-
-    /// The per-column divisors (powers of two), in column order.
-    pub fn divisors(&self) -> &[f32] {
-        &self.divisors
     }
 
     /// Whether the table has a row for a card id.
@@ -691,10 +670,20 @@ impl CubeTableSourceV1 {
             return Err(CardIndexErrorV1::MissingCards(missing));
         }
         let width = self.vector_width();
+        let mut maxima = vec![1u32; width];
+        for id in index.ids() {
+            for (maximum, &value) in maxima.iter_mut().zip(&self.rows[id].vector) {
+                *maximum = (*maximum).max(value.unsigned_abs());
+            }
+        }
+        let divisors: Vec<f32> = maxima
+            .into_iter()
+            .map(|maximum| u64::from(maximum).next_power_of_two() as f32)
+            .collect();
         let mut scaled = Vec::with_capacity(index.len() * width);
         for id in index.ids() {
             let row = &self.rows[id];
-            for (&value, &divisor) in row.vector.iter().zip(&self.divisors) {
+            for (&value, &divisor) in row.vector.iter().zip(&divisors) {
                 scaled.push(value as f32 / divisor);
             }
         }
@@ -718,7 +707,7 @@ impl CubeTableSourceV1 {
             index: index.clone(),
             index_pin,
             tokens: self.tokens.clone(),
-            divisors: self.divisors.clone(),
+            divisors,
             scaled,
             dense_columns,
             dense,
@@ -874,10 +863,9 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
 
-    /// The index pin of `[1, 2, 3]`, recorded by the program session after
-    /// the first run. UNSET: the test comparing against it fails until it is
-    /// filled in.
-    const RECORDED_PIN_OF_IDS_1_2_3: &str = "";
+    /// The index pin of `[1, 2, 3]`.
+    const RECORDED_PIN_OF_IDS_1_2_3: &str =
+        "333c32997f88f9fa3f6c07e0b749aa6e49b362794aac91479e686e2c23d1383d";
 
     fn compiled_hash() -> String {
         format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH)
@@ -993,23 +981,23 @@ mod tests {
 
     // Test 2: scaling, bit for bit against hand-computed values.
     #[test]
-    fn scaling_is_exact_and_uses_every_table_row() {
+    fn scaling_is_exact_and_uses_only_indexed_rows() {
         let table = source(&scaling_table())
             .unwrap()
             .bind_v1(&index(&[1, 2]))
             .unwrap();
-        // Column 0: max |v| over all rows is 200 (card 3, outside the index),
-        // so the divisor is 256. Column 1: max 16, a power of two, divisor
-        // 16. Column 2: all zero, divisor 1. Column 3: max 1, divisor 1.
+        // Column 0: the indexed maximum is 112, so the divisor is 128.
+        // Card 3 has magnitude 200 and is outside the index.
+        // Column 1 has max 16 and divisor 16. Columns 2 and 3 have divisor 1.
         let divisors: Vec<u32> = table.divisors().iter().map(|d| d.to_bits()).collect();
-        let expected_divisors: Vec<u32> = [256.0f32, 16.0, 1.0, 1.0]
+        let expected_divisors: Vec<u32> = [128.0f32, 16.0, 1.0, 1.0]
             .iter()
             .map(|d| d.to_bits())
             .collect();
         assert_eq!(divisors, expected_divisors);
         let expected: [f32; 8] = [
-            0.4375, 1.0, 0.0, 1.0, // card 1: 112/256, 16/16, 0/1, 1/1
-            -0.125, 0.3125, 0.0, -1.0, // card 2: -32/256, 5/16, 0/1, -1/1
+            0.875, 1.0, 0.0, 1.0, // card 1: 112/128, 16/16, 0/1, 1/1
+            -0.25, 0.3125, 0.0, -1.0, // card 2: -32/128, 5/16, 0/1, -1/1
         ];
         let got: Vec<u32> = table.scaled_rows().iter().map(|v| v.to_bits()).collect();
         let want: Vec<u32> = expected.iter().map(|v| v.to_bits()).collect();
@@ -1288,11 +1276,6 @@ mod tests {
     // Test 7: the index pin against the literal the program session records.
     #[test]
     fn index_pin_matches_the_recorded_literal() {
-        assert!(
-            !RECORDED_PIN_OF_IDS_1_2_3.is_empty(),
-            "record the pin of [1, 2, 3] in RECORDED_PIN_OF_IDS_1_2_3: {}",
-            index(&[1, 2, 3]).pin_sha256()
-        );
         assert_eq!(index(&[1, 2, 3]).pin_sha256(), RECORDED_PIN_OF_IDS_1_2_3);
     }
 
