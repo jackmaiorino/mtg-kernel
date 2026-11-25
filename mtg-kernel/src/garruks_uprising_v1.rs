@@ -144,6 +144,12 @@ impl EntryBatchV1 {
         }
     }
 }
+/// Whether this catalog records `CommittedEvent::GarrukEntryObservationV1`
+/// for entering permanents (only with Garruk's Uprising selected).
+pub(crate) fn records_entry_observations() -> bool {
+    enabled()
+}
+
 fn enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
