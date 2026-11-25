@@ -226,13 +226,15 @@ fn vec_sink_appends_like_vec_write_v1() {
     }
     assert_eq!(sunk, expected);
     VecSinkV1(&mut sunk).flush().unwrap();
+    // `Vec`'s vectored write reserves the total once (17 here); separate
+    // appends would grow 8 to 16 to 32.
     let slices = [
-        io::IoSlice::new(&source[..1]),
+        io::IoSlice::new(&source[..9]),
         io::IoSlice::new(&[]),
-        io::IoSlice::new(&source[3..40]),
+        io::IoSlice::new(&source[20..28]),
     ];
-    let mut expected = Vec::with_capacity(3);
-    let mut sunk = Vec::with_capacity(3);
+    let mut expected = Vec::with_capacity(8);
+    let mut sunk = Vec::with_capacity(8);
     assert_eq!(
         VecSinkV1(&mut sunk).write_vectored(&slices).unwrap(),
         expected.write_vectored(&slices).unwrap()

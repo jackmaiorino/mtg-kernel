@@ -21,9 +21,11 @@
 //!   `memcpy`.
 //!
 //! The serializer's type changes, so a `Serialize` implementation that
-//! looked at its serializer's type name could tell the two apart. Every
-//! document written here is a derived or serde-provided implementation,
-//! which does not.
+//! looked at its serializer's type name could tell the two apart. None of
+//! the documents written here does: their implementations are derived or
+//! serde's own, apart from the borrowed checkpoint tensors'
+//! (`checkpoint_container_v1::serialize_bits_v1`), which is `collect_seq`
+//! over the values' bits.
 //!
 //! `json_writer_v1/tests.rs` compares the result with `serde_json::to_vec`
 //! (the previous writer, kept there as the reference): bytes, errors and the
