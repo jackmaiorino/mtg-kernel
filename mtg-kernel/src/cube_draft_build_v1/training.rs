@@ -209,11 +209,13 @@ fn pick_credit(r: f64, v: f32, seats: usize) -> (f64, f64, f32) {
 #[path = "training/paths.rs"]
 mod paths;
 
-fn score_means(scores: &[[i8; 7]; 2]) -> Result<[f64; 2]> {
+fn chair_returns(scores: &[[i8; 7]; 2]) -> Result<(f64, [f64; 2])> {
     if scores.iter().flatten().any(|&s| !(-1..=1).contains(&s)) {
         return Err("invalid completed game score".into());
     }
-    Ok(scores.map(|s| f64::from(s.iter().copied().map(i32::from).sum::<i32>()) / 7.))
+    let sums = scores.map(|s| s.into_iter().map(i32::from).sum::<i32>());
+    let pick_return = f64::from(sums[0] + sums[1]) / 14.;
+    Ok((pick_return, sums.map(|sum| f64::from(sum) / 7.)))
 }
 
 struct Batch {
@@ -255,7 +257,7 @@ pub fn update(
     for (i, chair) in chairs.iter().enumerate() {
         let (picker, builder, build_count) = match &chair.role {
             Role::Learning { scores } => {
-                score_means(scores)?;
+                chair_returns(scores)?;
                 (&*model, &*model, 2)
             }
             Role::Older {
@@ -297,8 +299,8 @@ pub fn update(
     }
     for chair in chairs {
         if let Role::Learning { scores } = &chair.role {
-            let [a, b] = score_means(scores)?;
-            paths::picks(model, rows, chair, (a + b) / 2., Some(&mut batch))?;
+            let (pick_return, [a, b]) = chair_returns(scores)?;
+            paths::picks(model, rows, chair, pick_return, Some(&mut batch))?;
             paths::builds(
                 model,
                 rows,

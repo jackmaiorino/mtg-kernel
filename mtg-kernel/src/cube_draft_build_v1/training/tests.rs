@@ -413,6 +413,69 @@ fn replay_is_atomic_for_current_and_snapshot_chairs() {
     );
 }
 #[test]
+fn pick_return_rounds_once_over_fourteen_scores() {
+    let scores = [[-1; 7], [-1, -1, -1, -1, -1, 0, 0]];
+    let (pick_return, [a, b]) = chair_returns(&scores).unwrap();
+    assert_eq!(pick_return.to_bits(), 0xbfeb_6db6_db6d_b6db);
+    let mean_of_sibling_means = (a + b) / 2.;
+    assert_eq!(mean_of_sibling_means.to_bits(), 0xbfeb_6db6_db6d_b6dc);
+}
+
+#[test]
+fn older_only_split_rows_do_not_increment_head_updates() {
+    let (mut model, rows) = data(13);
+    let (snapshot, _) = data(19);
+    let pool: Vec<_> = (0..45).collect();
+    let forward = model.build_forward_v1(&rows, 1).unwrap();
+    let builds = [
+        build(&forward, &pool, 0, 38, 1).0,
+        build(&forward, &pool, 1, 39, 2).0,
+    ];
+    let old_forward = snapshot.build_forward_v1(&rows, 1).unwrap();
+    let old_build = [build(&old_forward, &pool, 0, 38, 7).0];
+    assert!(builds.iter().all(|build| build.split.is_empty()));
+    assert!(!old_build[0].split.is_empty());
+    let chairs = [
+        Chair {
+            role: scores(),
+            picks: &[],
+            pool: &pool,
+            builds: &builds,
+        },
+        Chair {
+            role: Role::Older {
+                picker_pin: None,
+                builder_pin: "old",
+            },
+            picks: &[],
+            pool: &pool,
+            builds: &old_build,
+        },
+    ];
+    let mut opt = Optimizer::new(&model);
+    opt.head_updates.split = 3;
+    update(
+        &mut model,
+        &mut opt,
+        &rows,
+        Phase::Builder,
+        &chairs,
+        &BTreeMap::from([("old".into(), &snapshot)]),
+    )
+    .unwrap();
+    assert_eq!(
+        opt.head_updates,
+        HeadUpdates {
+            count: 1,
+            pointer: 1,
+            type_set: 1,
+            split: 3,
+            ..HeadUpdates::default()
+        }
+    );
+}
+
+#[test]
 fn builder_phase_freezes_sets_and_counts_present_heads_only() {
     let (mut m, rows) = data(13);
     let before = m.clone();
