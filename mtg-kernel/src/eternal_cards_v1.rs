@@ -859,6 +859,9 @@ pub enum EternalOpV1 {
     Pf2bV1(crate::eternal_pauper_pf2b_v1::Pf2bOpV1),
     /// A leaf owned by Pauper field wave Pf2c's module.
     Pf2cV1(crate::eternal_pauper_pf2c_v1::Pf2cOpV1),
+    /// A leaf owned by Premodern wave P3i's module (Alter Reality). Appended
+    /// to preserve existing stack and continuation hash discriminants.
+    P3iV1(crate::eternal_premodern_p3i_v1::P3iOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -982,6 +985,7 @@ impl EternalOpV1 {
             EternalOpV1::Pf2aV1(op) => op.contains_player_choice(),
             EternalOpV1::Pf2bV1(op) => op.contains_player_choice(),
             EternalOpV1::Pf2cV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3iV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -1786,6 +1790,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::Pf2aV1(op) => crate::eternal_pauper_pf2a_v1::execute(op, ctx, state),
         EternalOpV1::Pf2bV1(op) => crate::eternal_pauper_pf2b_v1::execute(op, ctx, state),
         EternalOpV1::Pf2cV1(op) => crate::eternal_pauper_pf2c_v1::execute(op, ctx, state),
+        EternalOpV1::P3iV1(op) => crate::eternal_premodern_p3i_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];

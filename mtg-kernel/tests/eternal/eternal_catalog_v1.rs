@@ -1289,14 +1289,7 @@ fn expand_rows(rows: &[CustomCardCountV1]) -> Vec<u16> {
 fn register_for_ordered_game_one(deck: &SnapshotDeck) -> EternalRegisteredDeckV1 {
     let format = EternalFormatV1::from_snapshot_key(&deck.format).unwrap();
     let mainboard = expand_rows(&deck.deck.cards);
-    // PLAYABLE plays game one only. Before step C2 lands Alter Reality,
-    // Replenish's sideboard cannot register, so fall back to an empty
-    // sideboard whenever a sideboard card is not yet Full.
-    let sideboard = if deck.sideboard.iter().all(|row| fully_supported(&row.name)) {
-        expand_rows(&deck.sideboard)
-    } else {
-        Vec::new()
-    };
+    let sideboard = expand_rows(&deck.sideboard);
     let companion = deck
         .deck
         .companion
