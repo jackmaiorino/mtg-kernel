@@ -20,8 +20,7 @@ struct Restart {
     signature_line: String,
     a6_part2_sha256: String,
     panel: Option<RestartPanel>,
-    #[serde(default)]
-    namespaces: Vec<String>,
+    namespaces: Option<Vec<String>>,
     replacements: Vec<Replacement>,
 }
 
@@ -29,6 +28,23 @@ struct Restart {
 struct RestartPanel {
     run: String,
     sha256: String,
+}
+
+fn record_panel(
+    panels: &mut BTreeMap<String, String>,
+    run: &str,
+    digest: &str,
+) -> Result<(), PodRunnerError> {
+    if d8_run_number(run).is_none() || !is_sha256_hex(digest) {
+        return Err(plan_err("invalid dose-d8 panel pin"));
+    }
+    if panels
+        .insert(run.to_owned(), digest.to_owned())
+        .is_some_and(|old| old != digest)
+    {
+        return Err(plan_err("conflicting dose-d8 panel pins"));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -450,7 +466,33 @@ pub(super) fn authorize_restart(
     let entries = parse_entries(&raw)?;
     let mut authorization = None;
     let mut replacements = BTreeMap::new();
-    for entry in entries.iter().filter(|entry| entry.kind == "restart") {
+    let mut panels = BTreeMap::new();
+    for entry in &entries {
+        if entry.kind == "panel" {
+            let (run, digest) =
+                if let Some(panel) = entry.value.get("panel").filter(|value| value.is_object()) {
+                    (panel.get("run"), panel.get("sha256"))
+                } else {
+                    (
+                        entry.value.get("run"),
+                        entry
+                            .value
+                            .get("panel_sha256")
+                            .filter(|v| !v.is_null() && v.as_str() != Some(""))
+                            .or_else(|| entry.value.get("sha256")),
+                    )
+                };
+            let (Some(run), Some(digest)) =
+                (run.and_then(Value::as_str), digest.and_then(Value::as_str))
+            else {
+                return Err(plan_err("structured panel entry requires run and digest"));
+            };
+            record_panel(&mut panels, run, digest)?;
+            continue;
+        }
+        if entry.kind != "restart" {
+            continue;
+        }
         let restart: Restart = serde_json::from_value(entry.value.clone())
             .map_err(|error| plan_err(format!("invalid structured restart: {error}")))?;
         if d8_run_number(&restart.run).is_none_or(|n| n < 2)
@@ -480,12 +522,18 @@ pub(super) fn authorize_restart(
                 "restart note differs from its pin or lacks the exact signature line",
             ));
         }
-        let mut namespaces: BTreeSet<&str> =
-            restart.namespaces.iter().map(String::as_str).collect();
+        let mut namespaces: BTreeSet<&str> = restart
+            .namespaces
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(String::as_str)
+            .collect();
         if let Some(panel) = &restart.panel {
-            if panel.run != restart.run || !is_sha256_hex(&panel.sha256) {
+            if panel.run != restart.run {
                 return Err(plan_err("invalid restart panel pin"));
             }
+            record_panel(&mut panels, &panel.run, &panel.sha256)?;
             namespaces.insert("dose-d8");
         }
         let mut listed = BTreeMap::new();
@@ -549,6 +597,14 @@ pub(super) fn authorize_restart(
     let (kind, _, _) = authorization.ok_or_else(|| {
         plan_err("structured shakedown manifest does not authorize this restart run")
     })?;
+    if manifest.namespace == "dose-d8"
+        && manifest
+            .panel_sha256
+            .as_ref()
+            .is_some_and(|panel| panels.get(&manifest.run) != Some(panel))
+    {
+        return Err(plan_err("dose-d8 panel differs from the shakedown pin"));
+    }
     if let Some(predecessor) = &manifest.replaces {
         let expected = Some((predecessor.clone(), manifest.retired.clone()));
         if replacements.remove(&manifest.set) != expected {

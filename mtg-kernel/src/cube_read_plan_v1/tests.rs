@@ -459,7 +459,8 @@ fn d8_restart_requires_pinned_structured_entry_appended_on_lead_branch() {
             "run": "v2", "restart_kind": "note", "note_path": "restart-note.md",
             "note_sha256": sha256_hex(note.as_bytes()), "signature_line": signature,
             "a6_part2_sha256": manifest.declaration_sha256,
-            "panel": null,
+            "panel": {"run":"v2", "sha256":"b".repeat(64)},
+            "namespaces": null,
             "replacements": [{"namespace":"read-d8-aa", "set":"fixed-restart-1",
                 "replaces":"v1/fixed", "retired":[[1, 4]]}],
         }),
@@ -480,6 +481,17 @@ fn d8_restart_requires_pinned_structured_entry_appended_on_lead_branch() {
         shakedown::authorize_restart(&manifest, &pin).unwrap(),
         RestartKind::Note
     );
+    let mut dose = d8_manifest("dose-d8", "v2", "dose-0", ManifestKind::Plans);
+    dose.panel_sha256 = Some("b".repeat(64));
+    assert_eq!(
+        shakedown::authorize_restart(&dose, &pin).unwrap(),
+        RestartKind::Note
+    );
+    dose.panel_sha256 = Some("c".repeat(64));
+    assert!(shakedown::authorize_restart(&dose, &pin)
+        .unwrap_err()
+        .to_string()
+        .contains("panel differs"));
     manifest.retired = vec![[2, 4]];
     assert!(shakedown::authorize_restart(&manifest, &pin).is_err());
     manifest.retired = vec![[1, 4]];
