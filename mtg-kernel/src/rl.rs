@@ -1117,6 +1117,12 @@ pub struct PublicObservationProjectionV5 {
     /// other observation, which keeps refusing such games.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_schedule: Option<crate::extra_turn_public_v1::TurnScheduleV1>,
+    /// Pending and queued Ward payments, each bound to its exact targeting
+    /// stack item, under the public shroud contract (Limited schema 5).
+    /// Absent while no Ward trigger is bound; every other observation mode
+    /// keeps refusing the Ward states it cannot represent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ward_payments: Option<PublicWardPaymentsV1>,
 }
 
 /// One live Layer-3 color-word replacement on a battlefield permanent or stack
@@ -1136,6 +1142,53 @@ pub struct PublicMeddlingMageNameV1 {
     /// The printed name: a card's, a split half's or Room door's, or an
     /// Adventure, Omen or back face's.
     pub name: String,
+}
+
+/// Ward payments under the public shroud contract (Limited schema 5): the
+/// Ward payment its payer is answering now and every Ward trigger on the
+/// stack still bound to a live spell or ability. Present only while one
+/// exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWardPaymentsV1 {
+    /// The resolving Ward trigger whose payer is choosing to pay or not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<PublicWardPaymentV1>,
+    /// Ward triggers waiting on the stack, bottom first. A trigger whose
+    /// targeting spell or ability has left the stack does nothing and has
+    /// no record (its stack row remains).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued: Vec<PublicQueuedWardPaymentV1>,
+}
+
+/// "Counter that spell or ability unless its controller pays": the Ward
+/// source, the exact spell or ability, who may pay and what.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicWardPaymentV1 {
+    /// The permanent whose Ward (printed or granted) triggered.
+    pub ward_source: CardStableRefV1,
+    /// The public stack row of the spell or ability the trigger counters
+    /// unless its cost is paid.
+    pub targeting_stack_index: u32,
+    /// That spell or ability's controller.
+    pub payer: PlayerSeatV1,
+    pub cost: PublicWardCostV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PublicWardCostV1 {
+    /// "Ward {N}": N generic mana.
+    Generic { amount: u8 },
+    /// "Ward--Pay N life": payable only with at least N life (rule 119.4).
+    Life { amount: u8 },
+}
+
+/// A Ward trigger waiting on the stack and the payment it will ask for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicQueuedWardPaymentV1 {
+    /// The Ward trigger's own public stack row.
+    pub trigger_stack_index: u32,
+    pub payment: PublicWardPaymentV1,
 }
 
 /// Shroud under the public shroud contract (Limited schema 5).
@@ -2038,6 +2091,107 @@ fn public_shroud_v1(state: &GameState) -> Result<PublicShroudV1> {
     })
 }
 
+/// Schema 5's Ward payments (`PublicObservationProjectionV5::ward_payments`).
+/// Each binding is the authenticated one the typed successors use
+/// (`validated_ward_observation_targeter` for generic mana,
+/// `validated_life_ward_observation_targeter` for life), so the exact
+/// targeting stack item is reported rather than inferred. The Ward source is
+/// the public source already shown for the trigger: its stack row, or the
+/// pending effect's source while its payer answers. Every fact here is
+/// public: the stack, its controllers and the printed or granted cost.
+fn public_ward_payments_v1(
+    state: &GameState,
+    projection: &PublicObservationProjectionV2,
+) -> Result<Option<PublicWardPaymentsV1>> {
+    let bound = |trigger: &StackItem| -> Result<Option<(u32, PlayerSeatV1, PublicWardCostV1)>> {
+        let generic = crate::effect::validated_ward_observation_targeter(state, trigger)
+            .map_err(RlContractError)?
+            .map(|(targeter, amount)| (targeter, PublicWardCostV1::Generic { amount }));
+        let bound = match generic {
+            Some(bound) => Some(bound),
+            None => crate::effect::validated_life_ward_observation_targeter(state, trigger)
+                .map_err(RlContractError)?
+                .map(|(targeter, amount)| (targeter, PublicWardCostV1::Life { amount })),
+        };
+        bound
+            .map(|(targeter, cost)| {
+                let index = state
+                    .stack
+                    .iter()
+                    .position(|live| live.v4.stack_item_id == targeter.v4.stack_item_id)
+                    .ok_or_else(|| {
+                        RlContractError("Ward targeter lost public stack membership".into())
+                    })?;
+                let index = u32::try_from(index)
+                    .map_err(|_| RlContractError("Ward targeter index exceeds u32".into()))?;
+                Ok((index, targeter.controller.into(), cost))
+            })
+            .transpose()
+    };
+    let pending_effect = state.engine.pending_effect.as_ref();
+    let mut queued = Vec::new();
+    for (index, trigger) in state.stack.iter().enumerate() {
+        if pending_effect.is_some_and(|pending| {
+            pending.resolving_item.v4.stack_item_id == trigger.v4.stack_item_id
+        }) {
+            continue;
+        }
+        let Some((targeting_stack_index, payer, cost)) = bound(trigger)? else {
+            continue;
+        };
+        let trigger_stack_index = u32::try_from(index)
+            .map_err(|_| RlContractError("Ward trigger index exceeds u32".into()))?;
+        let ward_source = projection
+            .stack
+            .get(index)
+            .filter(|row| row.stack_index == trigger_stack_index)
+            .ok_or_else(|| RlContractError("Ward trigger has no public stack row".into()))?
+            .source
+            .clone();
+        queued.push(PublicQueuedWardPaymentV1 {
+            trigger_stack_index,
+            payment: PublicWardPaymentV1 {
+                ward_source,
+                targeting_stack_index,
+                payer,
+                cost,
+            },
+        });
+    }
+    let mut pending = None;
+    if let Some(continuation) = pending_effect {
+        if matches!(
+            continuation.choice.as_ref(),
+            Some(crate::effect::PendingEffectChoice::ChooseBoolean {
+                purpose: crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { .. }
+                    | crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. },
+                ..
+            })
+        ) {
+            let (targeting_stack_index, payer, cost) = bound(&continuation.resolving_item)?
+                .ok_or_else(|| {
+                    RlContractError("pending Ward payment has no live bound targeter".into())
+                })?;
+            let ward_source = projection
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| pending.source.clone())
+                .ok_or_else(|| {
+                    RlContractError("pending Ward payment has no public source".into())
+                })?;
+            pending = Some(PublicWardPaymentV1 {
+                ward_source,
+                targeting_stack_index,
+                payer,
+                cost,
+            });
+        }
+    }
+    Ok((pending.is_some() || !queued.is_empty())
+        .then_some(PublicWardPaymentsV1 { pending, queued }))
+}
+
 /// Wave S1k's Meddling Mage names, in public battlefield order.
 fn public_meddling_mage_names_v1(state: &GameState) -> Result<Vec<PublicMeddlingMageNameV1>> {
     crate::eternal_sideboard_s1b_v1::applying_mage_names(state)
@@ -2433,8 +2587,10 @@ pub fn observe_premodern_ordered_registered_v1(
                 .then(|| public_text_color_changes_v1(state))
                 .transpose()?
                 .filter(|changes| !changes.is_empty()),
-            // This observation keeps refusing a game with extra turns.
+            // This observation keeps refusing a game with extra turns and
+            // the Ward states the legacy check cannot bind.
             turn_schedule: None,
+            ward_payments: None,
         };
         Some(NumericRegisteredStableSceneV1 {
             projection,
@@ -3291,7 +3447,14 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
         substep_count,
         text_mode,
     } = request;
-    crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+    let public_contract = text_mode == ObservationTextModeV2::PublicShroudV5Artifact;
+    if public_contract {
+        // Schema 5 reports every bound Ward payment (`ward_payments`); only
+        // the variable-target guard shared with the legacy check applies.
+        crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    } else {
+        crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
+    }
     crate::effect::temporary_control_v1::refuse_legacy_observation(state)
         .map_err(RlContractError)?;
     #[cfg(test)]
@@ -3335,6 +3498,11 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             }
         }
     }
+    let ward_payments = if public_contract {
+        public_ward_payments_v1(state, &base.projection)?
+    } else {
+        None
+    };
     Ok(ObservationV5 {
         schema_version: OBSERVATION_SCHEMA_VERSION_V5,
         kernel_version: base.kernel_version,
@@ -3381,6 +3549,7 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 .transpose()?
                 .filter(|changes| !changes.is_empty()),
             turn_schedule,
+            ward_payments,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -6120,6 +6289,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             meddling_mage_names: None,
             text_color_changes: None,
             turn_schedule: None,
+            ward_payments: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -8153,9 +8323,30 @@ fn core_surface_action_candidates_fake_scoped_v50(
                     )?;
                 }
             }
-            Decision::ChooseEffectBoolean { player, source, .. } => {
+            Decision::ChooseEffectBoolean {
+                player,
+                source,
+                purpose,
+                ..
+            } => {
                 let actor = (*player).into();
-                let source = card_ref(state, *source)?;
+                // Under the public shroud contract (Limited schema 5) a Ward
+                // payment answer names the Ward source by the public
+                // incarnation its trigger showed (`ward_payments`), never by
+                // a zone it has since moved to: a bounced source put back
+                // into its owner's library (Brainstorm) stays hidden. Every
+                // other mode keeps the current reference.
+                let ward = matches!(
+                    purpose,
+                    crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysLife { .. }
+                );
+                let source = match state.engine.pending_effect.as_ref() {
+                    Some(pending) if ward && state.public_shroud_v1 => {
+                        stack_source_ref(state, &pending.resolving_item)?
+                    }
+                    _ => card_ref(state, *source)?,
+                };
                 // Schema-v4's canonical Boolean ordering follows the
                 // existing ChooseKicker convention: false/No, then true/Yes.
                 // Legacy AIRL displays chooseUse as Yes then No; the semantic
