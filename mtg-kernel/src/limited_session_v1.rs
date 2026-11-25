@@ -1540,6 +1540,67 @@ mod tests {
         assert_eq!(session.privileged_environment_hash(), after_hash);
     }
 
+    #[test]
+    fn limited_reset_max_stack_objects_preserves_legacy_bytes_and_round_trips() {
+        let plain_deck = r#"{"cards":[{"name":"Plains","count":40}]}"#;
+        let companion_deck =
+            r#"{"cards":[{"name":"Plains","count":40}],"companion":"Kaheera, the Orphanguard"}"#;
+        let sideboard = r#","outside_the_game":[[{"name":"Forest","count":1}],[]]"#;
+
+        for schema in [
+            LIMITED_SCHEMA_V1,
+            LIMITED_ENGINE_PRIORITY_SCHEMA_V1,
+            LIMITED_FOUNDATIONS_COMBAT_SCHEMA_V1,
+            LIMITED_LONDON_MULLIGANS_SCHEMA_V1,
+            LIMITED_PUBLIC_SHROUD_SCHEMA_V1,
+        ] {
+            let forms = if schema >= LIMITED_LONDON_MULLIGANS_SCHEMA_V1 {
+                &[
+                    (plain_deck, ""),
+                    (plain_deck, sideboard),
+                    (companion_deck, ""),
+                    (companion_deck, sideboard),
+                ][..]
+            } else {
+                &[(plain_deck, "")][..]
+            };
+
+            for &(deck, outside_the_game) in forms {
+                let prefix = format!(
+                    concat!(
+                        r#"{{"request_type":"reset","schema_version":{schema},"request_id":"reset","#,
+                        r#""decks":[{deck},{plain_deck}],"episode_id":7,"env_seed":123,"#,
+                        r#""max_physical_decisions":4096,"max_policy_steps":4096"#
+                    ),
+                    schema = schema,
+                    deck = deck,
+                    plain_deck = plain_deck,
+                );
+                let legacy = format!("{prefix}{outside_the_game}}}");
+                let request: LimitedRequestV1 = serde_json::from_str(&legacy).unwrap();
+                assert!(matches!(
+                    request,
+                    LimitedRequestV1::Reset {
+                        max_stack_objects: None,
+                        ..
+                    }
+                ));
+                assert_eq!(serde_json::to_vec(&request).unwrap(), legacy.as_bytes());
+
+                let capped = format!(r#"{prefix},"max_stack_objects":16{outside_the_game}}}"#);
+                let request: LimitedRequestV1 = serde_json::from_str(&capped).unwrap();
+                assert!(matches!(
+                    request,
+                    LimitedRequestV1::Reset {
+                        max_stack_objects: Some(16),
+                        ..
+                    }
+                ));
+                assert_eq!(serde_json::to_vec(&request).unwrap(), capped.as_bytes());
+            }
+        }
+    }
+
     #[cfg(feature = "eternal-fixtures")]
     fn zirda_monolith_stack_for_limited_jsonl(
         items: usize,
