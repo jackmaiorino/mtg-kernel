@@ -1,0 +1,126 @@
+{
+  "schema": "mtg-kernel-cube-read-declaration/v2",
+  "interfaces": "m4-interfaces/v2",
+  "read_plan": "mtg-kernel-cube-read-plan/v3",
+  "a6_sha256": null,
+  "resamples": 10000,
+  "pins": null,
+  "inputs": null,
+  "reads": {
+    "a": {
+      "namespace": "test",
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": 0.04,
+      "extension_factor": 2,
+      "n": 2,
+      "sizing": {
+        "delta": 0.06,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
+    },
+    "a_early": {
+      "namespace": "test",
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": 0.04,
+      "extension_factor": 2,
+      "n": 2,
+      "sizing": {
+        "delta": 0.06,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
+    },
+    "b": {
+      "namespace": "test",
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": 0.52,
+      "extension_factor": 2,
+      "n": 2,
+      "sizing": {
+        "delta": 0.03,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
+    },
+    "c": {
+      "namespace": "test",
+      "levels": [
+        0.025,
+        0.025
+      ],
+      "cut": -0.02,
+      "extension_factor": 2,
+      "n": 2,
+      "sizing": {
+        "delta": 0.02,
+        "z_sum": 2.8,
+        "floor": 128,
+        "cap": 512
+      }
+    },
+    "aa": {
+      "namespace": "test",
+      "pairs": 4,
+      "level": 0.025
+    },
+    "dose": {
+      "namespace": "test",
+      "panel_drafts": 2,
+      "level": 0.025,
+      "panel_sha256": null
+    },
+    "d13": {
+      "namespace": "test",
+      "panel_drafts": 2,
+      "level": 0.025,
+      "panel_sha256": null
+    },
+    "a_one": {
+      "namespace": "test",
+      "level": 0.025
+    },
+    "a_early_one": {
+      "namespace": "test",
+      "level": 0.025
+    },
+    "a_all": {
+      "namespace": "test"
+    },
+    "a_early_all": {
+      "namespace": "test"
+    },
+    "size_a": {
+      "namespace": "test",
+      "units": 3,
+      "level": 0.025
+    },
+    "size_a_early": {
+      "namespace": "test",
+      "units": 3,
+      "level": 0.025
+    },
+    "size_b": {
+      "namespace": "test",
+      "units": 3,
+      "level": 0.025
+    },
+    "size_c": {
+      "namespace": "test",
+      "units": 3,
+      "level": 0.025
+    }
+  }
+}
