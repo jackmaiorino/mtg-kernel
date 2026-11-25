@@ -19,10 +19,8 @@ pub struct ResumeAuthorization {
     pub manifest: PathBuf,
     pub manifest_sha256: String,
     pub entry_seq: u64,
-    pub entry_commit: String,
+    /// Git repository containing the manifest and the lead branch named by entry 1.
     pub records_repository: PathBuf,
-    /// Trusted full ref from launch configuration, independent of the manifest.
-    pub lead_ref: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -64,14 +62,7 @@ impl ResumeAuthorization {
                 "resume entry differs from the run or next untouched batch",
             ));
         }
-        verify_entry_commit(
-            &self.records_repository,
-            &self.manifest,
-            &self.lead_ref,
-            &self.entry_commit,
-            &manifest,
-            &entry,
-        )?;
+        verify_entry_commit(&self.records_repository, &self.manifest, &manifest, &entry)?;
         Ok(ResumeReceipt {
             manifest_len: manifest.len(),
             manifest_sha256: digest,
