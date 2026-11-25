@@ -93,6 +93,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     };
     let iterate = |source: &ExpandedModelSourceV1, label: &str, seed: u64| -> PinnedFileV1 {
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {

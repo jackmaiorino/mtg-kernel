@@ -103,13 +103,17 @@ impl TurnV1 {
     }
 }
 
-/// The color a Circle of Protection names: wave S1d's blue, the serialized
-/// default, or wave P3g's red.
+/// The color a Circle of Protection names: wave S1d's blue (the serialized
+/// default), wave P3g's red, and white/black/green appended for Layer-3
+/// color-word replacements (Alter Reality, design §4.2).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CircleColorV1 {
     #[default]
     Blue,
     Red,
+    White,
+    Black,
+    Green,
 }
 
 impl CircleColorV1 {
@@ -117,19 +121,29 @@ impl CircleColorV1 {
         *self == Self::Blue
     }
 
-    fn mask(self) -> u8 {
-        crate::card_def::mana_color_mask(match self {
+    fn mana_color(self) -> ManaColor {
+        match self {
+            Self::White => ManaColor::W,
             Self::Blue => ManaColor::U,
+            Self::Black => ManaColor::B,
             Self::Red => ManaColor::R,
-        })
+            Self::Green => ManaColor::G,
+        }
     }
 
-    /// The Circle of Protection naming this color.
-    fn circle(self) -> &'static str {
-        match self {
-            Self::Blue => CIRCLE_OF_PROTECTION_BLUE,
-            Self::Red => CIRCLE_OF_PROTECTION_RED,
+    fn from_mana_color(color: ManaColor) -> Option<Self> {
+        match color {
+            ManaColor::W => Some(Self::White),
+            ManaColor::U => Some(Self::Blue),
+            ManaColor::B => Some(Self::Black),
+            ManaColor::R => Some(Self::Red),
+            ManaColor::G => Some(Self::Green),
+            ManaColor::C => None,
         }
+    }
+
+    fn mask(self) -> u8 {
+        crate::card_def::mana_color_mask(self.mana_color())
     }
 }
 
@@ -1190,6 +1204,15 @@ fn circle_sources(state: &GameState, mask: u8) -> Vec<ObjectLinkV4> {
     sources
 }
 
+fn effective_circle_color(
+    state: &GameState,
+    ctx: &ExecCtx,
+    printed: CircleColorV1,
+) -> CircleColorV1 {
+    let color = crate::text_color_change_v1::resolving_color(state, ctx, printed.mana_color());
+    CircleColorV1::from_mana_color(color).unwrap_or(printed)
+}
+
 fn circle_options(state: &GameState, color: CircleColorV1) -> Vec<EffectOp> {
     circle_sources(state, color.mask())
         .into_iter()
@@ -1201,7 +1224,7 @@ pub(crate) fn validate_circle_choice(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<(), String> {
-    let Some(color) = pending
+    let Some(printed) = pending
         .resolving_item
         .inline_effect
         .as_ref()
@@ -1209,6 +1232,7 @@ pub(crate) fn validate_circle_choice(
     else {
         return Ok(());
     };
+    let color = effective_circle_color(state, &pending.ctx, printed);
     let options = circle_options(state, color);
     let valid = match &pending.choice {
         Some(PendingEffectChoice::ChooseOption {
@@ -1523,10 +1547,11 @@ pub(crate) fn drive(
     let controller = continuation.ctx.controller;
     match op {
         S1dOpV1::CopChooseV1 | S1dOpV1::CircleChooseV1 { .. } => {
-            let color = match op {
+            let printed = match op {
                 S1dOpV1::CircleChooseV1 { color } => *color,
                 _ => CircleColorV1::Blue,
             };
+            let color = effective_circle_color(state, &continuation.ctx, printed);
             let options = circle_options(state, color);
             if !options.is_empty() {
                 push_choice(continuation, options, &path);
@@ -1792,11 +1817,19 @@ pub(crate) mod statics {
         read_state(state).is_some_and(|s1d| s1d.cop_shields.iter().any(|shield| shield.turn == now))
             || battlefield(state).any(|object| {
                 definition(state, object).is_some_and(|def| {
-                    [CircleColorV1::Blue, CircleColorV1::Red]
-                        .iter()
-                        .any(|color| def.name == color.circle())
+                    matches!(
+                        def.name,
+                        CIRCLE_OF_PROTECTION_BLUE | CIRCLE_OF_PROTECTION_RED
+                    )
                 })
             })
+            || (state.text_color_changes_v1.is_some()
+                && state.stack.iter().any(|item| {
+                    item.inline_effect
+                        .as_ref()
+                        .and_then(circle_choice_color)
+                        .is_some()
+                }))
     }
 
     /// Wave P3g. Records `object`'s incarnation and color just before it
@@ -1814,7 +1847,37 @@ pub(crate) mod statics {
             return;
         }
         let color_mask = crate::engine::object_color_mask(state, object);
-        if color_mask & (CircleColorV1::Blue.mask() | CircleColorV1::Red.mask()) == 0 {
+        let mut watched_mask = CircleColorV1::Blue.mask() | CircleColorV1::Red.mask();
+        if state.text_color_changes_v1.is_some() {
+            for permanent in battlefield(state) {
+                if definition(state, permanent)
+                    .is_some_and(|def| def.name == CIRCLE_OF_PROTECTION_RED)
+                {
+                    let color =
+                        crate::text_color_change_v1::text_color(state, permanent, ManaColor::R);
+                    watched_mask |= crate::card_def::mana_color_mask(color);
+                }
+            }
+            for item in &state.stack {
+                if let Some(printed) = item.inline_effect.as_ref().and_then(circle_choice_color) {
+                    let color = crate::text_color_change_v1::captured_color(
+                        state,
+                        item.v4.stack_item_id,
+                        printed.mana_color(),
+                    );
+                    watched_mask |= crate::card_def::mana_color_mask(color);
+                }
+            }
+        }
+        if let Some(s1d) = read_state(state) {
+            let now = TurnV1::now(state);
+            for shield in &s1d.cop_shields {
+                if shield.turn == now {
+                    watched_mask |= shield.color.mask();
+                }
+            }
+        }
+        if color_mask & watched_mask == 0 {
             return;
         }
         let record = DepartedSourceV1 {
