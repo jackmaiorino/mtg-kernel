@@ -91,8 +91,9 @@ fn escape_non_ascii_json(text: &str) -> String {
 /// Serializes `value` as canonical UTF-8 JSON matching Python's
 /// `json.dumps(doc, indent=2, ensure_ascii=True) + "\n"` with LF line endings.
 pub fn to_canonical_pretty_json<T: Serialize>(value: &T) -> Result<String, PodRunnerError> {
-    let raw = serde_json::to_string_pretty(value)
-        .map_err(|error| PodRunnerError::InvalidPlan(format!("JSON serialization error: {error}")))?;
+    let raw = serde_json::to_string_pretty(value).map_err(|error| {
+        PodRunnerError::InvalidPlan(format!("JSON serialization error: {error}"))
+    })?;
     let mut escaped = escape_non_ascii_json(&raw);
     escaped.push('\n');
     Ok(escaped)
@@ -101,8 +102,9 @@ pub fn to_canonical_pretty_json<T: Serialize>(value: &T) -> Result<String, PodRu
 /// Serializes `value` as compact UTF-8 JSON matching Python's
 /// `json.dumps(doc, separators=(",", ":"), ensure_ascii=True)` (no trailing LF).
 pub fn to_canonical_compact_json<T: Serialize>(value: &T) -> Result<String, PodRunnerError> {
-    let raw = serde_json::to_string(value)
-        .map_err(|error| PodRunnerError::InvalidPlan(format!("JSON serialization error: {error}")))?;
+    let raw = serde_json::to_string(value).map_err(|error| {
+        PodRunnerError::InvalidPlan(format!("JSON serialization error: {error}"))
+    })?;
     Ok(escape_non_ascii_json(&raw))
 }
 
@@ -320,10 +322,9 @@ impl PlanFamily {
             | PlanFamily::AEarlyOne
             | PlanFamily::AAll
             | PlanFamily::AEarlyAll => PodUse::ReadA,
-            PlanFamily::SizeA
-            | PlanFamily::SizeAEarly
-            | PlanFamily::SizeB
-            | PlanFamily::SizeC => PodUse::Sizing,
+            PlanFamily::SizeA | PlanFamily::SizeAEarly | PlanFamily::SizeB | PlanFamily::SizeC => {
+                PodUse::Sizing
+            }
             PlanFamily::B => PodUse::ReadB,
             PlanFamily::C | PlanFamily::D13 => PodUse::PairedBuild,
             PlanFamily::Dose => PodUse::Dose,
@@ -835,7 +836,9 @@ fn expect_u32(value: &OrderedJson, path: &str) -> Result<u32, String> {
 fn expect_sha256<'a>(value: &'a OrderedJson, path: &str) -> Result<&'a str, String> {
     let text = expect_str(value, path)?;
     if !is_sha256_hex(text) {
-        return Err(format!("{path}: expected 64-hex sha256 string, got {text:?}"));
+        return Err(format!(
+            "{path}: expected 64-hex sha256 string, got {text:?}"
+        ));
     }
     Ok(text)
 }
@@ -845,7 +848,9 @@ fn expect_opt_sha256<'a>(value: &'a OrderedJson, path: &str) -> Result<Option<&'
         None => Ok(None),
         Some(text) => {
             if !is_sha256_hex(text) {
-                return Err(format!("{path}: expected 64-hex sha256 string, got {text:?}"));
+                return Err(format!(
+                    "{path}: expected 64-hex sha256 string, got {text:?}"
+                ));
             }
             Ok(Some(text))
         }
@@ -858,7 +863,9 @@ fn ordered_to_value(value: &OrderedJson) -> Result<Value, String> {
         OrderedJson::Bool(b) => Ok(Value::Bool(*b)),
         OrderedJson::U64(n) => Ok(Value::from(*n)),
         OrderedJson::I64(n) => Ok(Value::from(*n)),
-        OrderedJson::F64 => Err("floating-point numbers are forbidden in read-plan JSON".to_owned()),
+        OrderedJson::F64 => {
+            Err("floating-point numbers are forbidden in read-plan JSON".to_owned())
+        }
         OrderedJson::Str(s) => Ok(Value::String(s.clone())),
         OrderedJson::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
@@ -1123,7 +1130,10 @@ fn parse_builder_ref_v1(
 fn parse_plan_chairs(value: &OrderedJson, path: &str) -> Result<Vec<PlanChair>, String> {
     let items = expect_array(value, path)?;
     if items.len() != SEATS {
-        return Err(format!("{path}: expected {SEATS} chairs, got {}", items.len()));
+        return Err(format!(
+            "{path}: expected {SEATS} chairs, got {}",
+            items.len()
+        ));
     }
     let mut chairs = Vec::with_capacity(SEATS);
     for (idx, item) in items.iter().enumerate() {
@@ -1144,7 +1154,9 @@ fn parse_plan_chairs(value: &OrderedJson, path: &str) -> Result<Vec<PlanChair>, 
         };
         let picker = parse_seat_ref_v1(&entries[2].1, &format!("{cp}.picker"))?;
         if role == ChairRole::Fixture && picker.kind != SeatKind::Uniform {
-            return Err(format!("{cp}.picker: fixture chair must use uniform picker"));
+            return Err(format!(
+                "{cp}.picker: fixture chair must use uniform picker"
+            ));
         }
         chairs.push(PlanChair {
             chair,
@@ -1158,7 +1170,10 @@ fn parse_plan_chairs(value: &OrderedJson, path: &str) -> Result<Vec<PlanChair>, 
 fn parse_pools_8x45(value: &OrderedJson, path: &str) -> Result<Vec<Vec<u16>>, String> {
     let items = expect_array(value, path)?;
     if items.len() != SEATS {
-        return Err(format!("{path}: expected {SEATS} pools, got {}", items.len()));
+        return Err(format!(
+            "{path}: expected {SEATS} pools, got {}",
+            items.len()
+        ));
     }
     let mut pools = Vec::with_capacity(SEATS);
     for (s, seat_val) in items.iter().enumerate() {
@@ -1173,9 +1188,7 @@ fn parse_pools_8x45(value: &OrderedJson, path: &str) -> Result<Vec<Vec<u16>>, St
         for (c_idx, card_val) in cards_arr.iter().enumerate() {
             let card_id = expect_u16(card_val, &format!("{path}[{s}][{c_idx}]"))?;
             if usize::from(card_id) >= CARD_DEFS.len() {
-                return Err(format!(
-                    "{path}[{s}][{c_idx}]: unknown card id {card_id}"
-                ));
+                return Err(format!("{path}[{s}][{c_idx}]: unknown card id {card_id}"));
             }
             seat_pool.push(card_id);
         }
@@ -1220,14 +1233,7 @@ fn parse_plan_deck(
         value,
         path,
         &[
-            "deck",
-            "source",
-            "chair",
-            "build",
-            "builder",
-            "cards",
-            "dealt",
-            "row",
+            "deck", "source", "chair", "build", "builder", "cards", "dealt", "row",
         ],
     )?;
     let deck = expect_u32(&entries[0].1, &format!("{path}.deck"))?;
@@ -1247,7 +1253,12 @@ fn parse_plan_deck(
         OrderedJson::Null => None,
         other => Some(parse_dealt_origin(other, &format!("{path}.dealt"))?),
     };
-    let builder = parse_builder_ref_v1(&entries[4].1, source, &entries[6].1, &format!("{path}.builder"))?;
+    let builder = parse_builder_ref_v1(
+        &entries[4].1,
+        source,
+        &entries[6].1,
+        &format!("{path}.builder"),
+    )?;
     let cards = match &entries[5].1 {
         OrderedJson::Null => None,
         other => Some(parse_cards_40_ascending(other, &format!("{path}.cards"))?),
@@ -1259,13 +1270,17 @@ fn parse_plan_deck(
     match source {
         DeckSource::Build => {
             if chair.is_none() || chair.unwrap() >= SEATS as u8 {
-                return Err(format!("{path}.chair: built deck requires chair in 0..{SEATS}"));
+                return Err(format!(
+                    "{path}.chair: built deck requires chair in 0..{SEATS}"
+                ));
             }
             if dealt.is_some() {
                 return Err(format!("{path}.dealt: built deck must have dealt == null"));
             }
             let Some(expected_build) = row.expected_build_index() else {
-                return Err(format!("{path}.row: built deck cannot have row \"opponent\""));
+                return Err(format!(
+                    "{path}.row: built deck cannot have row \"opponent\""
+                ));
             };
             if build != Some(expected_build) {
                 return Err(format!(
@@ -1627,11 +1642,7 @@ fn parse_game_end_v1(value: &OrderedJson, path: &str) -> Result<GameEnd, String>
             })
         }
         "terminal" => {
-            let e = expect_object_keys(
-                value,
-                path,
-                &["kind", "code", "classification", "reason"],
-            )?;
+            let e = expect_object_keys(value, path, &["kind", "code", "classification", "reason"])?;
             Ok(GameEnd::Terminal {
                 code: expect_str(&e[1].1, &format!("{path}.code"))?.to_owned(),
                 classification: expect_str(&e[2].1, &format!("{path}.classification"))?.to_owned(),
@@ -1822,7 +1833,9 @@ pub fn parse_and_validate_read_plan_json(json_text: &str) -> Result<ReadPlanV1, 
 
     let schema = expect_str(&top[0].1, "plan.schema").map_err(plan_err)?;
     if schema != READ_PLAN_SCHEMA {
-        return Err(plan_err(format!("plan.schema: expected {READ_PLAN_SCHEMA:?}, got {schema:?}")));
+        return Err(plan_err(format!(
+            "plan.schema: expected {READ_PLAN_SCHEMA:?}, got {schema:?}"
+        )));
     }
     let interfaces = expect_str(&top[1].1, "plan.interfaces").map_err(plan_err)?;
     if interfaces != M4_INTERFACES_VERSION {
@@ -1959,7 +1972,9 @@ pub fn parse_and_validate_read_plan_json(json_text: &str) -> Result<ReadPlanV1, 
                     return Err(plan_err("plan.mark: required for dose"));
                 };
                 if m.kind != MarkKind::Dose {
-                    return Err(plan_err("plan.mark.kind: expected \"dose\" for dose family"));
+                    return Err(plan_err(
+                        "plan.mark.kind: expected \"dose\" for dose family",
+                    ));
                 }
             }
             PlanFamily::D13 => {
@@ -1967,7 +1982,9 @@ pub fn parse_and_validate_read_plan_json(json_text: &str) -> Result<ReadPlanV1, 
                     return Err(plan_err("plan.mark: required for d13"));
                 };
                 if m.kind != MarkKind::Pilot {
-                    return Err(plan_err("plan.mark.kind: expected \"pilot\" for d13 family"));
+                    return Err(plan_err(
+                        "plan.mark.kind: expected \"pilot\" for d13 family",
+                    ));
                 }
             }
             _ => {
@@ -2023,7 +2040,8 @@ pub fn parse_and_validate_read_plan_json(json_text: &str) -> Result<ReadPlanV1, 
     if expect_str(&top[16].1, "plan.seat_rule").map_err(plan_err)? != "schedule" {
         return Err(plan_err("plan.seat_rule: must be \"schedule\""));
     }
-    let inputs = parse_plan_inputs(&top[17].1, family.has_dealt(), "plan.inputs").map_err(plan_err)?;
+    let inputs =
+        parse_plan_inputs(&top[17].1, family.has_dealt(), "plan.inputs").map_err(plan_err)?;
     let prep_sha256 = expect_opt_sha256(&top[18].1, "plan.prep_sha256")
         .map_err(plan_err)?
         .map(str::to_owned);
@@ -2157,7 +2175,10 @@ fn validate_plan_family_layout(plan: &ReadPlanV1) -> Result<(), PodRunnerError> 
                     || cand.build != Some(0)
                     || cand.row != DeckRow::Candidate
                 {
-                    return Err(plan_err(format!("plan.decks[{}]: invalid candidate deck", 2 * c)));
+                    return Err(plan_err(format!(
+                        "plan.decks[{}]: invalid candidate deck",
+                        2 * c
+                    )));
                 }
                 if plan.family == PlanFamily::Aa && cand.builder.kind != BuilderKind::Uniform {
                     return Err(plan_err(format!(
@@ -2333,7 +2354,10 @@ fn validate_plan_family_layout(plan: &ReadPlanV1) -> Result<(), PodRunnerError> 
                     || cand.build != Some(0)
                     || cand.row != DeckRow::Candidate
                 {
-                    return Err(plan_err(format!("plan.decks[{}]: invalid (b) candidate", 2 * s)));
+                    return Err(plan_err(format!(
+                        "plan.decks[{}]: invalid (b) candidate",
+                        2 * s
+                    )));
                 }
                 let expected_dealt = DealtOrigin {
                     function: "cube_deal_b_v1".to_owned(),
@@ -2417,7 +2441,10 @@ fn validate_plan_family_layout(plan: &ReadPlanV1) -> Result<(), PodRunnerError> 
                     || dy.build != Some(build_y)
                     || dy.row != row_y
                 {
-                    return Err(plan_err(format!("plan.decks[{}]: invalid y deck", 3 * s + 1)));
+                    return Err(plan_err(format!(
+                        "plan.decks[{}]: invalid y deck",
+                        3 * s + 1
+                    )));
                 }
                 let expected_dealt = DealtOrigin {
                     function: "cube_deal_common_v1".to_owned(),
@@ -2539,17 +2566,33 @@ fn validate_plan_family_layout(plan: &ReadPlanV1) -> Result<(), PodRunnerError> 
                     }
                 }
                 let contrasts = [
-                    (0u8, PairedBuildKind::CurrentInitial, (base) as u32, (base + 1) as u32),
-                    (1u8, PairedBuildKind::K1LastB1Last, (base + 2) as u32, (base) as u32),
-                    (2u8, PairedBuildKind::CandidateStated, (base + 2) as u32, (base + 3) as u32),
+                    (
+                        0u8,
+                        PairedBuildKind::CurrentInitial,
+                        (base) as u32,
+                        (base + 1) as u32,
+                    ),
+                    (
+                        1u8,
+                        PairedBuildKind::K1LastB1Last,
+                        (base + 2) as u32,
+                        (base) as u32,
+                    ),
+                    (
+                        2u8,
+                        PairedBuildKind::CandidateStated,
+                        (base + 2) as u32,
+                        (base + 3) as u32,
+                    ),
                 ];
                 for (q, kind, deck_x, deck_y) in contrasts {
                     let mut gx = Vec::with_capacity(4);
                     let mut gy = Vec::with_capacity(4);
                     for o in 0..2u64 {
                         for j in 0..2u64 {
-                            let group = (12 * s + 4 * usize::from(q) + 2 * (o as usize) + j as usize)
-                                as u32;
+                            let group =
+                                (12 * s + 4 * usize::from(q) + 2 * (o as usize) + j as usize)
+                                    as u32;
                             let g_seed = seed(&[
                                 SeedPart::Str(&plan.namespace),
                                 SeedPart::Str("game"),
@@ -2613,7 +2656,9 @@ fn validate_plan_family_layout(plan: &ReadPlanV1) -> Result<(), PodRunnerError> 
 }
 
 /// Strictly parses and validates a `PrepRequest` JSON (`requests/unit-<unit>.json`).
-pub fn parse_and_validate_prep_request_json(json_text: &str) -> Result<PrepRequest, PodRunnerError> {
+pub fn parse_and_validate_prep_request_json(
+    json_text: &str,
+) -> Result<PrepRequest, PodRunnerError> {
     let root = JsonParser::new(json_text).parse_root().map_err(plan_err)?;
     let top = expect_object_keys(
         &root,
@@ -2891,23 +2936,35 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
 
     let schema = expect_str(&top[0].1, "manifest.schema").map_err(plan_err)?;
     if schema != READ_PLAN_SCHEMA {
-        return Err(plan_err(format!("manifest.schema: expected {READ_PLAN_SCHEMA:?}")));
+        return Err(plan_err(format!(
+            "manifest.schema: expected {READ_PLAN_SCHEMA:?}"
+        )));
     }
     let kind = match expect_str(&top[1].1, "manifest.kind").map_err(plan_err)? {
         "plans" => ManifestKind::Plans,
         "prep" => ManifestKind::Prep,
         other => return Err(plan_err(format!("manifest.kind: invalid {other:?}"))),
     };
-    let family = expect_str(&top[2].1, "manifest.family").map_err(plan_err)?.to_owned();
-    let namespace = expect_str(&top[3].1, "manifest.namespace").map_err(plan_err)?.to_owned();
+    let family = expect_str(&top[2].1, "manifest.family")
+        .map_err(plan_err)?
+        .to_owned();
+    let namespace = expect_str(&top[3].1, "manifest.namespace")
+        .map_err(plan_err)?
+        .to_owned();
     if !is_valid_token(&namespace) {
-        return Err(plan_err(format!("manifest.namespace: invalid {namespace:?}")));
+        return Err(plan_err(format!(
+            "manifest.namespace: invalid {namespace:?}"
+        )));
     }
-    let run = expect_str(&top[4].1, "manifest.run").map_err(plan_err)?.to_owned();
+    let run = expect_str(&top[4].1, "manifest.run")
+        .map_err(plan_err)?
+        .to_owned();
     if !is_valid_token(&run) || (namespace != "test" && run != "v1") {
         return Err(plan_err(format!("manifest.run: invalid {run:?}")));
     }
-    let set = expect_str(&top[5].1, "manifest.set").map_err(plan_err)?.to_owned();
+    let set = expect_str(&top[5].1, "manifest.set")
+        .map_err(plan_err)?
+        .to_owned();
     if set.is_empty() {
         return Err(plan_err("manifest.set: must be non-empty"));
     }
@@ -2932,7 +2989,9 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
         let first = expect_u64(&arr[0], &format!("{p}[0]")).map_err(plan_err)?;
         let end = expect_u64(&arr[1], &format!("{p}[1]")).map_err(plan_err)?;
         if first >= end {
-            return Err(plan_err(format!("{p}: expected first < end, got [{first}, {end})")));
+            return Err(plan_err(format!(
+                "{p}: expected first < end, got [{first}, {end})"
+            )));
         }
         Ok([first, end])
     };
@@ -2965,12 +3024,13 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
     }
 
     // Validate family, namespace, panel_sha256, and prep_set consistency.
-    let is_prep_panel =
-        kind == ManifestKind::Prep && (set == "prep-panel" || set.starts_with("prep-panel-restart-"));
+    let is_prep_panel = kind == ManifestKind::Prep
+        && (set == "prep-panel" || set.starts_with("prep-panel-restart-"));
     match kind {
         ManifestKind::Plans => {
-            let fam = PlanFamily::from_str_name(&family)
-                .ok_or_else(|| plan_err(format!("manifest.family: unknown plan family {family:?}")))?;
+            let fam = PlanFamily::from_str_name(&family).ok_or_else(|| {
+                plan_err(format!("manifest.family: unknown plan family {family:?}"))
+            })?;
             if !fam.is_valid_namespace(&namespace) {
                 return Err(plan_err(format!(
                     "manifest.namespace: {namespace:?} invalid for family {family:?}"
@@ -2988,15 +3048,18 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
             }
         }
         ManifestKind::Prep => {
-            let fam = PrepFamily::from_str_name(&family)
-                .ok_or_else(|| plan_err(format!("manifest.family: unknown prep family {family:?}")))?;
+            let fam = PrepFamily::from_str_name(&family).ok_or_else(|| {
+                plan_err(format!("manifest.family: unknown prep family {family:?}"))
+            })?;
             if !fam.is_valid_namespace(&namespace) {
                 return Err(plan_err(format!(
                     "manifest.namespace: {namespace:?} invalid for prep family {family:?}"
                 )));
             }
             if prep_set.is_some() {
-                return Err(plan_err("manifest.prep_set: must be null on prep manifests"));
+                return Err(plan_err(
+                    "manifest.prep_set: must be null on prep manifests",
+                ));
             }
             if is_prep_panel {
                 if !fam.is_panel_family() {
@@ -3026,7 +3089,8 @@ pub fn parse_and_validate_manifest_json(json_text: &str) -> Result<SetManifest, 
             ManifestKind::Plans => {
                 let e = expect_object_keys(p_val, &pp, &["pod_index", "file", "sha256"])
                     .map_err(plan_err)?;
-                let pod_index = expect_u64(&e[0].1, &format!("{pp}.pod_index")).map_err(plan_err)?;
+                let pod_index =
+                    expect_u64(&e[0].1, &format!("{pp}.pod_index")).map_err(plan_err)?;
                 if let Some(prev) = prev_id {
                     if pod_index <= prev {
                         return Err(plan_err(format!(
@@ -3240,11 +3304,15 @@ pub fn parse_and_validate_panel_json(json_text: &str) -> Result<PanelDocument, P
     if kind != "panel" {
         return Err(plan_err("panel.kind must be \"panel\""));
     }
-    let namespace = expect_str(&top[2].1, "panel.namespace").map_err(plan_err)?.to_owned();
+    let namespace = expect_str(&top[2].1, "panel.namespace")
+        .map_err(plan_err)?
+        .to_owned();
     if !is_valid_token(&namespace) {
         return Err(plan_err("panel.namespace invalid"));
     }
-    let run = expect_str(&top[3].1, "panel.run").map_err(plan_err)?.to_owned();
+    let run = expect_str(&top[3].1, "panel.run")
+        .map_err(plan_err)?
+        .to_owned();
     if !is_valid_token(&run) {
         return Err(plan_err("panel.run invalid"));
     }
@@ -3285,8 +3353,8 @@ pub fn parse_and_validate_panel_json(json_text: &str) -> Result<PanelDocument, P
     }
 
     let drafts_arr = expect_array(&top[10].1, "panel.drafts").map_err(plan_err)?;
-    let expected_count = usize::try_from(units[1] - units[0])
-        .map_err(|_| plan_err("panel.units range overflow"))?;
+    let expected_count =
+        usize::try_from(units[1] - units[0]).map_err(|_| plan_err("panel.units range overflow"))?;
     if prep_outputs.len() != expected_count || drafts_arr.len() != expected_count {
         return Err(plan_err(format!(
             "panel: expected {expected_count} prep_outputs and drafts"
@@ -3403,8 +3471,8 @@ pub fn parse_and_validate_plan_execution_receipt_json(
     let mut records = Vec::with_capacity(rec_arr.len());
     for (idx, item) in rec_arr.iter().enumerate() {
         let rp = format!("execution.records[{idx}]");
-        let e = expect_object_keys(item, &rp, &["pod_index", "sha256", "status"])
-            .map_err(plan_err)?;
+        let e =
+            expect_object_keys(item, &rp, &["pod_index", "sha256", "status"]).map_err(plan_err)?;
         let pod_index = expect_u64(&e[0].1, &format!("{rp}.pod_index")).map_err(plan_err)?;
         let sha256 = expect_sha256(&e[1].1, &format!("{rp}.sha256"))
             .map_err(plan_err)?
@@ -3512,13 +3580,11 @@ fn verify_declaration(
         )));
     }
     if manifest.namespace != "test" {
-        let text = std::str::from_utf8(&verification.declaration_bytes).map_err(|_| {
-            plan_err("A6 declaration file is not valid UTF-8")
-        })?;
+        let text = std::str::from_utf8(&verification.declaration_bytes)
+            .map_err(|_| plan_err("A6 declaration file is not valid UTF-8"))?;
         let lower = text.to_ascii_lowercase();
-        let has_part2 = lower.contains("part 2")
-            || lower.contains("part-2")
-            || lower.contains("part_2");
+        let has_part2 =
+            lower.contains("part 2") || lower.contains("part-2") || lower.contains("part_2");
         let has_sig = lower.contains("countersign") || lower.contains("## signature");
         if !(has_part2 && has_sig) {
             return Err(plan_err(
@@ -3608,7 +3674,10 @@ fn load_and_verify_panel(
     Ok(Some(panel))
 }
 
-fn verify_plan_against_panel(plan: &ReadPlanV1, panel: &PanelDocument) -> Result<(), PodRunnerError> {
+fn verify_plan_against_panel(
+    plan: &ReadPlanV1,
+    panel: &PanelDocument,
+) -> Result<(), PodRunnerError> {
     let draft = panel
         .drafts
         .iter()
@@ -3742,7 +3811,9 @@ pub fn run_prep_set_execution(
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", manifest_path.display())))?;
     let manifest = parse_and_validate_manifest_json(&manifest_text)?;
     if manifest.kind != ManifestKind::Prep {
-        return Err(plan_err("run_prep_set_execution requires manifest kind=\"prep\""));
+        return Err(plan_err(
+            "run_prep_set_execution requires manifest kind=\"prep\"",
+        ));
     }
     verify_declaration(&manifest, verification)?;
 
@@ -4037,7 +4108,9 @@ pub fn accept_prep_execution(set_dir: &Path) -> Result<AcceptedPrepExecution, Po
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", manifest_path.display())))?;
     let manifest = parse_and_validate_manifest_json(&manifest_text)?;
     if manifest.kind != ManifestKind::Prep {
-        return Err(plan_err("accept_prep_execution requires manifest kind=\"prep\""));
+        return Err(plan_err(
+            "accept_prep_execution requires manifest kind=\"prep\"",
+        ));
     }
 
     let mut accepted: Option<AcceptedPrepExecution> = None;
@@ -4213,8 +4286,7 @@ fn parse_deck_record(value: &OrderedJson, path: &str) -> Result<DeckRecord, Stri
         OrderedJson::Null => None,
         other => Some(parse_dealt_origin(other, &format!("{path}.dealt"))?),
     };
-    let builder =
-        parse_builder_ref_v1(&d[4].1, source, &d[8].1, &format!("{path}.builder"))?;
+    let builder = parse_builder_ref_v1(&d[4].1, source, &d[8].1, &format!("{path}.builder"))?;
     let build_seed = expect_opt_u64(&d[5].1, &format!("{path}.build_seed"))?;
     let cards = parse_cards_40_ascending(&d[6].1, &format!("{path}.cards"))?;
     let build_rows = match &d[7].1 {
@@ -4391,9 +4463,7 @@ pub fn execute_read_plan_v1(
     }
     let (header, built_decks) = prepare_read_plan_decks(pool, plan, seats)?;
     if let Some(journal) = options.journal {
-        journal
-            .record_header(&header)
-            .map_err(PodRunnerError::Io)?;
+        journal.record_header(&header).map_err(PodRunnerError::Io)?;
     }
 
     let tasks: Vec<GameTask> = plan
@@ -4420,12 +4490,13 @@ pub fn execute_read_plan_v1(
         .collect();
 
     let journal_opt = options.journal;
-    let hook_closure = move |game: &PodGameRecord, timings: &[AttemptTiming]| -> Result<(), String> {
-        if let Some(journal) = journal_opt {
-            journal.record_game(game, timings)?;
-        }
-        Ok(())
-    };
+    let hook_closure =
+        move |game: &PodGameRecord, timings: &[AttemptTiming]| -> Result<(), String> {
+            if let Some(journal) = journal_opt {
+                journal.record_game(game, timings)?;
+            }
+            Ok(())
+        };
     let on_game_complete: Option<&GameCompleteHook<'_>> = if journal_opt.is_some() {
         Some(&hook_closure)
     } else {
@@ -4443,26 +4514,26 @@ pub fn execute_read_plan_v1(
     };
     let exec_out = execute_game_tasks_with_options(&tasks, &built_decks, pilot, &exec_opts)?;
 
-    let (halts, status, stop, watchdog_stopped) = if let Some(stop_idx) = exec_out.first_watchdog_stop
-    {
-        let (halts, _, _) = collect_halts_and_stop(&exec_out.games, false);
-        let expired = &exec_out.games[stop_idx];
-        let a0 = &expired.attempts[0];
-        let stop_report = StopReport {
-            game: expired.game,
-            pairing: expired.pairing,
-            decks: expired.decks,
-            attempts: vec![StopAttemptReport {
-                deal_seed: a0.deal_seed,
-                stop_kind: WATCHDOG_STOP_KIND.to_owned(),
-                last_action_source: None,
-            }],
+    let (halts, status, stop, watchdog_stopped) =
+        if let Some(stop_idx) = exec_out.first_watchdog_stop {
+            let (halts, _, _) = collect_halts_and_stop(&exec_out.games, false);
+            let expired = &exec_out.games[stop_idx];
+            let a0 = &expired.attempts[0];
+            let stop_report = StopReport {
+                game: expired.game,
+                pairing: expired.pairing,
+                decks: expired.decks,
+                attempts: vec![StopAttemptReport {
+                    deal_seed: a0.deal_seed,
+                    stop_kind: WATCHDOG_STOP_KIND.to_owned(),
+                    last_action_source: None,
+                }],
+            };
+            (halts, PodStatus::Stopped, Some(stop_report), true)
+        } else {
+            let (halts, status, stop) = collect_halts_and_stop(&exec_out.games, false);
+            (halts, status, stop, false)
         };
-        (halts, PodStatus::Stopped, Some(stop_report), true)
-    } else {
-        let (halts, status, stop) = collect_halts_and_stop(&exec_out.games, false);
-        (halts, status, stop, false)
-    };
 
     let record = PodRecord {
         schema: POD_RECORD_SCHEMA,
@@ -4526,9 +4597,11 @@ pub fn finalize_stopped_record_from_journal(
             };
             match kind.as_str() {
                 "header" => {
-                    let Ok(h) =
-                        expect_object_keys(&parsed, "journal.header", &["kind", "draft", "chairs", "decks"])
-                    else {
+                    let Ok(h) = expect_object_keys(
+                        &parsed,
+                        "journal.header",
+                        &["kind", "draft", "chairs", "decks"],
+                    ) else {
                         break;
                     };
                     let Ok(draft) = parse_draft_record(&h[1].1, "journal.header.draft") else {
@@ -4563,7 +4636,8 @@ pub fn finalize_stopped_record_from_journal(
                     });
                 }
                 "game" => {
-                    let Ok(g) = expect_object_keys(&parsed, "journal.game", &["kind", "game", "timings"])
+                    let Ok(g) =
+                        expect_object_keys(&parsed, "journal.game", &["kind", "game", "timings"])
                     else {
                         break;
                     };
@@ -4576,7 +4650,9 @@ pub fn finalize_stopped_record_from_journal(
                     let Ok(timings) = t_arr
                         .iter()
                         .enumerate()
-                        .map(|(i, v)| parse_attempt_timing(v, &format!("journal.game.timings[{i}]")))
+                        .map(|(i, v)| {
+                            parse_attempt_timing(v, &format!("journal.game.timings[{i}]"))
+                        })
                         .collect::<Result<Vec<_>, _>>()
                     else {
                         break;
@@ -4683,7 +4759,9 @@ fn preflight_plan_set_execution(
         .map_err(|error| PodRunnerError::Io(format!("{}: {error}", manifest_path.display())))?;
     let manifest = parse_and_validate_manifest_json(&manifest_text)?;
     if manifest.kind != ManifestKind::Plans {
-        return Err(plan_err("plan set execution requires manifest kind=\"plans\""));
+        return Err(plan_err(
+            "plan set execution requires manifest kind=\"plans\"",
+        ));
     }
     verify_declaration(&manifest, verification)?;
 
@@ -4733,13 +4811,18 @@ fn preflight_plan_set_execution(
                     let h_obj = expect_object_keys(
                         h,
                         "exec-0.halt",
-                        &["game", "attempt", "stop_kind", "last_action_source", "deal_seed"],
+                        &[
+                            "game",
+                            "attempt",
+                            "stop_kind",
+                            "last_action_source",
+                            "deal_seed",
+                        ],
                     )
                     .map_err(plan_err)?;
                     let sk = expect_str(&h_obj[2].1, "exec-0.halt.stop_kind").map_err(plan_err)?;
                     if sk == WATCHDOG_STOP_KIND {
-                        let game =
-                            expect_u64(&h_obj[0].1, "exec-0.halt.game").map_err(plan_err)?;
+                        let game = expect_u64(&h_obj[0].1, "exec-0.halt.game").map_err(plan_err)?;
                         e0_watchdogs.push([rec_entry.pod_index, game]);
                     }
                 }
@@ -4940,13 +5023,8 @@ where
         journal_path: &Path,
         execution: u64,
     ) -> Result<SupervisedPodOutcome, PodRunnerError> {
-        let mut cmd = (self.build_command)(
-            plan_path,
-            record_path,
-            timing_path,
-            journal_path,
-            execution,
-        );
+        let mut cmd =
+            (self.build_command)(plan_path, record_path, timing_path, journal_path, execution);
         let status = cmd
             .status()
             .map_err(|error| PodRunnerError::Io(format!("spawn worker failed: {error}")))?;
@@ -4964,17 +5042,22 @@ where
         let OrderedJson::Object(entries) = parsed else {
             return Err(plan_err("worker record is not a JSON object"));
         };
-        let pod_status = match entries
-            .iter()
-            .find(|(k, _)| k == "status")
-            .and_then(|(_, v)| match v {
-                OrderedJson::Str(s) => Some(s.as_str()),
-                _ => None,
-            }) {
-            Some("complete") => PodStatus::Complete,
-            Some("stopped") => PodStatus::Stopped,
-            other => return Err(plan_err(format!("unexpected worker record status {other:?}"))),
-        };
+        let pod_status =
+            match entries
+                .iter()
+                .find(|(k, _)| k == "status")
+                .and_then(|(_, v)| match v {
+                    OrderedJson::Str(s) => Some(s.as_str()),
+                    _ => None,
+                }) {
+                Some("complete") => PodStatus::Complete,
+                Some("stopped") => PodStatus::Stopped,
+                other => {
+                    return Err(plan_err(format!(
+                        "unexpected worker record status {other:?}"
+                    )))
+                }
+            };
         let entry = ExecutionRecordEntry {
             pod_index: plan.pod_index,
             sha256: sha256_hex(&bytes),
@@ -5096,7 +5179,9 @@ pub fn accept_plan_execution(
         .map_err(|error| PodRunnerError::Io(format!("manifest.json: {error}")))?;
     let manifest = parse_and_validate_manifest_json(&manifest_text)?;
     if manifest.kind != ManifestKind::Plans {
-        return Err(plan_err("accept_plan_execution requires manifest kind=\"plans\""));
+        return Err(plan_err(
+            "accept_plan_execution requires manifest kind=\"plans\"",
+        ));
     }
     let exec_entry = manifest
         .executions

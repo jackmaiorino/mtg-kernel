@@ -202,10 +202,9 @@ fn load_verification(args: &Args, loaded: &LoadedPool) -> Fallible<RuntimeVerifi
     let binary = match args.get("--binary-pin") {
         Some(pin) => pin.to_owned(),
         None => {
-            let exe = std::env::current_exe()
-                .map_err(|error| format!("current_exe: {error}"))?;
-            let bytes = std::fs::read(&exe)
-                .map_err(|error| format!("{}: {error}", exe.display()))?;
+            let exe = std::env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
+            let bytes =
+                std::fs::read(&exe).map_err(|error| format!("{}: {error}", exe.display()))?;
             sha256_hex(&bytes)
         }
     };
@@ -247,8 +246,8 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
     let workers = args.number("--workers")?.unwrap_or(1).max(1) as usize;
     let host = args.get("--host").unwrap_or("local");
 
-    let plan_text = std::fs::read_to_string(plan_path)
-        .map_err(|error| format!("{plan_path}: {error}"))?;
+    let plan_text =
+        std::fs::read_to_string(plan_path).map_err(|error| format!("{plan_path}: {error}"))?;
     let plan = parse_and_validate_read_plan_json(&plan_text).map_err(|e| e.to_string())?;
     let journal = PodProgressJournal::create(journal_path).map_err(|e| e.to_string())?;
     let run_opts = ReadPlanRunOptions {
@@ -281,8 +280,7 @@ fn run_worker_plan(args: &Args, loaded: &LoadedPool) -> Fallible<()> {
         File::create_new(&timing_path).map_err(|e| format!("{}: {e}", timing_path.display()))?;
     for entry in &output.timings {
         let line = to_canonical_compact_json(entry).map_err(|e| e.to_string())?;
-        writeln!(timing_file, "{line}")
-            .map_err(|e| format!("{}: {e}", timing_path.display()))?;
+        writeln!(timing_file, "{line}").map_err(|e| format!("{}: {e}", timing_path.display()))?;
     }
     timing_file
         .sync_all()
@@ -457,8 +455,8 @@ fn run_cli(args: &Args) -> Fallible<()> {
 
     match out_path {
         Some(path) => {
-            let file = File::create_new(&path)
-                .map_err(|error| format!("{}: {error}", path.display()))?;
+            let file =
+                File::create_new(&path).map_err(|error| format!("{}: {error}", path.display()))?;
             let mut writer = BufWriter::new(file);
             for record in &records {
                 writeln!(writer, "{}", record.to_json_line())
@@ -475,19 +473,15 @@ fn run_cli(args: &Args) -> Fallible<()> {
                 writeln!(writer, "{}", record.to_json_line())
                     .map_err(|error| format!("stdout: {error}"))?;
             }
-            writer
-                .flush()
-                .map_err(|error| format!("stdout: {error}"))?;
+            writer.flush().map_err(|error| format!("stdout: {error}"))?;
         }
     }
 
-    let report_json =
-        serde_json::to_string_pretty(&report).expect("a batch report is plain data");
+    let report_json = serde_json::to_string_pretty(&report).expect("a batch report is plain data");
     if let Some(path) = report_path {
         let mut file =
             File::create_new(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-        writeln!(file, "{report_json}")
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+        writeln!(file, "{report_json}").map_err(|error| format!("{}: {error}", path.display()))?;
         file.flush()
             .map_err(|error| format!("{}: {error}", path.display()))?;
     } else {

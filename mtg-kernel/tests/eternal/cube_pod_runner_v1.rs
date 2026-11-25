@@ -34,8 +34,8 @@ use mtg_kernel::cube_read_plan_v1::{
     accept_plan_execution, accept_prep_execution, compute_plan_set_sha256, execute_read_plan_v1,
     parse_and_validate_prep_result_json, parse_and_validate_read_plan_json, run_plan_set_execution,
     run_prep_set_execution, sha256_hex, supervise_plan_set_execution, to_canonical_compact_json,
-    to_canonical_pretty_json, CommandPodWorkerLauncher, DeckRow, ExecutionRecordEntry,
-    ExecutionReason, ManifestEntry, ManifestExecutionEntry, ManifestKind, ManifestPodEntry,
+    to_canonical_pretty_json, CommandPodWorkerLauncher, DeckRow, ExecutionReason,
+    ExecutionRecordEntry, ManifestEntry, ManifestExecutionEntry, ManifestKind, ManifestPodEntry,
     ManifestUnitEntry, MarkKind, PanelDocument, PanelDraftEntry, PanelPrepOutput, PlanChair,
     PlanDeck, PlanExecutionEnded, PlanFamily, PlanGame, PlanInputs, PlanMark, PodProgressJournal,
     PodWorkerLauncher, PrepBuildSpec, PrepExecutionEnded, PrepFamily, PrepRequest,
@@ -210,11 +210,7 @@ impl SeatPicker for CheckingUniformPicker {
         // `seen_not_taken`: every card seen at an earlier pick minus own pool,
         // ascending registry id, at most 238 cards.
         let pool_set: BTreeSet<u16> = self.pool_history.iter().copied().collect();
-        let expected_seen: Vec<u16> = self
-            .seen_history
-            .difference(&pool_set)
-            .copied()
-            .collect();
+        let expected_seen: Vec<u16> = self.seen_history.difference(&pool_set).copied().collect();
         assert_eq!(view.seen_not_taken, expected_seen.as_slice());
         assert!(view.seen_not_taken.windows(2).all(|w| w[0] < w[1]));
         assert!(view.seen_not_taken.len() <= 238);
@@ -251,11 +247,7 @@ fn acceptance_1_uniform_draft_equality() {
     let expected = run_draft(&pool, draft_seed, &mut uniform_pickers(draft_seed)).unwrap();
     assert_eq!(checked.record, expected);
     assert_eq!(checked.record.pools.len(), SEATS);
-    assert!(checked
-        .record
-        .pools
-        .iter()
-        .all(|p| p.len() == POOL_CARDS));
+    assert!(checked.record.pools.iter().all(|p| p.len() == POOL_CARDS));
     assert_eq!(checked.record.packs.len(), ROUNDS);
 }
 
@@ -397,13 +389,8 @@ fn acceptance_3_pod_replays_bit_for_bit_on_1_and_12_workers() {
             .insert((19, env19_a0), (GameEnd::DecisionCap, None));
 
         let run_with_workers = |workers: usize| -> (PodRecord, String) {
-            let cfg = TrainingPodConfig::uniform_a2(
-                PodUse::Test,
-                "test",
-                "det-workers",
-                3,
-                workers,
-            );
+            let cfg =
+                TrainingPodConfig::uniform_a2(PodUse::Test, "test", "det-workers", 3, workers);
             let mut chairs = uniform_training_chairs(roles);
             let record = run_training_pod(&pool, &cfg, &mut chairs, &pilot).unwrap();
             let line = record.to_json_line();
@@ -867,8 +854,13 @@ fn acceptance_7_exhausted_retries() {
 
     // Get target game identity from a clean baseline run.
     let mut chairs_base = uniform_training_chairs(roles);
-    let baseline =
-        run_training_pod(&pool, &cfg, &mut chairs_base, &ScriptedPilot::natural_only()).unwrap();
+    let baseline = run_training_pod(
+        &pool,
+        &cfg,
+        &mut chairs_base,
+        &ScriptedPilot::natural_only(),
+    )
+    .unwrap();
     let target_idx = 23usize;
     let target = &baseline.games[target_idx];
     let target_p0 = baseline.decks[target.decks[0] as usize].cards.clone();
@@ -1105,10 +1097,7 @@ fn acceptance_8_seed_parity() {
     // Reject strings outside `[a-z0-9-]+`.
     for bad in ["", "Upper", "has_underscore", "has space", "a/b", "a\"b"] {
         assert!(
-            matches!(
-                seed(&[Str(bad)]),
-                Err(PodRunnerError::InvalidSeedPart(_))
-            ),
+            matches!(seed(&[Str(bad)]), Err(PodRunnerError::InvalidSeedPart(_))),
             "should reject {bad:?}"
         );
     }
@@ -1180,10 +1169,7 @@ fn acceptance_9_layout_read_plans_and_reports() {
         let mut group_counts = BTreeMap::new();
         let mut size_histogram = BTreeMap::new();
         for game in &pod.games {
-            group_counts
-                .entry(game.group)
-                .or_default()
-                .push(game);
+            group_counts.entry(game.group).or_default().push(game);
         }
         assert_eq!(group_counts.len(), POD_GAMES);
         for (g, &(low, high)) in pairings.iter().enumerate() {
@@ -1391,12 +1377,8 @@ fn acceptance_10_schema() {
         );
     }
     let mut chairs_stop = uniform_training_chairs(roles);
-    let stopped = unwrap_complete_or_stopped(run_training_pod(
-        &pool,
-        &cfg,
-        &mut chairs_stop,
-        &stop_pilot,
-    ));
+    let stopped =
+        unwrap_complete_or_stopped(run_training_pod(&pool, &cfg, &mut chairs_stop, &stop_pilot));
     let stopped_json = stopped.to_json_line();
     validate_pod_record_json(&stopped_json).expect("stopped record matches frozen schema");
 
@@ -1460,10 +1442,8 @@ fn acceptance_10_schema() {
     );
 
     // 9. Reject missing field inside `stop` report.
-    let missing_stop_field = stopped_json.replace(
-        ",\"attempts\":[{\"deal_seed\"",
-        ",\"bad\":[{\"deal_seed\"",
-    );
+    let missing_stop_field =
+        stopped_json.replace(",\"attempts\":[{\"deal_seed\"", ",\"bad\":[{\"deal_seed\"");
     assert_ne!(missing_stop_field, stopped_json);
     assert!(
         validate_pod_record_json(&missing_stop_field).is_err(),
@@ -1520,7 +1500,6 @@ fn watchdog_expiry_recorded_as_terminal_watchdog() {
     assert_eq!(stop.attempts[0].last_action_source, None);
     validate_pod_record_json(&record.to_json_line()).expect("watchdog-stopped record valid v2");
 }
-
 
 // ---------------------------------------------------------------------------
 // Round 2 helpers and tests (`m4-interfaces/v2`, `pod-record/v2`, `READ-PLAN-v1`)
@@ -1779,7 +1758,12 @@ fn build_test_d13_plan(
     for s in 0..SEATS {
         let base = 6 * s;
         let specs = [
-            (0u8, DeckRow::B1Last, 0u8, BuilderRef::learned(pin_hex(0xb1))),
+            (
+                0u8,
+                DeckRow::B1Last,
+                0u8,
+                BuilderRef::learned(pin_hex(0xb1)),
+            ),
             (1, DeckRow::Initial, 0, BuilderRef::learned(pin_hex(0xb2))),
             (2, DeckRow::K1Last, 0, BuilderRef::learned(pin_hex(0xb3))),
             (3, DeckRow::Stated, 1, BuilderRef::stated()),
@@ -1813,9 +1797,24 @@ fn build_test_d13_plan(
             });
         }
         let contrasts = [
-            (0u8, PairedBuildKind::CurrentInitial, base as u32, (base + 1) as u32),
-            (1u8, PairedBuildKind::K1LastB1Last, (base + 2) as u32, base as u32),
-            (2u8, PairedBuildKind::CandidateStated, (base + 2) as u32, (base + 3) as u32),
+            (
+                0u8,
+                PairedBuildKind::CurrentInitial,
+                base as u32,
+                (base + 1) as u32,
+            ),
+            (
+                1u8,
+                PairedBuildKind::K1LastB1Last,
+                (base + 2) as u32,
+                base as u32,
+            ),
+            (
+                2u8,
+                PairedBuildKind::CandidateStated,
+                (base + 2) as u32,
+                (base + 3) as u32,
+            ),
         ];
         for (q, kind, deck_x, deck_y) in contrasts {
             let mut gx = Vec::with_capacity(4);
@@ -1976,11 +1975,15 @@ fn round2_v2_record_client_d13_dealt_and_read_halts() {
 
     // 1. Client pod uses `namespace = "client-pods"` and `use = "client"`, and
     //    never enters a training batch.
-    let client_cfg =
-        TrainingPodConfig::uniform_a2(PodUse::Client, CLIENT_NAMESPACE, "c-run", 0, 2);
+    let client_cfg = TrainingPodConfig::uniform_a2(PodUse::Client, CLIENT_NAMESPACE, "c-run", 0, 2);
     let mut chairs = uniform_training_chairs(roles);
-    let client_pod =
-        run_training_pod(&pool, &client_cfg, &mut chairs, &ScriptedPilot::natural_only()).unwrap();
+    let client_pod = run_training_pod(
+        &pool,
+        &client_cfg,
+        &mut chairs,
+        &ScriptedPilot::natural_only(),
+    )
+    .unwrap();
     assert_eq!(client_pod.pod_use, PodUse::Client);
     assert_eq!(client_pod.namespace, CLIENT_NAMESPACE);
     validate_pod_record_json(&client_pod.to_json_line()).expect("client pod validates v2");
@@ -2312,15 +2315,8 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
         to_canonical_pretty_json(&manifest).unwrap().as_bytes(),
     )
     .unwrap();
-    let e1 = run_prep_set_execution(
-        &pool,
-        &bc_dir,
-        1,
-        &UniformSeatFactory,
-        &verification,
-        None,
-    )
-    .unwrap();
+    let e1 = run_prep_set_execution(&pool, &bc_dir, 1, &UniformSeatFactory, &verification, None)
+        .unwrap();
     assert_eq!(e1.ended, PrepExecutionEnded::Complete);
     assert_eq!(e1.outputs.len(), 2);
 
@@ -2346,15 +2342,10 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
         to_canonical_pretty_json(&manifest).unwrap().as_bytes(),
     )
     .unwrap();
-    assert!(run_prep_set_execution(
-        &pool,
-        &bc_dir,
-        2,
-        &UniformSeatFactory,
-        &verification,
-        None
-    )
-    .is_err());
+    assert!(
+        run_prep_set_execution(&pool, &bc_dir, 2, &UniformSeatFactory, &verification, None)
+            .is_err()
+    );
 
     // Part B: Two-stage frozen panel (`prep-panel` stage 1 -> `panel/panel.json`
     // stage 2 -> `prep-dose-0` verified against pinned `panel_sha256`).
@@ -2434,7 +2425,9 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
     };
     std::fs::write(
         prep_panel_dir.join("manifest.json"),
-        to_canonical_pretty_json(&stage1_manifest).unwrap().as_bytes(),
+        to_canonical_pretty_json(&stage1_manifest)
+            .unwrap()
+            .as_bytes(),
     )
     .unwrap();
     let stage1_receipt = run_prep_set_execution(
@@ -2502,7 +2495,11 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
     let panel_text = to_canonical_pretty_json(&panel_doc).unwrap();
     let panel_digest = sha256_hex(panel_text.as_bytes());
     std::fs::create_dir_all(run_root.join("panel")).unwrap();
-    std::fs::write(run_root.join("panel").join("panel.json"), panel_text.as_bytes()).unwrap();
+    std::fs::write(
+        run_root.join("panel").join("panel.json"),
+        panel_text.as_bytes(),
+    )
+    .unwrap();
 
     // Stage-2 consumer `prep-dose-0` with pinned `panel_sha256`.
     let prep_dose_dir = run_root.join("prep-dose-0");
@@ -2630,8 +2627,14 @@ fn round2_prep_mode_receipts_retries_determinism_and_two_stage_panel() {
     // Both current and initial share build=0 and build_seed, distinguished by builder.pin.
     assert_eq!(u0_parsed.builds[0].build, 0);
     assert_eq!(u0_parsed.builds[1].build, 0);
-    assert_eq!(u0_parsed.builds[0].build_seed, u0_parsed.builds[1].build_seed);
-    assert_ne!(u0_parsed.builds[0].builder.pin, u0_parsed.builds[1].builder.pin);
+    assert_eq!(
+        u0_parsed.builds[0].build_seed,
+        u0_parsed.builds[1].build_seed
+    );
+    assert_ne!(
+        u0_parsed.builds[0].builder.pin,
+        u0_parsed.builds[1].builder.pin
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2656,7 +2659,10 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
 
     // Validate JSON roundtrip and strict rejection of reordered keys / floats.
     let plan0_json = to_canonical_pretty_json(&plan0).unwrap();
-    assert_eq!(parse_and_validate_read_plan_json(&plan0_json).unwrap(), plan0);
+    assert_eq!(
+        parse_and_validate_read_plan_json(&plan0_json).unwrap(),
+        plan0
+    );
     let swapped = plan0_json.replace(
         "\"unit\": 0,\n  \"pod_index\": 0,",
         "\"pod_index\": 0,\n  \"unit\": 0,",
@@ -2747,10 +2753,15 @@ fn round2_read_plan_v1_exec_dirs_receipts_timing_and_validation() {
         ];
         for (slot, b_idx, bref) in builders {
             let mut b = LearnedTestSeatFactory.make_builder(&bref).unwrap();
-            let mut stream = SplitMix64::seed(mtg_kernel::cube_pod_runner_v1::build_seed_for_chair(
-                d13_dseed, s, b_idx,
-            ));
-            let deck = canonical_deck(&b.build(&seat_draft.record.pools[s], &mut stream).unwrap().deck.card_ids());
+            let mut stream = SplitMix64::seed(
+                mtg_kernel::cube_pod_runner_v1::build_seed_for_chair(d13_dseed, s, b_idx),
+            );
+            let deck = canonical_deck(
+                &b.build(&seat_draft.record.pools[s], &mut stream)
+                    .unwrap()
+                    .deck
+                    .card_ids(),
+            );
             built_map.insert((s as u8, slot), deck.card_ids());
         }
     }
@@ -2962,7 +2973,11 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     assert_eq!(e1.records.len(), 1);
     assert_eq!(e1.records[0].pod_index, 0);
     assert_eq!(e1.records[0].status, PodStatus::Stopped);
-    assert!(!wd_dir.join("exec-1").join("records").join("pod-1.json").exists());
+    assert!(!wd_dir
+        .join("exec-1")
+        .join("records")
+        .join("pod-1.json")
+        .exists());
     accept_plan_execution(&wd_dir, 1).expect("exec-1 watchdog_stop accepted");
 
     let e1_pod0_text =
@@ -2975,7 +2990,10 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
         e1_pod0["stop"]["attempts"][0]["stop_kind"],
         json!(WATCHDOG_STOP_KIND)
     );
-    assert_eq!(e1_pod0["stop"]["attempts"][0]["last_action_source"], json!(null));
+    assert_eq!(
+        e1_pod0["stop"]["attempts"][0]["last_action_source"],
+        json!(null)
+    );
 
     // e = 2 is always refused.
     assert!(run_plan_set_execution(
@@ -3014,8 +3032,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
                 watchdog_override: None,
                 journal: None,
             };
-            let out =
-                execute_read_plan_v1(self.pool, plan, &UniformSeatFactory, &pilot, &opts)?;
+            let out = execute_read_plan_v1(self.pool, plan, &UniformSeatFactory, &pilot, &opts)?;
             if plan.pod_index == 0 {
                 let text = to_canonical_pretty_json(&out.record)?;
                 let sha = sha256_hex(text.as_bytes());
@@ -3097,8 +3114,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     accept_plan_execution(&sup_dir, 0).expect("interrupted execution accepted");
 
     let sup_pod1_text =
-        std::fs::read_to_string(sup_dir.join("exec-0").join("records").join("pod-1.json"))
-            .unwrap();
+        std::fs::read_to_string(sup_dir.join("exec-0").join("records").join("pod-1.json")).unwrap();
     validate_pod_record_json(&sup_pod1_text).expect("supervisor stopped record valid v2");
     let sup_pod1: serde_json::Value = serde_json::from_str(&sup_pod1_text).unwrap();
     assert_eq!(sup_pod1["status"], json!("stopped"));
@@ -3106,8 +3122,14 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     assert_eq!(sup_pod1["games"].as_array().unwrap().len(), 3);
     assert_eq!(sup_pod1["halts"].as_array().unwrap().len(), 0);
     assert_eq!(sup_pod1["stop"]["game"], json!(3));
-    assert_eq!(sup_pod1["stop"]["attempts"][0]["stop_kind"], json!("process_death"));
-    assert_eq!(sup_pod1["stop"]["attempts"][0]["last_action_source"], json!(null));
+    assert_eq!(
+        sup_pod1["stop"]["attempts"][0]["stop_kind"],
+        json!("process_death")
+    );
+    assert_eq!(
+        sup_pod1["stop"]["attempts"][0]["last_action_source"],
+        json!(null)
+    );
     // Supervisor journal scratch dir was cleaned up.
     assert!(!sup_dir.join(".supervisor-exec-0").exists());
 
