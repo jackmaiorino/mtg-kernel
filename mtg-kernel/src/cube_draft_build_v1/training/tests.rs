@@ -1,5 +1,7 @@
 use super::*;
 
+const HISTORY_ONLY_CARD: u16 = 55;
+
 fn data(seed: u64) -> (ModelV1, ModelCardRowsV1) {
     let mut rng = SplitMix64::seed(seed);
     let mut draw = || ((rng.next_u64() >> 40) as f32 / (1 << 24) as f32 - 0.5) * 0.45;
@@ -47,16 +49,23 @@ fn row(
     )
 }
 fn pick(f: &PickForwardV1<'_>, step: usize) -> ((PickStateV1, Row), f64, f32) {
+    pick_choice(f, step, 0)
+}
+fn pick_choice(
+    f: &PickForwardV1<'_>,
+    step: usize,
+    choice: usize,
+) -> ((PickStateV1, Row), f64, f32) {
     let state = PickStateV1 {
         pack: (step as u16..(step + PACK_SIZE - step % PACK_SIZE) as u16).collect(),
         pool: (0..step as u16).collect(),
-        history: vec![61, 63],
+        history: vec![HISTORY_ONLY_CARD, 63],
         step: step as u8,
         direction: if step / PACK_SIZE == 1 { -1 } else { 1 },
     };
     let c = f.pick_logits_v1(&state).unwrap();
     let value = f.value_v1(&state).unwrap();
-    let (r, lp) = row(Head::Pick, c.ids, &c.logits, 0, Some(value));
+    let (r, lp) = row(Head::Pick, c.ids, &c.logits, choice, Some(value));
     ((state, r), lp, value)
 }
 fn build(f: &BuildForwardV1<'_>, pool: &[u16], sibling: usize, b: usize, mask: u8) -> (Build, f64) {
@@ -126,6 +135,14 @@ fn build(f: &BuildForwardV1<'_>, pool: &[u16], sibling: usize, b: usize, mask: u
         path,
     )
 }
+fn joint_picks(model: &ModelV1, rows: &ModelCardRowsV1, choice: usize) -> Vec<(PickStateV1, Row)> {
+    let forward = model.pick_forward_v1(rows, 1).unwrap();
+    (0..STEP_COUNT_V1)
+        .filter(|step| step % PACK_SIZE != PACK_SIZE - 1)
+        .map(|step| pick_choice(&forward, step, choice).0)
+        .collect()
+}
+
 fn scores() -> Role<'static> {
     Role::Learning {
         scores: [[1; 7], [-1; 7]],
@@ -157,42 +174,80 @@ fn central_differences_cover_every_tensor() {
 
     // Use D2's independent public forward on both sides. Keep the pick
     // advantage fixed and exclude the value loss when perturbing its inputs.
+    let mut rng = SplitMix64::seed(0xd4_0044);
     for (i, spec) in model.specs.clone().into_iter().enumerate() {
-        let (j, &analytic) = batch.grads[i]
+        let grad = &batch.grads[i];
+        let (peak, _) = grad
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
             .unwrap();
-        assert!(analytic.abs() > 1e-7, "no signal in {}", spec.name);
-        let center = model.values[i][j];
-        let delta = 1. / 128.;
-        let mut eval = |v| {
-            model.values[i][j] = v;
-            match spec.set {
-                ParameterSetV1::Build => {
-                    -0.75 * build(&model.build_forward_v1(&rows, 1).unwrap(), &pool, 0, 38, 7).1
-                }
-                set => {
-                    let (_, lp, v) = pick(&model.pick_forward_v1(&rows, 1).unwrap(), 6);
-                    if set == ParameterSetV1::Pick {
-                        c * lp
-                    } else {
-                        0.5 * (f64::from(v) - target).powi(2)
+        let mut random = (rng.next_u64() % grad.len() as u64) as usize;
+        if grad.len() > 1 && random == peak {
+            random = (random + 1) % grad.len();
+        }
+        // Random coordinates can be inactive (for instance unused embedding rows).
+        let mut probes = vec![(peak, true), (random, false)];
+        let id = T::ALL[i];
+        let width = *spec.shape.last().unwrap();
+        let slices: &[(usize, usize)] = match id {
+            T::StateEncoder0Weight | T::Value0Weight => {
+                &[(HISTORY_COLUMNS_V1.start, HISTORY_COLUMNS_V1.end)]
+            }
+            T::TypesetScorer0Weight => &[(2 * H, 2 * H + 1)],
+            T::PointerContextWeight => &[(2 * H, 2 * H + 1), (2 * H + 1, 2 * H + 2)],
+            _ => &[],
+        };
+        for &(start, end) in slices {
+            let index = (0..grad.len())
+                .filter(|j| (start..end).contains(&(j % width)))
+                .max_by(|&a, &b| grad[a].abs().total_cmp(&grad[b].abs()))
+                .unwrap();
+            probes.push((index, true));
+        }
+        if id == T::PickEmbedding {
+            let start = rows.row_of(HISTORY_ONLY_CARD).unwrap() * width;
+            let index = (start..start + width)
+                .max_by(|&a, &b| grad[a].abs().total_cmp(&grad[b].abs()))
+                .unwrap();
+            probes.push((index, true));
+        }
+        for (j, require_signal) in probes {
+            let analytic = grad[j];
+            if require_signal {
+                assert!(analytic.abs() > 1e-7, "no signal in {}[{j}]", spec.name);
+            }
+            let center = model.values[i][j];
+            // A wider perturbation resolves small slopes above f32 forward rounding.
+            let delta = if j == peak { 1. / 128. } else { 1. / 32. };
+            let mut eval = |v| {
+                model.values[i][j] = v;
+                match spec.set {
+                    ParameterSetV1::Build => {
+                        -0.75 * build(&model.build_forward_v1(&rows, 1).unwrap(), &pool, 0, 38, 7).1
+                    }
+                    set => {
+                        let (_, lp, v) = pick(&model.pick_forward_v1(&rows, 1).unwrap(), 6);
+                        if set == ParameterSetV1::Pick {
+                            c * lp
+                        } else {
+                            0.5 * (f64::from(v) - target).powi(2)
+                        }
                     }
                 }
-            }
-        };
-        let hi = center + delta;
-        let lo = center - delta;
-        let numerical = (eval(hi) - eval(lo)) / f64::from(hi - lo);
-        model.values[i][j] = center;
-        let error = (numerical - f64::from(analytic)).abs();
-        assert!(
-            error <= 0.025 * f64::from(analytic.abs()) + 2e-5
-                && error < f64::from(analytic.abs()) / 2.,
-            "{}[{j}] analytic {analytic} numerical {numerical}",
-            spec.name
-        );
+            };
+            let hi = center + delta;
+            let lo = center - delta;
+            let numerical = (eval(hi) - eval(lo)) / f64::from(hi - lo);
+            model.values[i][j] = center;
+            let error = (numerical - f64::from(analytic)).abs();
+            assert!(
+                error <= 0.025 * f64::from(analytic.abs()) + 2e-5
+                    && (!require_signal || error < f64::from(analytic.abs()) / 2.),
+                "{}[{j}] analytic {analytic} numerical {numerical}",
+                spec.name
+            );
+        }
     }
     assert_eq!(model.layout().len(), 44);
 }
@@ -239,42 +294,59 @@ fn replay_is_atomic_for_current_and_snapshot_chairs() {
     let (model, rows) = data(12);
     let (snap, _) = data(13);
     let pool: Vec<_> = (0..45).collect();
-    let make_picks = |model: &ModelV1| {
-        let f = model.pick_forward_v1(&rows, 1).unwrap();
-        (0..45)
-            .filter(|n| n % 15 != 14)
-            .map(|n| pick(&f, n).0)
-            .collect::<Vec<_>>()
-    };
-    let picks = make_picks(&model);
-    let older = make_picks(&snap);
+    let picks = joint_picks(&model, &rows, 0);
+    let older = joint_picks(&snap, &rows, 0);
     let f = model.build_forward_v1(&rows, 1).unwrap();
     let builds = [build(&f, &pool, 0, 38, 7).0, build(&f, &pool, 1, 39, 3).0];
-    let old_builds = [build(&snap.build_forward_v1(&rows, 1).unwrap(), &pool, 0, 40, 1).0];
+    let old_builds = [build(&snap.build_forward_v1(&rows, 1).unwrap(), &pool, 0, 38, 7).0];
     let league = BTreeMap::from([("pinned".into(), &snap)]);
-    for tamper in 0..8 {
+    let corruptions = [
+        Head::Pick,
+        Head::Pick,
+        Head::Pick,
+        Head::Pick,
+        Head::Count,
+        Head::Pointer,
+        Head::TypeSet,
+        Head::Split,
+    ];
+    for (chair_index, (case, &head)) in (0..2).flat_map(|chair| {
+        corruptions
+            .iter()
+            .enumerate()
+            .map(move |case| (chair, case))
+    }) {
         let mut m = model.clone();
         let mut opt = Optimizer::new(&m);
         let untouched = opt.clone();
         let mut current = picks.clone();
         let mut old = older.clone();
-        let row = if tamper < 4 {
-            &mut current[0].1
+        let mut current_builds = builds.clone();
+        let mut snapshot_builds = old_builds.clone();
+        let (pick, build) = if chair_index == 0 {
+            (&mut current[0].1, &mut current_builds[0])
         } else {
-            &mut old[41].1
+            (&mut old[41].1, &mut snapshot_builds[0])
         };
-        match tamper % 4 {
-            0 => row.logits_bits[0] ^= 1,
+        let row = match head {
+            Head::Pick => pick,
+            Head::Count => &mut build.count,
+            Head::Pointer => &mut build.pointer[0],
+            Head::TypeSet => build.type_set.as_mut().unwrap(),
+            Head::Split => &mut build.split[0],
+        };
+        match case {
             1 => row.p_chosen_bits ^= 1,
             2 => *row.value_bits.as_mut().unwrap() ^= 1,
-            _ => row.stream_values[0] = u64::MAX,
+            3 => row.stream_values[0] = u64::MAX,
+            _ => row.logits_bits[0] ^= 1,
         }
         let chairs = [
             Chair {
                 role: scores(),
                 picks: &current,
                 pool: &pool,
-                builds: &builds,
+                builds: &current_builds,
             },
             Chair {
                 role: Role::Older {
@@ -283,10 +355,14 @@ fn replay_is_atomic_for_current_and_snapshot_chairs() {
                 },
                 picks: &old,
                 pool: &pool,
-                builds: &old_builds,
+                builds: &snapshot_builds,
             },
         ];
-        assert!(update(&mut m, &mut opt, &rows, Phase::Joint, &chairs, &league).is_err());
+        let error = update(&mut m, &mut opt, &rows, Phase::Joint, &chairs, &league).unwrap_err();
+        assert!(
+            error.starts_with(&format!("chair {chair_index}: {head:?} replay")),
+            "{error}"
+        );
         assert_eq!(m.parameter_sha256(), model.parameter_sha256());
         assert_eq!(opt, untouched);
     }
@@ -436,4 +512,124 @@ fn adam_uses_independent_bias_corrections_and_preserves_failed_state() {
     assert!(adam(&mut m, &mut opt, Phase::Joint, &batch).is_err());
     assert_eq!(m.parameter_sha256(), before);
     assert_eq!(opt, saved);
+}
+
+#[test]
+fn joint_update_credits_each_learning_chair_with_two_seat_denominator() {
+    let (mut model, rows) = data(17);
+    let (snapshot, _) = data(19);
+    let pool: Vec<_> = (0..45).collect();
+    let picks0 = joint_picks(&model, &rows, 0);
+    let picks1 = joint_picks(&model, &rows, 1);
+    let older = joint_picks(&snapshot, &rows, 0);
+    let forward = model.build_forward_v1(&rows, 1).unwrap();
+    let builds0 = [
+        build(&forward, &pool, 0, 38, 7).0,
+        build(&forward, &pool, 1, 39, 3).0,
+    ];
+    let builds1 = [builds0[1].clone(), builds0[0].clone()];
+    let old_build = [build(
+        &snapshot.build_forward_v1(&rows, 1).unwrap(),
+        &pool,
+        0,
+        38,
+        7,
+    )
+    .0];
+    let chairs = [
+        Chair {
+            role: Role::Learning {
+                scores: [[1; 7], [0; 7]],
+            },
+            picks: &picks0,
+            pool: &pool,
+            builds: &builds0,
+        },
+        Chair {
+            role: Role::Learning {
+                scores: [[-1; 7], [-1; 7]],
+            },
+            picks: &picks1,
+            pool: &pool,
+            builds: &builds1,
+        },
+        Chair {
+            role: Role::Older {
+                picker_pin: Some("old"),
+                builder_pin: "old",
+            },
+            picks: &older,
+            pool: &pool,
+            builds: &old_build,
+        },
+    ];
+    // Supply the focal targets and sibling contrasts independently of update.
+    // Accumulate directly into the two-seat batch to preserve the declared sum order.
+    let mut expected = Batch::new(&model, 2);
+    for (chair, target, advantages) in [(&chairs[0], 0.5, [1., -1.]), (&chairs[1], -1., [0., 0.])] {
+        paths::picks(&model, &rows, chair, target, Some(&mut expected)).unwrap();
+        paths::builds(&model, &rows, chair, advantages, Some(&mut expected)).unwrap();
+    }
+    let mut opt = Optimizer::new(&model);
+    let losses = update(
+        &mut model,
+        &mut opt,
+        &rows,
+        Phase::Joint,
+        &chairs,
+        &BTreeMap::from([("old".into(), &snapshot)]),
+    )
+    .unwrap();
+    assert_eq!(
+        losses.pick.to_bits(),
+        expected.losses.pick.to_bits(),
+        "pick loss"
+    );
+    assert_eq!(
+        losses.value.to_bits(),
+        expected.losses.value.to_bits(),
+        "value loss"
+    );
+    assert_eq!(
+        losses.build.to_bits(),
+        expected.losses.build.to_bits(),
+        "build loss"
+    );
+    for (i, grad) in expected.grads.iter().enumerate() {
+        for (j, &g) in grad.iter().enumerate() {
+            let first = (g - 0.0) * (1.0 - 0.9_f32);
+            assert_eq!(
+                opt.first[i][j].to_bits(),
+                first.to_bits(),
+                "{}[{j}] first moment",
+                model.specs[i].name
+            );
+        }
+    }
+}
+
+#[test]
+fn unequal_policy_gradient_matches_independent_f64_softmax() {
+    let logits = [0.75_f32, 1.75];
+    let sample = sample_v1(&logits, &[true; 2], 0).unwrap();
+    // The logits differ by one. Their exact softmax odds are 1:e.
+    let denominator = 1.0 + std::f64::consts::E;
+    let oracle = [1.0 / denominator, std::f64::consts::E / denominator];
+    for (j, p) in oracle.into_iter().enumerate() {
+        let actual = m4_exp(sample.log_probabilities[j].clamp(-120., 0.));
+        assert!((actual - p).abs() <= 1e-8 * p, "p[{j}] {actual} vs {p}");
+    }
+    // At coefficient 25 the two analytical magnitudes lie within 1e-8
+    // relative of an f32, so the same tolerance tests the final cast too.
+    for chosen in 0..2 {
+        let grad = policy_gradient(&sample.log_probabilities, &[(chosen, 25.)]);
+        for (j, p) in oracle.into_iter().enumerate() {
+            let expected = 25. * (f64::from(j == chosen) - p);
+            assert!(
+                (f64::from(grad[j]) - expected).abs() <= 1e-8 * expected.abs(),
+                "choice {chosen}, logit {j}: {} vs {expected}",
+                grad[j]
+            );
+        }
+    }
 }
