@@ -21,6 +21,8 @@ The writer (`--write`, and `--cube --write` for the cube table below) takes an e
 - Integers only, identical on every platform. The table records `KERNEL_CARDDB_HASH`, the pool and mapping hashes and a content hash; a card database change fails `--check` until the table is regenerated.
 - The vocabulary only grows: regeneration keeps the committed column order and appends new tokens.
 
+A choice that names a card contributes one choice with one option and one occurrence of its effect leaf. The generator recognizes a choice tree whose menus all have the same chooser and whose leaves all use the same typed naming operation. This covers flat name lists and lists grouped by first letter. It omits the chosen card's definition ID from amount features. Tamiyo, Collector of Tales is the only current table row that uses this encoding. The same rule covers the engine's name-list programs for Anointed Peacekeeper, Cabal Therapy, Cursed Scroll, Demonic Consultation, and Disruptor Flute. The generator suite checks every count column against an upper bound of 64.
+
 ## The first table
 
 171 cards, 490 columns, card database `0777a48028de38d7`. A card has 6 to 28 nonzero columns (median 14). Sneaky Snacker adds the two return-from-graveyard columns. The former source-move and source-tap columns retain their positions with zero carriers.
@@ -78,7 +80,19 @@ Column rule:
 - The cube vocabulary starts with the Pauper table's columns in the exact Pauper table order so column `i` means the same token in both tables. A Pauper column that no cube row carries is kept with 0 carriers (all zero).
 - Cube-only tokens are appended after the Pauper prefix in sorted deterministic order. Regeneration preserves the committed cube column order and only appends new tokens.
 
-The migration in `data/card_semantics_v1/cube_table_v1_column_map_4836b459.json` identifies the source and destination tables by content SHA-256. Entry `i` of `old_to_new` is the zero-based destination index of old column `i`, with `null` reserved for a removed token. The 490-column Pauper prefix moves the two return-from-graveyard tokens from 641 and 642 to 488 and 489. Other Cube-only tokens retain their relative order. Every old token has a destination, including the zero-carrier source-move and source-tap columns at 254 and 344.
+PR 984 manually reordered the prior Cube vocabulary before regeneration. The Pauper prefix had grown from 488 to 490 columns, and the two added return-from-graveyard tokens were already in the Cube suffix. Moving those tokens from indices 641 and 642 to 488 and 489 made the prior vocabulary start with the new Pauper prefix. Later writes use that order.
+
+`data/card_semantics_v1/cube_table_v1_column_map_4836b459.json` identifies the pre-984 and PR 984 tables by content SHA-256. Entry `i` of `old_to_new` is the zero-based destination index of old column `i`, with `null` reserved for a removed token. All 947 old columns have a destination. Old indices 488 through 640 become 490 through 642, and the two return-from-graveyard columns move to 488 and 489. Indices 0 through 487 and 643 through 946 keep their positions, including the zero-carrier source-move and source-tap columns at 254 and 344. PR 984 appends 31 new columns.
+
+| PR 984 indices | New tokens in order |
+| --- | --- |
+| 947 to 954 | `bestow:generic`, `bestow:pip:R`, `cost:hybrid:GW`, `cost:hybrid:RW`, `costpart:mana:hybrid:GW`, `costpart:mana:hybrid:RW`, `kicker:x`, `kw:INFECT` |
+| 955 | `leaf:StandardV1.0=AuraEnters` |
+| 956 to 957 | Tamiyo's `TamiyoPlusOneNamedV1.named` value and `TamiyoPlusOneNamedV1=named` count |
+| 958 to 964 | `leaf:StandardV1.EternalV1=` variants C8aV1, C8bV1, C8cV1, C9aV1, C9bV1, C9cV1, E8bV1 |
+| 965 to 977 | `subtype:` tokens Ally, Arcane, Badger, Crab, Elspeth, Fox, Golem, Grist, Kithkin, Mole, Nissa, Saheeli, Tamiyo |
+
+The name-list fix keeps all 978 positions and their token kinds. Tamiyo's former name ID value column at 956 has zero carriers. The existing map documents the PR 984 migration, and the current Cube table uses the same column indices as PR 984.
 
 Cube report (written in `cube_table_v1.txt` and printed by `--cube --check`; informational only, with no pass or fail thresholds; the Pauper pair checks are not applied to the cube table):
 

@@ -1297,6 +1297,60 @@ mod tests {
         assert!(mapping::parse(text).is_err());
     }
 
+    #[test]
+    fn table_counts_fit_bound_and_name_lists_count_once() {
+        const MAX_COLUMN_COUNT: i64 = 64;
+        let path = if cfg!(feature = "eternal-fixtures") {
+            table::CUBE_TABLE_PATH
+        } else {
+            table::TABLE_PATH
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&read(&repo_root(), path).unwrap()).unwrap();
+        let vocab = parsed["vocabulary"].as_array().unwrap();
+        let rows = parsed["cards"].as_array().unwrap();
+        for row in rows {
+            let vector = row["vector"].as_array().unwrap();
+            assert_eq!(vector.len(), vocab.len());
+            for (column, value) in vocab.iter().zip(vector) {
+                if column["kind"] == "count" {
+                    assert!(
+                        value.as_i64().unwrap() <= MAX_COLUMN_COUNT,
+                        "{} has count {value} for {}",
+                        row["name"],
+                        column["token"],
+                    );
+                }
+            }
+        }
+
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            let tamiyo = rows
+                .iter()
+                .find(|row| row["name"] == "Tamiyo, Collector of Tales")
+                .unwrap();
+            for (token, expected) in [
+                (
+                    "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1=named",
+                    1,
+                ),
+                (
+                    "leaf:StandardV1.EternalV1.C9cV1.TamiyoPlusOneNamedV1.named",
+                    0,
+                ),
+                ("op:Choice", 1),
+                ("op:Choice.options", 1),
+            ] {
+                let index = vocab
+                    .iter()
+                    .position(|column| column["token"] == token)
+                    .unwrap();
+                assert_eq!(tamiyo["vector"][index], expected, "{token}");
+            }
+        }
+    }
+
     #[cfg(not(feature = "eternal-fixtures"))]
     #[test]
     fn non_eternal_build_refuses_cube_flag() {
