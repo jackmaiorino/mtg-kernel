@@ -21,7 +21,7 @@ use crate::effect::{EffectOp, LibraryCardFilter};
 use crate::limited_session_v1::LimitedJsonlServerV1;
 use crate::mana::{ManaColor, Pip};
 use crate::state::{SplitMix64, Zone};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -1066,7 +1066,7 @@ pub fn build_stated_rule_decks(record: &DraftRecord) -> Result<[Deck; SEATS], Cu
 
 /// Bounds of one game. The driver cap counts the driver's decisions; the
 /// session caps go into the reset request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameCaps {
     pub max_decisions: u64,
     pub max_physical_decisions: u64,
@@ -1086,7 +1086,7 @@ impl Default for GameCaps {
 }
 
 /// How a game ended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GameEnd {
     /// A natural game over; the winning seat, if the game had one.

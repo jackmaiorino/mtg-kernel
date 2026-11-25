@@ -24,6 +24,7 @@ use crate::cube_seat_v1::{
     SeatError, SeatPicker, StatedSeatBuilder, UniformFourStepBuilder, UniformSeatPicker,
     M4_INTERFACES_VERSION, UNIFORM_SAMPLER_ID,
 };
+use crate::cube_worker_liveness_v1::observe_decisions;
 use crate::state::SplitMix64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -46,12 +47,11 @@ pub const WATCHDOG_REASON: &str = "watchdog_seconds";
 pub const WATCHDOG_STOP_KIND: &str = "terminal:watchdog";
 /// The A2.1 game caps: 16,384 driver decisions, 16,384 physical decisions,
 /// 32,768 policy steps.
-pub const A2_GAME_CAPS: GameCaps = GameCaps {
-    max_decisions: 16_384,
-    max_physical_decisions: 16_384,
-    max_policy_steps: 32_768,
-};
-/// Default per-game wall-clock watchdog in seconds.
+pub const A2_GAME_CAPS: GameCaps = crate::cube_b_census_v1::A2_CAPS;
+pub(crate) const A2_MAX_STACK_OBJECTS: u32 = A2_GAME_CAPS
+    .max_stack_objects
+    .expect("A2.1 requires a stack cap");
+/// Default limit in seconds between changes in a worker decision count.
 pub const DEFAULT_WATCHDOG_SECONDS: u64 = 600;
 /// Maximum per-game replays in a training pod (4 total attempts: 0..=3).
 pub const TRAINING_MAX_REPLAYS: u8 = 3;
@@ -542,6 +542,7 @@ pub struct PodCaps {
     pub max_decisions: u64,
     pub max_physical_decisions: u64,
     pub max_policy_steps: u64,
+    pub max_stack_objects: u32,
     pub watchdog_seconds: u64,
     pub max_replays: u8,
 }
@@ -553,6 +554,7 @@ impl PodCaps {
             max_decisions: A2_GAME_CAPS.max_decisions,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_MAX_STACK_OBJECTS,
             watchdog_seconds: DEFAULT_WATCHDOG_SECONDS,
             max_replays: TRAINING_MAX_REPLAYS,
         }
@@ -564,6 +566,7 @@ impl PodCaps {
             max_decisions: A2_GAME_CAPS.max_decisions,
             max_physical_decisions: A2_GAME_CAPS.max_physical_decisions,
             max_policy_steps: A2_GAME_CAPS.max_policy_steps,
+            max_stack_objects: A2_MAX_STACK_OBJECTS,
             watchdog_seconds: DEFAULT_WATCHDOG_SECONDS,
             max_replays: READ_MAX_REPLAYS,
         }
@@ -575,6 +578,7 @@ impl PodCaps {
             max_decisions: self.max_decisions,
             max_physical_decisions: self.max_physical_decisions,
             max_policy_steps: self.max_policy_steps,
+            max_stack_objects: Some(self.max_stack_objects),
         }
     }
 }
@@ -955,7 +959,7 @@ pub struct ReadGameSpec {
 }
 
 /// Explicit read plan (`seat_rule: "schedule"`, `max_replays: 0`) for direct
-/// in-memory execution. For full file-backed `mtg-kernel-cube-read-plan/v1`
+/// in-memory execution. For full file-backed `mtg-kernel-cube-read-plan/v3`
 /// plans, manifests, prep sets, panels and execution directories, see
 /// [`crate::cube_read_plan_v1`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1048,7 +1052,8 @@ fn play_game_task(
             action_seed,
         };
         let started = Instant::now();
-        let outcome = ctx.pilot.play(&spec, &ctx.game_caps);
+        let (outcome, stalled) =
+            observe_decisions(ctx.watchdog, || ctx.pilot.play(&spec, &ctx.game_caps));
         let elapsed = started.elapsed();
         let elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
         timings.push(AttemptTiming {
@@ -1059,7 +1064,7 @@ fn play_game_task(
         });
 
         let pilot_watchdog = is_watchdog_end(&outcome.end);
-        let timed_out = pilot_watchdog || elapsed > ctx.watchdog;
+        let timed_out = pilot_watchdog || stalled;
         let (end, halted, sk, last_action_source, physical_decisions, policy_steps) = if timed_out {
             (
                 watchdog_game_end(),
@@ -1166,7 +1171,8 @@ pub(crate) fn execute_game_tasks_with_options(
 
     let worker_count = options.workers.max(1).min(tasks.len());
     let next_index = AtomicUsize::new(0);
-    type GameSlot = Mutex<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>>;
+    type GameResult = Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>;
+    type GameSlot = Mutex<Option<GameResult>>;
     let slots: Vec<GameSlot> = (0..tasks.len()).map(|_| Mutex::new(None)).collect();
 
     std::thread::scope(|scope| -> Result<(), PodRunnerError> {
@@ -1200,11 +1206,10 @@ pub(crate) fn execute_game_tasks_with_options(
         Ok(())
     })?;
 
-    let mut raw_slots: Vec<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>> =
-        slots
-            .into_iter()
-            .map(|slot| slot.into_inner().expect("game result slot lock"))
-            .collect();
+    let raw_slots: Vec<Option<GameResult>> = slots
+        .into_iter()
+        .map(|slot| slot.into_inner().expect("game result slot lock"))
+        .collect();
 
     if options.stop_on_watchdog && watchdog_tripped.load(Ordering::Acquire) {
         let mut first_expired: Option<usize> = None;
@@ -1238,9 +1243,8 @@ pub(crate) fn execute_game_tasks_with_options(
     let mut games = Vec::with_capacity(tasks.len());
     let mut timings = Vec::new();
     for (index, slot) in raw_slots.into_iter().enumerate() {
-        let (game, game_timings) = slot.ok_or_else(|| {
-            PodRunnerError::Thread(format!("missing result for game {index}"))
-        })??;
+        let (game, game_timings) = slot
+            .ok_or_else(|| PodRunnerError::Thread(format!("missing result for game {index}")))??;
         games.push(game);
         timings.extend(game_timings);
     }
@@ -1337,6 +1341,11 @@ fn validate_common_config(
         });
     }
     validate_use_and_namespace(pod_use, namespace)?;
+    if caps.max_stack_objects != A2_MAX_STACK_OBJECTS {
+        return Err(PodRunnerError::InvalidCaps(format!(
+            "max_stack_objects must be {A2_MAX_STACK_OBJECTS}"
+        )));
+    }
     if caps.watchdog_seconds == 0 {
         return Err(PodRunnerError::InvalidCaps(
             "watchdog_seconds must be at least 1".to_owned(),
@@ -2180,10 +2189,7 @@ impl<'a> JsonParser<'a> {
             }
             if b == b'\\' {
                 self.pos += 1;
-                let esc = *self
-                    .bytes
-                    .get(self.pos)
-                    .ok_or("truncated string escape")?;
+                let esc = *self.bytes.get(self.pos).ok_or("truncated string escape")?;
                 self.pos += 1;
                 match esc {
                     b'"' => out.push('"'),
@@ -2211,8 +2217,8 @@ impl<'a> JsonParser<'a> {
                             let ch = char::from_u32(code).ok_or("invalid unicode scalar")?;
                             out.push(ch);
                         } else {
-                            let ch = char::from_u32(u32::from(first))
-                                .ok_or("invalid unicode scalar")?;
+                            let ch =
+                                char::from_u32(u32::from(first)).ok_or("invalid unicode scalar")?;
                             out.push(ch);
                         }
                     }
@@ -2228,7 +2234,10 @@ impl<'a> JsonParser<'a> {
                     .map_err(|_| "invalid UTF-8 in JSON string")?;
                 let ch = rest.chars().next().ok_or("unexpected end of string")?;
                 if (ch as u32) < 0x20 {
-                    return Err(format!("unescaped control character at offset {}", self.pos));
+                    return Err(format!(
+                        "unescaped control character at offset {}",
+                        self.pos
+                    ));
                 }
                 out.push(ch);
                 self.pos += ch.len_utf8();
@@ -2469,10 +2478,13 @@ fn validate_builder_ref(
                     "{path}.kind: dealt deck requires builder.kind \"dealt\", got {kind:?}"
                 ));
             }
-            let pin_obj = expect_object_keys(&entries[1].1, &format!("{path}.pin"), &["function", "key"])?;
+            let pin_obj =
+                expect_object_keys(&entries[1].1, &format!("{path}.pin"), &["function", "key"])?;
             let _ = expect_str(&pin_obj[0].1, &format!("{path}.pin.function"))?;
             if &entries[1].1 != dealt {
-                return Err(format!("{path}.pin: must equal deck.dealt {{function, key}}"));
+                return Err(format!(
+                    "{path}.pin: must equal deck.dealt {{function, key}}"
+                ));
             }
         }
         other => return Err(format!("{path}: unknown deck source {other:?}")),
@@ -2566,11 +2578,7 @@ fn validate_game_end(value: &OrderedJson, path: &str) -> Result<(), String> {
             let _ = expect_str(&e[2].1, &format!("{path}.reason"))?;
         }
         "terminal" => {
-            let e = expect_object_keys(
-                value,
-                path,
-                &["kind", "code", "classification", "reason"],
-            )?;
+            let e = expect_object_keys(value, path, &["kind", "code", "classification", "reason"])?;
             let _ = expect_str(&e[1].1, &format!("{path}.code"))?;
             let _ = expect_str(&e[2].1, &format!("{path}.classification"))?;
             let _ = expect_str(&e[3].1, &format!("{path}.reason"))?;
@@ -2663,7 +2671,9 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
         "dose" | "read_a" | "read_b" | "paired_build" | "sizing"
     );
     let is_read_record = match &top[6].1 {
-        OrderedJson::Object(entries) if entries.len() == 5 && (is_read_use || pod_use == "test") => {
+        OrderedJson::Object(entries)
+            if entries.len() == 5 && (is_read_use || pod_use == "test") =>
+        {
             let seeds = expect_object_keys(
                 &top[6].1,
                 "seeds",
@@ -2734,6 +2744,7 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
             "max_decisions",
             "max_physical_decisions",
             "max_policy_steps",
+            "max_stack_objects",
             "watchdog_seconds",
             "max_replays",
         ],
@@ -2741,9 +2752,17 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
     for (key, val) in caps {
         let _ = expect_u64(val, &format!("caps.{key}"))?;
     }
-    let max_replays = expect_u64(&caps[4].1, "caps.max_replays")?;
+    let max_stack_objects = expect_u64(&caps[3].1, "caps.max_stack_objects")?;
+    if max_stack_objects != u64::from(A2_MAX_STACK_OBJECTS) {
+        return Err(format!(
+            "caps.max_stack_objects: expected {A2_MAX_STACK_OBJECTS}, got {max_stack_objects}"
+        ));
+    }
+    let max_replays = expect_u64(&caps[5].1, "caps.max_replays")?;
     if is_read_record && max_replays != 0 {
-        return Err(format!("caps.max_replays: read pod requires 0, got {max_replays}"));
+        return Err(format!(
+            "caps.max_replays: read pod requires 0, got {max_replays}"
+        ));
     }
 
     if !matches!(top[10].1, OrderedJson::Null) {
@@ -2812,11 +2831,8 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
         let chair = expect_opt_u64(&d[2].1, &format!("{path}.chair"))?;
         let build = expect_opt_u64(&d[3].1, &format!("{path}.build"))?;
         if !matches!(d[8].1, OrderedJson::Null) {
-            let dealt = expect_object_keys(
-                &d[8].1,
-                &format!("{path}.dealt"),
-                &["function", "key"],
-            )?;
+            let dealt =
+                expect_object_keys(&d[8].1, &format!("{path}.dealt"), &["function", "key"])?;
             let _ = expect_str(&dealt[0].1, &format!("{path}.dealt.function"))?;
         }
         validate_builder_ref(&d[4].1, source, &d[8].1, &format!("{path}.builder"))?;
@@ -2830,7 +2846,9 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
         {
             return Err(format!("{path}: dealt deck has invalid null pattern"));
         }
-        if source == "build" && (chair.is_none() || build.is_none() || !matches!(d[8].1, OrderedJson::Null)) {
+        if source == "build"
+            && (chair.is_none() || build.is_none() || !matches!(d[8].1, OrderedJson::Null))
+        {
             return Err(format!(
                 "{path}: build deck requires non-null chair and build and dealt == null"
             ));
@@ -2872,7 +2890,10 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
         let _ = expect_u64(&g[0].1, &format!("{path}.game"))?;
         let _ = expect_u64(&g[1].1, &format!("{path}.group"))?;
         let role = expect_str(&g[2].1, &format!("{path}.role"))?;
-        if !matches!(role, "reference" | "sibling" | "cross" | "read_b" | "common") {
+        if !matches!(
+            role,
+            "reference" | "sibling" | "cross" | "read_b" | "common"
+        ) {
             return Err(format!("{path}.role: invalid value {role:?}"));
         }
         let _ = expect_opt_u64(&g[3].1, &format!("{path}.pairing"))?;
@@ -2950,10 +2971,7 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
             OrderedJson::Null => {}
             OrderedJson::Array(scores) if scores.len() == 2 => {
                 for (s_idx, s) in scores.iter().enumerate() {
-                    let valid = matches!(
-                        s,
-                        OrderedJson::U64(0 | 1) | OrderedJson::I64(-1 | 0 | 1)
-                    );
+                    let valid = matches!(s, OrderedJson::U64(0 | 1) | OrderedJson::I64(-1..=1));
                     if !valid {
                         return Err(format!("{path}.scores[{s_idx}]: expected -1, 0, or 1"));
                     }
@@ -2964,7 +2982,10 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
     }
 
     let mut prev_first_game: Option<u64> = None;
-    for (idx, pb) in expect_array(&top[14].1, "paired_builds")?.iter().enumerate() {
+    for (idx, pb) in expect_array(&top[14].1, "paired_builds")?
+        .iter()
+        .enumerate()
+    {
         let path = format!("paired_builds[{idx}]");
         let p = expect_object_keys(
             pb,
@@ -3069,11 +3090,8 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
             if status != "stopped" {
                 return Err("stop report is non-null but status is not \"stopped\"".to_owned());
             }
-            let stop = expect_object_keys(
-                other,
-                "stop",
-                &["game", "pairing", "decks", "attempts"],
-            )?;
+            let stop =
+                expect_object_keys(other, "stop", &["game", "pairing", "decks", "attempts"])?;
             let _ = expect_u64(&stop[0].1, "stop.game")?;
             let _ = expect_opt_u64(&stop[1].1, "stop.pairing")?;
             let decks = expect_array(&stop[2].1, "stop.decks")?;
@@ -3082,7 +3100,10 @@ pub fn validate_pod_record_json(json_text: &str) -> Result<(), String> {
             }
             let _ = expect_u64(&decks[0], "stop.decks[0]")?;
             let _ = expect_u64(&decks[1], "stop.decks[1]")?;
-            for (idx, attempt) in expect_array(&stop[3].1, "stop.attempts")?.iter().enumerate() {
+            for (idx, attempt) in expect_array(&stop[3].1, "stop.attempts")?
+                .iter()
+                .enumerate()
+            {
                 let ap = format!("stop.attempts[{idx}]");
                 let a = expect_object_keys(
                     attempt,
