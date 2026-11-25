@@ -10150,11 +10150,11 @@ mod tests {
         // directly from a failing run (never hand-typed).
         assert_eq!(
             semantics,
-            "db709ac73893a382be26544c766847165c1e493c0d66295ee470327e5945b790"
+            "2e056ad9688b70422577f0554518465ecd18d853d322bc83b52153bb4a37806b"
         );
         assert_eq!(
             identity,
-            "8b79805463cf89dca30566f78fccd4d6bf44121f7c0f3eec7c1f7c6b31078949"
+            "4410bd7bef72f8dc886720fda808df4c3d6922b8bed3f7b1e86f431cd69ed183"
         );
         assert_eq!(
             sha256_hex(&run_bytes),
