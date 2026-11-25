@@ -1,9 +1,9 @@
-//! Unit tests of the D2 model. The forward goldens use D1's pinned table;
-//! focused model tests use synthetic rows.
+//! Unit tests of the D2 model. The forward goldens use D1's pinned table.
+//! Focused model tests use synthetic rows.
 
 use std::collections::HashMap;
 
-use super::super::card_index::{CardIndexV1, CubeTableSourceV1};
+use super::super::card_index::{CardIndexV1, CubeTableSourceV1, PROVISIONAL_TABLE_SHA256_V1};
 use super::*;
 
 // ---------------------------------------------------------------------------
@@ -1162,9 +1162,11 @@ fn golden_fixture() -> (ModelV1, ModelCardRowsV1) {
         env!("CARGO_MANIFEST_DIR"),
         "/../data/card_semantics_v1/cube_table_v1.json"
     );
-    const TABLE_SHA256: &str = "778c12a127071fdc2170730e4f0e932d296f47b6ac2805b3eee331e00f5c46c0";
-    let source = CubeTableSourceV1::read_v1(std::path::Path::new(TABLE_PATH), TABLE_SHA256)
-        .expect("the pinned provisional table");
+    let source = CubeTableSourceV1::read_v1(
+        std::path::Path::new(TABLE_PATH),
+        PROVISIONAL_TABLE_SHA256_V1,
+    )
+    .expect("the pinned provisional table");
     let (index, left_out) = CardIndexV1::provisional_v1(CUBE_LIST, &source).unwrap();
     assert!(left_out.is_empty());
     let table = source.bind_v1(&index).unwrap();
