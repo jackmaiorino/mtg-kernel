@@ -399,12 +399,10 @@ impl RunConfig {
         {
             return Err(invalid("invalid update plan or trained sets"));
         }
-        if self.label != "shakedown" {
-            if matches!(self.pilot.initial, PilotSelection::Uniform) {
-                return Err(invalid(
-                    "a non-shakedown run cannot start from a uniform-pilot lineage",
-                ));
-            }
+        if self.label != "shakedown" && matches!(self.pilot.initial, PilotSelection::Uniform) {
+            return Err(invalid(
+                "a non-shakedown run cannot start from a uniform-pilot lineage",
+            ));
         }
         if let TripwireMode::Full { rules } = &self.tripwire {
             for rule in rules {
@@ -976,14 +974,36 @@ fn ledger_stop(root: &Path, stop: &StopRecord) -> Result<PathBuf, TrainingDriver
     Ok(path)
 }
 
-fn read_commit(path: &Path) -> Result<Option<CommitManifest>, TrainingDriverError> {
-    let commit_path = path.join("commit.json");
-    if !commit_path.exists() {
+fn read_commit(path: &Path, update: u64) -> Result<Option<CommitManifest>, TrainingDriverError> {
+    let bytes = match fs::read(path.join("commit.json")) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Ok(commit) = serde_json::from_slice::<CommitManifest>(&bytes) else {
+        return Ok(None);
+    };
+    let required = ["pods.json", "checkpoint.json", "update.json"];
+    let optional = ["stop.json", "league.json"];
+    if commit.update != update
+        || required
+            .iter()
+            .any(|name| !commit.files.contains_key(*name))
+        || optional
+            .iter()
+            .any(|name| path.join(name).exists() != commit.files.contains_key(*name))
+    {
         return Ok(None);
     }
-    let commit: CommitManifest = read_json(&commit_path)?;
     for (name, digest) in &commit.files {
-        let bytes = fs::read(path.join(name))?;
+        if !required.contains(&name.as_str()) && !optional.contains(&name.as_str()) {
+            return Ok(None);
+        }
+        let bytes = match fs::read(path.join(name)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
         if sha256_hex(&bytes) != *digest {
             return Ok(None);
         }
@@ -1013,7 +1033,7 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
             .strip_prefix("update-")
             .and_then(|value| value.parse::<u64>().ok())
             .ok_or_else(|| invalid("invalid pending update name"))?;
-        if read_commit(&directory)?.is_some() {
+        if read_commit(&directory, update)?.is_some() {
             let destination = updates.join(name);
             if destination.exists() {
                 if fs::read(destination.join("commit.json"))?
@@ -1106,7 +1126,7 @@ fn published_update_indices(root: &Path) -> Result<Vec<u64>, TrainingDriverError
             .strip_prefix("update-")
             .and_then(|value| value.parse::<u64>().ok())
             .ok_or_else(|| invalid("invalid update name"))?;
-        if read_commit(&entry.path())?.is_none() {
+        if read_commit(&entry.path(), update)?.is_none() {
             return Err(invalid("published update has an invalid commit"));
         }
         indices.push(update);
@@ -1152,7 +1172,7 @@ fn rebuild_tripwire(
 
 fn pin_reasons(config: &RunConfig, checkpoint: u64) -> Vec<CheckpointPinReason> {
     let mut reasons = Vec::new();
-    if checkpoint % 16 == 0 {
+    if checkpoint.is_multiple_of(16) {
         reasons.push(CheckpointPinReason::League);
     }
     if checkpoint == config.total_updates() {
@@ -1211,7 +1231,7 @@ pub fn prune_checkpoint(path: &Path) -> Result<(), TrainingDriverError> {
 }
 
 struct BatchFailure {
-    pod: PodRecord,
+    pod: Box<PodRecord>,
     completed: Vec<PodRecord>,
 }
 
@@ -1221,7 +1241,7 @@ enum CollectFailure {
 }
 
 fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecord {
-    let pod = failure.pod;
+    let pod = *failure.pod;
     let stop = pod.stop.clone();
     let attempts = stop
         .as_ref()
@@ -1469,9 +1489,12 @@ impl TrainingDriver {
                 "the pick phase requires a completed builder segment",
             ));
         }
-        if config.namespace != previous.config.namespace || config.run == previous.config.run {
+        if config.namespace != previous.config.namespace
+            || config.label != previous.config.label
+            || config.run == previous.config.run
+        {
             return Err(invalid(
-                "the pick phase needs a new run id in the same namespace",
+                "the pick phase needs a new run id in the same namespace and run mode",
             ));
         }
         if config.metadata.parameter_layout_sha256.is_empty() {
@@ -1499,26 +1522,12 @@ impl TrainingDriver {
         let (model, optimizer) = state
             .restore(model, previous.head_updates())
             .map_err(TrainingDriverError::Update)?;
-        let lineage = if previous.lineage.iter().any(|entry| {
-            entry.segment == previous.config.segment && entry.run == previous.config.run
-        }) {
-            previous.lineage.clone()
-        } else {
-            let mut lineage = previous.lineage.clone();
-            lineage.push(LineageSegment {
-                segment: previous.config.segment,
-                run: previous.config.run.clone(),
-                pilots: vec![PilotKind::Uniform],
-            });
-            lineage
-        };
-        config.label = previous.config.label.clone();
         Self::open_from_state(
             config,
             previous.rows.clone(),
             model,
             optimizer,
-            lineage,
+            previous.lineage.clone(),
             previous.league.clone(),
         )
     }
@@ -1692,7 +1701,7 @@ impl TrainingDriver {
                 }
                 Err(PodRunnerError::Stopped(record)) => {
                     return Err(CollectFailure::Stop(BatchFailure {
-                        pod: *record,
+                        pod: record,
                         completed,
                     }));
                 }
@@ -2061,7 +2070,7 @@ pub fn run_two_action_part3(
                 "v1",
                 index as u64,
                 BatchFailure {
-                    pod,
+                    pod: Box::new(pod),
                     completed: Vec::new(),
                 },
             );

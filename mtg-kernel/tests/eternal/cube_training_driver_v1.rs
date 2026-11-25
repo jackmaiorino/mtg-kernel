@@ -496,7 +496,8 @@ fn kill_recovery_matches_uninterrupted_run_with_straddling_tripwire() {
     )
     .expect("window stop JSON");
     assert_eq!(stop["firing"]["denominator"], 2_240);
-    assert_eq!(stop["firing"]["games"], 1);
+    // The reference and its coupled sibling share the first attempt seed.
+    assert_eq!(stop["firing"]["games"], 2);
     assert_eq!(
         directory_bytes(&uninterrupted_root),
         directory_bytes(&resumed_root)
@@ -616,7 +617,7 @@ fn invalid_pending_batch_is_abandoned_not_published() {
     let temp = TempTestDir::new("abandoned");
     let root = temp.join("b1");
     fs::create_dir_all(root.join("pending/update-0000")).expect("pending batch");
-    fs::write(root.join("pending/update-0000/partial.txt"), b"lost").expect("partial write");
+    fs::write(root.join("pending/update-0000/commit.json"), b"{").expect("torn commit");
     let error = TrainingDriver::open(
         config(&root, "b1", Segment::BuilderOnly, 1),
         model_rows(),

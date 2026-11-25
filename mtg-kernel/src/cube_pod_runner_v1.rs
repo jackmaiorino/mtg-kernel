@@ -1190,7 +1190,8 @@ pub(crate) fn execute_game_tasks_with_options(
 
     let worker_count = options.workers.max(1).min(tasks.len());
     let next_index = AtomicUsize::new(0);
-    type GameSlot = Mutex<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>>;
+    type GameResult = Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>;
+    type GameSlot = Mutex<Option<GameResult>>;
     let slots: Vec<GameSlot> = (0..tasks.len()).map(|_| Mutex::new(None)).collect();
 
     std::thread::scope(|scope| -> Result<(), PodRunnerError> {
@@ -1224,11 +1225,10 @@ pub(crate) fn execute_game_tasks_with_options(
         Ok(())
     })?;
 
-    let raw_slots: Vec<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>> =
-        slots
-            .into_iter()
-            .map(|slot| slot.into_inner().expect("game result slot lock"))
-            .collect();
+    let raw_slots: Vec<_> = slots
+        .into_iter()
+        .map(|slot| slot.into_inner().expect("game result slot lock"))
+        .collect();
 
     if options.stop_on_watchdog && watchdog_tripped.load(Ordering::Acquire) {
         let mut first_expired: Option<usize> = None;
