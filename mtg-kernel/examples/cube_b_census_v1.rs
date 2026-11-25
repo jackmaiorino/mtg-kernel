@@ -1149,12 +1149,15 @@ mod tests {
         with_heartbeat(&progress, &current, poll, || {
             for decision in 1..=3 {
                 std::thread::sleep(Duration::from_secs(1));
-                current.decision_counter().store(decision, Ordering::Relaxed);
+                current
+                    .decision_counter()
+                    .store(decision, Ordering::Relaxed);
                 let expected = format!("8 {decision}");
                 loop {
                     let seen = part_progress(&part);
-                    part.seen_at = check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit)
-                        .expect("advancing worker timed out");
+                    part.seen_at =
+                        check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit)
+                            .expect("advancing worker timed out");
                     part.seen = seen;
                     if part.seen.live == expected {
                         break;
@@ -1165,9 +1168,15 @@ mod tests {
             let live = progress.with_added_extension("live");
             let modified = std::fs::metadata(&live).unwrap().modified().unwrap();
             std::thread::sleep(limit + poll);
-            assert_eq!(std::fs::metadata(&live).unwrap().modified().unwrap(), modified);
+            assert_eq!(
+                std::fs::metadata(&live).unwrap().modified().unwrap(),
+                modified
+            );
             let seen = part_progress(&part);
-            assert_eq!(check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit), None);
+            assert_eq!(
+                check_watchdog(&part.seen, &seen, part.seen_at, Instant::now(), limit),
+                None
+            );
             assert_eq!(hang_message(0, part.next, &seen, limit),
                 "hang: worker 0 made no progress for 2s at game 8 (last decision 3); the batch is void (A2.1), no output written");
         });
