@@ -134,11 +134,8 @@ mod tests {
             .map(|x| m4_exp(x.clamp(-120., 0.)))
             .collect();
         let target = -p[0] * p[1];
-        close(
-            enumerate(theta, 0., 2, payoff).1,
-            target,
-            1e-6 * target.abs(),
-        );
+        let enumerated = enumerate(theta, 0., 2, payoff).1;
+        close(enumerated, target, 1e-6 * target.abs());
         let mut streams = [
             SplitMix64::seed(0x4d34_4434_0000),
             SplitMix64::seed(0x4d34_4434_0001),
@@ -158,6 +155,7 @@ mod tests {
         }
         let n = f64::from(n);
         let mean = sum / n;
+        eprintln!("part 2 target {target:.12}, enumerated {enumerated:.12}, sampled {mean:.12}, action 1 share {:.12}", ones as f64/(2.*n));
         close(
             mean,
             target,

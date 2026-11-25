@@ -252,21 +252,22 @@ fn replay_is_atomic_for_current_and_snapshot_chairs() {
     let builds = [build(&f, &pool, 0, 38, 7).0, build(&f, &pool, 1, 39, 3).0];
     let old_builds = [build(&snap.build_forward_v1(&rows, 1).unwrap(), &pool, 0, 40, 1).0];
     let league = BTreeMap::from([("pinned".into(), &snap)]);
-    for tamper in 0..6 {
+    for tamper in 0..8 {
         let mut m = model.clone();
         let mut opt = Optimizer::new(&m);
         let untouched = opt.clone();
         let mut current = picks.clone();
         let mut old = older.clone();
-        let row = if tamper < 3 {
+        let row = if tamper < 4 {
             &mut current[0].1
         } else {
             &mut old[41].1
         };
-        match tamper % 3 {
+        match tamper % 4 {
             0 => row.logits_bits[0] ^= 1,
             1 => row.p_chosen_bits ^= 1,
-            _ => *row.value_bits.as_mut().unwrap() ^= 1,
+            2 => *row.value_bits.as_mut().unwrap() ^= 1,
+            _ => row.stream_values[0] = u64::MAX,
         }
         let chairs = [
             Chair {
