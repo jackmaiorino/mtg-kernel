@@ -15,6 +15,7 @@ use std::fs;
 use std::path::Path;
 
 const MIN_GAMES: u64 = 5;
+const ELIGIBLE_SUMMARY_SCHEMA: &str = "mtg-kernel-census-b-eligible/v2";
 
 #[derive(Debug, Clone, Copy)]
 struct Rate {
@@ -117,6 +118,7 @@ struct CensusCard {
 
 #[derive(Deserialize)]
 struct CensusEligible {
+    schema: String,
     games: u64,
     cards: Vec<CensusCard>,
 }
@@ -167,7 +169,9 @@ impl CensusRates {
         }
         let total = summary.games - excluded;
         let card_rows = match summary.tripwire {
-            Some(rates) if rates.games == total => rates.cards,
+            Some(rates) if rates.schema == ELIGIBLE_SUMMARY_SCHEMA && rates.games == total => {
+                rates.cards
+            }
             None if excluded == 0 => summary.cards,
             _ => return Err(invalid("census-b summary lacks eligible card denominators")),
         };
@@ -666,6 +670,26 @@ mod tests {
     }
 
     #[test]
+    fn pinned_r1_summary_reproduces_stop_and_card_denominators() {
+        let bytes = include_bytes!("../tests/fixtures/cube_v1/census-b-r1-summary.json");
+        assert_eq!(
+            sha256_hex(bytes),
+            "f624a5c0edb87fadf988aba6f7d3800777aeb9a5778729bea469f5bd705425dd"
+        );
+        let summary: CensusSummary = serde_json::from_slice(bytes).unwrap();
+        assert!(summary.tripwire.is_none());
+        assert_eq!((summary.completed, summary.halted), (199_632, 372));
+        let rates = CensusRates::from_summary(summary).unwrap();
+        assert_eq!(rates.stop_kinds.len(), 8);
+        assert!(rates.stop_kinds.values().all(|rate| rate.total == 200_004));
+        let ranked_stop = rates.stop_kinds["engine_halted:InvalidEffectContinuation:source:*"];
+        assert_eq!(ranked_stop.games, 255);
+        assert_eq!(rates.cards.len(), 530);
+        let card = rates.cards[&1584];
+        assert_eq!((card.games, card.total), (87, 20_153));
+    }
+
+    #[test]
     fn summary_uses_eligible_rates_and_checks_denominators() {
         let mut summary = json!({
             "games": 105, "completed": 98, "halted": 7,
@@ -681,14 +705,20 @@ mod tests {
         });
         let parse = |value| CensusRates::from_summary(serde_json::from_value(value).unwrap());
         assert!(parse(summary.clone()).is_err());
-        summary["tripwire"] =
-            json!({"games":100,"cards":[{"card":1,"games_present":55,"charged":1}]});
+        summary["tripwire"] = json!({
+            "schema": ELIGIBLE_SUMMARY_SCHEMA,
+            "games": 100,
+            "cards": [{"card": 1, "games_present": 55, "charged": 1}]
+        });
         let rates = parse(summary.clone()).unwrap();
         assert_eq!(rates.stop_kinds["ordinary"].total, 100);
         assert_eq!(rates.stop_kinds["hang"].total, 100);
         assert_eq!(rates.stop_kinds.len(), 2);
         assert_eq!(rates.cards[&1].total, 55);
         summary["tripwire"]["games"] = json!(105);
+        assert!(parse(summary.clone()).is_err());
+        summary["tripwire"]["games"] = json!(100);
+        summary["tripwire"]["schema"] = json!("unknown");
         assert!(parse(summary).is_err());
     }
     #[test]
