@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::card_def::CARD_DEFS;
 use crate::cube_draft_build_v1::model::{
     BuildForwardV1, CardHiddenTableV1, ModelCardRowsV1, ModelErrorV1, ModelV1, PickForwardV1,
-    PickStateV1, TrunkV1,
+    PickStateV1, TrunkV1, TYPE_SET_COUNT_V1,
 };
 use crate::cube_draft_v1::{basic_land_ids, Deck, DECK_CARDS, PACK_SIZE, POOL_CARDS, ROUNDS};
 use crate::cube_seat_v1::{
@@ -86,16 +86,32 @@ impl SeatForward for ModelSeatForward {
             .step
             .iter()
             .position(|&entry| entry == 1.0)
-            .ok_or_else(|| invalid("missing pick step"))?;
+            .ok_or_else(|| invalid("pick step must be one-hot"))?;
+        if input
+            .step
+            .iter()
+            .enumerate()
+            .any(|(i, &value)| i != step && value != 0.0)
+        {
+            return Err(invalid("pick step must be one-hot"));
+        }
+        let direction = match input.direction {
+            1.0 => 1,
+            -1.0 => -1,
+            _ => return Err(invalid("pick direction must be +1 or -1")),
+        };
         let state = PickStateV1 {
             pack: input.pack.to_vec(),
             pool: input.pool.to_vec(),
             history: input.history.to_vec(),
             step: step as u8,
-            direction: input.direction as i8,
+            direction,
         };
         let forward = PickForwardV1::from_cached_hidden(&self.model, &self.rows, &self.pick_hidden);
         let logits = forward.pick_logits_v1(&state).map_err(model_error)?;
+        if logits.ids != input.pack {
+            return Err(invalid("pick logits do not match the pack order"));
+        }
         let value = forward.value_v1(&state).map_err(model_error)?;
         Ok((logits.logits, value))
     }
@@ -116,10 +132,21 @@ impl SeatForward for ModelSeatForward {
             .map_err(model_error)?
             .pointer_logits_v1(usize::from(input.basics), input.chosen, remaining)
             .map_err(model_error)?;
+        if logits.ids != remaining {
+            return Err(invalid(
+                "pointer logits do not match the remaining card order",
+            ));
+        }
         Ok(logits.logits)
     }
 
     fn type_set(&self, input: &BuildInputs<'_>, masks: &[u16]) -> Result<Vec<f32>, SeatError> {
+        if masks.iter().any(|&mask| {
+            !(1..=TYPE_SET_COUNT_V1 as u16).contains(&mask)
+                || mask.count_ones() > u32::from(input.basics)
+        }) {
+            return Err(invalid("infeasible basic type mask"));
+        }
         let logits = self
             .build_forward()
             .build_context_v1(input.pool)
@@ -134,6 +161,13 @@ impl SeatForward for ModelSeatForward {
     }
 
     fn split(&self, input: &BuildInputs<'_>, bits: &[u16]) -> Result<Vec<f32>, SeatError> {
+        if bits.iter().any(|&bit| !matches!(bit, 1 | 2 | 4 | 8 | 16))
+            || bits.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(invalid(
+                "split types must be single basic bits in ascending order",
+            ));
+        }
         let mask = bits.iter().fold(0u8, |mask, &bit| mask | bit as u8);
         let logits = self
             .build_forward()
@@ -239,16 +273,16 @@ fn pick_with(
     view: &SeatPickView<'_>,
     word: impl FnOnce() -> Result<u64, SeatError>,
 ) -> Result<PickOutcome, SeatError> {
+    let round = usize::from(view.round);
+    let pick = usize::from(view.pick);
+    if round >= ROUNDS || pick >= PACK_SIZE || view.pack.len() != PACK_SIZE - pick {
+        return Err(invalid("invalid draft step or pack size"));
+    }
     if view.pack.len() == 1 {
         return Ok(PickOutcome {
             index: 0,
             row: None,
         });
-    }
-    let round = usize::from(view.round);
-    let pick = usize::from(view.pick);
-    if round >= ROUNDS || pick >= PACK_SIZE || view.pack.len() != PACK_SIZE - pick {
-        return Err(invalid("invalid draft step or pack size"));
     }
     let pack = sorted_cards(view.pack);
     let mut step = [0.0; POOL_CARDS];
