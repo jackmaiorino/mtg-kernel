@@ -3,9 +3,8 @@
 //! and no intervening "if" clause. Under CR 400.7, if another effect moves
 //! the card, its ability resolves and does nothing because the original
 //! object is gone, even if the card returns to the graveyard or battlefield.
-//! CR 400.7j lets the effect find an object it moved to a public zone itself,
-//! or that moved there to pay the spell or ability's costs. With no response,
-//! the resolving ability finds the card it returned and taps it.
+//! With no response, its ability returns the original card tapped. Entering
+//! tapped does not produce a separate tap event (CR 603.2e).
 
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
@@ -231,6 +230,26 @@ fn sneaky_snacker_stays_exiled_when_relic_of_progenitus_answers_its_trigger() {
     }
 }
 
+#[test]
+fn sneaky_snacker_cast_from_hand_enters_untapped() {
+    for (me, seed) in [
+        (PlayerId::P0, 0x534e_4143_4b00_000d),
+        (PlayerId::P1, 0x534e_4143_4b00_000e),
+    ] {
+        let mut state = ready_main(seed, me);
+        let snacker = put_object(&mut state, me, "Sneaky Snacker", Zone::Hand);
+        state.players[me.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+        state.players[me.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+
+        engine::step(&mut state, Action::CastSpell(snacker)).unwrap();
+        assert!(pass_until_idle_watching(&mut state, snacker));
+
+        assert_eq!(state.objects.get(snacker).zone, Zone::Battlefield);
+        assert!(state.players[me.index()].battlefield.contains(&snacker));
+        assert!(!state.objects.get(snacker).tapped);
+    }
+}
+
 /// Control: with no response the trigger returns Sneaky Snacker tapped.
 #[test]
 fn sneaky_snacker_returns_tapped_when_nobody_responds() {
@@ -240,6 +259,8 @@ fn sneaky_snacker_returns_tapped_when_nobody_responds() {
     ] {
         let mut game = snacker_game(seed, me);
         snacker_trigger_on_the_stack(&mut game);
+        let start = game.state.engine.event_history.len();
+        game.state = serde_json::from_slice(&serde_json::to_vec(&game.state).unwrap()).unwrap();
         pass_until_idle_watching(&mut game.state, game.snacker);
         let state = &game.state;
         assert!(state.engine.halted.is_none());
@@ -248,6 +269,9 @@ fn sneaky_snacker_returns_tapped_when_nobody_responds() {
             .battlefield
             .contains(&game.snacker));
         assert!(state.objects.get(game.snacker).tapped);
+        assert!(!state.engine.event_history.range_v2(start..).iter().any(
+            |event| matches!(event, event::CommittedEvent::Tap { object } if *object == game.snacker)
+        ));
     }
 }
 
@@ -328,10 +352,7 @@ fn sneaky_snacker_returned_by_another_effect_stays_untapped() {
         assert_eq!(returned.zone, Zone::Battlefield);
         let after_move = returned.zone_change_count;
         assert!(after_move > before);
-        // The card's definition taps it on every entry today (its
-        // `enters_tapped` tag), so the new incarnation is untapped by hand:
-        // the question here is only whether the old trigger taps it.
-        game.state.objects.get_mut(game.snacker).tapped = false;
+        assert!(!returned.tapped);
         pass_until_idle_watching(&mut game.state, game.snacker);
         let state = &game.state;
         assert!(state.engine.halted.is_none());

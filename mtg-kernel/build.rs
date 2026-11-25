@@ -75,6 +75,7 @@ mod build_eternal_p3e_v1;
 mod build_eternal_p3f_v1;
 mod build_eternal_p3g_v1;
 mod build_eternal_p3h_v1;
+mod build_eternal_p3i_v1;
 mod build_eternal_pf1a_v1;
 mod build_eternal_pf1b_v1;
 mod build_eternal_pf1c_v1;
@@ -4962,7 +4963,7 @@ fn enters_battlefield_tapped(card: &CardJson) -> bool {
     card.mechanics
         .iter()
         .any(|mechanic| mechanic == "enters_tapped")
-        && card.name != "Gingerbread Cabin"
+        && !matches!(card.name.as_str(), "Gingerbread Cabin" | "Sneaky Snacker")
 }
 
 fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {

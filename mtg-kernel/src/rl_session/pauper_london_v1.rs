@@ -206,10 +206,41 @@ impl FastActorSessionV1 {
         modes: [PauperMulliganModeV1; 2],
         windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
     ) -> Result<Self, RlSessionError> {
+        Self::reset_pauper_london_windows_deck_format_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            modes,
+            windows,
+            None,
+        )
+    }
+
+    /// `reset_pauper_london_windows_v1` with an opt-in deck format
+    /// (`sideboard::DeckFormatV1`), which changes the explicit decks' size
+    /// admission only. None is exactly that reset.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_pauper_london_windows_deck_format_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        modes: [PauperMulliganModeV1; 2],
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+        deck_format: Option<crate::sideboard::DeckFormatV1>,
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, mut state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
             Some(starting_player),
+            deck_format,
         )?;
         london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
@@ -223,6 +254,7 @@ impl FastActorSessionV1 {
             episode_id,
             max_physical_decisions,
             max_policy_steps,
+            max_stack_objects: None,
             state,
             surface,
             environment_revision: 0,

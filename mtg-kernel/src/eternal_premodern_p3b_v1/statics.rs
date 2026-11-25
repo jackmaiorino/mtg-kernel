@@ -15,13 +15,17 @@ fn gloom_id() -> Option<u16> {
     *ID.get_or_init(|| crate::card_def::card_id_by_name(GLOOM))
 }
 
-const fn white() -> u8 {
-    crate::card_def::mana_color_mask(ManaColor::W)
-}
-
-/// {3} for each Gloom whose abilities apply.
-fn gloom_count_tax(state: &GameState) -> u32 {
-    let glooms = active_with_id(state, gloom_id(), GLOOM, None).count();
+/// {3} for each active Gloom whose effective color word is in `colors`.
+fn gloom_matching_tax(state: &GameState, colors: u8) -> u32 {
+    if colors == 0 {
+        return 0;
+    }
+    let glooms = active_with_id(state, gloom_id(), GLOOM, None)
+        .filter(|&gloom| {
+            let color = crate::text_color_change_v1::text_color(state, gloom, ManaColor::W);
+            colors & crate::card_def::mana_color_mask(color) != 0
+        })
+        .count();
     u32::try_from(glooms).map_or(u32::MAX, |count| count.saturating_mul(3))
 }
 
@@ -35,10 +39,14 @@ pub(crate) fn gloom_spell_tax(
     definition: &CardDef,
     method: CastMethodV4,
 ) -> u32 {
-    if gloom_id().is_none() || form_colors(state, definition, method) & white() == 0 {
+    if gloom_id().is_none()
+        || active_with_id(state, gloom_id(), GLOOM, None)
+            .next()
+            .is_none()
+    {
         return 0;
     }
-    gloom_count_tax(state)
+    gloom_matching_tax(state, form_colors(state, definition, method))
 }
 
 /// Gloom: "Activated abilities of white enchantments cost {3} more to
@@ -50,12 +58,15 @@ pub(crate) fn gloom_activation_tax(state: &GameState, source: ObjectId) -> u8 {
             .objects
             .try_get(source)
             .is_some_and(|live| live.zone == Zone::Battlefield)
-        || crate::engine::object_color_mask(state, source) & white() == 0
         || !crate::engine::object_has_type(state, source, CardType::Enchantment)
+        || active_with_id(state, gloom_id(), GLOOM, None)
+            .next()
+            .is_none()
     {
         return 0;
     }
-    u8::try_from(gloom_count_tax(state)).unwrap_or(u8::MAX)
+    let colors = crate::engine::object_color_mask(state, source);
+    u8::try_from(gloom_matching_tax(state, colors)).unwrap_or(u8::MAX)
 }
 
 // ---- Mogg Salvage ---------------------------------------------------------------------

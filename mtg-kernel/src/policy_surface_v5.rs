@@ -1301,17 +1301,28 @@ impl PolicySurfaceV5 {
     }
 
     pub fn next_decision(&mut self, state: &mut GameState) -> Result<PolicyDecisionV5, String> {
-        self.next_decision_with_binding(state, EnvironmentBindingModeV5::Exact)
+        self.next_decision_with_binding(state, EnvironmentBindingModeV5::Exact, None)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn next_decision_owned(
         &mut self,
         state: &mut GameState,
         environment_revision: u64,
     ) -> Result<PolicyDecisionV5, String> {
+        self.next_decision_owned_with_stack_cap(state, environment_revision, None)
+    }
+
+    pub(crate) fn next_decision_owned_with_stack_cap(
+        &mut self,
+        state: &mut GameState,
+        environment_revision: u64,
+        max_stack_objects: Option<u32>,
+    ) -> Result<PolicyDecisionV5, String> {
         self.next_decision_with_binding(
             state,
             EnvironmentBindingModeV5::OwnedRevision(environment_revision),
+            max_stack_objects,
         )
     }
 
@@ -1319,6 +1330,7 @@ impl PolicySurfaceV5 {
         &mut self,
         state: &mut GameState,
         binding_mode: EnvironmentBindingModeV5,
+        max_stack_objects: Option<u32>,
     ) -> Result<PolicyDecisionV5, String> {
         if let Some(order) = &self.hunter_order_v45 {
             let origin =
@@ -1337,7 +1349,9 @@ impl PolicySurfaceV5 {
             return policy_decision_for_scan(scan);
         }
 
-        let surfaced = self.inner.next_decision(state);
+        let surfaced = self
+            .inner
+            .next_decision_with_stack_cap(state, max_stack_objects);
         match surfaced {
             SurfaceDecision::Decision(Decision::DeclareAttackers { player, eligible })
                 if !eligible.is_empty() =>

@@ -3,13 +3,19 @@
 //! whose whole mainboard and companion are Full resolve and play to natural
 //! terminals, with both a fixed action preference and seeded random actions.
 //! Games run on the Limited schema 5 session, whose policy observation
-//! reports shroud on permanents and players.
+//! reports shroud on permanents and players and every bound Ward payment, so
+//! spells and abilities target Ward permanents freely.
 #![cfg(feature = "eternal-fixtures")]
 
+use mtg_kernel::bo3_match::PlayDrawChoiceV1;
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError,
-    TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError, CARD_DEFS,
+    KERNEL_CARDDB_HASH,
 };
+use mtg_kernel::eternal_bo3_v1::{
+    EternalBestOfThreeMatchV1, EternalFormatV1, EternalRegisteredDeckV1,
+};
+use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -23,7 +29,7 @@ use std::thread::available_parallelism;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 137] = [
+const PLAYABLE: [(&str, &str); 138] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -203,6 +209,7 @@ const PLAYABLE: [(&str, &str); 137] = [
     ("premodern", "premodern-survival"),
     ("premodern", "premodern-madness-threshold"),
     ("premodern", "premodern-reanimator"),
+    ("premodern", "premodern-full-english-breakfast"),
 ];
 
 fn read_json(relative: &str) -> Value {
@@ -256,13 +263,10 @@ const PARTIAL_S1: [&str; 0] = [];
 /// Headliner Scarlett, Gandalf, Goblins' Bane and Metamorphosis Fanatic in C7a.
 const PARTIAL_CUBE: [&str; 0] = [];
 
-/// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
-/// only Partial definitions.
+/// The S1 and cube cards above (currently none) are the registry's only
+/// Partial definitions; Volrath's Shapeshifter became Full in step B2 (#460).
 pub(crate) fn expected_capability(name: &str) -> CardCapability {
-    if name == "Volrath's Shapeshifter"
-        || PARTIAL_S1.contains(&name)
-        || PARTIAL_CUBE.contains(&name)
-    {
+    if PARTIAL_S1.contains(&name) || PARTIAL_CUBE.contains(&name) {
         CardCapability::Partial
     } else {
         CardCapability::Full
@@ -318,11 +322,7 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
             "{name}"
         );
     }
-    for name in ["Volrath's Shapeshifter"]
-        .into_iter()
-        .chain(PARTIAL_S1)
-        .chain(PARTIAL_CUBE)
-    {
+    for name in PARTIAL_S1.into_iter().chain(PARTIAL_CUBE) {
         let id = card_id_by_name(name).unwrap();
         assert!(CARD_DEFS[usize::from(id)].is_executable());
         assert!(matches!(
@@ -335,6 +335,19 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
             }) if card_def == id && rejected == name
         ));
     }
+    let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
+    assert_eq!(
+        CARD_DEFS[usize::from(volrath)].capability,
+        CardCapability::Full
+    );
+    assert!(matches!(
+        preflight_fully_supported_deck(&[volrath]),
+        Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+            index: 0,
+            card_def,
+            name: "Volrath's Shapeshifter",
+        }) if card_def == volrath
+    ));
     println!("eternal catalog hash {KERNEL_CARDDB_HASH:#018x}");
 }
 
@@ -444,48 +457,6 @@ fn lavinia_prohibits(decision: &Value, action: &Value) -> bool {
         && usize::from(def.mana_value) > lands_controlled(decision, actor)
 }
 
-/// Whether the opponent of `seat` controls a Hexing Squelcher, whose own
-/// "Ward--Pay 2 life" and the one it grants their other creatures policy
-/// observation v5 does not represent.
-fn opponent_has_life_ward(decision: &Value, seat: &Value) -> bool {
-    decision["observation"]["projection"]["battlefield"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|cards| cards.as_array().into_iter().flatten())
-        .any(|card| {
-            &card["stable"]["controller"] != seat
-                && card["stable"]["card_db_id"]
-                    .as_u64()
-                    .is_some_and(|id| CARD_DEFS[id as usize].name == "Hexing Squelcher")
-        })
-}
-
-/// Whether starting this spell or ability may target a permanent: its card
-/// or ability has a target, or its entry trigger targets one.
-fn may_target(action: &Value) -> bool {
-    let s = &action["semantic"];
-    let Some(id) = s["source"]["card_db_id"].as_u64() else {
-        return false;
-    };
-    let def = &CARD_DEFS[id as usize];
-    match s["action_kind"].as_str() {
-        Some("cast_spell") => {
-            def.target_spec != TargetSpec::None
-                || def.mode2.is_some()
-                || matches!(
-                    def.name,
-                    "Portable Hole" | "Witch Enchanter" | "Monk Realist" | "Ghitu Slinger"
-                )
-        }
-        Some("activate_ability") => s["ability_index"]
-            .as_u64()
-            .and_then(|index| def.activated_abilities.get(index as usize))
-            .is_some_and(|ability| ability.target_spec != TargetSpec::None),
-        _ => false,
-    }
-}
-
 /// Whether this action puts a companion into its owner's hand.
 fn is_companion_action(action: &Value) -> bool {
     let s = &action["semantic"];
@@ -502,78 +473,22 @@ fn is_companion_action(action: &Value) -> bool {
         })
 }
 
-/// Whether the public session can follow this action. Policy observation v5
-/// fails closed while an Escape cast stages its graveyard exile (Sleep of the
-/// Dead, and every nonland card under Underworld Breach) and once an extra
-/// turn is scheduled (Emrakul, the Aeons Torn's cast trigger, Time Walk,
-/// Time Vault's ability), so these games never begin either; the engine
-/// paths are covered by the rules tests. Every other action is admitted:
-/// schema 5 reports shroud (Sylvan Safekeeper's ability, Argothian
-/// Enchantress, Sterling Grove, Solitary Confinement).
-fn session_can_follow(action: &Value, decision: &Value) -> bool {
-    let s = &action["semantic"];
-    if !matches!(
-        s["action_kind"].as_str(),
-        Some("cast_spell" | "activate_ability")
-    ) {
-        return true;
-    }
-    let Some(id) = s["source"]["card_db_id"].as_u64() else {
-        return true;
-    };
-    let id = id as usize;
-    if matches!(
-        CARD_DEFS[id].name,
-        "Emrakul, the Aeons Torn" | "Time Walk" | "Time Vault"
-    ) {
-        return false;
-    }
-    s["action_kind"] != "cast_spell"
-        || s["source"]["zone"] != serde_json::to_value(mtg_kernel::state::Zone::Graveyard).unwrap()
-        || (CARD_DEFS[id].escape.is_none()
-            && !controls_named(decision, &s["actor"], "Underworld Breach"))
-}
-
-/// Whether this action chooses a Ward permanent as a target.
-fn targets_ward_permanent(action: &Value) -> bool {
-    let target = &action["semantic"]["target"];
-    target["target_kind"] == "object"
-        && target["object"]["card_db_id"]
-            .as_u64()
-            .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
-}
-
-/// Whether this action chooses as a target an object whose controller
-/// controls a Hexing Squelcher, which grants its other creatures "Ward--Pay 2
-/// life" (policy observation v5 does not represent it).
-fn targets_life_warded_object(action: &Value, decision: &Value) -> bool {
-    let target = &action["semantic"]["target"];
-    target["target_kind"] == "object"
-        && controls_named(
-            decision,
-            &target["object"]["controller"],
-            "Hexing Squelcher",
-        )
-}
-
-/// Whether any public stack item's targets include a Ward permanent.
-fn public_targets_ward_permanent(value: &Value) -> bool {
-    match value {
-        Value::Object(map) => {
-            map.get("targets")
-                .and_then(Value::as_array)
-                .is_some_and(|targets| {
-                    targets.iter().any(|target| {
-                        target["target_kind"] == "object"
-                            && target["object"]["card_db_id"]
-                                .as_u64()
-                                .is_some_and(|id| CARD_DEFS[id as usize].ward_cost.is_some())
-                    })
-                })
-                || map.values().any(public_targets_ward_permanent)
+/// Counts the decision's reported Ward payments (pending and queued) by
+/// cost kind: generic mana, then life.
+fn count_ward_payments(decision: &Value, counts: &mut [usize; 2]) {
+    let payments = &decision["observation"]["projection"]["ward_payments"];
+    let pending = payments.get("pending").into_iter();
+    let queued = payments["queued"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|queued| &queued["payment"]);
+    for payment in pending.chain(queued) {
+        match payment["cost"]["kind"].as_str() {
+            Some("generic") => counts[0] += 1,
+            Some("life") => counts[1] += 1,
+            other => panic!("unexpected Ward cost {other:?}: {payment}"),
         }
-        Value::Array(items) => items.iter().any(public_targets_ward_permanent),
-        _ => false,
     }
 }
 
@@ -1027,6 +942,12 @@ pub(crate) struct Game {
     /// acting player holds a card with that single spell name, which no
     /// action casts.
     pub(crate) mage_held_names: usize,
+    /// Decisions taken while an Escape cast is staged, whose observation
+    /// carries its `staged_escape` record.
+    pub(crate) staged_escape_decisions: usize,
+    /// Decisions whose observation reports a Ward payment, by cost kind:
+    /// generic mana, then life.
+    pub(crate) ward_payments: [usize; 2],
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -1073,6 +994,8 @@ pub(crate) fn play_observed(
     let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
     let mut circle_choices = 0;
     let (mut mage_choices, mut mage_held_names) = ([0; 2], 0);
+    let mut staged_escape_decisions = 0;
+    let mut ward_payments = [0; 2];
     let mut miracle_reveals = BTreeSet::new();
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
@@ -1140,10 +1063,22 @@ last actions:
                 circle_choices,
                 mage_choices,
                 mage_held_names,
+                staged_escape_decisions,
+                ward_payments,
             };
         }
         let decision = &reply["decision"];
         collect_overloaded_spells(decision, &mut overloaded_spells);
+        // The schema 5 record is an object while an Escape cast is staged
+        // and otherwise absent from the reply bytes, never null.
+        let staged = decision["observation"]["projection"]["staged_escape"].is_object();
+        assert_eq!(
+            raw.contains("\"staged_escape\""),
+            staged,
+            "seed={seed}: {raw}"
+        );
+        staged_escape_decisions += usize::from(staged);
+        count_ward_payments(decision, &mut ward_payments);
         // No noncreature spell over the caster's lands is offered while an
         // opponent controls Lavinia, Azorius Renegade (wave S1l).
         for action in decision["legal_actions"].as_array().unwrap() {
@@ -1176,11 +1111,13 @@ last actions:
                     .any(|name| mage_names.contains(name)),
             );
         }
+        // The public session follows every action: schema 5 reports shroud,
+        // the turn schedule once an extra turn is scheduled, Ward payments
+        // and a staged Escape cast.
         let actions: Vec<&Value> = decision["legal_actions"]
             .as_array()
             .unwrap()
             .iter()
-            .filter(|action| session_can_follow(action, decision))
             .collect();
         if let [only] = actions[..] {
             if is_attacker_inclusion(only, false)
@@ -1189,39 +1126,6 @@ last actions:
                 unpaid_exclusions += 1;
             }
         }
-        // Policy observation v5 fails closed while two stack items target
-        // one Ward permanent, so these games avoid targeting a Ward
-        // permanent whenever another action is available, and start no new
-        // spell or ability while something on the stack targets one. It
-        // does not represent "Ward--Pay N life" at all, so while a seat's
-        // opponent controls a Hexing Squelcher that seat starts no spell or
-        // ability that may target a permanent.
-        let ward_targeted = public_targets_ward_permanent(decision);
-        let unwarded: Vec<&Value> = actions
-            .iter()
-            .copied()
-            .filter(|action| {
-                if targets_ward_permanent(action) || targets_life_warded_object(action, decision) {
-                    return false;
-                }
-                let starts_new = matches!(
-                    action["semantic"]["action_kind"].as_str(),
-                    Some("cast_spell" | "activate_ability")
-                );
-                if starts_new
-                    && may_target(action)
-                    && opponent_has_life_ward(decision, &action["semantic"]["actor"])
-                {
-                    return false;
-                }
-                !ward_targeted || !starts_new
-            })
-            .collect();
-        let actions = if unwarded.is_empty() {
-            actions
-        } else {
-            unwarded
-        };
         let action = match policy {
             // A ranked seat passes while its own spell or ability is on the
             // stack, so free recasts (Acererak under Aluren) cannot pile up
@@ -1354,6 +1258,64 @@ fn premodern_elves_snapshot_finishes_and_replays_in_both_seats() {
     }
 }
 
+fn requires_ordered_graveyard(deck: &SnapshotDeck) -> bool {
+    let (ids, _) = deck.deck.resolve_with_companion().unwrap();
+    matches!(
+        preflight_fully_supported_deck(&ids),
+        Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 { .. })
+    )
+}
+
+fn expand_rows(rows: &[CustomCardCountV1]) -> Vec<u16> {
+    rows.iter()
+        .flat_map(|row| {
+            let id = card_id_by_name(&row.name)
+                .unwrap_or_else(|| panic!("{} is in the eternal registry", row.name));
+            std::iter::repeat_n(id, row.count as usize)
+        })
+        .collect()
+}
+
+fn register_for_ordered_game_one(deck: &SnapshotDeck) -> EternalRegisteredDeckV1 {
+    let format = EternalFormatV1::from_snapshot_key(&deck.format).unwrap();
+    let mainboard = expand_rows(&deck.deck.cards);
+    let sideboard = expand_rows(&deck.sideboard);
+    let companion = deck
+        .deck
+        .companion
+        .as_deref()
+        .map(|name| card_id_by_name(name).unwrap());
+    EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(
+        format,
+        deck.archetype.clone(),
+        mainboard,
+        sideboard,
+        companion,
+    )
+    .unwrap_or_else(|error| panic!("{}: {error}", deck.archetype))
+}
+
+fn play_ordered_game_one(
+    first: &SnapshotDeck,
+    second: &SnapshotDeck,
+    seed: u64,
+    policy: Policy,
+) -> crate::eternal_bo3_v1::ordered::OrderedGame {
+    let pair = [
+        register_for_ordered_game_one(first),
+        register_for_ordered_game_one(second),
+    ];
+    let configs = [
+        pair[0].registered_configuration().clone(),
+        pair[1].registered_configuration().clone(),
+    ];
+    let mut bo3 = EternalBestOfThreeMatchV1::new_v1(pair, PlayerId::P0).unwrap();
+    let (_, owner) = bo3
+        .start_game_with_ordered_graveyard_v1(PlayerId::P0, PlayDrawChoiceV1::Play, configs, seed)
+        .unwrap();
+    crate::eternal_bo3_v1::ordered::play(owner, seed, policy)
+}
+
 #[test]
 fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     let decks: Vec<SnapshotDeck> = snapshot_decks()
@@ -1361,19 +1323,33 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
         .filter(|deck| PLAYABLE.contains(&(deck.format.as_str(), deck.archetype.as_str())))
         .collect();
     assert_eq!(decks.len(), PLAYABLE.len());
+    let mut ordered_decks = 0usize;
     for deck in &decks {
         let (ids, companion) = deck
             .deck
             .resolve_with_companion()
             .unwrap_or_else(|error| panic!("{}: {error}", deck.archetype));
-        preflight_fully_supported_deck(&ids)
-            .unwrap_or_else(|error| panic!("{}: {error:?}", deck.archetype));
+        if matches!(
+            preflight_fully_supported_deck(&ids),
+            Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 { .. })
+        ) {
+            ordered_decks += 1;
+        } else {
+            preflight_fully_supported_deck(&ids)
+                .unwrap_or_else(|error| panic!("{}: {error:?}", deck.archetype));
+        }
         assert_eq!(companion.is_some(), deck.deck.companion.is_some());
     }
+    assert!(
+        ordered_decks > 0,
+        "expected at least one PLAYABLE Shapeshifter deck"
+    );
     // Each deck plays the next one, so every deck takes both seats, once
     // with ranked actions and once with seeded random actions.
     let mut random_activations = 0;
     let mut companion_actions = 0;
+    let mut staged_escape_decisions = 0;
+    let mut ward_payments = [0; 2];
     // Every deck casts a spell in its two ranked games (one per seat); a
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1391,8 +1367,49 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // threads (`in_parallel`); everything below takes their results in this
     // loop's order.
     let outcomes = in_parallel(&games, |&(first, second, seed, policy)| {
-        let pair = [first.deck.clone(), second.deck.clone()];
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if requires_ordered_graveyard(first) || requires_ordered_graveyard(second) {
+                let game = play_ordered_game_one(first, second, seed, policy);
+                let replay = play_ordered_game_one(first, second, seed, policy);
+                assert_eq!(
+                    game.transcript_sha256, replay.transcript_sha256,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                assert_eq!(
+                    game.state_hash, replay.state_hash,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                assert_eq!(
+                    game.winner, replay.winner,
+                    "{} / {}",
+                    first.archetype, second.archetype
+                );
+                let casts_by_seat = [0, 1].map(|seat| game.cast_cards[seat].values().sum());
+                return Game {
+                    transcript_sha256: game.transcript_sha256,
+                    action_counts: game.action_counts,
+                    casts_by_seat,
+                    companion_actions: 0,
+                    winner: game.winner,
+                    cast_cards: game.cast_cards,
+                    spell_modes: BTreeMap::new(),
+                    search_looks: [0; 2],
+                    overloaded_spells: 0,
+                    taxed_inclusions: 0,
+                    unpaid_exclusions: 0,
+                    circle_choices: 0,
+                    mage_choices: [0; 2],
+                    mage_held_names: 0,
+                    // The ordered-graveyard session is not the schema 5
+                    // contract and reports no Ward payments or staged
+                    // Escape casts.
+                    staged_escape_decisions: 0,
+                    ward_payments: [0; 2],
+                };
+            }
+            let pair = [first.deck.clone(), second.deck.clone()];
             let game = play(pair.clone(), seed, policy);
             let replay = play(pair.clone(), seed, policy);
             assert_eq!(
@@ -1414,6 +1431,9 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
             continue;
         };
         companion_actions += game.companion_actions;
+        staged_escape_decisions += game.staged_escape_decisions;
+        ward_payments[0] += game.ward_payments[0];
+        ward_payments[1] += game.ward_payments[1];
         if let Policy::Ranked = policy {
             *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
             *ranked_casts.entry(second.archetype.as_str()).or_default() += game.casts_by_seat[1];
@@ -1449,6 +1469,16 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     assert!(
         companion_actions > 0,
         "no game put a companion into its owner's hand"
+    );
+    // Escape casts are followed (Underworld Breach, Uro, Sleep of the Dead).
+    println!("staged Escape decisions: {staged_escape_decisions}");
+    assert!(staged_escape_decisions > 0, "no game staged an Escape cast");
+    // Spells and abilities target Ward permanents freely, and the session
+    // follows each Ward payment (generic, life).
+    println!("ward payment decisions (generic, life): {ward_payments:?}");
+    assert!(
+        ward_payments.iter().all(|count| *count > 0),
+        "{ward_payments:?}"
     );
 }
 

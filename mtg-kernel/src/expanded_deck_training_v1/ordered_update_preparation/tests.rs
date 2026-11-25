@@ -1106,12 +1106,14 @@ fn net8_prepared_gae_update_defers_learner_replay_bit_exact_with_error_fallback_
         postboard: false,
         max_physical_decisions: 100_000,
         max_policy_steps: 1_000_000,
+        max_stack_objects: None,
         runtime_rules: None,
         reset: None,
         opening: None,
         mulligan_modes: None,
         priority_windows: None,
         london_keep_offset: None,
+        deck_format: None,
     }];
     let collect_receipt = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
         source: source.clone(),
