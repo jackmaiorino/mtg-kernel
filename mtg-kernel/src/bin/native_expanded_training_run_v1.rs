@@ -14,6 +14,8 @@ fn main() {
     unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
     mtg_kernel::set_default_digest_memo_mib_v1(16);
+    // Collection states do not repeat; their memo lookups and copies only cost.
+    mtg_kernel::set_digest_memo_states_v1(false);
     if let Err(error) = run() {
         eprintln!("native expanded training: {error}");
         std::process::exit(1);

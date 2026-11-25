@@ -642,6 +642,24 @@ pub(crate) fn set_default_digest_memo_mib_v1(mib: usize) {
     DIGEST_MEMO_DEFAULT_MIB_V1.store(mib, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Whether state messages go through the digest memo (on by default). Off,
+/// a state message is hashed as if the memo were off (prefix cache, no memo
+/// lookup, no memo copy) while action messages still use the memo. A program
+/// whose state messages do not repeat turns it off: in self-play collection a
+/// state JSON is about 29 KB, its full-message bucketing hash and heap copy
+/// cost about a fifth of the digest time, and 13 of 43,920 state messages
+/// were repeats (c1 recipe, 32 updates). Digests are the same either way.
+static DIGEST_MEMO_STATES_V1: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+pub(crate) fn set_digest_memo_states_v1(on: bool) {
+    DIGEST_MEMO_STATES_V1.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn digest_memo_states_v1() -> bool {
+    DIGEST_MEMO_STATES_V1.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(test)]
 pub(crate) fn default_digest_memo_mib_v1() -> usize {
     DIGEST_MEMO_DEFAULT_MIB_V1.load(std::sync::atomic::Ordering::Relaxed)
@@ -1106,7 +1124,7 @@ fn hash_prepared_slots_v2(slots: &[DigestSlotV1], batch: &mut DigestBatchV1) -> 
     }
     DIGEST_MEMO_V1.with(|memo| {
         let mut memo = memo.borrow_mut();
-        hash_prepared_slots_memoized_v2(slots, batch, &mut memo, budget)
+        hash_prepared_slots_memoized_v2(slots, batch, &mut memo, budget, digest_memo_states_v1())
     })
 }
 
@@ -1276,28 +1294,35 @@ fn hash_prepared_slots_unmemoized_v2(
 /// [`hash_prepared_slots_unmemoized_v2`] with the whole-message memo: the
 /// same messages in the same order, with stored digests reused for messages
 /// equal byte for byte to a stored one. Only messages missing from the memo
-/// are hashed (state messages still resume from the prefix cache).
+/// are hashed (state messages still resume from the prefix cache). With
+/// `memo_states` false, state messages bypass the memo (never looked up,
+/// never stored, not counted) and only action messages use it.
 fn hash_prepared_slots_memoized_v2(
     slots: &[DigestSlotV1],
     batch: &mut DigestBatchV1,
     memo: &mut DigestMemoV1,
     budget: usize,
+    memo_states: bool,
 ) -> Vec<usize> {
     const N: usize = ACTION_HASH_BLOCK_COUNT_V1;
     // Per message (in output order): its memo hash and either the index of
     // its copied stored digests, its precomputed empty-state blocks, or the
-    // index of its first job.
+    // index of its first job (stored in the memo afterwards, or not).
     enum Source {
         EmptyState,
         Stored(usize),
         Jobs(usize),
+        JobsUnmemoized(usize),
     }
+    // Every buffer is sized once for the most it can hold, so a call makes no
+    // growth reallocations (the counts are known before any message is read).
+    let message_count: usize = slots.iter().map(|slot| 1 + slot.action_ranges.len()).sum();
     let mut offsets = Vec::with_capacity(slots.len() + 1);
-    let mut messages: Vec<(&'static [u8], &[u8], u64, Source)> = Vec::new();
-    let mut state_resumes = Vec::new();
-    let mut groups = Vec::new();
-    let mut jobs = Vec::new();
-    let mut stored: Vec<[[u8; 64]; N]> = Vec::new();
+    let mut messages: Vec<(&'static [u8], &[u8], u64, Source)> = Vec::with_capacity(message_count);
+    let mut state_resumes = Vec::with_capacity(slots.len());
+    let mut groups = Vec::with_capacity(slots.len());
+    let mut jobs = Vec::with_capacity(message_count * N);
+    let mut stored: Vec<[[u8; 64]; N]> = Vec::with_capacity(message_count);
     let (mut hits, mut misses) = (0u64, 0u64);
     let snapshot_prefix = slots.len() > 1;
     for slot in slots {
@@ -1306,8 +1331,17 @@ fn hash_prepared_slots_memoized_v2(
             messages.push((STATE_HASH_NAMESPACE_V2, &[], 0, Source::EmptyState));
         } else {
             let state = slot.state_message();
-            let hash = digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state);
-            if let Some(blocks) = memo.get(hash, STATE_HASH_NAMESPACE_V2, state) {
+            let hash = if memo_states {
+                digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state)
+            } else {
+                0
+            };
+            let stored_blocks = if memo_states {
+                memo.get(hash, STATE_HASH_NAMESPACE_V2, state)
+            } else {
+                None
+            };
+            if let Some(blocks) = stored_blocks {
                 hits += 1;
                 stored.push(*blocks);
                 messages.push((
@@ -1317,7 +1351,7 @@ fn hash_prepared_slots_memoized_v2(
                     Source::Stored(stored.len() - 1),
                 ));
             } else {
-                misses += 1;
+                misses += u64::from(memo_states);
                 let resume = state_prefix_cache_lookup_v1(state, snapshot_prefix);
                 let first = jobs.len();
                 groups.push(first..first + N);
@@ -1329,7 +1363,12 @@ fn hash_prepared_slots_memoized_v2(
                     });
                 }
                 state_resumes.push((state, resume, first));
-                messages.push((STATE_HASH_NAMESPACE_V2, state, hash, Source::Jobs(first)));
+                let source = if memo_states {
+                    Source::Jobs(first)
+                } else {
+                    Source::JobsUnmemoized(first)
+                };
+                messages.push((STATE_HASH_NAMESPACE_V2, state, hash, source));
             }
         }
         for &(start, end) in slot.action_ranges.iter() {
@@ -1392,6 +1431,11 @@ fn hash_prepared_slots_memoized_v2(
                     .expect("six digests per message");
                 batch.blocks.extend_from_slice(&blocks);
                 memo.insert(budget, hash, namespace, message, blocks);
+            }
+            Source::JobsUnmemoized(first) => {
+                batch
+                    .blocks
+                    .extend_from_slice(&batch.scratch_blocks[first..first + N]);
             }
         }
     }
@@ -10244,9 +10288,21 @@ mod tests {
                 let offsets = hash_prepared_slots_unmemoized_v2(&slots, &mut plain);
                 assert_eq!(offsets, vec![0, 18, 24], "{}", case.name);
                 assert_eq!(plain.blocks, expected, "{} variant {variant}", case.name);
-                let mut memoized = DigestBatchV1::default();
-                hash_prepared_slots_memoized_v2(&slots, &mut memoized, &mut memo, 1 << 20);
-                assert_eq!(memoized.blocks, expected, "{} variant {variant}", case.name);
+                for memo_states in [true, false] {
+                    let mut memoized = DigestBatchV1::default();
+                    hash_prepared_slots_memoized_v2(
+                        &slots,
+                        &mut memoized,
+                        &mut memo,
+                        1 << 20,
+                        memo_states,
+                    );
+                    assert_eq!(
+                        memoized.blocks, expected,
+                        "{} variant {variant} memo_states {memo_states}",
+                        case.name
+                    );
+                }
                 if variant < 2 {
                     let state_hex: Vec<String> =
                         plain.blocks[..6].iter().map(|block| hex(block)).collect();

@@ -36,7 +36,10 @@ fn digest_memo_matches_unmemoized_digests() {
     let base: Vec<u8> = (0..6000).map(|i| b"{\"x\":[1,2],}"[i % 12]).collect();
     // A pool of slots replayed in random order, so whole messages repeat.
     let pool: Vec<DigestSlotV1> = (0..12).map(|_| slot(&mut rng, &base)).collect();
-    for budget in [1usize, 4_000, 20_000, 1 << 24] {
+    for (budget, memo_states) in [1usize, 4_000, 20_000, 1 << 24]
+        .into_iter()
+        .flat_map(|budget| [(budget, true), (budget, false)])
+    {
         let mut memo = DigestMemoV1::default();
         let (mut plain, mut memoized) = (DigestBatchV1::default(), DigestBatchV1::default());
         for round in 0..300 {
@@ -56,11 +59,20 @@ fn digest_memo_matches_unmemoized_digests() {
                 })
                 .collect();
             let expected = hash_prepared_slots_unmemoized_v2(&picked, &mut plain);
-            let actual = hash_prepared_slots_memoized_v2(&picked, &mut memoized, &mut memo, budget);
-            assert_eq!(expected, actual, "offsets, budget {budget} round {round}");
+            let actual = hash_prepared_slots_memoized_v2(
+                &picked,
+                &mut memoized,
+                &mut memo,
+                budget,
+                memo_states,
+            );
+            assert_eq!(
+                expected, actual,
+                "offsets, budget {budget} states {memo_states} round {round}"
+            );
             assert_eq!(
                 plain.blocks, memoized.blocks,
-                "digests, budget {budget} round {round}"
+                "digests, budget {budget} states {memo_states} round {round}"
             );
             assert!(memo.bytes <= budget, "memo exceeds its budget");
         }
@@ -69,12 +81,13 @@ fn digest_memo_matches_unmemoized_digests() {
     let probe = &pool[0];
     let mut memo = DigestMemoV1::default();
     let mut batch = DigestBatchV1::default();
-    for _ in 0..2 {
+    for memo_states in [true, true, false, false] {
         hash_prepared_slots_memoized_v2(
             std::slice::from_ref(probe),
             &mut batch,
             &mut memo,
             1 << 20,
+            memo_states,
         );
         for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 {
             let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter as u32, &probe.state_json);
@@ -144,4 +157,82 @@ fn suppression_turns_off_only_a_program_default_digest_memo() {
         assert!(suppressed());
     }
     assert!(!suppressed());
+}
+
+/// With `memo_states` false the memo never sees a state message: no state
+/// entry is stored, no state lookup is counted, a repeated state is hashed
+/// again (through the prefix cache) to the same digests, and actions are
+/// still stored and reused. With it true, states are stored as before.
+#[test]
+fn state_messages_bypass_the_memo_when_turned_off() {
+    let state: Vec<u8> = (0..3_000).map(|i| b"{\"y\":[3,4],}"[i % 12]).collect();
+    let slot = DigestSlotV1 {
+        state_json: state.clone(),
+        action_json: b"{\"a\":1}{\"b\":22}".to_vec(),
+        action_ranges: vec![(0, 7), (7, 15)],
+        ..DigestSlotV1::default()
+    };
+    let expected: Vec<[u8; 64]> = (0..ACTION_HASH_BLOCK_COUNT_V1 as u32)
+        .map(|counter| {
+            crate::sha512_multi_v1::sha512_job_scalar_v1(&Sha512JobV1::new(
+                STATE_HASH_NAMESPACE_V2,
+                counter,
+                &state,
+            ))
+        })
+        .collect();
+    let state_entries = |memo: &DigestMemoV1| {
+        memo.entries
+            .iter()
+            .flatten()
+            .filter(|entry| entry.namespace == STATE_HASH_NAMESPACE_V2)
+            .count()
+    };
+    let action_entries = |memo: &DigestMemoV1| {
+        memo.entries
+            .iter()
+            .flatten()
+            .filter(|entry| entry.namespace == ACTION_HASH_NAMESPACE_V1)
+            .count()
+    };
+    let _ = DIGEST_MEMO_COUNTS_V1.with(|counts| counts.replace((0, 0)));
+    let mut memo = DigestMemoV1::default();
+    let mut batch = DigestBatchV1::default();
+    for round in 0..3 {
+        hash_prepared_slots_memoized_v2(
+            std::slice::from_ref(&slot),
+            &mut batch,
+            &mut memo,
+            1 << 20,
+            false,
+        );
+        assert_eq!(batch.blocks[..6], expected[..], "round {round}");
+        assert_eq!(state_entries(&memo), 0, "round {round}");
+        assert_eq!(action_entries(&memo), 2, "round {round}");
+    }
+    // Two action misses, then four action hits; no state was looked up.
+    assert_eq!(
+        DIGEST_MEMO_COUNTS_V1.with(|counts| counts.replace((0, 0))),
+        (4, 2)
+    );
+    hash_prepared_slots_memoized_v2(
+        std::slice::from_ref(&slot),
+        &mut batch,
+        &mut memo,
+        1 << 20,
+        true,
+    );
+    assert_eq!(batch.blocks[..6], expected[..]);
+    assert_eq!(state_entries(&memo), 1);
+    assert_eq!(
+        DIGEST_MEMO_COUNTS_V1.with(|counts| counts.replace((0, 0))),
+        (2, 1)
+    );
+}
+
+/// The process default keeps state messages in the memo; only a program
+/// (the trainer) turns them off.
+#[test]
+fn state_messages_use_the_memo_by_default() {
+    assert!(digest_memo_states_v1());
 }
