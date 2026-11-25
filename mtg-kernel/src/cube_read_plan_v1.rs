@@ -19,6 +19,8 @@
 //!   report from the last durable game prefix and closing `execution.json`
 //!   with `ended = "interrupted"`.
 
+mod attestation;
+
 use crate::card_def::CARD_DEFS;
 use crate::cube_draft_v1::{
     game_seed, pod_game_seats, pod_pairings, CubePool, Deck, DraftRecord, GameEnd, PickRecord,
@@ -3900,17 +3902,8 @@ fn verify_declaration(
         )));
     }
     if manifest.namespace != "test" {
-        let text = std::str::from_utf8(&verification.declaration_bytes)
-            .map_err(|_| plan_err("A6 declaration file is not valid UTF-8"))?;
-        let lower = text.to_ascii_lowercase();
-        let has_part2 =
-            lower.contains("part 2") || lower.contains("part-2") || lower.contains("part_2");
-        let has_sig = lower.contains("countersign") || lower.contains("## signature");
-        if !(has_part2 && has_sig) {
-            return Err(plan_err(
-                "A6 declaration file lacks the required part 2 countersignature",
-            ));
-        }
+        let (pins, inputs) = attestation::verify_countersigned_a6(&verification.declaration_bytes)?;
+        verify_runtime_pins(&pins, inputs.as_ref(), &verification.pins)?;
     }
     Ok(())
 }
