@@ -3196,7 +3196,7 @@ fn cast_was_on_stack_at_entry(
 fn cast_matches_copy_entry(
     state: &GameState,
     claimed: &crate::cast_identity_v1::ReceiptV1,
-    printing: u16,
+    abilities: &[trigger::TriggeredAbilityDef],
     cast_at: usize,
     entry_at: usize,
 ) -> bool {
@@ -3204,11 +3204,12 @@ fn cast_matches_copy_entry(
         return false;
     }
     let history = &state.engine.event_history;
-    if card_def::CARD_DEFS[usize::from(printing)].name == crate::eternal_cube_c4b_v1::SAGE_OF_THE_SKIES
-        && !history.range_v2(..cast_at).iter().rev()
-            .take_while(|event| !matches!(event, CommittedEvent::UpkeepBegan { .. }))
-            .any(|event| matches!(event, CommittedEvent::SpellCast { controller, .. } if *controller == claimed.controller))
-    {
+    if !crate::eternal_cube_c4b_v1::copy_cast_trigger_allows(
+        abilities,
+        state,
+        cast_at + 1,
+        claimed.controller,
+    ) {
         return false;
     }
     let mut parent_left = false;
@@ -3218,6 +3219,9 @@ fn cast_matches_copy_entry(
             CommittedEvent::UpkeepBegan { .. }
             | CommittedEvent::BeginningPrecombatMainV1 { .. }
             | CommittedEvent::BeginningOfCombat { .. }
+            | CommittedEvent::DeclaredAttacker { .. }
+            | CommittedEvent::ControllerAttacked { .. }
+            | CommittedEvent::CombatDamageToPlayer { .. }
             | CommittedEvent::BeginningEndStep { .. } => return false,
             CommittedEvent::ZoneChange {
                 object,
@@ -3315,13 +3319,13 @@ pub(crate) fn authenticate_resolved_permanent_copy(
             if cast_matches_copy_entry(
                 state,
                 &receipt,
-                origin.parent_card_def,
+                trigger::triggers_for(origin.parent_card_def),
                 cast_at,
                 entry_at,
             ) => {}
         _ => return Err(invalid()),
     }
-    // A token that left the battlefield ceases to exist (704.5d, 111.7): no
+    // A token that left the battlefield ceases to exist (704.5d, 111.8): no
     // later move of it, from any zone, puts it onto the battlefield again.
     if changes.any(|(_, _, to)| to == Zone::Battlefield) {
         return Err(invalid());
@@ -43216,6 +43220,197 @@ mod tests {
             (casts, token)
         };
         assert_eq!(play(true), play(false));
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn first_spell_copy_exclusion_follows_the_printed_stack_trigger() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        let first = put_in_hand(&mut state, p, "Sage of the Skies");
+        let second = put_in_hand(&mut state, p, "Sage of the Skies");
+        let counter = put_in_hand(&mut state, p.opponent(), "Counterspell");
+        fence_pool(&mut state, p, &[ManaColor::W], 2);
+        fence_pool(&mut state, p.opponent(), &[ManaColor::U; 2], 0);
+        step(&mut state, Action::CastSpell(first)).unwrap();
+        fence_counter_original(&mut state, first, counter);
+        let token = fence_counter_sage_while_its_copy_waits(&mut state, second);
+        let history = &state.engine.event_history;
+        let (cast_at, receipt) = history
+            .iter()
+            .enumerate()
+            .find_map(|(at, event)| match event {
+                CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell == first => {
+                    Some((at, receipt))
+                }
+                _ => None,
+            })
+            .unwrap();
+        let entry_at = history.iter().position(|event|
+            matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. } if *object == token)
+        ).unwrap();
+        // Keep the same Sage cast and stack ability, changing only its condition.
+        let printed = trigger::triggers_for(state.objects.get(first).card_def);
+        let [ability] = printed else {
+            panic!("expected Sage's one printed trigger")
+        };
+        let unconditional = [trigger::TriggeredAbilityDef {
+            condition: trigger::TriggerCondition::CastSelf,
+            ..*ability
+        }];
+        assert!(!cast_matches_copy_entry(
+            &state, receipt, printed, cast_at, entry_at
+        ));
+        assert!(cast_matches_copy_entry(
+            &state,
+            receipt,
+            &unconditional,
+            cast_at,
+            entry_at
+        ));
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_from_remanded_cast_survives_the_same_cards_recast() {
+        let mut state = ready_game_in_main1(0);
+        let p = PlayerId::P0;
+        put_on_battlefield(&mut state, p, "Aluren");
+        let sage = put_in_hand(&mut state, p, "Sage of the Skies");
+        let remand = put_in_hand(&mut state, p.opponent(), "Remand");
+        set_library_top(&mut state, p.opponent(), "Island");
+        fence_cast_prior_bolt(&mut state);
+        step(&mut state, Action::CastSpell(sage)).unwrap();
+        fence_resolve_top(&mut state); // original cast trigger
+        let copy = state.stack.last().unwrap();
+        assert!(copy.is_copy);
+        let token = copy.source;
+        let first = state.objects.get(token).spell_copy_origin.unwrap();
+
+        fence_pool(&mut state, p.opponent(), &[ManaColor::U], 1);
+        step(&mut state, Action::Pass).unwrap();
+        step(&mut state, Action::CastSpell(remand)).unwrap();
+        step(&mut state, Action::ChooseTarget(Target::Object(sage))).unwrap();
+        fence_resolve_top(&mut state);
+        assert_eq!(state.objects.get(sage).zone, Zone::Hand);
+        step(&mut state, Action::CastSpell(sage)).unwrap();
+        fence_resolve_top(&mut state); // recast trigger
+        let recast_copy = state.stack.last().unwrap();
+        assert!(recast_copy.is_copy);
+        let recast = state
+            .objects
+            .get(recast_copy.source)
+            .spell_copy_origin
+            .unwrap();
+        assert_eq!(first.parent, recast.parent);
+        assert_ne!(
+            first.parent_stack_zone_change_count,
+            recast.parent_stack_zone_change_count
+        );
+        fence_resolve_top(&mut state); // recast copy
+        fence_resolve_top(&mut state); // recast original
+        assert_eq!(state.objects.get(sage).zone, Zone::Battlefield);
+        assert_eq!(state.stack.last().unwrap().source, token);
+        fence_resolve_top(&mut state);
+        fence_bolt_targeting_token(&mut state, token);
+        fence_check_substituted_sage(&mut state, token, recast, false);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_rejects_a_mirrored_parent_controller_substitution() {
+        let mut state = ready_game_in_main1(0);
+        let (_, sage, token) = fence_sage_and_token(&mut state);
+        assert_eq!(state.objects.get(sage).zone, Zone::Battlefield);
+        fence_bolt_targeting_token(&mut state, token);
+        let mut origin = state.objects.get(token).spell_copy_origin.unwrap();
+        origin.parent_controller = origin.parent_controller.opponent();
+        fence_check_substituted_sage(&mut state, token, origin, false);
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_token_rejects_two_receipts_for_one_stack_generation() {
+        let mut state = ready_game_in_main1(0);
+        let (_, sage, token) = fence_sage_and_token(&mut state);
+        let origin = state.objects.get(token).spell_copy_origin.unwrap();
+        let (at, first) = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(at, event)| match event {
+                CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell == sage => {
+                    Some((at, *receipt))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_ok());
+        let duplicate_at = state.engine.event_history.len();
+        let second = crate::cast_identity_v1::ReceiptV1 {
+            stack_item_id: next_stack_item_id(&mut state),
+            spell_cast_history_index: (duplicate_at + 1) as u64,
+            ..first
+        };
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::PublishedCastIdentityV1 { receipt: second });
+        state.engine.event_history.push(CommittedEvent::SpellCast {
+            spell: sage,
+            controller: first.controller,
+        });
+        // Each receipt passes its printing, marker and stack-ID checks in isolation.
+        for (index, receipt) in [(at, first), (duplicate_at, second)] {
+            assert_eq!(
+                crate::cast_identity_v1::checked_printing(
+                    &state,
+                    index,
+                    &receipt,
+                    origin.parent_owner
+                ),
+                Ok(Some(origin.parent_card_def))
+            );
+        }
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_err());
+    }
+
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn sage_copy_cannot_wait_across_recorded_combat_actions() {
+        let mut state = ready_game_in_main1(0);
+        let player = PlayerId::P0;
+        let attacker = put_on_battlefield(&mut state, player, "Jackal Pup");
+        let generation = state.objects.get(attacker).zone_change_count;
+        let (_, _, token) = fence_sage_and_token(&mut state);
+        let origin = state.objects.get(token).spell_copy_origin.unwrap();
+        assert!(authenticate_resolved_permanent_copy(&state, token, origin).is_ok());
+        let entry = state.engine.event_history.iter().position(|event|
+            matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, to: Zone::Battlefield, .. } if *object == token)
+        ).unwrap();
+        for marker in [
+            CommittedEvent::DeclaredAttacker {
+                source: attacker,
+                source_zone_change_count: generation,
+                controller: player,
+            },
+            CommittedEvent::ControllerAttacked {
+                source: attacker,
+                source_zone_change_count: generation,
+                controller: player,
+            },
+            CommittedEvent::CombatDamageToPlayer {
+                source: attacker,
+                source_zone_change_count: generation,
+                player: player.opponent(),
+                amount: 1,
+            },
+        ] {
+            let mut restored = state.clone();
+            restored.engine.event_history.insert(entry, marker);
+            assert!(authenticate_resolved_permanent_copy(&restored, token, origin).is_err());
+        }
     }
 
     #[cfg(feature = "eternal-fixtures")]
