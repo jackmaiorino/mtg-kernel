@@ -3028,7 +3028,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     let plan0 = build_test_aa_plan(0, 0, &pins);
     let plan1 = build_test_aa_plan(0, 1, &pins);
 
-    // Part A: Watchdog expiry on pod 0 game 3 (via real timer with override).
+    // Part A: Watchdog expiry in game 3 of both mirrors.
     let target_seed = plan0.games[3].game_seed;
     let target_env = attempt_seeds(target_seed, 0).1;
     let target_deck0_pair = plan0.games[3].decks;
@@ -3046,7 +3046,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
                 && spec.episode == self.target_episode
                 && spec.decks[0].card_ids() == self.target_p0_cards
             {
-                std::thread::sleep(Duration::from_millis(60));
+                std::thread::sleep(Duration::from_millis(400));
                 return AttemptOutcome {
                     decisions: 1,
                     physical_decisions: Some(1),
@@ -3062,7 +3062,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
         }
     }
 
-    // Compute pod 0's exact deck cards for game 3's p0 so only pod 0 game 3 sleeps.
+    // Match the stated build in game 3. The two A/A mirrors use the same decks and seeds.
     let (hdr0, _) =
         mtg_kernel::cube_read_plan_v1::prepare_read_plan_decks(&pool, &plan0, &UniformSeatFactory)
             .unwrap();
@@ -3097,7 +3097,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
         &slow_pilot,
         &verification,
         1,
-        Some(Duration::from_millis(20)),
+        Some(Duration::from_millis(150)),
     )
     .unwrap();
     assert_eq!(e0.ended, PlanExecutionEnded::Complete);
@@ -3124,12 +3124,16 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
     assert_eq!(e0_pod0["halts"].as_array().unwrap().len(), 1);
     assert_eq!(e0_pod0["halts"][0]["game"], json!(3));
     assert_eq!(e0_pod0["halts"][0]["stop_kind"], json!(WATCHDOG_STOP_KIND));
+    let e0_pod1: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(wd_dir.join("exec-0/records/pod-1.json")).unwrap())
+            .unwrap();
+    assert_eq!(e0_pod1["halts"], e0_pod0["halts"]);
 
     // e = 1 (watchdog_rerun): stops immediately at pod 0 game 3 with `watchdog_stop`.
     manifest.executions.push(ManifestExecutionEntry {
         execution: 1,
         reason: ExecutionReason::WatchdogRerun,
-        expired_games: vec![[0, 3]],
+        expired_games: vec![[0, 3], [1, 3]],
         binary: verification.pins.binary.clone(),
         platform: verification.platform.clone(),
         claim_id: None,
@@ -3147,7 +3151,7 @@ fn round2_watchdog_e0_complete_e1_stop_and_supervisor_process_death() {
         &slow_pilot,
         &verification,
         1,
-        Some(Duration::from_millis(20)),
+        Some(Duration::from_millis(150)),
     )
     .unwrap();
     assert_eq!(e1.ended, PlanExecutionEnded::WatchdogStop);
