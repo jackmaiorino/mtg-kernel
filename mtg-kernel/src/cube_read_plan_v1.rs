@@ -999,12 +999,17 @@ fn parse_caps_a67(value: &OrderedJson, path: &str) -> Result<PodCaps, String> {
         expect_u64(&entries[1].1, &format!("{path}.max_physical_decisions"))?;
     let max_policy_steps = expect_u64(&entries[2].1, &format!("{path}.max_policy_steps"))?;
     let max_stack_objects = if stack_fields == 1 {
-        Some(expect_u32(&entries[3].1, &format!("{path}.max_stack_objects"))?)
+        Some(expect_u32(
+            &entries[3].1,
+            &format!("{path}.max_stack_objects"),
+        )?)
     } else {
         A2_GAME_CAPS.max_stack_objects
     };
-    let watchdog_seconds =
-        expect_u64(&entries[3 + stack_fields].1, &format!("{path}.watchdog_seconds"))?;
+    let watchdog_seconds = expect_u64(
+        &entries[3 + stack_fields].1,
+        &format!("{path}.watchdog_seconds"),
+    )?;
     let max_replays = expect_u8(&entries[4 + stack_fields].1, &format!("{path}.max_replays"))?;
     if max_decisions != A2_GAME_CAPS.max_decisions
         || max_physical_decisions != A2_GAME_CAPS.max_physical_decisions
