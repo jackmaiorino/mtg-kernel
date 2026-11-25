@@ -50,6 +50,7 @@ pub const A2_GAME_CAPS: GameCaps = GameCaps {
     max_decisions: 16_384,
     max_physical_decisions: 16_384,
     max_policy_steps: 32_768,
+    max_stack_objects: Some(128),
 };
 /// Default per-game wall-clock watchdog in seconds.
 pub const DEFAULT_WATCHDOG_SECONDS: u64 = 600;
@@ -575,6 +576,7 @@ impl PodCaps {
             max_decisions: self.max_decisions,
             max_physical_decisions: self.max_physical_decisions,
             max_policy_steps: self.max_policy_steps,
+            max_stack_objects: A2_GAME_CAPS.max_stack_objects,
         }
     }
 }
@@ -1134,6 +1136,28 @@ fn play_game_task(
     Ok((record, timings))
 }
 
+pub(crate) fn play_training_game_for_driver(
+    task: &GameTask,
+    built_decks: &[Deck],
+    pilot: &(dyn GamePilot + Sync),
+    caps: &PodCaps,
+) -> Result<PodGameRecord, PodRunnerError> {
+    let watchdog_tripped = AtomicBool::new(false);
+    let ctx = ExecContext {
+        tasks: std::slice::from_ref(task),
+        built_decks,
+        pilot,
+        game_caps: caps.game_caps(),
+        max_replays: caps.max_replays,
+        watchdog: Duration::from_secs(caps.watchdog_seconds),
+        host: "fixture",
+        stop_on_watchdog: false,
+        watchdog_tripped: &watchdog_tripped,
+        on_game_complete: None,
+    };
+    play_game_task(task, &ctx).map(|(game, _)| game)
+}
+
 pub(crate) fn execute_game_tasks_with_options(
     tasks: &[GameTask],
     built_decks: &[Deck],
@@ -1200,7 +1224,7 @@ pub(crate) fn execute_game_tasks_with_options(
         Ok(())
     })?;
 
-    let mut raw_slots: Vec<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>> =
+    let raw_slots: Vec<Option<Result<(PodGameRecord, Vec<AttemptTiming>), PodRunnerError>>> =
         slots
             .into_iter()
             .map(|slot| slot.into_inner().expect("game result slot lock"))
