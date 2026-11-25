@@ -126,7 +126,7 @@ fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
 pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
 mod fresh_registry_transfer_source;
-mod json_writer_v1;
+pub(crate) mod json_writer_v1;
 mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;

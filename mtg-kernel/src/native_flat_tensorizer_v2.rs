@@ -294,7 +294,6 @@ pub(crate) struct NativeFlatTensorizerV2 {
 #[derive(Default)]
 pub(crate) struct NativeFlatTensorScratchV3 {
     pending: NativeFlatDecisionTensorV2,
-    canonical_base: Vec<u8>,
     slot: DigestSlotV1,
     digests: DigestBatchV1,
 }
@@ -2294,7 +2293,6 @@ fn fill_successor_reusing_v2(
         &objects.projection,
         extensions,
         &mut scratch.slot.state_json,
-        &mut scratch.canonical_base,
     )?;
     drop(span);
     let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::TensorStateHead);
@@ -4739,7 +4737,6 @@ pub(crate) fn canonical_v3_streamed_and_reference_bytes(
         &projection,
         |output| streaming_v3::write_extensions_v3(view, output),
         &mut streamed,
-        &mut Vec::new(),
     )
     .unwrap();
     let mut canonical = canonical_observation_v2(decision, &projection).unwrap();
@@ -4759,53 +4756,37 @@ fn write_canonical_observation_with_extensions_v2(
     extensions: &Value,
     output: &mut Vec<u8>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
-    write_canonical_observation_with_extensions_reusing_v2(
-        decision,
-        projection,
-        extensions,
-        output,
-        &mut Vec::new(),
-    )
-}
-
-fn write_canonical_observation_with_extensions_reusing_v2(
-    decision: FlatScoringDecisionViewV1<'_>,
-    projection: &ObjectProjectionV2,
-    extensions: &Value,
-    output: &mut Vec<u8>,
-    base: &mut Vec<u8>,
-) -> Result<(), NativeFlatTensorErrorV2> {
     write_canonical_observation_with_streamed_extensions_reusing_v2(
         decision,
         projection,
         |output| append_json_v2(output, extensions),
         output,
-        base,
     )
 }
 
+/// The first member of every canonical observation, which sorts before
+/// `"extensions"` and every common member.
+const CANONICAL_HEAD_V2: &[u8] = br#"{"acting_player":"self","#;
+
+/// The canonical observation with an `"extensions"` member written by
+/// `extensions`, in one pass into `output`: the head, the extensions, then
+/// the common members exactly as [`write_canonical_observation_v2`] writes
+/// them after its head. Extensions were evaluated before the common
+/// observation in the Value caller, so an extension error still precedes
+/// any common one: nothing of the common observation is written before the
+/// extensions succeed.
 fn write_canonical_observation_with_streamed_extensions_reusing_v2(
     decision: FlatScoringDecisionViewV1<'_>,
     projection: &ObjectProjectionV2,
     extensions: impl FnOnce(&mut Vec<u8>) -> Result<(), NativeFlatTensorErrorV2>,
     output: &mut Vec<u8>,
-    base: &mut Vec<u8>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
-    const HEAD: &[u8] = br#"{"acting_player":"self","#;
-    // Extensions were evaluated before the common observation in the Value
-    // caller. Preserve that error precedence while retaining both buffers.
     output.clear();
-    output.extend_from_slice(HEAD);
+    output.extend_from_slice(CANONICAL_HEAD_V2);
     output.extend_from_slice(br#""extensions":"#);
     extensions(output)?;
-    write_canonical_observation_v2(decision, projection, base)?;
-    if !base.starts_with(HEAD) {
-        return Err(NativeFlatTensorErrorV2::CanonicalJson);
-    }
-    output.reserve(base.len());
     output.push(b',');
-    output.extend_from_slice(&base[HEAD.len()..]);
-    Ok(())
+    write_canonical_observation_body_v2(decision, projection, output)
 }
 
 fn write_canonical_observation_v2(
@@ -4814,8 +4795,18 @@ fn write_canonical_observation_v2(
     output: &mut Vec<u8>,
 ) -> Result<(), NativeFlatTensorErrorV2> {
     output.clear();
+    output.extend_from_slice(CANONICAL_HEAD_V2);
+    write_canonical_observation_body_v2(decision, projection, output)
+}
+
+/// The common observation after [`CANONICAL_HEAD_V2`], appended to `output`.
+fn write_canonical_observation_body_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
     let globals = decision.globals();
-    output.extend_from_slice(br#"{"acting_player":"self","known_hand_cards":"#);
+    output.extend_from_slice(br#""known_hand_cards":"#);
     write_canonical_known_cards_v2(
         decision,
         projection,
@@ -4912,11 +4903,16 @@ fn write_canonical_observation_v2(
     Ok(())
 }
 
+/// `serde_json::to_writer(output, value)`, any error mapped to
+/// `CanonicalJson`, written by the trainer's byte-tested writer
+/// (`expanded_deck_training_v1::json_writer_v1`), which gives the same bytes
+/// and fails exactly when `serde_json` fails.
 fn append_json_v2<T: Serialize + ?Sized>(
     output: &mut Vec<u8>,
     value: &T,
 ) -> Result<(), NativeFlatTensorErrorV2> {
-    serde_json::to_writer(&mut *output, value).map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)
+    crate::expanded_deck_training_v1::json_writer_v1::to_vec_into_v1(output, value)
+        .map_err(|_| NativeFlatTensorErrorV2::CanonicalJson)
 }
 
 fn append_static_json_string_v2(output: &mut Vec<u8>, value: &str) {

@@ -233,20 +233,203 @@ fn streamed_extensions_preserve_errors_before_common_observation_errors() {
         "the malformed common observation must have a distinct error"
     );
     let mut output = Vec::new();
-    let mut base = b"unwritten".to_vec();
     assert_eq!(
         write_canonical_observation_with_streamed_extensions_reusing_v2(
             common,
             &projection,
             |out| streaming_v3::write_extensions_v3(v3, out),
             &mut output,
+        ),
+        Err(expected)
+    );
+    assert!(
+        output.starts_with(CANONICAL_HEAD_V2)
+            && !output.windows(17).any(|w| w == b"known_hand_cards\""),
+        "extension errors must precede common writes"
+    );
+    // The previous two-buffer writer agrees on this pair of errors, and on a
+    // well-formed extension before the malformed common observation.
+    let mut base = Vec::new();
+    assert_eq!(
+        previous_streamed_observation_v2(
+            common,
+            &projection,
+            |out| streaming_v3::write_extensions_v3(v3, out),
+            &mut Vec::new(),
             &mut base,
         ),
         Err(expected)
     );
+    for writer in [
+        write_streamed_now_v2 as StreamedWriterV2,
+        write_streamed_previous_v2,
+    ] {
+        assert_eq!(
+            writer(common, &projection, Ok(b"{}"), &mut Vec::new()),
+            Err(NativeFlatTensorErrorV2::ObjectOrder)
+        );
+    }
+}
+
+/// The previous streamed writer, kept as the reference: the common
+/// observation written whole into `base`, then its members after the head
+/// copied after the extensions.
+fn previous_streamed_observation_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    extensions: impl FnOnce(&mut Vec<u8>) -> Result<(), NativeFlatTensorErrorV2>,
+    output: &mut Vec<u8>,
+    base: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    const HEAD: &[u8] = br#"{"acting_player":"self","#;
+    output.clear();
+    output.extend_from_slice(HEAD);
+    output.extend_from_slice(br#""extensions":"#);
+    extensions(output)?;
+    write_canonical_observation_v2(decision, projection, base)?;
+    if !base.starts_with(HEAD) {
+        return Err(NativeFlatTensorErrorV2::CanonicalJson);
+    }
+    output.reserve(base.len());
+    output.push(b',');
+    output.extend_from_slice(&base[HEAD.len()..]);
+    Ok(())
+}
+
+/// A streamed writer given extension text to append, or an extension error.
+type StreamedWriterV2 = fn(
+    FlatScoringDecisionViewV1<'_>,
+    &ObjectProjectionV2,
+    Result<&[u8], NativeFlatTensorErrorV2>,
+    &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2>;
+
+fn write_streamed_now_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    extensions: Result<&[u8], NativeFlatTensorErrorV2>,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    write_canonical_observation_with_streamed_extensions_reusing_v2(
+        decision,
+        projection,
+        |out| extensions.map(|text| out.extend_from_slice(text)),
+        output,
+    )
+}
+
+fn write_streamed_previous_v2(
+    decision: FlatScoringDecisionViewV1<'_>,
+    projection: &ObjectProjectionV2,
+    extensions: Result<&[u8], NativeFlatTensorErrorV2>,
+    output: &mut Vec<u8>,
+) -> Result<(), NativeFlatTensorErrorV2> {
+    previous_streamed_observation_v2(
+        decision,
+        projection,
+        |out| extensions.map(|text| out.extend_from_slice(text)),
+        output,
+        &mut b"a stale base buffer".to_vec(),
+    )
+}
+
+/// Every frozen fixture's observation through the one-buffer writer and the
+/// previous two-buffer one, with empty, nested and escaped extension text
+/// and with an extension error, from an empty and from a stale output
+/// buffer: the same bytes and the same error.
+#[test]
+fn streamed_observation_with_extensions_matches_the_previous_writer_v2() {
+    let extension_texts: [&[u8]; 4] = [
+        b"{}",
+        b"null",
+        br#"{"a":[1,-2,{"b":"\"\u0000"}],"z":null}"#,
+        br#"{"pending":{"kind":"x","values":[0,1,2,3,4,5,6,7,8,9,10]}}"#,
+    ];
+    let mut checked = 0;
+    for case in full_golden().cases {
+        let fixture = &case.rust_fixture;
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+            fixture.episode_id,
+            fixture.environment_seed,
+            256,
+            32_768,
+            fixture.deck_ids.clone(),
+        )
+        .unwrap();
+        for &selected in &fixture.replay_selected_indices {
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("{} ended before its fixture", case.name);
+            };
+            session
+                .step(expected.episode_id, expected.step, selected)
+                .unwrap();
+        }
+        let mut owned = OwnedScoringDecisionV2::from_session(&session);
+        let observation = serde_json::from_value(fixture.observation.clone()).unwrap();
+        apply_owned_fixture_transform_v2(&mut owned, &fixture.fixture_transform, &observation);
+        let projection = build_object_projection_v2(&owned.objects).unwrap();
+        let extensions = extension_texts
+            .iter()
+            .map(|text| Ok(*text))
+            .chain([Err(NativeFlatTensorErrorV2::CardTokenRange)]);
+        for extension in extensions {
+            let mut expected = Vec::new();
+            let previous =
+                write_streamed_previous_v2(owned.view(), &projection, extension, &mut expected);
+            for start in [Vec::new(), b"stale output bytes".repeat(400)] {
+                let mut got = start;
+                let now = write_streamed_now_v2(owned.view(), &projection, extension, &mut got);
+                assert_eq!(now, previous, "{}", case.name);
+                if previous.is_ok() {
+                    assert!(got == expected, "{}: bytes differ", case.name);
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 0);
+}
+
+/// `append_json_v2` against `serde_json::to_writer`, the previous writer,
+/// on the kinds of value the streamed observation appends.
+#[test]
+fn append_json_matches_serde_json_v2() {
+    fn assert_same<T: Serialize + ?Sized>(value: &T) {
+        for prefix in [&b""[..], b"[1,"] {
+            let mut expected = prefix.to_vec();
+            serde_json::to_writer(&mut expected, value).unwrap();
+            let mut got = prefix.to_vec();
+            append_json_v2(&mut got, value).unwrap();
+            assert_eq!(got, expected);
+        }
+    }
+    for value in [0u32, 1, 9, 10, 99, 100, u32::MAX] {
+        assert_same(&value);
+        assert_same(&Some(value));
+    }
+    for value in [i32::MIN, -10, -9, -1, 0, 1, 9, 10, 20, i32::MAX] {
+        assert_same(&[value, -value.saturating_add(1)]);
+    }
+    for value in [0u64, 7, 12_345, u64::MAX] {
+        assert_same(&value);
+    }
+    assert_same(&[0u8, 1, 2, 10, 255]);
+    assert_same(&[0usize, 3, usize::MAX]);
+    assert_same(&());
+    assert_same(&None::<u32>);
+    assert_same(&true);
+    assert_same(&false);
+    for text in ["", "player", "object", "a\"b\\c\u{1}\n\u{7f}\u{e9}"] {
+        assert_same(text);
+    }
+    assert_same(&vec![vec![1u32, 2], vec![], vec![30]]);
+    assert_same(&serde_json::json!({"z": [1, -2, 3.5], "a": null}));
+    // An error is an error for both: `CanonicalJson` for the streamed writer.
+    let refused: std::collections::BTreeMap<Vec<u8>, u32> = [(vec![1], 2)].into_iter().collect();
+    assert!(serde_json::to_writer(&mut Vec::new(), &refused).is_err());
     assert_eq!(
-        base, b"unwritten",
-        "extension errors must precede common writes"
+        append_json_v2(&mut Vec::new(), &refused),
+        Err(NativeFlatTensorErrorV2::CanonicalJson)
     );
 }
 

@@ -44,7 +44,7 @@ use std::io;
 /// `serde_json::to_writer(&mut bytes, value)` with [`CompactFastIntegersV1`]
 /// and [`VecSinkV1`]: appends the bytes `serde_json::to_vec(value)` returns,
 /// and fails with its error.
-pub(super) fn to_vec_into_v1<T: ?Sized + Serialize>(
+pub(crate) fn to_vec_into_v1<T: ?Sized + Serialize>(
     bytes: &mut Vec<u8>,
     value: &T,
 ) -> serde_json::Result<()> {
