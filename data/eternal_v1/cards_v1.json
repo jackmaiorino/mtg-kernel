@@ -39781,6 +39781,34 @@
     "draw_card"
    ],
    "java_file": "Mage.Sets/src/mage/cards/i/InsideOut.java"
+  },
+  {
+   "name": "Alter Reality",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-replenish"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "text_change",
+    "flashback"
+   ],
+   "java_file": null
   }
  ]
 }
