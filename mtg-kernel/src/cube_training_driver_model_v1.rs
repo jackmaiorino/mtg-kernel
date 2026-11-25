@@ -66,6 +66,7 @@ pub(super) fn update_model(
         },
     ))
 }
+
 fn set_index(set: ParameterSetV1) -> usize {
     match set {
         ParameterSetV1::Build => 0,
