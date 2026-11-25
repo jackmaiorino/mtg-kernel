@@ -14,7 +14,7 @@ use mtg_kernel::cube_training_driver_v1::{
     check_stop_ledger, load_checkpoint_read_only_v1, prune_checkpoint, run_two_action_part3,
     tripwire_games_for_test, two_action_dropped_mean, CensusBaselinePin, LineageSegment, PilotPin,
     PilotProvider, PilotSchedule, PilotSelection, PilotSwitch, RunConfig, RunOutcome, Segment,
-    TrainingDriver, TrainingDriverError, TripwireMode, TripwireRule,
+    TrainingDriver, TrainingDriverError, TripwireMode,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -830,6 +830,18 @@ fn only_a_matching_pinned_census_summary_enables_full_mode() {
         run["tripwire"]["baseline"]["summary_sha256"],
         baseline.summary_sha256
     );
+    let q9_root = temp.join("q9-stays-q9");
+    let mut q9 = make_config(&q9_root);
+    q9.tripwire = TripwireMode::Q9;
+    q9.tripwire_summary = None;
+    TrainingDriver::open(q9, model_rows(), 1234).unwrap();
+    let error = TrainingDriver::open(make_config(&q9_root), model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(error
+        .to_string()
+        .contains("resume changed a run pin, plan or tripwire mode"));
+
     fs::write(&path, b"changed bytes").unwrap();
     let error = TrainingDriver::open(make_config(&root), model_rows(), 1234)
         .err()
