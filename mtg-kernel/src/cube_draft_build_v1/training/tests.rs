@@ -3,18 +3,22 @@ use super::*;
 const HISTORY_ONLY_CARD: u16 = 55;
 
 fn data(seed: u64) -> (ModelV1, ModelCardRowsV1) {
+    data_with_widths(seed, 3, 2)
+}
+
+fn data_with_widths(seed: u64, table: usize, dense: usize) -> (ModelV1, ModelCardRowsV1) {
     let mut rng = SplitMix64::seed(seed);
     let mut draw = || ((rng.next_u64() >> 40) as f32 / (1 << 24) as f32 - 0.5) * 0.45;
     let rows = ModelCardRowsV1::new_v1(
         (0..64).collect(),
-        3,
-        (0..64 * 3).map(|_| draw() * 3.).collect(),
-        2,
-        (0..128).map(|_| draw() * 4.).collect(),
+        table,
+        (0..64 * table).map(|_| draw() * 3.).collect(),
+        dense,
+        (0..64 * dense).map(|_| draw() * 4.).collect(),
         [60, 63, 59, 62, 61],
     )
     .unwrap();
-    let mut model = ModelV1::initialise_v1(64, 3, 2, seed).unwrap();
+    let mut model = ModelV1::initialise_v1(64, table, dense, seed).unwrap();
     model.visit_tensors_mut_v1(|_, _, _, params| {
         for p in params {
             *p = draw();
@@ -151,7 +155,7 @@ fn scores() -> Role<'static> {
 
 #[test]
 fn central_differences_cover_every_tensor() {
-    let (mut model, rows) = data(44);
+    let (mut model, rows) = data_with_widths(44, 58, 58);
     let pool: Vec<_> = (0..45).collect();
     let (pick_row, pick_lp, base) = pick(&model.pick_forward_v1(&rows, 1).unwrap(), 6);
     let (record, build_lp) = build(&model.build_forward_v1(&rows, 1).unwrap(), &pool, 0, 38, 7);
@@ -191,6 +195,10 @@ fn central_differences_cover_every_tensor() {
         let id = T::ALL[i];
         let width = *spec.shape.last().unwrap();
         let slices: &[(usize, usize)] = match id {
+            T::BuildMlp0Weight | T::PickMlp0Weight => {
+                assert_eq!(width, 74);
+                &[(0, 74)]
+            }
             T::StateEncoder0Weight | T::Value0Weight => {
                 &[(HISTORY_COLUMNS_V1.start, HISTORY_COLUMNS_V1.end)]
             }
