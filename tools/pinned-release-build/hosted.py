@@ -40,6 +40,7 @@ PACK3_SOURCES = (
     "e6804b8fbaee11a8823600d62a0d9a8f1b63c852",  # seal change reverted, exception-mask guard (main PR 823)
     "f6245966578b5a9cea6ca85bb8793c8d0837eef3",  # combined: pack3 + tail 596 port (PR 825) + metadata memo (PR 829 head)
     "6b8b141d76530e14b9870991fe73fa6e5f073e0c",  # lever 32b: trajectory JSON writer on f62459665
+    "167f8328830c80ee8f55cdc643eed4fb5da79257",  # lever 32b: review round 1 answered
 )
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
