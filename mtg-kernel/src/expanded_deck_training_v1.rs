@@ -14928,18 +14928,19 @@ pub(crate) mod tests {
     /// (CR 117.3c/117.5). Paired Native235/236 inputs first differ at the actual
     /// off-turn Ward trigger; initial parameters match. Both-seat paid Ward/
     /// Mystic tests also verify native restore and the following priority pass.
-    // Exact CPU outputs: Native236 (Windows), CI39598628050 (Linux).
+    // Windows CPU outputs for the issue #969 fixture seed.
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "6f8c26c98ed04629736de73f66fda34079e6608c7a42c1e2a4de2dc0fbe0c63e",
-        "81a23cc9045ed28b0630ea34f9b4bc379d49faeef120e606d617b8450ad5dcc7",
+        "bb753f462b55dbe47216e27824e4a322ab347f5052c6a3e33bbc46bdb128267c",
+        "78cdaf606ebf81479a6703cacab1fb017f21e8b19fc9cbc2e532122af9ca3c08",
     ];
+    // Prior Linux CPU outputs: CI39598628050. Re-pin after the issue #969 seed change.
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
         "edaa78f4aa822d845aacc5cf829577cc832dc64109bbee1574671662f366b3a5",
         "2ffea00f50926f435738cf80c5fabc1e4ad01b991e9c3328471b87f6e6e4b7d5",
     ];
-    // Current GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
+    // Prior GPU1 outputs: cuda_teacher_witness_bba7779a.json, 2026-10-01.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
         "8c9e77a2bc923c12bd883ef45d9f96eb8efbfe9b3909fdfe8fd8a10d62ad76cd",
         "0f04932d69bcb05687126f9c01c554039c718aefada39abc0e44b219e3566d88",
@@ -15016,7 +15017,9 @@ pub(crate) mod tests {
         };
         let seeds = || {
             vec![Some(LineBGameSeedsV1 {
-                root_seed: 11,
+                // Issue #969: the catalog hash re-ranked seed 11 onto the
+                // other seat. Seed 40 selects a root in the learner replay group.
+                root_seed: 40,
                 teacher_seed: 21,
             })]
         };
