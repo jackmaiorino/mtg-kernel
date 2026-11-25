@@ -1028,6 +1028,66 @@ fn resume_commit_must_add_the_entry_on_the_lead_branch() {
 }
 
 #[test]
+fn resume_refuses_an_edit_to_an_existing_entry_merged_into_lead() {
+    let temp = TempTestDir::new("resume-merged-edit");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    let before = directory_bytes(&root);
+    let proof = manifest_resume(&temp.join("manifest.md"), "b1", 1);
+    let repo = &proof.records_repository;
+    let original = fs::read_to_string(&proof.manifest).unwrap();
+    let edited = original.replace("fixture host boot record", "other host boot record");
+    assert_ne!(original, edited);
+
+    manifest_git(repo, &["checkout", "-qb", "other"]);
+    fs::write(&proof.manifest, &edited).unwrap();
+    manifest_git(repo, &["add", "--", "SHAKEDOWN-MANIFEST.md"]);
+    manifest_git(repo, &["commit", "-qm", "Edit the recorded host loss"]);
+    manifest_git(repo, &["checkout", "-q", "lead"]);
+    manifest_git(repo, &["merge", "--no-ff", "--no-edit", "other"]);
+
+    let config = config(&root, "b1", Segment::BuilderOnly, 2);
+    for (bytes, reason) in [
+        (original, "append-only violation"),
+        (edited, "resume entry bytes differ"),
+    ] {
+        fs::write(&proof.manifest, &bytes).unwrap();
+        let mut proof = proof.clone();
+        proof.manifest_sha256 = sha256_hex(bytes.as_bytes());
+        let mut proposed = config.clone();
+        proposed.resume = Some(proof);
+        let error = TrainingDriver::open(proposed, model_rows(), 1234)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(reason), "{error}");
+        assert_eq!(directory_bytes(&root), before);
+    }
+}
+
+#[test]
+fn resume_refuses_a_commit_on_a_differently_named_branch() {
+    let temp = TempTestDir::new("resume-other-branch-name");
+    let root = temp.join("b1");
+    exit_after_one_update(&root);
+    let before = directory_bytes(&root);
+    let proof = manifest_resume(&temp.join("manifest.md"), "b1", 1);
+    // Keep the exact pinned bytes and commit, but remove the branch entry 1 names.
+    manifest_git(&proof.records_repository, &["branch", "-m", "other"]);
+    let mut config = config(&root, "b1", Segment::BuilderOnly, 2);
+    config.resume = Some(proof);
+    let error = TrainingDriver::open(config, model_rows(), 1234)
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("entry 1 lead_branch was not found"),
+        "{error}"
+    );
+    assert_eq!(directory_bytes(&root), before);
+}
+
+#[test]
 fn manifest_history_refuses_rewrite_or_removal_even_if_tip_restores_bytes() {
     let temp = TempTestDir::new("resume-history");
     let root = temp.join("b1");
