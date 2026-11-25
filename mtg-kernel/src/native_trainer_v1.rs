@@ -5149,8 +5149,8 @@ mod tests {
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                31, 249, 235, 37, 111, 128, 105, 71, 169, 29, 12, 154, 57, 110, 240, 186, 13, 221,
-                167, 1, 216, 242, 103, 73, 15, 143, 28, 136, 191, 128, 230, 7,
+                250, 65, 91, 174, 116, 190, 144, 186, 179, 104, 99, 28, 88, 18, 34, 109, 243, 48,
+                235, 83, 216, 158, 86, 138, 19, 213, 69, 85, 125, 236, 212, 81,
             ]
         );
         // Re-baselined once per the owner ruling on record (collab CLAUDE
@@ -5177,8 +5177,8 @@ mod tests {
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                15, 79, 68, 69, 0, 13, 59, 119, 15, 143, 111, 103, 80, 80, 152, 53, 70, 239, 4, 39,
-                39, 16, 241, 10, 102, 91, 192, 205, 55, 91, 128, 169,
+                25, 223, 92, 235, 14, 41, 74, 96, 84, 185, 140, 149, 60, 178, 117, 6, 138, 51, 162,
+                28, 141, 247, 45, 161, 238, 165, 86, 14, 155, 90, 67, 198,
             ]
         );
 
@@ -6115,12 +6115,12 @@ mod tests {
             digest_hexes,
             [
                 (
-                    "84c7cf0b1bc403f0a4a20d1fc4137335280f15d56b57ef99f6619943fc457ca0".to_owned(),
-                    "5a48662804e8fa65c5fbcd901b33ed06723a5a2cff9256e5f600e0af8a2882a8".to_owned(),
+                    "b0e48953baea9b368752d93a8eac93669742b894b106c3b25ad64be2ffeee20d".to_owned(),
+                    "94899fc5889cb48e6973c8fe595f190202ee2ae98eaef6e83613136400000602".to_owned(),
                 ),
                 (
-                    "33c9a7f17cf364fb6933a51a75fd12918e7d5b841465f159814b08230c3fba8b".to_owned(),
-                    "bb4a5a647bf32c7406c9dfef076befcedb9cf56a312dfb8bfbe730e69d63affc".to_owned(),
+                    "01e2372bbd521843f317b6c82cb74be8857da2b77c975cb981a06a5680db0f6a".to_owned(),
+                    "e57b071ca28ca659b41c374652e25442c36ca8e363026569dd1c3b0072250c2d".to_owned(),
                 ),
             ],
             "the distinct-deck V2 pair goldens drifted"

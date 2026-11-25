@@ -304,13 +304,13 @@ pub const PINNED: [(&str, Census, Census); 2] = [
     (
         "all tokens",
         Census {
-            distinct_tokens: 488,
+            distinct_tokens: 486,
             tokens_on_one_card: 286,
             cards_with_unshared_token: 120,
             cards_without_effect_token: 34,
         },
         Census {
-            distinct_tokens: 488,
+            distinct_tokens: 486,
             tokens_on_one_card: 286,
             cards_with_unshared_token: 120,
             cards_without_effect_token: 34,

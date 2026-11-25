@@ -632,3 +632,29 @@ pub(crate) fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV1, St
         casts,
     })
 }
+
+#[cfg(test)]
+mod mountain_cost_tests {
+    use super::CostV1;
+    use crate::card_def::{self, PermanentFilter, Subtype, CARD_DEFS};
+
+    #[test]
+    fn mountain_sacrifices_publish_the_same_filtered_cost_kind() {
+        let filter = PermanentFilter::WithSubtypeV1(Subtype::Mountain);
+        let def = |name| &CARD_DEFS[usize::from(card_def::card_id_by_name(name).unwrap())];
+        for (components, count) in [
+            (def("Fireblast").alt_cost.as_ref().unwrap().components, 2),
+            (def("Lava Dart").flashback.as_ref().unwrap().cost, 1),
+            #[cfg(feature = "eternal-fixtures")]
+            (
+                def("Mine Collapse").alt_cost.as_ref().unwrap().components,
+                1,
+            ),
+        ] {
+            assert_eq!(
+                super::costs(components).unwrap(),
+                [CostV1::SacrificeControlled(count, filter)]
+            );
+        }
+    }
+}

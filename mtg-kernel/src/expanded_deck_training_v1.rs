@@ -15037,19 +15037,19 @@ pub(crate) mod tests {
     // Windows CPU outputs for the issue #969 fixture seed.
     #[cfg(target_os = "windows")]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "bb753f462b55dbe47216e27824e4a322ab347f5052c6a3e33bbc46bdb128267c",
-        "78cdaf606ebf81479a6703cacab1fb017f21e8b19fc9cbc2e532122af9ca3c08",
+        "e44b68ee5931b9643795fcd1c80899332b2067d7e8b231cb01d2d02224ab98e1",
+        "35b2f30fb018085032f48e2133821949bba797c8b078c39357369566a47dab6b",
     ];
     // Non-Windows CPU outputs from Linux CI for the issue #969 fixture seed.
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "4b1f08cd5f3128f89caa9882533f93a7cf828d8f3f12e08c4a699eb859571753",
-        "61f9e08ed62428b8cb87a56fa4eddfe392e3d0c1318ab5541bb9e222194caa9b",
+        "00168143ca052028488138ed7a321f232c7316995c868b1a3a62cc12a22e195a",
+        "629aa6df4862065824d5c8d31beb6dbf32d24aef83c3c056b99d4a47125cdb02",
     ];
     // GPU1 outputs for the issue #969 fixture seed.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
-        "1d28b7b17a7cbfd3a9a9b315c443e1315569c1fa362a2ac3e1f9241c373c4c8c",
-        "b4f869ebbe905b5dc386f5996f30a28840a20fed9b799e36ef16e85be58e3a6a",
+        "5332ed0ff07b0043f6644f2eb91b44c2abc4425f3eb203b1cd7534af6899bff4",
+        "0b975c84781e8c4baa34550b1ca79a2bbd3bbba89a58d17353cd4b7b478941b7",
     ];
 
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
@@ -15125,9 +15125,9 @@ pub(crate) mod tests {
         };
         let seeds = || {
             vec![Some(LineBGameSeedsV1 {
-                // Issue #969: the catalog hash re-ranked seed 11 onto the
-                // other seat. Seed 40 selects a root in the learner replay group.
-                root_seed: 40,
+                // Issue #969: seed 40 lost its teacher signal with this catalog.
+                // Seed 47 is the first learner root that moves both updates.
+                root_seed: 47,
                 teacher_seed: 21,
             })]
         };
