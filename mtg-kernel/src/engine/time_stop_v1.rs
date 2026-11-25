@@ -520,6 +520,9 @@ fn dispose_stack(state: &mut GameState, item: &StackItem) -> Result<(), String> 
         return Err("end-turn stack exile failed".into());
     }
     state.stack.clear();
+    for row in &rows {
+        crate::text_color_change_v1::remove_capture(state, row.v4.stack_item_id);
+    }
     // A real end-turn resolution replaces any ordinary cleanup priority window.
     ordinary_cleanup_v1::replaced_by_time_stop(state)?;
     let disposal = u64::try_from(state.engine.event_history.len())

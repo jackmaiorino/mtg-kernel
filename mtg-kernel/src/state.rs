@@ -2663,6 +2663,11 @@ pub struct GameState {
     pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) eternal_opening_v1: Option<crate::eternal_opening_v1::OpeningV1>,
+    /// Layer-3 color-word text replacement records, captures, and derived
+    /// token/animation colors (Alter Reality, issue #460). Absent whenever all
+    /// lists are empty so games without the card keep identical bytes and hashes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color_changes_v1: Option<crate::text_color_change_v1::TextColorChangesV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) coveted_jewel_draw_progress_v1:
         Option<crate::eternal_vintage_v1::JewelDrawProgressV1>,
@@ -2998,6 +3003,10 @@ impl Hash for GameState {
             "eternal-opening/v1".hash(state);
             opening.hash(state);
         }
+        if let Some(changes) = &self.text_color_changes_v1 {
+            "text-color-changes/v1".hash(state);
+            changes.hash(state);
+        }
         if let Some(progress) = &self.coveted_jewel_draw_progress_v1 {
             "coveted-jewel-draw-progress/v1".hash(state);
             progress.hash(state);
@@ -3281,6 +3290,7 @@ impl GameState {
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
             eternal_opening_v1: None,
+            text_color_changes_v1: None,
             coveted_jewel_draw_progress_v1: None,
             paradoxical_outcome_draw_progress_v1: None,
             eternal_owned_draw_progress_v1: None,
