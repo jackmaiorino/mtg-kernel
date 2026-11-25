@@ -849,8 +849,6 @@ impl TrainingChair {
     }
 }
 
-/// Constructs an 8-chair training role assignment with the two specified
-/// distinct chairs marked [`ChairRole::Older`] and the remaining six
 /// Draws D0.11 older chairs and their league indices, in ascending chair order.
 pub fn draw_league_chairs(
     league_seed: u64,
@@ -880,6 +878,8 @@ mod league_draw_tests {
     }
 }
 
+/// Constructs an 8-chair training role assignment with the two specified
+/// distinct chairs marked [`ChairRole::Older`] and the remaining six
 /// [`ChairRole::Learning`].
 pub fn training_roles_with_older(older: [usize; 2]) -> Result<[ChairRole; SEATS], PodRunnerError> {
     if older[0] >= SEATS || older[1] >= SEATS || older[0] == older[1] {
