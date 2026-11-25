@@ -16063,8 +16063,19 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             };
         }
         #[cfg(feature = "eternal-fixtures")]
-        if let Some(decision) = crate::eternal_cards_v1::e3::entry_choice_decision(state) {
-            return decision;
+        {
+            // A draw may suspend the interpreter before its ordinary
+            // collection checkpoint. Capture the draw without performing
+            // SBAs or placing any trigger while its owner is resolving.
+            if state.engine.pending_effect.is_some()
+                && crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_some()
+            {
+                let captured = trigger::capture_triggers_without_sba(state);
+                crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, captured);
+            }
+            if let Some(decision) = crate::eternal_cards_v1::e3::entry_choice_decision(state) {
+                return decision;
+            }
         }
 
         if let Some(d) = drain_pending_spell_copy_or_decide(state) {
@@ -29299,6 +29310,17 @@ pub(crate) fn step_without_linked_aura_v1(
             "only the exact color-choice action may answer a pending land play".to_string(),
         );
     }
+    #[cfg(feature = "eternal-fixtures")]
+    if state.engine.pending_land_play.is_none()
+        && crate::eternal_legacy_e5b_v1::pending_decision(state).is_some()
+    {
+        let Action::ChooseEffectOption(option) = action else {
+            return Err("only the active miracle reveal may be answered".into());
+        };
+        crate::eternal_legacy_e5b_v1::answer_pending_decision(state, option)?;
+        collect_and_queue_triggers(state);
+        return Ok(());
+    }
     if let Some(pending) = state.engine.pending_cast.as_ref() {
         let stage = pending_cast_action_stage(state, pending)?;
         if !action_matches_pending_cast_stage(&action, stage) {
@@ -29663,14 +29685,14 @@ pub(crate) fn step_without_linked_aura_v1(
             Ok(())
         }
         Action::ChooseEffectOption(option_index) => {
-            if cfg!(feature = "eternal-fixtures")
+            if state.engine.pending_land_play.is_some() {
+                apply_choose_land_color(state, option_index)
+            } else if cfg!(feature = "eternal-fixtures")
                 && crate::eternal_cards_v1::e3::entry_choice_pending(state)
             {
                 crate::eternal_cards_v1::e3::answer_entry_choice(state, option_index)?;
                 collect_and_queue_triggers(state);
                 Ok(())
-            } else if state.engine.pending_land_play.is_some() {
-                apply_choose_land_color(state, option_index)
             } else if state.engine.pending_cast.is_some() {
                 apply_pending_cast_effect_option(state, option_index)
             } else if let Some(pending) = state.engine.pending_activation.as_ref() {

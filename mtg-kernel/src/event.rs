@@ -3940,7 +3940,7 @@ pub(crate) fn draw_instruction_extra_at_hand_size(
     .min(u32::MAX - count)
 }
 
-fn draw_instruction_continues(state: &GameState, player: PlayerId) -> bool {
+pub(crate) fn draw_instruction_continues(state: &GameState, player: PlayerId) -> bool {
     state.engine.halted.is_none()
         && !crate::eternal_cards_v1::owned_draws_v1::draw_won_game(state, player)
 }

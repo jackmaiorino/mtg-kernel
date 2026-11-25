@@ -459,6 +459,8 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
+            #[cfg(feature = "eternal-fixtures")]
+            MiracleDrawRemainderV1 { drawn, .. } => self.b(drawn),
             GenesisWaveV1 { choice, cards } => {
                 !matches!(
                     self.scope,

@@ -183,7 +183,8 @@ pub(crate) fn forces_resumable(
                     .any(|player| may_need_draw_choice(state, player))
         }
     };
-    needs_choice && crate::effect::resumable_program_supported(program)
+    (needs_choice || crate::effect::program_may_draw_miracle(state, program, ctx))
+        && crate::effect::resumable_program_supported(program)
 }
 
 pub(crate) fn draw_may_need_choice(
@@ -210,6 +211,22 @@ pub(crate) fn drive_draws(
         else {
             commit_resolution_draw(state, continuation, drawer, &path);
             count -= 1;
+            if !owned_draws_v1::draw_stage_matches(
+                state,
+                continuation,
+                drawer,
+                &path,
+                &continuation.frames,
+            ) && crate::eternal_legacy_e5b_v1::uncollected_miracle_draw(state).is_some()
+            {
+                if count > 0 {
+                    continuation.frames.push(EffectFrame::Program {
+                        op: EffectOp::DrawCards { player, count },
+                        path,
+                    });
+                }
+                return Ok(true);
+            }
             continue;
         };
         if count > 1 {

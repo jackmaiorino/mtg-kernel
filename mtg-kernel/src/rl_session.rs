@@ -14036,6 +14036,157 @@ mod tests {
         session
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn limited_miracle_reveal_suspends_a_resolving_draw_then_discard() {
+        fn choose(
+            session: &mut RlEpisodeSessionV1,
+            accept: impl Fn(&ActionSemanticV1) -> bool,
+        ) -> RlSessionResponseV1 {
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                panic!("expected a Limited decision");
+            };
+            let action = decision
+                .legal_actions
+                .iter()
+                .find(|action| accept(&action.semantic))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "test action missing from step {}: {:?}",
+                        decision.step, decision.legal_actions
+                    )
+                });
+            session
+                .step(
+                    decision.episode_id,
+                    decision.step,
+                    action.selected_index,
+                    &action.stable_id,
+                )
+                .unwrap()
+        }
+
+        let island = card_id_by_name("Island").unwrap();
+        let mut session = RlEpisodeSessionV1::reset_with_custom_decks_v1(
+            7,
+            123,
+            100,
+            100,
+            ["miracle-p0".into(), "miracle-p1".into()],
+            [&[island; 40], &[island; 40]],
+            crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+            true,
+        )
+        .unwrap();
+        let state = &mut session.state;
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        state.players[1].draws_this_turn = 0;
+        state.players[1].mana_pool[crate::mana::ManaColor::B.pool_index()] = 2;
+        let dack = add_battlefield_object(state, PlayerId::P0, "Dack Fayden");
+        crate::planeswalker_v1::after_zone_change(state, dack, None);
+        let second = state.players[1].library[0];
+        let miracle = add_battlefield_object(state, PlayerId::P1, "Metamorphosis Fanatic");
+        assert_eq!(state.players[1].battlefield.pop(), Some(miracle));
+        state.objects.get_mut(miracle).zone = Zone::Library;
+        state.players[1].library.insert(0, miracle);
+        session.current = None;
+        session.advance_to_decision_or_terminal();
+
+        choose(&mut session, |action| {
+            matches!(action, ActionSemanticV1::ActivateAbility { source, ability_index: 0, .. }
+                if source.arena_id == dack.0)
+        });
+        choose(&mut session, |action| {
+            matches!(
+                action,
+                ActionSemanticV1::ChooseTarget {
+                    target: crate::rl::TargetRefV1::Player {
+                        player: crate::rl::PlayerSeatV1::P1
+                    },
+                    ..
+                }
+            )
+        });
+        for _ in 0..2 {
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Pass { .. })
+            });
+        }
+
+        let decision = session.current_response();
+        let mut snapshot = session.snapshot_v5();
+        let state_bytes = serde_json::to_vec(&session.state).unwrap();
+        snapshot.0.state = serde_json::from_slice(&state_bytes).unwrap();
+        let before_second_draw = session.state.players[1].library.first() == Some(&second);
+        assert!(before_second_draw);
+        assert!(session.state.engine.pending_discard.is_none());
+        assert_eq!(session.state.players[1].draws_this_turn, 1);
+        let mut refused = snapshot.0.state.clone();
+        assert_eq!(
+            crate::engine::step(&mut refused, crate::engine::Action::Pass).unwrap_err(),
+            "only the active miracle reveal may be answered",
+        );
+        assert_eq!(serde_json::to_vec(&refused).unwrap(), state_bytes);
+
+        let mut forged = snapshot.0.state.clone();
+        let frames = &mut forged.engine.pending_effect.as_mut().unwrap().frames;
+        let Some(crate::effect::EffectFrame::MiracleDrawRemainderV1 { path, .. }) =
+            frames.last_mut()
+        else {
+            panic!("expected a bound first-draw remainder");
+        };
+        path[0] = 1; // Dack's discard leaf cannot authenticate a draw.
+        assert!(crate::effect::validate_pending_effect_choice(&forged).is_err());
+        for option in [0, 1] {
+            session.restore_v5(&snapshot);
+            assert_eq!(session.current_response(), decision);
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::ChooseEffectOption { source, option_index, .. }
+                    if source.arena_id == miracle.0 && *option_index == option)
+            });
+            assert!(session.state.players[1].hand.contains(&second));
+            assert_eq!(session.state.players[1].draws_this_turn, 2);
+            assert_eq!(
+                session
+                    .state
+                    .known_hand_cards(PlayerId::P0, PlayerId::P1)
+                    .iter()
+                    .any(|entry| entry.object == miracle),
+                option == 1,
+            );
+            assert_eq!(session.state.stack.len(), 1);
+            assert_eq!(session.state.stack[0].source, dack);
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Discard { cards, .. }
+                    if cards.iter().any(|card| card.arena_id == miracle.0))
+            });
+            assert_eq!(session.state.objects.get(miracle).zone, Zone::Hand);
+            choose(&mut session, |action| {
+                matches!(action, ActionSemanticV1::Discard { .. })
+            });
+            assert_eq!(session.state.objects.get(miracle).zone, Zone::Graveyard);
+            assert_eq!(session.state.stack.len(), usize::from(option == 1));
+            if option == 1 {
+                assert_eq!(session.state.stack[0].source, miracle);
+                for _ in 0..2 {
+                    choose(&mut session, |action| {
+                        matches!(action, ActionSemanticV1::Pass { .. })
+                    });
+                }
+                let RlSessionResponseV1::Decision(after) = session.current_response() else {
+                    panic!("expected priority after the miracle trigger");
+                };
+                assert!(after.legal_actions.iter().all(|action| {
+                    !matches!(&action.semantic, ActionSemanticV1::ChooseEffectOption { source, .. }
+                        if source.arena_id == miracle.0)
+                }));
+                assert_eq!(session.state.objects.get(miracle).zone, Zone::Graveyard);
+            }
+        }
+    }
+
     #[cfg(feature = "limited-fdn-fixtures")]
     mod limited_trigger_order_tests {
         use super::*;

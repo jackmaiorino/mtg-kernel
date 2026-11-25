@@ -3188,18 +3188,19 @@ fn miracle_reveal_mid_resolution_with_dredge_and_resolution_cast_preserves_defer
             }
             assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
 
-            // Draw 2: dredge Stinkweed Imp, milling Creeping Chill while recording Terminus's miracle offer.
-            match settle(&mut state) {
-                Some(Decision::ChooseEffectTargets {
-                    player,
-                    legal_targets,
-                    ..
-                }) if player == caster && legal_targets.contains(&Target::Object(imp)) => {
-                    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+            let draw_second = |state: &mut GameState| {
+                match next(state) {
+                    Decision::ChooseEffectTargets {
+                        player,
+                        legal_targets,
+                        ..
+                    } if player == caster && legal_targets.contains(&Target::Object(imp)) => {
+                        act(state, Action::ChooseEffectTarget(Target::Object(imp)));
+                    }
+                    other => panic!("expected second Brainstorm dredge prompt, got {other:?}"),
                 }
-                other => panic!("expected second Brainstorm dredge prompt, got {other:?}"),
-            }
-            assert_eq!(zone(&state, sba_canary), Zone::Battlefield);
+                assert_eq!(zone(state, sba_canary), Zone::Battlefield);
+            };
 
             // While Brainstorm is still resolving, Miracle reveal is offered.
             let offer_decision = next(&mut state);
@@ -3217,6 +3218,7 @@ fn miracle_reveal_mid_resolution_with_dredge_and_resolution_cast_preserves_defer
                 let mut declined = state.clone();
                 act(&mut declined, Action::ChooseEffectOption(0));
                 assert_eq!(zone(&declined, sba_canary), Zone::Battlefield);
+                draw_second(&mut declined);
                 for _ in 0..8 {
                     match next(&mut declined) {
                         Decision::ChooseEffectTargets {
@@ -3272,6 +3274,7 @@ fn miracle_reveal_mid_resolution_with_dredge_and_resolution_cast_preserves_defer
             assert_eq!(state.stack.len(), 1);
             assert_eq!(state.stack[0].source, brainstorm);
             assert!(state.engine.pending_effect.is_some());
+            draw_second(&mut state);
 
             let mut caster_ordered_both = false;
             for _ in 0..16 {
