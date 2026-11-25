@@ -1043,7 +1043,7 @@ mod tests {
         for column in [1u32, 2, 3] {
             hash.update(column.to_le_bytes());
         }
-        for value in [0.4375f32, 1.0, 0.0, 1.0, -0.125, 0.3125, 0.0, -1.0] {
+        for value in [0.875f32, 1.0, 0.0, 1.0, -0.25, 0.3125, 0.0, -1.0] {
             hash.update(value.to_bits().to_le_bytes());
         }
         assert_eq!(table.binding_sha256(), lowercase_hex(&hash.finalize()));
