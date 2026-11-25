@@ -375,6 +375,7 @@ fn build(
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
             meddling_mage_names: None,
+            text_color_changes: None,
             turn_schedule: None,
             ward_payments: None,
             staged_escape: None,

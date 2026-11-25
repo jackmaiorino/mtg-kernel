@@ -1091,6 +1091,13 @@ pub struct PublicObservationProjectionV5 {
     /// Mage's name applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meddling_mage_names: Option<Vec<PublicMeddlingMageNameV1>>,
+    /// Live Layer-3 color-word replacements on battlefield permanents and stack
+    /// spells under the public shroud contract (Limited schema 5): seat 0's
+    /// battlefield then seat 1's in public battlefield order, then the stack
+    /// bottom to top; each object's entries in timestamp order. Absent when
+    /// empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color_changes: Option<Vec<PublicTextColorChangeV1>>,
     /// The public turn schedule once an extra turn has been scheduled (Time
     /// Walk, Time Vault's ability, Emrakul, the Aeons Torn's cast trigger),
     /// under the public shroud contract (Limited schema 5). `turn` keeps its
@@ -1299,6 +1306,15 @@ fn public_staged_escape_v1(
         controller: pending.controller.into(),
         stage,
     })
+}
+
+/// One live Layer-3 color-word replacement on a battlefield permanent or stack
+/// spell (Alter Reality, Limited schema 5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicTextColorChangeV1 {
+    pub object: CardStableRefV1,
+    pub from: ManaColor,
+    pub to: ManaColor,
 }
 
 /// A Meddling Mage and the card name it chose as it entered (Eternal wave
@@ -1687,6 +1703,19 @@ pub enum ActionSemanticV1 {
         option_index: u16,
         option_count: u16,
         option_text: String,
+    },
+    /// One option of Alter Reality's color-word replacement menu (design §4.5):
+    /// `stage` is `from` (five colors in WUBRG order) or `to` (the four other
+    /// colors in WUBRG order, with `from` naming the chosen old color word).
+    ChooseTextColorWordV1 {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        target: TargetRefV1,
+        stage: crate::text_color_change_v1::TextColorWordStageV1,
+        from: Option<ManaColor>,
+        color: ManaColor,
+        option_index: u16,
+        option_count: u16,
     },
 }
 
@@ -2359,6 +2388,52 @@ fn public_meddling_mage_names_v1(state: &GameState) -> Result<Vec<PublicMeddling
         .collect()
 }
 
+/// Live Layer-3 color-word replacements on battlefield permanents and stack
+/// spells (Alter Reality, schema 5 and registered Premodern ordered profile):
+/// seat 0's battlefield, seat 1's battlefield, then stack spells bottom to top;
+/// each object's changes in timestamp order.
+fn public_text_color_changes_v1(state: &GameState) -> Result<Vec<PublicTextColorChangeV1>> {
+    if state.text_color_changes_v1.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut push_for = |id: ObjectId| -> Result<()> {
+        let entries = crate::text_color_change_v1::live_changes_for_object(state, id);
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let object = card_ref(state, id)?;
+        for (from, to) in entries {
+            out.push(PublicTextColorChangeV1 {
+                object: object.clone(),
+                from,
+                to,
+            });
+        }
+        Ok(())
+    };
+    for player in &state.players {
+        for &id in &player.battlefield {
+            push_for(id)?;
+        }
+    }
+    for item in &state.stack {
+        if item.kind == StackItemKind::Spell {
+            push_for(item.source)?;
+        }
+    }
+    if let Some(pending) = state.engine.pending_effect.as_ref() {
+        if pending.resolving_item.kind == StackItemKind::Spell
+            && !state.stack.iter().any(|item| {
+                item.kind == StackItemKind::Spell && item.source == pending.resolving_item.source
+            })
+        {
+            push_for(pending.resolving_item.source)?;
+        }
+    }
+    Ok(out)
+}
+
 fn public_attack_count_v1(state: &GameState) -> Option<u32> {
     if state.creatures_attacked_this_turn_v1() == 0 {
         None
@@ -2420,6 +2495,11 @@ pub fn observe_v1(
     if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
         return Err(RlContractError(
             "Meddling Mage named entry requires its consumer successor".into(),
+        ));
+    }
+    if crate::text_color_change_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "text color-word replacement requires its consumer successor".into(),
         ));
     }
     crate::full_text_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -2685,6 +2765,11 @@ pub fn observe_premodern_ordered_registered_v1(
                 .then(|| public_meddling_mage_names_v1(state))
                 .transpose()?
                 .filter(|names| !names.is_empty()),
+            text_color_changes: text_mode
+                .accepts_public_shroud()
+                .then(|| public_text_color_changes_v1(state))
+                .transpose()?
+                .filter(|changes| !changes.is_empty()),
             // This observation keeps refusing a game with extra turns, the
             // Ward states the legacy check cannot bind, and a staged Escape.
             turn_schedule: None,
@@ -2990,6 +3075,12 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if mage_refused {
         return Err(RlContractError(
             "Meddling Mage named entry requires its consumer successor".into(),
+        ));
+    }
+    if !text_mode.accepts_public_shroud() && crate::text_color_change_v1::requires_successor(state)
+    {
+        return Err(RlContractError(
+            "text color-word replacement requires its consumer successor".into(),
         ));
     }
     if !text_mode.accepts_ordered_full_text() {
@@ -3648,6 +3739,11 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
                 .then(|| public_meddling_mage_names_v1(state))
                 .transpose()?
                 .filter(|names| !names.is_empty()),
+            text_color_changes: text_mode
+                .accepts_public_shroud()
+                .then(|| public_text_color_changes_v1(state))
+                .transpose()?
+                .filter(|changes| !changes.is_empty()),
             turn_schedule,
             ward_payments,
             staged_escape,
@@ -6388,6 +6484,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
             meddling_mage_names: None,
+            text_color_changes: None,
             turn_schedule: None,
             ward_payments: None,
             staged_escape: None,
@@ -8195,6 +8292,62 @@ fn core_surface_action_candidates_fake_scoped_v50(
                                 u16::try_from(option_index)
                                     .expect("five colors fit the u16 option contract"),
                             )),
+                        )?;
+                    }
+                } else if let Some(crate::effect::PendingEffectChoice::ChooseOption {
+                    player: word_player,
+                    options,
+                    purpose:
+                        crate::effect::EffectOptionChoicePurpose::ChooseTextColorWordV1 { stage, from },
+                    ..
+                }) = state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .and_then(|pending| pending.choice.as_ref())
+                {
+                    let Some(pending) = state.engine.pending_effect.as_ref() else {
+                        return Err(RlContractError(
+                            "text color-word decision lost its pending continuation".to_string(),
+                        ));
+                    };
+                    let Some(colors) = crate::text_color_change_v1::choice_colors(*stage, *from)
+                    else {
+                        return Err(RlContractError(
+                            "text color-word decision has inconsistent stage metadata".to_string(),
+                        ));
+                    };
+                    let Some(&raw_target) = pending.ctx.targets.first() else {
+                        return Err(RlContractError(
+                            "text color-word decision is missing its target".to_string(),
+                        ));
+                    };
+                    if word_player != player
+                        || options.len() != usize::from(*option_count)
+                        || colors.len() != options.len()
+                        || pending.resolving_item.source.0 != source.arena_id
+                    {
+                        return Err(RlContractError(
+                            "text color-word decision disagrees with its continuation".to_string(),
+                        ));
+                    }
+                    let target = target_ref(state, raw_target)?;
+                    for (option_index, color) in colors.into_iter().enumerate() {
+                        let option_index = u16::try_from(option_index)
+                            .expect("five colors fit the u16 option contract");
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseTextColorWordV1 {
+                                actor,
+                                source: source.clone(),
+                                target: target.clone(),
+                                stage: *stage,
+                                from: *from,
+                                color,
+                                option_index,
+                                option_count: *option_count,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
                         )?;
                     }
                 } else if state.engine.spellbench_neutral_v1.choices
