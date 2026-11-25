@@ -13,7 +13,7 @@ pub use tripwire::{CensusBaselineFiles, CensusBaselinePin};
 #[path = "cube_training_resume_v1.rs"]
 mod resume;
 pub use resume::ResumeAuthorization;
-use resume::{check_resume, RunnerMarker};
+use resume::{check_resume, RunLock, RunnerMarker};
 
 use crate::cube_draft_v1::{uniform_index, CubePool, SEATS};
 use crate::cube_learned_seat_v1::{
@@ -60,6 +60,7 @@ pub enum TrainingDriverError {
     Update(String),
     StoppedWithoutResolution,
     StoppedRequiresRestart,
+    RunAlreadyActive,
     ResumeAuthorizationRequired,
     PinnedCheckpoint,
 }
@@ -74,6 +75,7 @@ impl fmt::Display for TrainingDriverError {
             Self::StoppedWithoutResolution => {
                 write!(f, "the stop ledger has no resolution record")
             }
+            Self::RunAlreadyActive => write!(f, "another driver holds the training run lock"),
             Self::ResumeAuthorizationRequired => {
                 write!(
                     f,
@@ -767,6 +769,14 @@ impl TripwireFiring {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ProcessDeathEvidence {
+    /// None when the runner exited before the first batch committed.
+    pub last_committed_batch: Option<u64>,
+    pub found_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StopRecord {
     pub schema: String,
     pub kind: String,
@@ -783,6 +793,8 @@ pub struct StopRecord {
     pub second_watchdog_pod: Option<u64>,
     pub second_watchdog_game: Option<u32>,
     pub firing: Option<TripwireFiring>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_death: Option<ProcessDeathEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub batch: Vec<Value>,
@@ -1149,7 +1161,10 @@ fn read_partial_pods(directory: &Path) -> Result<Vec<Value>, TrainingDriverError
             .collect::<Result<_, _>>()?;
         files.sort();
         for path in files {
-            batch.push(serde_json::from_slice(&fs::read(path)?)?);
+            // The runner can die while writing the last pod. Keep the complete rows.
+            if let Ok(pod) = serde_json::from_slice(&fs::read(path)?) {
+                batch.push(pod);
+            }
         }
     }
     Ok(batch)
@@ -1170,7 +1185,59 @@ fn update_directories(directory: &Path) -> Result<Vec<PathBuf>, TrainingDriverEr
     Ok(directories)
 }
 
-fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
+fn record_process_death(
+    config: &RunConfig,
+    last_committed_batch: Option<u64>,
+    abandoned: Option<(u64, PathBuf)>,
+) -> Result<(), TrainingDriverError> {
+    let root = &config.root;
+    let found_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(io_error)?
+        .as_millis()
+        .try_into()
+        .map_err(io_error)?;
+    let (batch_index, batch) = if let Some((update, directory)) = abandoned {
+        let mut batch = read_partial_pods(&directory)?;
+        if batch.is_empty() && directory.join("pods.json").exists() {
+            batch = read_pods(&directory.join("pods.json")).unwrap_or_default();
+        }
+        (update, batch)
+    } else {
+        (
+            last_committed_batch.map_or(0, |update| update + 1),
+            Vec::new(),
+        )
+    };
+    let mut stop = StopRecord {
+        schema: STOP_SCHEMA.to_owned(),
+        kind: "process_death".to_owned(),
+        run: config.run.clone(),
+        batch_index,
+        pod: None,
+        pairing: None,
+        game: None,
+        decks: None,
+        attempts: Vec::new(),
+        hang: None,
+        first_watchdog_pod: None,
+        first_watchdog_game: None,
+        second_watchdog_pod: None,
+        second_watchdog_game: None,
+        firing: Some(TripwireFiring::immediate(TripwireRule::ProcessDeath)),
+        process_death: Some(ProcessDeathEvidence {
+            last_committed_batch,
+            found_unix_ms,
+        }),
+        batch,
+        error: None,
+    };
+    apply_first_watchdog(&mut stop, first_watchdog(root, batch_index)?);
+    ledger_stop(root, &stop)?;
+    Ok(())
+}
+
+fn recover(root: &Path) -> Result<(), TrainingDriverError> {
     let pending = root.join("pending");
     let updates = root.join("updates");
     fs::create_dir_all(&pending)?;
@@ -1202,32 +1269,8 @@ fn recover(root: &Path, run: &str) -> Result<(), TrainingDriverError> {
             published_stop(root, &destination, update)?;
             continue;
         }
-        let mut batch = read_partial_pods(&directory)?;
-        if batch.is_empty() && directory.join("pods.json").exists() {
-            batch = read_pods(&directory.join("pods.json")).unwrap_or_default();
-        }
         if ledger_path_for_update(root, update)?.is_none() {
-            let mut stop = StopRecord {
-                schema: STOP_SCHEMA.to_owned(),
-                kind: "process_death".to_owned(),
-                run: run.to_owned(),
-                batch_index: update,
-                pod: None,
-                pairing: None,
-                game: None,
-                decks: None,
-                attempts: Vec::new(),
-                hang: None,
-                first_watchdog_pod: None,
-                first_watchdog_game: None,
-                second_watchdog_pod: None,
-                second_watchdog_game: None,
-                firing: Some(TripwireFiring::immediate(TripwireRule::ProcessDeath)),
-                batch,
-                error: None,
-            };
-            apply_first_watchdog(&mut stop, first_watchdog(root, update)?);
-            ledger_stop(root, &stop)?;
+            return Err(invalid("unfinished batch has no stop ledger record"));
         }
         fs::remove_dir_all(&directory)?;
         sync_directory(&pending)?;
@@ -1465,6 +1508,7 @@ fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecor
         second_watchdog_pod: None,
         second_watchdog_game: None,
         firing: None,
+        process_death: None,
         error: None,
         batch: batch
             .iter()
@@ -1490,9 +1534,10 @@ impl Snapshot {
     }
 }
 
-/// Owns the active runner marker. The launcher must drop the driver before
-/// a clean process exit, including before calling `std::process::exit`.
-/// An exit that skips cleanup requires host-loss authorization to reopen.
+/// Owns the exclusive run lock and active runner marker. The launcher must
+/// drop the driver before a clean exit, including before `std::process::exit`.
+/// Without a host-loss resume entry, the next open records a process-death
+/// stop for an exit that skips cleanup.
 pub struct TrainingDriver {
     config: RunConfig,
     model: Snapshot,
@@ -1506,6 +1551,8 @@ pub struct TrainingDriver {
     census_rates: Option<CensusRates>,
     snapshots: BTreeMap<String, Snapshot>,
     runner: RunnerMarker,
+    // The marker must be dropped before releasing the run lock.
+    _run_lock: RunLock,
 }
 
 impl TrainingDriver {
@@ -1541,7 +1588,7 @@ impl TrainingDriver {
         initial_optimizer: Optimizer,
         initial_lineage: Vec<LineageSegment>,
         initial_league: Vec<LeagueEntry>,
-        boundary_source: Option<PickBoundary>,
+        builder_boundary: Option<(PickBoundary, &Path)>,
     ) -> Result<Self, TrainingDriverError> {
         let layout = model_layout_pin(&initial_model);
         if config.metadata.parameter_layout_sha256.is_empty() {
@@ -1584,7 +1631,8 @@ impl TrainingDriver {
                 "a non-shakedown run cannot start from a uniform-pilot lineage",
             ));
         }
-        let resume_receipt = check_resume(&config)?;
+        let run_lock = RunLock::acquire(&config)?;
+        let resume_receipt = check_resume(&config, &run_lock)?;
         let run_path = config.root.join("run.json");
         let mut runner = None;
         if let Some(receipt) = resume_receipt {
@@ -1595,12 +1643,23 @@ impl TrainingDriver {
             check_run_plan(&saved, &config)?;
             runner = Some(RunnerMarker::open(&config.root, Some(receipt))?);
         }
-        fs::create_dir_all(&config.root)?;
-        recover(&config.root, &config.run)?;
+        recover(&config.root)?;
         check_stop_ledger(&config.root)?;
         let indices = published_update_indices(&config.root)?;
         let initial_path = config.root.join("initial/checkpoint.json");
         if config.segment == Segment::PickPhase {
+            let boundary_source = if let Some((boundary, builder_root)) = builder_boundary {
+                for entry in &initial_league {
+                    let source = builder_root.join(&entry.path);
+                    let destination = config.root.join(&entry.path);
+                    if source != destination {
+                        publish_bytes(&destination, &fs::read(source)?)?;
+                    }
+                }
+                Some(boundary)
+            } else {
+                None
+            };
             let journal = config.root.join("pick-boundary.json");
             let record = if journal.exists() {
                 read_json::<BoundaryRecord>(&journal)?
@@ -1822,6 +1881,7 @@ impl TrainingDriver {
             census_rates,
             snapshots: BTreeMap::new(),
             runner,
+            _run_lock: run_lock,
             config,
         })
     }
@@ -1854,16 +1914,6 @@ impl TrainingDriver {
         if config.pins != previous.config.pins || config.metadata != previous.config.metadata {
             return Err(invalid("the segment boundary changed model or input pins"));
         }
-        for entry in &previous.league {
-            let source = previous.config.root.join(&entry.path);
-            let destination = config.root.join(&entry.path);
-            if source != destination {
-                if let Some(parent) = destination.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                publish_bytes(&destination, &fs::read(source)?)?;
-            }
-        }
         let mut model = previous.model.model.as_ref().clone();
         model.copy_build_trunk_to_pick_trunk();
         let mut state = CubeModelState::from_model(&model, &previous.optimizer);
@@ -1879,10 +1929,13 @@ impl TrainingDriver {
             optimizer,
             previous.lineage.clone(),
             previous.league.clone(),
-            Some(PickBoundary {
-                builder_run: previous.config.run.clone(),
-                builder_final_state_sha256: previous.current_pin.clone(),
-            }),
+            Some((
+                PickBoundary {
+                    builder_run: previous.config.run.clone(),
+                    builder_final_state_sha256: previous.current_pin.clone(),
+                },
+                &previous.config.root,
+            )),
         )
     }
 
@@ -2100,6 +2153,7 @@ impl TrainingDriver {
             second_watchdog_pod: None,
             second_watchdog_game: None,
             firing: None,
+            process_death: None,
             error: Some(error.to_string()),
             batch,
         };
@@ -2361,6 +2415,7 @@ impl TrainingDriver {
                 second_watchdog_pod: None,
                 second_watchdog_game: None,
                 firing: Some(firing.clone()),
+                process_death: None,
                 error: None,
                 batch: pods
                     .iter()

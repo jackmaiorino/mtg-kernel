@@ -38,9 +38,15 @@ Local head `956fb9381879e4f14a9535be55501c7ccb16e623`.
   `PickForwardV1::from_cached_hidden` and `assert_eq!(hidden.trunk(), TrunkV1::Build)`
   in `BuildForwardV1::from_cached_hidden`. These enforce trunk identity in release builds.
 - The launcher must drop `TrainingDriver` before a clean exit, including before
-  `std::process::exit`. Skipping destructors leaves the active marker and the next
-  open requires host-loss authorization. A consumed entry remains recorded after
-  a clean drop. Those receipts are separate from deterministic training artifacts.
+  `std::process::exit`. The drop clears the active marker before releasing the
+  operating system lock on `runner.lock`. Keep the lock file in the run directory.
+  If an exit leaves the marker and there is no resume entry, the next open writes
+  one atomic `process_death` stop and refuses. It records the last committed
+  batch and discovery time in Unix milliseconds. A live holder prevents a second
+  open. An interrupted run without `runner.lock` is refused because the driver
+  cannot verify that it has exclusive access. A used host-loss entry remains
+  recorded after a clean drop. Resume receipts are separate from deterministic
+  training artifacts.
 - Stop records name their zero-based `batch_index`. Checkpoint `update` remains
   the checkpoint number. Full-mode admission takes the summary, manifest and
   authorization files and verifies all three pins and their manifest binding.

@@ -1,17 +1,57 @@
 use super::{
-    index_from_update_path, invalid, json_bytes, publish_bytes, publish_fresh_bytes, read_commit,
-    read_json, replace_bytes, sha256_hex, stop_paths, sync_directory, update_directories,
-    RunConfig, TrainingDriverError,
+    check_stop_ledger, index_from_update_path, invalid, json_bytes, publish_bytes,
+    publish_fresh_bytes, published_update_indices, read_commit, read_json, record_process_death,
+    replace_bytes, sha256_hex, stop_paths, sync_directory, update_directories, RunConfig,
+    StopRecord, TrainingDriverError,
 };
 #[path = "cube_training_manifest_v1.rs"]
 mod manifest;
 use manifest::{read_resume_entry, verify_entry_commit};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::fs;
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 const RUNNER_MARKER: &str = "runner-active.json";
+
+/// The OS releases the lock on exit. The file itself stays at a stable path.
+pub(super) struct RunLock {
+    _file: File,
+}
+
+impl RunLock {
+    pub(super) fn acquire(config: &RunConfig) -> Result<Self, TrainingDriverError> {
+        let root = &config.root;
+        let mut options = OpenOptions::new();
+        options.read(true).write(true);
+        let path = root.join("runner.lock");
+        let file = match options.open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                if config.resume.is_some()
+                    || root.join(RUNNER_MARKER).try_exists()?
+                    || !update_directories(&root.join("pending"))?.is_empty()
+                {
+                    return Err(invalid(
+                        "cannot verify an interrupted run without runner.lock",
+                    ));
+                }
+                fs::create_dir_all(root)?;
+                let file = options.create(true).truncate(false).open(&path)?;
+                file.sync_all()?;
+                sync_directory(root)?;
+                file
+            }
+            Err(error) => return Err(error.into()),
+        };
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(TryLockError::WouldBlock) => Err(TrainingDriverError::RunAlreadyActive),
+            Err(TryLockError::Error(error)) => Err(error.into()),
+        }
+    }
+}
 
 fn receipt_path(root: &Path, seq: u64) -> PathBuf {
     root.join("resumes").join(format!("entry-{seq:020}.json"))
@@ -78,21 +118,26 @@ impl ResumeAuthorization {
     }
 }
 
-/// Resolve the next untouched batch without mutating the run. A staged commit
-/// counts as published here so authorization precedes recovery writes.
+/// A staged commit counts as completed so authorization precedes recovery.
+/// On an unrecorded exit without proof, write only the process-death stop.
 pub(super) fn check_resume(
     config: &RunConfig,
+    _lock: &RunLock,
 ) -> Result<Option<ResumeReceipt>, TrainingDriverError> {
     let root = &config.root;
     let marker = root.join(RUNNER_MARKER);
+    let stops = stop_paths(root)?;
+    if stops
+        .iter()
+        .any(|path| read_json::<StopRecord>(path).is_ok_and(|stop| stop.kind == "process_death"))
+    {
+        return check_stop_ledger(root).map(|()| None);
+    }
     let pending = update_directories(&root.join("pending"))?;
     if !marker.exists() && pending.is_empty() {
         if config.resume.is_some() {
             return Err(invalid("resume entry supplied without an unrecorded exit"));
         }
-        return Ok(None);
-    }
-    if !stop_paths(root)?.is_empty() {
         return Ok(None);
     }
     let mut completed = BTreeSet::new();
@@ -104,11 +149,11 @@ pub(super) fn check_resume(
         }
         completed.insert(batch);
     }
-    let mut abandoned = false;
+    let mut abandoned = None;
     for path in pending {
         let batch = index_from_update_path(&path)?;
         let Some(commit) = read_commit(&path, batch, false)? else {
-            abandoned = true;
+            abandoned.get_or_insert((batch, path));
             continue;
         };
         if commit.files.contains_key("stop.json") {
@@ -116,11 +161,23 @@ pub(super) fn check_resume(
         }
         completed.insert(batch);
     }
-    let proof = config
-        .resume
-        .as_ref()
-        .ok_or(TrainingDriverError::ResumeAuthorizationRequired)?;
-    if abandoned {
+    if !stops.is_empty() {
+        if abandoned.is_some() {
+            return check_stop_ledger(root).map(|()| None);
+        }
+        // Recover a completed batch whose publication already logged an I/O stop.
+        return Ok(None);
+    }
+    let Some(proof) = &config.resume else {
+        let saved: RunConfig = read_json(&root.join("run.json"))?;
+        if saved.run != config.run || saved.namespace != config.namespace {
+            return Err(invalid("run id differs from the interrupted run"));
+        }
+        published_update_indices(root)?;
+        record_process_death(config, completed.last().copied(), abandoned)?;
+        return check_stop_ledger(root).map(|()| None);
+    };
+    if abandoned.is_some() {
         return Err(invalid(
             "host-loss resume cannot replay a batch that was touched",
         ));
