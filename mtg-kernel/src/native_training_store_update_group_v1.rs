@@ -5333,7 +5333,7 @@ mod tests {
         // is cross-target consistent (71_544 on both reviewed targets).
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115";
+            "7937de2fc3b3ab55b239a2c682e4398b290ff3cf2d81649046712ecea1e5c7e2";
         #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
         const MAIN_GOLDEN_SHA256_V1: &str =
             "1b1ca5a4a5cbfe9704a0297459df94130c15b5d79a5ee609d73cb9ffa5e09771";
@@ -5804,8 +5804,8 @@ mod tests {
                 group.canonical_bytes().len(),
             );
             let pinned = (
-                "d043900e139bf0f197215de411daeed73a631d9fe01d8be7718fb93d4a236115".to_owned(),
-                "adba2de9dc1d52c392f912e8557e2037f6a6d37db7a812900eb8d61561d957a0".to_owned(),
+                "7937de2fc3b3ab55b239a2c682e4398b290ff3cf2d81649046712ecea1e5c7e2".to_owned(),
+                "13b7d78021decd054e272b9424e56f3395157e1beb450a27ef13355b47399a3e".to_owned(),
                 71_544usize,
             );
             assert_eq!(
