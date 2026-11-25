@@ -1218,6 +1218,10 @@ class AllocationTests(unittest.TestCase):
                 readers.run_read(DECL, DECL_SHA, "c", 1, opened, expected_picker=other_picker)
             with self.assertRaisesRegex(readers.ReadError, "builders"):
                 readers.run_read(DECL, DECL_SHA, "c", 1, opened, expected_builders=other_builders)
+            decl_with_pins = copy.deepcopy(DECL)
+            decl_with_pins["pins"] = dict(other_pins)
+            with self.assertRaisesRegex(readers.ReadError, "pins"):
+                readers.run_read(decl_with_pins, DECL_SHA, "c", 1, opened)
 
     def test_prep_to_plan_binding_mismatches_rejected(self):
         # New 3 probe: accepted prep built with uniform builder/picker/pins; plan claims different builder/picker/pins.
