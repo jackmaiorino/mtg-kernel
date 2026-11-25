@@ -606,14 +606,16 @@ pub(crate) const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
 ///    `2^k` construction `expm1_f64_v1` uses (`f64::from_bits(((k + 1023)
 ///    as u64) << 52)`).
 ///
-/// Accuracy: the Taylor truncation bound (`~3e-9` relative, at `|r| <=
-/// 0.3466`) and the reduction-constant error bound (`~3.9e-14` at this
-/// function's widest `k`) are both independent of how negative `x` is
-/// (range reduction always brings `r` into the same fixed small interval
-/// regardless of `x`'s magnitude), so this function's `f64`-precision
-/// accuracy stays uniform across its whole documented domain; narrowing to
-/// `f32` (the caller's one rounding per weight) is therefore correctly
-/// rounded to within the oracle-verified contract goal below. See
+/// Accuracy: for `|r| <= a = 0.346574`, the degree-7 Taylor truncation
+/// has relative error below `7.4e-9`. For negative r the alternating
+/// remainder is at most `a^8/8!` in magnitude and exp(r) >= exp(-a).
+/// For positive r Taylor's remainder divided by exp(r) is at most
+/// `a^8/8!`. The reduction and Horner roundoff fit in the same envelope:
+/// allow 3.9e-14 for the reduced argument (absolute error), scaled by
+/// exp(a) in the polynomial output, plus 4e-15 for rounded coefficients
+/// and Horner operations (14 operations on a polynomial with absolute
+/// term sum <= exp(a)). These bounds apply across the full input domain.
+/// For the oracle comparison after narrowing to `f32`, see
 /// `exp_f64_v1_oracle_correctly_rounded_comparison_v1` for the committed,
 /// generation-script-provenanced measurement.
 pub(crate) fn exp_f64_v1(x: f64) -> f64 {
@@ -641,8 +643,15 @@ pub(crate) fn exp_f64_v1(x: f64) -> f64 {
     scale * exp_r
 }
 
-/// Pinned natural log for finite softmax sums >= 1, identity
-/// `m4-ln-atanh23-f64-v1`. Shares the existing scalar atanh series.
+/// Identity `m4-ln-atanh23-f64-v1` names exactly
+/// `line_b_teacher_target_v1::ln_v1` in `src/line_b_teacher_target_v1.rs`.
+/// Its domain is finite binary64 `x >= 1`. Split x into `m * 2^e` and, if the
+/// `[1, 2)` mantissa exceeds the pinned sqrt(2), halve m and increment e.
+/// Set `t = (m-1)/(m+1)` and `s = t*t`. Evaluate the odd atanh series through
+/// `t^23/23` by Horner in s, from 1/23 down to 1, with plain multiplies
+/// and adds. Reconstruct as `e*ln2_hi + (e*ln2_lo + 2*(t*series))`.
+/// The existing Line B test grid measures agreement within 3 ulps of the
+/// platform ln. This is a tested accuracy figure.
 pub(crate) use crate::line_b_teacher_target_v1::ln_v1 as ln_f64_v1;
 
 /// Deterministic softmax-numerator conversion over one node's legal-action
@@ -916,9 +925,30 @@ pub(crate) fn assert_pinned_mxcsr_state_v1() {
 }
 
 #[cfg(test)]
+#[path = "deterministic_math_v1_ln_golden_inputs.rs"]
+mod ln_golden_inputs;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn ln_f64_v1_golden_bits() {
+        let expected: [&str; ln_golden_inputs::INPUTS.len()] = [
+            "PLACEHOLDER",
+            "PLACEHOLDER",
+            "PLACEHOLDER",
+            "PLACEHOLDER",
+            "PLACEHOLDER",
+            "PLACEHOLDER",
+            "PLACEHOLDER",
+            "PLACEHOLDER",
+        ];
+        for (x, bits) in ln_golden_inputs::INPUTS.into_iter().zip(expected) {
+            assert_eq!(format!("{:016x}", ln_f64_v1(x).to_bits()), bits, "x={x:?}");
+        }
+    }
 
     /// Inputs for the vectorized `tanh`: a stride through all 2^32 bit
     /// patterns (both signs, subnormals, infinities, NaN payloads), each

@@ -12,6 +12,9 @@
 //!
 //! Let N = 2^53 and T be the exact sum of the binary64 weights. Express
 //! each weight in units of 2^-226, with integer total U = T * 2^226.
+//! Even exp(-120) times (1 - 7.4e-9) exceeds 2^-174, so the smallest
+//! allowed binary64 weight has unbiased exponent at least -174. Its
+//! 53-bit significand needs no fractional bits below -174 - 52 = -226.
 //! Each quota N e_i / T equals a_i + r_i / U, with integer floor a_i
 //! and 0 <= r_i < U. The quotas sum to N. Thus the number of
 //! missing units is the integer L = sum(r_i / U). If L is positive it is
@@ -23,14 +26,35 @@
 //!
 //! # Bound against the loss
 //!
-//! For each entry compute A = floor(N e_i/T)/N and B = ceil(N e_i/T)/N.
-//! Both are exactly representable. For p = exp(returned log probability),
-//! |q_i/N - p| <= max(|A - p|, |B - p|). This per-input bound includes the
-//! pinned exp approximation and floor, rounding in S, the pinned logarithm
-//! and the final subtraction. To evaluate it in binary64, the tests bracket
-//! p around libm 0.2.16 exp (documented error below one ulp) and round the
-//! maximum endpoint distance outward. The fixture tests require this bound
-//! below 1e-8. A single grid step applies to e_i/T.
+//! Let p_i be the real exponential of the returned log probability, u = 2^-53,
+//! and n the number of enabled entries. For 1 <= n <= 45 the absolute error
+//! |q_i/N - p_i| is bounded by B(n) = 2.92e-9 + g(n) + 18u, where
+//! g(n) = (n-1)u / (1-(n-1)u). B(45) < 2.921e-9. This estimate assumes
+//! the tested ln accuracy described below. Longer enabled menus are accepted
+//! and retain the exact quota guarantee above, outside this loss estimate.
+//!
+//! * The numerator contributes `|e_i - exp(d)| / T <= 2.92e-9`. For the pinned degree-7
+//!   exp let a = 0.346574 bound |r| after reduction. For negative r the
+//!   alternating tail through degree 10 bounds the truncation by
+//!   a^8/8! (1-a/9+a^2/90) < 4.971e-9 (this bound increases with |r|).
+//!   At k = 0 and d < 0, T includes a separate unit maximum and e_i > 0.707,
+//!   so divide by at least 1.707. For k < 0 the reconstruction scales the
+//!   error by at most 1/2. Positive r requires k < 0 and its tail is at most
+//!   a^8/(8! (1-a/9)) < 5.370e-9 before scaling. The 2.92e-9 envelope
+//!   includes the reduction and Horner rounding allowance (< 6e-14 before
+//!   scaling). The maximum is exact. For d < -120 both the clamped weight
+//!   and the true numerator are below 8e-53, and T >= 1.
+//! * Positive left-to-right addition gives |S/T - 1| <= g(n), since
+//!   the first addition and all masked zeros are exact. Replacing T by S in
+//!   exp(d)/T costs at most g(n), since exp(d)/S <= 1.
+//! * Since 1 <= S <= n, ln(S) < 4. Allow 16u in absolute error for the
+//!   pinned ln (three ulps tested against platform ln, allowing another ulp
+//!   for that reference, at spacing at most 4u). This is a tested accuracy
+//!   assumption. Exp on nonpositive arguments has derivative at most one.
+//! * For z = d - pinned_ln(S) <= 0 the subtraction's rounding error is at
+//!   most u|z|. Its cost after exp is at most u|z| exp(-(1-u)|z|) < u,
+//!   including arbitrarily large finite f32 gaps. Apportionment costs < u.
+//!
 //! Cross-architecture byte verification is owed separately.
 
 use crate::deterministic_math_v1::{exp_f64_v1, ln_f64_v1, EXP_DOMAIN_FLOOR_V1};
@@ -84,7 +108,10 @@ fn weights(logits: &[f32], mask: &[bool]) -> Result<Weights, SamplerErrorV1> {
             if !logit.is_finite() {
                 return Err(SamplerErrorV1::NonFiniteLogit { index });
             }
-            max = max.max(f64::from(logit));
+            let value = f64::from(logit);
+            if value > max {
+                max = value;
+            }
         }
     }
     if max == f64::NEG_INFINITY {
@@ -95,7 +122,12 @@ fn weights(logits: &[f32], mask: &[bool]) -> Result<Weights, SamplerErrorV1> {
         .zip(mask)
         .map(|(&logit, &enabled)| {
             if enabled {
-                exp_f64_v1((f64::from(logit) - max).max(EXP_DOMAIN_FLOOR_V1))
+                let d = f64::from(logit) - max;
+                exp_f64_v1(if d < EXP_DOMAIN_FLOOR_V1 {
+                    EXP_DOMAIN_FLOOR_V1
+                } else {
+                    d
+                })
             } else {
                 0.0
             }
@@ -111,13 +143,18 @@ fn weights(logits: &[f32], mask: &[bool]) -> Result<Weights, SamplerErrorV1> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
 struct Units([u64; 5]);
 
+const _: () = assert!(EXP_DOMAIN_FLOOR_V1 == -120.0);
+
 impl Units {
     fn from_weight(weight: f64) -> Self {
         let bits = weight.to_bits();
+        debug_assert_eq!(bits >> 63, 0);
         let mut words = [0; 5];
         if bits != 0 {
+            let biased_exponent = (bits >> 52) as usize;
+            debug_assert!((1023 - 174..=1023).contains(&biased_exponent));
             let significand = (1 << 52) | (bits & ((1 << 52) - 1));
-            let shift = (bits >> 52) as usize - (1023 - 174);
+            let shift = biased_exponent - (1023 - 174);
             let low = 4 - shift / 64;
             let offset = shift % 64;
             words[low] = significand << offset;
@@ -299,6 +336,15 @@ mod tests {
             .map(|&w| Units::from_weight(w))
             .fold(Units::default(), Units::plus);
         let log_sum = ln_f64_v1(weights.values.iter().copied().sum());
+        let n = mask.iter().filter(|&&enabled| enabled).count();
+        assert!((1..=45).contains(&n));
+        let u = 1.0 / GRID_SIZE as f64;
+        let sum_error = (n - 1) as f64 * u;
+        let loss_bound = 2.92e-9 + sum_error / (1.0 - sum_error) + 18.0 * u;
+        let equal_logits = logits
+            .iter()
+            .zip(mask)
+            .all(|(&x, &enabled)| !enabled || f64::from(x) == weights.max);
         let mut end = 0;
         for (i, (&q, &w)) in sample.counts.iter().zip(&weights.values).enumerate() {
             if !mask[i] {
@@ -319,18 +365,16 @@ mod tests {
             let assigned = times(total, q);
             assert!(assigned.max(numerator).minus(assigned.min(numerator)) < total);
 
-            let (floor, remainder) = units.quota(total, GRID_BITS);
-            let ceil = floor + u64::from(remainder != Units::default());
-            let lo = floor as f64 / GRID_SIZE as f64;
-            let hi = ceil as f64 / GRID_SIZE as f64;
             let p = libm::exp(sample.log_probabilities[i]);
             // Two neighbors also cover a change in spacing at a binade edge.
             let p_lo = p.next_down().next_down().max(0.0);
             let p_hi = p.next_up().next_up().min(1.0);
-            let bound = (hi - p_lo).abs().max((lo - p_hi).abs()).next_up();
             let mass = q as f64 / GRID_SIZE as f64;
-            assert!((mass - p_lo).abs().max((mass - p_hi).abs()) <= bound);
-            assert!(bound < 1e-8, "fixture {i} has loss bound {bound:e}");
+            let error = (mass - p_lo).abs().max((mass - p_hi).abs()).next_up();
+            assert!(error <= loss_bound, "entry {i}: {error:e} > {loss_bound:e}");
+            if equal_logits {
+                assert!(error < 1e-15, "equal logits, entry {i}: {error:e}");
+            }
 
             if q != 0 {
                 // Both ends of every occupied interval, including the next
@@ -353,6 +397,7 @@ mod tests {
         for case in golden_cases::cases() {
             check_menu(&case.logits, &case.mask);
         }
+        check_menu(&[0.0, -0.346_573_56_f32], &[true; 2]);
         let logits = [f32::NAN, -120.0, 1.0, -119.0, f32::INFINITY, 0.0, -120.0];
         let mask = [false, true, true, true, false, true, true];
         check_menu(&logits, &mask);
@@ -399,12 +444,80 @@ mod tests {
     }
 
     #[test]
+    fn low_limb_weights_match_exact_dyadics() {
+        // Independent binary64 ratios a / 2^b for the pinned polynomial.
+        // Python: units = a << (226 - b). Read its five base-2^64 digits
+        // most significant first. The last case puts nonzero bits in limb 4.
+        let cases = [
+            (
+                -32.0,
+                2_006_717_132_460_649_u64,
+                97,
+                [0, 0, 0x000e_4232_7bb0_a4d2, 0, 0],
+                114,
+            ),
+            (
+                -36.5,
+                5_706_909_100_371_413,
+                105,
+                [0, 0, 0x288c_cea3_62db, 0xaa00_0000_0000_0000, 0],
+                1,
+            ),
+            (
+                -80.0,
+                3_376_375_365_715_299,
+                167,
+                [0, 0, 0, 0x5ff6_5d32_6a2b, 0x1800_0000_0000_0000],
+                0,
+            ),
+        ];
+        for (d, a, b, digits, small_count) in cases {
+            let w = weights(&[0.0, d], &[true; 2]).unwrap().values[1];
+            assert_eq!(w, a as f64 * 2.0_f64.powi(-b));
+            assert_eq!(Units::from_weight(w).0, digits);
+            // For two entries the smaller count is round(2^53*a/(2^b+a))
+            // (none of these rational quotas is halfway between integers).
+            assert_eq!(
+                counts_v1(&[0.0, d], &[true; 2]).unwrap(),
+                [GRID_SIZE - small_count, small_count]
+            );
+        }
+    }
+
+    #[test]
+    fn powers_of_two_at_limb_boundaries() {
+        // Multiplication by 2^226 gives 2^180, 2^116 and 2^52.
+        for (exponent, digits) in [
+            (-46, [0, 0, 1 << 52, 0, 0]),
+            (-110, [0, 0, 0, 1 << 52, 0]),
+            (-174, [0, 0, 0, 0, 1 << 52]),
+        ] {
+            assert_eq!(Units::from_weight(2.0_f64.powi(exponent)).0, digits);
+        }
+    }
+
+    #[test]
+    fn tiny_grid_matches_integer_quotas() {
+        // In quarters the total is 7. divmod(1024, 7) = (146, 2)
+        // and divmod(256, 7) = (36, 4). The first two tied quarters gain one.
+        assert_eq!(
+            apportion::<8>(&[1.0, 0.25, 0.25, 0.25, 0.0]),
+            [146, 37, 37, 36, 0]
+        );
+    }
+
+    #[test]
     fn all_tiny_grid_draws_recover_counts_for_each_mask() {
         let logits = [-0.34, -120.0, 0.0, 0.0, -5.0];
         for bits in 1_u32..(1 << logits.len()) {
             let mask: Vec<_> = (0..logits.len()).map(|i| bits & (1 << i) != 0).collect();
             let weights = weights(&logits, &mask).unwrap();
             let counts = apportion::<8>(&weights.values);
+            if mask.iter().all(|&enabled| enabled) {
+                // Exact Fraction quotas have floors [67, 0, 94, 94, 0].
+                // The last remainder exceeds 0.63, all others are below 0.17.
+                assert_eq!(counts, [67, 0, 94, 94, 1]);
+            }
             let mut histogram = vec![0; logits.len()];
             for k in 0..256 {
                 let i = select(&counts, k);
