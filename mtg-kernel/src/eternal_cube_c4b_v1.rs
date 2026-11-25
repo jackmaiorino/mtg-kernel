@@ -492,29 +492,40 @@ pub enum C4bTriggerV1 {
     CastSelfAfterAnotherSpellV1,
 }
 
-/// Whether the cast `events[index]` is the controller's first-or-later spell
-/// cast this turn with another spell cast before it: the turn's counter
-/// already holds every cast of the collected batch.
-fn another_spell_cast_before(
+/// Walk back from the cast through its event batch. The native turn counter
+/// resets at untap, and no spell can be cast before the upkeep marker.
+/// On reaching the start of the batch, use the counter there. For the full
+/// saved history that is the start of the game, with zero previous casts.
+fn another_spell_cast_before<'a>(
+    earlier: impl DoubleEndedIterator<Item = &'a CommittedEvent>,
+    caster: PlayerId,
+    casts_before_batch: usize,
+) -> bool {
+    for event in earlier.rev() {
+        match event {
+            CommittedEvent::UpkeepBegan { .. } => return false,
+            CommittedEvent::SpellCast { controller, .. } if *controller == caster => return true,
+            _ => {}
+        }
+    }
+    casts_before_batch > 0
+}
+
+/// The archived cast uses the same intervening-if predicate as collection.
+/// Printings without this stack trigger impose no such condition.
+pub(crate) fn copy_cast_trigger_allows(
+    abilities: &[TriggeredAbilityDef],
     state: &GameState,
-    events: &[CommittedEvent],
-    index: usize,
+    cast_at: usize,
     caster: PlayerId,
 ) -> bool {
-    let casts_by = |slice: &[CommittedEvent]| {
-        slice
-            .iter()
-            .filter(|other| {
-                matches!(
-                    other,
-                    CommittedEvent::SpellCast { controller, .. } if *controller == caster
-                )
-            })
-            .count()
-    };
-    let before_collection = usize::from(state.players[caster.index()].spells_cast_this_turn)
-        .saturating_sub(casts_by(events));
-    before_collection + casts_by(&events[..index]) > 0
+    !abilities.iter().any(|ability| {
+        ability.home_zone == Zone::Stack && ability.condition == CAST_SELF_AFTER_ANOTHER_SPELL
+    }) || another_spell_cast_before(
+        state.engine.event_history.range_v2(..cast_at).iter(),
+        caster,
+        0,
+    )
 }
 
 pub(crate) fn trigger_matches(
@@ -529,14 +540,24 @@ pub(crate) fn trigger_matches(
             let CommittedEvent::SpellCast { spell, controller } = events[index] else {
                 return false;
             };
-            spell == source
-                && state.stack.iter().any(|item| {
+            if spell != source
+                || !state.stack.iter().any(|item| {
                     item.kind == StackItemKind::Spell
                         && item.source == source
                         && item.controller == controller
                         && !item.is_copy
                 })
-                && another_spell_cast_before(state, events, index, controller)
+            {
+                return false;
+            }
+            // The live counter already includes every committed cast in the
+            // collected batch. Recover its value just before that batch.
+            let in_batch = events.iter().filter(|event| matches!(
+                event, CommittedEvent::SpellCast { controller: player, .. } if *player == controller
+            )).count();
+            let before_batch = usize::from(state.players[controller.index()].spells_cast_this_turn)
+                .saturating_sub(in_batch);
+            another_spell_cast_before(events[..index].iter(), controller, before_batch)
         }
     }
 }
@@ -660,10 +681,13 @@ const OKOYE_TRIGGERS: [TriggeredAbilityDef; 2] = [
     trigger(TriggerCondition::Etb, okoye_monarch),
     trigger(TriggerCondition::BeginningOfControllerCombat, okoye_combat),
 ];
-const SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
-    condition: TriggerCondition::StandardV1(StandardTriggerV1::EternalV1(EternalTriggerV1::C4bV1(
+const CAST_SELF_AFTER_ANOTHER_SPELL: TriggerCondition =
+    TriggerCondition::StandardV1(StandardTriggerV1::EternalV1(EternalTriggerV1::C4bV1(
         C4bTriggerV1::CastSelfAfterAnotherSpellV1,
-    ))),
+    )));
+
+const SAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: CAST_SELF_AFTER_ANOTHER_SPELL,
     home_zone: Zone::Stack,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,

@@ -174,7 +174,9 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
     // Goblin Warchief's haste and Mystic Enforcer's flying (wave P1a).
     let premodern = crate::eternal_premodern_p1a_v1::statics::granted_keywords(state, object)
         // Samut's haste and Marwyn's hexproof (wave C3b).
-        | crate::eternal_cube_c3b_v1::granted_keywords(state, object);
+        | crate::eternal_cube_c3b_v1::granted_keywords(state, object)
+        // Tuktuk Rubblefort's haste (Pauper field wave Pf2a).
+        | crate::eternal_pauper_pf2a_v1::granted_keywords(state, object);
     if grants_haste(state, object) {
         Keywords::HASTE | premodern
     } else {
@@ -460,7 +462,8 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         | crate::eternal_premodern_p2c_v1::statics::protection_mask(state, host)
         | crate::eternal_sideboard_s1c_v1::statics::protection_mask(state, host)
         | crate::eternal_premodern_p3a_v1::statics::protection_mask(state, host)
-        | crate::eternal_premodern_p3c_v1::statics::protection_mask(state, host);
+        | crate::eternal_premodern_p3c_v1::statics::protection_mask(state, host)
+        | crate::eternal_pauper_pf2a_v1::protection_mask(state, host);
     // Absolute Law's protection for all creatures (Premodern wave P3e).
     let law = crate::eternal_premodern_p3e_v1::protection_mask(state, host);
     printed

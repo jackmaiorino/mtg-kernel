@@ -551,8 +551,15 @@ pub(super) fn alternate_spell_name(def: &CardDef) -> Option<&'static str> {
     if let Some(adventure) = &def.adventure {
         return (!adventure.types.contains(&CardType::Land)).then_some(adventure.name);
     }
-    // OmenDef has no name field. Roost Seek is the only generated Omen.
-    (def.name == "Sagu Wildling" && def.omen.is_some()).then_some("Roost Seek")
+    // OmenDef has no name field; map the generated Omen cards by name.
+    if def.omen.is_some() {
+        return match def.name {
+            "Sagu Wildling" => Some("Roost Seek"),
+            "Stormshriek Feral" => Some("Flush Out"),
+            _ => None,
+        };
+    }
+    None
 }
 
 impl NameV1 {

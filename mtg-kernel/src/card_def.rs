@@ -556,6 +556,9 @@ pub enum Subtype {
     Elspeth = 772,
     Grist = 773,
     Nissa = 774,
+    /// Appended for Pauper field wave Pf2b (Pegasus Guardian and its Pegasus
+    /// token), stable id 780. A creature type.
+    Pegasus = 780,
 }
 
 impl Subtype {
@@ -985,6 +988,8 @@ impl Subtype {
         Subtype::Badger,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mole,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Pegasus,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1259,6 +1264,7 @@ impl Subtype {
             772 => Subtype::Elspeth,
             773 => Subtype::Grist,
             774 => Subtype::Nissa,
+            780 => Subtype::Pegasus,
             _ => return None,
         })
     }
@@ -1512,6 +1518,7 @@ impl Subtype {
             Subtype::Elspeth => false,
             Subtype::Grist => false,
             Subtype::Nissa => false,
+            Subtype::Pegasus => true,
         }
     }
 
@@ -1641,6 +1648,7 @@ impl Subtype {
                     | Subtype::Gamma
                     | Subtype::Badger
                     | Subtype::Mole
+                    | Subtype::Pegasus
             )
         {
             return true;
@@ -2670,6 +2678,10 @@ pub enum AltCostCondition {
     YourTurnV1,
     /// Boarding Action may pay its Beam me up cost only from its graveyard.
     BeamMeUpV1,
+    /// Prototype (CR 718): cast with the card's prototype mana cost, color,
+    /// mana value and base power/toughness on the stack and battlefield
+    /// (Boulderbranch Golem, Pauper field wave Pf2c).
+    PrototypeV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -3866,6 +3878,11 @@ pub enum DeckPreflightError {
         card_def: u16,
         name: &'static str,
     },
+    RequiresOrderedGraveyardOwnerV1 {
+        index: usize,
+        card_def: u16,
+        name: &'static str,
+    },
 }
 
 impl fmt::Display for DeckPreflightError {
@@ -3899,6 +3916,14 @@ impl fmt::Display for DeckPreflightError {
                 f,
                 "deck card {index} ({name}, definition {card_def}) requires the native opening profile"
             ),
+            DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index,
+                card_def,
+                name,
+            } => write!(
+                f,
+                "deck card {index} ({name}, definition {card_def}) requires the ordered graveyard owner"
+            ),
         }
     }
 }
@@ -3906,7 +3931,8 @@ impl fmt::Display for DeckPreflightError {
 impl std::error::Error for DeckPreflightError {}
 
 /// Admits explicitly `Full` printings to ordinary environment construction.
-/// Printings requiring the native opening owner use its separate registration.
+/// Printings requiring the native opening owner or the ordered graveyard owner
+/// use their separate registrations.
 pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
     for (index, &card_def) in card_defs.iter().enumerate() {
         let Some(def) = CARD_DEFS.get(card_def as usize) else {
@@ -3929,6 +3955,31 @@ pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPrefl
         }
         if crate::eternal_opening_v1::requires_native_opening(def) {
             return Err(DeckPreflightError::RequiresNativeOpening {
+                index,
+                card_def,
+                name: def.name,
+            });
+        }
+        if crate::full_text_v1::owns_definition(def) {
+            return Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index,
+                card_def,
+                name: def.name,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Refuses cards outside the game that require the ordered graveyard owner,
+/// and checks nothing else so existing outside-the-game inputs are unchanged.
+pub fn preflight_outside_the_game(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
+    for (index, &card_def) in card_defs.iter().enumerate() {
+        let Some(def) = CARD_DEFS.get(card_def as usize) else {
+            continue;
+        };
+        if crate::full_text_v1::owns_definition(def) {
+            return Err(DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
                 index,
                 card_def,
                 name: def.name,
@@ -4233,14 +4284,14 @@ mod tests {
         // prior definitions. Version 33 folded in Fang Dragon's Adventure
         // characteristics/effect (Forktail Sweep) and Azure Fleet Admiral's
         // `cant_be_blocked_by_monarchs_creatures` static flag.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x064a_7c98_9255_ab3c);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x1291_b789_c9aa_a269);
     }
 
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
     fn card_db_hash_full_pool_provisional_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x2430_d386_0838_f596;
+        const EXPECTED_FDN: u64 = 0xa575_a06d_e7ac_0729;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -4250,7 +4301,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x018a_a4f2_7088_c66b;
+        const EXPECTED_ETERNAL: u64 = 0x7fd4_42a7_12f0_cc4b;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
@@ -4720,6 +4771,31 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    #[cfg(feature = "eternal-fixtures")]
+    fn preflight_outside_the_game_refuses_volrath_and_accepts_other_cards() {
+        let forest = card_id_by_name("Forest").unwrap();
+        let extrapolate = card_id_by_name("Extrapolate the Impossible").unwrap();
+        let volrath = card_id_by_name("Volrath's Shapeshifter").unwrap();
+
+        assert!(preflight_outside_the_game(&[forest, extrapolate]).is_ok());
+        let error = preflight_outside_the_game(&[forest, volrath]).unwrap_err();
+        assert_eq!(
+            error,
+            DeckPreflightError::RequiresOrderedGraveyardOwnerV1 {
+                index: 1,
+                card_def: volrath,
+                name: "Volrath's Shapeshifter",
+            }
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("requires the ordered graveyard owner"),
+            "{error}"
+        );
     }
 
     #[test]

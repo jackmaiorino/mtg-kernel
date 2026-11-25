@@ -128,7 +128,7 @@ fn validate_config(config: &Config) -> Result<(), String> {
             "registration batch outside 1..64",
         )?;
         for episode in episodes {
-            episode.configurations()?;
+            super::registration_configurations_v1(episode)?;
             ensure(
                 ids.insert(&episode.id),
                 "registration training repeats an episode id",

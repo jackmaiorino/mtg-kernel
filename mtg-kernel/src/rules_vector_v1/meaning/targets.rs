@@ -815,6 +815,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::NonlandPermanentCardInOwnGraveyardManaValueAtMostSourcePowerV1 => ObjF::NonlandPermanent,
         S::CardInOwnGraveyardV1 => ObjF::AnyCard,
         S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => ObjF::Permanent,
+        S::SpellOrPermanentV1 => ObjF::Permanent,
     }
 }
 
@@ -957,6 +958,7 @@ pub(super) fn standard_target_origin(
         S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => {
             (Some(ZoneF::Battlefield), Some(RelF::You))
         }
+        S::SpellOrPermanentV1 => (Some(ZoneF::Battlefield), None),
     }
 }
 
@@ -1500,6 +1502,10 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::ControlledArtifactThenAnotherControlledArtifactOrCreatureV1 => {
             object(out, ObjF::Permanent, relation, zone);
             out.target(TargetAtom::MultipleTargets);
+        }
+        S::SpellOrPermanentV1 => {
+            object(out, ObjF::Permanent, relation, zone);
+            object(out, ObjF::Spell, relation, ZoneF::Stack);
         }
     }
 }

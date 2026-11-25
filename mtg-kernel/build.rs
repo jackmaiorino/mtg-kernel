@@ -75,9 +75,13 @@ mod build_eternal_p3e_v1;
 mod build_eternal_p3f_v1;
 mod build_eternal_p3g_v1;
 mod build_eternal_p3h_v1;
+mod build_eternal_p3i_v1;
 mod build_eternal_pf1a_v1;
 mod build_eternal_pf1b_v1;
 mod build_eternal_pf1c_v1;
+mod build_eternal_pf2a_v1;
+mod build_eternal_pf2b_v1;
+mod build_eternal_pf2c_v1;
 mod build_eternal_s1a_v1;
 mod build_eternal_s1b_v1;
 mod build_eternal_s1c_v1;
@@ -4959,7 +4963,7 @@ fn enters_battlefield_tapped(card: &CardJson) -> bool {
     card.mechanics
         .iter()
         .any(|mechanic| mechanic == "enters_tapped")
-        && card.name != "Gingerbread Cabin"
+        && !matches!(card.name.as_str(), "Gingerbread Cabin" | "Sneaky Snacker")
 }
 
 fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
@@ -7304,6 +7308,9 @@ fn omen_for(name: &str) -> String {
         "Sagu Wildling" => {
             "Some(OmenDef { cost: Cost { pips: &[Pip::Colored(ManaColor::G)], generic: 0, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: omen_effect_search_basic_land })".to_string()
         }
+        "Stormshriek Feral" => {
+            "Some(OmenDef { cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_program_eternal_pauper_pf2b_v1_flush_out })".to_string()
+        }
         _ => "None".to_string(),
     }
 }
@@ -7317,6 +7324,9 @@ fn omen_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
             reveal_selected: true,
             shuffle: true,
         }),
+        "Stormshriek Feral" => Some(AbilityEffectRecipe::StandardProgram(
+            "crate::eternal_pauper_pf2b_v1::flush_out",
+        )),
         _ => None,
     }
 }
@@ -7542,6 +7552,7 @@ fn optional_additional_cost_for(name: &str) -> &'static str {
 fn changeling_for(name: &str) -> bool {
     name == "Masked Vandal"
         || name == "Webweaver Changeling"
+        || name == "Rooftop Percher"
         || build_eternal_e5b_v1::changeling_for(name)
 }
 
@@ -11722,6 +11733,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Elspeth" => "Subtype::Elspeth",
         "Grist" => "Subtype::Grist",
         "Nissa" => "Subtype::Nissa",
+        "Pegasus" => "Subtype::Pegasus",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }
