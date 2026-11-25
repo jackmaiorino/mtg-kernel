@@ -249,7 +249,10 @@ fn select(counts: &[u64], k: u64) -> usize {
 /// goldens example can print its bits. Refuses inputs outside its domain (finite `x >= 1`).
 #[doc(hidden)]
 pub fn ln_f64_v1_for_goldens(x: f64) -> f64 {
-    assert!(x.is_finite() && x >= 1.0, "ln_f64_v1 domain is finite x >= 1, got {x}");
+    assert!(
+        x.is_finite() && x >= 1.0,
+        "ln_f64_v1 domain is finite x >= 1, got {x}"
+    );
     ln_f64_v1(x)
 }
 
