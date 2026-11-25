@@ -2,6 +2,7 @@
 use super::TensorIdV1 as T;
 use super::*;
 use crate::m4_sampler_v1::{sample_v1, SampleV1, GRID_SIZE, SAMPLER_ID_V1};
+use crate::native_policy_train_step_v1::{ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -10,6 +11,9 @@ mod tape;
 use tape::Tape;
 #[path = "training/fixture.rs"]
 pub mod fixture;
+
+/// D0.9 step size for all three parameter sets.
+const M4_LEARNING_RATE: f32 = 1e-3;
 
 fn m4_exp(x: f64) -> f64 {
     crate::deterministic_math_v1::exp_f64_v1(x)
@@ -241,11 +245,13 @@ fn pick_credit(r: f64, v: f32, seats: usize) -> (f64, f64, f32) {
 #[path = "training/paths.rs"]
 mod paths;
 
-fn score_means(scores: &[[i8; 7]; 2]) -> Result<[f64; 2]> {
+fn chair_returns(scores: &[[i8; 7]; 2]) -> Result<(f64, [f64; 2])> {
     if scores.iter().flatten().any(|&s| !(-1..=1).contains(&s)) {
         return Err("invalid completed game score".into());
     }
-    Ok(scores.map(|s| f64::from(s.iter().copied().map(i32::from).sum::<i32>()) / 7.))
+    let sums = scores.map(|s| s.into_iter().map(i32::from).sum::<i32>());
+    let pick_return = f64::from(sums[0] + sums[1]) / 14.;
+    Ok((pick_return, sums.map(|sum| f64::from(sum) / 7.)))
 }
 
 struct Batch {
@@ -338,7 +344,7 @@ pub fn update(
     for (i, chair) in chairs.iter().enumerate() {
         let (picker, builder, build_count) = match &chair.role {
             Role::Learning { scores } => {
-                score_means(scores)?;
+                chair_returns(scores)?;
                 (&*model, &*model, 2)
             }
             Role::Older {
@@ -380,8 +386,8 @@ pub fn update(
     }
     for chair in chairs {
         if let Role::Learning { scores } = &chair.role {
-            let [a, b] = score_means(scores)?;
-            paths::picks(model, rows, chair, (a + b) / 2., Some(&mut batch))?;
+            let (pick_return, [a, b]) = chair_returns(scores)?;
+            paths::picks(model, rows, chair, pick_return, Some(&mut batch))?;
             paths::builds(
                 model,
                 rows,
@@ -406,10 +412,10 @@ fn adam(model: &mut ModelV1, opt: &mut Optimizer, phase: Phase, batch: &Batch) -
         }
         *step = step.checked_add(1).ok_or("Adam counter overflow")?;
         let power = i32::try_from(*step).map_err(|_| "Adam power overflow")?;
-        let correction1 = 1. - MATH.powi_f64_v1(f64::from(0.9_f32), power);
-        let correction2 = 1. - MATH.powi_f64_v1(f64::from(0.999_f32), power);
+        let correction1 = 1. - MATH.powi_f64_v1(f64::from(ADAM_BETA1_V1), power);
+        let correction2 = 1. - MATH.powi_f64_v1(f64::from(ADAM_BETA2_V1), power);
         *correction = (
-            (f64::from(0.001_f32) / correction1) as f32,
+            (f64::from(M4_LEARNING_RATE) / correction1) as f32,
             correction2.sqrt() as f32,
         );
     }
@@ -433,9 +439,9 @@ fn adam(model: &mut ModelV1, opt: &mut Optimizer, phase: Phase, batch: &Batch) -
             let g = batch.grads[i][j];
             let m = &mut next.first[i][j];
             let v = &mut next.second[i][j];
-            *m += (g - *m) * (1. - 0.9_f32);
-            *v = *v * 0.999 + g * g * (1. - 0.999_f32);
-            *w += -step_size * *m / (v.sqrt() / root + 1e-8);
+            *m += (g - *m) * (1. - ADAM_BETA1_V1);
+            *v = *v * ADAM_BETA2_V1 + g * g * (1. - ADAM_BETA2_V1);
+            *w += -step_size * *m / (v.sqrt() / root + ADAM_EPSILON_V1);
             if !w.is_finite() || !m.is_finite() || !v.is_finite() || *v < 0. {
                 return Err("nonfinite Adam update".into());
             }

@@ -141,15 +141,11 @@ mod tests {
     fn additive_derivative_and_wrong_losses() {
         let m = TwoAction::new(0.).menu();
         let p = m4_exp(m[0].log_probabilities[1].clamp(-120., 0.));
-        eprintln!("part 1 backward p bits = {:#018x}", p.to_bits());
+        assert_eq!(p.to_bits(), 0x3fe0_0000_0000_0000);
         for baseline in [0., 0.5] {
             let (loss, g) = enumerate(0., baseline, 2, payoff);
             close(loss, f64::from(baseline) * 0.5_f64.ln(), 1e-12);
-            if p == 0.5 {
-                assert_eq!(g.to_bits(), (-0.25f64).to_bits());
-            } else {
-                close(g, -0.25, 0.25e-12);
-            }
+            assert_eq!(g.to_bits(), (-0.25f64).to_bits());
         }
         close(
             enumerate(0., 0., 2, |a, b| [payoff(a, b).iter().sum(); 2]).1,
