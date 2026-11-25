@@ -22,7 +22,7 @@ fn validate_panel(episodes: &[ExpandedEpisodeV1], workers: usize) -> Result<(), 
     validate_collection_workers_v1(workers)?;
     let mut ids = BTreeSet::new();
     for episode in episodes {
-        episode.configurations()?;
+        super::registration_configurations_v1(episode)?;
         ensure(
             ids.insert(&episode.id),
             "registration evaluation repeats an external episode id",

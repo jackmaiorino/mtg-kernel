@@ -293,6 +293,7 @@ fn preservation_check_v1(
                 .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
             priority_windows: None,
             london_keep_offset: None,
+            deck_format: None,
         };
         let trajectory = collect_episode(&mut child_policy, &learner, None, &episode)?;
         ensure(
