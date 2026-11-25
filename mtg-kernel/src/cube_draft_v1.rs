@@ -1138,6 +1138,56 @@ impl GameRecord {
     }
 }
 
+/// How many chosen actions back the earlier halt census looked for an action
+/// with a source card (its "last action's source" column).
+pub const RECENT_ACTIONS: u64 = 10;
+
+/// What a game's driver saw besides its end, for halt censuses: the
+/// session's own counts and the source cards of the actions it chose. A
+/// field the game never reached stays `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameTally {
+    /// The terminal reply's `policy_step_count`.
+    pub policy_steps: Option<u64>,
+    /// The terminal reply's `physical_decision_count`.
+    pub physical_decisions: Option<u64>,
+    /// `step` of the last decision reply.
+    pub last_step: Option<u64>,
+    /// `physical_decision_id` of the last decision reply.
+    pub last_physical_decision_id: Option<u64>,
+    /// Registry id of the source card (`semantic.source.card_db_id`) of the
+    /// last action chosen, if it had one.
+    pub last_action_source: Option<u16>,
+    /// The source card of the latest chosen action that had one.
+    latest_source: Option<u16>,
+    /// Actions chosen after that one.
+    actions_after_latest_source: u64,
+}
+
+impl GameTally {
+    fn record_action(&mut self, action: &Value) {
+        let source = action["semantic"]["source"]["card_db_id"]
+            .as_u64()
+            .filter(|&id| id < CARD_DEFS.len() as u64)
+            .map(|id| id as u16);
+        self.last_action_source = source;
+        if source.is_some() {
+            self.latest_source = source;
+            self.actions_after_latest_source = 0;
+        } else {
+            self.actions_after_latest_source += 1;
+        }
+    }
+
+    /// The source card of the latest of the last [`RECENT_ACTIONS`] chosen
+    /// actions that had one, as the earlier census's "last action's source"
+    /// column counted it.
+    pub fn recent_action_source(&self) -> Option<u16> {
+        self.latest_source
+            .filter(|_| self.actions_after_latest_source < RECENT_ACTIONS)
+    }
+}
+
 /// All games of a pod.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PodResult {
@@ -1184,7 +1234,7 @@ pub fn play_pod_round_robin_with_caps(
     caps: &GameCaps,
 ) -> PodResult {
     let games = (0..POD_GAMES)
-        .map(|game| play_pod_game_unchecked(decks, seed, game, caps))
+        .map(|game| play_pod_game_unchecked(decks, seed, game, caps).0)
         .collect();
     PodResult {
         pod_seed: seed,
@@ -1201,6 +1251,17 @@ pub fn play_pod_game(
     game: usize,
     caps: &GameCaps,
 ) -> Result<GameRecord, CubeDraftError> {
+    play_pod_game_tallied(decks, pod_seed, game, caps).map(|(record, _)| record)
+}
+
+/// [`play_pod_game`], also returning what the driver saw ([`GameTally`]).
+/// The game is the same: the tally draws no randomness.
+pub fn play_pod_game_tallied(
+    decks: &[Deck; SEATS],
+    pod_seed: u64,
+    game: usize,
+    caps: &GameCaps,
+) -> Result<(GameRecord, GameTally), CubeDraftError> {
     if game >= POD_GAMES {
         return Err(CubeDraftError::GameOutOfRange { game });
     }
@@ -1212,28 +1273,81 @@ fn play_pod_game_unchecked(
     pod_seed: u64,
     game: usize,
     caps: &GameCaps,
-) -> GameRecord {
+) -> (GameRecord, GameTally) {
+    let seats = pod_game_seats_unchecked(pod_seed, game);
+    play_seated_game(
+        [&decks[seats[0]], &decks[seats[1]]],
+        seats,
+        game_seed(pod_seed, game),
+        game,
+        caps,
+    )
+}
+
+/// The seats of pod game `game` as session players (p0 first): its pairing
+/// ([`pod_pairings`]) in the order of the game's seeded coin.
+pub fn pod_game_seats(pod_seed: u64, game: usize) -> Result<[usize; 2], CubeDraftError> {
+    if game >= POD_GAMES {
+        return Err(CubeDraftError::GameOutOfRange { game });
+    }
+    Ok(pod_game_seats_unchecked(pod_seed, game))
+}
+
+fn pod_game_seats_unchecked(pod_seed: u64, game: usize) -> [usize; 2] {
     let (low, high) = pod_pairings()[game];
     let seed = game_seed(pod_seed, game);
     let coin = SplitMix64::seed(derive_seed(seed, SeedStream::GameCoin, 0)).next_u64() & 1;
-    let seats = if coin == 0 { [low, high] } else { [high, low] };
+    if coin == 0 {
+        [low, high]
+    } else {
+        [high, low]
+    }
+}
+
+/// Plays `decks[0]` as session player p0 against `decks[1]` as p1 from one
+/// game seed, with uniform-random legal actions. The session's `env_seed`
+/// and the action stream derive from `seed` exactly as a pod game's derive
+/// from its [`game_seed`]; there is no seat coin, so the seats of the record
+/// are `[0, 1]` (deck indices). `episode` is the session episode id and the
+/// record's `game`.
+pub fn play_seeded_game_tallied(
+    decks: [&Deck; 2],
+    seed: u64,
+    episode: usize,
+    caps: &GameCaps,
+) -> (GameRecord, GameTally) {
+    play_seated_game(decks, [0, 1], seed, episode, caps)
+}
+
+fn play_seated_game(
+    decks: [&Deck; 2],
+    seats: [usize; 2],
+    seed: u64,
+    game: usize,
+    caps: &GameCaps,
+) -> (GameRecord, GameTally) {
     let env_seed = derive_seed(seed, SeedStream::GameEnv, 0);
     let action_seed = derive_seed(seed, SeedStream::GameActions, 0);
     let setup = GameSetup {
-        decks: [&decks[seats[0]], &decks[seats[1]]],
+        decks,
         seats,
         episode: game as u64,
         env_seed,
         action_seed,
     };
-    let (decisions, end) = catch_game_panic(|decisions| drive_game(&setup, caps, decisions));
-    GameRecord {
-        game,
-        seats,
-        env_seed,
-        decisions,
-        end,
-    }
+    let mut tally = GameTally::default();
+    let (decisions, end) =
+        catch_game_panic(|decisions| drive_game(&setup, caps, decisions, &mut tally));
+    (
+        GameRecord {
+            game,
+            seats,
+            env_seed,
+            decisions,
+            end,
+        },
+        tally,
+    )
 }
 
 /// Runs one game's `play`, which counts its decisions in the counter it is
@@ -1307,7 +1421,12 @@ fn terminal_end(terminal: &Value, seats: [usize; 2]) -> GameEnd {
     }
 }
 
-fn drive_game(setup: &GameSetup<'_>, caps: &GameCaps, decisions: &mut u64) -> GameEnd {
+fn drive_game(
+    setup: &GameSetup<'_>,
+    caps: &GameCaps,
+    decisions: &mut u64,
+    tally: &mut GameTally,
+) -> GameEnd {
     let mut rng = SplitMix64::seed(setup.action_seed);
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
     let mut request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "reset",
@@ -1335,10 +1454,21 @@ fn drive_game(setup: &GameSetup<'_>, caps: &GameCaps, decisions: &mut u64) -> Ga
                     message: text(&reply["error"]["message"]),
                 };
             }
-            Some("terminal") => return terminal_end(&reply["terminal"], setup.seats),
+            Some("terminal") => {
+                let terminal = &reply["terminal"];
+                tally.policy_steps = terminal["policy_step_count"].as_u64();
+                tally.physical_decisions = terminal["physical_decision_count"].as_u64();
+                return terminal_end(terminal, setup.seats);
+            }
             _ => {}
         }
         let decision = &reply["decision"];
+        if let Some(step) = decision["step"].as_u64() {
+            tally.last_step = Some(step);
+        }
+        if let Some(id) = decision["physical_decision_id"].as_u64() {
+            tally.last_physical_decision_id = Some(id);
+        }
         let actions = match decision["legal_actions"].as_array() {
             Some(actions) if !actions.is_empty() => actions,
             _ => {
@@ -1353,6 +1483,7 @@ fn drive_game(setup: &GameSetup<'_>, caps: &GameCaps, decisions: &mut u64) -> Ga
         }
         let action = &actions[uniform_index(&mut rng, actions.len())];
         *decisions += 1;
+        tally.record_action(action);
         let step = *decisions;
         request = json!({"schema_version": SESSION_SCHEMA_VERSION, "request_type": "step",
             "request_id": format!("step-{step}"),

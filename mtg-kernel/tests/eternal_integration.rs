@@ -1,5 +1,7 @@
 //! Consolidated integration tests; CI runs each module in its own process.
 
+#[path = "eternal/cube_b_census_v1.rs"]
+mod cube_b_census_v1;
 #[path = "eternal/cube_draft_v1.rs"]
 mod cube_draft_v1;
 #[path = "eternal/cube_foreign_adventure_v1.rs"]
