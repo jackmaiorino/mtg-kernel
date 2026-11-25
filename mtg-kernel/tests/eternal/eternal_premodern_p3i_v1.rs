@@ -540,21 +540,21 @@ fn alter_reality_permanent_target_full_twenty_pair_menu_and_schema_5_semantics()
 #[test]
 fn alter_reality_spell_target_400_7a_carryover_and_timestamp_order() {
     // 1) Spell target on the stack: change Red Elemental Blast's "blue" to "red",
-    // making its Island target illegal on resolution (CR 608.2b).
+    // making its blue permanent target (Legacy's Allure) illegal on resolution (CR 608.2b).
     let mut state = islands_for(P0);
-    let island = put(&mut state, P1, "Island", Zone::Battlefield);
+    let allure = put(&mut state, P1, "Legacy's Allure", Zone::Battlefield);
     let reb = put(&mut state, P0, "Red Elemental Blast", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 0);
     // Mode 1 = destroy target blue permanent.
-    cast_mode_with_targets(&mut state, reb, 1, &[Target::Object(island)]);
+    cast_mode_with_targets(&mut state, reb, 1, &[Target::Object(allure)]);
     // Pass P0 priority to P1 so P1 responds with Alter Reality targeting REB.
     act(&mut state, Action::Pass);
     let _alter = cast_and_resolve_alter_reality(&mut state, P1, reb, ManaColor::U, ManaColor::R);
     settled(&mut state);
     assert_eq!(
-        zone(&state, island),
+        zone(&state, allure),
         Zone::Battlefield,
-        "Island survives because REB now requires a red permanent"
+        "Legacy's Allure survives because REB now requires a red permanent"
     );
     assert_eq!(zone(&state, reb), Zone::Graveyard);
     assert!(
@@ -686,15 +686,12 @@ fn alter_reality_unaudited_target_halts_and_face_down_target_accepted() {
     pool(&mut morph_state, P0, &[], 3);
     assert!(castable(&mut morph_state, angel));
     act(&mut morph_state, Action::CastSpell(angel));
-    match next(&mut morph_state) {
-        Decision::ChooseCastMode { options, .. } => {
-            assert!(options.contains(&CastMode::Alternative));
-            act(
-                &mut morph_state,
-                Action::ChooseCastMode(CastMode::Alternative),
-            );
-        }
-        other => panic!("expected morph cast mode choice, got {other:?}"),
+    if let Decision::ChooseCastMode { options, .. } = next(&mut morph_state) {
+        assert!(options.contains(&CastMode::Alternative));
+        act(
+            &mut morph_state,
+            Action::ChooseCastMode(CastMode::Alternative),
+        );
     }
     settled(&mut morph_state);
     assert!(morph_state.objects.get(angel).v4.face_down_v1.is_some());

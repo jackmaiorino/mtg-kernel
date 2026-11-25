@@ -71,6 +71,7 @@
   "eternal_premodern_p3f_v1": 1,
   "eternal_premodern_p3g_v1": 1,
   "eternal_premodern_p3h_v1": 20,
+  "eternal_premodern_p3i_v1": 58,
   "eternal_public_shroud_v1": 1,
   "eternal_sideboard_s1a_v1": 1,
   "eternal_sideboard_s1b_v1": 1,
@@ -94,7 +95,8 @@
   "knowledge_owned_draws_v1": 1,
   "portent_owned_draws_v1": 1,
   "premodern_feb_jsonl_v1": 505,
-  "standstill_owned_draws_v1": 1
+  "standstill_owned_draws_v1": 1,
+  "text_color_change_v1": 1
  },
  "isolated": {
   "eternal_integration": {
