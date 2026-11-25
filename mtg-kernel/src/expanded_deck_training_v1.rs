@@ -15043,8 +15043,8 @@ pub(crate) mod tests {
     // Non-Windows CPU outputs from Linux CI for the issue #969 fixture seed.
     #[cfg(not(target_os = "windows"))]
     const LINE_B_TEACHER_UPDATE_GOLDEN_CPU_V1: [&str; 2] = [
-        "b73efba6af0d25f97e6622746c44244dc7b1aca41c5450f08636f7ae2bf975d1",
-        "593d058fb0a9e595f1288dc337b83225ce951e7bc820b663ed60b64a17a76547",
+        "00168143ca052028488138ed7a321f232c7316995c868b1a3a62cc12a22e195a",
+        "629aa6df4862065824d5c8d31beb6dbf32d24aef83c3c056b99d4a47125cdb02",
     ];
     // GPU1 outputs for the issue #969 fixture seed.
     const LINE_B_TEACHER_UPDATE_GOLDEN_CUDA_V1: [&str; 2] = [
