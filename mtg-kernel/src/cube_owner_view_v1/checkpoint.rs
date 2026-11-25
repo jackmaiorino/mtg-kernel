@@ -140,13 +140,13 @@ pub struct CheckpointHeader {
 }
 
 impl CheckpointHeader {
-    /// Parses a checkpoint JSON document and validates every header field and
-    /// `m4-interfaces/v2` change 2's `head_updates` key order and encoding.
+    /// Parses a flat top-level checkpoint JSON document and validates every
+    /// header field and `m4-interfaces/v2` change 2's `head_updates` key order
+    /// and unquoted decimal integer encoding.
     ///
-    /// If the checkpoint wraps metadata in a `"header"` object, `head_updates`
-    /// is checked as the last key of `"header"`; otherwise it is checked as
-    /// the last key of the top-level object when no body keys follow, or at
-    /// least verified for exact 6-key order and unquoted decimal integer encoding.
+    /// Top-level `head_updates` is required and no other known header key may
+    /// follow it. When D6's typed checkpoint loader lands, this fixture header
+    /// scanner will be replaced by D6's loader.
     pub fn from_json_str(text: &str) -> Result<Self, CheckpointHeaderError> {
         let header: Self = serde_json::from_str(text)
             .map_err(|err| CheckpointHeaderError::Json(err.to_string()))?;
@@ -196,13 +196,13 @@ fn check_sha256_hex(field: &'static str, value: &str) -> Result<(), CheckpointHe
     Ok(())
 }
 
-/// Inspects raw JSON text to enforce `m4-interfaces/v2` change 2 on
+/// Inspects raw top-level JSON text to enforce `m4-interfaces/v2` change 2 on
 /// `head_updates`:
-/// 1. Keys inside `head_updates` appear in the exact order
+/// 1. `head_updates` is present as a top-level key and no known header key
+///    appears after it.
+/// 2. Keys inside `head_updates` appear in the exact order
 ///    `pick`, `value`, `count`, `pointer`, `type_set`, `split`.
-/// 2. Each count is encoded as an unquoted decimal integer.
-/// 3. If the JSON object is a header-only checkpoint (or has a `"header"`
-///    sub-object), `head_updates` is its last key.
+/// 3. Each count is encoded as an unquoted decimal integer.
 pub fn validate_head_updates_raw_json(text: &str) -> Result<(), CheckpointHeaderError> {
     let mut parser = RawJsonScanner::new(text);
     let top_entries = parser.scan_object_keys_with_spans()?;
@@ -481,7 +481,15 @@ impl Default for FixtureStandInParams {
     }
 }
 
-/// Complete small fixture checkpoint JSON (D6 header + optional stand-in block).
+/// Model identity string used exclusively by stand-in fixture checkpoints.
+pub const FIXTURE_MODEL_IDENTITY_V1: &str = "m4-draft-build-standin-fixture/v1";
+
+/// Complete small fixture checkpoint JSON (D6 header plus required stand-in
+/// parameters).
+///
+/// `fixture_standin` has no serde default: a real checkpoint JSON that omits
+/// `fixture_standin` is refused instead of silently falling back to synthetic
+/// weights.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FixtureCheckpointFile {
     pub schema: String,
@@ -495,7 +503,6 @@ pub struct FixtureCheckpointFile {
     pub update: u64,
     pub state_sha256: String,
     pub head_updates: HeadUpdates,
-    #[serde(default)]
     pub fixture_standin: FixtureStandInParams,
 }
 
@@ -524,7 +531,7 @@ impl FixtureCheckpointFile {
         ));
         Self {
             schema: CHECKPOINT_SCHEMA_V1.to_owned(),
-            model_identity: "m4-draft-build-standin-fixture/v1".to_owned(),
+            model_identity: FIXTURE_MODEL_IDENTITY_V1.to_owned(),
             parameter_layout_sha256: fixture_digest_hex("fixture-parameter-layout-v1"),
             card_index_sha256: fixture_digest_hex("fixture-card-index-v1"),
             cube_table_sha256: fixture_digest_hex("fixture-cube-table-v1"),
@@ -556,10 +563,23 @@ impl FixtureCheckpointFile {
         }
     }
 
-    /// Parses a fixture checkpoint JSON document, enforcing all header rules.
+    /// Parses a fixture checkpoint JSON document, enforcing all header rules,
+    /// requiring explicit `fixture_standin` parameters, and refusing any file
+    /// whose `model_identity` is not [`FIXTURE_MODEL_IDENTITY_V1`].
     pub fn from_json_str(text: &str) -> Result<Self, CheckpointHeaderError> {
         let _header = CheckpointHeader::from_json_str(text)?;
-        serde_json::from_str(text).map_err(|err| CheckpointHeaderError::Json(err.to_string()))
+        let parsed: Self = serde_json::from_str(text)
+            .map_err(|err| CheckpointHeaderError::Json(err.to_string()))?;
+        if parsed.model_identity != FIXTURE_MODEL_IDENTITY_V1 {
+            return Err(CheckpointHeaderError::InvalidField {
+                field: "model_identity",
+                detail: format!(
+                    "expected fixture model identity {:?}, got {:?}; real checkpoints are refused on the fixture path",
+                    FIXTURE_MODEL_IDENTITY_V1, parsed.model_identity
+                ),
+            });
+        }
+        Ok(parsed)
     }
 }
 

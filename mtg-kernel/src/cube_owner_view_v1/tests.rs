@@ -1,11 +1,32 @@
 use super::*;
 use crate::card_def::{card_id_by_name, KERNEL_CARDDB_HASH};
-use crate::cube_draft_v1::{run_draft, uniform_pickers, CubePool, PACK_SIZE, POOL_CARDS, SEATS};
+use crate::cube_draft_v1::{
+    basic_land_ids, deck_seed, derive_seed, generate_packs, run_draft, uniform_pickers, CubePool,
+    SeedStream, PACK_SIZE, POOL_CARDS, SEATS,
+};
 use crate::cube_owner_view_v1::if2::{run_seat_draft, SeatPicker, UniformSeatPicker};
-use sha2::Digest;
-use std::collections::BTreeSet;
+use crate::m4_sampler_v1::GRID_SIZE;
+use crate::state::SplitMix64;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn fresh_temp_dir(tag: &str) -> PathBuf {
+    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("target")
+        .join("d16_test_tmp")
+        .join(format!("{tag}_{}_{n}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("create temp dir on N:");
+    dir
+}
 
 /// Loads the committed Vintage Cube list and gap record, sorts its registry
 /// ids in ascending order, and constructs an ordered `CubePool` for testing.
@@ -22,12 +43,21 @@ fn test_ordered_pool() -> (CubePool, String) {
     let mut ids: Vec<u16> = raw_pool.ids().to_vec();
     ids.sort_unstable();
     ids.dedup();
-    // Keep at least 484 ascending cards (or all valid cube cards).
     cube_pool_from_ordered_ids(&ids).expect("build ascending ordered pool")
 }
 
 fn carddb_hex() -> String {
     format!("{KERNEL_CARDDB_HASH:016x}")
+}
+
+/// Independent seed oracle: computes `seed(["owner-view", "draft", run, idx])`
+/// directly via SHA-256 without calling any production seed helper.
+fn oracle_owner_view_seed(run: &str, idx: u64) -> u64 {
+    let compact = format!("[\"owner-view\",\"draft\",\"{run}\",{idx}]");
+    let digest = Sha256::digest(compact.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(bytes) & ((1u64 << 63) - 1)
 }
 
 #[test]
@@ -65,8 +95,8 @@ fn seeds_match_python_deal_py_reference_values() {
             got, expected_seed,
             "seed mismatch for run={run_id} draft={draft_idx}"
         );
+        assert_eq!(oracle_owner_view_seed(run_id, draft_idx), expected_seed);
     }
-    // Reject invalid run ids.
     assert!(owner_view_draft_seed("B1-U0032", 0).is_err());
     assert!(owner_view_draft_seed("", 0).is_err());
     assert!(owner_view_draft_seed("b1_u0032", 0).is_err());
@@ -107,7 +137,6 @@ fn sample_pick_schedule_matches_d021_and_l4() {
             adjusted_indices.push(m);
         }
     }
-    // D0.21 [L4]: only m = 8 changes, from step 14 to step 13.
     assert_eq!(adjusted_indices, vec![8]);
     let m8 = sample_pick_spec(8);
     assert_eq!(m8.raw_step, 14);
@@ -171,6 +200,556 @@ fn checkpoint_header_enforces_if2_change2_head_updates() {
 }
 
 #[test]
+fn cli_refuses_real_checkpoint_and_requires_explicit_fixture_flag() {
+    let dir = fresh_temp_dir("cli_refusal");
+    let (pool, pool_sha) = test_ordered_pool();
+    let pool_path = dir.join("ordered_pool.json");
+    let mut pool_json = serde_json::to_string(pool.ids()).expect("serialize pool ids");
+    pool_json.push('\n');
+    fs::write(&pool_path, pool_json.as_bytes()).expect("write ordered pool");
+
+    // 1. Write all 6 fixture checkpoints via the CLI.
+    let fixtures_dir = dir.join("fixtures");
+    cli::run_cli_args(&[
+        "--write-fixture-checkpoints".to_owned(),
+        fixtures_dir.to_string_lossy().into_owned(),
+    ])
+    .expect("write fixture checkpoints");
+
+    // 2. Construct a real-looking checkpoint JSON (valid header, real model
+    //    identity, no fixture_standin field).
+    let sample_fixture = FixtureCheckpointFile::for_shakedown_fixture(
+        "b1",
+        32,
+        HeadUpdates {
+            pick: 0,
+            value: 0,
+            count: 32,
+            pointer: 32,
+            type_set: 32,
+            split: 32,
+        },
+        &carddb_hex(),
+    );
+    let real_ckpt_header = CheckpointHeader {
+        model_identity: "m4-draft-build/v1".to_owned(),
+        ..sample_fixture.header()
+    };
+    let real_ckpt_path = dir.join("real_b1_u0032.checkpoint.json");
+    fs::write(
+        &real_ckpt_path,
+        serde_json::to_string_pretty(&real_ckpt_header).expect("serialize real header"),
+    )
+    .expect("write real checkpoint");
+
+    // 3. Real checkpoint without --fixture MUST be refused clearly.
+    let out_refused_real = dir.join("refused_real.html");
+    let err = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "b1-u0032".to_owned(),
+        "--checkpoint".to_owned(),
+        real_ckpt_path.to_string_lossy().into_owned(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_refused_real.to_string_lossy().into_owned(),
+    ])
+    .expect_err("CLI must refuse real checkpoint until D6 loader exists");
+    assert!(
+        err.contains("real checkpoint rendering is refused") && err.contains("D6"),
+        "unexpected refusal message: {err}"
+    );
+    assert!(!out_refused_real.exists());
+
+    // 4. Real checkpoint (lacking fixture_standin) even WITH --fixture MUST be refused.
+    let out_refused_real_with_flag = dir.join("refused_real_with_flag.html");
+    let err_with_flag = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "b1-u0032".to_owned(),
+        "--checkpoint".to_owned(),
+        real_ckpt_path.to_string_lossy().into_owned(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--fixture".to_owned(),
+        "--out".to_owned(),
+        out_refused_real_with_flag.to_string_lossy().into_owned(),
+    ])
+    .expect_err("CLI must refuse real checkpoint without fixture_standin even with --fixture");
+    assert!(
+        err_with_flag.contains("fixture_standin") || err_with_flag.contains("invalid fixture"),
+        "unexpected error: {err_with_flag}"
+    );
+    assert!(!out_refused_real_with_flag.exists());
+
+    // 5. Fixture checkpoint WITHOUT --fixture MUST be refused.
+    let fixture_b1_32 = fixtures_dir.join("b1-u0032.checkpoint.json");
+    let out_no_flag = dir.join("refused_fixture_no_flag.html");
+    assert!(cli::run_cli_args(&[
+        "--run".to_owned(),
+        "b1-u0032".to_owned(),
+        "--checkpoint".to_owned(),
+        fixture_b1_32.to_string_lossy().into_owned(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        out_no_flag.to_string_lossy().into_owned(),
+    ])
+    .is_err());
+    assert!(!out_no_flag.exists());
+
+    // 6. Removed unpinned --cube / --gaps flags MUST be rejected.
+    let err_cube_flag = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "b1-u0032".to_owned(),
+        "--checkpoint".to_owned(),
+        fixture_b1_32.to_string_lossy().into_owned(),
+        "--cube".to_owned(),
+        "data/cube_v1/mtgo_vintage_cube_20261007.json".to_owned(),
+        "--gaps".to_owned(),
+        "data/cube_v1/mtgo_vintage_cube_20261007_gaps.json".to_owned(),
+        "--fixture".to_owned(),
+        "--out".to_owned(),
+        dir.join("refused_cube.html").to_string_lossy().into_owned(),
+    ])
+    .expect_err("--cube flag must not be accepted");
+    assert!(err_cube_flag.contains("unknown flag"));
+
+    // 7. Mismatched checkpoint (b1-u0064 checkpoint passed to --run b1-u0032) MUST be refused.
+    let fixture_b1_64 = fixtures_dir.join("b1-u0064.checkpoint.json");
+    let err_ckpt_mismatch = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "b1-u0032".to_owned(),
+        "--checkpoint".to_owned(),
+        fixture_b1_64.to_string_lossy().into_owned(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--fixture".to_owned(),
+        "--out".to_owned(),
+        dir.join("refused_mismatch.html")
+            .to_string_lossy()
+            .into_owned(),
+    ])
+    .expect_err("checkpoint 64 must be refused for --run b1-u0032");
+    assert!(err_ckpt_mismatch.contains("checkpoint mismatch"));
+
+    // 8. Mismatched --ordered-pool-sha256 MUST be refused.
+    let wrong_sha = "0".repeat(64);
+    let err_pool_sha = cli::run_cli_args(&[
+        "--run".to_owned(),
+        "b1-u0032".to_owned(),
+        "--checkpoint".to_owned(),
+        fixture_b1_32.to_string_lossy().into_owned(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        wrong_sha,
+        "--fixture".to_owned(),
+        "--out".to_owned(),
+        dir.join("refused_pool_sha.html")
+            .to_string_lossy()
+            .into_owned(),
+    ])
+    .expect_err("wrong ordered-pool sha256 must be refused");
+    assert!(err_pool_sha.contains("sha256 mismatch"));
+
+    // 9. Valid fixture checkpoint + explicit --fixture + pinned --ordered-pool-sha256 SUCCEEDS.
+    let out_ok = dir.join("b1-u0032.html");
+    cli::run_cli_args(&[
+        "--run".to_owned(),
+        "b1-u0032".to_owned(),
+        "--checkpoint".to_owned(),
+        fixture_b1_32.to_string_lossy().into_owned(),
+        "--ordered-pool".to_owned(),
+        pool_path.to_string_lossy().into_owned(),
+        "--ordered-pool-sha256".to_owned(),
+        pool_sha,
+        "--fixture".to_owned(),
+        "--out".to_owned(),
+        out_ok.to_string_lossy().into_owned(),
+    ])
+    .expect("valid fixture CLI render succeeds");
+    let rendered = fs::read_to_string(&out_ok).expect("read rendered HTML");
+    assert!(rendered.contains(
+        "Shakedown, under random play: the pilot plays uniformly at random. Weights are discarded."
+    ));
+    assert!(
+        rendered.contains("rendered with the uniform fixture: every pick is uniform over the pack")
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn page_identity_mismatch_and_pool_mismatch_are_refused() {
+    let (pool, pool_sha) = test_ordered_pool();
+    let fixture_b1_32 = FixtureCheckpointFile::for_shakedown_fixture(
+        "b1",
+        32,
+        HeadUpdates {
+            pick: 0,
+            value: 0,
+            count: 32,
+            pointer: 32,
+            type_set: 32,
+            split: 32,
+        },
+        &carddb_hex(),
+    );
+    let fixture_b1_64 = FixtureCheckpointFile::for_shakedown_fixture(
+        "b1",
+        64,
+        HeadUpdates {
+            pick: 0,
+            value: 0,
+            count: 64,
+            pointer: 64,
+            type_set: 64,
+            split: 64,
+        },
+        &carddb_hex(),
+    );
+    let fixture_k1_64 = FixtureCheckpointFile::for_shakedown_fixture(
+        "k1",
+        64,
+        HeadUpdates {
+            pick: 64,
+            value: 64,
+            count: 192,
+            pointer: 192,
+            type_set: 192,
+            split: 192,
+        },
+        &carddb_hex(),
+    );
+    let standin_32 = StandInCheckpoint::from_fixture(&fixture_b1_32);
+    let standin_64 = StandInCheckpoint::from_fixture(&fixture_b1_64);
+    let standin_k64 = StandInCheckpoint::from_fixture(&fixture_k1_64);
+
+    // 1. Undeclared run ids are refused (no prefix fallback, nothing for M5).
+    for undeclared in ["b1-u0000", "b2-u0032", "k1-u0032", "m5-u0064", "custom"] {
+        assert!(matches!(
+            resolve_page_spec(undeclared),
+            Err(OwnerViewError::UndeclaredRunId(_))
+        ));
+        assert!(matches!(
+            render_owner_view_page(
+                undeclared,
+                &pool,
+                &pool_sha,
+                &fixture_b1_32.header(),
+                &standin_32
+            ),
+            Err(OwnerViewError::UndeclaredRunId(_))
+        ));
+    }
+
+    // 2. Learned picker mode on a b1 page is refused.
+    assert!(matches!(
+        generate_owner_view_data(
+            "b1-u0032",
+            PickerMode::LearnedPickHead,
+            &pool,
+            &pool_sha,
+            &fixture_b1_32.header(),
+            &standin_32
+        ),
+        Err(OwnerViewError::PickerModeMismatch {
+            expected: PickerMode::UniformFixture,
+            got: PickerMode::LearnedPickHead,
+            ..
+        })
+    ));
+
+    // 3. Uniform picker mode on a k1 page is refused.
+    assert!(matches!(
+        generate_owner_view_data(
+            "k1-u0064",
+            PickerMode::UniformFixture,
+            &pool,
+            &pool_sha,
+            &fixture_k1_64.header(),
+            &standin_k64
+        ),
+        Err(OwnerViewError::PickerModeMismatch {
+            expected: PickerMode::LearnedPickHead,
+            got: PickerMode::UniformFixture,
+            ..
+        })
+    ));
+
+    // 4. Checkpoint update mismatch (b1 checkpoint 64 on b1-u0032) is refused.
+    assert!(matches!(
+        render_owner_view_page(
+            "b1-u0032",
+            &pool,
+            &pool_sha,
+            &fixture_b1_64.header(),
+            &standin_64
+        ),
+        Err(OwnerViewError::CheckpointMismatch {
+            expected_update: 32,
+            got_update: 64,
+            ..
+        })
+    ));
+
+    // 5. Checkpoint segment mismatch (k1 checkpoint 64 on b1-u0064) is refused.
+    assert!(matches!(
+        render_owner_view_page(
+            "b1-u0064",
+            &pool,
+            &pool_sha,
+            &fixture_k1_64.header(),
+            &standin_k64
+        ),
+        Err(OwnerViewError::CheckpointMismatch { .. })
+    ));
+
+    // 6. Pool sha256 mismatch is refused.
+    let bad_sha = "f".repeat(64);
+    assert!(matches!(
+        render_owner_view_page(
+            "b1-u0032",
+            &pool,
+            &bad_sha,
+            &fixture_b1_32.header(),
+            &standin_32
+        ),
+        Err(OwnerViewError::InvalidPool(_))
+    ));
+
+    // 7. Unsorted CubePool (cube-list order rather than ascending registry id) is refused.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+    let cube_list = fs::read_to_string(root.join("data/cube_v1/mtgo_vintage_cube_20261007.json"))
+        .expect("read cube list");
+    let gaps = fs::read_to_string(root.join("data/cube_v1/mtgo_vintage_cube_20261007_gaps.json"))
+        .expect("read gaps");
+    let unsorted_pool = CubePool::from_json_texts(&cube_list, &gaps, None).expect("unsorted pool");
+    let unsorted_sha = ordered_pool_sha256(unsorted_pool.ids());
+    assert!(matches!(
+        render_owner_view_page(
+            "b1-u0032",
+            &unsorted_pool,
+            &unsorted_sha,
+            &fixture_b1_32.header(),
+            &standin_32
+        ),
+        Err(OwnerViewError::InvalidPool(_))
+    ));
+}
+
+#[test]
+fn independent_oracle_pins_packs_picks_pools_build_seeds_and_histograms() {
+    let (pool, pool_sha) = test_ordered_pool();
+    let fixture = FixtureCheckpointFile::for_shakedown_fixture(
+        "b1",
+        32,
+        HeadUpdates {
+            pick: 0,
+            value: 0,
+            count: 32,
+            pointer: 32,
+            type_set: 32,
+            split: 32,
+        },
+        &carddb_hex(),
+    );
+    let standin = StandInCheckpoint::from_fixture(&fixture);
+    let header = fixture.header();
+
+    let (data, html) = render_owner_view_page("b1-u0032", &pool, &pool_sha, &header, &standin)
+        .expect("render b1-u0032");
+
+    // --- Oracle 1: First-pick pack counts over drafts 0..100 ---
+    let mut oracle_pack_counts: BTreeMap<u16, usize> = BTreeMap::new();
+    for d in 0u64..100 {
+        let seed = oracle_owner_view_seed("b1-u0032", d);
+        let opened = generate_packs(&pool, seed).expect("oracle generate_packs");
+        for pack in &opened[0] {
+            for &id in pack {
+                *oracle_pack_counts.entry(id).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut rendered_pack_counts: BTreeMap<u16, usize> = BTreeMap::new();
+    for row in data
+        .first_pick_ranked
+        .iter()
+        .chain(data.first_pick_low_count.iter())
+    {
+        rendered_pack_counts.insert(row.card.id, row.pack_count);
+    }
+    for &id in pool.ids() {
+        let expected = oracle_pack_counts.get(&id).copied().unwrap_or(0);
+        let got = rendered_pack_counts.get(&id).copied().unwrap_or(usize::MAX);
+        assert_eq!(got, expected, "pack count mismatch for card id {id}");
+    }
+    // Pin concrete top-ranked row inside the HTML.
+    let top_row = &data.first_pick_ranked[0];
+    let top_expected_packs = oracle_pack_counts[&top_row.card.id];
+    assert!(html.contains(&format!(
+        "<td class=\"num\">1</td><td>{}</td><td class=\"num\">{}</td>",
+        top_row.card.name, top_row.card.id
+    )));
+    assert!(html.contains(&format!("<td class=\"num\">{top_expected_packs}</td></tr>")));
+    // Shifting drafts by 1 (1..=100) must change the pack counts.
+    let mut shifted_pack_counts: BTreeMap<u16, usize> = BTreeMap::new();
+    for d in 1u64..101 {
+        let seed = oracle_owner_view_seed("b1-u0032", d);
+        let opened = generate_packs(&pool, seed).expect("shifted generate_packs");
+        for pack in &opened[0] {
+            for &id in pack {
+                *shifted_pack_counts.entry(id).or_insert(0) += 1;
+            }
+        }
+    }
+    assert_ne!(oracle_pack_counts, shifted_pack_counts);
+
+    // --- Oracle 2: 20 sample picks over drafts 100..120 (with L4 on m=8) ---
+    for m in 0usize..20 {
+        let draft_idx = 100 + m as u64;
+        let draft_seed = oracle_owner_view_seed("b1-u0032", draft_idx);
+        let chair = m % SEATS;
+        let raw_step = (7 * m + 3) % POOL_CARDS;
+        let step = if raw_step % PACK_SIZE == PACK_SIZE - 1 {
+            raw_step - 1
+        } else {
+            raw_step
+        };
+        let round = step / PACK_SIZE;
+        let pick = step % PACK_SIZE;
+        let mut pickers = uniform_pickers(draft_seed);
+        let draft = run_draft(&pool, draft_seed, &mut pickers).expect("oracle run_draft pick");
+        let rec = &draft.picks[step * SEATS + chair];
+
+        let got = &data.sample_picks[m];
+        assert_eq!(got.draft_seed, draft_seed);
+        assert_eq!(got.spec.draft_index, draft_idx);
+        assert_eq!(got.spec.chair, chair);
+        assert_eq!(got.spec.round, round);
+        assert_eq!(got.spec.pick, pick);
+        assert_eq!(got.spec.step, step);
+        assert_eq!(got.chosen_card.id, rec.chosen);
+        let got_pack_ids: BTreeSet<u16> = got.options.iter().map(|o| o.card.id).collect();
+        let expected_pack_ids: BTreeSet<u16> = rec.pack.iter().copied().collect();
+        assert_eq!(got_pack_ids, expected_pack_ids);
+        let got_pool_so_far: Vec<u16> = got.pool_so_far.iter().map(|c| c.id).collect();
+        assert_eq!(got_pool_so_far, draft.pools[chair][..step]);
+    }
+    // Pin concrete pick HTML fragments for m=0, m=8 (L4), and m=19.
+    for m in [0usize, 8, 19] {
+        let entry = &data.sample_picks[m];
+        assert!(html.contains(&format!(
+            "draft_seed = <code>{}</code> | Chosen: <strong>",
+            entry.draft_seed
+        )));
+    }
+    assert!(html.contains("(adjusted from forced step 14 to step 13 per D0.21 L4)"));
+
+    // --- Oracle 3: 20 sample pools and builds over drafts 120..140, k = 0 ---
+    let mut oracle_builder = standin.make_learned_builder();
+    for m in 0usize..20 {
+        let draft_idx = 120 + m as u64;
+        let draft_seed = oracle_owner_view_seed("b1-u0032", draft_idx);
+        let chair = m % SEATS;
+        let mut pickers = uniform_pickers(draft_seed);
+        let draft = run_draft(&pool, draft_seed, &mut pickers).expect("oracle run_draft pool");
+        let expected_build_seed =
+            derive_seed(deck_seed(draft_seed, chair), SeedStream::DeckBuild, 0);
+        let mut stream = SplitMix64::seed(expected_build_seed);
+        let outcome = oracle_builder
+            .build(&draft.pools[chair], &mut stream)
+            .expect("oracle build");
+
+        let got = &data.sample_pools[m];
+        assert_eq!(got.draft_seed, draft_seed);
+        assert_eq!(got.build_seed, expected_build_seed);
+        let got_pool_ids: Vec<u16> = got.pool_cards.iter().map(|c| c.id).collect();
+        assert_eq!(got_pool_ids, draft.pools[chair]);
+        let got_deck_ids: Vec<u16> = got.deck_cards.iter().map(|c| c.id).collect();
+        assert_eq!(got_deck_ids, outcome.deck.card_ids());
+    }
+    assert!(html.contains(&format!(
+        "draft_seed = <code>{}</code> | build_seed = <code>{}</code>",
+        data.sample_pools[0].draft_seed, data.sample_pools[0].build_seed
+    )));
+
+    // --- Oracle 4: 3,200 build seeds and histogram bins over drafts 200..300 ---
+    let basics = basic_land_ids().expect("basic ids");
+    let mut oracle_b_hist = vec![0usize; 41];
+    let mut oracle_t_hist = [0usize; 6];
+    let mut k0_only_b_hist = vec![0usize; 41];
+    let mut shifted_b_hist = vec![0usize; 41];
+
+    for d in 200u64..301 {
+        let draft_seed = oracle_owner_view_seed("b1-u0032", d);
+        let mut pickers = uniform_pickers(draft_seed);
+        let draft = run_draft(&pool, draft_seed, &mut pickers).expect("oracle dist draft");
+        for chair in 0..SEATS {
+            let seat_pool = &draft.pools[chair];
+            let mut k0_basics = 0usize;
+            for k in 0u64..4 {
+                let bseed = derive_seed(deck_seed(draft_seed, chair), SeedStream::DeckBuild, k);
+                let mut stream = SplitMix64::seed(bseed);
+                let outcome = oracle_builder
+                    .build(seat_pool, &mut stream)
+                    .expect("oracle dist build");
+                let mut basic_count = 0usize;
+                let mut type_mask = 0u8;
+                for entry in &outcome.deck.entries {
+                    if let Some(pos) = basics.iter().position(|&id| id == entry.id) {
+                        basic_count += entry.count as usize;
+                        type_mask |= 1u8 << pos;
+                    }
+                }
+                if k == 0 {
+                    k0_basics = basic_count;
+                }
+                if d < 300 {
+                    oracle_b_hist[basic_count] += 1;
+                    oracle_t_hist[type_mask.count_ones() as usize] += 1;
+                }
+                if d >= 201 {
+                    shifted_b_hist[basic_count] += 1;
+                }
+            }
+            if d < 300 {
+                k0_only_b_hist[k0_basics] += 4;
+            }
+        }
+    }
+
+    assert_eq!(data.distributions.basics_count_hist, oracle_b_hist);
+    assert_eq!(data.distributions.type_set_size_hist, oracle_t_hist);
+    // Reusing stream k=0 or shifting drafts by 1 would fail the oracle.
+    assert_ne!(k0_only_b_hist, oracle_b_hist);
+    assert_ne!(shifted_b_hist, oracle_b_hist);
+    // Pin concrete histogram rows in the HTML.
+    let peak_b = oracle_b_hist
+        .iter()
+        .enumerate()
+        .max_by_key(|&(_, &c)| c)
+        .expect("peak B")
+        .0;
+    assert!(html.contains(&format!(
+        "<tr><td class=\"num\">{peak_b}</td><td class=\"num\">{}</td>",
+        oracle_b_hist[peak_b]
+    )));
+    let peak_t = oracle_t_hist
+        .iter()
+        .enumerate()
+        .max_by_key(|&(_, &c)| c)
+        .expect("peak |T|")
+        .0;
+    assert!(html.contains(&format!(
+        "<tr><td class=\"num\">{peak_t}</td><td class=\"num\">{}</td>",
+        oracle_t_hist[peak_t]
+    )));
+}
+
+#[test]
 fn b1_page_labels_sample_plan_and_byte_identical_regeneration() {
     let (pool, pool_sha) = test_ordered_pool();
     let fixture = FixtureCheckpointFile::for_shakedown_fixture(
@@ -189,26 +768,12 @@ fn b1_page_labels_sample_plan_and_byte_identical_regeneration() {
     let standin = StandInCheckpoint::from_fixture(&fixture);
     let header = fixture.header();
 
-    let (data_a, html_a) = render_owner_view_page(
-        "b1-u0032",
-        PickerMode::UniformFixture,
-        &pool,
-        &pool_sha,
-        &header,
-        &standin,
-    )
-    .expect("render b1-u0032 first pass");
-    let (data_b, html_b) = render_owner_view_page(
-        "b1-u0032",
-        PickerMode::UniformFixture,
-        &pool,
-        &pool_sha,
-        &header,
-        &standin,
-    )
-    .expect("render b1-u0032 second pass");
+    let (data_a, html_a) = render_owner_view_page("b1-u0032", &pool, &pool_sha, &header, &standin)
+        .expect("render b1-u0032 first pass");
+    let (data_b, html_b) = render_owner_view_page("b1-u0032", &pool, &pool_sha, &header, &standin)
+        .expect("render b1-u0032 second pass");
 
-    // Acceptance 1: byte-identical regeneration from checkpoint and seed.
+    // Byte-identical regeneration from checkpoint and seed.
     assert_eq!(data_a, data_b);
     assert_eq!(html_a.as_bytes(), html_b.as_bytes());
     assert!(
@@ -217,89 +782,27 @@ fn b1_page_labels_sample_plan_and_byte_identical_regeneration() {
     );
     assert!(!html_a.contains("\r\n"), "LF line endings only");
 
-    // Exact D0.21 sample counts.
-    assert_eq!(data_a.first_pick_pack_count, 800);
-    let total_pack_appearances: usize = data_a
-        .first_pick_ranked
-        .iter()
-        .chain(data_a.first_pick_low_count.iter())
-        .map(|r| r.pack_count)
-        .sum();
-    assert_eq!(total_pack_appearances, 800 * PACK_SIZE);
-    assert!(data_a
-        .first_pick_ranked
-        .iter()
-        .all(|r| r.pack_count >= FIRST_PICK_MIN_PACKS));
-    assert!(data_a
-        .first_pick_low_count
-        .iter()
-        .all(|r| r.pack_count < FIRST_PICK_MIN_PACKS));
-
-    assert_eq!(data_a.sample_picks.len(), 20);
-    assert_eq!(data_a.sample_picks[8].spec.step, 13);
-    assert_eq!(data_a.sample_picks[8].options.len(), 2);
-
-    assert_eq!(data_a.sample_pools.len(), 20);
-    for entry in &data_a.sample_pools {
-        assert_eq!(entry.pool_cards.len(), POOL_CARDS);
-        assert_eq!(entry.deck_cards.len(), 40);
-        assert_eq!(
-            entry.included_pool_cards.len() + usize::from(entry.basics_count),
-            40
-        );
-    }
-
-    assert_eq!(data_a.distributions.total_builds, 3_200);
-    assert_eq!(data_a.distributions.basics_count_hist.len(), 41);
-    assert_eq!(
-        data_a.distributions.basics_count_hist.iter().sum::<usize>(),
-        3_200
+    // Literal D0.21 strings asserted directly in HTML (not via production constants).
+    assert!(html_a.contains(
+        "Shakedown, under random play: the pilot plays uniformly at random. Weights are discarded."
+    ));
+    assert!(
+        html_a.contains("rendered with the uniform fixture: every pick is uniform over the pack")
     );
-    assert_eq!(
-        data_a
-            .distributions
-            .type_set_size_hist
-            .iter()
-            .sum::<usize>(),
-        3_200
-    );
+    assert!(html_a.contains("sampled builds"));
+    assert!(html_a.contains("The owner&#39;s reactions are a go, no-go or bug signal only. They never label cards, enter training data, tune a constant or select a checkpoint."));
 
-    // Acceptance 3: every head labelled from checkpoint.head_updates.
-    assert_eq!(data_a.head_labels.len(), 6);
-    assert_eq!(data_a.head_labels[0].label, "untrained"); // pick = 0
-    assert_eq!(data_a.head_labels[1].label, "untrained"); // value = 0
-    assert_eq!(
-        data_a.head_labels[2].label,
-        "trained for 32 updates under random play"
-    ); // count = 32
-    assert_eq!(
-        data_a.head_labels[3].label,
-        "trained for 32 updates under random play"
-    ); // pointer = 32
-    assert_eq!(
-        data_a.head_labels[4].label,
-        "trained for 32 updates under random play"
-    ); // type_set = 32
-    assert_eq!(
-        data_a.head_labels[5].label,
-        "trained for 32 updates under random play"
-    ); // split = 32
+    // Exact head rows in HTML.
+    assert!(html_a.contains("<tr><td>pick</td><td><code>pick</code></td><td class=\"num\">0</td><td><span class=\"badge badge-untrained\">untrained</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>value</td><td><code>value</code></td><td class=\"num\">0</td><td><span class=\"badge badge-untrained\">untrained</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>count</td><td><code>count</code></td><td class=\"num\">32</td><td><span class=\"badge badge-trained\">trained for 32 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>pointer</td><td><code>pointer</code></td><td class=\"num\">32</td><td><span class=\"badge badge-trained\">trained for 32 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>type set</td><td><code>type_set</code></td><td class=\"num\">32</td><td><span class=\"badge badge-trained\">trained for 32 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>split</td><td><code>split</code></td><td class=\"num\">32</td><td><span class=\"badge badge-trained\">trained for 32 updates under random play</span></td></tr>"));
 
-    // Acceptance 4: b1 pages label picks "rendered with the uniform fixture".
-    assert!(html_a.contains(UNIFORM_PICKS_LABEL));
-    assert!(html_a.contains("rendered with the uniform fixture"));
-    // Acceptance 5: every page carries the shakedown label.
-    assert!(html_a.contains(SHAKEDOWN_LABEL));
-    assert!(html_a.contains(SAMPLED_BUILDS_LABEL));
-    assert!(html_a.contains(&LAW_BOUNDARY_NOTICE.replace('\'', "&#39;")));
-    // Acceptance 2: no cross-page or dose-read reference.
-    for other_run in SHAKEDOWN_OWNER_VIEW_RUNS {
-        if other_run != "b1-u0032" {
-            assert!(
-                !html_a.contains(other_run),
-                "b1-u0032 page must not reference another page {other_run}"
-            );
-        }
+    // No cross-page or dose-read reference.
+    for other_run in ["b1-u0064", "b1-u0096", "b1-u0128", "k1-u0064", "k1-u0128"] {
+        assert!(!html_a.contains(other_run));
     }
     assert!(!html_a.contains("dose-d8"));
 }
@@ -323,51 +826,31 @@ fn k1_page_uses_learned_picker_labels_all_heads_and_regenerates_byte_identically
     let standin = StandInCheckpoint::from_fixture(&fixture);
     let header = fixture.header();
 
-    let (data_a, html_a) = render_owner_view_page(
-        "k1-u0064",
-        PickerMode::LearnedPickHead,
-        &pool,
-        &pool_sha,
-        &header,
-        &standin,
-    )
-    .expect("render k1-u0064 first pass");
-    let (_data_b, html_b) = render_owner_view_page(
-        "k1-u0064",
-        PickerMode::LearnedPickHead,
-        &pool,
-        &pool_sha,
-        &header,
-        &standin,
-    )
-    .expect("render k1-u0064 second pass");
+    let (data_a, html_a) = render_owner_view_page("k1-u0064", &pool, &pool_sha, &header, &standin)
+        .expect("render k1-u0064 first pass");
+    let (_data_b, html_b) = render_owner_view_page("k1-u0064", &pool, &pool_sha, &header, &standin)
+        .expect("render k1-u0064 second pass");
 
     assert_eq!(html_a.as_bytes(), html_b.as_bytes());
     assert!(
         !html_a.contains('\u{2014}'),
         "no em-dash characters allowed"
     );
-    assert!(html_a.contains(SHAKEDOWN_LABEL));
-    assert!(html_a.contains(SAMPLED_BUILDS_LABEL));
-    // k1 page must NOT claim picks were rendered with the uniform fixture.
+    assert!(html_a.contains(
+        "Shakedown, under random play: the pilot plays uniformly at random. Weights are discarded."
+    ));
+    assert!(html_a.contains("sampled builds"));
     assert!(!html_a.contains("rendered with the uniform fixture"));
-    // Every head has count > 0, so no head is labelled untrained.
-    assert!(data_a.head_labels.iter().all(|h| h.label != "untrained"));
-    assert_eq!(
-        data_a.head_labels[0].label,
-        "trained for 64 updates under random play"
-    );
-    assert_eq!(
-        data_a.head_labels[1].label,
-        "trained for 64 updates under random play"
-    );
-    assert_eq!(
-        data_a.head_labels[2].label,
-        "trained for 192 updates under random play"
-    );
     assert!(!html_a.contains("class=\"badge badge-untrained\""));
 
-    // Verify first-pick ranking ordering: strictly non-increasing mean probability,
+    assert!(html_a.contains("<tr><td>pick</td><td><code>pick</code></td><td class=\"num\">64</td><td><span class=\"badge badge-trained\">trained for 64 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>value</td><td><code>value</code></td><td class=\"num\">64</td><td><span class=\"badge badge-trained\">trained for 64 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>count</td><td><code>count</code></td><td class=\"num\">192</td><td><span class=\"badge badge-trained\">trained for 192 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>pointer</td><td><code>pointer</code></td><td class=\"num\">192</td><td><span class=\"badge badge-trained\">trained for 192 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>type set</td><td><code>type_set</code></td><td class=\"num\">192</td><td><span class=\"badge badge-trained\">trained for 192 updates under random play</span></td></tr>"));
+    assert!(html_a.contains("<tr><td>split</td><td><code>split</code></td><td class=\"num\">192</td><td><span class=\"badge badge-trained\">trained for 192 updates under random play</span></td></tr>"));
+
+    // First-pick ranking strictly non-increasing by exact rational cross-multiplication,
     // ties broken by registry id ascending.
     for pair in data_a.first_pick_ranked.windows(2) {
         let a = &pair[0];
@@ -382,8 +865,6 @@ fn k1_page_uses_learned_picker_labels_all_heads_and_regenerates_byte_identically
         );
     }
 
-    // Verify all 20 sample picks have non-uniform probabilities summing to ~1.0
-    // and valid value_before_pick.
     assert_eq!(data_a.sample_picks.len(), 20);
     for entry in &data_a.sample_picks {
         assert!(entry.value_before_pick.is_some());
@@ -395,10 +876,22 @@ fn k1_page_uses_learned_picker_labels_all_heads_and_regenerates_byte_identically
 }
 
 #[test]
-fn head_untrained_label_tracks_each_individual_head_zero_exactly() {
-    // Test every single head independently set to 0 while the other 5 are non-zero.
+fn head_zero_rotation_reaches_each_heads_own_html_row() {
+    let (pool, pool_sha) = test_ordered_pool();
+    // Base page data rendered once, then head labels rotated through full
+    // JSON checkpoint parse -> generate/render HTML rows for all 6 heads with
+    // distinguishable non-zero counts so no two fields can alias each other.
+    let head_meta: [(&str, &str, u64); 6] = [
+        ("pick", "pick", 11),
+        ("value", "value", 22),
+        ("count", "count", 33),
+        ("pointer", "pointer", 44),
+        ("type set", "type_set", 55),
+        ("split", "split", 66),
+    ];
+
     for zero_idx in 0..6 {
-        let mut counts = [10u64; 6];
+        let mut counts = [11u64, 22, 33, 44, 55, 66];
         counts[zero_idx] = 0;
         let hu = HeadUpdates {
             pick: counts[0],
@@ -408,37 +901,115 @@ fn head_untrained_label_tracks_each_individual_head_zero_exactly() {
             type_set: counts[4],
             split: counts[5],
         };
-        for (idx, (_name, _key, c)) in hu.entries().into_iter().enumerate() {
-            let label = format_head_training_label(c);
-            if idx == zero_idx {
-                assert_eq!(label, "untrained");
+        let fixture = FixtureCheckpointFile::for_shakedown_fixture("b1", 32, hu, &carddb_hex());
+        let json = serde_json::to_string_pretty(&fixture).expect("serialize fixture");
+        let parsed = FixtureCheckpointFile::from_json_str(&json).expect("reparse fixture");
+        let standin = StandInCheckpoint::from_fixture(&parsed);
+        let (_data, html) =
+            render_owner_view_page("b1-u0032", &pool, &pool_sha, &parsed.header(), &standin)
+                .expect("render zero-rotation page");
+
+        for (idx, &(display, key, nonzero_count)) in head_meta.iter().enumerate() {
+            let expected_row = if idx == zero_idx {
+                format!(
+                    "<tr><td>{display}</td><td><code>{key}</code></td><td class=\"num\">0</td><td><span class=\"badge badge-untrained\">untrained</span></td></tr>"
+                )
             } else {
-                assert_eq!(label, "trained for 10 updates under random play");
-            }
+                format!(
+                    "<tr><td>{display}</td><td><code>{key}</code></td><td class=\"num\">{nonzero_count}</td><td><span class=\"badge badge-trained\">trained for {nonzero_count} updates under random play</span></td></tr>"
+                )
+            };
+            assert!(
+                html.contains(&expected_row),
+                "rotation zero_idx={zero_idx}: missing exact HTML row {expected_row}"
+            );
         }
+        assert_eq!(
+            html.matches("class=\"badge badge-untrained\"").count(),
+            1,
+            "rotation zero_idx={zero_idx}: exactly one head must be untrained"
+        );
     }
 }
 
 #[test]
-fn all_six_shakedown_run_ids_have_disjoint_seeds_and_correct_picker_modes() {
-    let mut seen_seeds = BTreeSet::new();
-    for &run_id in &SHAKEDOWN_OWNER_VIEW_RUNS {
-        let mode = PickerMode::for_run_id(run_id).expect("valid shakedown run id");
-        if run_id.starts_with("b1-") {
-            assert_eq!(mode, PickerMode::UniformFixture);
-        } else {
-            assert_eq!(mode, PickerMode::LearnedPickHead);
-        }
-        for draft_idx in [0u64, 99, 100, 119, 120, 139, 200, 299] {
-            let s = owner_view_draft_seed(run_id, draft_idx).expect("seed");
-            assert!(
-                seen_seeds.insert(s),
-                "seed collision at {run_id} draft {draft_idx}"
-            );
-        }
-    }
-    // Sanity check basic land lookup still works in eternal-fixtures test build.
-    assert!(card_id_by_name("Plains").is_some());
+fn small_positive_probabilities_render_in_scientific_notation_never_zero() {
+    let min_positive = 1.0f64 / (GRID_SIZE as f64); // 2^-53
+    let formatted_min = format_probability(min_positive);
+    assert!(
+        formatted_min.contains("e-"),
+        "expected scientific notation for 2^-53, got {formatted_min:?}"
+    );
+    assert!(!formatted_min.contains("0.000000"));
+    assert!(!formatted_min.contains("(0.00%)"));
+
+    let formatted_tiny = format_probability(2.5e-7);
+    assert_eq!(formatted_tiny, "2.500e-7 (2.500e-5%)");
+
+    assert_eq!(format_probability(0.0), "0.000000 (0.00%)");
+    assert_eq!(format_probability(1.0 / 15.0), "0.066667 (6.67%)");
+
+    // Verify through full HTML rendering of a sample pick with tiny positive probability.
+    let (pool, pool_sha) = test_ordered_pool();
+    let fixture = FixtureCheckpointFile::for_shakedown_fixture(
+        "b1",
+        32,
+        HeadUpdates {
+            pick: 0,
+            value: 0,
+            count: 32,
+            pointer: 32,
+            type_set: 32,
+            split: 32,
+        },
+        &carddb_hex(),
+    );
+    let standin = StandInCheckpoint::from_fixture(&fixture);
+    let (mut data, _html) =
+        render_owner_view_page("b1-u0032", &pool, &pool_sha, &fixture.header(), &standin)
+            .expect("render page");
+    data.sample_picks[0].options[0].probability = min_positive;
+    let html = render_owner_view_html(&data);
+    assert!(html.contains(&formatted_min));
+}
+
+#[test]
+fn zero_appearance_eligible_card_is_listed_in_fewer_than_five_table() {
+    let (pool, pool_sha) = test_ordered_pool();
+    let fixture = FixtureCheckpointFile::for_shakedown_fixture(
+        "b1",
+        32,
+        HeadUpdates {
+            pick: 0,
+            value: 0,
+            count: 32,
+            pointer: 32,
+            type_set: 32,
+            split: 32,
+        },
+        &carddb_hex(),
+    );
+    let standin = StandInCheckpoint::from_fixture(&fixture);
+    let (mut data, _html) =
+        render_owner_view_page("b1-u0032", &pool, &pool_sha, &fixture.header(), &standin)
+            .expect("render page");
+    let synthetic_zero_card = summarize_card(pool.ids()[0]);
+    data.first_pick_low_count.push(FirstPickRankRow {
+        rank: data.first_pick_low_count.len() + 1,
+        card: synthetic_zero_card.clone(),
+        pack_count: 0,
+        mean_probability: None,
+        exact_count_sum: None,
+    });
+    let html = render_owner_view_html(&data);
+    assert!(html.contains("<table class=\"low-count-table\">"));
+    assert!(html.contains(&format!(
+        "<td>{}</td><td class=\"num\">{}</td><td>{}</td><td>{}</td><td class=\"num\">N/A</td><td class=\"num\">0</td></tr>",
+        synthetic_zero_card.name,
+        synthetic_zero_card.id,
+        synthetic_zero_card.colors,
+        synthetic_zero_card.types
+    )));
 }
 
 #[test]
@@ -535,23 +1106,25 @@ fn all_six_shakedown_pages_render_independently_and_satisfy_acceptance_labels() 
         );
         let standin = StandInCheckpoint::from_fixture(&fixture);
         let header = fixture.header();
-        let mode = PickerMode::for_run_id(run_id).expect("picker mode");
-        let (data, html) =
-            render_owner_view_page(run_id, mode, &pool, &pool_sha, &header, &standin)
-                .expect("render page");
+        let (data, html) = render_owner_view_page(run_id, &pool, &pool_sha, &header, &standin)
+            .expect("render page");
 
-        assert_eq!(data.namespace, OWNER_VIEW_NAMESPACE);
+        assert_eq!(data.namespace, "owner-view");
         assert_eq!(data.run_id, run_id);
         assert_eq!(data.first_pick_pack_count, 800);
         assert_eq!(data.sample_picks.len(), 20);
         assert_eq!(data.sample_pools.len(), 20);
         assert_eq!(data.distributions.total_builds, 3_200);
-        assert!(html.contains(SHAKEDOWN_LABEL));
-        assert!(html.contains(SAMPLED_BUILDS_LABEL));
+        assert!(html.contains(
+            "Shakedown, under random play: the pilot plays uniformly at random. Weights are discarded."
+        ));
+        assert!(html.contains("sampled builds"));
         assert!(!html.contains('\u{2014}'));
         assert!(!html.contains("dose-d8"));
 
-        for &other in &SHAKEDOWN_OWNER_VIEW_RUNS {
+        for &other in &[
+            "b1-u0032", "b1-u0064", "b1-u0096", "b1-u0128", "k1-u0064", "k1-u0128",
+        ] {
             if other != run_id {
                 assert!(
                     !html.contains(other),
@@ -560,24 +1133,24 @@ fn all_six_shakedown_pages_render_independently_and_satisfy_acceptance_labels() 
             }
         }
         if segment == "b1" {
-            assert!(html.contains(UNIFORM_PICKS_LABEL));
-            assert_eq!(data.head_labels[0].label, "untrained");
-            assert_eq!(data.head_labels[1].label, "untrained");
-            assert_eq!(
-                data.head_labels[2].label,
-                format!("trained for {update} updates under random play")
-            );
+            assert!(html.contains(
+                "rendered with the uniform fixture: every pick is uniform over the pack"
+            ));
+            assert!(html.contains("<tr><td>pick</td><td><code>pick</code></td><td class=\"num\">0</td><td><span class=\"badge badge-untrained\">untrained</span></td></tr>"));
+            assert!(html.contains("<tr><td>value</td><td><code>value</code></td><td class=\"num\">0</td><td><span class=\"badge badge-untrained\">untrained</span></td></tr>"));
+            assert!(html.contains(&format!("<tr><td>count</td><td><code>count</code></td><td class=\"num\">{update}</td><td><span class=\"badge badge-trained\">trained for {update} updates under random play</span></td></tr>")));
         } else {
             assert!(!html.contains("rendered with the uniform fixture"));
             assert!(!html.contains("class=\"badge badge-untrained\""));
-            assert!(data.head_labels.iter().all(|h| h.label != "untrained"));
+            assert!(html.contains(&format!("<tr><td>pick</td><td><code>pick</code></td><td class=\"num\">{update}</td><td><span class=\"badge badge-trained\">trained for {update} updates under random play</span></td></tr>")));
         }
 
-        let digest = sha2::Sha256::digest(html.as_bytes());
+        let digest = Sha256::digest(html.as_bytes());
         assert!(
             page_hashes.insert(digest.to_vec()),
             "distinct run ids must produce distinct pages"
         );
     }
     assert_eq!(page_hashes.len(), 6);
+    assert!(card_id_by_name("Plains").is_some());
 }

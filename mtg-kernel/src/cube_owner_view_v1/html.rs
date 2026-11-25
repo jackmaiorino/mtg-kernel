@@ -240,14 +240,13 @@ pub fn render_owner_view_html(data: &OwnerViewPageData) -> String {
             let chosen_mark = if opt.chosen { "CHOSEN" } else { "" };
             let _ = writeln!(
                 &mut out,
-                "<tr{}><td>{}</td><td class=\"num\">{}</td><td>{}</td><td>{}</td><td class=\"num\">{:.6} ({:.2}%)</td><td>{}</td></tr>",
+                "<tr{}><td>{}</td><td class=\"num\">{}</td><td>{}</td><td>{}</td><td class=\"num\">{}</td><td>{}</td></tr>",
                 row_class,
                 escape_html(&opt.card.name),
                 opt.card.id,
                 escape_html(&opt.card.colors),
                 escape_html(&opt.card.types),
-                opt.probability,
-                opt.probability * 100.0,
+                format_probability(opt.probability),
                 chosen_mark
             );
         }
@@ -416,6 +415,17 @@ fn write_kv(out: &mut String, key: &str, value: &str) {
     );
 }
 
+/// Formats a probability for HTML display so that any positive probability
+/// smaller than `1e-4` (including `2^-53`) is printed in scientific notation
+/// and never rounds down to zero.
+pub fn format_probability(p: f64) -> String {
+    if p > 0.0 && p < 1e-4 {
+        format!("{p:.3e} ({:.3e}%)", p * 100.0)
+    } else {
+        format!("{p:.6} ({:.2}%)", p * 100.0)
+    }
+}
+
 fn write_first_pick_table(out: &mut String, rows: &[FirstPickRankRow], low_count: bool) {
     let table_class = if low_count {
         "low-count-table"
@@ -426,7 +436,7 @@ fn write_first_pick_table(out: &mut String, rows: &[FirstPickRankRow], low_count
     out.push_str("<thead>\n<tr><th>Rank</th><th>Card</th><th>ID</th><th>Colors</th><th>Type</th><th>Mean Prob</th><th>Packs</th></tr>\n</thead>\n<tbody>\n");
     for row in rows {
         let mean_str = match row.mean_probability {
-            Some(p) => format!("{p:.6} ({:.2}%)", p * 100.0),
+            Some(p) => format_probability(p),
             None => "N/A".to_owned(),
         };
         let _ = writeln!(

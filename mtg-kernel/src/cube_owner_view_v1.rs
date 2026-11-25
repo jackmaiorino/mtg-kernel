@@ -14,6 +14,7 @@
 //! own `owner-view` seeds, never depending on a dose read or on another page.
 
 pub mod checkpoint;
+pub mod cli;
 pub mod html;
 pub mod if2;
 pub mod sample_plan;
@@ -24,38 +25,40 @@ mod tests;
 pub use checkpoint::{
     format_head_training_label, validate_head_updates_raw_json, CheckpointHeader,
     CheckpointHeaderError, FixtureCheckpointFile, FixtureStandInParams, HeadUpdates,
-    OwnerViewSeatFactory, StandInCheckpoint, CHECKPOINT_SCHEMA_V1, HEAD_DISPLAY_NAMES,
-    HEAD_UPDATE_KEYS,
+    OwnerViewSeatFactory, StandInCheckpoint, CHECKPOINT_SCHEMA_V1, FIXTURE_MODEL_IDENTITY_V1,
+    HEAD_DISPLAY_NAMES, HEAD_UPDATE_KEYS,
 };
-pub use html::render_owner_view_html;
+pub use html::{format_probability, render_owner_view_html};
 pub use sample_plan::{
     cube_pool_from_ordered_ids, generate_owner_view_data, is_valid_token,
     learned_row_option_counts, ordered_pool_sha256, owner_view_build_seed, owner_view_draft_seed,
-    sample_pick_spec, sample_pool_spec, seed_deal_v1, summarize_card, BuildDistributions,
-    CardSummary, FirstPickRankRow, HeadLabelRow, OwnerViewError, OwnerViewPageData, PickerMode,
-    SamplePickEntry, SamplePickOption, SamplePickSpec, SamplePoolEntry, SamplePoolSpec, SeedPart,
-    DIST_BUILDS_PER_CHAIR, DIST_DRAFT_COUNT, DIST_DRAFT_START, DIST_TOTAL_BUILDS,
-    FIRST_PICK_DRAFT_COUNT, FIRST_PICK_DRAFT_START, FIRST_PICK_MIN_PACKS, FIRST_PICK_PACK_COUNT,
-    LAW_BOUNDARY_NOTICE, OWNER_VIEW_NAMESPACE, SAMPLED_BUILDS_LABEL, SAMPLE_PICK_COUNT,
-    SAMPLE_PICK_DRAFT_START, SAMPLE_POOL_BUILD_K, SAMPLE_POOL_COUNT, SAMPLE_POOL_DRAFT_START,
-    SHAKEDOWN_LABEL, SHAKEDOWN_OWNER_VIEW_RUNS, UNIFORM_PICKS_LABEL,
+    resolve_page_spec, sample_pick_spec, sample_pool_spec, seed_deal_v1, summarize_card,
+    BuildDistributions, CardSummary, FirstPickRankRow, HeadLabelRow, OwnerViewError,
+    OwnerViewPageData, OwnerViewPageSpec, PickerMode, SamplePickEntry, SamplePickOption,
+    SamplePickSpec, SamplePoolEntry, SamplePoolSpec, SeedPart, DIST_BUILDS_PER_CHAIR,
+    DIST_DRAFT_COUNT, DIST_DRAFT_START, DIST_TOTAL_BUILDS, FIRST_PICK_DRAFT_COUNT,
+    FIRST_PICK_DRAFT_START, FIRST_PICK_MIN_PACKS, FIRST_PICK_PACK_COUNT, LAW_BOUNDARY_NOTICE,
+    OWNER_VIEW_NAMESPACE, SAMPLED_BUILDS_LABEL, SAMPLE_PICK_COUNT, SAMPLE_PICK_DRAFT_START,
+    SAMPLE_POOL_BUILD_K, SAMPLE_POOL_COUNT, SAMPLE_POOL_DRAFT_START, SHAKEDOWN_LABEL,
+    SHAKEDOWN_OWNER_VIEW_RUNS, SHAKEDOWN_PAGE_SPECS, UNIFORM_PICKS_LABEL,
 };
 
 use crate::cube_draft_v1::CubePool;
 
-/// Runs D0.21's exact sample plan and renders the self-contained static HTML
-/// page in one call.
+/// Resolves `run_id` through [`resolve_page_spec`], validates the checkpoint
+/// and pinned ordered pool, runs D0.21's exact sample plan with the declared
+/// picker mode, and renders the self-contained static HTML page.
 pub fn render_owner_view_page(
     run_id: &str,
-    picker_mode: PickerMode,
     pool: &CubePool,
     ordered_pool_sha256: &str,
     checkpoint: &CheckpointHeader,
     factory: &dyn OwnerViewSeatFactory,
 ) -> Result<(OwnerViewPageData, String), OwnerViewError> {
+    let spec = resolve_page_spec(run_id)?;
     let data = generate_owner_view_data(
         run_id,
-        picker_mode,
+        spec.picker_mode,
         pool,
         ordered_pool_sha256,
         checkpoint,

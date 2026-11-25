@@ -75,6 +75,20 @@ const SEED_MASK_63: u64 = (1u64 << 63) - 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OwnerViewError {
     InvalidRunId(String),
+    UndeclaredRunId(String),
+    PickerModeMismatch {
+        run_id: String,
+        expected: PickerMode,
+        got: PickerMode,
+    },
+    CheckpointMismatch {
+        run_id: String,
+        expected_segment: String,
+        expected_update: u64,
+        got_segment: String,
+        got_update: u64,
+    },
+    InvalidCheckpoint(String),
     InvalidPool(String),
     Draft(CubeDraftError),
     Seat(SeatError),
@@ -88,6 +102,30 @@ impl fmt::Display for OwnerViewError {
                 f,
                 "invalid run id {id:?}: expected non-empty [a-z0-9-]+ token"
             ),
+            Self::UndeclaredRunId(id) => write!(
+                f,
+                "undeclared owner-view run id {id:?}: expected one of {:?}",
+                SHAKEDOWN_OWNER_VIEW_RUNS
+            ),
+            Self::PickerModeMismatch {
+                run_id,
+                expected,
+                got,
+            } => write!(
+                f,
+                "picker mode mismatch for run {run_id:?}: expected {expected:?}, got {got:?}"
+            ),
+            Self::CheckpointMismatch {
+                run_id,
+                expected_segment,
+                expected_update,
+                got_segment,
+                got_update,
+            } => write!(
+                f,
+                "checkpoint mismatch for run {run_id:?}: expected segment {expected_segment:?} update {expected_update}, got segment {got_segment:?} update {got_update}"
+            ),
+            Self::InvalidCheckpoint(msg) => write!(f, "invalid checkpoint header: {msg}"),
             Self::InvalidPool(msg) => write!(f, "invalid ordered pool: {msg}"),
             Self::Draft(err) => write!(f, "draft error: {err}"),
             Self::Seat(err) => write!(f, "seat error: {err}"),
@@ -239,22 +277,76 @@ pub enum PickerMode {
     LearnedPickHead,
 }
 
+/// Declared mapping from each of the six D0.13 / D0.21 shakedown owner-view
+/// run ids to its expected checkpoint segment, checkpoint update and picker
+/// mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerViewPageSpec {
+    pub run_id: &'static str,
+    pub expected_segment: &'static str,
+    pub expected_update: u64,
+    pub picker_mode: PickerMode,
+}
+
+/// Explicit table of the six declared D16 shakedown pages (D0.13, D0.21,
+/// design note 12a).
+pub const SHAKEDOWN_PAGE_SPECS: [OwnerViewPageSpec; 6] = [
+    OwnerViewPageSpec {
+        run_id: "b1-u0032",
+        expected_segment: "b1",
+        expected_update: 32,
+        picker_mode: PickerMode::UniformFixture,
+    },
+    OwnerViewPageSpec {
+        run_id: "b1-u0064",
+        expected_segment: "b1",
+        expected_update: 64,
+        picker_mode: PickerMode::UniformFixture,
+    },
+    OwnerViewPageSpec {
+        run_id: "b1-u0096",
+        expected_segment: "b1",
+        expected_update: 96,
+        picker_mode: PickerMode::UniformFixture,
+    },
+    OwnerViewPageSpec {
+        run_id: "b1-u0128",
+        expected_segment: "b1",
+        expected_update: 128,
+        picker_mode: PickerMode::UniformFixture,
+    },
+    OwnerViewPageSpec {
+        run_id: "k1-u0064",
+        expected_segment: "k1",
+        expected_update: 64,
+        picker_mode: PickerMode::LearnedPickHead,
+    },
+    OwnerViewPageSpec {
+        run_id: "k1-u0128",
+        expected_segment: "k1",
+        expected_update: 128,
+        picker_mode: PickerMode::LearnedPickHead,
+    },
+];
+
+/// Resolves a declared D16 run id to its expected segment, update and picker
+/// mode. Any undeclared run id is refused.
+pub fn resolve_page_spec(run_id: &str) -> Result<OwnerViewPageSpec, OwnerViewError> {
+    if !is_valid_token(run_id) {
+        return Err(OwnerViewError::InvalidRunId(run_id.to_owned()));
+    }
+    SHAKEDOWN_PAGE_SPECS
+        .iter()
+        .copied()
+        .find(|spec| spec.run_id == run_id)
+        .ok_or_else(|| OwnerViewError::UndeclaredRunId(run_id.to_owned()))
+}
+
 impl PickerMode {
-    /// Selects the D0.21 picker mode for a shakedown run id (`b<n>-...` uses
-    /// the uniform fixture; `k<n>-...` uses the checkpoint's pick head).
+    /// Selects the D0.21 picker mode for one of the six declared shakedown run
+    /// ids via [`resolve_page_spec`].
     pub fn for_run_id(run_id: &str) -> Result<Self, OwnerViewError> {
-        if !is_valid_token(run_id) {
-            return Err(OwnerViewError::InvalidRunId(run_id.to_owned()));
-        }
-        if run_id.starts_with('b') {
-            Ok(Self::UniformFixture)
-        } else if run_id.starts_with('k') {
-            Ok(Self::LearnedPickHead)
-        } else {
-            Err(OwnerViewError::InvalidRunId(format!(
-                "{run_id}: expected b* or k* run id to select picker mode"
-            )))
-        }
+        resolve_page_spec(run_id).map(|spec| spec.picker_mode)
     }
 }
 
@@ -555,17 +647,61 @@ fn extract_basics_and_types(
 
 /// Runs the complete D0.21 sample plan for one independent owner-view page.
 ///
-/// Plays zero games. Never reads a dose read or another owner-view page.
+/// Resolves `run_id` through [`resolve_page_spec`], refuses any mismatch in
+/// `picker_mode`, checkpoint segment, checkpoint update, checkpoint header
+/// format, or pinned ordered pool hash, and plays zero games. Never reads a
+/// dose read or another owner-view page.
 pub fn generate_owner_view_data(
     run_id: &str,
     picker_mode: PickerMode,
     pool: &CubePool,
-    ordered_pool_sha256: &str,
+    ordered_pool_sha256_expected: &str,
     checkpoint: &CheckpointHeader,
     factory: &dyn OwnerViewSeatFactory,
 ) -> Result<OwnerViewPageData, OwnerViewError> {
-    if !is_valid_token(run_id) {
-        return Err(OwnerViewError::InvalidRunId(run_id.to_owned()));
+    let page_spec = resolve_page_spec(run_id)?;
+    if picker_mode != page_spec.picker_mode {
+        return Err(OwnerViewError::PickerModeMismatch {
+            run_id: run_id.to_owned(),
+            expected: page_spec.picker_mode,
+            got: picker_mode,
+        });
+    }
+    checkpoint
+        .validate()
+        .map_err(|err| OwnerViewError::InvalidCheckpoint(err.to_string()))?;
+    if checkpoint.segment != page_spec.expected_segment
+        || checkpoint.update != page_spec.expected_update
+    {
+        return Err(OwnerViewError::CheckpointMismatch {
+            run_id: run_id.to_owned(),
+            expected_segment: page_spec.expected_segment.to_owned(),
+            expected_update: page_spec.expected_update,
+            got_segment: checkpoint.segment.clone(),
+            got_update: checkpoint.update,
+        });
+    }
+    let pool_ids = pool.ids();
+    if pool_ids.len() < SEATS * POOL_CARDS {
+        return Err(OwnerViewError::InvalidPool(format!(
+            "ordered pool has {} cards, need at least {}",
+            pool_ids.len(),
+            SEATS * POOL_CARDS
+        )));
+    }
+    for window in pool_ids.windows(2) {
+        if window[0] >= window[1] {
+            return Err(OwnerViewError::InvalidPool(format!(
+                "ordered pool ids must be strictly ascending: {} then {}",
+                window[0], window[1]
+            )));
+        }
+    }
+    let actual_pool_sha = ordered_pool_sha256(pool_ids);
+    if actual_pool_sha != ordered_pool_sha256_expected {
+        return Err(OwnerViewError::InvalidPool(format!(
+            "ordered pool sha256 mismatch: expected {ordered_pool_sha256_expected:?}, computed {actual_pool_sha:?}"
+        )));
     }
     let basic_ids = basic_land_ids()?;
 
@@ -898,7 +1034,7 @@ pub fn generate_owner_view_data(
         interfaces_version: M4_INTERFACES_VERSION.to_owned(),
         sampler_id: SAMPLER_ID_V1.to_owned(),
         used_stand_in_seats: factory.is_stand_in(),
-        ordered_pool_sha256: ordered_pool_sha256.to_owned(),
+        ordered_pool_sha256: actual_pool_sha,
         ordered_pool_len: pool.card_count(),
         checkpoint: checkpoint.clone(),
         head_labels,
