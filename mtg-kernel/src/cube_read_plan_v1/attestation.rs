@@ -27,7 +27,10 @@ pub(super) fn is_timestamp(date: &str, time: &str) -> bool {
 }
 
 fn a6_attestation(line: &str) -> bool {
-    if let Some(tail) = line.strip_prefix("Research lead,") {
+    if let Some(tail) = line
+        .strip_prefix("Research lead,")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+    {
         let mut words = tail.split_whitespace();
         if let (Some(date), Some(time), Some("ET." | "UTC."), Some(signature)) =
             (words.next(), words.next(), words.next(), words.next())
@@ -43,7 +46,10 @@ fn a6_attestation(line: &str) -> bool {
                     });
         }
     }
-    if let Some(tail) = line.strip_prefix("Countersigned,") {
+    if let Some(tail) = line
+        .strip_prefix("Countersigned,")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+    {
         let mut words = tail.split_whitespace();
         if let (Some("research"), Some("lead,"), Some(date), Some(time), Some(zone)) = (
             words.next(),
@@ -211,17 +217,14 @@ pub(super) fn verify_countersigned_a6(
         }
     }
     for line in part2.lines().map(str::trim) {
-        let (line, separator) = if let Some(line) = line
+        let Some(line) = line
             .strip_prefix(['-', '*'])
             .filter(|tail| tail.starts_with([' ', '\t']))
-        {
-            (line, ':')
-        } else if let Some(line) = line.strip_prefix('|') {
-            (line, '|')
-        } else {
+            .or_else(|| line.strip_prefix('|'))
+        else {
             continue;
         };
-        if let Some((key, value)) = line.split_once(separator) {
+        if let Some((key, value)) = line.split_once([':', '|']) {
             let key = key.trim().trim_matches('`');
             let value = value.trim().trim_end_matches('|').trim().trim_matches('`');
             if (PIN_KEYS.contains(&key) || INPUT_KEYS.contains(&key)) && is_sha256_hex(value) {
