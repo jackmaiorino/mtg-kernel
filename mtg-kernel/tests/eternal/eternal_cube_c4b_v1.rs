@@ -1543,6 +1543,63 @@ fn chain_lightning_retraced_with_the_wrenn_and_six_emblem_offers_its_copy() {
     assert_eq!(zone(&state, chain), Zone::Graveyard);
 }
 
+/// Review round 3, finding 2: with an opponent's Dauthi Voidwalker, the land
+/// discarded for retrace is exiled instead of put into the graveyard (a
+/// replacement, 614.6). It is still the retrace cast's paid land, and Chain
+/// Lightning still offers its copy without halting the game.
+#[test]
+fn chain_lightning_retraced_under_dauthi_voidwalker_offers_its_copy() {
+    let mut state = plains();
+    retrace_emblem(&mut state);
+    put(&mut state, P1, "Dauthi Voidwalker", Zone::Battlefield);
+    let chain = put(&mut state, P0, "Chain Lightning", Zone::Graveyard);
+    let land = put(&mut state, P0, "Mountain", Zone::Hand);
+    put(&mut state, P1, "Mountain", Zone::Battlefield);
+    put(&mut state, P1, "Mountain", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(castable(&mut state, chain));
+    act(&mut state, Action::CastSpell(chain));
+    let mut offered = false;
+    let mut copied = false;
+    settle_with(&mut state, |state, decision| match decision {
+        Decision::ChooseSpellCopyPayment { player, .. } => {
+            assert_eq!(player, P1);
+            assert_eq!(zone(state, land), Zone::Exile, "Dauthi exiled the discard");
+            let pay = !offered;
+            offered = true;
+            Action::ChooseSpellCopyPayment(pay)
+        }
+        Decision::ChooseEffectOption { .. } if offered => Action::ChooseEffectOption(1),
+        Decision::ChooseSpellCopyRetarget { .. } => {
+            copied = true;
+            Action::ChooseSpellCopyRetarget(false)
+        }
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Player(P1)) =>
+        {
+            Action::ChooseTarget(Target::Player(P1))
+        }
+        Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&land) => {
+            Action::ChooseCostTarget(land)
+        }
+        other => first_answer(other),
+    });
+    assert!(offered, "the copy was offered");
+    // `settle` refuses a halted game, so the game did not halt.
+    assert!(copied, "the copy was made");
+    assert_eq!(life(&state, P1), 14, "the spell and its copy");
+    assert_eq!(
+        zone(&state, land),
+        Zone::Exile,
+        "discarded for retrace, then exiled"
+    );
+    assert_eq!(
+        zone(&state, chain),
+        Zone::Exile,
+        "Dauthi exiles it as it leaves the stack"
+    );
+}
+
 /// Census stop `InvalidEffectContinuation` (cube fence, 2026-11-24, Chain
 /// Lightning games 4247, 9248): a Chain Lightning cast with flashback (here
 /// Snapcaster Mage's) halted as it offered its copy, because the copy

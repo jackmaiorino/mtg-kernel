@@ -959,6 +959,28 @@ fn retrace_cast(
         )
 }
 
+/// Whether a spell `object` that `caster` cast from its graveyard
+/// incarnation `origin_zone_change_count` by `route` was a retrace cast, so
+/// it paid retrace's land discard: the retrace route, or an ordinary
+/// graveyard permission route that only retrace allows. Every other route
+/// discards no land. The route's own permission is authenticated by
+/// `validate_spell_stack_source`.
+pub(crate) fn retrace_route(
+    state: &GameState,
+    object: ObjectId,
+    caster: PlayerId,
+    route: crate::state::SpellCastRouteV4,
+    origin_zone_change_count: u32,
+) -> bool {
+    match route {
+        crate::state::SpellCastRouteV4::RetraceV1 => true,
+        crate::state::SpellCastRouteV4::GraveyardPermissionV1 { holder, .. } => {
+            holder == caster && retrace_cast(state, object, caster, origin_zone_change_count)
+        }
+        _ => false,
+    }
+}
+
 /// Whether the pending cast is a retrace cast.
 pub(crate) fn pending_retrace(state: &GameState, pending: &crate::engine::PendingCast) -> bool {
     pending.origin_zone == Zone::Graveyard

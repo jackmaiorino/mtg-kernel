@@ -31552,8 +31552,10 @@ fn has_supported_spell_copy_offer_program(state: &GameState, item: &StackItem) -
 
 /// The object payments a spell-copy parent may carry: none, except the
 /// route-owned ones of escape (exactly the escape cost's other graveyard
-/// cards, now exiled, of the caster) and retrace on a graveyard route
-/// (exactly one land card of the caster, discarded).
+/// cards, now exiled, of the caster) and a retrace cast (exactly one land
+/// card of the caster, discarded). The caster is the player who cast the
+/// parent, from its cast receipt, even if its control has since changed
+/// (Commandeer).
 fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackItem) -> bool {
     let Some(source) = state.objects.try_get(parent.source) else {
         return false;
@@ -31561,9 +31563,28 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
     let Some(def) = card_def::CARD_DEFS.get(usize::from(source.card_def)) else {
         return false;
     };
-    let caster = parent.controller;
+    let caster = if cfg!(feature = "eternal-fixtures") {
+        crate::eternal_vintage_e7b_v1::spell_caster(state, parent).unwrap_or(parent.controller)
+    } else {
+        parent.controller
+    };
     let refs = &parent.v4.paid_cost_refs;
-    let route = source.v4.spell_cast_origin.map(|origin| origin.route);
+    let origin = source.v4.spell_cast_origin;
+    let route = origin.map(|origin| origin.route);
+    // Retrace (702.81, Wrenn and Six's emblem) is the route that discards a
+    // land: `RetraceV1`, or an ordinary graveyard permission route that only
+    // retrace allows (another permission casts without the discard).
+    let retrace = cfg!(feature = "eternal-fixtures")
+        && origin.is_some_and(|origin| {
+            origin.origin_zone == Zone::Graveyard
+                && crate::eternal_vintage_e7b_v1::retrace_route(
+                    state,
+                    parent.source,
+                    caster,
+                    origin.route,
+                    origin.origin_zone_change_count,
+                )
+        });
     match (parent.v4.cast_method, route) {
         (Some(CastMethodV4::Escape), Some(route)) if route.is_escape() => {
             let count =
@@ -31587,17 +31608,13 @@ fn spell_copy_parent_route_payments_are_exact(state: &GameState, parent: &StackI
                             .any(|prior| prior.object == card.object)
                 })
         }
-        // Retrace (Wrenn and Six's emblem) is recorded on a graveyard
-        // permission route; it pays with one discarded land card, as
-        // `validate_spell_stack_source` reads the same routes.
-        (
-            Some(CastMethodV4::Normal),
-            Some(SpellCastRouteV4::RetraceV1 | SpellCastRouteV4::GraveyardPermissionV1 { .. }),
-        ) => match refs.as_slice() {
-            [] => route != Some(SpellCastRouteV4::RetraceV1) && parent.discarded.is_empty(),
+        // A retrace cast pays with exactly one discarded land card of the
+        // caster. The discard puts it into the graveyard, or into exile if a
+        // replacement effect applies (Dauthi Voidwalker; 614.6).
+        (Some(CastMethodV4::Normal), Some(_)) if retrace => match refs.as_slice() {
             [land] => {
                 land.owner == caster
-                    && land.zone == Zone::Graveyard
+                    && matches!(land.zone, Zone::Graveyard | Zone::Exile)
                     && card_def::CARD_DEFS
                         .get(usize::from(land.card_def))
                         .is_some_and(|land_def| land_def.has_type(CardType::Land))
@@ -43927,6 +43944,174 @@ mod tests {
         assert_eq!(with_discard, before);
 
         // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// P0 casts Chain Lightning from their graveyard at P1, with Wrenn and
+    /// Six's emblem (retrace) if `emblem`, and after resolving Yawgmoth's Will
+    /// (another graveyard permission) if `will`, discarding the Mountain in
+    /// P0's hand if the cast asks for a land. Returns the state once the cast
+    /// is complete (the spell on the stack), the spell and the Mountain. P1
+    /// has two red sources for the copy.
+    #[cfg(feature = "eternal-fixtures")]
+    fn chain_lightning_cast_from_graveyard(
+        emblem: bool,
+        will: bool,
+    ) -> (GameState, ObjectId, ObjectId) {
+        let mut state = ready_game_in_main1(0);
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        if will {
+            let will = put_in_hand(&mut state, PlayerId::P0, "Yawgmoth's Will");
+            state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+            state.players[0].mana_pool[ManaColor::C.pool_index()] = 2;
+            step(&mut state, Action::CastSpell(will)).unwrap();
+            assert!(matches!(
+                pass_until_stack_resolves(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert!(state.stack.is_empty());
+        }
+        if emblem {
+            crate::eternal_vintage_e7b_v1::e7b_state(&mut state).wrenn_emblems[0] = 1;
+        }
+        let chain = put_in_graveyard(&mut state, PlayerId::P0, "Chain Lightning");
+        let land = put_in_hand(&mut state, PlayerId::P0, "Mountain");
+        state.players[0].mana_pool[ManaColor::R.pool_index()] = 1;
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        loop {
+            match advance_until_decision(&mut state) {
+                Decision::ChooseTargets { .. } => step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(PlayerId::P1)),
+                )
+                .unwrap(),
+                Decision::ChooseCostTargets { candidates, .. } => {
+                    assert!(candidates.contains(&land));
+                    step(&mut state, Action::ChooseCostTarget(land)).unwrap()
+                }
+                // With both Yawgmoth's Will and the emblem, the cast chooses
+                // its route: the ordinary permission (listed before retrace).
+                Decision::ChooseEffectOption {
+                    option_count: 2, ..
+                } if will && emblem => step(&mut state, Action::ChooseEffectOption(0)).unwrap(),
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision casting Chain Lightning: {other:?}"),
+            }
+        }
+        assert!(state.engine.pending_cast.is_none());
+        assert_eq!(state.stack.last().map(|item| item.source), Some(chain));
+        (state, chain, land)
+    }
+
+    /// Review round 3, finding 3: a graveyard cast is a retrace cast (and
+    /// discards a land) only on the retrace route, or on a graveyard
+    /// permission route that retrace alone allows. A Chain Lightning cast
+    /// under Yawgmoth's Will (with or without Wrenn and Six's emblem) paid no
+    /// land: a land payment added to it is refused when its copy offer is
+    /// answered.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_land_payment_on_a_non_retrace_graveyard_cast() {
+        for emblem in [false, true] {
+            let (mut state, _, land) = chain_lightning_cast_from_graveyard(emblem, true);
+            assert_eq!(
+                state.objects.get(land).zone,
+                Zone::Hand,
+                "no retrace discard"
+            );
+            assert!(matches!(
+                state
+                    .objects
+                    .get(state.stack.last().unwrap().source)
+                    .v4
+                    .spell_cast_origin
+                    .map(|origin| origin.route),
+                Some(SpellCastRouteV4::GraveyardPermissionV1 { .. })
+            ));
+            assert!(state.stack.last().unwrap().v4.paid_cost_refs.is_empty());
+            assert!(matches!(
+                pass_until_stack_resolves(&mut state),
+                Decision::ChooseSpellCopyPayment { .. }
+            ));
+            // A land card of the caster's, in their graveyard, recorded as
+            // the parent's discarded payment.
+            let mut forged = state.clone();
+            event::propose_and_commit(
+                &mut forged,
+                ProposedEvent::zone_change(land, Zone::Graveyard),
+            );
+            let payment = crate::state::PaidCostRefV4::capture(&forged, land);
+            let parent = forged.stack.last_mut().unwrap();
+            parent.v4.paid_cost_refs.push(payment);
+            parent.discarded.push(land);
+            let before = forged.clone();
+            assert!(step(&mut forged, Action::ChooseSpellCopyPayment(false)).is_err());
+            assert_eq!(forged, before);
+
+            // The genuine parent still offers its copy.
+            assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+        }
+    }
+
+    /// Review round 3, finding 3: a retrace cast recorded on the ordinary
+    /// graveyard permission route must carry its discarded land; the same
+    /// parent with that payment stripped is refused.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_rejects_a_retrace_cast_with_its_land_payment_stripped() {
+        let (mut state, _, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(
+            state.objects.get(land).zone,
+            Zone::Graveyard,
+            "retrace discard"
+        );
+        assert!(matches!(
+            state
+                .objects
+                .get(state.stack.last().unwrap().source)
+                .v4
+                .spell_cast_origin
+                .map(|origin| origin.route),
+            Some(SpellCastRouteV4::GraveyardPermissionV1 { .. })
+        ));
+        assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs.len(), 1);
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { .. }
+        ));
+        let mut stripped = state.clone();
+        let parent = stripped.stack.last_mut().unwrap();
+        parent.v4.paid_cost_refs.clear();
+        parent.discarded.clear();
+        let before = stripped.clone();
+        assert!(step(&mut stripped, Action::ChooseSpellCopyPayment(false)).is_err());
+        assert_eq!(stripped, before);
+
+        // The genuine parent still offers its copy.
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
+    }
+
+    /// Review round 3, finding 1: the parent's route payments belong to the
+    /// player who cast it (its cast receipt), not its current controller. A
+    /// retraced Chain Lightning whose control changed (Commandeer's effect)
+    /// still offers its copy; its discarded land is its caster's.
+    #[cfg(feature = "eternal-fixtures")]
+    #[test]
+    fn chain_copy_reads_the_caster_of_a_retraced_parent_whose_control_changed() {
+        let (mut state, chain, land) = chain_lightning_cast_from_graveyard(true, false);
+        assert_eq!(
+            state.objects.get(land).zone,
+            Zone::Graveyard,
+            "retrace discard"
+        );
+        assert!(gain_control_of_spell_v1(&mut state, chain, PlayerId::P1).is_some());
+        assert_eq!(state.stack.last().unwrap().controller, PlayerId::P1);
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment { player, .. } if player == PlayerId::P1
+        ));
+        assert!(state.engine.halted.is_none());
         assert!(step(&mut state, Action::ChooseSpellCopyPayment(false)).is_ok());
     }
 }
