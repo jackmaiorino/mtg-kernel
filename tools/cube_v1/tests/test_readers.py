@@ -1857,6 +1857,428 @@ class DeterminismTests(unittest.TestCase):
 REPORT_GOLDEN_SHA256 = "fc0de35729ed279d8c255aad456b508dbd0d6143e840a6ab5179f2097c8d9026"
 
 
+class D8V3RestartTests(unittest.TestCase):
+    """Finding 2: READ-PLAN-v3 Changes 1 & 2 (Q2.1 to Q2.4) in dose-d8 and read-d8-aa."""
+
+    @staticmethod
+    def _countersigned_a6() -> tuple[bytes, str]:
+        raw = Path("N:/cube-20261122/m4-docs/A6-READS.md").read_bytes()
+        cs = raw + (
+            b"\n\n## Signature, part 2\n\n"
+            b"Research lead countersigned part 2 pins on 2026-11-25 12:00 ET.\n"
+        )
+        return cs, hashlib.sha256(cs).hexdigest()
+
+    @staticmethod
+    def _live_decl(cs_sha: str, panel_v1: str | None = None) -> dict:
+        from decimal import Decimal
+        doc = json.loads(DECLARATION.read_text(encoding="utf-8"), parse_float=Decimal)
+        doc["a6_sha256"] = cs_sha
+        doc["pins"] = dict(synth.PINS)
+        doc["inputs"] = {"pool_sha256": synth.POOL[1], "constants_sha256": synth.CONST[1]}
+        doc["reads"]["aa"]["namespace"] = "read-d8-aa"
+        doc["reads"]["dose"]["namespace"] = "dose-d8"
+        doc["reads"]["dose"]["panel_drafts"] = 32
+        doc["reads"]["dose"]["panel_sha256"] = panel_v1
+        return readers.validate_declaration(doc)
+
+    def test_v2_dose_seeds_and_v3_manifest_shape_refusals(self):
+        # Reviewer's exact unit-32 seed vectors: v1 vs v2 must differ.
+        self.assertEqual(read_plans.plan_seeds("dose", "dose-d8", 32, run="v1")["draft_seed"], 5329981908323915159)
+        self.assertEqual(read_plans.plan_seeds("dose", "dose-d8", 32, run="v2")["draft_seed"], 5005737629818919850)
+
+        # Fresh read-d8-aa manifest with reserved=None is refused at write time.
+        entries = [(p, "0" * 64) for p in range(8)]
+        with self.assertRaisesRegex(read_plans.PlanError, "reserved"):
+            read_plans.build_manifest("plans", "aa", "read-d8-aa", "fixed", "a" * 64, entries,
+                                      units=[0, 4], reserved=None)
+        # Fresh dose-d8 prep-panel with reserved=None is refused at write time.
+        with self.assertRaisesRegex(read_plans.PlanError, "reserved"):
+            read_plans.build_manifest("prep", "dose", "dose-d8", "prep-panel", "a" * 64,
+                                      [(u, "0" * 64) for u in range(32)], units=[0, 32], reserved=None)
+
+        # Namespace `test` keeps v2 rules (Q2.3): reserved=None allowed, run="v2" refused.
+        m_test = read_plans.build_manifest("plans", "aa", "test", "fx-aa-swap-d0-fixed", DECL_SHA, entries,
+                                           units=[0, 4], reserved=None)
+        self.assertIsNone(m_test["reserved"])
+        with self.assertRaisesRegex(read_plans.PlanError, "v2 rules"):
+            read_plans.build_manifest("plans", "aa", "test", "fx-aa-swap-d0-fixed", DECL_SHA, entries,
+                                      units=[0, 4], reserved=[0, 4], run="v2")
+
+    def test_d8_v3_test_root_guard_rejects_non_temp_roots(self):
+        for bad_root in (synth.REPO_ROOT, synth.WORKTREE_PARENT, Path("N:/cube-20261122/runs/live"),
+                         Path(tempfile.gettempdir())):
+            with self.assertRaises(AssertionError):
+                synth.assert_test_temp_root(bad_root)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(synth.assert_test_temp_root(Path(tmp)), Path(tmp).resolve())
+
+    def test_dose_d8_v2_restart_replaced_and_fresh_ordinals_and_shakedown_manifest_pin(self):
+        cs_a6, cs_sha = self._countersigned_a6()
+        d0_sha = "d" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+
+            # --- Run v1: units [0, 32), panel P1, prep-dose-0 complete, dose-0 interrupted after units 0, 1 ---
+            stage1_v1, outs_v1 = synth.write_prep_set(
+                root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
+                reserved=[0, 32], namespace="dose-d8", run="v1",
+            )
+            panel_v1 = read_plans.assemble_panel(
+                "dose", "dose-d8", read_sets.load_manifest(stage1_v1), 0, outs_v1,
+                pins=synth.PINS, builders=None, **synth.DEALER,
+            )
+            p1_dir = root / "dose-d8" / "v1" / "panel"
+            p1_dir.mkdir(parents=True)
+            p1_text = read_plans.serialize(panel_v1)
+            (p1_dir / "panel.json").write_bytes(p1_text.encode("utf-8"))
+            p1_sha = hashlib.sha256(p1_text.encode("utf-8")).hexdigest()
+
+            _, pouts_v1_0 = synth.write_prep_set(
+                root, "dose", "dose", "prep-dose-0", range(0, 32), cs_sha,
+                reserved=[0, 32], panel_sha256=p1_sha, namespace="dose-d8", run="v1",
+            )
+            mark0 = {"kind": "dose", "label": "pods-512", "ordinal": 0}
+            plans_v1_0 = [synth.plan("dose", u, mark=mark0, prep=pouts_v1_0[u], namespace="dose-d8", run="v1")
+                          for u in range(0, 32)]
+            # Interrupt v1/dose-0 after unit 0 completes and unit 1 stops -> started={0,1}, unused=[[2,32]].
+            recs_v1_0 = {
+                0: synth.record(plans_v1_0[0], lambda p, g, pos: "draw"),
+                1: synth.record(plans_v1_0[1], lambda p, g, pos: "draw", games=4, status="stopped"),
+            }
+            synth.write_plan_set(
+                root, "dose", "dose-0", plans_v1_0, cs_sha,
+                executions=[{"records": recs_v1_0, "ended": "interrupted"}],
+                units=[0, 32], reserved=[0, 32], panel_sha256=p1_sha,
+                prep_set="dose-d8/v1/prep-dose-0/exec-0", namespace="dose-d8", run="v1",
+            )
+
+            # --- Run v2: units [32, 64), fresh panel P2, replaced ordinal 0 + fresh ordinal 1 ---
+            stage1_v2, outs_v2 = synth.write_prep_set(
+                root, "dose_panel", "dose", "prep-panel", range(32, 64), cs_sha,
+                reserved=[32, 64], namespace="dose-d8", run="v2",
+            )
+            panel_v2 = read_plans.assemble_panel(
+                "dose", "dose-d8", read_sets.load_manifest(stage1_v2), 0, outs_v2,
+                pins=synth.PINS, builders=None, **synth.DEALER,
+            )
+            self.assertEqual(panel_v2["run"], "v2")
+            self.assertEqual(panel_v2["units"], [32, 64])
+            self.assertEqual(panel_v2["drafts"][0]["seeds"]["draft_seed"], 5005737629818919850)
+            p2_dir = root / "dose-d8" / "v2" / "panel"
+            p2_dir.mkdir(parents=True)
+            p2_text = read_plans.serialize(panel_v2)
+            (p2_dir / "panel.json").write_bytes(p2_text.encode("utf-8"))
+            p2_sha = hashlib.sha256(p2_text.encode("utf-8")).hexdigest()
+
+            # Write D0.3b shakedown manifests (JSON and Markdown) pinning v1 -> p1_sha and v2 -> p2_sha.
+            sm_json_path = root / "SHAKEDOWN-MANIFEST.json"
+            sm_json_bytes = read_plans.serialize({
+                "schema": "mtg-kernel-cube-shakedown-manifest/v1",
+                "entries": [
+                    {"seq": 3, "kind": "dose_panel", "namespace": "dose-d8", "run": "v1", "panel_sha256": p1_sha},
+                    {"seq": 8, "kind": "restart", "namespace": "dose-d8", "run": "v2", "panel_sha256": p2_sha},
+                ],
+            }).encode("utf-8")
+            sm_json_path.write_bytes(sm_json_bytes)
+            sm_json_sha = hashlib.sha256(sm_json_bytes).hexdigest()
+
+            sm_md_path = root / "SHAKEDOWN-MANIFEST.md"
+            sm_md_bytes = (
+                f"## Entry 3: dose-d8 panel\n- namespace: dose-d8, run: v1, panel_sha256: {p1_sha}\n\n"
+                f"## Entry 8: restart\n- namespace: dose-d8, run: v2, panel.json sha256 {p2_sha}\n"
+            ).encode("utf-8")
+            sm_md_path.write_bytes(sm_md_bytes)
+            sm_md_sha = hashlib.sha256(sm_md_bytes).hexdigest()
+            self.assertEqual(read_sets.load_shakedown_manifest_panels(sm_md_path, sm_md_sha),
+                             {"v1": p1_sha, "v2": p2_sha})
+
+            # Replaced ordinal 0: prep-dose-0 is fresh (v1/prep-dose-0 completed), dose-0-restart-1 replaces v1/dose-0.
+            prep_v2_0, pouts_v2_0 = synth.write_prep_set(
+                root, "dose", "dose", "prep-dose-0", range(32, 64), cs_sha,
+                reserved=[32, 64], panel_sha256=p2_sha, namespace="dose-d8", run="v2",
+            )
+            read_sets.check_prep_dose_set(prep_v2_0, pool=synth.POOL, constants=synth.CONST,
+                                          shakedown_manifest=(sm_json_path, sm_json_sha))
+            plans_v2_0 = [synth.plan("dose", u, mark=mark0, prep=pouts_v2_0[u], namespace="dose-d8", run="v2")
+                          for u in range(32, 64)]
+            recs_v2_0 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "win" if g["game"] % 2 == 0 else "draw")
+                         for p in plans_v2_0}
+
+            # Negative writer checks before writing the valid replacement:
+            # 1) Plain set name `dose-0` refused because v1/dose-0 was interrupted.
+            with self.assertRaisesRegex(read_sets.SetError, "restart"):
+                synth.write_plan_set(
+                    root, "dose", "dose-0", plans_v2_0, cs_sha,
+                    executions=[{"records": recs_v2_0}], units=[32, 64], reserved=[32, 64],
+                    panel_sha256=p2_sha, prep_set="dose-d8/v2/prep-dose-0/exec-0", namespace="dose-d8", run="v2",
+                )
+            # 2) Wrong retired range refused.
+            with self.assertRaisesRegex(read_sets.SetError, "retired"):
+                synth.write_plan_set(
+                    root, "dose", "dose-0-restart-1", plans_v2_0, cs_sha,
+                    executions=[{"records": recs_v2_0}], units=[32, 64], reserved=[32, 64],
+                    panel_sha256=p2_sha, prep_set="dose-d8/v2/prep-dose-0/exec-0",
+                    replaces="v1/dose-0", retired=[[3, 32]], namespace="dose-d8", run="v2",
+                )
+
+            # Valid replaced ordinal 0:
+            dose_v2_0 = synth.write_plan_set(
+                root, "dose", "dose-0-restart-1", plans_v2_0, cs_sha,
+                executions=[{"records": recs_v2_0}], units=[32, 64], reserved=[32, 64],
+                panel_sha256=p2_sha, prep_set="dose-d8/v2/prep-dose-0/exec-0",
+                replaces="v1/dose-0", retired=[[2, 32]], namespace="dose-d8", run="v2",
+            )
+
+            # Fresh ordinal 1 (never started in v1): plain names prep-dose-1 and dose-1 in v2.
+            mark1 = {"kind": "dose", "label": "pods-1024", "ordinal": 1}
+            _, pouts_v2_1 = synth.write_prep_set(
+                root, "dose", "dose", "prep-dose-1", range(32, 64), cs_sha,
+                reserved=[32, 64], panel_sha256=p2_sha, namespace="dose-d8", run="v2",
+            )
+            plans_v2_1 = [synth.plan("dose", u, mark=mark1, prep=pouts_v2_1[u], namespace="dose-d8", run="v2")
+                          for u in range(32, 64)]
+            recs_v2_1 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "win" if g["game"] % 2 == 0 else "draw")
+                         for p in plans_v2_1}
+            dose_v2_1 = synth.write_plan_set(
+                root, "dose", "dose-1", plans_v2_1, cs_sha,
+                executions=[{"records": recs_v2_1}], units=[32, 64], reserved=[32, 64],
+                panel_sha256=p2_sha, prep_set="dose-d8/v2/prep-dose-1/exec-0", namespace="dose-d8", run="v2",
+            )
+
+            # Shakedown manifest D0.3b pin refusals (Q2.4):
+            # 1) Missing shakedown manifest on v2 is refused.
+            with self.assertRaisesRegex(read_sets.SetError, "shakedown manifest"):
+                read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
+                                        pinned_panel=p2_sha)
+            # 2) Mismatched D0.3b pin refused BEFORE trusting any digest inside.
+            with self.assertRaisesRegex(read_sets.SetError, "D0.3b pin"):
+                read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
+                                        shakedown_manifest=(sm_json_path, "0" * 64))
+            tampered_sm = root / "SHAKEDOWN-MANIFEST-tampered.json"
+            tampered_sm.write_bytes(sm_json_bytes + b" ")
+            with self.assertRaisesRegex(read_sets.SetError, "D0.3b pin"):
+                read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
+                                        shakedown_manifest=(tampered_sm, sm_json_sha))
+
+            # Valid reads of both replaced ordinal 0 and fresh ordinal 1 on v2's panel:
+            live_decl = self._live_decl(cs_sha, panel_v1=p1_sha)
+            opened_0 = read_sets.open_plan_set(dose_v2_0, cs_sha, pool=synth.POOL, constants=synth.CONST,
+                                               shakedown_manifest=(sm_json_path, sm_json_sha))
+            rep_0 = readers.run_read(live_decl, cs_sha, "dose", 0, [opened_0], a6_file=cs_a6,
+                                     d0_sha256=d0_sha, shakedown_manifest=(sm_json_path, sm_json_sha))
+            self.assertIsNone(rep_0["verdict"])
+            self.assertEqual(rep_0["units"], {"kind": "cluster", "first": 32, "end": 64})
+            self.assertEqual(rep_0["provenance"]["panel_run"], "v2")
+            self.assertEqual(rep_0["provenance"]["panel_sha256"], p2_sha)
+            self.assertEqual(rep_0["provenance"]["shakedown_manifest_sha256"], sm_json_sha)
+            self.assertEqual(rep_0["provenance"]["panel_pairing_note"], "marks on different panels are not paired")
+            self.assertIn("first_dose_basics_bands", rep_0)
+
+            opened_1 = read_sets.open_plan_set(dose_v2_1, cs_sha, pool=synth.POOL, constants=synth.CONST,
+                                               shakedown_manifest=(sm_md_path, sm_md_sha))
+            rep_1 = readers.run_read(live_decl, cs_sha, "dose", 1, [opened_1], a6_file=cs_a6,
+                                     d0_sha256=d0_sha, shakedown_manifest=(sm_md_path, sm_md_sha))
+            self.assertIsNone(rep_1["verdict"])
+            self.assertEqual(rep_1["units"], {"kind": "cluster", "first": 32, "end": 64})
+            self.assertEqual(rep_1["provenance"]["panel_run"], "v2")
+            self.assertEqual(rep_1["provenance"]["panel_sha256"], p2_sha)
+            # Refuses tampered manifest at run_read entry point too.
+            with self.assertRaisesRegex(read_sets.SetError, "D0.3b pin"):
+                readers.run_read(live_decl, cs_sha, "dose", 1, [opened_1], a6_file=cs_a6,
+                                 d0_sha256=d0_sha, shakedown_manifest=(tampered_sm, sm_md_sha))
+
+    def test_read_d8_aa_replacement_on_fresh_pairs_and_union_of_executions_retired(self):
+        cs_a6, cs_sha = self._countersigned_a6()
+        live_decl = self._live_decl(cs_sha)
+
+        # Scenario 1: simple interruption on pair 0 -> retired [[1, 4]], replaced by v2/fixed-restart-1 at [4, 8).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
+            recs1 = {0: synth.record(p1[0], lambda p, g, pos: "draw"),
+                     1: synth.record(p1[1], lambda p, g, pos: "draw", games=4, status="stopped")}
+            synth.write_plan_set(root, "aa", "fixed", p1, cs_sha,
+                                 executions=[{"records": recs1, "ended": "interrupted"}],
+                                 units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1")
+
+            p2 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v2") for u in range(4, 8) for m in (0, 1)]
+            recs2 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in p2}
+
+            # Refuses unqualified predecessor, wrong k, and units below high-water mark 4.
+            with self.assertRaisesRegex(read_plans.PlanError, "qualified"):
+                synth.write_plan_set(root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
+                                     units=[4, 8], reserved=[4, 8], replaces="fixed", retired=[[1, 4]],
+                                     namespace="read-d8-aa", run="v2")
+            with self.assertRaisesRegex(read_plans.PlanError, "fixed-restart-1"):
+                synth.write_plan_set(root, "aa", "fixed-restart-2", p2, cs_sha, executions=[{"records": recs2}],
+                                     units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[[1, 4]],
+                                     namespace="read-d8-aa", run="v2")
+            p2_low = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v2")
+                      for u in range(2, 6) for m in (0, 1)]
+            with self.assertRaisesRegex(read_sets.SetError, "high-water"):
+                synth.write_plan_set(root, "aa", "fixed-restart-1", p2_low, cs_sha,
+                                     executions=[{"records": {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw")
+                                                              for p in p2_low}}],
+                                     units=[2, 6], reserved=[2, 6], replaces="v1/fixed", retired=[[1, 4]],
+                                     namespace="read-d8-aa", run="v2")
+
+            aa_v2 = synth.write_plan_set(root, "aa", "fixed-restart-1", p2, cs_sha,
+                                         executions=[{"records": recs2}], units=[4, 8], reserved=[4, 8],
+                                         replaces="v1/fixed", retired=[[1, 4]], namespace="read-d8-aa", run="v2")
+            opened = read_sets.open_plan_set(aa_v2, cs_sha)
+            rep = readers.run_read(live_decl, cs_sha, "aa", 1, [opened], a6_file=cs_a6)
+            self.assertEqual(rep["verdict"], "symmetric")
+            self.assertEqual(rep["units"], {"kind": "pair", "first": 4, "end": 8})
+
+        # Scenario 2 (Q2.1 lead's exact example): exec-0 completed all 4 pairs with watchdog halt on pod 2 game 3,
+        # and exec-1 hung (same-game watchdog_stop) after starting only pairs 0 and 1. Union of started units is
+        # {0, 1, 2, 3}, so retired MUST be [] (NOT [[2, 4]]).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
+            wd_out = lambda pl, g, pos: (("halt", dict(synth.WATCHDOG_END), None, 50)
+                                         if (pl["pod_index"] == 2 and g["game"] == 3) else "draw")
+            e0 = {p["pod_index"]: synth.record(p, wd_out) for p in p1}
+            e1 = {0: synth.record(p1[0], wd_out), 1: synth.record(p1[1], wd_out),
+                  2: synth.record(p1[2], wd_out, games=4, status="stopped")}
+            v1_dir = synth.write_plan_set(
+                root, "aa", "fixed", p1, cs_sha,
+                executions=[{"records": e0}, {"records": e1, "ended": "watchdog_stop", "entry_expired": [[2, 3]]}],
+                units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1",
+            )
+            self.assertEqual(read_sets.d8_unused_reserved_ranges(v1_dir, read_sets.load_manifest(v1_dir)), [])
+            p2 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v2") for u in range(4, 8) for m in (0, 1)]
+            recs2 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in p2}
+            with self.assertRaisesRegex(read_sets.SetError, "retired"):
+                synth.write_plan_set(root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
+                                     units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[[2, 4]],
+                                     namespace="read-d8-aa", run="v2")
+            aa_v2 = synth.write_plan_set(root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
+                                         units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[],
+                                         namespace="read-d8-aa", run="v2")
+            self.assertEqual(readers.run_read(live_decl, cs_sha, "aa", 1,
+                                              [read_sets.open_plan_set(aa_v2, cs_sha)], a6_file=cs_a6)["verdict"],
+                             "symmetric")
+
+        # Scenario 3 (Q2.1 non-contiguous union): exec-0 started pair 0, exec-1 started pair 2 -> retired [[1,2],[3,4]].
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
+            v1_dir = synth.write_plan_set(
+                root, "aa", "fixed", p1, cs_sha,
+                executions=[
+                    {"records": {0: synth.record(p1[0], lambda pl, g, pos: "draw", games=2, status="stopped")},
+                     "ended": "interrupted"},
+                    {"records": {4: synth.record(p1[4], lambda pl, g, pos: "draw", games=2, status="stopped")},
+                     "ended": "interrupted"},
+                ],
+                units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1",
+            )
+            self.assertEqual(read_sets.d8_unused_reserved_ranges(v1_dir, read_sets.load_manifest(v1_dir)),
+                             [[1, 2], [3, 4]])
+
+    def test_d8_interrupted_set_cases_i_ii_iii_and_different_game_watchdog(self):
+        cs_a6, cs_sha = self._countersigned_a6()
+
+        # Case (i): execution left no execution.json -> accepted as interrupted predecessor.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
+            v1_dir = synth.write_plan_set(
+                root, "aa", "fixed", p1, cs_sha,
+                executions=[{"records": {0: synth.record(p1[0], lambda pl, g, pos: "draw", games=2, status="stopped")},
+                             "receipt": False}],
+                units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1",
+            )
+            self.assertFalse((v1_dir / "exec-0" / "execution.json").exists())
+            ok, reason = read_sets.is_d8_interrupted_set(v1_dir)
+            self.assertTrue(ok, reason)
+            p2 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v2") for u in range(4, 8) for m in (0, 1)]
+            recs2 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in p2}
+            aa_v2 = synth.write_plan_set(root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
+                                         units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[[1, 4]],
+                                         namespace="read-d8-aa", run="v2")
+            read_sets.open_plan_set(aa_v2, cs_sha)
+
+        # Case (ii): interrupted prep set prep-dose-0 -> accepted for v2/prep-dose-0-restart-1 with retired [[5, 32]].
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            s1_v1, o_v1 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(0, 32), cs_sha,
+                                               reserved=[0, 32], namespace="dose-d8", run="v1")
+            p1 = read_plans.assemble_panel("dose", "dose-d8", read_sets.load_manifest(s1_v1), 0, o_v1,
+                                           pins=synth.PINS, builders=None, **synth.DEALER)
+            (root / "dose-d8" / "v1" / "panel").mkdir(parents=True)
+            p1_text = read_plans.serialize(p1)
+            (root / "dose-d8" / "v1" / "panel" / "panel.json").write_bytes(p1_text.encode("utf-8"))
+            p1_sha = hashlib.sha256(p1_text.encode("utf-8")).hexdigest()
+
+            prep_v1_0, _ = synth.write_prep_set(
+                root, "dose", "dose", "prep-dose-0", range(0, 32), cs_sha,
+                executions=[{"ended": "interrupted", "units": list(range(0, 5)), "accept": False}],
+                reserved=[0, 32], panel_sha256=p1_sha, namespace="dose-d8", run="v1",
+            )
+            ok, reason = read_sets.is_d8_interrupted_set(prep_v1_0)
+            self.assertTrue(ok, reason)
+            self.assertEqual(read_sets.d8_unused_reserved_ranges(prep_v1_0, read_sets.load_manifest(prep_v1_0)),
+                             [[5, 32]])
+
+            s1_v2, o_v2 = synth.write_prep_set(root, "dose_panel", "dose", "prep-panel", range(32, 64), cs_sha,
+                                               reserved=[32, 64], namespace="dose-d8", run="v2")
+            p2 = read_plans.assemble_panel("dose", "dose-d8", read_sets.load_manifest(s1_v2), 0, o_v2,
+                                           pins=synth.PINS, builders=None, **synth.DEALER)
+            (root / "dose-d8" / "v2" / "panel").mkdir(parents=True)
+            p2_text = read_plans.serialize(p2)
+            (root / "dose-d8" / "v2" / "panel" / "panel.json").write_bytes(p2_text.encode("utf-8"))
+            p2_sha = hashlib.sha256(p2_text.encode("utf-8")).hexdigest()
+            sm_bytes = read_plans.serialize({"dose_panels": {"v1": p1_sha, "v2": p2_sha}}).encode("utf-8")
+            sm_sha = hashlib.sha256(sm_bytes).hexdigest()
+
+            prep_v2_0, _ = synth.write_prep_set(
+                root, "dose", "dose", "prep-dose-0-restart-1", range(32, 64), cs_sha,
+                reserved=[32, 64], panel_sha256=p2_sha, replaces="v1/prep-dose-0", retired=[[5, 32]],
+                namespace="dose-d8", run="v2",
+            )
+            read_sets.check_prep_dose_set(prep_v2_0, pool=synth.POOL, constants=synth.CONST,
+                                          shakedown_manifest=(sm_bytes, sm_sha))
+
+        # Case (iii): completed set stands on its build and MUST NOT be replaced.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
+            recs1 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in p1}
+            v1_dir = synth.write_plan_set(root, "aa", "fixed", p1, cs_sha, executions=[{"records": recs1}],
+                                          units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1")
+            ok, reason = read_sets.is_d8_interrupted_set(v1_dir)
+            self.assertFalse(ok)
+            self.assertIn("completed", reason)
+            p2 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v2") for u in range(4, 8) for m in (0, 1)]
+            recs2 = {p["pod_index"]: synth.record(p, lambda pl, g, pos: "draw") for p in p2}
+            with self.assertRaisesRegex(read_sets.SetError, "not an interrupted set|completed"):
+                synth.write_plan_set(root, "aa", "fixed-restart-1", p2, cs_sha, executions=[{"records": recs2}],
+                                     units=[4, 8], reserved=[4, 8], replaces="v1/fixed", retired=[],
+                                     namespace="read-d8-aa", run="v2")
+
+        # Different-game watchdog expiry is a void infrastructure failure, NOT a restartable interrupted set.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = synth.assert_test_temp_root(Path(tmp))
+            p1 = [synth.plan("aa", u, mirror=m, namespace="read-d8-aa", run="v1") for u in range(0, 4) for m in (0, 1)]
+            wd3 = lambda pl, g, pos: (("halt", dict(synth.WATCHDOG_END), None, 50)
+                                      if (pl["pod_index"] == 0 and g["game"] == 3) else "draw")
+            wd5 = lambda pl, g, pos: (("halt", dict(synth.WATCHDOG_END), None, 50)
+                                      if (pl["pod_index"] == 0 and g["game"] == 5) else "draw")
+            e0 = {p["pod_index"]: synth.record(p, wd3) for p in p1}
+            e1 = {0: synth.record(p1[0], wd5, games=6, status="stopped")}
+            v1_dir = synth.write_plan_set(
+                root, "aa", "fixed", p1, cs_sha,
+                executions=[{"records": e0}, {"records": e1, "ended": "watchdog_stop", "entry_expired": [[0, 3]]}],
+                units=[0, 4], reserved=[0, 4], namespace="read-d8-aa", run="v1",
+            )
+            ok, reason = read_sets.is_d8_interrupted_set(v1_dir)
+            self.assertFalse(ok)
+            self.assertIn("infrastructure failure", reason)
+
+
 class UniformPodRecordTests(unittest.TestCase):
     @unittest.skipUnless(D5_UNIFORM_FIXTURE.exists(),
                          "D5 has not yet produced a uniform pod record; its fixture is added when D5 lands")

@@ -219,6 +219,90 @@ def _u64(value: Any, label: str) -> int:
     return value
 
 
+D8_RESTART_NAMESPACES = ("dose-d8", "read-d8-aa")
+RUN_RE = re.compile(r"^v([1-9]\d*)$")
+QUALIFIED_SET_RE = re.compile(r"^(v[1-9]\d*)/(.+)$")
+RESTART_SUFFIX_RE = re.compile(r"^(.+)-restart-([1-9]\d*)$")
+
+
+def run_number(run: str) -> int:
+    m = RUN_RE.fullmatch(run) if isinstance(run, str) else None
+    if m is None:
+        raise PlanError(f"run must match v<n> with n >= 1, got {run!r}")
+    return int(m.group(1))
+
+
+def check_run(namespace: str, run: str) -> str:
+    """Validate `run` per READ-PLAN-v3 Change 1: v<n> in dose-d8 and read-d8-aa; v1 everywhere else."""
+    n = run_number(run)
+    if namespace not in D8_RESTART_NAMESPACES and n != 1:
+        raise PlanError(f"namespace {namespace!r} keeps v2 rules and requires run {RUN!r}, got {run!r}")
+    return run
+
+
+def check_d8_v3_manifest_shape(man: dict[str, Any]) -> None:
+    """Manifest-level checks for READ-PLAN-v3 Changes 1 and 2 (only in dose-d8 and read-d8-aa)."""
+    ns = man["namespace"]
+    if ns not in D8_RESTART_NAMESPACES:
+        return
+    run = check_run(ns, man["run"])
+    n = run_number(run)
+    set_name = man["set"]
+    units = man["units"]
+    reserved = man["reserved"]
+    if reserved is None or reserved != units:
+        raise PlanError(
+            f"{ns}/{run}/{set_name}: v3 requires non-null reserved equal to full units {units}, got {reserved!r}"
+        )
+    if ns == "dose-d8":
+        want_units = [32 * (n - 1), 32 * n]
+        if units != want_units:
+            raise PlanError(f"{ns}/{run}/{set_name}: expected units {want_units} for run {run}, got {units}")
+    else:
+        if units[1] - units[0] != 4:
+            raise PlanError(f"{ns}/{run}/{set_name}: read-d8-aa reserves 4 pairs, got units {units}")
+        if n == 1 and units != [0, 4]:
+            raise PlanError(f"{ns}/{run}/{set_name}: run v1 must have units [0, 4], got {units}")
+
+    suf = RESTART_SUFFIX_RE.fullmatch(set_name)
+    replaces = man["replaces"]
+    retired = man["retired"]
+    if replaces is None:
+        if suf is not None:
+            raise PlanError(f"{ns}/{run}/{set_name}: a fresh set (replaces null) cannot have a -restart-<k> suffix")
+        if retired:
+            raise PlanError(f"{ns}/{run}/{set_name}: a fresh set must have empty retired, got {retired}")
+        if ns == "read-d8-aa":
+            if n != 1 or set_name != "fixed":
+                raise PlanError(f"{ns}/{run}/{set_name}: only v1/fixed may be a fresh read-d8-aa set")
+        else:
+            if set_name == "prep-panel" and man["panel_sha256"] is not None:
+                raise PlanError(f"{ns}/{run}/{set_name}: stage-1 prep-panel must have panel_sha256 null")
+    else:
+        if set_name == "prep-panel" or (suf is not None and suf.group(1) == "prep-panel"):
+            raise PlanError(f"{ns}/{run}/{set_name}: prep-panel is always a fresh set with replaces null")
+        if suf is None:
+            raise PlanError(f"{ns}/{run}/{set_name}: a replacing set must carry a -restart-<k> suffix")
+        base_name, k_str = suf.group(1), suf.group(2)
+        k = int(k_str)
+        if ns == "read-d8-aa":
+            if base_name != "fixed" or n < 2 or k != n - 1:
+                raise PlanError(f"{ns}/{run}/{set_name}: read-d8-aa restart in {run} must be fixed-restart-{n - 1}")
+        else:
+            if not (base_name.startswith("dose-") or base_name.startswith("prep-dose-")):
+                raise PlanError(f"{ns}/{run}/{set_name}: only dose-<ordinal> and prep-dose-<ordinal> may restart")
+        if not isinstance(replaces, str):
+            raise PlanError(f"{ns}/{run}/{set_name}: replaces must be '<run>/<set>'")
+        qm = QUALIFIED_SET_RE.fullmatch(replaces)
+        if qm is None:
+            raise PlanError(f"{ns}/{run}/{set_name}: replaces must be qualified as '<run>/<set>', got {replaces!r}")
+        pred_run = qm.group(1)
+        if run_number(pred_run) >= n:
+            raise PlanError(
+                f"{ns}/{run}/{set_name}: replaced set {replaces!r} must be in an earlier run than {run}"
+            )
+
+
 # ---------------------------------------------------------------------------------------------
 # Section 3: identity, seeds and chairs
 
@@ -235,13 +319,15 @@ def seed_sources(family: str, namespace: str) -> tuple[str, str]:
     return namespace, namespace
 
 
-def plan_seeds(family: str, namespace: str, unit: int, rotation: int | None = None) -> dict[str, Any]:
+def plan_seeds(family: str, namespace: str, unit: int, rotation: int | None = None, *,
+               run: str = RUN) -> dict[str, Any]:
+    check_run(namespace, run)
     src_draft, src_pod = seed_sources(family, namespace)
-    pod_parts: list[Any] = [src_pod, "pod", RUN, unit]
+    pod_parts: list[Any] = [src_pod, "pod", run, unit]
     if _layout(family) == "one":
         pod_parts.append(rotation)
     return {
-        "draft_seed": deal.seed([src_draft, "draft", RUN, unit]),
+        "draft_seed": deal.seed([src_draft, "draft", run, unit]),
         "pod_seed": deal.seed(pod_parts),
         "league_seed": None,
         "draft_seed_namespace": src_draft,
@@ -328,8 +414,8 @@ def pairing_games(family: str, pod_seed: int, rotation: int | None) -> list[dict
 
 def dealt_decks(family: str, namespace: str, unit: int, pools: list[list[int]] | None,
                 built_cards: dict[tuple[int, str], list[int]] | None, pool_state: dict[str, Any] | None,
-                constants: dict[str, Any] | None, *, card_index: Any = None, cube_table: Any = None
-                ) -> dict[int, dict[str, Any]]:
+                constants: dict[str, Any] | None, *, card_index: Any = None, cube_table: Any = None,
+                run: str = RUN) -> dict[int, dict[str, Any]]:
     """The dealt opponent decks of a plan, by deck id."""
     layout = _layout(family)
     out: dict[int, dict[str, Any]] = {}
@@ -340,8 +426,8 @@ def dealt_decks(family: str, namespace: str, unit: int, pools: list[list[int]] |
     for s in range(SEATS):
         if layout == "b":
             x = SEATS * unit + s
-            opp = deal.deal_read_b_opponent(pool_state, constants, built_cards[(s, "candidate")], namespace, RUN, x)
-            out[2 * s + 1] = _dealt(2 * s + 1, deal.READ_B_KEY, [namespace, RUN, x], opp["mainboard"])
+            opp = deal.deal_read_b_opponent(pool_state, constants, built_cards[(s, "candidate")], namespace, run, x)
+            out[2 * s + 1] = _dealt(2 * s + 1, deal.READ_B_KEY, [namespace, run, x], opp["mainboard"])
         else:
             for o in ((0,) if layout == "c" else (0, 1)):
                 deck_id = 3 * s + 2 if layout == "c" else 6 * s + 4 + o
@@ -438,8 +524,10 @@ def verify_a15_golden(path: Path | None = None, *, expected_sha256: str | None =
     return {"sha256": actual_sha, "games": 4, "namespace": ns, "dealer_index": x}
 
 
-def dealer_games(family: str, namespace: str, unit: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def dealer_games(family: str, namespace: str, unit: int, *,
+                 run: str = RUN) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Games and paired builds of the dealer layouts (b, c, dose, d13)."""
+    check_run(namespace, run)
     layout = _layout(family)
     games: list[dict[str, Any]] = []
     pairs: list[dict[str, Any]] = []
@@ -449,10 +537,10 @@ def dealer_games(family: str, namespace: str, unit: int) -> tuple[list[dict[str,
             for j in range(deal.READ_B_GAMES):
                 decks, chairs = _focal(j, 2 * s, 2 * s + 1, s)
                 games.append(_game(4 * s + j, 4 * s + j, "read_b", None, decks, chairs,
-                                   deal.seed([deal.READ_B_KEY, namespace, RUN, x, j]), j))
+                                   deal.seed([deal.READ_B_KEY, namespace, run, x, j]), j))
         elif layout == "c":
             for j in range(deal_common.COMMON_GAMES):
-                g_seed = deal_common.common_game_seed(namespace, RUN, unit, s, 0, j)
+                g_seed = deal_common.common_game_seed(namespace, run, unit, s, 0, j)
                 for arm in (0, 1):
                     decks, chairs = _focal(j, 3 * s + arm, 3 * s + 2, s)
                     games.append(_game(8 * s + 2 * j + arm, 4 * s + j, "common", None, decks, chairs, g_seed, j))
@@ -466,7 +554,7 @@ def dealer_games(family: str, namespace: str, unit: int) -> tuple[list[dict[str,
                 for o in (0, 1):
                     for j in (0, 1):
                         group = 12 * s + 4 * q + 2 * o + j
-                        g_seed = deal_common.common_game_seed(namespace, RUN, unit, s, o, j, q)
+                        g_seed = deal_common.common_game_seed(namespace, run, unit, s, o, j, q)
                         for arm, row in enumerate((x_row, y_row)):
                             decks, chairs = _focal(j, 6 * s + D13_ROW_DECK[row], 6 * s + 4 + o, s)
                             games.append(_game(2 * group + arm, group, "common", None, decks, chairs, g_seed, j))
@@ -512,7 +600,7 @@ PREP_PLAN_FAMILY = {"b_c": "c", "size_b": "size_b", "size_c": "size_c", "dose": 
 
 
 def build_prep_request(prep_family: str, namespace: str, unit: int, pins: Any, picker: Any,
-                       builders: dict[str, Any]) -> dict[str, Any]:
+                       builders: dict[str, Any], *, run: str = RUN) -> dict[str, Any]:
     """A prep request (section 4). `namespace` is the draft seed source: read-gate-pools for b_c,
     the family's own namespace otherwise, `test` in fixtures. prep_family `dose` is a
     prep-dose-<ordinal> request (current and initial builds); `dose_panel` the stage-1 panel request
@@ -528,6 +616,7 @@ def build_prep_request(prep_family: str, namespace: str, unit: int, pins: Any, p
     else:
         _check_namespace(plan_family, namespace)
         seeds_ns = namespace
+    run = check_run(namespace, run)
     pins = _check_pins(pins)
     pick = None if plan_family == "dose" else _check_policy(picker, "picker", ("uniform", "learned"))
     builds = []
@@ -540,9 +629,9 @@ def build_prep_request(prep_family: str, namespace: str, unit: int, pins: Any, p
         "kind": "prep_request",
         "family": "dose" if prep_family == "dose_panel" else prep_family,
         "namespace": namespace,
-        "run": RUN,
+        "run": run,
         "unit": unit,
-        "seeds": plan_seeds(plan_family, seeds_ns, unit),
+        "seeds": plan_seeds(plan_family, seeds_ns, unit, run=run),
         "pins": pins,
         "chairs": plan_chairs(plan_family, None, None, pick),
         "builds": builds,
@@ -588,7 +677,7 @@ def check_prep_request(request: Any, *, expected_pins: Any = None, expected_pick
     prep_family = "dose_panel" if request["family"] == "dose" and not request["builds"] else request["family"]
     try:
         expected = build_prep_request(prep_family, request["namespace"], request["unit"], request["pins"],
-                                      bindings["picker"], bindings["builders"])
+                                      bindings["picker"], bindings["builders"], run=request["run"])
     except (ValueError, KeyError, TypeError) as exc:
         raise PlanError(f"prep request cannot be regenerated: {exc}") from exc
     if serialize(expected) != serialize(request):
@@ -646,7 +735,7 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
                mark: Any = None, prep: tuple[dict[str, Any], str] | None = None, pool_doc: Any = None,
                constants_doc: Any = None, pool_sha256: str | None = None,
                constants_sha256: str | None = None, card_index: tuple[Any, str] | None = None,
-               cube_table: tuple[Any, str] | None = None) -> dict[str, Any]:
+               cube_table: tuple[Any, str] | None = None, run: str = RUN) -> dict[str, Any]:
     """One read plan (sections 2 and 3). `picker` binds the learning chairs; `builders` binds each
     builder row except `stated`. Families with prep take (prep result, its sha256); families with
     dealt decks take the pool and constants documents and their sha256 values."""
@@ -655,6 +744,7 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
         raise PlanError(f"unknown family {family!r}")
     layout = spec["layout"]
     _check_namespace(family, namespace)
+    run = check_run(namespace, run)
     if layout == "b" and namespace != TEST:
         verify_a15_golden()
     _u64(unit, "unit")
@@ -690,7 +780,7 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
     if builders:
         raise PlanError(f"family {family} has no rows {sorted(builders)}")
 
-    seeds = plan_seeds(family, namespace, unit, rotation)
+    seeds = plan_seeds(family, namespace, unit, rotation, run=run)
     pools = built_cards = prep_sha = None
     if spec.get("prep"):
         if prep is None:
@@ -731,18 +821,18 @@ def build_plan(family: str, namespace: str, unit: int, *, pins: Any, pilot: Any,
             raise PlanError("cube_table does not hash to pins.cube_table")
 
     dealt = dealt_decks(family, namespace, unit, pools, built_cards, pool_state, constants,
-                        card_index=card_index_doc, cube_table=cube_table_doc)
+                        card_index=card_index_doc, cube_table=cube_table_doc, run=run)
     if layout in ("a", "one", "all"):
         games, pairs = pairing_games(family, seeds["pod_seed"], rotation), []
     else:
-        games, pairs = dealer_games(family, namespace, unit)
+        games, pairs = dealer_games(family, namespace, unit, run=run)
     return {
         "schema": PLAN_SCHEMA,
         "interfaces": INTERFACES,
         "family": family,
         "use": TEST if namespace == TEST else spec["use"],
         "namespace": namespace,
-        "run": RUN,
+        "run": run,
         "unit": unit,
         "pod_index": pod_index(family, unit, mirror, rotation),
         "mirror": mirror,
@@ -874,7 +964,7 @@ def check_plan(plan: Any, prep: tuple[dict[str, Any], str] | None = None, pool_d
                               picker=bindings["picker"], builders=bindings["builders"], mirror=plan["mirror"],
                               rotation=plan["rotation"], mark=plan["mark"], prep=prep, pool_doc=pool_doc,
                               constants_doc=constants_doc, pool_sha256=pool_sha256, constants_sha256=constants_sha256,
-                              card_index=card_index, cube_table=cube_table)
+                              card_index=card_index, cube_table=cube_table, run=plan["run"])
     except (ValueError, KeyError, TypeError) as exc:
         raise PlanError(f"plan cannot be regenerated: {exc}") from exc
     if serialize(expected) != serialize(plan):
@@ -938,27 +1028,34 @@ def build_manifest(kind: str, family: str, namespace: str, set_name: str, declar
                    entries: list[tuple[int, str]], *, look: int | None = None, units: list[int],
                    reserved: list[int] | None = None, pools_with: str | None = None,
                    panel_sha256: str | None = None, prep_set: str | None = None, replaces: str | None = None,
-                   retired: list[list[int]] | None = None) -> dict[str, Any]:
+                   retired: list[list[int]] | None = None, run: str = RUN) -> dict[str, Any]:
     """A manifest (section 5). `entries` are (pod_index or unit, file sha256); files are named
     plans/pod-<pod_index>.json or requests/unit-<unit>.json."""
     if kind not in ("plans", "prep"):
         raise PlanError("manifest kind is plans or prep")
+    run = check_run(namespace, run)
     check_set_name(namespace, family, set_name)
     index_key = "pod_index" if kind == "plans" else "unit"
     folder, stem = ("plans", "pod") if kind == "plans" else ("requests", "unit")
     plans = [{index_key: i, "file": f"{folder}/{stem}-{i}.json", "sha256": sha} for i, sha in entries]
-    return {
-        "schema": PLAN_SCHEMA, "kind": kind, "family": family, "namespace": namespace, "run": RUN,
+    man = {
+        "schema": PLAN_SCHEMA, "kind": kind, "family": family, "namespace": namespace, "run": run,
         "set": set_name, "interfaces": INTERFACES, "declaration_sha256": declaration_sha256, "look": look,
         "units": list(units), "reserved": None if reserved is None else list(reserved), "pools_with": pools_with,
         "panel_sha256": panel_sha256, "prep_set": prep_set, "replaces": replaces,
         "retired": [list(r) for r in (retired or [])], "plans": plans, "plan_set_sha256": plan_set_sha256(plans),
         "executions": [],
     }
+    check_d8_v3_manifest_shape(man)
+    return man
 
 
 def write_set(root: Path, manifest: dict[str, Any], files: dict[str, Any]) -> Path:
     """Write a set directory <root>/<namespace>/<run>/<set>/ with its manifest and files."""
+    check_d8_v3_manifest_shape(manifest)
+    if manifest["namespace"] in D8_RESTART_NAMESPACES:
+        import read_sets  # local import avoids module-load cycle
+        read_sets.verify_d8_v3_against_root(Path(root), manifest)
     set_dir = Path(root) / manifest["namespace"] / manifest["run"] / manifest["set"]
     for rel, doc in files.items():
         path = set_dir / rel
@@ -978,6 +1075,7 @@ def assemble_panel(family: str, namespace: str, prep_manifest: dict[str, Any], p
     the built decks (`builders` binds their rows)."""
     if family not in ("dose", "d13"):
         raise PlanError("panels exist for dose and d13")
+    run = check_run(namespace, prep_manifest["run"])
     pins = _check_pins(pins)
     card_index_doc = cube_table_doc = None
     if card_index is not None:
@@ -997,17 +1095,17 @@ def assemble_panel(family: str, namespace: str, prep_manifest: dict[str, Any], p
         pools = [list(p) for p in result["draft"]["pools"]]
         cards = prep_cards(result) if family == "d13" else None
         dealt = dealt_decks(family, namespace, unit, pools, cards, pool_state, constants,
-                            card_index=card_index_doc, cube_table=cube_table_doc)
-        games, _ = dealer_games(family, namespace, unit)
+                            card_index=card_index_doc, cube_table=cube_table_doc, run=run)
+        games, _ = dealer_games(family, namespace, unit, run=run)
         built = None
         if family == "d13":
             bound = {r: (dict(STATED) if r == "stated" else _check_policy(builders[r], r, ("uniform", "learned")))
                      for r in ROWS["d13"]}
             built = [d for d in plan_decks(family, bound, cards, dealt) if d["source"] == "build"]
-        drafts.append({"unit": unit, "seeds": plan_seeds(family, namespace, unit), "pools": pools,
+        drafts.append({"unit": unit, "seeds": plan_seeds(family, namespace, unit, run=run), "pools": pools,
                        "opponents": [dealt[k] for k in sorted(dealt)], "games": games, "built": built})
     return {
-        "schema": PLAN_SCHEMA, "kind": "panel", "namespace": namespace, "run": RUN, "units": [first, end],
+        "schema": PLAN_SCHEMA, "kind": "panel", "namespace": namespace, "run": run, "units": [first, end],
         "inputs": {"pool_sha256": pool_sha256, "constants_sha256": constants_sha256}, "pins": _check_pins(pins),
         "prep_set_sha256": prep_manifest["plan_set_sha256"], "prep_execution": prep_execution,
         "prep_outputs": [{"unit": u, "sha256": outputs[u][1]} for u in range(first, end)], "drafts": drafts,
@@ -1015,8 +1113,10 @@ def assemble_panel(family: str, namespace: str, prep_manifest: dict[str, Any], p
 
 
 def check_plan_against_panel(plan: dict[str, Any], panel: dict[str, Any]) -> None:
-    """Each dose or d13 plan's seeds, pools, dealt decks and games equal its unit's panel entry, and
+    """Each dose or d13 plan's run, seeds, pools, dealt decks and games equal its unit's panel entry, and
     for d13 so do its built decks."""
+    if plan["run"] != panel["run"]:
+        raise PlanError(f"plan run {plan['run']!r} differs from panel run {panel['run']!r}")
     entries = [d for d in panel["drafts"] if d["unit"] == plan["unit"]]
     if len(entries) != 1:
         raise PlanError(f"unit {plan['unit']} is not in the panel")
@@ -1155,10 +1255,11 @@ def main(argv: list[str] | None = None) -> int:
         doc = build_plan(spec["family"], spec["namespace"], spec["unit"], pins=spec["pins"], pilot=spec["pilot"],
                          picker=spec.get("picker"), builders=spec.get("builders"), mirror=spec.get("mirror"),
                          rotation=spec.get("rotation"), mark=spec.get("mark"), prep=prep, pool_doc=pool[0],
-                         constants_doc=constants[0], pool_sha256=pool[1], constants_sha256=constants[1])
+                         constants_doc=constants[0], pool_sha256=pool[1], constants_sha256=constants[1],
+                         run=spec.get("run", RUN))
     elif args.command == "prep-request":
         doc = build_prep_request(spec["prep_family"], spec["namespace"], spec["unit"], spec["pins"],
-                                 spec.get("picker"), spec.get("builders", {}))
+                                 spec.get("picker"), spec.get("builders", {}), run=spec.get("run", RUN))
     else:
         folder, stem = ("plans", "pod") if spec["kind"] == "plans" else ("requests", "unit")
         paths = sorted((args.set_dir / folder).glob(f"{stem}-*.json"), key=lambda p: int(p.stem.split("-")[1]))
@@ -1167,7 +1268,10 @@ def main(argv: list[str] | None = None) -> int:
                              spec["declaration_sha256"], entries, look=spec.get("look"), units=spec["units"],
                              reserved=spec.get("reserved"), pools_with=spec.get("pools_with"),
                              panel_sha256=spec.get("panel_sha256"), prep_set=spec.get("prep_set"),
-                             replaces=spec.get("replaces"), retired=spec.get("retired"))
+                             replaces=spec.get("replaces"), retired=spec.get("retired"), run=spec.get("run", RUN))
+        if doc["namespace"] in D8_RESTART_NAMESPACES:
+            import read_sets
+            read_sets.verify_d8_v3_against_root(args.set_dir.parents[2], doc)
         (args.set_dir / "manifest.json").write_bytes(serialize(doc).encode("utf-8"))
         return 0
     text = serialize(doc)

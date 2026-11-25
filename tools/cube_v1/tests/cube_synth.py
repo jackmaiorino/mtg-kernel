@@ -13,9 +13,12 @@ import json
 from pathlib import Path
 import random
 import sys
+import tempfile
 from typing import Any, Callable
 
 CUBE_V1_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = CUBE_V1_DIR.parents[1]
+WORKTREE_PARENT = REPO_ROOT.parent
 sys.path.insert(0, str(CUBE_V1_DIR))
 
 import deal  # noqa: E402
@@ -132,31 +135,49 @@ def uniform_build_rows(cards: list[int], pool: list[int]) -> dict[str, Any]:
 # Plans
 
 
+def assert_test_temp_root(root: Path) -> Path:
+    """Q2.3 guard: v3 dose-d8 and read-d8-aa fixtures may write only into test-temporary roots,
+    never into the repository or a real run root."""
+    resolved = Path(root).resolve()
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    if resolved == tmp_root or not resolved.is_relative_to(tmp_root):
+        raise AssertionError(
+            f"D8 fixture root {resolved} must be a subdirectory inside test temp dir {tmp_root}"
+        )
+    if resolved.is_relative_to(REPO_ROOT.resolve()) or resolved.is_relative_to(WORKTREE_PARENT.resolve()):
+        raise AssertionError(f"D8 fixture root {resolved} must not lie inside the repo or run parent")
+    return resolved
+
+
 def plan(family: str, unit: int, *, mirror: int | None = None, rotation: int | None = None,
-         mark: dict[str, Any] | None = None, prep: tuple[dict[str, Any], str] | None = None) -> dict[str, Any]:
+         mark: dict[str, Any] | None = None, prep: tuple[dict[str, Any], str] | None = None,
+         namespace: str = NS, run: str = read_plans.RUN) -> dict[str, Any]:
     rows = read_plans._rows(family)
     builders = {r: dict(UNIFORM) for r in rows if r != "stated"}
     kwargs: dict[str, Any] = {}
     if read_plans.FAMILIES[family]["layout"] in ("b", "c", "d13"):
         kwargs = dict(DEALER)
-    return read_plans.build_plan(family, NS, unit, pins=PINS, pilot=PILOT,
+    return read_plans.build_plan(family, namespace, unit, pins=PINS, pilot=PILOT,
                                  picker=None if family == "dose" else dict(UNIFORM), builders=builders,
-                                 mirror=mirror, rotation=rotation, mark=mark, prep=prep, **kwargs)
+                                 mirror=mirror, rotation=rotation, mark=mark, prep=prep, run=run, **kwargs)
 
 
 def prep_request(prep_family: str, unit: int, *, pins: dict[str, Any] | None = None,
-                 picker: Any = ..., builders: dict[str, Any] | None = None) -> dict[str, Any]:
+                 picker: Any = ..., builders: dict[str, Any] | None = None,
+                 namespace: str = NS, run: str = read_plans.RUN) -> dict[str, Any]:
     rows = read_plans.PREP_ROWS[prep_family]
     use_picker = (None if prep_family in ("dose", "dose_panel") else dict(UNIFORM)) if picker is ... else picker
     use_builders = {r: dict(UNIFORM) for r in rows if r != "stated"} if builders is None else builders
-    return read_plans.build_prep_request(prep_family, NS, unit, PINS if pins is None else pins,
-                                         use_picker, use_builders)
+    return read_plans.build_prep_request(prep_family, namespace, unit, PINS if pins is None else pins,
+                                         use_picker, use_builders, run=run)
 
 
 def prep_for(prep_family: str, unit: int, *, pins: dict[str, Any] | None = None,
              picker: Any = ..., builders: dict[str, Any] | None = None,
-             basics_by_chair: dict[tuple[int, str], int] | None = None) -> tuple[dict[str, Any], str, dict[str, Any], str]:
-    request = prep_request(prep_family, unit, pins=pins, picker=picker, builders=builders)
+             basics_by_chair: dict[tuple[int, str], int] | None = None,
+             namespace: str = NS, run: str = read_plans.RUN) -> tuple[dict[str, Any], str, dict[str, Any], str]:
+    request = prep_request(prep_family, unit, pins=pins, picker=picker, builders=builders,
+                           namespace=namespace, run=run)
     req_sha = read_plans.doc_sha256(request)
     result = prep_result(request, req_sha, basics_by_chair=basics_by_chair)
     return request, req_sha, result, read_plans.doc_sha256(result)
@@ -269,18 +290,22 @@ def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name:
                    panel_sha256: str | None = None, replaces: str | None = None,
                    retired: list[list[int]] | None = None, pins: dict[str, Any] | None = None,
                    picker: Any = ..., builders: dict[str, Any] | None = None,
-                   basics_by_chair: dict[tuple[int, str], int] | None = None
+                   basics_by_chair: dict[tuple[int, str], int] | None = None,
+                   namespace: str = NS, run: str = read_plans.RUN
                    ) -> tuple[Path, dict[int, tuple[dict[str, Any], str]]]:
     """A prep set with requests and executions. Each execution spec: {"ended", "units" (with markers),
     "receipt" (bool), "tamper" (unit -> callable on the result)}. Default: one complete execution."""
+    if namespace != NS:
+        assert_test_temp_root(root)
     requests, results = {}, {}
     for u in units:
         request, req_sha, result, res_sha = prep_for(prep_family, u, pins=pins, picker=picker, builders=builders,
-                                                     basics_by_chair=basics_by_chair)
+                                                     basics_by_chair=basics_by_chair, namespace=namespace, run=run)
         requests[u], results[u] = (request, req_sha), (result, res_sha)
-    man = read_plans.build_manifest("prep", manifest_family, NS, set_name, decl_sha,
+    man = read_plans.build_manifest("prep", manifest_family, namespace, set_name, decl_sha,
                                     [(u, requests[u][1]) for u in units], units=[units.start, units.stop],
-                                    reserved=reserved, panel_sha256=panel_sha256, replaces=replaces, retired=retired)
+                                    reserved=reserved, panel_sha256=panel_sha256, replaces=replaces,
+                                    retired=retired, run=run)
     executions = executions or [{"ended": "complete"}]
     for e, spec in enumerate(executions):
         man["executions"].append({"execution": e, "reason": "first" if e == 0 else "prep_retry", "expired_games": [],
@@ -321,13 +346,16 @@ def write_plan_set(root: Path, family: str, set_name: str, plans: list[dict[str,
                    executions: list[dict[str, Any]], look: int | None = None, units: list[int],
                    reserved: list[int] | None = None, pools_with: str | None = None, prep_set: str | None = None,
                    panel_sha256: str | None = None, replaces: str | None = None,
-                   retired: list[list[int]] | None = None) -> Path:
+                   retired: list[list[int]] | None = None, namespace: str = NS,
+                   run: str = read_plans.RUN) -> Path:
     """A plan set. Each execution spec: {"records": {pod_index: record}, "ended": ..., "expired": [...]}."""
+    if namespace != NS:
+        assert_test_temp_root(root)
     files = {f"plans/pod-{p['pod_index']}.json": p for p in plans}
     entries = [(p["pod_index"], read_plans.doc_sha256(p)) for p in plans]
-    man = read_plans.build_manifest("plans", family, NS, set_name, decl_sha, entries, look=look, units=units,
+    man = read_plans.build_manifest("plans", family, namespace, set_name, decl_sha, entries, look=look, units=units,
                                     reserved=reserved, pools_with=pools_with, panel_sha256=panel_sha256,
-                                    prep_set=prep_set, replaces=replaces, retired=retired)
+                                    prep_set=prep_set, replaces=replaces, retired=retired, run=run)
     for e, spec in enumerate(executions):
         man["executions"].append({"execution": e, "reason": "first" if e == 0 else "watchdog_rerun",
                                   "expired_games": spec.get("entry_expired", []), "binary": BINARY,
@@ -357,9 +385,10 @@ def write_plan_set(root: Path, family: str, set_name: str, plans: list[dict[str,
                     lines.append(json.dumps({"game": g["game"], "attempt": 0, "elapsed_ms": ms,
                                              "host": "fixture-host"}, separators=(",", ":")))
                 (exec_dir / "timing" / f"pod-{i}.jsonl").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
-        receipt = {"execution": e, "plan_set_sha256": man["plan_set_sha256"], "binary": BINARY,
-                   "platform": PLATFORM, "ended": spec.get("ended", "complete"), "records": listed}
-        (exec_dir / "execution.json").write_bytes(read_plans.serialize(receipt).encode())
+        if spec.get("receipt", True):
+            receipt = {"execution": e, "plan_set_sha256": man["plan_set_sha256"], "binary": BINARY,
+                       "platform": PLATFORM, "ended": spec.get("ended", "complete"), "records": listed}
+            (exec_dir / "execution.json").write_bytes(read_plans.serialize(receipt).encode())
     return set_dir
 
 

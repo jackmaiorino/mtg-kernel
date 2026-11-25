@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -82,6 +83,7 @@ def load_manifest(set_dir: Path) -> dict[str, Any]:
     if (set_dir.name, set_dir.parent.name, set_dir.parent.parent.name) != (man["set"], man["run"], man["namespace"]):
         raise SetError("the set directory is not <namespace>/<run>/<set> of its manifest")
     try:
+        read_plans.check_run(man["namespace"], man["run"])
         read_plans.check_set_name(man["namespace"], man["family"], man["set"])
     except read_plans.PlanError as exc:
         raise SetError(str(exc)) from exc
@@ -90,6 +92,10 @@ def load_manifest(set_dir: Path) -> dict[str, Any]:
         _range(man["reserved"], "manifest.reserved")
     for r in man["retired"]:
         _range(r, "manifest.retired entry")
+    try:
+        read_plans.check_d8_v3_manifest_shape(man)
+    except read_plans.PlanError as exc:
+        raise SetError(str(exc)) from exc
     index_key = "pod_index" if man["kind"] == "plans" else "unit"
     folder, stem = ("plans", "pod") if man["kind"] == "plans" else ("requests", "unit")
     for i, entry in enumerate(man["plans"]):
@@ -469,11 +475,327 @@ def check_shared_bc_prefix(b_sets: list[dict[str, Any]], c_sets: list[dict[str, 
                 raise SetError(f"shared unit {unit} chair {s_idx}: (b) and (c) have different candidate cards or builder")
 
 
+def _merge_ranges(indices: list[int]) -> list[list[int]]:
+    """Merge sorted unique integers into contiguous half-open [first, end) ranges."""
+    if not indices:
+        return []
+    out: list[list[int]] = []
+    start = prev = indices[0]
+    for x in indices[1:]:
+        if x == prev + 1:
+            prev = x
+        else:
+            out.append([start, prev + 1])
+            start = prev = x
+    out.append([start, prev + 1])
+    return out
+
+
+def _exec_dirs_and_indices(set_dir: Path, man: dict[str, Any]) -> list[tuple[int, Path]]:
+    found: dict[int, Path] = {}
+    for entry in man["executions"]:
+        e = entry["execution"]
+        found[e] = set_dir / f"exec-{e}"
+    if set_dir.exists():
+        for p in set_dir.iterdir():
+            m = re.fullmatch(r"exec-(\d+)", p.name)
+            if m and p.is_dir():
+                found.setdefault(int(m.group(1)), p)
+    return sorted(found.items())
+
+
+def d8_started_units(set_dir: Path, man: dict[str, Any]) -> set[int]:
+    """Q2.1: union of units started in ANY execution of a D8 set (prep or plans)."""
+    set_dir = Path(set_dir)
+    started: set[int] = set()
+    is_aa = man["family"] == "aa"
+    for _, exec_dir in _exec_dirs_and_indices(set_dir, man):
+        if not exec_dir.exists():
+            continue
+        receipt_path = exec_dir / "execution.json"
+        if receipt_path.exists():
+            try:
+                rec_doc = _load(receipt_path)
+            except SetError:
+                rec_doc = None
+            if isinstance(rec_doc, dict):
+                if man["kind"] == "prep":
+                    for item in rec_doc.get("outputs", []):
+                        if isinstance(item, dict) and type(item.get("unit")) is int:
+                            started.add(item["unit"])
+                else:
+                    for item in rec_doc.get("records", []):
+                        if isinstance(item, dict) and type(item.get("pod_index")) is int:
+                            pid = item["pod_index"]
+                            started.add(pid // 2 if is_aa else pid)
+        if man["kind"] == "prep":
+            for folder, pat in (("prep", r"unit-(\d+)\.json"), ("done", r"(\d+)\.json")):
+                sub = exec_dir / folder
+                if sub.is_dir():
+                    for p in sub.iterdir():
+                        m = re.fullmatch(pat, p.name)
+                        if m:
+                            started.add(int(m.group(1)))
+        else:
+            for folder, pat in (("records", r"pod-(\d+)\.json"), ("timing", r"pod-(\d+)\.jsonl")):
+                sub = exec_dir / folder
+                if sub.is_dir():
+                    for p in sub.iterdir():
+                        m = re.fullmatch(pat, p.name)
+                        if m:
+                            pid = int(m.group(1))
+                            started.add(pid // 2 if is_aa else pid)
+    return started
+
+
+def d8_unused_reserved_ranges(set_dir: Path, man: dict[str, Any]) -> list[list[int]]:
+    """Q2.1: reserved range minus the union of units started in ANY execution, merged into [first, end)."""
+    r0, r1 = man["reserved"]
+    started = d8_started_units(set_dir, man)
+    unused = [u for u in range(r0, r1) if u not in started]
+    return _merge_ranges(unused)
+
+
+def is_d8_interrupted_set(set_dir: Path, man: dict[str, Any] | None = None) -> tuple[bool, str]:
+    """Q2.2: predicate for an existing interrupted set in dose-d8 / read-d8-aa.
+    Includes: ended 'interrupted', same-game watchdog hang, (i) execution leaving no execution.json,
+    (ii) interrupted prep set (prep-dose-<ordinal>). Excludes (iii) completed sets and
+    different-game watchdog infrastructure failures."""
+    set_dir = Path(set_dir)
+    man = man or load_manifest(set_dir)
+    execs = _exec_dirs_and_indices(set_dir, man)
+    if man["kind"] == "prep":
+        if man["set"] == "prep-panel" or man["set"].startswith("prep-panel-restart-"):
+            return False, "prep-panel is never replaced"
+        try:
+            accept_prep_set(set_dir, man)
+            return False, "prep set completed with an accepted execution"
+        except SetError:
+            pass
+        if not execs:
+            return False, "prep set has no execution"
+        for e, exec_dir in execs:
+            if not (exec_dir / "execution.json").exists():
+                return True, f"prep execution {e} left no execution.json"
+            rec = _load(exec_dir / "execution.json")
+            if isinstance(rec, dict) and rec.get("ended") == "interrupted":
+                return True, f"prep execution {e} ended interrupted"
+        return True, "prep set did not complete"
+
+    if not execs:
+        return False, "plan set has no execution"
+    exec_map = dict(execs)
+    if 0 not in exec_map:
+        return False, "plan set has no execution 0"
+    if not (exec_map[0] / "execution.json").exists():
+        return True, "execution 0 left no execution.json"
+    e0 = _plan_receipt(exec_map[0], man, 0)
+    ended0 = e0["receipt"]["ended"]
+    if ended0 == "interrupted":
+        return True, "execution 0 ended interrupted"
+    if ended0 == "complete":
+        expired0 = _expired(e0["records"])
+        if not expired0:
+            return False, "set completed and stands on its build"
+        if 1 not in exec_map:
+            return False, "execution 0 holds a watchdog halt and its rerun has not started"
+        if not (exec_map[1] / "execution.json").exists():
+            return True, "execution 1 left no execution.json"
+        e1 = _plan_receipt(exec_map[1], man, 1)
+        ended1 = e1["receipt"]["ended"]
+        expired1 = _expired(e1["records"])
+        if ended1 == "complete" and not expired1:
+            return False, "set completed on watchdog rerun and stands on its build"
+        if ended1 == "interrupted":
+            return True, "execution 1 ended interrupted"
+        if ended1 == "watchdog_stop":
+            if any(g in expired0 for g in expired1):
+                return True, "same-game watchdog hang"
+            return False, "different-game watchdog expiry is a void infrastructure failure, not restartable"
+    return False, f"set execution state {ended0!r} is not a restartable interruption"
+
+
+def _set_base_and_k(set_name: str) -> tuple[str, int]:
+    m = read_plans.RESTART_SUFFIX_RE.fullmatch(set_name)
+    if m is None:
+        return set_name, 0
+    return m.group(1), int(m.group(2))
+
+
+def verify_d8_v3_against_root(root: Path, man: dict[str, Any]) -> None:
+    """Enforce READ-PLAN-v3 Change 1 (Q2.1, Q2.2) against existing sets under `root/<namespace>/`."""
+    ns = man["namespace"]
+    if ns not in read_plans.D8_RESTART_NAMESPACES:
+        return
+    try:
+        read_plans.check_d8_v3_manifest_shape(man)
+    except read_plans.PlanError as exc:
+        raise SetError(str(exc)) from exc
+    n = read_plans.run_number(man["run"])
+    ns_dir = Path(root) / ns
+    earlier_hwm = 0
+    earlier_sets: list[tuple[int, Path, dict[str, Any]]] = []
+    if ns_dir.is_dir():
+        for run_dir in sorted(ns_dir.iterdir()):
+            rm = read_plans.RUN_RE.fullmatch(run_dir.name)
+            if not rm or not run_dir.is_dir():
+                continue
+            r_num = int(rm.group(1))
+            if r_num >= n:
+                continue
+            for s_dir in sorted(run_dir.iterdir()):
+                if not (s_dir / "manifest.json").exists():
+                    continue
+                s_man = load_manifest(s_dir)
+                earlier_sets.append((r_num, s_dir, s_man))
+                if s_man["reserved"] is not None:
+                    earlier_hwm = max(earlier_hwm, s_man["reserved"][1])
+    if man["units"][0] < earlier_hwm:
+        raise SetError(
+            f"{ns}/{man['run']}/{man['set']}: units start at {man['units'][0]}, below namespace high-water mark {earlier_hwm}"
+        )
+    if ns == "read-d8-aa" and n >= 2:
+        if earlier_hwm == 0 or man["units"][0] != earlier_hwm:
+            raise SetError(
+                f"{ns}/{man['run']}/{man['set']}: read-d8-aa restart must start at namespace high-water mark {earlier_hwm}, "
+                f"got {man['units'][0]}"
+            )
+    if man["replaces"] is None:
+        if ns == "dose-d8" and n >= 2 and man["set"] != "prep-panel":
+            base_name, _ = _set_base_and_k(man["set"])
+            for _, prev_dir, prev_man in earlier_sets:
+                if prev_man["kind"] == man["kind"] and _set_base_and_k(prev_man["set"])[0] == base_name:
+                    interrupted, _ = is_d8_interrupted_set(prev_dir, prev_man)
+                    if interrupted:
+                        raise SetError(
+                            f"{ns}/{man['run']}/{man['set']}: earlier set {prev_man['run']}/{prev_man['set']} was interrupted, "
+                            f"so this ordinal must use a -restart-<k> name and replaces"
+                        )
+        return
+
+    pred_run, pred_set = man["replaces"].split("/", 1)
+    pred_dir = ns_dir / pred_run / pred_set
+    if not (pred_dir / "manifest.json").exists():
+        raise SetError(f"{ns}/{man['run']}/{man['set']}: replaced set {man['replaces']!r} does not exist")
+    pred_man = load_manifest(pred_dir)
+    if (pred_man["namespace"], pred_man["family"], pred_man["kind"]) != (ns, man["family"], man["kind"]):
+        raise SetError(f"{ns}/{man['run']}/{man['set']}: replaced set {man['replaces']!r} differs in family or kind")
+    cur_base, cur_k = _set_base_and_k(man["set"])
+    pred_base, pred_k = _set_base_and_k(pred_man["set"])
+    if cur_base != pred_base:
+        raise SetError(
+            f"{ns}/{man['run']}/{man['set']}: base set {cur_base!r} does not match predecessor {pred_man['set']!r}"
+        )
+    if cur_k != pred_k + 1:
+        raise SetError(
+            f"{ns}/{man['run']}/{man['set']}: restart index k = {cur_k} must follow predecessor k = {pred_k}"
+        )
+    interrupted, reason = is_d8_interrupted_set(pred_dir, pred_man)
+    if not interrupted:
+        raise SetError(
+            f"{ns}/{man['run']}/{man['set']}: replaced set {man['replaces']!r} is not an interrupted set ({reason})"
+        )
+    want_retired = d8_unused_reserved_ranges(pred_dir, pred_man)
+    if man["retired"] != want_retired:
+        raise SetError(
+            f"{ns}/{man['run']}/{man['set']}: retired {man['retired']} differs from unused reserved ranges "
+            f"{want_retired} of {man['replaces']}"
+        )
+
+
+def load_shakedown_manifest_panels(manifest: Path | bytes, expected_sha256: str) -> dict[str, str]:
+    """Q2.4: Verify the shakedown manifest (D0.3b) against its pinned sha256 BEFORE trusting any
+    panel digest inside it, then return {run: panel_sha256} for dose-d8."""
+    if not read_plans._is_sha(expected_sha256):
+        raise SetError("shakedown manifest D0.3b pin must be a 64-char hex sha256")
+    raw = manifest if isinstance(manifest, (bytes, bytearray)) else Path(manifest).read_bytes()
+    actual_sha = hashlib.sha256(raw).hexdigest()
+    if actual_sha != expected_sha256:
+        raise SetError(
+            f"shakedown manifest sha256 {actual_sha} differs from D0.3b pin {expected_sha256}"
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SetError(f"shakedown manifest is not valid UTF-8: {exc}") from exc
+    panels: dict[str, str] = {}
+
+    def record_panel(run: str, digest: str) -> None:
+        try:
+            read_plans.check_run("dose-d8", run)
+        except read_plans.PlanError as exc:
+            raise SetError(f"shakedown manifest invalid dose-d8 run {run!r}: {exc}") from exc
+        if not read_plans._is_sha(digest):
+            raise SetError(f"shakedown manifest invalid panel_sha256 for {run}: {digest!r}")
+        if run in panels and panels[run] != digest:
+            raise SetError(f"shakedown manifest records conflicting panel digests for dose-d8 {run}")
+        panels[run] = digest
+
+    stripped = text.lstrip()
+    if stripped.startswith("{"):
+        try:
+            doc = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SetError(f"shakedown manifest JSON error: {exc}") from exc
+        if not isinstance(doc, dict):
+            raise SetError("shakedown manifest JSON must be an object")
+        if isinstance(doc.get("dose_panels"), dict):
+            for run, digest in doc["dose_panels"].items():
+                record_panel(run, digest)
+        for entry in doc.get("entries", []):
+            if not isinstance(entry, dict):
+                continue
+            ns = entry.get("namespace", "dose-d8")
+            if ns == "dose-d8" and "panel_sha256" in entry and "run" in entry:
+                record_panel(entry["run"], entry["panel_sha256"])
+    else:
+        # Markdown SHAKEDOWN-MANIFEST.md format (D0.3b entries 3 and 8).
+        for block in re.split(r"(?m)^(?=#{1,6}\s|\s*-\s|\s*\d+\.\s)", text):
+            if "dose-d8" not in block:
+                continue
+            rm = re.search(r"\brun\s*[:=]?\s*`?(v[1-9]\d*)`?", block, re.IGNORECASE)
+            pm = re.search(r"panel(?:\.json|_sha256|\s+digest)(?:\s+sha256)?[\s:=`]*([0-9a-f]{64})", block, re.IGNORECASE)
+            if rm and pm:
+                record_panel(rm.group(1), pm.group(1))
+    if not panels:
+        raise SetError("shakedown manifest records no dose-d8 panel digest")
+    return panels
+
+
+def resolve_pinned_panel(man: dict[str, Any], pinned_panel: str | None,
+                         shakedown_manifest: tuple[Path | bytes, str] | None) -> str:
+    """Resolve the pinned panel digest for a dose or d13 set (Q2.4)."""
+    run = man["run"]
+    if shakedown_manifest is not None:
+        panels = load_shakedown_manifest_panels(shakedown_manifest[0], shakedown_manifest[1])
+        if run not in panels:
+            raise SetError(f"shakedown manifest has no pinned panel digest for {man['namespace']} run {run}")
+        resolved = panels[run]
+        if pinned_panel is not None and run == read_plans.RUN and pinned_panel != resolved:
+            raise SetError("declaration panel_sha256 disagrees with the D0.3b shakedown manifest for v1")
+        return resolved
+    if man["namespace"] == "dose-d8" and run != read_plans.RUN:
+        raise SetError(
+            f"dose-d8 restart run {run} requires a D0.3b-pinned shakedown manifest for its panel digest"
+        )
+    if pinned_panel is None:
+        raise SetError("a dose or d13 set requires a pinned panel digest")
+    return pinned_panel
+
+
 def verify_set_restarts(opened_set: dict[str, Any], *, n_b: int | None = None, n_c: int | None = None) -> None:
-    """Verify restart and shared-prefix restart rules from the reader entry point (A6.7, section 7)."""
+    """Verify restart and shared-prefix restart rules from the reader entry point (A6.7, section 7, v3)."""
     man = opened_set["manifest"]
     set_dir = Path(opened_set["set_dir"])
     root = set_dir.parents[2]
+    if man["namespace"] in read_plans.D8_RESTART_NAMESPACES:
+        verify_d8_v3_against_root(root, man)
+        if man["prep_set"] is not None:
+            prep_path, _, _ = man["prep_set"].rpartition("/exec-")
+            prep_dir = root / prep_path
+            prep_man = load_manifest(prep_dir)
+            verify_d8_v3_against_root(root, prep_man)
+        return
     if man["replaces"] is not None:
         pred_dir = set_dir.parent / man["replaces"]
         if not (pred_dir / "manifest.json").exists():
@@ -509,7 +831,7 @@ def verify_set_restarts(opened_set: dict[str, Any], *, n_b: int | None = None, n
 
 
 # ---------------------------------------------------------------------------------------------
-# Frozen panels (v1 section 5, v2 change 2)
+# Frozen panels (v1 section 5, v2 change 2, v3 change 2)
 
 
 def panel_set_names(namespace: str, set_name: str) -> tuple[str, str]:
@@ -521,23 +843,33 @@ def panel_set_names(namespace: str, set_name: str) -> tuple[str, str]:
 
 
 def verify_panel(root: Path, namespace: str, pinned: str, *, pool_doc: Any, constants_doc: Any,
-                 pool_sha256: str, constants_sha256: str, set_name: str = "",
+                 pool_sha256: str, constants_sha256: str, set_name: str = "", run: str = read_plans.RUN,
                  card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None
                  ) -> dict[str, Any]:
     """Rebuild panel.json from the accepted prep-panel execution, require identical bytes and the
     pinned digest. Returns the panel. The stage-1 prep-panel set itself is never checked against a
     pinned panel (read plan v2 change 2)."""
+    try:
+        read_plans.check_run(namespace, run)
+    except read_plans.PlanError as exc:
+        raise SetError(str(exc)) from exc
     prep_name, panel_name = panel_set_names(namespace, set_name)
-    panel_path = Path(root) / namespace / read_plans.RUN / panel_name / "panel.json"
+    panel_path = Path(root) / namespace / run / panel_name / "panel.json"
     if not panel_path.exists():
-        raise SetError("panel.json is missing")
+        raise SetError(f"panel.json is missing at {namespace}/{run}/{panel_name}")
     if _sha_file(panel_path) != pinned:
         raise SetError("panel.json does not hash to the pinned panel digest")
     panel = _load(panel_path)
-    prep_dir = Path(root) / namespace / read_plans.RUN / prep_name
+    if panel.get("run") != run:
+        raise SetError(f"panel.json run {panel.get('run')!r} differs from expected run {run!r}")
+    prep_dir = Path(root) / namespace / run / prep_name
     prep_man = load_manifest(prep_dir)
+    if prep_man["run"] != run:
+        raise SetError(f"prep-panel run {prep_man['run']!r} differs from expected run {run!r}")
     if prep_man["panel_sha256"] is not None:
         raise SetError("the stage-1 prep-panel set runs with panel_sha256 null")
+    if namespace in read_plans.D8_RESTART_NAMESPACES:
+        verify_d8_v3_against_root(Path(root), prep_man)
     accepted = accept_prep_set(prep_dir, prep_man)
     family = prep_man["family"]
     builders = None
@@ -558,17 +890,22 @@ def verify_panel(root: Path, namespace: str, pinned: str, *, pool_doc: Any, cons
 # Opening a plan set for reading
 
 
-def check_prep_dose_set(set_dir: Path, pinned_panel: str, *, pool: tuple[Any, str], constants: tuple[Any, str]
-                        ) -> dict[str, Any]:
+def check_prep_dose_set(set_dir: Path, pinned_panel: str | None = None, *, pool: tuple[Any, str],
+                        constants: tuple[Any, str],
+                        shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
     """A downstream prep-dose-<ordinal> set: it carries the pinned panel digest, and each accepted
     result's draft pools equal the panel's. (prep-panel is exempt: read plan v2 change 2.)"""
     set_dir = Path(set_dir)
     man = load_manifest(set_dir)
-    if man["panel_sha256"] != pinned_panel or pinned_panel is None:
+    root = set_dir.parents[2]
+    if man["namespace"] in read_plans.D8_RESTART_NAMESPACES:
+        verify_d8_v3_against_root(root, man)
+    resolved_panel = resolve_pinned_panel(man, pinned_panel, shakedown_manifest)
+    if man["panel_sha256"] != resolved_panel:
         raise SetError("a prep-dose set carries the pinned panel digest")
-    panel = verify_panel(set_dir.parents[2], man["namespace"], pinned_panel, pool_doc=pool[0],
+    panel = verify_panel(root, man["namespace"], resolved_panel, pool_doc=pool[0],
                          constants_doc=constants[0], pool_sha256=pool[1], constants_sha256=constants[1],
-                         set_name=man["set"])
+                         set_name=man["set"], run=man["run"])
     accepted = accept_prep_set(set_dir, man)
     by_unit = {d["unit"]: d for d in panel["drafts"]}
     for unit, (result, _) in accepted["outputs"].items():
@@ -636,7 +973,8 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
                   constants: tuple[Any, str] | None = None, pinned_panel: str | None = None,
                   card_index: tuple[Any, str] | None = None, cube_table: tuple[Any, str] | None = None,
                   expected_pins: Any = None, expected_pilot: Any = None, expected_picker: Any = None,
-                  expected_builders: dict[str, Any] | None = None) -> dict[str, Any]:
+                  expected_builders: dict[str, Any] | None = None,
+                  shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
     """Check a plan set and its chosen execution before data: manifest, plans (regenerated), prep
     acceptance, mirrors, panel, then each record against its plan."""
     set_dir = Path(set_dir)
@@ -647,14 +985,22 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         raise SetError("the manifest's declaration_sha256 is not the declaration read")
     root = set_dir.parents[2]
     family = man["family"]
+    if man["namespace"] in read_plans.D8_RESTART_NAMESPACES:
+        verify_d8_v3_against_root(root, man)
     plans = load_entries(set_dir, man)
     outputs: dict[str, tuple[dict[str, Any], str]] = {}
     if read_plans.FAMILIES[family].get("prep"):
         if man["prep_set"] is None:
             raise SetError("a plan set with prep names its accepted prep execution")
         prep_path, _, exec_name = man["prep_set"].rpartition("/exec-")
+        prep_dir = root / prep_path
+        prep_man = load_manifest(prep_dir)
+        if man["namespace"] in read_plans.D8_RESTART_NAMESPACES:
+            verify_d8_v3_against_root(root, prep_man)
+            if prep_man["run"] != man["run"]:
+                raise SetError(f"prep_set run {prep_man['run']!r} differs from plan set run {man['run']!r}")
         accepted = accept_prep_set(
-            root / prep_path, expected_pins=expected_pins, expected_picker=expected_picker,
+            prep_dir, prep_man, expected_pins=expected_pins, expected_picker=expected_picker,
             expected_builders=expected_builders if family != "b" else None,
         )
         if str(accepted["execution"]) != exec_name:
@@ -664,11 +1010,12 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
         raise SetError("this family has no prep")
     panel = None
     if family in ("dose", "d13"):
-        if man["panel_sha256"] is None or man["panel_sha256"] != pinned_panel:
+        resolved_panel = resolve_pinned_panel(man, pinned_panel, shakedown_manifest)
+        if man["panel_sha256"] is None or man["panel_sha256"] != resolved_panel:
             raise SetError("a dose or d13 set carries the pinned panel digest")
-        panel = verify_panel(root, man["namespace"], pinned_panel, pool_doc=pool[0], constants_doc=constants[0],
+        panel = verify_panel(root, man["namespace"], resolved_panel, pool_doc=pool[0], constants_doc=constants[0],
                              pool_sha256=pool[1], constants_sha256=constants[1], set_name=man["set"],
-                             card_index=card_index, cube_table=cube_table)
+                             run=man["run"], card_index=card_index, cube_table=cube_table)
     elif man["panel_sha256"] is not None:
         raise SetError("only dose and d13 sets carry a panel digest")
     first, end = man["units"]
@@ -685,8 +1032,9 @@ def open_plan_set(set_dir: Path, declaration_sha: str, *, pool: tuple[Any, str] 
                                   expected_picker=expected_picker, expected_builders=expected_builders)
         except (read_plans.PlanError, pod_record.RecordError) as exc:
             raise SetError(f"plan {index}: {exc}") from exc
-        if plan["family"] != family or plan["namespace"] != man["namespace"] or plan["pod_index"] != index:
-            raise SetError(f"plan {index} is not this set's family, namespace and pod index")
+        if (plan["family"] != family or plan["namespace"] != man["namespace"]
+                or plan["run"] != man["run"] or plan["pod_index"] != index):
+            raise SetError(f"plan {index} is not this set's family, namespace, run and pod index")
         if not first <= plan["unit"] < end:
             raise SetError(f"plan {index}'s unit lies outside the manifest's units")
         if panel is not None:

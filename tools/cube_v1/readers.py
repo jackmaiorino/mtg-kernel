@@ -1023,7 +1023,8 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
              sets: list[dict[str, Any]], *, a6_file: Path | bytes | None = None,
              peer_sets: list[dict[str, Any]] | None = None, expected_pilot: Any = None,
              expected_picker: Any = None, expected_builders: dict[str, Any] | None = None,
-             d0_sha256: str | None = None) -> dict[str, Any]:
+             d0_sha256: str | None = None,
+             shakedown_manifest: tuple[Path | bytes, str] | None = None) -> dict[str, Any]:
     """One read's report. `sets` are read_sets.open_plan_set results: one set, or for a gate's look 2
     the look-1 and look-2 sets. For dose and D13 the look is the mark ordinal (D13 may take one set
     per pilot)."""
@@ -1208,8 +1209,14 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
         if namespace == "dose-d8" and d0_sha256 is None:
             raise ReadError("dose-d8 requires D0 provenance (d0_sha256)")
         man0 = sets[0]["manifest"]
+        expected_panel = read_sets.resolve_pinned_panel(man0, section.get("panel_sha256"), shakedown_manifest)
+        if man0["panel_sha256"] != expected_panel:
+            raise ReadError(
+                f"dose set panel_sha256 {man0['panel_sha256']!r} differs from pinned panel {expected_panel!r} "
+                f"for run {man0['run']}"
+            )
         mark0 = next(iter(plans.values()))["mark"]
-        report["provenance"] = {
+        prov = {
             "label": "shakedown, under random play, provisional pins" if namespace in ("dose-d8", TEST) else "m5",
             "d0_sha256": d0_sha256,
             "panel_sha256": man0["panel_sha256"],
@@ -1217,6 +1224,9 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
             "mark": mark0,
             "panel_pairing_note": "marks on different panels are not paired",
         }
+        if shakedown_manifest is not None:
+            prov["shakedown_manifest_sha256"] = shakedown_manifest[1]
+        report["provenance"] = prov
         if look == 0:
             timing0 = sets[0].get("timing")
             basic_ids0 = sets[0].get("basic_ids")
@@ -1357,10 +1367,15 @@ def main(argv: list[str] | None = None) -> int:
                         help="peer (b)/(c) set directories for shared-prefix verification")
     parser.add_argument("--a6-file", type=Path, help="countersigned A6 declaration file (required for live reads)")
     parser.add_argument("--d0-sha256", help="D0 declaration sha256 for dose-d8 provenance")
+    parser.add_argument("--shakedown-manifest", type=Path, help="D0.3b shakedown manifest for per-run panel digests")
+    parser.add_argument("--shakedown-manifest-sha256", help="D0.3b sha256 pin for --shakedown-manifest")
     parser.add_argument("--pool", type=Path)
     parser.add_argument("--constants", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
+    if (args.shakedown_manifest is None) != (args.shakedown_manifest_sha256 is None):
+        raise ReadError("--shakedown-manifest and --shakedown-manifest-sha256 must be given together")
+    sm = (args.shakedown_manifest, args.shakedown_manifest_sha256) if args.shakedown_manifest else None
     declaration, decl_sha = load_declaration(args.declaration)
     pool = read_plans.load_json(args.pool) if args.pool else None
     constants = read_plans.load_json(args.constants) if args.constants else None
@@ -1368,12 +1383,14 @@ def main(argv: list[str] | None = None) -> int:
     want_decl = declaration["a6_sha256"] or decl_sha
     sets = [read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
                                     pinned_panel=sec.get("panel_sha256"),
-                                    expected_pins=declaration.get("pins")) for d in args.sets]
+                                    expected_pins=declaration.get("pins"),
+                                    shakedown_manifest=sm) for d in args.sets]
     peer_sets = ([read_sets.open_plan_set(d, want_decl, pool=pool, constants=constants,
                                           expected_pins=declaration.get("pins")) for d in args.peer_sets]
                  if args.peer_sets else None)
     text = serialize_report(run_read(declaration, decl_sha, args.read, args.look, sets,
-                                     a6_file=args.a6_file, peer_sets=peer_sets, d0_sha256=args.d0_sha256))
+                                     a6_file=args.a6_file, peer_sets=peer_sets,
+                                     d0_sha256=args.d0_sha256, shakedown_manifest=sm))
     if args.out is None:
         sys.stdout.write(text)
     else:
