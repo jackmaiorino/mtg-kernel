@@ -2175,4 +2175,3 @@ pub fn tripwire_games_for_test(
         .sum::<u64>()
         + tracker.open.games)
 }
-

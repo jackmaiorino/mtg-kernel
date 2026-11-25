@@ -2,7 +2,7 @@
 
 use mtg_kernel::cube_draft_v1::{CubePool, GameCaps, GameEnd, game_seed};
 use mtg_kernel::cube_learned_seat_v1::{BuildInputs, PickInputs, SeatForward};
-use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed};
+use mtg_kernel::cube_pod_runner_v1::{attempt_seeds, pod_play_seed, watchdog_game_end};
 use mtg_kernel::cube_seat_v1::{AttemptOutcome, AttemptSpec, GamePilot, SeatError};
 use mtg_kernel::cube_training_driver_v1::{
     CheckpointModel, CubeModelState, CubeUpdate, HeadUpdates, LineageSegment, OptimizerOutput,
@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -177,6 +177,25 @@ impl GamePilot for AlwaysHaltPilot {
             end: GameEnd::DecisionCap,
             last_action_source: None,
         }
+    }
+}
+
+struct FirstWatchdogPilot {
+    fired: AtomicBool,
+}
+
+impl GamePilot for FirstWatchdogPilot {
+    fn play(&self, spec: &AttemptSpec<'_>, caps: &GameCaps) -> AttemptOutcome {
+        if !self.fired.swap(true, Ordering::SeqCst) {
+            return AttemptOutcome {
+                decisions: 0,
+                physical_decisions: Some(0),
+                policy_steps: Some(0),
+                end: watchdog_game_end(),
+                last_action_source: None,
+            };
+        }
+        NaturalPilot.play(spec, caps)
     }
 }
 
@@ -565,6 +584,41 @@ fn worker_count_does_not_change_pods_or_checkpoint() {
 }
 
 #[test]
+fn first_watchdog_expiry_reruns_the_same_batch_once() {
+    let temp = TempTestDir::new("watchdog");
+    let cube = pool();
+    let rerun_root = temp.join("rerun");
+    let direct_root = temp.join("direct");
+    let pilot = FirstWatchdogPilot {
+        fired: AtomicBool::new(false),
+    };
+    let mut rerun = TrainingDriver::open(
+        config(&rerun_root, "b1", Segment::BuilderOnly, 1),
+        TestModel::new(),
+        TestUpdate,
+    )
+    .expect("rerun driver");
+    assert_eq!(
+        rerun.run_next_update(&cube, &pilot),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    assert!(pilot.fired.load(Ordering::SeqCst));
+    assert!(!rerun_root.join("stops").exists());
+
+    let mut direct = TrainingDriver::open(
+        config(&direct_root, "b1", Segment::BuilderOnly, 1),
+        TestModel::new(),
+        TestUpdate,
+    )
+    .expect("direct driver");
+    assert_eq!(
+        direct.run_next_update(&cube, &NaturalPilot),
+        Ok(RunOutcome::Published { update: 0 })
+    );
+    assert_eq!(directory_bytes(&rerun_root), directory_bytes(&direct_root));
+}
+
+#[test]
 fn invalid_pending_batch_is_abandoned_not_published() {
     let temp = TempTestDir::new("abandoned");
     let root = temp.join("b1");
@@ -583,4 +637,3 @@ fn invalid_pending_batch_is_abandoned_not_published() {
     let stop = fs::read_to_string(root.join("stops/stop-0000.json")).expect("stop record");
     assert!(stop.contains("\"kind\": \"process_death\""));
 }
-
