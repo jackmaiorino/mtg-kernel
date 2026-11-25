@@ -1231,6 +1231,7 @@ def run_read(declaration: dict[str, Any], decl_sha: str, read: str, look: int,
                 )
         read_sets.verify_set_restarts(
             s, n_b=declaration["reads"]["b"]["n"], n_c=declaration["reads"]["c"]["n"],
+            shakedown_manifest=shakedown_manifest,
         )
     _check_declared_pins(declaration, family, sets, a6_info)
     if peer_sets is not None:

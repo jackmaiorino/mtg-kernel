@@ -316,7 +316,8 @@ def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name:
                    retired: list[list[int]] | None = None, pins: dict[str, Any] | None = None,
                    picker: Any = ..., builders: dict[str, Any] | None = None,
                    basics_by_chair: dict[tuple[int, str], int] | None = None,
-                   namespace: str = NS, run: str = read_plans.RUN
+                   namespace: str = NS, run: str = read_plans.RUN,
+                   shakedown_manifest: tuple[Path | bytes, str] | None = None
                    ) -> tuple[Path, dict[int, tuple[dict[str, Any], str]]]:
     """A prep set with requests and executions. Each execution spec: {"ended", "units" (with markers),
     "receipt" (bool), "tamper" (unit -> callable on the result)}. Default: one complete execution."""
@@ -335,7 +336,8 @@ def write_prep_set(root: Path, prep_family: str, manifest_family: str, set_name:
     for e, spec in enumerate(executions):
         man["executions"].append({"execution": e, "reason": "first" if e == 0 else "prep_retry", "expired_games": [],
                                   "binary": BINARY, "platform": PLATFORM})
-    set_dir = read_plans.write_set(root, man, {f"requests/unit-{u}.json": requests[u][0] for u in units})
+    set_dir = read_plans.write_set(root, man, {f"requests/unit-{u}.json": requests[u][0] for u in units},
+                                   shakedown_manifest=shakedown_manifest)
     for e, spec in enumerate(executions):
         exec_dir = set_dir / f"exec-{e}"
         done_units = spec.get("units", list(units))
@@ -372,7 +374,8 @@ def write_plan_set(root: Path, family: str, set_name: str, plans: list[dict[str,
                    reserved: list[int] | None = None, pools_with: str | None = None, prep_set: str | None = None,
                    panel_sha256: str | None = None, replaces: str | None = None,
                    retired: list[list[int]] | None = None, namespace: str = NS,
-                   run: str = read_plans.RUN) -> Path:
+                   run: str = read_plans.RUN,
+                   shakedown_manifest: tuple[Path | bytes, str] | None = None) -> Path:
     """A plan set. Each execution spec: {"records": {pod_index: record}, "ended": ..., "expired": [...]}."""
     if namespace != NS:
         assert_test_temp_root(root)
@@ -385,7 +388,7 @@ def write_plan_set(root: Path, family: str, set_name: str, plans: list[dict[str,
         man["executions"].append({"execution": e, "reason": "first" if e == 0 else "watchdog_rerun",
                                   "expired_games": spec.get("entry_expired", []), "binary": BINARY,
                                   "platform": PLATFORM})
-    set_dir = read_plans.write_set(root, man, files)
+    set_dir = read_plans.write_set(root, man, files, shakedown_manifest=shakedown_manifest)
     for e, spec in enumerate(executions):
         exec_dir = set_dir / f"exec-{e}"
         (exec_dir / "records").mkdir(parents=True, exist_ok=True)

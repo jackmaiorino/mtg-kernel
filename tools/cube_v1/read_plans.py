@@ -1076,12 +1076,13 @@ def build_manifest(kind: str, family: str, namespace: str, set_name: str, declar
     return man
 
 
-def write_set(root: Path, manifest: dict[str, Any], files: dict[str, Any]) -> Path:
+def write_set(root: Path, manifest: dict[str, Any], files: dict[str, Any], *,
+              shakedown_manifest: tuple[Path | bytes, str] | None = None) -> Path:
     """Write a set directory <root>/<namespace>/<run>/<set>/ with its manifest and files."""
     check_d8_v3_manifest_shape(manifest)
     if manifest["namespace"] in D8_RESTART_NAMESPACES:
         import read_sets  # local import avoids module-load cycle
-        read_sets.verify_d8_v3_against_root(Path(root), manifest)
+        read_sets.verify_d8_v3_against_root(Path(root), manifest, shakedown_manifest=shakedown_manifest)
     set_dir = Path(root) / manifest["namespace"] / manifest["run"] / manifest["set"]
     for rel, doc in files.items():
         path = set_dir / rel
