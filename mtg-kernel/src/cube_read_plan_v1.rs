@@ -974,26 +974,42 @@ fn parse_pilot_v1(value: &OrderedJson, path: &str) -> Result<PilotInfo, String> 
 }
 
 fn parse_caps_a67(value: &OrderedJson, path: &str) -> Result<PodCaps, String> {
-    let entries = expect_object_keys(
-        value,
-        path,
-        &[
-            "max_decisions",
-            "max_physical_decisions",
-            "max_policy_steps",
-            "watchdog_seconds",
-            "max_replays",
-        ],
-    )?;
+    const LEGACY_KEYS: &[&str] = &[
+        "max_decisions",
+        "max_physical_decisions",
+        "max_policy_steps",
+        "watchdog_seconds",
+        "max_replays",
+    ];
+    const STACK_KEYS: &[&str] = &[
+        "max_decisions",
+        "max_physical_decisions",
+        "max_policy_steps",
+        "max_stack_objects",
+        "watchdog_seconds",
+        "max_replays",
+    ];
+    // Keep reading the older D5 plan shape until its v3 parser lands.
+    let (entries, stack_fields) = match expect_object_keys(value, path, STACK_KEYS) {
+        Ok(entries) => (entries, 1),
+        Err(_) => (expect_object_keys(value, path, LEGACY_KEYS)?, 0),
+    };
     let max_decisions = expect_u64(&entries[0].1, &format!("{path}.max_decisions"))?;
     let max_physical_decisions =
         expect_u64(&entries[1].1, &format!("{path}.max_physical_decisions"))?;
     let max_policy_steps = expect_u64(&entries[2].1, &format!("{path}.max_policy_steps"))?;
-    let watchdog_seconds = expect_u64(&entries[3].1, &format!("{path}.watchdog_seconds"))?;
-    let max_replays = expect_u8(&entries[4].1, &format!("{path}.max_replays"))?;
+    let max_stack_objects = if stack_fields == 1 {
+        Some(expect_u32(&entries[3].1, &format!("{path}.max_stack_objects"))?)
+    } else {
+        A2_GAME_CAPS.max_stack_objects
+    };
+    let watchdog_seconds =
+        expect_u64(&entries[3 + stack_fields].1, &format!("{path}.watchdog_seconds"))?;
+    let max_replays = expect_u8(&entries[4 + stack_fields].1, &format!("{path}.max_replays"))?;
     if max_decisions != A2_GAME_CAPS.max_decisions
         || max_physical_decisions != A2_GAME_CAPS.max_physical_decisions
         || max_policy_steps != A2_GAME_CAPS.max_policy_steps
+        || max_stack_objects != A2_GAME_CAPS.max_stack_objects
         || watchdog_seconds != DEFAULT_WATCHDOG_SECONDS
         || max_replays != READ_MAX_REPLAYS
     {
@@ -1005,7 +1021,7 @@ fn parse_caps_a67(value: &OrderedJson, path: &str) -> Result<PodCaps, String> {
         max_decisions,
         max_physical_decisions,
         max_policy_steps,
-        max_stack_objects: A2_GAME_CAPS.max_stack_objects,
+        max_stack_objects,
         watchdog_seconds,
         max_replays,
     })
