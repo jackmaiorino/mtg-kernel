@@ -312,6 +312,7 @@ impl NativeFlatTensorScratchV3 {
     }
 }
 
+mod digest_diag_v1;
 #[cfg(test)]
 mod digest_memo_tests;
 #[cfg(test)]
@@ -1292,6 +1293,10 @@ fn hash_prepared_slots_memoized_v2(
         Stored(usize),
         Jobs(usize),
     }
+    let diag_t0 = std::time::Instant::now();
+    let mut diag_excluded = std::time::Duration::ZERO;
+    let mut diag_state_hash = std::time::Duration::ZERO;
+    let mut diag_action = std::time::Duration::ZERO;
     let mut offsets = Vec::with_capacity(slots.len() + 1);
     let mut messages: Vec<(&'static [u8], &[u8], u64, Source)> = Vec::new();
     let mut state_resumes = Vec::new();
@@ -1306,8 +1311,13 @@ fn hash_prepared_slots_memoized_v2(
             messages.push((STATE_HASH_NAMESPACE_V2, &[], 0, Source::EmptyState));
         } else {
             let state = slot.state_message();
+            let diag_h = std::time::Instant::now();
             let hash = digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state);
+            diag_state_hash += diag_h.elapsed();
             if let Some(blocks) = memo.get(hash, STATE_HASH_NAMESPACE_V2, state) {
+                let diag_x = std::time::Instant::now();
+                digest_diag_v1::observe_state(state, true, 0);
+                diag_excluded += diag_x.elapsed();
                 hits += 1;
                 stored.push(*blocks);
                 messages.push((
@@ -1319,6 +1329,9 @@ fn hash_prepared_slots_memoized_v2(
             } else {
                 misses += 1;
                 let resume = state_prefix_cache_lookup_v1(state, snapshot_prefix);
+                let diag_x = std::time::Instant::now();
+                digest_diag_v1::observe_state(state, false, resume.as_ref().map_or(0, |hit| hit.blocks));
+                diag_excluded += diag_x.elapsed();
                 let first = jobs.len();
                 groups.push(first..first + N);
                 for counter in 0..N as u32 {
@@ -1334,7 +1347,13 @@ fn hash_prepared_slots_memoized_v2(
         }
         for &(start, end) in slot.action_ranges.iter() {
             let action = &slot.action_json[start..end];
+            let diag_a = std::time::Instant::now();
             let hash = digest_memo_hash_v1(ACTION_HASH_NAMESPACE_V1, action);
+            let diag_found = memo.get(hash, ACTION_HASH_NAMESPACE_V1, action).is_some();
+            diag_action += diag_a.elapsed();
+            let diag_x = std::time::Instant::now();
+            digest_diag_v1::observe_action(action.len(), diag_found);
+            diag_excluded += diag_x.elapsed();
             if let Some(blocks) = memo.get(hash, ACTION_HASH_NAMESPACE_V1, action) {
                 hits += 1;
                 stored.push(*blocks);
@@ -1362,6 +1381,8 @@ fn hash_prepared_slots_memoized_v2(
     batch.scratch_blocks.clear();
     batch.scratch_blocks.resize(jobs.len(), [0u8; 64]);
     let caching = state_prefix_cache_enabled_v1();
+    let diag_t1 = std::time::Instant::now();
+    let mut diag_t2 = diag_t1;
     if !jobs.is_empty() {
         sha512_jobs_grouped_v1(
             &jobs,
@@ -1369,6 +1390,7 @@ fn hash_prepared_slots_memoized_v2(
             &mut batch.scratch_blocks,
             caching.then_some(&mut batch.checkpoints),
         );
+        diag_t2 = std::time::Instant::now();
         if caching {
             for (state, resume, first) in state_resumes {
                 state_prefix_cache_insert_v1(
@@ -1395,6 +1417,15 @@ fn hash_prepared_slots_memoized_v2(
             }
         }
     }
+    let diag_t3 = std::time::Instant::now();
+    digest_diag_v1::with(|d| {
+        d.calls += 1;
+        d.ns_prepare += (diag_t1 - diag_t0).saturating_sub(diag_excluded).as_nanos() as u64;
+        d.ns_state_memo_hash += diag_state_hash.as_nanos() as u64;
+        d.ns_action_memo += diag_action.as_nanos() as u64;
+        d.ns_kernel += (diag_t2 - diag_t1).as_nanos() as u64;
+        d.ns_finish += (diag_t3 - diag_t2).as_nanos() as u64;
+    });
     offsets
 }
 
