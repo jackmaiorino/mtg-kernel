@@ -231,7 +231,8 @@ fn directory_bytes(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
 #[test]
 fn two_action_part3_uses_real_replay_cap_and_stop() {
     let temp = TempTestDir::new("two-action");
-    let report = run_two_action_part3(&temp.join("half"), false).expect("part 3");
+    let cube = pool();
+    let report = run_two_action_part3(&temp.join("half"), &cube, false).expect("part 3");
     assert_eq!(report.published_batches, 63);
     assert_eq!(report.stopped_batches, 1);
     assert!((report.published_mean - CAPPED_MEAN).abs() < 1e-12);
@@ -243,7 +244,7 @@ fn two_action_part3_uses_real_replay_cap_and_stop() {
     );
 
     let deterministic =
-        run_two_action_part3(&temp.join("always"), true).expect("deterministic halt");
+        run_two_action_part3(&temp.join("always"), &cube, true).expect("deterministic halt");
     assert_eq!(deterministic.published_batches, 3);
     assert_eq!(deterministic.stopped_batches, 1);
     assert!((deterministic.published_mean - DETERMINISTIC_HALT_MEAN).abs() < 1e-12);
@@ -1552,7 +1553,7 @@ fn stack_cap_and_liveness_are_in_the_run_record_and_stack_cap_reaches_pods() {
     );
     assert_eq!(
         run["liveness"],
-        mtg_kernel::cube_pod_runner_v1::WATCHDOG_LIVENESS
+        mtg_kernel::cube_worker_liveness_v1::LIVENESS
     );
     let expected = A2_CAPS.max_stack_objects;
     struct CapPilot(Option<u32>);

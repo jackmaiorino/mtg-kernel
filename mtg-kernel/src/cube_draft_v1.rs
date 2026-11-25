@@ -1066,7 +1066,7 @@ pub fn build_stated_rule_decks(record: &DraftRecord) -> Result<[Deck; SEATS], Cu
 
 /// Bounds of one game. The driver cap counts the driver's decisions; the
 /// session caps go into the reset request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameCaps {
     pub max_decisions: u64,
     pub max_physical_decisions: u64,

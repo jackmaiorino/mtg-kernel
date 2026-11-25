@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::cube_draft_build_v1::model::training::fixture::{halt_cases, HaltCase};
-use crate::cube_draft_v1::GameEnd;
+use crate::cube_draft_v1::{game_seed, GameEnd};
 use crate::cube_pod_runner_v1::{
-    collect_halts_and_stop, play_training_game_for_driver, GameRole, SeatRule, POD_RECORD_SCHEMA,
+    attempt_seeds, pod_play_seed, run_training_pod, uniform_training_chairs, TrainingPodConfig,
 };
 use crate::cube_seat_v1::{AttemptOutcome, AttemptSpec};
 
@@ -20,17 +20,15 @@ impl GamePilot for TwoActionPilot {
         spec: &AttemptSpec<'_>,
         _caps: &crate::cube_draft_v1::GameCaps,
     ) -> AttemptOutcome {
-        let attempt = (0..=3u8)
-            .find(|attempt| {
-                crate::cube_pod_runner_v1::attempt_seeds(self.game_seed, *attempt).2
-                    == spec.action_seed
-            })
-            .expect("two-action attempt seed");
-        let halt = if self.deterministic_halt {
-            self.case.deterministic_halt()
-        } else {
-            self.case.halts(usize::from(attempt))
-        };
+        let attempt =
+            (0..=3u8).find(|attempt| attempt_seeds(self.game_seed, *attempt).2 == spec.action_seed);
+        let halt = attempt.is_some_and(|attempt| {
+            if self.deterministic_halt {
+                self.case.deterministic_halt()
+            } else {
+                self.case.halts(usize::from(attempt))
+            }
+        });
         if halt {
             return AttemptOutcome {
                 decisions: 1,
@@ -67,13 +65,12 @@ pub struct TwoActionPart3Report {
 
 pub fn run_two_action_part3(
     root: &Path,
+    pool: &CubePool,
     deterministic_halt: bool,
 ) -> Result<TwoActionPart3Report, TrainingDriverError> {
     fs::create_dir_all(root)?;
-    let decks = [
-        crate::cube_draft_v1::Deck::default(),
-        crate::cube_draft_v1::Deck::default(),
-    ];
+    let roles = training_roles_with_older([0, 1])?;
+    let mut chairs = uniform_training_chairs(roles);
     let mut derivative_sum = 0.0;
     let mut published = 0usize;
     let mut stopped = 0usize;
@@ -81,46 +78,17 @@ pub fn run_two_action_part3(
         if deterministic_halt && case.pattern != 15 {
             continue;
         }
-        let game_seed = index as u64;
+        let config = TrainingPodConfig::uniform_a2(PodUse::Test, "test", "v1", index as u64, 1);
+        let pod_seed = pod_play_seed(&config.namespace, &config.run, config.pod_index)?;
         let pilot = TwoActionPilot {
             case,
             deterministic_halt,
-            game_seed,
+            game_seed: game_seed(pod_seed, 0),
         };
-        let task = crate::cube_pod_runner_v1::GameTask {
-            game: 0,
-            group: 0,
-            role: GameRole::Reference,
-            pairing: Some(0),
-            decks: [0, 1],
-            chairs: [Some(0), Some(1)],
-            seats: [0, 1],
-            seat_rule: SeatRule::Schedule,
-            game_seed,
-            episode: 0,
-        };
-        let caps = crate::cube_pod_runner_v1::PodCaps::training_a2();
-        let game = play_training_game_for_driver(&task, &decks, &pilot, &caps)?;
-        let (halts, status, stop) = collect_halts_and_stop(std::slice::from_ref(&game), true);
-        let pod = PodRecord {
-            schema: POD_RECORD_SCHEMA,
-            interfaces: M4_INTERFACES_VERSION,
-            pod_use: PodUse::Test,
-            namespace: "test".to_owned(),
-            run: "v1".to_owned(),
-            pod_index: 0,
-            seeds: Default::default(),
-            pins: PodPins::default(),
-            pilot: PilotInfo::uniform(),
-            caps,
-            draft: None,
-            chairs: Vec::new(),
-            decks: Vec::new(),
-            games: vec![game],
-            paired_builds: Vec::new(),
-            halts,
-            status,
-            stop,
+        let pod = match run_training_pod(pool, &config, &mut chairs, &pilot) {
+            Ok(pod) => pod,
+            Err(PodRunnerError::Stopped(pod)) => *pod,
+            Err(error) => return Err(error.into()),
         };
         if pod.status == PodStatus::Stopped {
             stopped += 1;

@@ -1,7 +1,13 @@
 use super::*;
-use crate::cube_draft_v1::{deck_seed, derive_seed, CubePool, SeedStream, SEATS};
+use crate::cube_draft_build_v1::model::{HISTORY_COLUMNS_V1, STATE_INPUT_WIDTH_V1};
+use crate::cube_draft_v1::{deck_seed, derive_seed, picker_seed, CubePool, SeedStream, SEATS};
 use crate::cube_seat_v1::{run_seat_draft, SeatDraft};
 use std::collections::BTreeSet;
+
+use crate::m4_sampler_v1::golden_cases;
+
+const CUBE_LIST: &str = include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007.json");
+const CUBE_GAPS: &str = include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007_gaps.json");
 
 // Test forwards only. Nonzero logits make padding, option order, lost inputs
 // and replay against the wrong weights observable.
@@ -68,12 +74,60 @@ impl SeatForward for Probe {
 }
 
 fn cube() -> CubePool {
-    CubePool::from_json_texts(
-        include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007.json"),
-        include_str!("../../../data/cube_v1/mtgo_vintage_cube_20261007_gaps.json"),
-        None,
-    )
-    .unwrap()
+    CubePool::from_json_texts(CUBE_LIST, CUBE_GAPS, None).unwrap()
+}
+
+fn cube_from_names(names: impl IntoIterator<Item = impl AsRef<str>>) -> CubePool {
+    let cards: Vec<_> = names
+        .into_iter()
+        .map(|name| serde_json::json!({"name": name.as_ref()}))
+        .collect();
+    CubePool::from_json_texts(&serde_json::json!({"cards": cards}).to_string(), "{}", None).unwrap()
+}
+
+fn model_fixture(nonzero: bool) -> (CubePool, Arc<ModelSeatForward>) {
+    let pool = cube();
+    let mut ids = pool.ids().to_vec();
+    ids.extend(basic_land_ids().unwrap());
+    ids.sort_unstable();
+    ids.dedup();
+    // Exercise the concrete D2 forward independently of D1's provisional
+    // table pin. Vary the inputs so the card scorers can distinguish cards.
+    let features: Vec<_> = ids.iter().map(|&id| f32::from(id % 83) / 83.0).collect();
+    let rows =
+        ModelCardRowsV1::with_registry_basics_v1(ids, 1, features.clone(), 1, features).unwrap();
+    let mut model =
+        ModelV1::initialise_v1(rows.rows(), rows.table_width(), rows.dense_width(), 13).unwrap();
+    if nonzero {
+        for name in [
+            "pick.scorer.2.weight",
+            "value.out.weight",
+            "value.out.bias",
+            "build.count_head.weight",
+            "build.count_head.bias",
+            "build.pointer_scorer.2.weight",
+            "build.typeset_scorer.2.weight",
+            "build.split_scorer.2.weight",
+        ] {
+            for (index, value) in model.tensor_mut_v1(name).unwrap().iter_mut().enumerate() {
+                *value = (1 + index % 29) as f32 / 512.0;
+            }
+        }
+        for name in ["pick.state_encoder.0.weight", "value.0.weight"] {
+            for (index, row) in model
+                .tensor_mut_v1(name)
+                .unwrap()
+                .chunks_exact_mut(STATE_INPUT_WIDTH_V1)
+                .enumerate()
+            {
+                for (column, value) in row[HISTORY_COLUMNS_V1].iter_mut().enumerate() {
+                    *value = (1 + (7 * index + column) % 29) as f32 / 512.0;
+                }
+            }
+        }
+    }
+    let forward = ModelSeatForward::new(Arc::new(model), Arc::new(rows), 1).unwrap();
+    (pool, Arc::new(forward))
 }
 
 fn sibling(seed: u64, seat: usize, k: u64) -> SplitMix64 {
@@ -85,6 +139,68 @@ fn draft(pool: &CubePool, seed: u64, params: Arc<dyn SeatForward>) -> SeatDraft 
         Box::new(LearnedSeatPicker::new(params.clone())) as Box<dyn SeatPicker>
     });
     run_seat_draft(pool, seed, &mut seats).unwrap()
+}
+
+fn assert_sampler_row(row: &DecisionRow) {
+    let logits: Vec<_> = row
+        .logits_bits
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|&bits| f32::from_bits(bits))
+        .collect();
+    let word = recorded_word(row).unwrap();
+    let sample = sample_v1(&logits, &vec![true; logits.len()], word).unwrap();
+    assert_eq!(row.chosen, row.options[sample.selected_index]);
+    assert_eq!(
+        row.p_chosen_bits,
+        Some((sample.counts[sample.selected_index] as f64 / GRID_SIZE as f64).to_bits())
+    );
+}
+
+#[test]
+fn shared_sampler_goldens_pass_through_decision_rows() {
+    // The D2a fixture tests pin these records. D3 removes masked entries
+    // before drawing, so retain their original option ids for comparison.
+    let golden_draws = [
+        0,
+        GRID_SIZE / 32,
+        GRID_SIZE / 7,
+        GRID_SIZE / 2 - 1,
+        GRID_SIZE / 2,
+        3 * GRID_SIZE / 4,
+        GRID_SIZE - 2,
+        GRID_SIZE - 1,
+    ];
+    for case in golden_cases::cases() {
+        let original_record = case.record();
+        let (options, logits): (Vec<_>, Vec<_>) = case
+            .logits
+            .iter()
+            .zip(&case.mask)
+            .enumerate()
+            .filter(|(_, (_, enabled))| **enabled)
+            .map(|(index, (&logit, _))| (index as u16, logit))
+            .unzip();
+        let draws = golden_draws.map(|k| {
+            let word = k << 11;
+            let sample = sample_v1(&case.logits, &case.mask, word).unwrap();
+            let decision =
+                decide(DecisionKind::Pointer, &options, &logits, None, word, None).unwrap();
+            assert_eq!(
+                decision.row.p_chosen_bits,
+                Some((sample.counts[sample.selected_index] as f64 / GRID_SIZE as f64).to_bits())
+            );
+            assert_eq!(
+                decision.log_prob.to_bits(),
+                sample.selected_log_probability.to_bits()
+            );
+            decision.row.chosen
+        });
+        let (_, record_after_hash) = original_record.split_once(' ').unwrap();
+        let (recorded_draws, _) = record_after_hash.rsplit_once(' ').unwrap();
+        assert_eq!(format!("{draws:?}"), recorded_draws, "{}", case.name);
+    }
 }
 
 #[test]
@@ -104,6 +220,27 @@ fn forced_pick_consumes_nothing_and_skips_forward() {
         .unwrap();
     assert_eq!(result.index, 0);
     assert!(result.row.is_none());
+    assert_eq!(rng.next_u64(), SplitMix64::seed(13).next_u64());
+}
+
+#[test]
+fn malformed_forced_pick_is_rejected_without_drawing() {
+    let mut picker = LearnedSeatPicker::new(Arc::new(Probe(1.0)));
+    let mut rng = SplitMix64::seed(13);
+    for (round, pick) in [(0, 13), (ROUNDS as u8, 14), (0, PACK_SIZE as u8)] {
+        let view = SeatPickView {
+            round,
+            pick,
+            direction: PassDirection::Left,
+            pack: &[27],
+            pool: &[],
+            seen_not_taken: &[],
+        };
+        assert!(matches!(
+            picker.pick(&view, &mut rng),
+            Err(SeatError::Seat(_))
+        ));
+    }
     assert_eq!(rng.next_u64(), SplitMix64::seed(13).next_u64());
 }
 
@@ -164,17 +301,271 @@ fn mapping_and_permuted_sets_preserve_all_bits() {
     assert!(positions.windows(2).all(|w| w[0] < w[1]));
 }
 
+fn assert_forward_logits(row: &DecisionRow, logits: &[f32]) {
+    let bits: Vec<_> = logits.iter().map(|logit| logit.to_bits()).collect();
+    assert_eq!(
+        row.logits_bits.as_deref(),
+        Some(bits.as_slice()),
+        "{:?} logits differ from D2",
+        row.kind
+    );
+}
+
+#[test]
+fn learned_pick_matches_direct_d2_with_history() {
+    let (cube, params) = model_fixture(true);
+    let forward = params.model.pick_forward_v1(&params.rows, 1).unwrap();
+    let mut picker = LearnedSeatPicker::new(params.clone());
+    let ids = cube.ids();
+    let mut evaluate = |history: &[u16]| {
+        let view = SeatPickView {
+            round: 0,
+            pick: 1,
+            direction: PassDirection::Left,
+            pack: &ids[1..PACK_SIZE],
+            pool: &ids[..1],
+            seen_not_taken: history,
+        };
+        let row = picker
+            .pick(&view, &mut SplitMix64::seed(17))
+            .unwrap()
+            .row
+            .unwrap();
+        let state = PickStateV1 {
+            pack: view.pack.to_vec(),
+            pool: view.pool.to_vec(),
+            history: history.to_vec(),
+            step: 1,
+            direction: 1,
+        };
+        let logits = forward.pick_logits_v1(&state).unwrap();
+        assert_eq!(row.options, logits.ids);
+        assert_forward_logits(&row, &logits.logits);
+        assert_eq!(
+            row.value_bits,
+            Some(forward.value_v1(&state).unwrap().to_bits()),
+            "pick value differs from D2"
+        );
+        row
+    };
+    let empty = evaluate(&[]);
+    let remembered = evaluate(&ids[PACK_SIZE..PACK_SIZE + 1]);
+    assert_ne!(empty.logits_bits, remembered.logits_bits);
+    assert_ne!(empty.value_bits, remembered.value_bits);
+}
+
+#[test]
+fn learned_build_matches_direct_d2_with_filtered_masks_and_split() {
+    let (cube, params) = model_fixture(true);
+    let pool = &cube.ids()[..POOL_CARDS];
+    let forward = params.model.build_forward_v1(&params.rows, 1).unwrap();
+    let context = forward.build_context_v1(pool).unwrap();
+    let count_logits = context.count_logits_v1();
+    let mut builder = LearnedSeatBuilder::new(params.clone());
+    let basics = 3usize;
+    let streams = (0..512).map(SplitMix64::seed).filter(|stream| {
+        let mut preview = *stream;
+        let sample = sample_v1(&count_logits, &[true; 41], preview.next_u64()).unwrap();
+        sample.selected_index == basics
+    });
+    for mut stream in streams {
+        let rows = builder.build(pool, &mut stream).unwrap().rows.unwrap();
+        assert_eq!(usize::from(rows.count.chosen), basics);
+        assert_forward_logits(&rows.count, &count_logits);
+        assert_eq!(rows.pointer.len(), DECK_CARDS as usize - basics);
+
+        let mut chosen = Vec::new();
+        let mut remaining = sorted_cards(pool);
+        for row in &rows.pointer {
+            let logits = context
+                .pointer_logits_v1(basics, &chosen, &remaining)
+                .unwrap();
+            assert_eq!(row.options, logits.ids);
+            assert_forward_logits(row, &logits.logits);
+            chosen.push(remaining.remove(remaining.binary_search(&row.chosen).unwrap()));
+        }
+
+        let types = context.type_context_v1(basics, &chosen).unwrap();
+        let row = rows.type_set.unwrap();
+        let feasible: Vec<u16> = (1u16..=31)
+            .filter(|mask| mask.count_ones() <= basics as u32)
+            .collect();
+        assert!(feasible.windows(2).any(|pair| pair[1] > pair[0] + 1));
+        assert_eq!(row.options, feasible);
+        let logits = types.typeset_logits_v1();
+        let selected_logits: Vec<_> = feasible
+            .iter()
+            .map(|&mask| logits[usize::from(mask) - 1])
+            .collect();
+        assert_forward_logits(&row, &selected_logits);
+
+        if !rows.split.is_empty() {
+            let split = types.split_logits_v1(row.chosen as u8).unwrap();
+            assert_eq!(split.type_bits.len(), 2);
+            assert!(split.type_bits[0] < split.type_bits[1]);
+            assert!(split.logits.iter().all(|&logit| logit != 0.0));
+            assert_ne!(split.logits[0].to_bits(), split.logits[1].to_bits());
+            let bits: Vec<_> = split.type_bits.into_iter().map(u16::from).collect();
+            assert_eq!(rows.split.len(), basics - bits.len());
+            for row in &rows.split {
+                assert_eq!(row.options, bits);
+                assert_forward_logits(row, &split.logits);
+            }
+            return;
+        }
+    }
+    panic!("fixture streams produced no split with three basics and two basic types");
+}
+
+#[test]
+fn concrete_forward_rejects_invalid_pick_inputs() {
+    let (cube, params) = model_fixture(false);
+    let mut pack = sorted_cards(&cube.ids()[..PACK_SIZE]);
+    let mut step = [0.0; POOL_CARDS];
+    step[0] = 1.0;
+    let valid = PickInputs {
+        pack: &pack,
+        pool: &[],
+        history: &[],
+        step,
+        direction: 1.0,
+    };
+    assert!(params.pick_and_value(&valid).is_ok());
+    for value in [1.0, 0.5, f32::NAN] {
+        step[1] = value;
+        let invalid = PickInputs { step, ..valid };
+        assert!(matches!(
+            params.pick_and_value(&invalid),
+            Err(SeatError::Seat(_))
+        ));
+    }
+    let invalid = PickInputs {
+        step: [0.0; POOL_CARDS],
+        ..valid
+    };
+    assert!(matches!(
+        params.pick_and_value(&invalid),
+        Err(SeatError::Seat(_))
+    ));
+    for direction in [0.0, 1.5, -1.5, f32::NAN] {
+        let invalid = PickInputs { direction, ..valid };
+        assert!(matches!(
+            params.pick_and_value(&invalid),
+            Err(SeatError::Seat(_))
+        ));
+    }
+
+    pack.swap(0, 1);
+    let invalid = PickInputs {
+        pack: &pack,
+        pool: &[],
+        history: &[],
+        step: std::array::from_fn(|i| if i == 0 { 1.0 } else { 0.0 }),
+        direction: 1.0,
+    };
+    assert!(matches!(
+        params.pick_and_value(&invalid),
+        Err(SeatError::Seat(_))
+    ));
+}
+
+#[test]
+fn concrete_forward_rejects_invalid_build_options() {
+    let (cube, params) = model_fixture(false);
+    let pool = sorted_cards(&cube.ids()[..POOL_CARDS]);
+    let input = BuildInputs {
+        pool: &pool,
+        chosen: &[],
+        basics: 2,
+    };
+    let mut remaining = pool.clone();
+    assert!(params.pointer(&input, &remaining).is_ok());
+    remaining.swap(0, 1);
+    assert!(matches!(
+        params.pointer(&input, &remaining),
+        Err(SeatError::Seat(_))
+    ));
+
+    let input = BuildInputs {
+        chosen: &pool[..38],
+        ..input
+    };
+    assert!(params.type_set(&input, &[1, 3, 8]).is_ok());
+    for mask in [0, 32, 7] {
+        assert!(matches!(
+            params.type_set(&input, &[mask]),
+            Err(SeatError::Seat(_))
+        ));
+    }
+    assert!(params.split(&input, &[1, 4]).is_ok());
+    for bits in [[4, 1], [1, 1], [1, 3], [0, 1], [1, 32], [1, 256]] {
+        assert!(matches!(
+            params.split(&input, &bits),
+            Err(SeatError::Seat(_))
+        ));
+    }
+}
+
+#[test]
+fn concrete_initializer_scores_every_menu_at_zero() {
+    let (cube, params) = model_fixture(false);
+    let view = SeatPickView {
+        round: 0,
+        pick: 0,
+        direction: PassDirection::Left,
+        pack: &cube.ids()[..PACK_SIZE],
+        pool: &[],
+        seen_not_taken: &[],
+    };
+    let pick = pick_with(params.as_ref(), &view, || Ok(0)).unwrap();
+    assert_eq!(pick.row.as_ref().unwrap().value_bits, Some(0));
+    let built = walk_build(
+        params.as_ref(),
+        &cube.ids()[..POOL_CARDS],
+        |step, options, logits| {
+            let word = match step {
+                Step::Count => 1 << 63,
+                Step::TypeSet => u64::MAX,
+                _ => 0,
+            };
+            decide(step.kind(), options, logits, None, word, None)
+        },
+    )
+    .unwrap();
+    assert_eq!(built.rows.count.chosen, 20);
+    assert_eq!(built.rows.pointer.len(), 20);
+    assert_eq!(built.rows.type_set.as_ref().unwrap().chosen, 31);
+    assert_eq!(built.rows.split.len(), 15);
+    for row in pick
+        .row
+        .iter()
+        .chain(std::iter::once(&built.rows.count))
+        .chain(&built.rows.pointer)
+        .chain(&built.rows.type_set)
+        .chain(&built.rows.split)
+    {
+        assert!(row
+            .logits_bits
+            .as_ref()
+            .unwrap()
+            .iter()
+            .all(|&logit| logit == 0));
+        assert_sampler_row(row);
+    }
+}
+
 #[test]
 fn eight_seats_replay_all_picks_and_siblings() {
-    let params = Arc::new(Probe(0.75));
+    let (cube, params) = model_fixture(true);
     let seed = 731;
-    let draft = draft(&cube(), seed, params.clone());
+    let draft = draft(&cube, seed, params.clone());
     let mut builder = LearnedSeatBuilder::new(params.clone());
     for chair in 0..SEATS {
         assert_eq!(draft.pick_rows[chair].len(), 42);
         let mut pool = Vec::new();
         let mut history = BTreeSet::new();
         let mut rows = draft.pick_rows[chair].iter();
+        let mut shadow = SplitMix64::seed(picker_seed(seed, chair));
         for pick in draft.record.picks.iter().filter(|p| p.seat == chair) {
             if pick.pack.len() > 1 {
                 let history: Vec<u16> = history.iter().copied().collect();
@@ -192,10 +583,18 @@ fn eight_seats_replay_all_picks_and_siblings() {
                 };
                 let row = rows.next().unwrap();
                 assert_eq!(row.chosen, pick.chosen);
+                assert_eq!(row.stream_values, [shadow.next_u64()]);
+                assert_sampler_row(row);
                 replay_pick(row, params.as_ref(), &view).unwrap();
                 if pick.pick == 0 {
                     let mut corrupt = row.clone();
+                    corrupt.p_chosen_bits = row.p_chosen_bits.map(|bits| bits ^ 1);
+                    assert!(replay_pick(&corrupt, params.as_ref(), &view).is_err());
+                    let mut corrupt = row.clone();
                     corrupt.logits_bits.as_mut().unwrap()[0] ^= 1;
+                    assert!(replay_pick(&corrupt, params.as_ref(), &view).is_err());
+                    let mut corrupt = row.clone();
+                    corrupt.value_bits = row.value_bits.map(|bits| bits ^ 1);
                     assert!(replay_pick(&corrupt, params.as_ref(), &view).is_err());
                 }
             }
@@ -210,6 +609,13 @@ fn eight_seats_replay_all_picks_and_siblings() {
             let outcome = builder.build(&pool, &mut sibling(seed, chair, k)).unwrap();
             outcome.deck.validate(&pool).unwrap();
             let rows = outcome.rows.unwrap();
+            for row in std::iter::once(&rows.count)
+                .chain(&rows.pointer)
+                .chain(&rows.type_set)
+                .chain(&rows.split)
+            {
+                assert_sampler_row(row);
+            }
             replay_build(&rows, params.as_ref(), &pool).unwrap();
             let mut reverse = pool.clone();
             reverse.reverse();
@@ -236,10 +642,10 @@ impl SeatPicker for FirstCard {
     }
 }
 
-fn privacy_draft(cube: &CubePool) -> SeatDraft {
+fn privacy_draft(cube: &CubePool, params: Arc<dyn SeatForward>) -> SeatDraft {
     let mut seats: [Box<dyn SeatPicker>; SEATS] = std::array::from_fn(|chair| {
         if chair == 0 {
-            Box::new(LearnedSeatPicker::new(Arc::new(Probe(1.0)))) as Box<dyn SeatPicker>
+            Box::new(LearnedSeatPicker::new(params.clone())) as Box<dyn SeatPicker>
         } else {
             Box::new(FirstCard) as Box<dyn SeatPicker>
         }
@@ -249,8 +655,8 @@ fn privacy_draft(cube: &CubePool) -> SeatDraft {
 
 #[test]
 fn changing_an_unseen_card_in_another_pool_preserves_seat_rows() {
-    let cube = cube();
-    let first = privacy_draft(&cube);
+    let (cube, params) = model_fixture(true);
+    let first = privacy_draft(&cube, params.clone());
     let seen: BTreeSet<_> = first
         .record
         .picks
@@ -266,14 +672,8 @@ fn changing_an_unseen_card_in_another_pool_preserves_seat_rows() {
         cube.ids().iter().position(|id| id == hidden).unwrap(),
         cube.ids().iter().position(|id| id == unused).unwrap(),
     );
-    let cards: Vec<_> = names
-        .iter()
-        .map(|name| serde_json::json!({"name": name}))
-        .collect();
-    let changed =
-        CubePool::from_json_texts(&serde_json::json!({"cards": cards}).to_string(), "{}", None)
-            .unwrap();
-    let second = privacy_draft(&changed);
+    let changed = cube_from_names(names);
+    let second = privacy_draft(&changed, params);
     assert_ne!(first.record.packs, second.record.packs);
     assert_ne!(first.record.pools[1..], second.record.pools[1..]);
     assert!(first.record.picks.iter().filter(|p| p.seat == 0).eq(second
@@ -335,12 +735,12 @@ fn count_boundaries_single_type_and_no_extras() {
     assert!(no_basics.rows.type_set.is_none() && no_basics.rows.split.is_empty());
     let mut expected_log_p = sample_v1(&[0.0; 41], &[true; 41], 0)
         .unwrap()
-        .log_probabilities[0];
+        .selected_log_probability;
     for (j, row) in no_basics.rows.pointer.iter().enumerate() {
         assert_eq!(row.options.len(), 45 - j);
         expected_log_p += sample_v1(&vec![0.0; 45 - j], &vec![true; 45 - j], 0)
             .unwrap()
-            .log_probabilities[0];
+            .selected_log_probability;
         assert!(row.options.iter().all(|id| pool.contains(id)));
         assert!(no_basics.rows.pointer[..j]
             .iter()
@@ -409,14 +809,14 @@ fn likelihood_uses_new_parameters_and_order_symmetric_split_counts() {
             .unwrap()
             .log_probabilities
     };
-    let mut expected = logs(&changed.count(&ordered).unwrap())[40]
+    let expected = logs(&changed.count(&ordered).unwrap())[40]
         + logs(&changed.type_set(&input, &masks).unwrap())[30];
     let split = logs(&changed.split(&input, &bits).unwrap());
-    for (n, log_q) in copies.into_iter().zip(split) {
-        if n > 1 {
-            expected += (n - 1) as f64 * log_q;
-        }
-    }
+    let split_term = copies
+        .into_iter()
+        .zip(split)
+        .fold(0.0, |sum, (n, log_q)| sum + (n - 1) as f64 * log_q);
+    let expected = expected + split_term;
     rows.split.reverse();
     // The observed count remains 40 even though this word now draws count 0.
     rows.count.stream_values[0] = 0;

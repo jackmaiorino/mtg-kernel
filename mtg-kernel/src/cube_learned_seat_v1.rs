@@ -3,6 +3,10 @@
 use std::sync::Arc;
 
 use crate::card_def::CARD_DEFS;
+use crate::cube_draft_build_v1::model::{
+    BuildForwardV1, CardHiddenTableV1, ModelCardRowsV1, ModelErrorV1, ModelV1, PickForwardV1,
+    PickStateV1, TrunkV1, TYPE_SET_COUNT_V1,
+};
 use crate::cube_draft_v1::{basic_land_ids, Deck, DECK_CARDS, PACK_SIZE, POOL_CARDS, ROUNDS};
 use crate::cube_seat_v1::{
     canonical_deck, BuildOutcome, BuildRows, DecisionKind, DecisionRow, PassDirection, PickOutcome,
@@ -37,6 +41,144 @@ pub trait SeatForward: Send + Sync {
     fn pointer(&self, input: &BuildInputs<'_>, remaining: &[u16]) -> Result<Vec<f32>, SeatError>;
     fn type_set(&self, input: &BuildInputs<'_>, masks: &[u16]) -> Result<Vec<f32>, SeatError>;
     fn split(&self, input: &BuildInputs<'_>, bits: &[u16]) -> Result<Vec<f32>, SeatError>;
+}
+
+/// An immutable D2 model and its cached card representations for both trunks.
+pub struct ModelSeatForward {
+    model: Arc<ModelV1>,
+    rows: Arc<ModelCardRowsV1>,
+    pick_hidden: CardHiddenTableV1,
+    build_hidden: CardHiddenTableV1,
+}
+
+impl ModelSeatForward {
+    pub fn new(
+        model: Arc<ModelV1>,
+        rows: Arc<ModelCardRowsV1>,
+        threads: usize,
+    ) -> Result<Self, SeatError> {
+        let pick_hidden = model
+            .card_hidden_table(&rows, TrunkV1::Pick, threads)
+            .map_err(model_error)?;
+        let build_hidden = model
+            .card_hidden_table(&rows, TrunkV1::Build, threads)
+            .map_err(model_error)?;
+        Ok(Self {
+            model,
+            rows,
+            pick_hidden,
+            build_hidden,
+        })
+    }
+
+    fn build_forward(&self) -> BuildForwardV1<'_> {
+        BuildForwardV1::from_cached_hidden(&self.model, &self.rows, &self.build_hidden)
+    }
+}
+
+fn model_error(error: ModelErrorV1) -> SeatError {
+    SeatError::Seat(error.to_string())
+}
+
+impl SeatForward for ModelSeatForward {
+    fn pick_and_value(&self, input: &PickInputs<'_>) -> Result<(Vec<f32>, f32), SeatError> {
+        let step = input
+            .step
+            .iter()
+            .position(|&entry| entry == 1.0)
+            .ok_or_else(|| invalid("pick step must be one-hot"))?;
+        if input
+            .step
+            .iter()
+            .enumerate()
+            .any(|(i, &value)| i != step && value != 0.0)
+        {
+            return Err(invalid("pick step must be one-hot"));
+        }
+        let direction = match input.direction {
+            1.0 => 1,
+            -1.0 => -1,
+            _ => return Err(invalid("pick direction must be +1 or -1")),
+        };
+        let state = PickStateV1 {
+            pack: input.pack.to_vec(),
+            pool: input.pool.to_vec(),
+            history: input.history.to_vec(),
+            step: step as u8,
+            direction,
+        };
+        let forward = PickForwardV1::from_cached_hidden(&self.model, &self.rows, &self.pick_hidden);
+        let logits = forward.pick_logits_v1(&state).map_err(model_error)?;
+        if logits.ids != input.pack {
+            return Err(invalid("pick logits do not match the pack order"));
+        }
+        let value = forward.value_v1(&state).map_err(model_error)?;
+        Ok((logits.logits, value))
+    }
+
+    fn count(&self, pool: &[u16]) -> Result<[f32; 41], SeatError> {
+        self.build_forward()
+            .build_context_v1(pool)
+            .map_err(model_error)?
+            .count_logits_v1()
+            .try_into()
+            .map_err(|_| invalid("expected 41 basics-count logits"))
+    }
+
+    fn pointer(&self, input: &BuildInputs<'_>, remaining: &[u16]) -> Result<Vec<f32>, SeatError> {
+        let logits = self
+            .build_forward()
+            .build_context_v1(input.pool)
+            .map_err(model_error)?
+            .pointer_logits_v1(usize::from(input.basics), input.chosen, remaining)
+            .map_err(model_error)?;
+        if logits.ids != remaining {
+            return Err(invalid(
+                "pointer logits do not match the remaining card order",
+            ));
+        }
+        Ok(logits.logits)
+    }
+
+    fn type_set(&self, input: &BuildInputs<'_>, masks: &[u16]) -> Result<Vec<f32>, SeatError> {
+        if masks.iter().any(|&mask| {
+            !(1..=TYPE_SET_COUNT_V1 as u16).contains(&mask)
+                || mask.count_ones() > u32::from(input.basics)
+        }) {
+            return Err(invalid("infeasible basic type mask"));
+        }
+        let logits = self
+            .build_forward()
+            .build_context_v1(input.pool)
+            .map_err(model_error)?
+            .type_context_v1(usize::from(input.basics), input.chosen)
+            .map_err(model_error)?
+            .typeset_logits_v1();
+        Ok(masks
+            .iter()
+            .map(|&mask| logits[usize::from(mask) - 1])
+            .collect())
+    }
+
+    fn split(&self, input: &BuildInputs<'_>, bits: &[u16]) -> Result<Vec<f32>, SeatError> {
+        if bits.iter().any(|&bit| !matches!(bit, 1 | 2 | 4 | 8 | 16))
+            || bits.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(invalid(
+                "split types must be single basic bits in ascending order",
+            ));
+        }
+        let mask = bits.iter().fold(0u8, |mask, &bit| mask | bit as u8);
+        let logits = self
+            .build_forward()
+            .build_context_v1(input.pool)
+            .map_err(model_error)?
+            .type_context_v1(usize::from(input.basics), input.chosen)
+            .map_err(model_error)?
+            .split_logits_v1(mask)
+            .map_err(model_error)?;
+        Ok(logits.logits)
+    }
 }
 
 pub struct LearnedSeatPicker {
@@ -85,8 +227,7 @@ fn decide(
     word: u64,
     specified: Option<u16>,
 ) -> Result<Decision, SeatError> {
-    if options.is_empty() || logits.len() != options.len() || logits.iter().any(|x| !x.is_finite())
-    {
+    if logits.len() != options.len() {
         return Err(invalid("forward must supply one finite logit per option"));
     }
     if value.is_some_and(|v| !v.is_finite()) {
@@ -94,8 +235,8 @@ fn decide(
     }
     // Every vector is compacted before this call, including type-set masks.
     let enabled = vec![true; options.len()];
-    let sample =
-        sample_v1(logits, &enabled, word).map_err(|error| SeatError::Seat(error.to_string()))?;
+    let sample = sample_v1(logits, &enabled, word)
+        .map_err(|error| SeatError::Seat(format!("learned sampler: {error}")))?;
     let index = match specified {
         Some(chosen) => options
             .binary_search(&chosen)
@@ -132,16 +273,16 @@ fn pick_with(
     view: &SeatPickView<'_>,
     word: impl FnOnce() -> Result<u64, SeatError>,
 ) -> Result<PickOutcome, SeatError> {
+    let round = usize::from(view.round);
+    let pick = usize::from(view.pick);
+    if round >= ROUNDS || pick >= PACK_SIZE || view.pack.len() != PACK_SIZE - pick {
+        return Err(invalid("invalid draft step or pack size"));
+    }
     if view.pack.len() == 1 {
         return Ok(PickOutcome {
             index: 0,
             row: None,
         });
-    }
-    let round = usize::from(view.round);
-    let pick = usize::from(view.pick);
-    if round >= ROUNDS || pick >= PACK_SIZE || view.pack.len() != PACK_SIZE - pick {
-        return Err(invalid("invalid draft step or pack size"));
     }
     let pack = sorted_cards(view.pack);
     let mut step = [0.0; POOL_CARDS];
@@ -303,11 +444,11 @@ fn walk_build(
                 rows.split.push(decision.row);
             }
             // Sum the split by type in canonical order, independent of draw order.
-            for (&n, q) in copies.iter().zip(log_q) {
-                if n > 1 {
-                    log_prob += (n - 1) as f64 * q;
-                }
-            }
+            let split_log_prob = copies
+                .iter()
+                .zip(log_q)
+                .fold(0.0, |sum, (&n, q)| sum + (n - 1) as f64 * q);
+            log_prob += split_log_prob;
         }
         let ids = basic_land_ids()?;
         for (bit, n) in bits.into_iter().zip(copies) {

@@ -5,7 +5,7 @@ use crate::cube_draft_build_v1::model::training::{HeadUpdates, TrainingStatistic
 use crate::cube_draft_build_v1::model::{training::Optimizer, ModelCardRowsV1, ModelV1};
 #[path = "cube_training_driver_model_v1.rs"]
 mod model;
-use model::TrainingModel;
+use model::update_model;
 #[path = "cube_training_tripwire_v1.rs"]
 mod tripwire;
 pub use tripwire::CensusBaselinePin;
@@ -16,7 +16,9 @@ pub use resume::ResumeAuthorization;
 use resume::{check_resume, RunnerMarker};
 
 use crate::cube_draft_v1::{uniform_index, CubePool, SEATS};
-use crate::cube_learned_seat_v1::{LearnedSeatBuilder, LearnedSeatPicker, SeatForward};
+use crate::cube_learned_seat_v1::{
+    LearnedSeatBuilder, LearnedSeatPicker, ModelSeatForward, SeatForward,
+};
 use crate::cube_pod_runner_v1::{
     is_watchdog_end, pod_league_seed, training_roles_with_older, PilotInfo, PilotKind, PodPins,
     PodRecord, PodRunnerError, PodStatus, PodUse, SeatKind, SeatRef, StopAttemptReport,
@@ -26,6 +28,7 @@ use crate::cube_read_plan_v1::sha256_hex;
 use crate::cube_seat_v1::{
     GamePilot, UniformPilot, UniformSeatPicker, LEARNED_SAMPLER_ID, M4_INTERFACES_VERSION,
 };
+use crate::cube_worker_liveness_v1::LIVENESS;
 use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
 use crate::state::SplitMix64;
 use flate2::write::GzEncoder;
@@ -374,7 +377,7 @@ impl RunConfig {
             metadata: CheckpointMetadata::default(),
             caps: crate::cube_pod_runner_v1::PodCaps::training_a2(),
             workers: 1,
-            liveness: crate::cube_pod_runner_v1::WATCHDOG_LIVENESS.to_owned(),
+            liveness: LIVENESS.to_owned(),
             // A6.17's four b1 dose marks and D0.21's six owner views.
             marks: match segment {
                 Segment::BuilderOnly => CheckpointMarks {
@@ -405,7 +408,8 @@ impl RunConfig {
             || self.update_range[1] == 0
             || self.pods_per_update != PODS_PER_UPDATE
             || self.train_sets != self.segment.train_sets()
-            || self.caps.max_stack_objects != crate::cube_b_census_v1::A2_CAPS.max_stack_objects
+            || Some(self.caps.max_stack_objects)
+                != crate::cube_b_census_v1::A2_CAPS.max_stack_objects
             || self.workers == 0
         {
             return Err(invalid("invalid update plan or trained sets"));
@@ -413,7 +417,7 @@ impl RunConfig {
         if (self.label == "shakedown") != (self.namespace == "shakedown-pods") {
             return Err(invalid("the shakedown label and namespace must agree"));
         }
-        if self.liveness != crate::cube_pod_runner_v1::WATCHDOG_LIVENESS
+        if self.liveness != LIVENESS
             || self
                 .pilot
                 .switch
@@ -1452,9 +1456,26 @@ fn stop_from_failure(run: &str, update: u64, failure: BatchFailure) -> StopRecor
     }
 }
 
+struct Snapshot {
+    model: Arc<ModelV1>,
+    seat: Arc<ModelSeatForward>,
+}
+
+impl Snapshot {
+    fn new(model: ModelV1, rows: Arc<ModelCardRowsV1>) -> Result<Self, String> {
+        let model = Arc::new(model);
+        let seat =
+            ModelSeatForward::new(model.clone(), rows, 1).map_err(|error| error.to_string())?;
+        Ok(Self {
+            model,
+            seat: Arc::new(seat),
+        })
+    }
+}
+
 pub struct TrainingDriver {
     config: RunConfig,
-    model: Arc<TrainingModel>,
+    model: Snapshot,
     optimizer: Optimizer,
     rows: Arc<ModelCardRowsV1>,
     next_update: u64,
@@ -1463,7 +1484,7 @@ pub struct TrainingDriver {
     current_pin: String,
     tripwire: TripwireTracker,
     census_rates: Option<CensusRates>,
-    snapshots: BTreeMap<String, Arc<TrainingModel>>,
+    snapshots: BTreeMap<String, Snapshot>,
     runner: RunnerMarker,
 }
 
@@ -1761,8 +1782,7 @@ impl TrainingDriver {
             .model
             .restore(initial_model, checkpoint.head_updates)
             .map_err(TrainingDriverError::Update)?;
-        let model =
-            Arc::new(TrainingModel::new(model, rows.clone()).map_err(TrainingDriverError::Update)?);
+        let model = Snapshot::new(model, rows.clone()).map_err(TrainingDriverError::Update)?;
         let runner = match runner {
             Some(mut runner) => {
                 runner.finish_batch();
@@ -1824,7 +1844,7 @@ impl TrainingDriver {
                 publish_bytes(&destination, &fs::read(source)?)?;
             }
         }
-        let mut model = previous.model.parameters().clone();
+        let mut model = previous.model.model.as_ref().clone();
         model.copy_build_trunk_to_pick_trunk();
         let mut state = CubeModelState::from_model(&model, &previous.optimizer);
         state.pick.reset_optimizer();
@@ -1849,7 +1869,7 @@ impl TrainingDriver {
     pub fn checkpoint(&self) -> Result<Checkpoint, TrainingDriverError> {
         Checkpoint::new(
             &self.config,
-            CubeModelState::from_model(self.model.parameters(), &self.optimizer),
+            CubeModelState::from_model(&self.model.model, &self.optimizer),
             self.league.clone(),
             self.next_update,
             self.lineage.clone(),
@@ -1921,9 +1941,9 @@ impl TrainingDriver {
         update: u64,
         selection: &PilotSelection,
         pilot: &(dyn GamePilot + Sync),
-        snapshots: &BTreeMap<String, Arc<TrainingModel>>,
+        snapshots: &BTreeMap<String, Snapshot>,
     ) -> Result<Vec<PodRecord>, CollectFailure> {
-        let current: Arc<dyn SeatForward> = self.model.clone();
+        let current: Arc<dyn SeatForward> = self.model.seat.clone();
         let mut completed = Vec::new();
         for offset in 0..PODS_PER_UPDATE {
             let pod_index = update * PODS_PER_UPDATE + offset;
@@ -1956,7 +1976,7 @@ impl TrainingDriver {
                 let older_pin = assignments.get(&chair);
                 let forward = older_pin.map_or_else(
                     || current.clone(),
-                    |pin| snapshots[pin].clone() as Arc<dyn SeatForward>,
+                    |pin| snapshots[pin].seat.clone() as Arc<dyn SeatForward>,
                 );
                 let picker: Box<dyn crate::cube_seat_v1::SeatPicker> =
                     if self.config.segment == Segment::BuilderOnly {
@@ -2100,11 +2120,11 @@ impl TrainingDriver {
             }
             let (model, _) = checkpoint
                 .model
-                .restore(self.model.parameters().clone(), checkpoint.head_updates)
+                .restore(self.model.model.as_ref().clone(), checkpoint.head_updates)
                 .map_err(TrainingDriverError::Update)?;
-            let snapshot = TrainingModel::new(model, self.rows.clone())
-                .map_err(TrainingDriverError::Update)?;
-            self.snapshots.insert(entry.pin.clone(), Arc::new(snapshot));
+            let snapshot =
+                Snapshot::new(model, self.rows.clone()).map_err(TrainingDriverError::Update)?;
+            self.snapshots.insert(entry.pin.clone(), snapshot);
         }
         let pending = self.config.root.join("pending").join(update_name(update));
         if pending.exists() {
@@ -2173,12 +2193,17 @@ impl TrainingDriver {
         }
         let firing = tripwire.firing.clone();
         let before_state = self.current_pin.clone();
-        let updated = self.model.update(
+        let updated = update_model(
+            &self.model.model,
+            &self.rows,
             self.optimizer.clone(),
             self.config.segment,
             &pods,
             &self.snapshots,
-        );
+        )
+        .and_then(|(model, optimizer, output)| {
+            Ok((Snapshot::new(model, self.rows.clone())?, optimizer, output))
+        });
         let (model, optimizer, optimizer_output) = match updated {
             Ok(result) => result,
             Err(message) => {
@@ -2189,7 +2214,7 @@ impl TrainingDriver {
         };
         let head_updates = optimizer.head_updates;
         let checkpoint_number = update + 1;
-        let model_state = CubeModelState::from_model(model.parameters(), &optimizer);
+        let model_state = CubeModelState::from_model(&model.model, &optimizer);
         let mut league = self.league.clone();
         let reasons = pin_reasons(&self.config, checkpoint_number);
         let mut league_snapshot_bytes = None;
@@ -2314,7 +2339,7 @@ impl TrainingDriver {
         restore_update_league_snapshot(&self.config.root, &published)?;
         published_stop(&self.config.root, &published, update)?;
         self.next_update += 1;
-        self.model = Arc::new(model);
+        self.model = model;
         self.optimizer = optimizer;
         self.league = league;
         self.current_pin = state_pin;

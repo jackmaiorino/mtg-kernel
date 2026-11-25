@@ -1,190 +1,71 @@
-use super::{CubeModelState, HeadUpdates, OptimizerOutput, ParameterSetState, Segment};
+use super::{CubeModelState, HeadUpdates, OptimizerOutput, ParameterSetState, Segment, Snapshot};
 use crate::cube_draft_build_v1::model::{
     training::{self, Build, Chair, Optimizer, Phase, Role, Row},
-    CardHiddenTableV1, ModelCardRowsV1, ModelV1, ParameterSetV1, PickStateV1, TrunkV1,
+    ModelCardRowsV1, ModelV1, ParameterSetV1, PickStateV1,
 };
 use crate::cube_draft_v1::PACK_SIZE;
-use crate::cube_learned_seat_v1::{BuildInputs, PickInputs, SeatForward};
 use crate::cube_pod_runner_v1::{BuilderPin, ChairRole, PodRecord};
-use crate::cube_seat_v1::SeatError;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
-pub(super) struct TrainingModel {
-    model: ModelV1,
-    rows: Arc<ModelCardRowsV1>,
-    build_hidden: CardHiddenTableV1,
-    pick_hidden: CardHiddenTableV1,
-}
-
-impl TrainingModel {
-    pub(super) fn new(model: ModelV1, rows: Arc<ModelCardRowsV1>) -> Result<Self, String> {
-        let hidden = |trunk| {
-            model
-                .card_hidden_table(&rows, trunk, 1)
-                .map_err(|e| e.to_string())
-        };
-        Ok(Self {
-            build_hidden: hidden(TrunkV1::Build)?,
-            pick_hidden: hidden(TrunkV1::Pick)?,
-            model,
-            rows,
-        })
-    }
-
-    pub(super) fn parameters(&self) -> &ModelV1 {
-        &self.model
-    }
-
-    pub(super) fn update(
-        &self,
-        mut optimizer: Optimizer,
-        segment: Segment,
-        pods: &[PodRecord],
-        snapshots: &BTreeMap<String, Arc<Self>>,
-    ) -> Result<(Self, Optimizer, OptimizerOutput), String> {
-        let phase = match segment {
-            Segment::BuilderOnly => Phase::Builder,
-            Segment::PickPhase => Phase::Joint,
-        };
-        let prepared = pods
-            .iter()
-            .map(prepare_pod)
-            .collect::<Result<Vec<_>, _>>()?;
-        let chairs: Vec<_> = prepared
-            .iter()
-            .flatten()
-            .map(|chair| Chair {
-                role: match &chair.role {
-                    Role::Learning { scores } => Role::Learning { scores: *scores },
-                    Role::Older {
-                        picker_pin,
-                        builder_pin,
-                    } => Role::Older {
-                        picker_pin: *picker_pin,
-                        builder_pin,
-                    },
+pub(super) fn update_model(
+    current: &ModelV1,
+    rows: &ModelCardRowsV1,
+    mut optimizer: Optimizer,
+    segment: Segment,
+    pods: &[PodRecord],
+    snapshots: &BTreeMap<String, Snapshot>,
+) -> Result<(ModelV1, Optimizer, OptimizerOutput), String> {
+    let phase = match segment {
+        Segment::BuilderOnly => Phase::Builder,
+        Segment::PickPhase => Phase::Joint,
+    };
+    let prepared = pods
+        .iter()
+        .map(prepare_pod)
+        .collect::<Result<Vec<_>, _>>()?;
+    let chairs: Vec<_> = prepared
+        .iter()
+        .flatten()
+        .map(|chair| Chair {
+            role: match &chair.role {
+                Role::Learning { scores } => Role::Learning { scores: *scores },
+                Role::Older {
+                    picker_pin,
+                    builder_pin,
+                } => Role::Older {
+                    picker_pin: *picker_pin,
+                    builder_pin,
                 },
-                picks: &chair.picks,
-                pool: chair.pool,
-                builds: &chair.builds,
-            })
-            .collect();
-        let pinned = snapshots
-            .iter()
-            .map(|(pin, snapshot)| (pin.clone(), &snapshot.model))
-            .collect();
-        let mut model = self.model.clone();
-        let losses = training::update(
-            &mut model,
-            &mut optimizer,
-            &self.rows,
-            phase,
-            &chairs,
-            &pinned,
-        )?;
-        let loss_values = [
-            ("build", losses.build),
-            ("pick", losses.pick),
-            ("value", losses.value),
-        ]
-        .into_iter()
-        .map(|(name, loss)| (name.to_owned(), loss))
-        .collect();
-        Ok((
-            Self::new(model, self.rows.clone())?,
-            optimizer,
-            OptimizerOutput {
-                losses: loss_values,
-                gradient_norms: losses.gradient_norms,
-                statistics: losses.statistics,
             },
-        ))
-    }
+            picks: &chair.picks,
+            pool: chair.pool,
+            builds: &chair.builds,
+        })
+        .collect();
+    let pinned = snapshots
+        .iter()
+        .map(|(pin, snapshot)| (pin.clone(), snapshot.model.as_ref()))
+        .collect();
+    let mut model = current.clone();
+    let losses = training::update(&mut model, &mut optimizer, rows, phase, &chairs, &pinned)?;
+    let loss_values = [
+        ("build", losses.build),
+        ("pick", losses.pick),
+        ("value", losses.value),
+    ]
+    .into_iter()
+    .map(|(name, loss)| (name.to_owned(), loss))
+    .collect();
+    Ok((
+        model,
+        optimizer,
+        OptimizerOutput {
+            losses: loss_values,
+            gradient_norms: losses.gradient_norms,
+            statistics: losses.statistics,
+        },
+    ))
 }
-
-fn pick_state(input: &PickInputs<'_>) -> PickStateV1 {
-    PickStateV1 {
-        pack: input.pack.to_vec(),
-        pool: input.pool.to_vec(),
-        history: input.history.to_vec(),
-        step: input
-            .step
-            .iter()
-            .position(|&step| step == 1.0)
-            .expect("D3 pick step") as u8,
-        direction: input.direction as i8,
-    }
-}
-
-fn seat_error(error: impl ToString) -> SeatError {
-    SeatError::Seat(error.to_string())
-}
-
-impl SeatForward for TrainingModel {
-    fn pick_and_value(&self, input: &PickInputs<'_>) -> Result<(Vec<f32>, f32), SeatError> {
-        let state = pick_state(input);
-        let forward = self
-            .model
-            .pick_forward_with_hidden(&self.rows, &self.pick_hidden);
-        let logits = forward.pick_logits_v1(&state).map_err(seat_error)?;
-        let value = forward.value_v1(&state).map_err(seat_error)?;
-        Ok((logits.logits, value))
-    }
-
-    fn count(&self, pool: &[u16]) -> Result<[f32; 41], SeatError> {
-        let forward = self
-            .model
-            .build_forward_with_hidden(&self.rows, &self.build_hidden);
-        forward
-            .build_context_v1(pool)
-            .map_err(seat_error)?
-            .count_logits_v1()
-            .try_into()
-            .map_err(|_| seat_error("D2 count width differs"))
-    }
-
-    fn pointer(&self, input: &BuildInputs<'_>, remaining: &[u16]) -> Result<Vec<f32>, SeatError> {
-        let forward = self
-            .model
-            .build_forward_with_hidden(&self.rows, &self.build_hidden);
-        let context = forward.build_context_v1(input.pool).map_err(seat_error)?;
-        Ok(context
-            .pointer_logits_v1(input.basics.into(), input.chosen, remaining)
-            .map_err(seat_error)?
-            .logits)
-    }
-
-    fn type_set(&self, input: &BuildInputs<'_>, masks: &[u16]) -> Result<Vec<f32>, SeatError> {
-        let forward = self
-            .model
-            .build_forward_with_hidden(&self.rows, &self.build_hidden);
-        let context = forward.build_context_v1(input.pool).map_err(seat_error)?;
-        let logits = context
-            .type_context_v1(input.basics.into(), input.chosen)
-            .map_err(seat_error)?
-            .typeset_logits_v1();
-        Ok(masks
-            .iter()
-            .map(|&mask| logits[usize::from(mask) - 1])
-            .collect())
-    }
-
-    fn split(&self, input: &BuildInputs<'_>, bits: &[u16]) -> Result<Vec<f32>, SeatError> {
-        let forward = self
-            .model
-            .build_forward_with_hidden(&self.rows, &self.build_hidden);
-        let context = forward.build_context_v1(input.pool).map_err(seat_error)?;
-        let mask = bits.iter().fold(0, |mask, &bit| mask | bit as u8);
-        Ok(context
-            .type_context_v1(input.basics.into(), input.chosen)
-            .map_err(seat_error)?
-            .split_logits_v1(mask)
-            .map_err(seat_error)?
-            .logits)
-    }
-}
-
 fn set_index(set: ParameterSetV1) -> usize {
     match set {
         ParameterSetV1::Build => 0,

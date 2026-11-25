@@ -23,6 +23,7 @@
 //! are not here (tasks D2a and D3). Logits come out as f32, in the canonical
 //! orders those routines walk, with exactly the real candidates.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
 
@@ -944,13 +945,13 @@ impl ModelV1 {
         Ok(())
     }
 
-    fn card_input(
-        &self,
-        rows: &ModelCardRowsV1,
-        row: usize,
-        embedding: TensorIdV1,
-        projection: TensorIdV1,
-    ) -> Vec<f32> {
+    /// h(r) of one index row through `trunk`.
+    fn card_hidden_row(&self, trunk: TrunkV1, rows: &ModelCardRowsV1, row: usize, out: &mut [f32]) {
+        let ids = match trunk {
+            TrunkV1::Build => TensorIdV1::BUILD_TRUNK,
+            TrunkV1::Pick => TensorIdV1::PICK_TRUNK,
+        };
+        let [embedding, projection, mlp0_weight, mlp0_bias, mlp2_weight, mlp2_bias] = ids;
         let embedding_row =
             &self.t(embedding)[row * EMBEDDING_WIDTH_V1..(row + 1) * EMBEDDING_WIDTH_V1];
         let projection = self.t(projection);
@@ -966,17 +967,6 @@ impl ModelV1 {
             *slot = sum;
         }
         card_vector[EMBEDDING_WIDTH_V1..].copy_from_slice(rows.dense_row(row));
-        card_vector
-    }
-
-    /// h(r) of one index row through `trunk`.
-    fn card_hidden_row(&self, trunk: TrunkV1, rows: &ModelCardRowsV1, row: usize, out: &mut [f32]) {
-        let ids = match trunk {
-            TrunkV1::Build => TensorIdV1::BUILD_TRUNK,
-            TrunkV1::Pick => TensorIdV1::PICK_TRUNK,
-        };
-        let [embedding, projection, mlp0_weight, mlp0_bias, mlp2_weight, mlp2_bias] = ids;
-        let card_vector = self.card_input(rows, row, embedding, projection);
         let mut first = [0.0f32; H];
         self.layer(mlp0_weight, Some(mlp0_bias))
             .forward(&card_vector, &mut first);
@@ -1040,23 +1030,8 @@ impl ModelV1 {
         Ok(PickForwardV1 {
             model: self,
             rows,
-            hidden: std::borrow::Cow::Owned(hidden),
+            hidden: Cow::Owned(hidden),
         })
-    }
-
-    /// Borrows H from a caller that holds this immutable model and its card rows.
-    #[cfg(feature = "eternal-fixtures")]
-    pub(crate) fn pick_forward_with_hidden<'m>(
-        &'m self,
-        rows: &'m ModelCardRowsV1,
-        hidden: &'m CardHiddenTableV1,
-    ) -> PickForwardV1<'m> {
-        assert_eq!(hidden.trunk(), TrunkV1::Pick);
-        PickForwardV1 {
-            model: self,
-            rows,
-            hidden: std::borrow::Cow::Borrowed(hidden),
-        }
     }
 
     /// The build head over the build trunk's H, computed here once.
@@ -1069,23 +1044,8 @@ impl ModelV1 {
         Ok(BuildForwardV1 {
             model: self,
             rows,
-            hidden: std::borrow::Cow::Owned(hidden),
+            hidden: Cow::Owned(hidden),
         })
-    }
-
-    /// Borrows H from a caller that holds this immutable model and its card rows.
-    #[cfg(feature = "eternal-fixtures")]
-    pub(crate) fn build_forward_with_hidden<'m>(
-        &'m self,
-        rows: &'m ModelCardRowsV1,
-        hidden: &'m CardHiddenTableV1,
-    ) -> BuildForwardV1<'m> {
-        assert_eq!(hidden.trunk(), TrunkV1::Build);
-        BuildForwardV1 {
-            model: self,
-            rows,
-            hidden: std::borrow::Cow::Borrowed(hidden),
-        }
     }
 }
 
@@ -1330,10 +1290,24 @@ fn resolve_pick_state(
 pub struct PickForwardV1<'m> {
     model: &'m ModelV1,
     rows: &'m ModelCardRowsV1,
-    hidden: std::borrow::Cow<'m, CardHiddenTableV1>,
+    hidden: Cow<'m, CardHiddenTableV1>,
 }
 
-impl PickForwardV1<'_> {
+impl<'m> PickForwardV1<'m> {
+    // The owner keeps these borrows tied to the model and rows that built H.
+    pub(crate) fn from_cached_hidden(
+        model: &'m ModelV1,
+        rows: &'m ModelCardRowsV1,
+        hidden: &'m CardHiddenTableV1,
+    ) -> Self {
+        assert_eq!(hidden.trunk(), TrunkV1::Pick);
+        Self {
+            model,
+            rows,
+            hidden: Cow::Borrowed(hidden),
+        }
+    }
+
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
         &self.hidden
     }
@@ -1413,10 +1387,24 @@ impl PickForwardV1<'_> {
 pub struct BuildForwardV1<'m> {
     model: &'m ModelV1,
     rows: &'m ModelCardRowsV1,
-    hidden: std::borrow::Cow<'m, CardHiddenTableV1>,
+    hidden: Cow<'m, CardHiddenTableV1>,
 }
 
-impl BuildForwardV1<'_> {
+impl<'m> BuildForwardV1<'m> {
+    // The owner keeps these borrows tied to the model and rows that built H.
+    pub(crate) fn from_cached_hidden(
+        model: &'m ModelV1,
+        rows: &'m ModelCardRowsV1,
+        hidden: &'m CardHiddenTableV1,
+    ) -> Self {
+        assert_eq!(hidden.trunk(), TrunkV1::Build);
+        Self {
+            model,
+            rows,
+            hidden: Cow::Borrowed(hidden),
+        }
+    }
+
     pub fn hidden_table(&self) -> &CardHiddenTableV1 {
         &self.hidden
     }
