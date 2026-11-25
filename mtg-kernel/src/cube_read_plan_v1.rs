@@ -20,6 +20,8 @@
 //!   with `ended = "interrupted"`.
 
 mod attestation;
+mod shakedown;
+use shakedown::RestartKind;
 #[cfg(test)]
 mod tests;
 
@@ -801,6 +803,14 @@ pub struct RuntimePins {
     pub constants_sha256: Option<String>,
 }
 
+/// Records repository and exact D0.3b shakedown manifest pin for a D8 restart.
+#[derive(Debug, Clone)]
+pub struct ShakedownManifestPin {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub records_repo: PathBuf,
+}
+
 /// Runtime verification context supplied by the launcher/caller.
 #[derive(Debug, Clone)]
 pub struct RuntimeVerification {
@@ -811,6 +821,8 @@ pub struct RuntimeVerification {
     pub declaration_bytes: Vec<u8>,
     /// Pinned panel digest for `dose` and `d13` sets other than `prep-panel`.
     pub pinned_panel_sha256: Option<String>,
+    /// Required for dose-d8 and read-d8-aa runs after v1.
+    pub shakedown_manifest: Option<ShakedownManifestPin>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2950,6 +2962,12 @@ pub fn parse_and_validate_prep_result_json(json_text: &str) -> Result<PrepResult
     })
 }
 
+fn d8_set_name(set: &str) -> (&str, u64) {
+    set.rsplit_once("-restart-")
+        .and_then(|(base, suffix)| positive_decimal(suffix).map(|index| (base, index)))
+        .unwrap_or((set, 0))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_d8_set(
     namespace: &str,
@@ -3005,13 +3023,15 @@ fn validate_d8_set(
             let (prior_run, prior_set) = previous
                 .split_once('/')
                 .ok_or_else(|| plan_err("D8 predecessor must be <run>/<set>"))?;
-            let expected = if restart == 1 {
-                base.to_owned()
+            let (prior_base, prior_index) = d8_set_name(prior_set);
+            let valid_suffix = if namespace == "read-d8-aa" {
+                prior_index.checked_add(1) == Some(restart)
             } else {
-                format!("{base}-restart-{}", restart - 1)
+                prior_index < restart
             };
             if d8_run_number(prior_run).is_none_or(|previous| previous >= run_number)
-                || prior_set != expected
+                || prior_base != base
+                || !valid_suffix
                 || retired.iter().any(|range| range[1] > units[0])
                 || retired
                     .windows(2)
@@ -3733,7 +3753,27 @@ pub fn parse_and_validate_prep_execution_receipt_json(
 // Runtime pin, declaration, and two-stage panel verification (`READ-PLAN-v1` s6)
 // ---------------------------------------------------------------------------
 
-fn verify_d8_history(set_dir: &Path, manifest: &SetManifest) -> Result<(), PodRunnerError> {
+fn verify_d8_launch(
+    set_dir: &Path,
+    manifest: &SetManifest,
+    verification: &RuntimeVerification,
+) -> Result<(), PodRunnerError> {
+    let restart = if d8_namespace(&manifest.namespace) && manifest.run != "v1" {
+        let pin = verification.shakedown_manifest.as_ref().ok_or_else(|| {
+            plan_err("D8 restart requires the pinned shakedown manifest and records repository")
+        })?;
+        Some(shakedown::authorize_restart(manifest, pin)?)
+    } else {
+        None
+    };
+    verify_d8_history(set_dir, manifest, restart)
+}
+
+fn verify_d8_history(
+    set_dir: &Path,
+    manifest: &SetManifest,
+    restart_kind: Option<RestartKind>,
+) -> Result<(), PodRunnerError> {
     if !d8_namespace(&manifest.namespace) {
         return Ok(());
     }
@@ -3761,64 +3801,125 @@ fn verify_d8_history(set_dir: &Path, manifest: &SetManifest) -> Result<(), PodRu
     if run_number == 1 {
         return Ok(());
     }
-    let mut end_of_reservations = 0;
-    let mut predecessor = None;
-    let dirs = |path: &Path| {
-        fs::read_dir(path)
-            .map_err(|error| PodRunnerError::Io(format!("{}: {error}", path.display())))
+    let restart_kind = restart_kind.ok_or_else(|| plan_err("D8 restart is not authorized"))?;
+    let earlier = read_d8_history(namespace_dir, manifest, run_number)?;
+    let end_of_reservations = earlier
+        .iter()
+        .map(|(_, _, prior)| prior.units[1])
+        .max()
+        .unwrap_or(0);
+    if manifest.units[0] < end_of_reservations
+        || (manifest.namespace == "read-d8-aa"
+            && (end_of_reservations == 0 || manifest.units[0] != end_of_reservations))
+    {
+        return Err(plan_err(
+            "D8 restart must start after the earlier namespace reservations",
+        ));
+    }
+
+    let (base, restart_index) = d8_set_name(&manifest.set);
+    let matching = |(n, _, prior): &&(u64, PathBuf, SetManifest)| {
+        (*n < run_number) && prior.kind == manifest.kind && d8_set_name(&prior.set).0 == base
     };
-    for entry in dirs(namespace_dir)? {
-        let entry = entry.map_err(|error| PodRunnerError::Io(error.to_string()))?;
-        let run = entry.file_name().to_string_lossy().into_owned();
-        if d8_run_number(&run).is_none_or(|n| n >= run_number) || !entry.path().is_dir() {
-            continue;
+    let latest = earlier
+        .iter()
+        .filter(matching)
+        .max_by_key(|(n, _, prior)| (*n, d8_set_name(&prior.set).1));
+
+    if let Some(predecessor) = &manifest.replaces {
+        let (number, path, prior) =
+            latest.ok_or_else(|| plan_err("D8 predecessor manifest is missing"))?;
+        if format!("v{number}/{}", prior.set) != *predecessor || prior.family != manifest.family {
+            return Err(plan_err(
+                "D8 replacement must name the latest set of its family and kind",
+            ));
         }
-        for set in dirs(&entry.path())? {
-            let path = set
-                .map_err(|error| PodRunnerError::Io(error.to_string()))?
-                .path();
-            let bytes = match fs::read_to_string(path.join("manifest.json")) {
+        if manifest.namespace == "dose-d8" {
+            let expected = 1 + earlier
+                .iter()
+                .filter(matching)
+                .filter(|(_, _, prior)| d8_set_name(&prior.set).1 != 0)
+                .count() as u64;
+            if restart_index != expected {
+                return Err(plan_err(format!(
+                    "dose restart index must be {expected} by namespace history"
+                )));
+            }
+        }
+        if d8_set_status(path, prior)? != D8SetStatus::Interrupted {
+            return Err(plan_err("D8 predecessor is not a restartable interruption"));
+        }
+        let unused = d8_unused_reserved_ranges(path, prior)?;
+        if manifest.retired != unused {
+            return Err(plan_err(format!(
+                "D8 retired ranges must equal the predecessor's unused units {unused:?}"
+            )));
+        }
+    } else if manifest.namespace == "dose-d8" && base != "prep-panel" {
+        if let Some((_, path, prior)) = latest {
+            if d8_set_status(path, prior)? == D8SetStatus::Interrupted {
+                return Err(plan_err("the latest interrupted dose set must be replaced"));
+            }
+        }
+        if restart_kind == RestartKind::Note {
+            let dose_name = base.strip_prefix("prep-").unwrap_or(base);
+            for (_, path, prior) in &earlier {
+                if prior.kind == ManifestKind::Plans
+                    && d8_set_name(&prior.set).0 == dose_name
+                    && d8_set_status(path, prior)? == D8SetStatus::Complete
+                {
+                    return Err(plan_err(
+                        "a same-build restart cannot replay a completed dose ordinal",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_d8_history(
+    namespace_dir: &Path,
+    current: &SetManifest,
+    run_number: u64,
+) -> Result<Vec<(u64, PathBuf, SetManifest)>, PodRunnerError> {
+    let mut earlier = Vec::new();
+    for entry in read_dir_if_present(namespace_dir)? {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(n) = d8_run_number(&name).filter(|_| entry.path().is_dir()) else {
+            continue;
+        };
+        for entry in read_dir_if_present(&entry.path())? {
+            let path = entry.path();
+            let text = match fs::read_to_string(path.join("manifest.json")) {
                 Ok(text) => text,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => {
                     return Err(PodRunnerError::Io(format!("{}: {error}", path.display())))
                 }
             };
-            let prior = parse_and_validate_manifest_json(&bytes)?;
-            if prior.namespace != manifest.namespace
-                || prior.run != run
-                || path.file_name().and_then(|name| name.to_str()) != Some(prior.set.as_str())
+            let manifest = parse_and_validate_manifest_json(&text)?;
+            if manifest.namespace != current.namespace
+                || manifest.run != name
+                || path.file_name().and_then(|name| name.to_str()) != Some(&manifest.set)
             {
-                return Err(plan_err("prior D8 manifest disagrees with its directory"));
+                return Err(plan_err("D8 manifest disagrees with its directory"));
             }
-            end_of_reservations = end_of_reservations.max(prior.units[1]);
-            if manifest.replaces.as_deref() == Some(format!("{run}/{}", prior.set).as_str()) {
-                predecessor = Some((path, prior));
+            if manifest.run == current.run && manifest.set == current.set {
+                continue;
+            }
+            if current.replaces.is_some() && manifest.replaces == current.replaces {
+                return Err(plan_err(
+                    "D8 predecessor is already replaced (forked history)",
+                ));
+            }
+            if n < run_number {
+                earlier.push((n, path, manifest));
             }
         }
     }
-    if manifest.units[0] != end_of_reservations {
-        return Err(plan_err(
-            "D8 restart must start after the earlier namespace reservations",
-        ));
-    }
-    if manifest.replaces.is_some() {
-        let (path, prior) =
-            predecessor.ok_or_else(|| plan_err("D8 predecessor manifest is missing"))?;
-        if prior.kind != manifest.kind {
-            return Err(plan_err("D8 predecessor has a different execution kind"));
-        }
-        if d8_set_status(&path, &prior)? != D8SetStatus::Interrupted {
-            return Err(plan_err("D8 predecessor is not a restartable interruption"));
-        }
-        let unused = d8_unused_reserved_ranges(&path, &prior)?;
-        if manifest.retired != unused {
-            return Err(plan_err(format!(
-                "D8 retired ranges must equal the predecessor's unused units {unused:?}"
-            )));
-        }
-    }
-    Ok(())
+    Ok(earlier)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -4464,7 +4565,7 @@ pub fn run_prep_set_execution_with_ended_claim(
         ));
     }
     verify_declaration(&manifest, verification)?;
-    verify_d8_history(set_dir, &manifest)?;
+    verify_d8_launch(set_dir, &manifest, verification)?;
 
     // Execution must be the next appended execution entry.
     let expected_exec = manifest
@@ -5460,7 +5561,7 @@ fn preflight_plan_set_execution(
         ));
     }
     verify_declaration(&manifest, verification)?;
-    verify_d8_history(set_dir, &manifest)?;
+    verify_d8_launch(set_dir, &manifest, verification)?;
 
     let expected_exec = manifest
         .executions

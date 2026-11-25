@@ -35,7 +35,8 @@ use mtg_kernel::cube_read_plan_v1::{
     execute_read_plan_v1, parse_and_validate_read_plan_json,
     run_prep_set_execution_with_ended_claim, sha256_hex, supervise_plan_set_execution,
     to_canonical_compact_json, to_canonical_pretty_json, CommandPodWorkerLauncher,
-    PodProgressJournal, ReadPlanRunOptions, RuntimePins, RuntimeVerification, UniformSeatFactory,
+    PodProgressJournal, ReadPlanRunOptions, RuntimePins, RuntimeVerification, ShakedownManifestPin,
+    UniformSeatFactory,
 };
 #[path = "cube_pod_runner/worker.rs"]
 mod worker;
@@ -79,6 +80,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--pool-pin",
     "--constants-pin",
     "--panel-pin",
+    "--shakedown-manifest",
+    "--shakedown-manifest-pin",
+    "--shakedown-records-repo",
     "--platform",
     "--host",
 ];
@@ -224,6 +228,24 @@ fn load_verification(args: &Args, loaded: &LoadedPool) -> Fallible<RuntimeVerifi
     let declaration_bytes = read_bytes(declaration_path)?;
     let platform = args.get("--platform").unwrap_or("local").to_owned();
     let host = args.get("--host").unwrap_or("local").to_owned();
+    let shakedown_manifest = match (
+        args.get("--shakedown-manifest"),
+        args.get("--shakedown-manifest-pin"),
+        args.get("--shakedown-records-repo"),
+    ) {
+        (None, None, None) => None,
+        (Some(path), Some(sha256), Some(repo)) => Some(ShakedownManifestPin {
+            path: PathBuf::from(path),
+            sha256: sha256.to_owned(),
+            records_repo: PathBuf::from(repo),
+        }),
+        _ => {
+            return Err(
+                "the shakedown manifest, its pin, and records repo must be supplied together"
+                    .to_owned(),
+            )
+        }
+    };
     Ok(RuntimeVerification {
         pins: RuntimePins {
             binary,
@@ -238,6 +260,7 @@ fn load_verification(args: &Args, loaded: &LoadedPool) -> Fallible<RuntimeVerifi
         host,
         declaration_bytes,
         pinned_panel_sha256: args.get("--panel-pin").map(str::to_owned),
+        shakedown_manifest,
     })
 }
 

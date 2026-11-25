@@ -12,7 +12,7 @@ const PIN_KEYS: [&str; 5] = [
 ];
 const INPUT_KEYS: [&str; 2] = ["pool_sha256", "constants_sha256"];
 
-fn is_timestamp(date: &str, time: &str) -> bool {
+pub(super) fn is_timestamp(date: &str, time: &str) -> bool {
     let matches = |text: &str, mask: &str| {
         text.len() == mask.len()
             && text.bytes().zip(mask.bytes()).all(|(byte, expected)| {

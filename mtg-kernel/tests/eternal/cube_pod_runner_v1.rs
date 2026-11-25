@@ -1641,6 +1641,7 @@ fn fixture_verification(decl_bytes: Vec<u8>, pinned_panel: Option<String>) -> Ru
         host: "test-host".to_owned(),
         declaration_bytes: decl_bytes,
         pinned_panel_sha256: pinned_panel,
+        shakedown_manifest: None,
     }
 }
 
